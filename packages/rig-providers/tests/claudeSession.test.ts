@@ -1499,6 +1499,276 @@ describe("ClaudeSession", () => {
             message: { content: retainedMessage.content },
         });
     });
+
+    it("restarts the query when the caller compacts the context inside a tool loop", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const replayEntries: unknown[] = [];
+        const firstClose = vi.fn();
+        const query = vi.fn<ClaudeSdkQuery>((parameters) => {
+            const index = query.mock.calls.length - 1;
+            if (index === 0) return fakeToolCallQuery(firstClose);
+            async function* messages() {
+                replayEntries[index] = await parameters.options?.sessionStore?.load({
+                    projectKey: "test",
+                    sessionId: parameters.options.resume ?? "compacted-tool-loop-session",
+                });
+                yield* fakeQuery("CONTINUED");
+            }
+            return Object.assign(messages(), {
+                close: () => {},
+            }) as unknown as ReturnType<ClaudeSdkQuery>;
+        });
+        const session = new ClaudeSession("compacted-tool-loop-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [
+                {
+                    name: "Bash",
+                    type: "local",
+                    parameters: Type.Object({ command: Type.String() }),
+                },
+            ],
+        });
+
+        await expect(
+            collectSessionEvents(
+                session.run({
+                    context: { messages: [{ role: "user", content: "ORIGINAL QUESTION" }] },
+                }),
+            ),
+        ).resolves.toContainEqual({ type: "done", state: "tool_call" });
+
+        // The caller compacted while the tool ran, so the history behind the pending tool result
+        // is no longer the history the live query holds.
+        const events = await collectSessionEvents(
+            session.run({
+                context: {
+                    messages: [
+                        {
+                            role: "user",
+                            content: "<conversation_summary>\nSUMMARY\n</conversation_summary>",
+                        },
+                        {
+                            role: "assistant",
+                            content: "",
+                            toolCalls: [
+                                {
+                                    callId: "call-1",
+                                    name: "Bash",
+                                    arguments: '{"command":"echo done"}',
+                                },
+                            ],
+                        },
+                        { role: "tool", callId: "call-1", content: "done" },
+                    ],
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(firstClose).toHaveBeenCalledOnce();
+        expect(JSON.stringify(replayEntries[1])).toContain("SUMMARY");
+        expect(JSON.stringify(replayEntries[1])).not.toContain("ORIGINAL QUESTION");
+        expect(textFromSessionEvents(events)).toBe("CONTINUED");
+    });
+
+    it("keeps one live query when a tool result completes the batch it generated", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() => fakeLiveToolLoopQuery("CONTINUED"));
+        const session = new ClaudeSession("live-tool-loop-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [
+                {
+                    name: "Bash",
+                    type: "local",
+                    parameters: Type.Object({ command: Type.String() }),
+                },
+            ],
+        });
+
+        await collectSessionEvents(
+            session.run({ context: { messages: [{ role: "user", content: "Run a command." }] } }),
+        );
+        // The executor round trip decorates the assistant it replays with fields Claude never
+        // sent back, so wire identity - not raw equality - has to drive the decision.
+        const events = await collectSessionEvents(
+            session.run({
+                context: {
+                    messages: [
+                        { role: "user", content: "Run a command." },
+                        {
+                            role: "assistant",
+                            content: "",
+                            encryptedReasoning: "round-trip-only",
+                            responseItems: [{ type: "ignored" }],
+                            toolCalls: [
+                                {
+                                    callId: "call-1",
+                                    name: "Bash",
+                                    arguments: '{"command":"echo done"}',
+                                },
+                            ],
+                        },
+                        { role: "tool", callId: "call-1", content: "done" },
+                    ] as never,
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledOnce();
+        expect(textFromSessionEvents(events)).toBe("CONTINUED");
+    });
+
+    it("restarts when the caller edits the assistant message the query generated", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() => fakeQuery("ANSWER"));
+        const session = new ClaudeSession("edited-assistant-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+        });
+
+        await collectSessionEvents(
+            session.run({ context: { messages: [{ role: "user", content: "First." }] } }),
+        );
+        await collectSessionEvents(
+            session.run({
+                context: {
+                    messages: [
+                        { role: "user", content: "First." },
+                        { role: "assistant", content: "EDITED ANSWER" },
+                        { role: "user", content: "Second." },
+                    ],
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledTimes(2);
+    });
+
+    it("restarts rather than dropping a system notice queued behind the next prompt", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const replayEntries: unknown[] = [];
+        const query = vi.fn<ClaudeSdkQuery>((parameters) => {
+            const index = query.mock.calls.length - 1;
+            async function* messages() {
+                replayEntries[index] = await parameters.options?.sessionStore?.load({
+                    projectKey: "test",
+                    sessionId: parameters.options.resume ?? "system-notice-session",
+                });
+                yield* fakeQuery("ANSWER");
+            }
+            return Object.assign(messages(), {
+                close: () => {},
+            }) as unknown as ReturnType<ClaudeSdkQuery>;
+        });
+        const session = new ClaudeSession("system-notice-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+        });
+
+        await collectSessionEvents(
+            session.run({ context: { messages: [{ role: "user", content: "First." }] } }),
+        );
+        // Only the final message reaches a live query, so a notice appended beside the next
+        // prompt would be silently dropped if the session continued here.
+        await collectSessionEvents(
+            session.run({
+                context: {
+                    messages: [
+                        { role: "user", content: "First." },
+                        { role: "assistant", content: "ANSWER" },
+                        { role: "system", content: "PROJECT NOTICE" },
+                        { role: "user", content: "Second." },
+                    ],
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(JSON.stringify(replayEntries[1])).toContain("PROJECT NOTICE");
+    });
+
+    it("restarts when only part of a parallel tool batch is answered", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query: ReturnType<typeof vi.fn<ClaudeSdkQuery>> = vi.fn<ClaudeSdkQuery>(() =>
+            query.mock.calls.length === 1 ? fakeParallelToolCallQuery() : fakeQuery("REPLAYED"),
+        );
+        const session = new ClaudeSession("partial-batch-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [
+                {
+                    name: "Bash",
+                    type: "local",
+                    parameters: Type.Object({ command: Type.String() }),
+                },
+            ],
+        });
+
+        await collectSessionEvents(
+            session.run({ context: { messages: [{ role: "user", content: "Run two." }] } }),
+        );
+        const events = await collectSessionEvents(
+            session.run({
+                context: {
+                    messages: [
+                        { role: "user", content: "Run two." },
+                        {
+                            role: "assistant",
+                            content: "",
+                            toolCalls: [
+                                { callId: "call-1", name: "Bash", arguments: "{}" },
+                                { callId: "call-2", name: "Bash", arguments: "{}" },
+                            ],
+                        },
+                        { role: "tool", callId: "call-1", content: "only one" },
+                    ],
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(textFromSessionEvents(events)).toBe("REPLAYED");
+    });
+
+    it("starts a fresh query when the caller clears back to an identical first prompt", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() => fakeQuery("ANSWER"));
+        const session = new ClaudeSession("cleared-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+        });
+
+        const firstTurn = { messages: [{ role: "user" as const, content: "Same prompt." }] };
+        await collectSessionEvents(session.run({ context: firstTurn }));
+        // Clearing rewinds behind an answer the live query still holds, so the identical prompt
+        // must not resume that conversation.
+        await collectSessionEvents(session.run({ context: firstTurn }));
+
+        expect(query).toHaveBeenCalledTimes(2);
+    });
 });
 
 async function settlesBeforeNextTurn<T>(promise: Promise<T>): Promise<T> {
@@ -1703,6 +1973,63 @@ function midResponseServerErrorQuery(
         };
     }
     return Object.assign(messages(), { close }) as unknown as ReturnType<ClaudeSdkQuery>;
+}
+
+/** Stays open after its tool call, the way a real live query awaits the pending result. */
+function fakeLiveToolLoopQuery(text: string): ReturnType<ClaudeSdkQuery> {
+    async function* messages() {
+        yield* fakeToolCallQuery(() => {});
+        yield* fakeQuery(text);
+    }
+    return Object.assign(messages(), {
+        close: () => {},
+    }) as unknown as ReturnType<ClaudeSdkQuery>;
+}
+
+function fakeParallelToolCallQuery(): ReturnType<ClaudeSdkQuery> {
+    async function* messages() {
+        for (const [index, callId] of ["call-1", "call-2"].entries()) {
+            yield {
+                type: "stream_event",
+                event: {
+                    type: "content_block_start",
+                    index,
+                    content_block: { type: "tool_use", id: callId, name: "Bash", input: {} },
+                },
+                parent_tool_use_id: null,
+                uuid: `tool-start-${callId}`,
+                session_id: "session-id",
+            };
+            yield {
+                type: "stream_event",
+                event: {
+                    type: "content_block_delta",
+                    index,
+                    delta: { type: "input_json_delta", partial_json: "{}" },
+                },
+                parent_tool_use_id: null,
+                uuid: `tool-delta-${callId}`,
+                session_id: "session-id",
+            };
+            yield {
+                type: "stream_event",
+                event: { type: "content_block_stop", index },
+                parent_tool_use_id: null,
+                uuid: `tool-stop-${callId}`,
+                session_id: "session-id",
+            };
+        }
+        yield {
+            type: "stream_event",
+            event: { type: "message_stop" },
+            parent_tool_use_id: null,
+            uuid: "message-stop",
+            session_id: "session-id",
+        };
+    }
+    return Object.assign(messages(), {
+        close: () => {},
+    }) as unknown as ReturnType<ClaudeSdkQuery>;
 }
 
 function fakeToolCallQuery(close: () => void): ReturnType<ClaudeSdkQuery> {
