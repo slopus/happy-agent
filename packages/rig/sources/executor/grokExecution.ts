@@ -2,7 +2,6 @@ import {
     GrokApiKeyCredential,
     GrokProvider,
     GrokSessionCredential,
-    grok_hosted_tools,
 } from "@slopus/rig-providers";
 import { builtinModelProfiles, type ExecutorProvider } from "@slopus/rig-execution";
 
@@ -43,9 +42,6 @@ export function grokExecution(options: {
             }
             return new GrokProvider({
                 credential,
-                // Web and X search run on Grok's backend, so a Grok session gets them the way
-                // the Grok CLI does rather than through a tool Rig would have to execute.
-                hostedTools: grok_hosted_tools,
                 ...(options.resolveInferenceMaxRetries === undefined
                     ? {}
                     : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),

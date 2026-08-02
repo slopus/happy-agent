@@ -121,7 +121,6 @@ export {
     type FetchGrokProviderUsageOptions,
 } from "@/vendors/grok/fetchGrokProviderUsage.js";
 export { GrokSession, type GrokSessionOptions } from "@/vendors/grok/GrokSession.js";
-export { grok_hosted_tools } from "@/vendors/grok/tools/index.js";
 export type { GrokToolVendor } from "@/vendors/grok/GrokToolVendor.js";
 export { CodexProvider, type CodexProviderOptions } from "@/vendors/codex/CodexProvider.js";
 export {

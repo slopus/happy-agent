@@ -25,16 +25,6 @@ import { image_edit } from "@/vendors/grok/tools/image_edit.js";
 import { image_to_video } from "@/vendors/grok/tools/image_to_video.js";
 import { reference_to_video } from "@/vendors/grok/tools/reference_to_video.js";
 import { write } from "@/vendors/grok/tools/write.js";
-import { hosted_web_search } from "@/vendors/grok/tools/hosted_web_search.js";
-import { hosted_x_search } from "@/vendors/grok/tools/hosted_x_search.js";
-
-/**
- * Search that Grok's backend performs itself, declared by type alone.
- *
- * Kept apart from `grok_4_5_tools`, which is a literal capture of the tools CLI 0.2.111 sent.
- * These are what current Grok sends, and what gives a caller live web and X results.
- */
-export const grok_hosted_tools: readonly SessionTool[] = [hosted_web_search, hosted_x_search];
 
 export const grok_4_5_tools: readonly SessionTool[] = [
     run_terminal_command,

@@ -232,25 +232,6 @@ async function* streamExecutorInference(options: {
                 yield { type: "toolcall_end", contentIndex, toolCall, partial: snapshot() };
                 continue;
             }
-            if (event.type === "server_tool_call_start") {
-                yield { type: "server_toolcall_start", callId: event.callId, name: event.name };
-                continue;
-            }
-            if (event.type === "server_tool_call_delta") {
-                yield { type: "server_toolcall_delta", callId: event.callId, delta: event.delta };
-                continue;
-            }
-            if (event.type === "server_tool_call_end") {
-                // The provider already ran this call and answered it. It stays out of the
-                // assistant message so the agent loop never tries to execute or complete it.
-                yield {
-                    type: "server_toolcall_end",
-                    callId: event.callId,
-                    name: event.name,
-                    arguments: event.arguments,
-                };
-                continue;
-            }
             if (event.type === "token_usage") {
                 partial = {
                     ...partial,

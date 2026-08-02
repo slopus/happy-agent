@@ -206,32 +206,6 @@ export function createGymProvider(options: CreateGymProviderOptions) {
                     }
                 }
 
-                // A hosted call is answered by the provider itself, so it streams alongside the
-                // response and never becomes a content block the client has to execute.
-                for (const [index, serverToolCall] of (reply.serverToolCalls ?? []).entries()) {
-                    const callId = serverToolCall.callId ?? `server-call-${String(index + 1)}`;
-                    yield { type: "server_toolcall_start", callId, name: serverToolCall.name };
-                    if (reply.serverToolCallDeltaDelayMs !== undefined) {
-                        await delay(reply.serverToolCallDeltaDelayMs, streamOptions);
-                    }
-                    if (serverToolCall.arguments.length > 0) {
-                        yield {
-                            type: "server_toolcall_delta",
-                            callId,
-                            delta: serverToolCall.arguments,
-                        };
-                    }
-                    if (reply.serverToolCallDeltaDelayMs !== undefined) {
-                        await delay(reply.serverToolCallDeltaDelayMs, streamOptions);
-                    }
-                    yield {
-                        type: "server_toolcall_end",
-                        callId,
-                        name: serverToolCall.name,
-                        arguments: serverToolCall.arguments,
-                    };
-                }
-
                 for (const block of reply.content) {
                     const contentIndex = message.content.length;
                     const stopped = yield* eventsForBlock(

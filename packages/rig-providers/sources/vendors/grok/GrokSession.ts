@@ -49,8 +49,6 @@ import { GrokSessionCredential } from "@/vendors/grok/GrokSessionCredential.js";
 export interface GrokSessionOptions extends SessionOptions, InferenceRetryOptions {
     credential: GrokCredential;
     endpoint: string;
-    /** Tools Grok runs on its own backend, sent alongside the tools Rig executes. */
-    hostedTools?: readonly SessionTool[];
     model?: string;
     /** Identifies this client upstream instead of reproducing the grok-build user agent. */
     userAgent?: string;
@@ -59,7 +57,6 @@ export interface GrokSessionOptions extends SessionOptions, InferenceRetryOption
 export class GrokSession extends BaseSession {
     readonly credential: GrokCredential;
     readonly endpoint: string;
-    readonly hostedTools: readonly SessionTool[];
     readonly model: string | undefined;
     readonly tools: readonly SessionTool[];
 
@@ -82,7 +79,6 @@ export class GrokSession extends BaseSession {
         this.context = { instructions: options.instructions, messages: [] };
         this.turnIndex = 0;
         this.endpoint = options.endpoint;
-        this.hostedTools = options.hostedTools ?? [];
         this.model = options.model;
         this.activeModel = options.model;
         this.modelConfigurations = options.modelConfigurations;
@@ -95,7 +91,6 @@ export class GrokSession extends BaseSession {
 
         this.connection = new GrokConnection({
             baseUrl: this.endpoint,
-            hostedTools: this.hostedTools,
             sessionId: this.id,
             token: () => this.credential.credential.token,
             tools: this.tools,
@@ -383,13 +378,11 @@ export class GrokSession extends BaseSession {
                     continue;
                 }
                 if (event.type === "text_delta") rawSummary += event.delta;
-                // Only a call Rig would have to answer invalidates the sample. Compaction is sent
-                // without hosted tools, and search Grok ran itself would still leave a usable
-                // summary, so it is not grounds for discarding one.
                 if (
                     event.type === "tool_call_start" ||
                     event.type === "tool_call_delta" ||
-                    event.type === "tool_call_end"
+                    event.type === "tool_call_end" ||
+                    event.type === "server_tool_call_delta"
                 ) {
                     emittedToolCall = true;
                 }
@@ -479,9 +472,7 @@ export class GrokSession extends BaseSession {
                         event.type === "tool_call_start" ||
                         event.type === "tool_call_delta" ||
                         event.type === "tool_call_end" ||
-                        event.type === "server_tool_call_start" ||
-                        event.type === "server_tool_call_delta" ||
-                        event.type === "server_tool_call_end"
+                        event.type === "server_tool_call_delta"
                     ) {
                         responseContentBegun = true;
                     }

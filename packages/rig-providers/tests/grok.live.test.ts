@@ -6,7 +6,6 @@ import type { GrokCredential } from "@/vendors/VendorCredential.js";
 import { GrokApiKeyCredential } from "@/vendors/grok/GrokApiKeyCredential.js";
 import { GrokProvider } from "@/vendors/grok/GrokProvider.js";
 import { GrokSessionCredential } from "@/vendors/grok/GrokSessionCredential.js";
-import { grok_hosted_tools } from "@/vendors/grok/tools/index.js";
 import { collectSessionEvents, textFromSessionEvents } from "./helpers/collectSessionEvents.js";
 
 const LIVE = process.env.RIG_LIVE_TEST === "1";
@@ -195,38 +194,4 @@ describeLive("GrokProvider live", () => {
         expect(continuation.content).toContain("This session is being continued");
         expect(continuation.content).toContain("pnpm test");
     }, 120_000);
-    it("answers from X search that Grok runs on its own backend", async () => {
-        const credential = await resolveGrokCredential();
-        if (credential === null) {
-            expect.fail("RIG_LIVE_TEST=1 is set but no grok credentials were found");
-        }
-
-        const provider = new GrokProvider({ credential, hostedTools: grok_hosted_tools });
-        const session = await provider.session(`grok-x-search-live-${Date.now()}`, {
-            instructions: "You are a concise assistant.",
-            tools: [],
-        });
-        const events = await collectSessionEvents(
-            session.run({
-                context: {
-                    messages: [
-                        {
-                            role: "user",
-                            content:
-                                "<user_query>Search X for recent posts about Claude Code and reply with one post URL.</user_query>",
-                        },
-                    ],
-                },
-                model: "grok-4.5",
-                effort: "low",
-            }),
-        );
-
-        const searches = events.filter((event) => event.type === "server_tool_call_start");
-        expect(searches.length).toBeGreaterThan(0);
-        expect(searches.every((event) => event.name.startsWith("x_"))).toBe(true);
-        expect(events.filter((event) => event.type === "tool_call_start")).toEqual([]);
-        expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
-        expect(textFromSessionEvents(events)).toContain("x.com/");
-    }, 180_000);
 });
