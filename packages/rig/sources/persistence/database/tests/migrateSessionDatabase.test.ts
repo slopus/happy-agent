@@ -15,6 +15,7 @@ import {
 import { agentTreeUsage } from "../migrations/08-agent-tree-usage.js";
 import { projectComputeGeneration } from "../migrations/12-project-compute-generation.js";
 import { projectUserMutationVersion } from "../migrations/16-project-user-mutation-version.js";
+import { sessionHostedCapabilities } from "../migrations/29-session-hosted-capabilities.js";
 import { openSessionDatabase } from "../openSessionDatabase.js";
 import { dropSchemaAddedAfterIdentityMigrations } from "./dropSchemaAddedAfterIdentityMigrations.js";
 import * as schema from "../schema.js";
@@ -422,6 +423,32 @@ describe("migrateSessionDatabase", () => {
             { id: "first", user_mutation_version: 4 },
             { id: "second", user_mutation_version: 9 },
         ]);
+        opened.client.close();
+    });
+
+    it("adds nullable hosted capabilities without changing existing sessions", () => {
+        const opened = openTestDatabase();
+        opened.database.run(sql.raw("CREATE TABLE sessions (id TEXT NOT NULL PRIMARY KEY)"));
+        opened.database.run(sql.raw("INSERT INTO sessions (id) VALUES ('existing-session')"));
+
+        sessionHostedCapabilities(opened.database);
+
+        expect(
+            opened.database.get(
+                sql.raw(
+                    "SELECT id, hosted_capabilities FROM sessions WHERE id = 'existing-session'",
+                ),
+            ),
+        ).toEqual({
+            hosted_capabilities: null,
+            id: "existing-session",
+        });
+        expect(
+            opened.database
+                .all<{ name: string; notnull: number }>(sql.raw("PRAGMA table_info(sessions)"))
+                .find((column) => column.name === "hosted_capabilities"),
+        ).toMatchObject({ name: "hosted_capabilities", notnull: 0 });
+
         opened.client.close();
     });
 

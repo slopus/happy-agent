@@ -1,5 +1,5 @@
 import type { Message } from "../types.js";
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { HostedCapability, ServiceTier } from "@slopus/rig-execution";
 
 export type SubagentRunStatus = "aborted" | "completed" | "error" | "running" | "suspended";
 export type SubagentContextMode = "parent" | "task";
@@ -27,6 +27,11 @@ export interface ManagedSubagent {
 
 export interface SpawnSubagentRequest {
     background?: boolean;
+    /**
+     * Provider-executed searches to grant this child. Rig cannot review one of these once the
+     * child holds it, so the spawn is where it is reviewed and the grant lasts the child's life.
+     */
+    capabilities?: readonly HostedCapability[];
     contextMode?: SubagentContextMode;
     contextMessages?: readonly Message[];
     description: string;
@@ -62,6 +67,12 @@ export interface SubagentContext {
     availableModels?: readonly AvailableSubagentModel[];
     canSpawn: boolean;
     depth: number;
+    /**
+     * Provider-executed searches this agent may hand to a child. Empty unless the agent can
+     * reach outside the sandbox itself, and always empty for an agent that already holds one:
+     * a capability Rig cannot intercept goes one level deep and stops.
+     */
+    grantableCapabilities?: readonly HostedCapability[];
     disabledProviders?: readonly DisabledSubagentProvider[];
     encryptedMessages?: boolean;
     followUp(

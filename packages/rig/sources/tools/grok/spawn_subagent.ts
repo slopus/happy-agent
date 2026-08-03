@@ -5,6 +5,11 @@ import {
     SUBAGENT_EFFORT_ARGUMENT_DESCRIPTION,
     SUBAGENT_MODEL_ARGUMENT_DESCRIPTION,
 } from "../../agent/context/subagentSelectionDescriptions.js";
+import {
+    describeSpawnCapabilityGrant,
+    spawnGrantsCapabilities,
+    subagentCapabilitiesArgumentSchema,
+} from "../../agent/context/subagentCapabilityDescriptions.js";
 import { defineTool } from "../../agent/types.js";
 import { requireSubagentContext } from "../../agent/tools/codex/impl/requireSubagentContext.js";
 
@@ -14,6 +19,7 @@ export const grokSpawnSubagentTool = defineTool({
     description:
         "Launch a subagent to handle a concrete, bounded task. Background subagents return immediately and share the current workspace.",
     arguments: Type.Object({
+        capabilities: subagentCapabilitiesArgumentSchema,
         prompt: Type.String({ description: "The full task prompt for the subagent to execute." }),
         description: Type.String({ description: "Short description of the task in 3-5 words." }),
         model: Type.String({
@@ -65,10 +71,12 @@ export const grokSpawnSubagentTool = defineTool({
         status: Type.String(),
         output: Type.Optional(Type.String()),
     }),
-    shouldReviewInAutoMode: () => false,
+    describeAutoPermissionAction: describeSpawnCapabilityGrant,
+    shouldReviewInAutoMode: spawnGrantsCapabilities,
     execute: async (
         {
             background = true,
+            capabilities,
             context: contextMode = "task",
             description,
             effort,
@@ -85,6 +93,9 @@ export const grokSpawnSubagentTool = defineTool({
         const result = await requireSubagentContext(context).spawn(
             {
                 background,
+                ...(capabilities === undefined || capabilities.length === 0
+                    ? {}
+                    : { capabilities }),
                 contextMode,
                 ...(contextMode === "parent" && execution.messages !== undefined
                     ? { contextMessages: execution.messages.slice(0, -1) }

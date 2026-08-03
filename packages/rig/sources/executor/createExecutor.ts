@@ -1,7 +1,12 @@
 import { release } from "node:os";
 
 import type { ProviderUsage } from "@slopus/rig-providers";
-import { Executor, type ExecutorProvider, type Identity } from "@slopus/rig-execution";
+import {
+    Executor,
+    type ExecutorProvider,
+    type HostedCapability,
+    type Identity,
+} from "@slopus/rig-execution";
 
 import type { AgentContext } from "../agent/context/AgentContext.js";
 import type { ConfigProvider, ConfigProviders } from "../config/types.js";
@@ -16,6 +21,8 @@ export interface CreateExecutorOptions {
     allowEmptyModels?: boolean;
     apiKey?: string;
     env: NodeJS.ProcessEnv;
+    /** Provider-executed searches this agent was granted. Empty unless something granted them. */
+    hostedCapabilities?: readonly HostedCapability[];
     identity?: Identity;
     /** Receives account usage a provider reports while it is already answering. */
     onAccountUsage?: (usage: ProviderUsage) => void;
@@ -105,6 +112,9 @@ function configuredExecutor(
                   ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
                   config,
                   env: options.env,
+                  ...(options.hostedCapabilities === undefined
+                      ? {}
+                      : { hostedCapabilities: options.hostedCapabilities }),
                   id,
                   ...(options.resolveInferenceMaxRetries === undefined
                       ? {}

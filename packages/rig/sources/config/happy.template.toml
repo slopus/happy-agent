@@ -102,6 +102,15 @@
 # base_url = "https://api.x.ai/v1"
 # include_models = ["xai/grok-build"]
 # exclude_models = []
+#
+# Searches Grok runs on its own backend, which a Grok agent at the top of a session may use
+# directly. Empty by default, and left empty this changes nothing: an agent can still grant one to
+# a subagent on the spawn call, where Rig reviews the decision once.
+#
+# Naming one here removes that review. Grok performs the search inside its own response, so Rig
+# never sees a call it could show you or stop, and cannot tell you what was searched for or what
+# came back. It applies only while the session is in Auto or Full access.
+# hosted_search = ["x_search", "web_search"]
 
 # [providers.bedrock]
 # type = "bedrock"

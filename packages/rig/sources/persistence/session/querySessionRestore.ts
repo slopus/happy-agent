@@ -27,6 +27,7 @@ import {
 } from "../../session/sessionWorkspaceTransferState.js";
 import type { TX } from "../Transaction.js";
 import { parsePersistedUsage } from "./impl/persistedUsage.js";
+import { parseStoredHostedCapabilities } from "./impl/parseStoredHostedCapabilities.js";
 import {
     readNumber,
     readOptionalNumber,
@@ -91,6 +92,9 @@ export function querySessionRestore(tx: TX, sessionId: string): SessionRestore |
     const activeRunId = readOptionalString(row, "active_run_id");
     const activeSince = readOptionalNumber(row, "active_since_ms");
     const permissionMode = parsePermissionMode(readString(row, "permission_mode"));
+    const hostedCapabilities = parseStoredHostedCapabilities(
+        readOptionalString(row, "hosted_capabilities"),
+    );
     const parentSessionId = readOptionalString(row, "parent_session_id");
     const delegatedBySessionId = readOptionalString(row, "delegated_by_session_id");
     const parentToolCallId = readOptionalString(row, "parent_tool_call_id");
@@ -157,6 +161,7 @@ export function querySessionRestore(tx: TX, sessionId: string): SessionRestore |
         providerId: readString(row, "provider_id"),
         permissionMode,
         pendingContextMessages: queryPendingContextMessages(tx, sessionId),
+        ...(hostedCapabilities === undefined ? {} : { hostedCapabilities }),
         projectId,
         ...(workspaceId === undefined ? {} : { workspaceId }),
         workspaceTransfer,

@@ -1667,6 +1667,24 @@ describe("createProtocolHttpServer", () => {
         }
     });
 
+    it("rejects unrecognized hosted capabilities when creating a session", async () => {
+        const { close, socketPath } = await startServer();
+        try {
+            const response = await requestRawJson(socketPath, "/sessions", {
+                body: JSON.stringify({
+                    cwd: "/tmp/invalid-hosted-capability",
+                    hostedCapabilities: ["filesystem_search"],
+                }),
+                method: "POST",
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(response.body).toContain("Unknown capability 'filesystem_search'");
+        } finally {
+            await close();
+        }
+    });
+
     it("exposes the in-memory global event queue when durable retention is disabled", async () => {
         const { client, close } = await startServer();
         try {

@@ -208,6 +208,7 @@ export const sessions = sqliteTable(
         workspaceQueueWaiting: integer("workspace_queue_waiting", { mode: "boolean" })
             .notNull()
             .default(false),
+        hostedCapabilities: text("hosted_capabilities"),
     },
     (table) => [
         index("sessions_agent_id").on(table.agentId),

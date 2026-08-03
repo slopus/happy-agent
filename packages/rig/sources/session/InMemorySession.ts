@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { isDeepStrictEqual } from "node:util";
 
 import { createId } from "@paralleldrive/cuid2";
-import { Executor } from "@slopus/rig-execution";
+import { Executor, parseHostedCapabilities } from "@slopus/rig-execution";
 import { areProviderModelsCompatible, type ProviderUsage } from "@slopus/rig-providers";
 
 import { errorToMessage } from "../errorToMessage.js";
@@ -101,12 +101,19 @@ import {
     type TranscriptRunFacts,
 } from "./sessionTranscriptWindow.js";
 import { clampSessionDraftTimestamp } from "./impl/clampSessionDraftTimestamp.js";
+import { canSpawnWithCapabilities, grantableCapabilities } from "./hostedCapabilityGrants.js";
 import { generateKeyBetween } from "../utils/fractionalIndexing.js";
 import { sessionUnreadStateAfterEvent } from "./impl/sessionUnreadStateAfterEvent.js";
 import { IDLE_SESSION_ACTIVITY, sessionActivityAfterEvent } from "./sessionActivityAfterEvent.js";
 import { aggregateSessionTokenCount } from "./usage/aggregateSessionTokenCount.js";
 import { sessionTokenCountAfterEvent } from "./usage/sessionTokenCountAfterEvent.js";
-import type { Model, ServiceTier, StopReason, Usage } from "@slopus/rig-execution";
+import type {
+    HostedCapability,
+    Model,
+    ServiceTier,
+    StopReason,
+    Usage,
+} from "@slopus/rig-execution";
 import { createEncryptedAgentTransportScope } from "../executor/createEncryptedAgentTransportScope.js";
 import type {
     DurableUserInputCall,
@@ -314,6 +321,7 @@ export interface PersistedSessionState {
     orderKey: string;
     providerId: string;
     permissionMode: PermissionMode;
+    hostedCapabilities?: readonly HostedCapability[];
     permissionReviews?: readonly SessionPermissionReview[];
     pendingContextMessages?: readonly PersistedPendingContextMessage[];
     projectId?: string;
@@ -690,6 +698,7 @@ export class InMemorySession {
     #providerId: string;
     #projectId: string;
     #permissionMode: PermissionMode;
+    #hostedCapabilities: readonly HostedCapability[];
     #queue: PersistedQueuedRun[] = [];
     #recap: string | undefined;
     #request: CreateSessionRequest;
@@ -809,6 +818,11 @@ export class InMemorySession {
                 options.request.permissionMode ??
                 DEFAULT_PERMISSION_MODE,
         );
+        this.#hostedCapabilities = [
+            ...parseHostedCapabilities(
+                options.restore?.hostedCapabilities ?? options.request.hostedCapabilities ?? [],
+            ),
+        ];
         this.#projectId = options.restore?.projectId ?? options.projectId ?? createId();
         this.#workspaceId = options.restore?.workspaceId ?? options.workspaceId;
         // A subagent belongs to the session that started it, not to any ordered
@@ -3692,6 +3706,10 @@ export class InMemorySession {
             providerId: this.#providerId,
             ...(this.#request.apiKey !== undefined ? { apiKey: this.#request.apiKey } : {}),
             permissionMode: this.#permissionMode,
+            // The subagent creation path overrides this continuation grant before creating a child.
+            ...(this.#hostedCapabilities.length === 0
+                ? {}
+                : { hostedCapabilities: this.#hostedCapabilities }),
             workflowsEnabled: this.#workflowsEnabled,
             ...(this.#request.docker === undefined ? {} : { docker: this.#request.docker }),
         };
@@ -4050,6 +4068,9 @@ export class InMemorySession {
             environment: summarizeDockerExecution(this.#request.docker),
             providerId: this.#providerId,
             permissionMode: this.#permissionMode,
+            ...(this.#hostedCapabilities.length === 0
+                ? {}
+                : { hostedCapabilities: this.#hostedCapabilities }),
             modelId: this.#modelId,
             ...(this.#orderKey === "" ? {} : { orderKey: this.#orderKey }),
             modelLocked: this.#modelLocked(),
@@ -4121,6 +4142,9 @@ export class InMemorySession {
             environment: summarizeDockerExecution(this.#request.docker),
             providerId: this.#providerId,
             permissionMode: this.#permissionMode,
+            ...(this.#hostedCapabilities.length === 0
+                ? {}
+                : { hostedCapabilities: this.#hostedCapabilities }),
             modelId: this.#modelId,
             ...(this.#orderKey === "" ? {} : { orderKey: this.#orderKey }),
             ...(this.#effort !== undefined ? { effort: this.#effort } : {}),
@@ -4206,6 +4230,9 @@ export class InMemorySession {
             orderKey: this.#orderKey,
             providerId: this.#providerId,
             permissionMode: this.#permissionMode,
+            ...(this.#hostedCapabilities.length === 0
+                ? {}
+                : { hostedCapabilities: this.#hostedCapabilities }),
             permissionReviews: [...this.#permissionReviews.values()],
             projectId: this.#projectId,
             ...(this.#workspaceId === undefined ? {} : { workspaceId: this.#workspaceId }),
@@ -6662,6 +6689,9 @@ export class InMemorySession {
             isSubagent: this.isSubagent(),
             modelId: this.#modelId,
             permissionMode: this.#permissionMode,
+            ...(this.#hostedCapabilities.length === 0
+                ? {}
+                : { hostedCapabilities: this.#hostedCapabilities }),
             providerId: this.#providerId,
             secrets: this.#secrets,
             scheduling: {
@@ -6727,7 +6757,9 @@ export class InMemorySession {
                         providerId: provider.providerId,
                     })),
                 ),
-                canSpawn: this.#agentMetadata.depth < agentManager.maxDepth,
+                canSpawn:
+                    this.#agentMetadata.depth < agentManager.maxDepth &&
+                    canSpawnWithCapabilities(this.#hostedCapabilities),
                 depth: this.#agentMetadata.depth,
                 disabledProviders: this.#modelCatalog.providers.flatMap((provider) =>
                     provider.disabledReason === undefined
@@ -6737,6 +6769,10 @@ export class InMemorySession {
                 encryptedMessages: false,
                 followUp: (target, message, effort, encryptedMessage) =>
                     agentManager.followUp(this.id, target, message, effort, encryptedMessage),
+                grantableCapabilities: grantableCapabilities({
+                    held: this.#hostedCapabilities,
+                    permissionMode: this.#permissionMode,
+                }),
                 inspect: (target) => agentManager.inspect(this.id, target),
                 interrupt: (target) => agentManager.interrupt(this.id, target),
                 list: (pathPrefix) => agentManager.list(this.id, pathPrefix),
@@ -7440,6 +7476,9 @@ export class InMemorySession {
                 displayText: queued.displayText,
                 modelId: this.#modelId,
                 permissionMode: this.#permissionMode,
+                ...(this.#hostedCapabilities.length === 0
+                    ? {}
+                    : { hostedCapabilities: this.#hostedCapabilities }),
                 providerId: this.#providerId,
                 request: {
                     ...(queued.debugRequestContent === undefined

@@ -29,7 +29,13 @@ export type SessionEvent =
       }
     | { type: "tool_call_delta"; callId: string; delta: string }
     | { type: "tool_call_end"; callId: string; arguments: string; incomplete?: boolean }
+    /**
+     * A tool the provider ran on its own backend while producing this response. The client never
+     * executes it and never returns a result, so it never becomes one of the run's tool calls.
+     */
+    | { type: "server_tool_call_start"; callId: string; name: string }
     | { type: "server_tool_call_delta"; callId: string; delta: string }
+    | { type: "server_tool_call_end"; callId: string; name: string; arguments: string }
     | { type: "retrying"; attempt: number; reason: string }
     | { type: "token_usage"; usage: SessionCacheUsage }
     | { type: "done"; state: "cancelled" }

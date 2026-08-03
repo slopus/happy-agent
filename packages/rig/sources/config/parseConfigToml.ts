@@ -1,6 +1,7 @@
 import { parse, TomlDate, type TomlTable, type TomlValue } from "smol-toml";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { parseHostedCapabilities, type HostedCapability } from "@slopus/rig-execution";
 import { MAX_INFERENCE_MAX_RETRIES } from "./inferenceRetrySettings.js";
 
 import type {
@@ -501,15 +502,18 @@ function readProviders(
                 "base_url",
                 "enabled",
                 "exclude_models",
+                "hosted_search",
                 "include_models",
                 "type",
             ]);
             const authFile = readProviderString(id, rawProvider, "auth_file");
             const baseUrl = readProviderString(id, rawProvider, "base_url");
+            const hostedSearch = readProviderHostedSearch(id, rawProvider);
             providers[id] = {
                 ...common,
                 ...(authFile === undefined ? {} : { authFile }),
                 ...(baseUrl === undefined ? {} : { baseUrl }),
+                ...(hostedSearch === undefined ? {} : { hostedSearch }),
                 type,
             };
             continue;
@@ -590,6 +594,24 @@ function readProviderString(id: string, table: TomlTable, key: string): string |
         throw new Error(`providers.${id}.${key} must be a string.`);
     }
     return value;
+}
+
+function readProviderHostedSearch(
+    id: string,
+    table: TomlTable,
+): readonly HostedCapability[] | undefined {
+    const value = table.hosted_search;
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+        throw new Error(`providers.${id}.hosted_search must be an array of strings.`);
+    }
+    try {
+        return parseHostedCapabilities(value as readonly string[]);
+    } catch (error) {
+        throw new Error(
+            `providers.${id}.hosted_search: ${error instanceof Error ? error.message : String(error)}`,
+        );
+    }
 }
 
 function assertKnownKeys(table: TomlTable, path: string, keys: readonly string[]): void {

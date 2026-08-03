@@ -1,7 +1,7 @@
 import type { PermissionMode } from "../permissions/index.js";
 import type { McpServerConfig } from "../mcp/types.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { HostedCapability, ServiceTier } from "@slopus/rig-execution";
 import type { BedrockModelOverrides } from "../executor/bedrock-model-overrides.js";
 import type { ConfigPermissions, PartialConfigPermissions } from "./configPermissions.js";
 
@@ -120,6 +120,13 @@ export interface ConfigCodexProvider extends ConfigProviderBase {
 export interface ConfigGrokProvider extends ConfigProviderBase {
     authFile?: string;
     baseUrl?: string;
+    /**
+     * Searches Grok runs on its own backend that a root Grok agent may declare, such as
+     * `["x_search"]`. Empty by default. Grok executes these during its response, so Rig never sees
+     * a call it could review; naming one here means those searches happen unreviewed whenever the
+     * session is in Auto or Full access. A subagent gets them from a reviewed spawn instead.
+     */
+    hostedSearch?: readonly HostedCapability[];
     type: "grok";
 }
 

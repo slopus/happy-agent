@@ -34,6 +34,8 @@ import type {
     AgentSessionTransferSchedule,
 } from "../agent/context/WorkspaceContext.js";
 import type { Message } from "../agent/types.js";
+import { modelSupportsHostedCapabilities, type HostedCapability } from "@slopus/rig-execution";
+import { assertGrantIsNarrowing, grantableCapabilities } from "./hostedCapabilityGrants.js";
 import type { PermissionMode } from "../permissions/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
@@ -854,10 +856,25 @@ export class AgentSessionManager {
                 "Native encrypted collaboration only works within the current compatible provider and region. Use `rig.spawn_agent` and provide the task normally when selecting or crossing a model, provider, or region.",
             );
         }
+        // Before anything else, because whether this agent may hand out a capability at all is a
+        // question about the agent, not about the child it is trying to configure. Answering it
+        // first is also what makes the refusal say so.
+        const grantedCapabilities = this.#authorizeGrant(parent, request);
+
         const selection = this.#resolveSubagentSelection(parent, request);
         let parentRequest = selection.parentRequest;
         const childModelId = selection.modelId;
         const childProviderId = selection.providerId;
+
+        if (
+            grantedCapabilities.length > 0 &&
+            childModelId !== undefined &&
+            !modelSupportsHostedCapabilities(childModelId)
+        ) {
+            throw new Error(
+                `Model '${childModelId}' cannot run ${grantedCapabilities.join(", ")}. Only Grok models execute search on the provider's backend.`,
+            );
+        }
 
         const parentMetadata = parent.agentMetadata();
         const depth = parentMetadata.depth + 1;
@@ -900,6 +917,9 @@ export class AgentSessionManager {
                 ...(childProviderId === undefined ? {} : { providerId: childProviderId }),
                 ...(request.readOnly === true ? { permissionMode: "read_only" as const } : {}),
                 ...(request.serviceTier === undefined ? {} : { serviceTier: request.serviceTier }),
+                // Always written, never inherited. A capability the parent holds says nothing
+                // about this child, whose grant was reviewed on its own spawn or not at all.
+                hostedCapabilities: grantedCapabilities,
             };
             const configuredChildRequest =
                 request.workspaceId !== undefined &&
@@ -994,6 +1014,31 @@ export class AgentSessionManager {
             signal?.removeEventListener("abort", abortChild);
             this.#stoppedExplicitly.delete(child.id);
         }
+    }
+
+    /**
+     * Decides what a spawn actually grants the child, refusing anything the parent may not give.
+     *
+     * This is the only gate a hosted search ever passes. The provider runs the search during its
+     * own response, so once the child holds the capability there is no call left for Rig to
+     * review; everything that protects the user has to happen here, while the spawn is still a
+     * tool call the parent had to make and the user could see.
+     */
+    #authorizeGrant(
+        parent: InMemorySession,
+        request: SpawnSubagentRequest,
+    ): readonly HostedCapability[] {
+        const requested = request.capabilities ?? [];
+        if (requested.length === 0) return [];
+        const parentRequest = parent.requestForSubagent();
+        assertGrantIsNarrowing({
+            grantable: grantableCapabilities({
+                held: parentRequest.hostedCapabilities ?? [],
+                permissionMode: parentRequest.permissionMode ?? "read_only",
+            }),
+            requested,
+        });
+        return requested;
     }
 
     #resolveSubagentSelection(

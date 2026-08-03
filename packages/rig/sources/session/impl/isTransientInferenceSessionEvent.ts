@@ -14,6 +14,11 @@ export const TRANSIENT_INFERENCE_EVENT_TYPES = [
     "toolcall_start",
     "toolcall_delta",
     "toolcall_end",
+    // A provider-run call leaves no trace in the assistant message, so only its progress is
+    // disposable. Its completion stays durable, or reopening the session would lose the record
+    // that the provider searched at all.
+    "server_toolcall_start",
+    "server_toolcall_delta",
     "done",
     "error",
     "tool_execution_progress",

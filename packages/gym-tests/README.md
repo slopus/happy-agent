@@ -417,6 +417,12 @@ interface GymInferenceResponse {
     }[];
     providerError?: ProviderError;
     responseModel?: string;
+    serverToolCalls?: readonly {
+        arguments: string;
+        callId?: string;
+        name: string;
+    }[];
+    serverToolCallDeltaDelayMs?: number;
     stopReason?: StopReason;
     thinkingDeltaChunkSize?: number;
     thinkingDeltaDelayMs?: number;
@@ -440,6 +446,8 @@ interface GymInferenceResponse {
 - `textDeltaChunkSize` splits text blocks into deterministic streaming deltas of at most that many UTF-16 code units.
 - `textDeltaDelayMs` pauses between those text deltas and respects abort signals. Pair it with `textDeltaChunkSize` for live text-stream rendering scenarios.
 - `toolCallDeltaDelayMs` pauses after `toolcall_start` and before the arguments delta. Use it to exercise the live streamed-tool-call UI deterministically.
+- `serverToolCalls` streams tools the provider ran on its own backend, such as Grok's X and web search, before the response content. The client never executes them and never answers them, so they never become tool calls or content blocks.
+- `serverToolCallDeltaDelayMs` pauses before and after each hosted call's argument delta, so its live row stays observable while the arguments are still incomplete.
 - `stopReason` defaults to `toolUse` when any content block is a tool call, otherwise `stop`.
 - `errorMessage` populates the assistant message error field.
 - `providerError` supplies the provider-neutral error category, optional reset timestamp, and

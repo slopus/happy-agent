@@ -1249,6 +1249,7 @@ export interface ProtocolSession {
     modelId: string;
     providerId: string;
     permissionMode: string;
+    hostedCapabilities?: readonly string[];
     effort?: string;
     serviceTier?: string;
     secretIds?: readonly string[];
@@ -1679,6 +1680,7 @@ export interface SessionSummary {
     /** Absent for a session with no place in an ordered list, such as a subagent. */
     orderKey?: string;
     permissionMode: string;
+    hostedCapabilities?: readonly string[];
     effort?: string;
     serviceTier?: string;
     status: SessionStatus;

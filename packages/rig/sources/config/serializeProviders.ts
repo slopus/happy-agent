@@ -58,6 +58,9 @@ function serializeProviderFields(provider: PartialConfigProvider): Record<string
         return {
             ...(provider.authFile === undefined ? {} : { auth_file: provider.authFile }),
             ...(provider.baseUrl === undefined ? {} : { base_url: provider.baseUrl }),
+            ...(provider.hostedSearch === undefined
+                ? {}
+                : { hosted_search: provider.hostedSearch }),
         };
     }
     return {

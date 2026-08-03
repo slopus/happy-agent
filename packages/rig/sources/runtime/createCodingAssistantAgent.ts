@@ -34,7 +34,8 @@ import { createExecutor } from "../executor/createExecutor.js";
 import { createGymProviderFromEnvironment } from "../executor/createGymProviderFromEnvironment.js";
 import { getBedrockModelRoute } from "../executor/getBedrockModelRoute.js";
 import { modelOpenaiGpt56Sol } from "@slopus/rig-execution";
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { HostedCapability, ServiceTier } from "@slopus/rig-execution";
+import { resolveHostedCapabilities } from "./resolveHostedCapabilities.js";
 import { routeProviderThroughGym } from "../executor/routeProviderThroughGym.js";
 import { goalTools } from "../tools/goals/index.js";
 import type { WorkflowContext } from "../workflows/index.js";
@@ -75,6 +76,11 @@ export interface CreateCodingAssistantAgentOptions {
     executor?: Executor;
     env?: NodeJS.ProcessEnv;
     goals?: GoalContext;
+    /**
+     * Provider-executed searches this agent holds. A subagent gets these from the reviewed spawn
+     * that granted them; a root agent gets them from configuration, and from nothing else.
+     */
+    hostedCapabilities?: readonly HostedCapability[];
     instructions?: string;
     identity?: Identity;
     isSubagent?: boolean;
@@ -206,6 +212,14 @@ export function createCodingAssistantAgent(
     if (providerId !== "gym" && (providerConfig === undefined || !providerConfig.enabled)) {
         throw new Error(`Unknown or disabled inference provider '${providerId}'.`);
     }
+    const hostedCapabilities = resolveHostedCapabilities({
+        ...(options.hostedCapabilities === undefined
+            ? {}
+            : { granted: options.hostedCapabilities }),
+        isSubagent: options.isSubagent === true,
+        ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
+        ...(providerConfig === undefined ? {} : { providerConfig }),
+    });
     const nativeProvider =
         options.executor ??
         (() => {
@@ -222,6 +236,7 @@ export function createCodingAssistantAgent(
                 agentContext: context,
                 ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
                 env,
+                ...(hostedCapabilities.length === 0 ? {} : { hostedCapabilities }),
                 ...(options.identity === undefined ? {} : { identity: options.identity }),
                 ...(options.onAccountUsage === undefined
                     ? {}

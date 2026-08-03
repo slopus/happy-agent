@@ -36,6 +36,14 @@ export interface GymInferenceResponse {
     }[];
     providerError?: ProviderError;
     responseModel?: string;
+    /** Tools the provider ran on its own backend before this response's content, as Grok search does. */
+    serverToolCalls?: readonly {
+        arguments: string;
+        callId?: string;
+        name: string;
+    }[];
+    /** Pauses before and after a hosted call's argument delta, keeping its live row observable. */
+    serverToolCallDeltaDelayMs?: number;
     stopReason?: StopReason;
     thinkingDeltaChunkSize?: number;
     thinkingDeltaDelayMs?: number;

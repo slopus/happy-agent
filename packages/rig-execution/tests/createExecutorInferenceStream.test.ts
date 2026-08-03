@@ -339,4 +339,59 @@ describe("createExecutorInferenceStream", () => {
             stopReason: "toolUse",
         });
     });
+
+    it("reports a provider-run search without turning it into a tool call to execute", async () => {
+        const executor = {
+            run: async function* () {
+                yield { type: "server_tool_call_start", callId: "x-1", name: "x_keyword_search" };
+                yield { type: "server_tool_call_delta", callId: "x-1", delta: '{"query":"Cla' };
+                yield {
+                    type: "server_tool_call_delta",
+                    callId: "x-1",
+                    delta: 'ude Code","limit":"5"}',
+                };
+                yield {
+                    type: "server_tool_call_end",
+                    callId: "x-1",
+                    name: "x_keyword_search",
+                    arguments: '{"query":"Claude Code","limit":"5"}',
+                };
+                yield { type: "text_delta", delta: "People are talking about it." };
+                yield { type: "done", state: "normal" } as const;
+            },
+        } as unknown as Executor;
+        const stream = createExecutorInferenceStream({
+            context: { messages: [] },
+            executor,
+            model: defineModel({
+                id: "xai/grok-test",
+                name: "Grok Test",
+                thinkingLevels: ["off"],
+                defaultThinkingLevel: "off",
+            }),
+            providerId: "grok",
+        });
+
+        const events = [];
+        for await (const event of stream) {
+            events.push(event);
+        }
+
+        expect(events.filter((event) => event.type.startsWith("server_toolcall_"))).toEqual([
+            { type: "server_toolcall_start", callId: "x-1", name: "x_keyword_search" },
+            { type: "server_toolcall_delta", callId: "x-1", delta: '{"query":"Cla' },
+            { type: "server_toolcall_delta", callId: "x-1", delta: 'ude Code","limit":"5"}' },
+            {
+                type: "server_toolcall_end",
+                callId: "x-1",
+                name: "x_keyword_search",
+                arguments: '{"query":"Claude Code","limit":"5"}',
+            },
+        ]);
+        expect(events.some((event) => event.type.startsWith("toolcall_"))).toBe(false);
+
+        const message = await stream.result();
+        expect(message.content).toEqual([{ type: "text", text: "People are talking about it." }]);
+        expect(message.stopReason).toBe("stop");
+    });
 });

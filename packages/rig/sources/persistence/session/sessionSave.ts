@@ -50,6 +50,10 @@ export function sessionSave(
             delegatedBySessionId: state.agent.delegatedBySessionId ?? null,
             parentToolCallId: state.agent.parentToolCallId ?? null,
             permissionMode: state.permissionMode,
+            hostedCapabilities:
+                state.hostedCapabilities === undefined || state.hostedCapabilities.length === 0
+                    ? null
+                    : JSON.stringify(state.hostedCapabilities),
             projectId: input.projectId,
             providerId: state.providerId,
             recap: state.recap ?? null,

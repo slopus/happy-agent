@@ -26,6 +26,7 @@ import {
     readOptionalString,
     readString,
 } from "./impl/sqliteRow.js";
+import { parseStoredHostedCapabilities } from "./impl/parseStoredHostedCapabilities.js";
 
 export function querySessionSummaries(
     tx: TX,
@@ -73,7 +74,7 @@ export function querySessionSummaries(
                 id, project_id, workspace_id, order_key, archived, track_unread,
                 unread_reason, unread_since_ms, cwd, draft, draft_updated_at_ms,
                 docker_json, secret_ids_json, provider_id, model_id, permission_mode,
-                effort, service_tier, status, title, title_status, title_error, recap,
+                hosted_capabilities, effort, service_tier, status, title, title_status, title_error, recap,
                 session_token_count_json, metadata_updated_at_ms, metadata_run_id,
                 interruption_json, created_at_ms, updated_at_ms, last_message_at_ms,
                 last_event_id
@@ -125,6 +126,9 @@ export function querySessionSummaries(
         const unreadSince = readOptionalNumber(row, "unread_since_ms");
         const workspaceId = readOptionalString(row, "workspace_id");
         const shareId = readOptionalString(row, "share_id");
+        const hostedCapabilities = parseStoredHostedCapabilities(
+            readOptionalString(row, "hosted_capabilities"),
+        );
         // An empty stored key means the session has no place in an ordered
         // list, which the protocol says by leaving the position out.
         const orderKey = readString(row, "order_key");
@@ -175,6 +179,7 @@ export function querySessionSummaries(
             providerId: readString(row, "provider_id"),
             modelId: readString(row, "model_id"),
             permissionMode: parsePermissionMode(readString(row, "permission_mode")),
+            ...(hostedCapabilities === undefined ? {} : { hostedCapabilities }),
             environment: summarizeDockerExecution(docker),
             ...(effort !== undefined ? { effort } : {}),
             ...(serviceTier === "fast" ? { serviceTier } : {}),

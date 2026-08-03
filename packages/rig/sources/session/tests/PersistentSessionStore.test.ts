@@ -2324,6 +2324,44 @@ describe("PersistentSessionStore", () => {
         }
     });
 
+    it("persists hosted capabilities in session details and summaries without granting defaults", async () => {
+        const { cleanup, databasePath } = await createDatabasePath();
+        try {
+            const store = new PersistentSessionStore({ databasePath });
+            const granted = store.create({
+                cwd: "/tmp/rig-persistent-hosted-capabilities",
+                hostedCapabilities: ["web_search", "x_search"],
+            });
+            const ungranted = store.create({
+                cwd: "/tmp/rig-persistent-no-hosted-capabilities",
+            });
+            store.close();
+
+            const restoredStore = new PersistentSessionStore({ databasePath });
+            try {
+                expect(restoredStore.get(granted.id)?.snapshot().hostedCapabilities).toEqual([
+                    "web_search",
+                    "x_search",
+                ]);
+                expect(
+                    restoredStore.list().find((summary) => summary.id === granted.id)
+                        ?.hostedCapabilities,
+                ).toEqual(["web_search", "x_search"]);
+                expect(
+                    restoredStore.get(ungranted.id)?.snapshot().hostedCapabilities,
+                ).toBeUndefined();
+                expect(
+                    restoredStore.list().find((summary) => summary.id === ungranted.id)
+                        ?.hostedCapabilities,
+                ).toBeUndefined();
+            } finally {
+                restoredStore.close();
+            }
+        } finally {
+            await cleanup();
+        }
+    });
+
     it("reports the stored context size in session summaries", async () => {
         const { cleanup, databasePath } = await createDatabasePath();
         try {

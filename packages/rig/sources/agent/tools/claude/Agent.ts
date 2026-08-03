@@ -4,6 +4,11 @@ import {
     SUBAGENT_EFFORT_ARGUMENT_DESCRIPTION,
     SUBAGENT_MODEL_ARGUMENT_DESCRIPTION,
 } from "../../context/subagentSelectionDescriptions.js";
+import {
+    describeSpawnCapabilityGrant,
+    spawnGrantsCapabilities,
+    subagentCapabilitiesArgumentSchema,
+} from "../../context/subagentCapabilityDescriptions.js";
 import { defineTool } from "../../types.js";
 
 const completedAgentResultSchema = Type.Object({
@@ -25,6 +30,7 @@ export const claudeAgentTool = defineTool({
     description:
         "Start a subagent for a focused, self-contained task. Agents run in the background by default and report back when they finish. Set run_in_background to false when the result is needed immediately.",
     arguments: Type.Object({
+        capabilities: subagentCapabilitiesArgumentSchema,
         context: Type.Optional(
             Type.Union([Type.Literal("parent"), Type.Literal("task")], {
                 description:
@@ -69,9 +75,11 @@ export const claudeAgentTool = defineTool({
         ),
     }),
     returnType: Type.Union([completedAgentResultSchema, backgroundAgentResultSchema]),
-    shouldReviewInAutoMode: () => false,
+    describeAutoPermissionAction: describeSpawnCapabilityGrant,
+    shouldReviewInAutoMode: spawnGrantsCapabilities,
     execute: async (
         {
+            capabilities,
             context: contextMode = "task",
             description,
             effort,
@@ -90,6 +98,9 @@ export const claudeAgentTool = defineTool({
         }
         const result = await context.subagents.spawn(
             {
+                ...(capabilities === undefined || capabilities.length === 0
+                    ? {}
+                    : { capabilities }),
                 description,
                 effort,
                 ...(run_in_background === true ? { background: true } : {}),

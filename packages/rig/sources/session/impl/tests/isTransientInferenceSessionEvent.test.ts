@@ -129,6 +129,40 @@ describe("isTransientInferenceSessionEvent", () => {
         ).toBe(false);
     });
 
+    it("keeps a finished provider-run search durable because no message records it", () => {
+        expect(
+            isTransientInferenceSessionEvent(
+                agentEvent({
+                    callId: "x-1",
+                    messageId: "message-1",
+                    name: "x_keyword_search",
+                    type: "server_toolcall_start",
+                }),
+            ),
+        ).toBe(true);
+        expect(
+            isTransientInferenceSessionEvent(
+                agentEvent({
+                    callId: "x-1",
+                    delta: '{"query":"Cla',
+                    messageId: "message-1",
+                    type: "server_toolcall_delta",
+                }),
+            ),
+        ).toBe(true);
+        expect(
+            isTransientInferenceSessionEvent(
+                agentEvent({
+                    arguments: '{"query":"Claude Code"}',
+                    callId: "x-1",
+                    messageId: "message-1",
+                    name: "x_keyword_search",
+                    type: "server_toolcall_end",
+                }),
+            ),
+        ).toBe(false);
+    });
+
     it("conservatively keeps null and missing agent event subtypes", () => {
         expect(isTransientInferenceSessionEvent(malformedAgentEvent({ type: null }))).toBe(false);
         expect(isTransientInferenceSessionEvent(malformedAgentEvent({}))).toBe(false);

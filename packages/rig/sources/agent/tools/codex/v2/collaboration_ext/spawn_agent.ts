@@ -4,6 +4,11 @@ import {
     SUBAGENT_EFFORT_ARGUMENT_DESCRIPTION,
     SUBAGENT_MODEL_ARGUMENT_DESCRIPTION,
 } from "../../../../context/subagentSelectionDescriptions.js";
+import {
+    describeSpawnCapabilityGrant,
+    spawnGrantsCapabilities,
+    subagentCapabilitiesArgumentSchema,
+} from "../../../../context/subagentCapabilityDescriptions.js";
 import { defineTool } from "../../../../types.js";
 import { humanizeTaskName } from "../../impl/humanizeTaskName.js";
 import { requireSubagentContext } from "../../impl/requireSubagentContext.js";
@@ -23,6 +28,7 @@ Use this tool for non-GPT models or when crossing providers. Prefer \`collaborat
 Spawn a background subagent with an explicit provider and model.`,
     arguments: Type.Object(
         {
+            capabilities: subagentCapabilitiesArgumentSchema,
             task_name: Type.String({
                 description:
                     "Lowercase canonical-path leaf using letters, numbers, and underscores.",
@@ -64,9 +70,11 @@ Spawn a background subagent with an explicit provider and model.`,
         agent_id: Type.String(),
         path: Type.String(),
     }),
-    shouldReviewInAutoMode: () => false,
+    describeAutoPermissionAction: describeSpawnCapabilityGrant,
+    shouldReviewInAutoMode: spawnGrantsCapabilities,
     execute: async (args, context, execution) => {
         const {
+            capabilities,
             fork_turns,
             message,
             model,
@@ -91,6 +99,9 @@ Spawn a background subagent with an explicit provider and model.`,
         const result = await subagents.spawn(
             {
                 background: true,
+                ...(capabilities === undefined || capabilities.length === 0
+                    ? {}
+                    : { capabilities }),
                 contextMode: fork.contextMode,
                 ...(fork.contextMode === "parent" && parentMessages !== undefined
                     ? { contextMessages: selectCodexForkMessages(parentMessages, fork.lastNTurns) }

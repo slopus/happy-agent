@@ -192,6 +192,25 @@ enabled = true
         });
     });
 
+    it("parses the hosted searches a root Grok agent may run itself", () => {
+        expect(
+            parseConfigToml('[providers.grok]\nhosted_search = ["x_search"]\n').providers?.grok,
+        ).toEqual({ hostedSearch: ["x_search"], type: "grok" });
+    });
+
+    it("leaves hosted search unset rather than empty when it is not configured", () => {
+        expect(parseConfigToml("[providers.grok]\n").providers?.grok).toEqual({ type: "grok" });
+    });
+
+    it("rejects a hosted search Rig does not recognize instead of dropping it", () => {
+        expect(() => parseConfigToml('[providers.grok]\nhosted_search = ["read_email"]\n')).toThrow(
+            /providers\.grok\.hosted_search: Unknown capability 'read_email'/u,
+        );
+        expect(() => parseConfigToml('[providers.grok]\nhosted_search = "x_search"\n')).toThrow(
+            "providers.grok.hosted_search must be an array of strings.",
+        );
+    });
+
     it("rejects a non-boolean provider default", () => {
         expect(() => parseConfigToml('[providers]\ndefault_enable = "false"\n')).toThrow(
             "providers.default_enable must be a boolean.",

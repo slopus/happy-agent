@@ -3,6 +3,7 @@ import { createCodexCollaborationInstructions } from "./codexInstructions.js";
 import {
     createAvailableModelsInstructions,
     createBundledDocsInstructions,
+    createCapabilityDelegationInstructions,
     createParentDelegationInstructions,
     createPermissionInstructions,
     createWorkspaceInstructions,
@@ -94,6 +95,11 @@ export async function createSystemPrompt(
 
     if (options.context.subagents?.canSpawn === true && options.context.subagents.depth === 0) {
         parts.push(createParentDelegationInstructions());
+    }
+
+    const grantableCapabilities = options.context.subagents?.grantableCapabilities ?? [];
+    if (options.context.subagents?.canSpawn === true && grantableCapabilities.length > 0) {
+        parts.push(createCapabilityDelegationInstructions(grantableCapabilities));
     }
 
     if (options.context.workspaces !== undefined) {

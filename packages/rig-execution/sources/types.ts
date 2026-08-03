@@ -323,6 +323,15 @@ export type ProviderAssistantMessageEvent =
     | { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
     | { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
     | { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
+    /**
+     * A tool the provider ran on its own backend while producing this response, such as Grok's X
+     * and web search. It carries no content index and never reaches the assistant message, because
+     * the client neither executes it nor answers it with a tool result. It exists so the user can
+     * see what the provider was doing during a long response.
+     */
+    | { type: "server_toolcall_start"; callId: string; name: string }
+    | { type: "server_toolcall_delta"; callId: string; delta: string }
+    | { type: "server_toolcall_end"; callId: string; name: string; arguments: string }
     | {
           type: "done";
           reason: Extract<StopReason, "stop" | "length" | "toolUse">;

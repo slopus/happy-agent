@@ -4,6 +4,7 @@ import type {
 } from "../context/SubagentContext.js";
 import type { PermissionMode } from "../../permissions/index.js";
 import type { AnyDefinedTool } from "../types.js";
+import type { HostedCapability } from "@slopus/rig-execution";
 
 /** Marks the role section so a child can strip its parent's copy before appending its own. */
 const SUBAGENT_INSTRUCTIONS_MARKER =
@@ -140,6 +141,20 @@ export function createParentDelegationInstructions(): string {
 You are the parent agent. You are explicitly allowed to spawn subagents for concrete, bounded work that is genuinely independent and benefits from parallel execution or separate context.
 
 Do simple work directly. When you delegate, give each child one clear task, keep doing useful work yourself, and combine the results into the response to the user. A child may delegate further only when you explicitly allow nested delegation in its assigned task.`;
+}
+
+export function createCapabilityDelegationInstructions(
+    grantable: readonly HostedCapability[],
+): string {
+    return `# Provider-executed search
+
+You cannot search the web or X yourself. What you can do is grant that reach to one subagent, through the \`capabilities\` argument on the spawn call, choosing from: ${grantable.join(", ")}.
+
+This split is deliberate. These searches run inside the provider's own response rather than as a tool Rig executes, so once an agent holds one, Rig cannot review an individual search, cannot show the user what was searched for, and cannot see what came back. The spawn call is the only moment anyone decides. Everything that protects the user has to happen in how you write it.
+
+So carve out the research task before making the call. Work out what actually needs to be found, give the child that question plus the context it genuinely needs to answer it, and nothing more — a child handed the whole conversation is a child that can put any part of it into a search box. Then use what it reports back.
+
+A subagent granted one of these cannot spawn subagents of its own, and only Grok models can run them.`;
 }
 
 export function createWorkspaceInstructions(): string {

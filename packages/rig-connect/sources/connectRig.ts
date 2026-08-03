@@ -515,6 +515,7 @@ export interface CreateSessionInput {
     local?: boolean;
     modelId?: string;
     permissionMode?: string;
+    hostedCapabilities?: readonly string[];
     /**
      * Identity to give the project if this directory is not one yet.
      *

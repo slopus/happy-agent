@@ -9539,6 +9539,109 @@ describe("CodingAssistantApp", () => {
         expect(rendered).toContain("Sent from another terminal");
         expect(rendered).not.toContain("Unsent from the last terminal");
     });
+    it("shows a provider-run search live and keeps it as history when it finishes", () => {
+        const model = defineModel({
+            id: "xai/grok-test",
+            name: "Grok Test",
+            thinkingLevels: ["off"],
+            defaultThinkingLevel: "off",
+        });
+        const provider = defineProvider({
+            id: "grok",
+            models: [model],
+            stream() {
+                return streamText("unused");
+            },
+        });
+        const harness = createJustBashToolHarness();
+        const app = new CodingAssistantApp({
+            agent: new Agent({
+                provider,
+                modelId: model.id,
+                context: harness.context,
+                printToConsole: false,
+            }),
+            cwd: harness.context.fs.cwd,
+            processManager: new NativeProcessManager(),
+            sessionBacked: true,
+            tui: fakeTui(),
+        });
+        const agentEvent = (id: string, event: AgentLoopEvent): SessionEvent => ({
+            createdAt: 1,
+            data: { event, runId: "run-1" },
+            id,
+            sessionId: "session-1",
+            type: "agent_event",
+        });
+
+        app.applySessionEvent({
+            createdAt: 1,
+            data: { runId: "run-1" },
+            id: "run-started",
+            sessionId: "session-1",
+            type: "run_started",
+        });
+        app.applySessionEvent({
+            createdAt: 1,
+            data: {
+                delivery: "run",
+                displayText: "What is X saying about Claude Code?",
+                message: {
+                    blocks: [{ text: "What is X saying about Claude Code?", type: "text" }],
+                    id: "user-1",
+                    role: "user",
+                },
+                runId: "run-1",
+            },
+            id: "user-submitted",
+            sessionId: "session-1",
+            type: "message_submitted",
+        });
+        app.applySessionEvent(
+            agentEvent("search-start", {
+                callId: "x-1",
+                messageId: "message-1",
+                name: "x_keyword_search",
+                type: "server_toolcall_start",
+            }),
+        );
+        app.applySessionEvent(
+            agentEvent("search-delta", {
+                callId: "x-1",
+                delta: '{"query":"Claude Code","li',
+                messageId: "message-1",
+                type: "server_toolcall_delta",
+            }),
+        );
+
+        const searchingFrame = app.render(100);
+        const searching = stripAnsi(searchingFrame.join("\n"));
+        expect(searching).toContain('Searching X for "Claude Code"');
+        expect(searching).not.toContain("Searched X");
+        expect(searching).not.toContain("x_keyword_search");
+        expect(searching).not.toContain('{"query"');
+
+        app.applySessionEvent(
+            agentEvent("search-end", {
+                arguments: '{"query":"Claude Code","limit":"5","mode":"Latest"}',
+                callId: "x-1",
+                messageId: "message-1",
+                name: "x_keyword_search",
+                type: "server_toolcall_end",
+            }),
+        );
+
+        // The live row and its history row swap in one render, so nothing above the composer
+        // collapses upward when the search finishes.
+        const searchedFrame = app.render(100);
+        expect(searchedFrame.length).toBe(searchingFrame.length);
+        const searched = stripAnsi(searchedFrame.join("\n"));
+        expect(searched).toContain('Searched X for "Claude Code"');
+        expect(searched).not.toContain('Searching X for "Claude Code"');
+        expect(searched).not.toContain("x_keyword_search");
+        expect(searched).not.toContain('{"query"');
+    });
+
     it("shows a persistent above-composer indicator, in English, while a member holds a capability", () => {
         const model = defineModel({
             id: "openai/gpt-test",
