@@ -3,8 +3,7 @@ import { ClaudeApiKeyCredential } from "@/vendors/claude/ClaudeApiKeyCredential.
 import { ClaudeAuthTokenCredential } from "@/vendors/claude/ClaudeAuthTokenCredential.js";
 import { ClaudeCodeCredential } from "@/vendors/claude/ClaudeCodeCredential.js";
 import { ClaudeOAuthCredential } from "@/vendors/claude/ClaudeOAuthCredential.js";
-import { CodexApiKeyCredential } from "@/vendors/codex/CodexApiKeyCredential.js";
-import { CodexSessionCredential } from "@/vendors/codex/CodexSessionCredential.js";
+import { loadCodexCredential } from "@/vendors/codex/loadCodexCredential.js";
 import { GeminiApiKeyCredential } from "@/vendors/gemini/GeminiApiKeyCredential.js";
 import { GrokApiKeyCredential } from "@/vendors/grok/GrokApiKeyCredential.js";
 import { GrokSessionCredential } from "@/vendors/grok/GrokSessionCredential.js";
@@ -61,10 +60,8 @@ export async function tryLoadCredentials(
                 ? {}
                 : { configDir: options.claudeConfigDir }),
         }),
-        CodexApiKeyCredential.tryLoad(
-            options.codexApiKey === undefined ? {} : { apiKey: options.codexApiKey },
-        ),
-        CodexSessionCredential.tryLoad({
+        loadCodexCredential({
+            ...(options.codexApiKey === undefined ? {} : { apiKey: options.codexApiKey }),
             ...(env === undefined ? {} : { env }),
             ...(options.codexAuthFile === undefined ? {} : { authFile: options.codexAuthFile }),
         }),

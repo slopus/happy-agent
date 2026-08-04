@@ -118,6 +118,33 @@ describe("fetchCodexProviderQuota", () => {
         expect(new Headers(init?.headers).get("chatgpt-account-id")).toBe("jwt-account");
     });
 
+    it("does not request session quota when the native login selects an API key", async () => {
+        const directory = await mkdtemp(path.join(tmpdir(), "rig-codex-quota-"));
+        temporaryDirectories.push(directory);
+        const authPath = path.join(directory, "auth.json");
+        await writeFile(
+            authPath,
+            JSON.stringify({
+                auth_mode: "apikey",
+                OPENAI_API_KEY: "native-api-key",
+                tokens: { access_token: "stale-session-token" },
+            }),
+        );
+        const fetchMock = vi.fn<typeof fetch>();
+
+        await expect(
+            fetchCodexProviderQuota({ authPath, fetch: fetchMock, now: () => 33 }),
+        ).resolves.toEqual({
+            capturedAt: 33,
+            source: "codex",
+            windows: {
+                fiveHour: { status: "unavailable" },
+                weekly: { status: "unavailable" },
+            },
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("keeps weekly available when the duration-classified five-hour window is absent", async () => {
         const authPath = await writeAuthFile({ access_token: "access-token" });
         const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(

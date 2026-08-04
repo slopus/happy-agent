@@ -1,6 +1,28 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type Static, Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+
+const codexAuthFileSchema = Type.Object(
+    {
+        auth_mode: Type.Optional(Type.String()),
+        OPENAI_API_KEY: Type.Optional(Type.String()),
+        tokens: Type.Optional(
+            Type.Object(
+                {
+                    access_token: Type.Optional(Type.String()),
+                    account_id: Type.Optional(Type.String()),
+                    id_token: Type.Optional(Type.String()),
+                },
+                { additionalProperties: true },
+            ),
+        ),
+    },
+    { additionalProperties: true },
+);
+
+type CodexAuthFile = Static<typeof codexAuthFileSchema>;
 
 export function getCodexAuthPath(
     options: { authFile?: string; env?: NodeJS.ProcessEnv } = {},
@@ -16,26 +38,58 @@ export interface CodexQuotaAuth {
     accountId?: string;
 }
 
-export function readCodexQuotaAuth(contents: string): CodexQuotaAuth | undefined {
-    const parsed = JSON.parse(contents) as {
-        tokens?: {
-            access_token?: unknown;
-            account_id?: unknown;
-            id_token?: unknown;
+export type CodexStoredAuth =
+    | { authMode: "apikey"; apiKey?: string }
+    | { authMode: "session"; quotaAuth?: CodexQuotaAuth };
+
+export function readCodexAuth(contents: string): CodexStoredAuth | undefined {
+    const parsed: unknown = JSON.parse(contents);
+    if (!Value.Check(codexAuthFileSchema, parsed)) {
+        return undefined;
+    }
+    if (parsed.auth_mode === "apikey") {
+        return {
+            authMode: "apikey",
+            ...(parsed.OPENAI_API_KEY === undefined ? {} : { apiKey: parsed.OPENAI_API_KEY }),
         };
+    }
+
+    const quotaAuth = readQuotaAuth(parsed);
+    return {
+        authMode: "session",
+        ...(quotaAuth === undefined ? {} : { quotaAuth }),
     };
+}
+
+export async function readCodexAuthFile(path: string): Promise<CodexStoredAuth | undefined> {
+    try {
+        return readCodexAuth(await readFile(path, "utf8"));
+    } catch (error) {
+        if (isFileNotFound(error)) {
+            return undefined;
+        }
+        throw error;
+    }
+}
+
+export function readCodexQuotaAuth(contents: string): CodexQuotaAuth | undefined {
+    const auth = readCodexAuth(contents);
+    return auth?.authMode === "session" ? auth.quotaAuth : undefined;
+}
+
+function readQuotaAuth(parsed: CodexAuthFile): CodexQuotaAuth | undefined {
     const accessToken = parsed.tokens?.access_token;
-    if (typeof accessToken !== "string" || accessToken.length === 0) {
+    if (accessToken === undefined || accessToken.length === 0) {
         return undefined;
     }
 
     const storedAccountId = parsed.tokens?.account_id;
-    if (typeof storedAccountId === "string" && storedAccountId.length > 0) {
+    if (storedAccountId !== undefined && storedAccountId.length > 0) {
         return { accessToken, accountId: storedAccountId };
     }
 
     for (const token of [parsed.tokens?.id_token, accessToken]) {
-        if (typeof token !== "string") {
+        if (token === undefined) {
             continue;
         }
         try {
@@ -59,14 +113,8 @@ export function readCodexQuotaAuth(contents: string): CodexQuotaAuth | undefined
 }
 
 export async function readCodexQuotaAuthFile(path: string): Promise<CodexQuotaAuth | undefined> {
-    try {
-        return readCodexQuotaAuth(await readFile(path, "utf8"));
-    } catch (error) {
-        if (isFileNotFound(error)) {
-            return undefined;
-        }
-        throw error;
-    }
+    const auth = await readCodexAuthFile(path);
+    return auth?.authMode === "session" ? auth.quotaAuth : undefined;
 }
 
 function isFileNotFound(error: unknown): boolean {

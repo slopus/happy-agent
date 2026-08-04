@@ -1,5 +1,9 @@
 import { BaseCredential } from "@/core/BaseCredential.js";
-import { getCodexAuthPath, readCodexQuotaAuthFile } from "@/vendors/codex/impl/auth.js";
+import {
+    getCodexAuthPath,
+    type CodexQuotaAuth,
+    readCodexQuotaAuthFile,
+} from "@/vendors/codex/impl/auth.js";
 import { refreshCodexAuthFile } from "@/vendors/codex/impl/refreshCodexAuthFile.js";
 
 export type CodexSessionCredentialValue = {
@@ -32,6 +36,16 @@ export class CodexSessionCredential extends BaseCredential<
             return null;
         }
 
+        return CodexSessionCredential.fromAuth(auth, {
+            authFile: authPath,
+            ...(options.env === undefined ? {} : { env: options.env }),
+        });
+    }
+
+    static fromAuth(
+        auth: CodexQuotaAuth,
+        options: { authFile: string; env?: NodeJS.ProcessEnv },
+    ): CodexSessionCredential {
         const env = options.env ?? process.env;
         return new CodexSessionCredential(
             {
@@ -39,7 +53,7 @@ export class CodexSessionCredential extends BaseCredential<
                 ...(auth.accountId === undefined ? {} : { accountId: auth.accountId }),
             },
             {
-                authFile: authPath,
+                authFile: options.authFile,
                 clientId:
                     env.CODEX_APP_SERVER_LOGIN_CLIENT_ID?.trim() || "app_EMoamEEZ73f0CkXaXp7hrann",
                 refreshTokenUrl:

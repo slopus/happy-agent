@@ -204,6 +204,10 @@ export {
     type CodexSessionCredentialValue,
 } from "@/vendors/codex/CodexSessionCredential.js";
 export {
+    loadCodexCredential,
+    type LoadCodexCredentialOptions,
+} from "@/vendors/codex/loadCodexCredential.js";
+export {
     GeminiApiKeyCredential,
     type GeminiApiKeyCredentialLoadOptions,
     type GeminiApiKeyCredentialValue,

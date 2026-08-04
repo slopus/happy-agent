@@ -1,8 +1,7 @@
 import {
-    CodexApiKeyCredential,
     CodexImageGenerationError,
     CodexProvider,
-    CodexSessionCredential,
+    loadCodexCredential,
 } from "@slopus/rig-providers";
 import {
     builtinModelProfiles,
@@ -11,6 +10,7 @@ import {
 } from "@slopus/rig-execution";
 
 import type { ConfigCodexProvider } from "../config/types.js";
+import { loadNativeCodexProviderConfig } from "./loadNativeCodexProviderConfig.js";
 
 export function codexExecution(options: {
     apiKey?: string;
@@ -20,18 +20,34 @@ export function codexExecution(options: {
     resolveStreamMaxRetries?: () => number;
     sessionId?: string;
 }): ExecutorProvider {
-    const baseUrl = options.config.baseUrl ?? options.env.RIG_CODEX_BASE_URL;
+    const configuredBaseUrl = options.config.baseUrl ?? options.env.RIG_CODEX_BASE_URL;
     const transport = options.config.transport ?? options.env.RIG_CODEX_TRANSPORT;
-    const loadCredential = async () =>
-        (options.apiKey === undefined
-            ? null
-            : await CodexApiKeyCredential.tryLoad({ apiKey: options.apiKey })) ??
-        (await CodexSessionCredential.tryLoad({
+    const loadNativeConfiguration = async () =>
+        configuredBaseUrl === undefined ? loadNativeCodexProviderConfig(options.env) : null;
+    const loadCredential = async (
+        nativeConfiguration: Awaited<ReturnType<typeof loadNativeConfiguration>>,
+    ) => {
+        const nativeBearerToken =
+            configuredBaseUrl === undefined &&
+            options.config.authFile === undefined &&
+            !options.apiKey?.trim() &&
+            !options.env.OPENAI_API_KEY?.trim() &&
+            nativeConfiguration?.baseUrl !== undefined
+                ? nativeConfiguration.experimentalBearerToken
+                : undefined;
+        const apiKey = options.apiKey ?? nativeBearerToken;
+        return loadCodexCredential({
+            ...(apiKey === undefined ? {} : { apiKey }),
             env: options.env,
             ...(options.config.authFile === undefined ? {} : { authFile: options.config.authFile }),
-        }));
-    const createNative = (credential: NonNullable<Awaited<ReturnType<typeof loadCredential>>>) =>
-        new CodexProvider({
+        });
+    };
+    const createNative = (
+        credential: NonNullable<Awaited<ReturnType<typeof loadCredential>>>,
+        nativeConfiguration: Awaited<ReturnType<typeof loadNativeConfiguration>>,
+    ) => {
+        const baseUrl = configuredBaseUrl ?? nativeConfiguration?.baseUrl;
+        return new CodexProvider({
             credential,
             parallelToolCalls: true,
             ...(options.resolveStreamMaxRetries === undefined
@@ -44,22 +60,26 @@ export function codexExecution(options: {
                   ? { transport: "websocket" as const }
                   : {}),
         });
+    };
     const native = async () => {
-        const credential = await loadCredential();
+        const nativeConfiguration = await loadNativeConfiguration();
+        const credential = await loadCredential(nativeConfiguration);
         if (credential === null) {
             throw new Error(
                 "Codex authentication is unavailable. Sign in with Codex or configure an API key.",
             );
         }
-        return createNative(credential);
+        return createNative(credential, nativeConfiguration);
     };
     return {
         id: options.id,
         imageGeneration: {
             generate: async (request) => {
                 let credential: Awaited<ReturnType<typeof loadCredential>>;
+                let nativeConfiguration: Awaited<ReturnType<typeof loadNativeConfiguration>>;
                 try {
-                    credential = await loadCredential();
+                    nativeConfiguration = await loadNativeConfiguration();
+                    credential = await loadCredential(nativeConfiguration);
                 } catch (error) {
                     throw new ExecutorImageGenerationUnavailableError(
                         "A configured Codex image provider's authentication could not be loaded.",
@@ -72,7 +92,7 @@ export function codexExecution(options: {
                     );
                 }
                 try {
-                    return await createNative(credential).generateImage(request);
+                    return await createNative(credential, nativeConfiguration).generateImage(request);
                 } catch (error) {
                     if (error instanceof CodexImageGenerationError && error.fallbackEligible) {
                         throw new ExecutorImageGenerationUnavailableError(error.message, {
