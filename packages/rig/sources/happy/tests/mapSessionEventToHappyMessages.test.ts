@@ -667,6 +667,180 @@ describe("HappyMessageMapper", () => {
         });
     });
 
+    it("keeps agent-authored steering notifications inside agent work", () => {
+        const mapper = new HappyMessageMapper();
+        const output = [
+            ...mapper.map(
+                sessionEvent(
+                    "message_submitted",
+                    {
+                        delivery: "run",
+                        displayText: "Analyze the project",
+                        message: {
+                            blocks: [{ text: "Analyze the project", type: "text" }],
+                            id: "user-1",
+                            role: "user",
+                        },
+                        runId: "run-1",
+                    },
+                    80,
+                ),
+            ),
+            ...mapper.map(sessionEvent("run_started", { runId: "run-1" }, 90)),
+            ...mapper.map(
+                sessionEvent(
+                    "agent_event",
+                    {
+                        event: {
+                            iteration: 1,
+                            messageId: "agent-1",
+                            type: "inference_iteration_start",
+                        },
+                        runId: "run-1",
+                    },
+                    100,
+                ),
+            ),
+            ...mapper.map(
+                sessionEvent(
+                    "message_submitted",
+                    {
+                        delivery: "steer",
+                        displayText: 'Background work "Quality" completed.',
+                        message: {
+                            blocks: [
+                                {
+                                    text: 'Background work "Quality" completed.',
+                                    type: "text",
+                                },
+                            ],
+                            id: "notification-1",
+                            provenance: "agent",
+                            role: "user",
+                        },
+                        runId: "run-1",
+                        source: "notification",
+                    },
+                    110,
+                ),
+            ),
+            ...mapper.map(
+                sessionEvent(
+                    "steering_applied",
+                    { messageIds: ["notification-1"], runId: "run-1" },
+                    120,
+                ),
+            ),
+            ...mapper.map(
+                sessionEvent(
+                    "agent_event",
+                    {
+                        event: {
+                            iteration: 2,
+                            messageId: "agent-2",
+                            type: "inference_iteration_start",
+                        },
+                        runId: "run-1",
+                    },
+                    130,
+                ),
+            ),
+            ...mapper.map(
+                sessionEvent(
+                    "agent_message",
+                    {
+                        message: {
+                            blocks: [{ text: "Final answer", type: "text" }],
+                            id: "agent-final",
+                            role: "agent",
+                        },
+                        runId: "run-1",
+                    },
+                    140,
+                ),
+            ),
+            ...mapper.map(
+                sessionEvent(
+                    "run_finished",
+                    { modelLocked: false, runId: "run-1", stopReason: "stop" },
+                    150,
+                ),
+            ),
+        ];
+
+        const notification = output.find(
+            (message) => message.content.id === "notification-1",
+        );
+        expect(notification?.content).toMatchObject({
+            role: "agent",
+            turn: "agent-2",
+            ev: {
+                t: "service",
+                text: 'Background work "Quality" completed.',
+            },
+        });
+    });
+
+    it("starts agent-authored notification runs inside agent work", () => {
+        const mapper = new HappyMessageMapper();
+        const output = [
+            ...mapper.map(
+                sessionEvent(
+                    "message_submitted",
+                    {
+                        delivery: "run",
+                        displayText: 'Background work "Security review" completed.',
+                        message: {
+                            blocks: [
+                                {
+                                    text: 'Background work "Security review" completed.',
+                                    type: "text",
+                                },
+                            ],
+                            id: "notification-run-1",
+                            provenance: "agent",
+                            role: "user",
+                        },
+                        runId: "run-2",
+                        source: "notification",
+                    },
+                    200,
+                ),
+            ),
+            ...mapper.map(sessionEvent("run_started", { runId: "run-2" }, 210)),
+            ...mapper.map(
+                sessionEvent(
+                    "agent_event",
+                    {
+                        event: {
+                            iteration: 1,
+                            messageId: "agent-notification-response",
+                            type: "inference_iteration_start",
+                        },
+                        runId: "run-2",
+                    },
+                    220,
+                ),
+            ),
+        ];
+
+        expect(output.map((message) => message.content)).toEqual([
+            expect.objectContaining({
+                role: "agent",
+                turn: "agent-notification-response",
+                ev: {
+                    t: "service",
+                    text: 'Background work "Security review" completed.',
+                },
+            }),
+            expect.objectContaining({
+                role: "agent",
+                turn: "agent-notification-response",
+                ev: { t: "turn-start" },
+            }),
+        ]);
+    });
+
     it("does not stop a group for the technical abort that continues steering", () => {
         const mapper = new HappyMessageMapper();
         mapper.map(

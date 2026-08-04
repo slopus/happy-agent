@@ -40,6 +40,12 @@ export class HappyMessageMapper {
                 this.#pendingSteering.set(event.data.runId, pending);
                 return [];
             }
+            if (event.data.message.provenance === "agent") {
+                const headers = this.#pendingSteeringHeaders.get(event.data.runId) ?? [];
+                headers.push(event);
+                this.#pendingSteeringHeaders.set(event.data.runId, headers);
+                return [];
+            }
             return [userMessage(event)];
         }
         if (event.type === "run_started") {
@@ -241,7 +247,9 @@ export class HappyMessageMapper {
         if (steering === undefined) return output;
         this.#pendingSteeringHeaders.delete(runId);
         for (const event of steering) {
-            if (event.type === "message_submitted") output.push(userMessage(event, groupId));
+            if (event.type === "message_submitted") {
+                output.push(steeringMessage(event, groupId));
+            }
         }
         return output;
     }
@@ -289,6 +297,19 @@ function userMessage(
         time: event.createdAt,
         ...(groupId === undefined ? {} : { turn: groupId }),
     });
+}
+
+function steeringMessage(
+    event: Extract<SessionEvent, { type: "message_submitted" }>,
+    groupId: string,
+): HappySessionProtocolMessage {
+    if (event.data.message.provenance === "agent") {
+        return agentMessage(event, event.data.message.id, groupId, {
+            t: "service",
+            text: event.data.displayText,
+        });
+    }
+    return userMessage(event, groupId);
 }
 
 function failureMessage(

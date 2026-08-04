@@ -940,7 +940,9 @@ function remoteMessage(id: string, seq: number, content: string): HappyRemoteMes
 }
 
 function deriveBlobKey(key: Uint8Array, variant: "dataKey" | "legacy"): Uint8Array {
-    const root = createHmac("sha512", key).update("Happy Blobs Master Seed").digest();
+    // Match Happy's deriveKey(seed, "Happy Blobs", [path]): the usage label is
+    // the root HMAC key and the session data key is its payload.
+    const root = createHmac("sha512", "Happy Blobs Master Seed").update(key).digest();
     const path = variant === "dataKey" ? "session" : "master";
     return new Uint8Array(
         createHmac("sha512", root.subarray(32))

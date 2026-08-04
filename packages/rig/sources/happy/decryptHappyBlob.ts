@@ -27,8 +27,11 @@ function deriveBlobKey(
     encryptionKey: Uint8Array,
     encryptionVariant: HappyEncryptionVariant,
 ): Uint8Array {
-    const root = createHmac("sha512", encryptionKey)
-        .update(new TextEncoder().encode("Happy Blobs Master Seed"))
+    const root = createHmac(
+        "sha512",
+        new TextEncoder().encode("Happy Blobs Master Seed"),
+    )
+        .update(encryptionKey)
         .digest();
     const path = encryptionVariant === "dataKey" ? "session" : "master";
     return new Uint8Array(
