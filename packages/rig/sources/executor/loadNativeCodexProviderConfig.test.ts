@@ -19,19 +19,19 @@ describe("loadNativeCodexProviderConfig", () => {
 model_provider = "balancer"
 
 [model_providers.balancer]
-base_url = "https://balancer.example/backend-api/codex"
+base_url = "https://example.com/codex"
 wire_api = "responses"
-experimental_bearer_token = "balancer-token"
+experimental_bearer_token = "provider"
 requires_openai_auth = true
 
 [model_providers.other]
-base_url = "https://other.example/v1"
-experimental_bearer_token = "other-token"
+base_url = "https://example.org/other"
+experimental_bearer_token = "other"
 `);
 
         await expect(loadNativeCodexProviderConfig({ CODEX_HOME: codexHome })).resolves.toEqual({
-            baseUrl: "https://balancer.example/backend-api/codex",
-            experimentalBearerToken: "balancer-token",
+            baseUrl: "https://example.com/codex",
+            experimentalBearerToken: "provider",
             requiresOpenAiAuth: true,
             wireApi: "responses",
         });
@@ -42,7 +42,7 @@ experimental_bearer_token = "other-token"
 model_provider = "missing"
 
 [model_providers.other]
-base_url = "https://other.example/v1"
+base_url = "https://example.org/other"
 `);
 
         await expect(
@@ -59,9 +59,9 @@ base_url = "https://other.example/v1"
 model_provider = "legacy"
 
 [model_providers.legacy]
-base_url = "https://legacy.example/v1"
+base_url = "https://example.net/legacy"
 wire_api = "chat"
-experimental_bearer_token = "legacy-token"
+experimental_bearer_token = "legacy"
 `);
 
         await expect(loadNativeCodexProviderConfig({ CODEX_HOME: codexHome })).rejects.toThrow(

@@ -75,7 +75,7 @@ describe("resolveProviderDisabledReasons", () => {
         tempDirectories.push(root);
         await writeFile(
             join(root, "codex.json"),
-            JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "codex-api-key" }),
+            JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "native" }),
         );
 
         const reasons = await resolveProviderDisabledReasons(
@@ -97,9 +97,9 @@ describe("resolveProviderDisabledReasons", () => {
 model_provider = "balancer"
 
 [model_providers.balancer]
-base_url = "https://balancer.example/backend-api/codex"
+base_url = "https://example.com/codex"
 wire_api = "responses"
-experimental_bearer_token = "balancer-token"
+experimental_bearer_token = "provider"
 `,
         );
 
@@ -117,7 +117,7 @@ experimental_bearer_token = "balancer-token"
         await Promise.all([
             writeFile(
                 join(codexHome, "auth.json"),
-                JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "stored-api-key" }),
+                JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "stored" }),
             ),
             writeFile(
                 join(codexHome, "config.toml"),
@@ -125,9 +125,9 @@ experimental_bearer_token = "balancer-token"
 model_provider = "legacy"
 
 [model_providers.legacy]
-base_url = "https://legacy.example/v1"
+base_url = "https://example.net/legacy"
 wire_api = "chat"
-experimental_bearer_token = "legacy-token"
+experimental_bearer_token = "legacy"
 `,
             ),
         ]);
@@ -146,7 +146,7 @@ experimental_bearer_token = "legacy-token"
         await Promise.all([
             writeFile(
                 join(codexHome, "auth.json"),
-                JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "stored-api-key" }),
+                JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "stored" }),
             ),
             writeFile(
                 join(codexHome, "config.toml"),
@@ -154,7 +154,7 @@ experimental_bearer_token = "legacy-token"
 model_provider = "legacy"
 
 [model_providers.legacy]
-base_url = "https://legacy.example/v1"
+base_url = "https://example.net/legacy"
 wire_api = "chat"
 `,
             ),
@@ -163,7 +163,7 @@ wire_api = "chat"
         const reasons = await resolveProviderDisabledReasons(
             {
                 codex: {
-                    baseUrl: "https://rig.example/v1",
+                    baseUrl: "https://example.org/rig",
                     enabled: true,
                     type: "codex",
                 },
@@ -180,7 +180,7 @@ wire_api = "chat"
         await Promise.all([
             writeFile(
                 join(codexHome, "auth.json"),
-                JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "stored-openai-key" }),
+                JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "stored" }),
             ),
             writeFile(
                 join(codexHome, "config.toml"),
@@ -188,7 +188,7 @@ wire_api = "chat"
 model_provider = "local"
 
 [model_providers.local]
-base_url = "https://local.example/v1"
+base_url = "https://example.com/local"
 wire_api = "responses"
 requires_openai_auth = false
 `,
@@ -197,7 +197,7 @@ requires_openai_auth = false
 
         const reasons = await resolveProviderDisabledReasons(
             { codex: { enabled: true, type: "codex" } },
-            { CODEX_HOME: codexHome, OPENAI_API_KEY: "environment-openai-key" },
+            { CODEX_HOME: codexHome, OPENAI_API_KEY: "environment" },
         );
 
         expect(reasons.get("codex")).toBe("not_authenticated");

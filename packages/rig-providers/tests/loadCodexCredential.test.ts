@@ -18,13 +18,13 @@ describe("loadCodexCredential", () => {
     it("loads the API key selected by the native Codex login", async () => {
         const authFile = await writeAuthFile({
             auth_mode: "apikey",
-            OPENAI_API_KEY: "native-api-key",
+            OPENAI_API_KEY: "native",
         });
 
         const credential = await loadCodexCredential({ authFile, env: {} });
 
         expect(credential).toMatchObject({
-            credential: { apiKey: "native-api-key" },
+            credential: { apiKey: "native" },
             name: "codex-api-key",
         });
     });
@@ -32,14 +32,14 @@ describe("loadCodexCredential", () => {
     it("does not use a stale API key when the native login selects a session", async () => {
         const authFile = await writeAuthFile({
             auth_mode: "chatgpt",
-            OPENAI_API_KEY: "stale-api-key",
-            tokens: { access_token: "session-token" },
+            OPENAI_API_KEY: "stale",
+            tokens: { access_token: "session" },
         });
 
         const credential = await loadCodexCredential({ authFile, env: {} });
 
         expect(credential).toMatchObject({
-            credential: { accessToken: "session-token" },
+            credential: { accessToken: "session" },
             name: "codex-session",
         });
     });
@@ -48,7 +48,7 @@ describe("loadCodexCredential", () => {
         const authFile = await writeAuthFile({
             auth_mode: "apikey",
             OPENAI_API_KEY: "",
-            tokens: { access_token: "stale-session-token" },
+            tokens: { access_token: "stale" },
         });
 
         await expect(loadCodexCredential({ authFile, env: {} })).resolves.toBeNull();
@@ -57,35 +57,35 @@ describe("loadCodexCredential", () => {
     it("prefers explicit and environment API keys over the native auth file", async () => {
         const authFile = await writeAuthFile({
             auth_mode: "apikey",
-            OPENAI_API_KEY: "native-api-key",
+            OPENAI_API_KEY: "native",
         });
 
         await expect(
             loadCodexCredential({
-                apiKey: "explicit-api-key",
+                apiKey: "explicit",
                 authFile,
-                env: { OPENAI_API_KEY: "environment-api-key" },
+                env: { OPENAI_API_KEY: "environment" },
             }),
-        ).resolves.toMatchObject({ credential: { apiKey: "explicit-api-key" } });
+        ).resolves.toMatchObject({ credential: { apiKey: "explicit" } });
         await expect(
             loadCodexCredential({
                 authFile,
-                env: { OPENAI_API_KEY: "environment-api-key" },
+                env: { OPENAI_API_KEY: "environment" },
             }),
-        ).resolves.toMatchObject({ credential: { apiKey: "environment-api-key" } });
+        ).resolves.toMatchObject({ credential: { apiKey: "environment" } });
     });
 
     it("discovers exactly one Codex credential from the native auth file", async () => {
         const authFile = await writeAuthFile({
             auth_mode: "apikey",
-            OPENAI_API_KEY: "native-api-key",
+            OPENAI_API_KEY: "native",
         });
 
         const credentials = await tryLoadCredentials({ codexAuthFile: authFile, env: {} });
 
         expect(credentials.filter((credential) => credential.name.startsWith("codex-"))).toEqual([
             expect.objectContaining({
-                credential: { apiKey: "native-api-key" },
+                credential: { apiKey: "native" },
                 name: "codex-api-key",
             }),
         ]);

@@ -126,8 +126,8 @@ describe("fetchCodexProviderQuota", () => {
             authPath,
             JSON.stringify({
                 auth_mode: "apikey",
-                OPENAI_API_KEY: "native-api-key",
-                tokens: { access_token: "stale-session-token" },
+                OPENAI_API_KEY: "native",
+                tokens: { access_token: "stale" },
             }),
         );
         const fetchMock = vi.fn<typeof fetch>();

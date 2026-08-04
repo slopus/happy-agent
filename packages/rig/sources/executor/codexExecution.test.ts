@@ -22,7 +22,7 @@ describe("codexExecution authentication", () => {
         const authFile = join(root, "auth.json");
         await writeFile(
             authFile,
-            JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "codex-api-key" }),
+            JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "native" }),
         );
         const definition = codexExecution({
             config: { authFile, enabled: true, type: "codex" },
@@ -37,21 +37,21 @@ describe("codexExecution authentication", () => {
 
         expect(provider).toBeInstanceOf(CodexProvider);
         expect((provider as CodexProvider).credential).toMatchObject({
-            credential: { apiKey: "codex-api-key" },
+            credential: { apiKey: "native" },
             name: "codex-api-key",
         });
     });
 
     it("uses the active provider from the native Codex configuration", async () => {
         const codexHome = await writeCodexHome({
-            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored-api-key" },
+            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored" },
             config: `
 model_provider = "balancer"
 
 [model_providers.balancer]
-base_url = "https://balancer.example/backend-api/codex"
+base_url = "https://example.com/codex"
 wire_api = "responses"
-experimental_bearer_token = "balancer-token"
+experimental_bearer_token = "provider"
 requires_openai_auth = true
 `,
         });
@@ -66,33 +66,33 @@ requires_openai_auth = true
 
         const provider = (await definition.native(profile)) as CodexProvider;
 
-        expect(provider.endpoint).toBe("https://balancer.example/backend-api/codex");
+        expect(provider.endpoint).toBe("https://example.com/codex");
         expect(provider.credential).toMatchObject({
-            credential: { apiKey: "balancer-token" },
+            credential: { apiKey: "provider" },
             name: "codex-api-key",
         });
     });
 
     it("keeps explicit Rig authentication and endpoint overrides authoritative", async () => {
         const codexHome = await writeCodexHome({
-            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored-api-key" },
+            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored" },
             config: `
 model_provider = "balancer"
 
 [model_providers.balancer]
-base_url = "https://balancer.example/backend-api/codex"
+base_url = "https://example.com/codex"
 wire_api = "responses"
-experimental_bearer_token = "balancer-token"
+experimental_bearer_token = "provider"
 `,
         });
         const definition = codexExecution({
-            apiKey: "explicit-api-key",
+            apiKey: "explicit",
             config: {
-                baseUrl: "https://rig.example/v1",
+                baseUrl: "https://example.org/rig",
                 enabled: true,
                 type: "codex",
             },
-            env: { CODEX_HOME: codexHome, RIG_CODEX_BASE_URL: "https://env.example/v1" },
+            env: { CODEX_HOME: codexHome, RIG_CODEX_BASE_URL: "https://example.net/env" },
             id: "codex",
         });
         if (typeof definition.native !== "function") expect.fail("Expected lazy Codex provider.");
@@ -101,28 +101,28 @@ experimental_bearer_token = "balancer-token"
 
         const provider = (await definition.native(profile)) as CodexProvider;
 
-        expect(provider.endpoint).toBe("https://rig.example/v1");
+        expect(provider.endpoint).toBe("https://example.org/rig");
         expect(provider.credential).toMatchObject({
-            credential: { apiKey: "explicit-api-key" },
+            credential: { apiKey: "explicit" },
             name: "codex-api-key",
         });
     });
 
     it("does not send the native provider bearer token to an overridden endpoint", async () => {
         const codexHome = await writeCodexHome({
-            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored-api-key" },
+            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored" },
             config: `
 model_provider = "balancer"
 
 [model_providers.balancer]
-base_url = "https://balancer.example/backend-api/codex"
+base_url = "https://example.com/codex"
 wire_api = "responses"
-experimental_bearer_token = "balancer-token"
+experimental_bearer_token = "provider"
 `,
         });
         const definition = codexExecution({
             config: {
-                baseUrl: "https://override.example/v1",
+                baseUrl: "https://example.org/override",
                 enabled: true,
                 type: "codex",
             },
@@ -135,28 +135,28 @@ experimental_bearer_token = "balancer-token"
 
         const provider = (await definition.native(profile)) as CodexProvider;
 
-        expect(provider.endpoint).toBe("https://override.example/v1");
+        expect(provider.endpoint).toBe("https://example.org/override");
         expect(provider.credential).toMatchObject({
-            credential: { apiKey: "stored-api-key" },
+            credential: { apiKey: "stored" },
             name: "codex-api-key",
         });
     });
 
     it("does not send OpenAI credentials to a native provider that disables OpenAI auth", async () => {
         const codexHome = await writeCodexHome({
-            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored-openai-key" },
+            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored" },
             config: `
 model_provider = "local"
 
 [model_providers.local]
-base_url = "https://local.example/v1"
+base_url = "https://example.com/local"
 wire_api = "responses"
 requires_openai_auth = false
 `,
         });
         const definition = codexExecution({
             config: { enabled: true, type: "codex" },
-            env: { CODEX_HOME: codexHome, OPENAI_API_KEY: "environment-openai-key" },
+            env: { CODEX_HOME: codexHome, OPENAI_API_KEY: "environment" },
             id: "codex",
         });
         if (typeof definition.native !== "function") expect.fail("Expected lazy Codex provider.");
