@@ -173,6 +173,35 @@ wire_api = "chat"
 
         expect(reasons.has("codex")).toBe(false);
     });
+
+    it("does not expose OpenAI credentials to a native provider that disables OpenAI auth", async () => {
+        const codexHome = await mkdtemp(join(tmpdir(), "rig-codex-home-"));
+        tempDirectories.push(codexHome);
+        await Promise.all([
+            writeFile(
+                join(codexHome, "auth.json"),
+                JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "stored-openai-key" }),
+            ),
+            writeFile(
+                join(codexHome, "config.toml"),
+                `
+model_provider = "local"
+
+[model_providers.local]
+base_url = "https://local.example/v1"
+wire_api = "responses"
+requires_openai_auth = false
+`,
+            ),
+        ]);
+
+        const reasons = await resolveProviderDisabledReasons(
+            { codex: { enabled: true, type: "codex" } },
+            { CODEX_HOME: codexHome, OPENAI_API_KEY: "environment-openai-key" },
+        );
+
+        expect(reasons.get("codex")).toBe("not_authenticated");
+    });
 });
 
 function providersFor(root: string): ConfigProviders {

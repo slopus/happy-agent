@@ -31,10 +31,19 @@ export function codexExecution(options: {
             configuredBaseUrl === undefined &&
             options.config.authFile === undefined &&
             !options.apiKey?.trim() &&
-            !options.env.OPENAI_API_KEY?.trim() &&
             nativeConfiguration?.baseUrl !== undefined
                 ? nativeConfiguration.experimentalBearerToken
                 : undefined;
+        if (
+            configuredBaseUrl === undefined &&
+            options.config.authFile === undefined &&
+            !options.apiKey?.trim() &&
+            nativeConfiguration?.baseUrl !== undefined &&
+            nativeConfiguration.requiresOpenAiAuth === false &&
+            nativeBearerToken === undefined
+        ) {
+            return null;
+        }
         const apiKey = options.apiKey ?? nativeBearerToken;
         return loadCodexCredential({
             ...(apiKey === undefined ? {} : { apiKey }),

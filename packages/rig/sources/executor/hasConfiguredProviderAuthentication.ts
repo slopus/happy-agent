@@ -28,10 +28,18 @@ export async function hasConfiguredProviderAuthentication(options: {
             const nativeBearerToken =
                 configuredBaseUrl === undefined &&
                 config.authFile === undefined &&
-                !env.OPENAI_API_KEY?.trim() &&
                 nativeConfiguration?.baseUrl !== undefined
                     ? nativeConfiguration.experimentalBearerToken
                     : undefined;
+            if (
+                configuredBaseUrl === undefined &&
+                config.authFile === undefined &&
+                nativeConfiguration?.baseUrl !== undefined &&
+                nativeConfiguration.requiresOpenAiAuth === false &&
+                nativeBearerToken === undefined
+            ) {
+                return false;
+            }
             return (
                 (await loadCodexCredential({
                     ...(nativeBearerToken === undefined ? {} : { apiKey: nativeBearerToken }),

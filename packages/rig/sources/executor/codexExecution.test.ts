@@ -141,6 +141,32 @@ experimental_bearer_token = "balancer-token"
             name: "codex-api-key",
         });
     });
+
+    it("does not send OpenAI credentials to a native provider that disables OpenAI auth", async () => {
+        const codexHome = await writeCodexHome({
+            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored-openai-key" },
+            config: `
+model_provider = "local"
+
+[model_providers.local]
+base_url = "https://local.example/v1"
+wire_api = "responses"
+requires_openai_auth = false
+`,
+        });
+        const definition = codexExecution({
+            config: { enabled: true, type: "codex" },
+            env: { CODEX_HOME: codexHome, OPENAI_API_KEY: "environment-openai-key" },
+            id: "codex",
+        });
+        if (typeof definition.native !== "function") expect.fail("Expected lazy Codex provider.");
+        const profile = definition.profiles[0];
+        if (profile === undefined) expect.fail("Expected a Codex model profile.");
+
+        await expect(definition.native(profile)).rejects.toThrow(
+            "Codex authentication is unavailable",
+        );
+    });
 });
 
 describe("codexExecution image generation", () => {
