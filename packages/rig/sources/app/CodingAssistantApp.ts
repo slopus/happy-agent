@@ -72,7 +72,7 @@ import {
     createBackgroundTerminalViewer,
     type BackgroundTerminalViewer,
 } from "./createBackgroundTerminalViewer.js";
-import { createSelectionPanel } from "./createSelectionPanel.js";
+import { createSelectionPanel, fitSelectionPanelToViewport } from "./createSelectionPanel.js";
 import { createSecretInputPanel } from "./createSecretInputPanel.js";
 import { createSubagentMonitor, type SubagentMonitor } from "./createSubagentMonitor.js";
 import { createWorkflowMonitor } from "./createWorkflowMonitor.js";
@@ -1731,6 +1731,15 @@ export class CodingAssistantApp implements Component, Focusable {
                 : [];
         const queuedPrompts =
             selectionPanel === undefined ? this.#renderQueuedPrompts(safeWidth) : [];
+        if (selectionPanel !== undefined) {
+            // An inline panel shares the screen with the transcript and footer, so
+            // it may only grow into the rows those do not need.
+            fitSelectionPanelToViewport(
+                selectionPanel,
+                safeWidth,
+                Math.max(8, this.#tui.terminal.rows - 8),
+            );
+        }
         const activityLabel = this.#activityLabel();
         const activity =
             activityLabel !== undefined && this.#shouldRenderActivityAsLastMessage()

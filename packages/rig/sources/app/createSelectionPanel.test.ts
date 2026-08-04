@@ -38,6 +38,68 @@ describe("createSelectionPanel", () => {
         expect(rendered.join("\n")).not.toContain("\x1b[48;5;236m");
     });
 
+    it("wraps long option labels and descriptions into aligned columns", () => {
+        const panel = createSelectionPanel({
+            cancelDisabled: true,
+            items: [
+                {
+                    description:
+                        "Keep instant renderer deploys and ship a runtime capability check.",
+                    label: "Detect and gate (keep live renderer deploys)",
+                    value: "detect",
+                },
+                {
+                    description: "Pages serves versioned bundles and the shell pins one.",
+                    label: "Eliminate skew (pin renderer to shell release)",
+                    value: "pin",
+                },
+            ],
+            onCancel: () => {},
+            onSelect: () => {},
+            subtitle: "How should that gap be handled? · 1 of 2",
+            title: "Skew policy",
+        });
+
+        const rendered = panel.render(80);
+        const text = stripAnsi(rendered.join("\n"));
+
+        expect(rendered.every((line) => visibleWidth(line) === 80)).toBe(true);
+        expect(text).toContain("Detect and gate (keep live renderer");
+        expect(text).toContain("deploys)");
+        expect(text).toContain("Keep instant renderer deploys and");
+        expect(text).toContain("ship a runtime capability check.");
+        expect(text).not.toContain("…");
+
+        const descriptionColumns = stripAnsi(rendered.join("\n"))
+            .split("\n")
+            .filter((line) => line.includes("Keep instant") || line.includes("Pages serves"))
+            .map((line) => line.indexOf(line.includes("Keep instant") ? "Keep" : "Pages"));
+        expect(new Set(descriptionColumns).size).toBe(1);
+    });
+
+    it("stacks the description under the label when the terminal is narrow", () => {
+        const panel = createSelectionPanel({
+            cancelDisabled: true,
+            items: [
+                {
+                    description: "Enter a response that is not listed.",
+                    label: "Type another answer",
+                    value: "other",
+                },
+            ],
+            onCancel: () => {},
+            onSelect: () => {},
+            subtitle: "Pick one · 1 of 1",
+            title: "Question",
+        });
+
+        const text = stripAnsi(panel.render(36).join("\n"));
+
+        expect(text.replace(/\s+/gu, " ")).toContain("Type another answer");
+        expect(text.replace(/\s+/gu, " ")).toContain("Enter a response that is not listed.");
+        expect(text.split("\n").some((line) => line.trimStart().startsWith("Enter a"))).toBe(true);
+    });
+
     it("removes terminal controls from every user-visible field", () => {
         const titleControl = "\x1b]0;CORRUPTED_TITLE\x07";
         const eraseControl = "\x1b[2J";
