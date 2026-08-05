@@ -20,6 +20,7 @@ export const HAPPY_SESSION_RPC_METHODS = [
     "abort",
     "bash",
     "communication",
+    "killSession",
     "listFileTree",
     "readFile",
     "writeFile",
@@ -28,6 +29,7 @@ export const HAPPY_SESSION_RPC_METHODS = [
 
 export async function handleHappySessionRpc(options: {
     abort: () => Promise<unknown>;
+    archive: () => unknown;
     answerQuestion: (
         requestId: string,
         answers: Record<string, unknown>,
@@ -39,6 +41,7 @@ export async function handleHappySessionRpc(options: {
 }): Promise<unknown> {
     const { method } = options;
     if (method === "abort") return options.abort();
+    if (method === "killSession") return options.archive();
     const params = requireRecord(options.params);
     if (method === "communication") {
         // A reply to an agent-to-user communication. Answers arrive keyed by

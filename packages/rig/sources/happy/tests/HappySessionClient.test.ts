@@ -459,6 +459,15 @@ describe("HappySessionClient", () => {
         expect(harness.abortCalls).toBe(2);
         expect(harness.abortRequests.at(-1)).toBeUndefined();
 
+        const archiveResponse = await socket.requestRpc({
+            method: "remote-1:killSession",
+            params: encodeRemote(sessionKey, {}),
+        });
+        expect(
+            decryptHappyPayload(sessionKey, "dataKey", Buffer.from(archiveResponse, "base64")),
+        ).toEqual({ success: true });
+        expect(harness.snapshot.archived).toBe(true);
+
         await client.close();
         repository.close();
     });
@@ -913,6 +922,10 @@ function fakeSession(submitted: unknown[]): {
                 return snapshot;
             },
             id: "session-1",
+            setArchived: (archived: boolean) => {
+                snapshot.archived = archived;
+                return snapshot;
+            },
             snapshot: () => snapshot,
             submit: (request: { clientSubmissionId: string }) => {
                 submitted.push(request);

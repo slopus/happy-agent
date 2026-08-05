@@ -28,6 +28,7 @@ export interface HappySyncServiceOptions {
     getProjectContext?: (
         session: InMemorySession,
     ) => ReturnType<NonNullable<HappySessionClientOptions["projectContext"]>>;
+    loadSession?: (sessionId: string) => InMemorySession | undefined;
     modelCatalog?: ModelCatalog;
     socketFactory?: HappySessionClientOptions["socketFactory"];
 }
@@ -46,6 +47,7 @@ export class HappySyncService {
     readonly #fetch: typeof fetch | undefined;
     readonly #getSubagents: NonNullable<HappySyncServiceOptions["getSubagents"]>;
     readonly #getProjectContext: HappySyncServiceOptions["getProjectContext"];
+    readonly #loadSession: HappySyncServiceOptions["loadSession"];
     readonly #modelCatalog: ModelCatalog | undefined;
     readonly #machineClient: HappyMachineClient | undefined;
     readonly #repository: HappySyncRepository;
@@ -58,6 +60,7 @@ export class HappySyncService {
         this.#fetch = options.fetch;
         this.#getSubagents = options.getSubagents ?? (() => []);
         this.#getProjectContext = options.getProjectContext;
+        this.#loadSession = options.loadSession;
         this.#modelCatalog = options.modelCatalog;
         this.#repository = new HappySyncRepository(options.databasePath);
         this.#socketFactory = options.socketFactory;
@@ -232,6 +235,11 @@ export class HappySyncService {
     start(): void {
         if (this.#closed) return;
         this.#machineClient?.start();
+        if (this.#loadSession === undefined) return;
+        for (const sessionId of this.#repository.sessionIds(this.#credentialFingerprint)) {
+            const session = this.#loadSession(sessionId);
+            if (session !== undefined) this.attach(session);
+        }
     }
 
     #detach(sessionId: string): void {

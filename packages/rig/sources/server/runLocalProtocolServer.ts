@@ -757,6 +757,7 @@ async function runOwnedLocalProtocolServer(
                             ...(workspace === undefined ? {} : { workspace }),
                         };
                     },
+                    loadSession: (sessionId) => store?.get(sessionId),
                     modelCatalog,
                 });
                 service.start();
@@ -861,6 +862,7 @@ async function runOwnedLocalProtocolServer(
                                                   ...(workspace === undefined ? {} : { workspace }),
                                               };
                                           },
+                                          loadSession: (sessionId) => store?.get(sessionId),
                                           modelCatalog,
                                       });
                                   } catch (error) {

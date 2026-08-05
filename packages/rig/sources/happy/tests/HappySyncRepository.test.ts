@@ -93,6 +93,19 @@ describe("HappySyncRepository", () => {
         repository.close();
     });
 
+    it("lists only sessions mapped for the active Happy credentials", async () => {
+        const { repository } = await createRepository();
+        repository.ensureSession({
+            credentialFingerprint: "account-1",
+            encryptionVariant: "dataKey",
+            sessionId: "session-1",
+        });
+
+        expect(repository.sessionIds("account-1")).toEqual(["session-1"]);
+        expect(repository.sessionIds("account-2")).toEqual([]);
+        repository.close();
+    });
+
     it("rolls back session rotation when clearing the stale outbox fails", async () => {
         const { databasePath, repository } = await createRepository();
         repository.ensureSession({

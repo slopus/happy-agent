@@ -184,6 +184,84 @@ describe("HappySyncService machine spawning", () => {
     });
 });
 
+describe("HappySyncService daemon restart", () => {
+    it("reconnects sessions already mapped to the active Happy credentials", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "rig-happy-service-restart-"));
+        directories.push(directory);
+        const databasePath = join(directory, "sessions.sqlite");
+        const configuration: HappyConnectionConfiguration = {
+            credentials: {
+                encryption: { secret: new Uint8Array(32).fill(4), type: "legacy" },
+                token: "happy-token",
+            },
+            credentialsPath: join(directory, "access.key"),
+            happyHome: join(directory, "happy"),
+            imported: false,
+            serverUrl: "https://happy.example",
+        };
+        const sockets: FakeSocket[] = [];
+        const request = vi.fn<typeof fetch>(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v1/sessions") {
+                const body = JSON.parse(String(init?.body)) as { metadata: string };
+                return Response.json({
+                    session: {
+                        active: true,
+                        id: "happy-session-restarted",
+                        metadata: body.metadata,
+                        metadataVersion: 0,
+                    },
+                });
+            }
+            if (url.pathname === "/v3/sessions/happy-session-restarted/messages") {
+                return Response.json(
+                    init?.method === "POST" ? {} : { hasMore: false, messages: [] },
+                );
+            }
+            return new Response("Not found", { status: 404 });
+        });
+        const createService = (store: PersistentSessionStore) =>
+            new HappySyncService({
+                configuration,
+                databasePath,
+                fetch: request,
+                loadSession: (sessionId) => store.get(sessionId),
+                socketFactory: () => {
+                    const socket = new FakeSocket();
+                    sockets.push(socket);
+                    return socket;
+                },
+            });
+        const firstStore = new PersistentSessionStore({ databasePath, modelCatalog: catalog() });
+        const session = firstStore.create({ cwd: directory });
+        const firstService = createService(firstStore);
+        let restartedService: HappySyncService | undefined;
+        let restartedStore: PersistentSessionStore | undefined;
+
+        try {
+            firstService.attach(session);
+            await waitFor(() => sockets[0]?.connected === true);
+            await firstService.close();
+            firstStore.close();
+
+            restartedStore = new PersistentSessionStore({ databasePath, modelCatalog: catalog() });
+            restartedService = createService(restartedStore);
+            restartedService.start();
+
+            await waitFor(() => sockets[1]?.connected === true);
+            expect(sockets[1]?.emitted).toContainEqual([
+                "rpc-register",
+                { method: "happy-session-restarted:killSession" },
+            ]);
+        } finally {
+            await restartedService?.close();
+            restartedStore?.close();
+            await firstService.close();
+            firstStore.close();
+        }
+    });
+});
+
 describe("HappySyncService session archival", () => {
     it("ends Happy synchronization and does not reattach an archived Rig session", async () => {
         const directory = await mkdtemp(join(tmpdir(), "rig-happy-service-archive-"));

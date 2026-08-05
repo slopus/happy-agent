@@ -35,6 +35,7 @@ describe("handleHappySessionRpc", () => {
 
         const result = (await handleHappySessionRpc({
             abort: async () => ({ aborted: true }),
+            archive: () => ({ success: true }),
             answerQuestion: () => {},
             cancelQuestion: () => {},
             context: () => context,
@@ -61,6 +62,7 @@ describe("handleHappySessionRpc", () => {
         await expect(
             handleHappySessionRpc({
                 abort: async () => ({ aborted: true }),
+                archive: () => ({ success: true }),
                 answerQuestion: () => {},
                 cancelQuestion: () => {},
                 context: () => context,
@@ -90,6 +92,7 @@ describe("handleHappySessionRpc", () => {
                     abortCalls += 1;
                     return { aborted: true };
                 },
+                archive: () => ({ success: true }),
                 answerQuestion: (requestId, answers) => {
                     answered.push({ answers, requestId });
                 },
@@ -173,6 +176,7 @@ describe("handleHappySessionRpc", () => {
         });
         const result = handleHappySessionRpc({
             abort: async () => ({ aborted: true }),
+            archive: () => ({ success: true }),
             answerQuestion: () => {},
             cancelQuestion: async () => {
                 await cancellation;

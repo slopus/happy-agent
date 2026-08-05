@@ -11,6 +11,7 @@ import {
 import { happySessionSetRemote } from "../persistence/happy/happySessionSetRemote.js";
 import { queryHappyOutbox } from "../persistence/happy/queryHappyOutbox.js";
 import { queryHappySession } from "../persistence/happy/queryHappySession.js";
+import { queryHappySessionIds } from "../persistence/happy/queryHappySessionIds.js";
 import {
     openSessionDatabase,
     type SessionDatabase,
@@ -71,6 +72,10 @@ export class HappySyncRepository {
 
     getSession(sessionId: string): HappySessionState | undefined {
         return queryHappySession(this.#database, sessionId);
+    }
+
+    sessionIds(credentialFingerprint: string): readonly string[] {
+        return queryHappySessionIds(this.#database, credentialFingerprint);
     }
 
     pending(sessionId: string, limit = 50): readonly HappySessionProtocolMessage[] {

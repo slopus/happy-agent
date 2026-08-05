@@ -503,6 +503,10 @@ export class HappySessionClient {
                 } else {
                     response = await handleHappySessionRpc({
                         abort: () => this.#abortFromHappy(),
+                        archive: () => {
+                            this.#session.setArchived(true);
+                            return { success: true };
+                        },
                         answerQuestion: (requestId, answers) =>
                             this.#answerQuestion(requestId, answers),
                         cancelQuestion: (requestId) => this.#cancelQuestion(requestId),
