@@ -1,6 +1,6 @@
 {
     "name": "@slopus/rig",
-    "version": "0.0.142",
+    "version": "0.0.143",
     "description": "Opinionated coding-agent harness with strong defaults for provider-aligned workflows.",
     "keywords": [
         "agent-harness",
