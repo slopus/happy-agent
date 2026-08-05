@@ -5,7 +5,7 @@ import {
     SUBAGENT_MODEL_ARGUMENT_DESCRIPTION,
 } from "../../../../context/subagentSelectionDescriptions.js";
 import {
-    describeSpawnCapabilityGrant,
+    createSpawnCapabilityGrantDescriber,
     spawnGrantsCapabilities,
     subagentCapabilitiesArgumentSchema,
 } from "../../../../context/subagentCapabilityDescriptions.js";
@@ -70,7 +70,9 @@ Spawn a background subagent with an explicit provider and model.`,
         agent_id: Type.String(),
         path: Type.String(),
     }),
-    describeAutoPermissionAction: describeSpawnCapabilityGrant,
+    describeAutoPermissionAction: createSpawnCapabilityGrantDescriber({
+        inheritsConversationByDefault: true,
+    }),
     shouldReviewInAutoMode: spawnGrantsCapabilities,
     execute: async (args, context, execution) => {
         const {

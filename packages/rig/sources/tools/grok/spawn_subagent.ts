@@ -6,7 +6,7 @@ import {
     SUBAGENT_MODEL_ARGUMENT_DESCRIPTION,
 } from "../../agent/context/subagentSelectionDescriptions.js";
 import {
-    describeSpawnCapabilityGrant,
+    createSpawnCapabilityGrantDescriber,
     spawnGrantsCapabilities,
     subagentCapabilitiesArgumentSchema,
 } from "../../agent/context/subagentCapabilityDescriptions.js";
@@ -71,7 +71,9 @@ export const grokSpawnSubagentTool = defineTool({
         status: Type.String(),
         output: Type.Optional(Type.String()),
     }),
-    describeAutoPermissionAction: describeSpawnCapabilityGrant,
+    describeAutoPermissionAction: createSpawnCapabilityGrantDescriber({
+        inheritsConversationByDefault: false,
+    }),
     shouldReviewInAutoMode: spawnGrantsCapabilities,
     execute: async (
         {

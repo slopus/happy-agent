@@ -5,7 +5,10 @@ import { AgentSessionManager } from "../AgentSessionManager.js";
 import type { InMemorySession } from "../InMemorySession.js";
 import type { HostedCapability } from "@slopus/rig-execution";
 
-function harness(parentRequest: Partial<CreateSessionRequest>) {
+function harness(
+    parentRequest: Partial<CreateSessionRequest>,
+    options: { withoutModel?: boolean } = {},
+) {
     const child = {
         agentMetadata: () => ({
             depth: 1,
@@ -28,7 +31,7 @@ function harness(parentRequest: Partial<CreateSessionRequest>) {
         recordSubagentChanged: vi.fn(),
         requestForSubagent: () => ({
             cwd: "/tmp/rig-capability-test",
-            modelId: "xai/grok-4.5",
+            ...(options.withoutModel === true ? {} : { modelId: "xai/grok-4.5" }),
             permissionMode: "auto",
             providerId: "grok",
             ...parentRequest,
@@ -53,7 +56,7 @@ function harness(parentRequest: Partial<CreateSessionRequest>) {
             prompt: "What is X saying about the launch?",
             taskName: "research",
         });
-    return { createSubagent, spawn };
+    return { createSubagent, manager, parentId: parent.id, spawn };
 }
 
 describe("spawning with a hosted capability", () => {
@@ -88,6 +91,23 @@ describe("spawning with a hosted capability", () => {
         await expect(spawn(["x_search"], "anthropic/claude-opus-4.6")).rejects.toThrow(
             /Only Grok models execute search on the provider's backend/u,
         );
+        expect(createSubagent).not.toHaveBeenCalled();
+    });
+
+    it("refuses a capability when the model the child inherits cannot be named", async () => {
+        // A parent that names no model is a shape the request type permits and every real store
+        // avoids. It is pinned because the alternative reading of a model nobody can name is that
+        // nothing disqualifies it, and a grant is the wrong place to discover that.
+        const { createSubagent, manager, parentId } = harness({}, { withoutModel: true });
+        await expect(
+            manager.spawn(parentId, {
+                background: true,
+                capabilities: ["x_search"],
+                description: "Research the launch",
+                prompt: "What is X saying about the launch?",
+                taskName: "research",
+            }),
+        ).rejects.toThrow(/Only Grok models execute search on the provider's backend/u);
         expect(createSubagent).not.toHaveBeenCalled();
     });
 });

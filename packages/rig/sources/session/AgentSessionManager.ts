@@ -312,6 +312,11 @@ export class AgentSessionManager {
             projectId,
             trackUnread: true,
             workspaceId: workspace.id,
+            // Dropped rather than carried, for the reason a spawn writes it fresh: a hosted search
+            // was approved once, for one agent and one task. A delegated session is a new
+            // conversation someone will talk to, so inheriting the grant here would spend that
+            // one approval somewhere nobody pointed it.
+            hostedCapabilities: [],
             ...(selection.providerId === undefined ? {} : { providerId: selection.providerId }),
             ...(request.readOnly === true ? { permissionMode: "read_only" as const } : {}),
             ...(request.serviceTier === undefined ? {} : { serviceTier: request.serviceTier }),
@@ -854,16 +859,6 @@ export class AgentSessionManager {
         if (parent === undefined) {
             throw new Error("The parent session is no longer available.");
         }
-        if (
-            request.encryptedPrompt !== undefined &&
-            (parent.encryptedAgentTransportScope() === undefined ||
-                request.providerId !== undefined ||
-                (request.modelId !== undefined && !isCodexV2CollaborationModel(request.modelId)))
-        ) {
-            throw new Error(
-                "Native encrypted collaboration only works within the current compatible provider and region. Use `rig.spawn_agent` and provide the task normally when selecting or crossing a model, provider, or region.",
-            );
-        }
         // Before anything else, because whether this agent may hand out a capability at all is a
         // question about the agent, not about the child it is trying to configure. Answering it
         // first is also what makes the refusal say so.
@@ -874,14 +869,57 @@ export class AgentSessionManager {
         const childModelId = selection.modelId;
         const childProviderId = selection.providerId;
 
-        if (
-            grantedCapabilities.length > 0 &&
-            childModelId !== undefined &&
-            !modelSupportsHostedCapabilities(childModelId)
-        ) {
-            throw new Error(
-                `Model '${childModelId}' cannot run ${grantedCapabilities.join(", ")}. Only Grok models execute search on the provider's backend.`,
-            );
+        // Both checks below judge the child that will actually be built, not the one that was
+        // asked for. A spawn naming only a model resolves its provider from recent successful
+        // routing, so a request that looks compatible before resolution can still land elsewhere.
+        // The parent's own request is read only when a check actually runs, because a spawn that
+        // asks for neither has to stay refusable on depth and capacity alone — those answers come
+        // from the tree, and asking the parent to describe itself first would make them depend on
+        // a parent that has nothing to describe yet.
+        const resolveEffectiveChild = () => {
+            parentRequest ??= parent.requestForSubagent();
+            return {
+                modelId: childModelId ?? parentRequest.modelId,
+                providerId: childProviderId ?? parentRequest.providerId,
+            };
+        };
+
+        if (request.encryptedPrompt !== undefined) {
+            const { modelId: effectiveModelId, providerId: effectiveProviderId } =
+                resolveEffectiveChild();
+            // A scope is the provider that issued it — `createEncryptedAgentTransportScope`
+            // returns that provider's own id — so equal ids mean the same provider and therefore
+            // the same type. That leaves only the model to check: the parent holds a scope at all
+            // only when it is a Codex collaboration model, and the child has to be one too for the
+            // ciphertext to be readable where it lands. If that scope ever regains structure this
+            // comparison silently refuses every native spawn, which is what the two-account test
+            // beside this one is for.
+            const parentScope = parent.encryptedAgentTransportScope();
+            if (
+                parentScope === undefined ||
+                effectiveProviderId !== parentScope ||
+                effectiveModelId === undefined ||
+                !isCodexV2CollaborationModel(effectiveModelId)
+            ) {
+                throw new Error(
+                    "Native encrypted collaboration only works within the current compatible provider and region. Use `rig.spawn_agent` and provide the task normally when selecting or crossing a model, provider, or region.",
+                );
+            }
+        }
+
+        if (grantedCapabilities.length > 0) {
+            // A child with no model to name is refused rather than waved through. Every real store
+            // hands the parent's own model down, so this is a shape the types allow and reality
+            // does not — and the one thing a grant must never do is depend on that staying true.
+            const { modelId: effectiveModelId } = resolveEffectiveChild();
+            if (
+                effectiveModelId === undefined ||
+                !modelSupportsHostedCapabilities(effectiveModelId)
+            ) {
+                throw new Error(
+                    `Model '${effectiveModelId ?? "(unresolved)"}' cannot run ${grantedCapabilities.join(", ")}. Only Grok models execute search on the provider's backend.`,
+                );
+            }
         }
 
         const parentMetadata = parent.agentMetadata();
@@ -1027,10 +1065,12 @@ export class AgentSessionManager {
     /**
      * Decides what a spawn actually grants the child, refusing anything the parent may not give.
      *
-     * This is the only gate a hosted search ever passes. The provider runs the search during its
-     * own response, so once the child holds the capability there is no call left for Rig to
-     * review; everything that protects the user has to happen here, while the spawn is still a
-     * tool call the parent had to make and the user could see.
+     * A spawn is the only way one agent hands a hosted capability to another: `delegate` drops
+     * whatever the delegator holds, and every other child request writes the grant fresh from what
+     * this returns rather than inheriting it. That matters because the provider runs the search
+     * inside its own response, so once the child holds the capability there is no call left for
+     * Rig to review; everything that protects the user has to happen here, while the spawn is
+     * still a tool call the parent had to make and the user could see.
      */
     #authorizeGrant(
         parent: InMemorySession,

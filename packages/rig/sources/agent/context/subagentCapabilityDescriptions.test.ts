@@ -7,7 +7,7 @@ import { codexExtendedSpawnAgentTool } from "../tools/codex/v2/collaboration_ext
 import { createJustBashToolHarness } from "../../tools/testing/createJustBashToolHarness.js";
 import { grokSpawnSubagentTool } from "../../tools/grok/spawn_subagent.js";
 import {
-    describeSpawnCapabilityGrant,
+    createSpawnCapabilityGrantDescriber,
     spawnGrantsCapabilities,
     subagentCapabilitiesArgumentSchema,
 } from "./subagentCapabilityDescriptions.js";
@@ -57,7 +57,9 @@ describe("the review policy", () => {
 
     it("tells the reviewer what the grant reaches and that it is the only approval", () => {
         const harness = createJustBashToolHarness();
-        const described = describeSpawnCapabilityGrant(
+        const described = createSpawnCapabilityGrantDescriber({
+            inheritsConversationByDefault: false,
+        })(
             { capabilities: ["x_search"], description: "Find reactions to the launch" },
             harness.context,
         );
@@ -65,6 +67,51 @@ describe("the review policy", () => {
         expect(described).toContain("Rig cannot review those searches individually");
         expect(described).toContain("Find reactions to the launch");
         expect(described).toContain("network access outside Rig's shell sandbox");
+    });
+
+    it("never tells the reviewer the conversation is out of the child's reach", () => {
+        const harness = createJustBashToolHarness();
+        const taskFirst = createSpawnCapabilityGrantDescriber({
+            inheritsConversationByDefault: false,
+        });
+        const conversationFirst = createSpawnCapabilityGrantDescriber({
+            inheritsConversationByDefault: true,
+        });
+        // Whatever the dialect and whatever the arguments, the sentence about this conversation
+        // reaching the search is there. A spawned child holds `read_agent_history`, which walks to
+        // the root of its own tree without asking, so a review that promised isolation on the
+        // task-only path would be promising something no argument to this tool controls.
+        for (const described of [
+            taskFirst({ capabilities: ["x_search"] }, harness.context),
+            taskFirst({ capabilities: ["x_search"], context: "parent" }, harness.context),
+            conversationFirst({ capabilities: ["x_search"] }, harness.context),
+            conversationFirst({ capabilities: ["x_search"], fork_turns: "none" }, harness.context),
+        ]) {
+            expect(described).toContain("anything in it can reach the search");
+        }
+    });
+
+    it("separates the conversation the child is handed from the one it would have to go get", () => {
+        const harness = createJustBashToolHarness();
+        const taskFirst = createSpawnCapabilityGrantDescriber({
+            inheritsConversationByDefault: false,
+        });
+        const conversationFirst = createSpawnCapabilityGrantDescriber({
+            inheritsConversationByDefault: true,
+        });
+        expect(taskFirst({ capabilities: ["x_search"] }, harness.context)).toContain(
+            "can read this conversation",
+        );
+        expect(
+            taskFirst({ capabilities: ["x_search"], context: "parent" }, harness.context),
+        ).toContain("starts with this conversation");
+        // Codex forks unless told not to, so saying nothing is the request that hands it over.
+        expect(conversationFirst({ capabilities: ["x_search"] }, harness.context)).toContain(
+            "starts with this conversation",
+        );
+        expect(
+            conversationFirst({ capabilities: ["x_search"], fork_turns: "none" }, harness.context),
+        ).toContain("can read this conversation");
     });
 });
 

@@ -5,7 +5,7 @@ import {
     SUBAGENT_MODEL_ARGUMENT_DESCRIPTION,
 } from "../../context/subagentSelectionDescriptions.js";
 import {
-    describeSpawnCapabilityGrant,
+    createSpawnCapabilityGrantDescriber,
     spawnGrantsCapabilities,
     subagentCapabilitiesArgumentSchema,
 } from "../../context/subagentCapabilityDescriptions.js";
@@ -75,7 +75,9 @@ export const claudeAgentTool = defineTool({
         ),
     }),
     returnType: Type.Union([completedAgentResultSchema, backgroundAgentResultSchema]),
-    describeAutoPermissionAction: describeSpawnCapabilityGrant,
+    describeAutoPermissionAction: createSpawnCapabilityGrantDescriber({
+        inheritsConversationByDefault: false,
+    }),
     shouldReviewInAutoMode: spawnGrantsCapabilities,
     execute: async (
         {

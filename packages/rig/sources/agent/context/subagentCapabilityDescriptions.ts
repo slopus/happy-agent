@@ -33,13 +33,47 @@ export function spawnGrantsCapabilities(args: { capabilities?: readonly string[]
     return (args.capabilities?.length ?? 0) > 0;
 }
 
-export function describeSpawnCapabilityGrant(
-    args: { capabilities?: readonly string[]; description?: string },
-    _context: AgentContext,
-): string {
-    const grant =
-        describeHostedCapabilityGrant(parseHostedCapabilities(args.capabilities ?? [])) ??
-        "Start a subagent.";
-    const task = args.description?.trim();
-    return `${grant}${task === undefined || task.length === 0 ? "" : ` Task: ${task}.`} Access: network access outside Rig's shell sandbox`;
+/**
+ * Describes a capability grant for review, including how this conversation reaches the search.
+ *
+ * Approving a search Rig cannot see into is really a question about what the child can put in the
+ * search box, and the answer is always "this conversation": a spawned subagent is given
+ * `read_agent_history`, and that tool reaches the root of its own tree without asking anyone. What
+ * the spawn arguments change is only whether the thread is already sitting in the child's context
+ * or one tool call away. So the review says the conversation is reachable either way, and uses the
+ * default the calling dialect actually has — Grok and Claude start a child on the task alone,
+ * Codex forks the whole conversation unless told otherwise — to say which of the two it is.
+ */
+export function createSpawnCapabilityGrantDescriber(options: {
+    inheritsConversationByDefault: boolean;
+}) {
+    return (
+        args: {
+            capabilities?: readonly string[];
+            context?: string;
+            description?: string;
+            fork_turns?: string;
+        },
+        _context: AgentContext,
+    ): string => {
+        const grant =
+            describeHostedCapabilityGrant(parseHostedCapabilities(args.capabilities ?? [])) ??
+            "Start a subagent.";
+        const task = args.description?.trim();
+        const inherits = spawnInheritsConversation(args, options.inheritsConversationByDefault);
+        return `${grant}${task === undefined || task.length === 0 ? "" : ` Task: ${task}.`} It ${
+            inherits ? "starts with this conversation" : "can read this conversation"
+        }, so anything in it can reach the search. Access: network access outside Rig's shell sandbox`;
+    };
+}
+
+function spawnInheritsConversation(
+    args: { context?: string; fork_turns?: string },
+    byDefault: boolean,
+): boolean {
+    if (typeof args.fork_turns === "string") {
+        return args.fork_turns.trim().toLowerCase() !== "none";
+    }
+    if (typeof args.context === "string") return args.context === "parent";
+    return byDefault;
 }

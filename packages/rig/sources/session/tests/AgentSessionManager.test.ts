@@ -709,7 +709,9 @@ describe("AgentSessionManager", () => {
     });
 
     it("rejects encrypted spawn delivery across provider or region scopes", async () => {
-        const parentTransportScope = vi.fn<() => string | undefined>(() => '["codex",null]');
+        // A transport scope is the provider that issued it, so the parent's scope is its own
+        // provider id. The guard runs after resolution now, so the parent has to be resolvable.
+        const parentTransportScope = vi.fn<() => string | undefined>(() => "codex");
         const child = {
             id: "child-1",
             submit: vi.fn(),
@@ -717,8 +719,10 @@ describe("AgentSessionManager", () => {
         const parent = {
             agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
             encryptedAgentTransportScope: parentTransportScope,
+            hasModel: () => true,
             id: "root-1",
             isSubagent: () => false,
+            providerIdsForModel: () => ["codex"],
             recordSubagentChanged: vi.fn(),
             requestForSubagent: () => ({
                 cwd: "/tmp/rig-manager-test",
@@ -772,6 +776,50 @@ describe("AgentSessionManager", () => {
             }),
         ).rejects.toThrow("Native encrypted collaboration only works within the current");
         expect(createSubagent).not.toHaveBeenCalled();
+    });
+
+    it("refuses encrypted delivery to a second account the request never named", async () => {
+        // The request names no provider, so nothing about it looks like a crossing. Resolution
+        // still moves the child onto whichever account last succeeded for that model, and
+        // ciphertext issued by one account cannot be read by another. Checking the request instead
+        // of the resolved child is how that used to go out silently.
+        const child = { id: "child-1", submit: vi.fn() } as unknown as InMemorySession;
+        const parent = {
+            agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
+            encryptedAgentTransportScope: () => "codex-a",
+            hasModel: () => true,
+            id: "root-1",
+            isSubagent: () => false,
+            providerIdsForModel: () => ["codex-a", "codex-b"],
+            recordSubagentChanged: vi.fn(),
+            requestForSubagent: () => ({
+                cwd: "/tmp/rig-manager-test",
+                modelId: "openai/gpt-5.6-sol",
+                permissionMode: "auto",
+                providerId: "codex-a",
+            }),
+        } as unknown as InMemorySession;
+        const createSubagent = vi.fn(() => child);
+        const manager = new AgentSessionManager({
+            repository: {
+                createSubagent,
+                get: (sessionId) => (sessionId === parent.id ? parent : undefined),
+                listByRoot: () => [],
+            },
+        });
+        manager.recordSuccessfulProvider("openai/gpt-5.6-terra", "codex-b");
+
+        await expect(
+            manager.spawn(parent.id, {
+                encryptedPrompt: "opaque-ciphertext",
+                description: "Silent account crossing",
+                modelId: "openai/gpt-5.6-terra",
+                prompt: "",
+                taskName: "silent_crossing",
+            }),
+        ).rejects.toThrow("Native encrypted collaboration only works within the current");
+        expect(createSubagent).not.toHaveBeenCalled();
+        expect(child.submit).not.toHaveBeenCalled();
     });
 
     it("infers a provider for model-only requests and reuses the last successful provider", async () => {
