@@ -333,6 +333,15 @@ export function createCodingAssistantAgent(
                         "followup_subagent",
                     ].includes(tool.name),
                 );
+    // Two workspace tools start an agent, so they belong to the same capability
+    // `canSpawn` gates. Without this, an agent that has just been told it cannot
+    // spawn subagents is still holding a working way to do it.
+    const availableWorkspaceTools =
+        options.subagents?.canSpawn === false
+            ? workspaceTools.filter(
+                  (tool) => !["spawn_workspace_agent", "delegate_to_workspace"].includes(tool.name),
+              )
+            : workspaceTools;
     const toolsWithoutGoals = [
         ...baseTools,
         ...selectCommonToolsForModel({
@@ -342,8 +351,8 @@ export function createCodingAssistantAgent(
         ...(options.workspaces === undefined
             ? []
             : options.workspaces.crossWorkspace
-              ? [...workspaceTools, ...crossWorkspaceTools]
-              : workspaceTools),
+              ? [...availableWorkspaceTools, ...crossWorkspaceTools]
+              : availableWorkspaceTools),
         ...agentCommunicationTools,
         ...(options.chatHistory === undefined ? [] : [readAgentHistoryTool]),
         ...availableCollaborationTools,

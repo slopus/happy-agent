@@ -46,6 +46,10 @@ import {
     type WorkspaceFeatures,
 } from "./InMemorySession.js";
 import { AgentSessionManager } from "./AgentSessionManager.js";
+import {
+    subagentMaxDepthFromEnvironment,
+    subagentModelPolicyFromEnvironment,
+} from "./subagentModelPolicy.js";
 import { createModelCatalog } from "../model-catalog/createModelCatalog.js";
 import type { GlobalEventQueue } from "../global-event/GlobalEventQueue.js";
 import { PersistentGlobalEventQueue } from "../global-event/PersistentGlobalEventQueue.js";
@@ -361,6 +365,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             },
             resolveContext: (scope) => this.#remoteTerminalContext(scope),
         });
+        const maxSubagentDepth = subagentMaxDepthFromEnvironment();
         this.#agentManager = new AgentSessionManager({
             repository: {
                 archiveOwnedWorkspace: async (ownerSessionId, projectId, workspaceId) =>
@@ -417,6 +422,8 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                     });
                 },
             },
+            ...(maxSubagentDepth === undefined ? {} : { maxDepth: maxSubagentDepth }),
+            subagentModelPolicy: subagentModelPolicyFromEnvironment(),
             ...(this.#taskDrain === undefined ? {} : { taskDrain: this.#taskDrain }),
         });
         this.#repairInterruptedTitleGenerations();

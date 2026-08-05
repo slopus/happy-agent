@@ -7,6 +7,11 @@ import type {
 } from "../../protocol/index.js";
 import { AgentSessionManager } from "../AgentSessionManager.js";
 import type { InMemorySession } from "../InMemorySession.js";
+import {
+    subagentMaxDepthFromEnvironment,
+    subagentModelPolicyFromEnvironment,
+    type SubagentModelPolicy,
+} from "../subagentModelPolicy.js";
 
 describe("AgentSessionManager", () => {
     it("sends agent-authored steering and changes an owned delegate permission mode", async () => {
@@ -2541,6 +2546,168 @@ describe("AgentSessionManager", () => {
             "directory is unavailable",
         );
         expect(createSubagent).toHaveBeenCalledTimes(1);
+    });
+
+    describe("subagent model policy", () => {
+        function pinnedManagerFixture(policy?: SubagentModelPolicy) {
+            const providerModels = new Map([
+                ["codex", new Set(["openai/gpt-5.6-sol", "openai/gpt-5.6-luna"])],
+            ]);
+            const effortLevels = new Map([
+                ["openai/gpt-5.6-sol", ["low", "medium", "high"]],
+                ["openai/gpt-5.6-luna", ["low", "medium", "max"]],
+            ]);
+            const child = {
+                agentMetadata: () => ({
+                    depth: 1,
+                    parentSessionId: "root-1",
+                    rootSessionId: "root-1",
+                    taskName: "pinned",
+                    type: "subagent" as const,
+                }),
+                id: "child-1",
+                isSubagent: () => true,
+                subagentSummary: () => ({ status: "running" }),
+                submit: vi.fn(() => ({ runId: "child-run" })),
+            } as unknown as InMemorySession;
+            const parent = {
+                agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
+                effortLevelsForModel: (modelId: string) => effortLevels.get(modelId),
+                hasModel: (modelId: string, providerId?: string) =>
+                    providerId === undefined
+                        ? [...providerModels.values()].some((models) => models.has(modelId))
+                        : (providerModels.get(providerId)?.has(modelId) ?? false),
+                id: "root-1",
+                isSubagent: () => false,
+                providerIdsForModel: (modelId: string) =>
+                    [...providerModels.entries()]
+                        .filter(([, models]) => models.has(modelId))
+                        .map(([providerId]) => providerId),
+                recordSubagentChanged: vi.fn(),
+                requestForSubagent: () => ({
+                    cwd: "/tmp/rig-policy-test",
+                    modelId: "openai/gpt-5.6-sol",
+                    permissionMode: "auto",
+                    providerId: "codex",
+                }),
+            } as unknown as InMemorySession;
+            const requests: CreateSessionRequest[] = [];
+            const createSubagent = vi.fn((request: CreateSessionRequest) => {
+                requests.push(request);
+                return child;
+            });
+            const manager = new AgentSessionManager({
+                repository: {
+                    createSubagent,
+                    get: (sessionId) => (sessionId === parent.id ? parent : undefined),
+                    listByRoot: () => [],
+                },
+                ...(policy === undefined ? {} : { subagentModelPolicy: policy }),
+            });
+            return { createSubagent, manager, parent, requests };
+        }
+
+        it("overrides the model and effort the orchestrator asked for", async () => {
+            const { createSubagent, manager, parent } = pinnedManagerFixture({
+                effort: "max",
+                modelId: "openai/gpt-5.6-luna",
+            });
+
+            await manager.spawn(parent.id, {
+                background: true,
+                description: "Pinned child",
+                effort: "high",
+                modelId: "openai/gpt-5.6-sol",
+                prompt: "The orchestrator picked sol; the policy pins luna.",
+            });
+
+            expect(createSubagent).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    effort: "max",
+                    modelId: "openai/gpt-5.6-luna",
+                    providerId: "codex",
+                }),
+                expect.anything(),
+            );
+        });
+
+        it("clears an unpinned effort when the pinned model differs", async () => {
+            // "high" is a sol level and not a luna one, so carrying it across
+            // would fail validation against the model the child actually runs.
+            const { createSubagent, manager, parent, requests } = pinnedManagerFixture({
+                modelId: "openai/gpt-5.6-luna",
+            });
+
+            await manager.spawn(parent.id, {
+                background: true,
+                description: "Pinned model only",
+                effort: "high",
+                modelId: "openai/gpt-5.6-sol",
+                prompt: "Effort must not survive the model swap.",
+            });
+
+            expect(createSubagent).toHaveBeenLastCalledWith(
+                expect.objectContaining({ modelId: "openai/gpt-5.6-luna" }),
+                expect.anything(),
+            );
+            expect(requests.at(-1)?.effort).toBeUndefined();
+        });
+
+        it("leaves the orchestrator's choice alone when no policy is set", async () => {
+            const { createSubagent, manager, parent } = pinnedManagerFixture();
+
+            await manager.spawn(parent.id, {
+                background: true,
+                description: "Unpinned child",
+                effort: "high",
+                modelId: "openai/gpt-5.6-sol",
+                prompt: "Nothing is pinned, so nothing changes.",
+            });
+
+            expect(createSubagent).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    effort: "high",
+                    modelId: "openai/gpt-5.6-sol",
+                }),
+                expect.anything(),
+            );
+        });
+    });
+});
+
+describe("subagentModelPolicyFromEnvironment", () => {
+    it("is undefined when nothing is set, so the policy stays off by default", () => {
+        expect(subagentModelPolicyFromEnvironment({})).toBeUndefined();
+        expect(
+            subagentModelPolicyFromEnvironment({
+                RIG_SUBAGENT_EFFORT: "  ",
+                RIG_SUBAGENT_MODEL: "",
+            }),
+        ).toBeUndefined();
+    });
+
+    it("reads a maximum subagent depth, treating zero as a real value", () => {
+        expect(subagentMaxDepthFromEnvironment({})).toBeUndefined();
+        expect(subagentMaxDepthFromEnvironment({ RIG_SUBAGENT_MAX_DEPTH: "0" })).toBe(0);
+        expect(subagentMaxDepthFromEnvironment({ RIG_SUBAGENT_MAX_DEPTH: "2" })).toBe(2);
+        // Garbage falls back to the default rather than silently disabling
+        // delegation, which would be the worst possible way to misread it.
+        expect(subagentMaxDepthFromEnvironment({ RIG_SUBAGENT_MAX_DEPTH: "-1" })).toBeUndefined();
+        expect(subagentMaxDepthFromEnvironment({ RIG_SUBAGENT_MAX_DEPTH: "no" })).toBeUndefined();
+    });
+
+    it("reads model, effort and provider", () => {
+        expect(
+            subagentModelPolicyFromEnvironment({
+                RIG_SUBAGENT_EFFORT: "max",
+                RIG_SUBAGENT_MODEL: "openai/gpt-5.6-luna",
+                RIG_SUBAGENT_PROVIDER: "codex",
+            }),
+        ).toEqual({
+            effort: "max",
+            modelId: "openai/gpt-5.6-luna",
+            providerId: "codex",
+        });
     });
 });
 

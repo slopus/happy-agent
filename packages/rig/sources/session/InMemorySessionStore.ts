@@ -25,6 +25,10 @@ import type {
     TransferSessionResponse,
 } from "../protocol/index.js";
 import { AgentSessionManager } from "./AgentSessionManager.js";
+import {
+    subagentMaxDepthFromEnvironment,
+    subagentModelPolicyFromEnvironment,
+} from "./subagentModelPolicy.js";
 import { InMemorySession, type InMemorySessionOptions } from "./InMemorySession.js";
 import { createModelCatalog } from "../model-catalog/createModelCatalog.js";
 import { retriedSession } from "./retriedSession.js";
@@ -195,6 +199,7 @@ export class InMemorySessionStore implements SessionStore {
         this.#createRuntime = options.createRuntime;
         this.#defaultDocker = options.defaultDocker;
         this.#mcpToolProvider = options.mcpToolProvider;
+        const maxSubagentDepth = subagentMaxDepthFromEnvironment();
         this.#agentManager = new AgentSessionManager({
             repository: {
                 archiveOwnedWorkspace: async (ownerSessionId, projectId, workspaceId) =>
@@ -255,6 +260,8 @@ export class InMemorySessionStore implements SessionStore {
                     });
                 },
             },
+            ...(maxSubagentDepth === undefined ? {} : { maxDepth: maxSubagentDepth }),
+            subagentModelPolicy: subagentModelPolicyFromEnvironment(),
         });
     }
 

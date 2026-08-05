@@ -43,6 +43,7 @@ import type { TaskDrain } from "../utils/TrackedTaskDrain.js";
 import { throwIfAborted } from "../concurrency/index.js";
 import { resolveSharedAgentPath } from "./impl/resolveSharedAgentPath.js";
 import type { InMemorySession } from "./InMemorySession.js";
+import { applySubagentModelPolicy, type SubagentModelPolicy } from "./subagentModelPolicy.js";
 
 export const DEFAULT_MAX_SUBAGENT_DEPTH = 3;
 export const DEFAULT_MAX_ACTIVE_SUBAGENTS = 8;
@@ -103,6 +104,8 @@ export interface AgentSessionManagerOptions {
     maxActive?: number;
     maxDepth?: number;
     repository: AgentSessionRepository;
+    /** Pin every child's model and effort instead of letting the parent choose. */
+    subagentModelPolicy?: SubagentModelPolicy | undefined;
     taskDrain?: TaskDrain;
 }
 
@@ -117,10 +120,12 @@ export class AgentSessionManager {
     readonly #pendingBackgroundRuns = new Map<string, string>();
     readonly #slotReservations = new Map<string, number>();
     readonly #stoppedExplicitly = new Set<string>();
+    readonly #subagentModelPolicy: SubagentModelPolicy | undefined;
     readonly #taskDrain: TaskDrain | undefined;
 
     constructor(options: AgentSessionManagerOptions) {
         this.#repository = options.repository;
+        this.#subagentModelPolicy = options.subagentModelPolicy;
         this.#taskDrain = options.taskDrain;
         this.maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE_SUBAGENTS;
         this.maxDepth = options.maxDepth ?? DEFAULT_MAX_SUBAGENT_DEPTH;
@@ -839,9 +844,12 @@ export class AgentSessionManager {
 
     async spawn(
         parentSessionId: string,
-        request: SpawnSubagentRequest,
+        requestedSpawn: SpawnSubagentRequest,
         signal?: AbortSignal,
     ): Promise<SpawnSubagentResult> {
+        // Every spawn tool funnels through here, so this is the one place a
+        // pinned model and effort can hold for the whole tree.
+        const request = applySubagentModelPolicy(requestedSpawn, this.#subagentModelPolicy);
         const parent = this.#repository.get(parentSessionId);
         if (parent === undefined) {
             throw new Error("The parent session is no longer available.");
