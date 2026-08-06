@@ -6,10 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 
 import { openSessionDatabase } from "../../persistence/database/openSessionDatabase.js";
+import { sessions } from "../../persistence/database/schema.js";
 import { createSessionDatabaseFixture } from "../../persistence/database/tests/createSessionDatabaseFixture.js";
 import { HappySyncRepository } from "../HappySyncRepository.js";
 
 const directories: string[] = [];
+const HOUR_MS = 60 * 60 * 1_000;
+const DAY_MS = 24 * HOUR_MS;
+const NOW = 1_700_000_000_000;
 
 afterEach(async () => {
     await Promise.all(
@@ -101,8 +105,43 @@ describe("HappySyncRepository", () => {
             sessionId: "session-1",
         });
 
-        expect(repository.sessionIds("account-1")).toEqual(["session-1"]);
-        expect(repository.sessionIds("account-2")).toEqual([]);
+        expect(repository.sessionIds("account-1", { activeSinceMs: 0 })).toEqual(["session-1"]);
+        expect(repository.sessionIds("account-2", { activeSinceMs: 0 })).toEqual([]);
+        repository.close();
+    });
+
+    it("restores only live, recently active sessions and keeps the batch bounded", async () => {
+        const { databasePath, repository } = await createRepository(() => NOW);
+        insertSessions(databasePath, [
+            { archived: true, id: "archived", updatedAtMs: NOW - HOUR_MS },
+            { id: "subagent", sessionKind: "subagent", updatedAtMs: NOW - HOUR_MS },
+            { id: "stale", updatedAtMs: NOW - 30 * DAY_MS },
+            { id: "recent", updatedAtMs: NOW - 2 * DAY_MS },
+            { id: "chatting", lastMessageAtMs: NOW - HOUR_MS, updatedAtMs: NOW - 30 * DAY_MS },
+        ]);
+        for (const sessionId of [
+            "archived",
+            "chatting",
+            "recent",
+            "session-1",
+            "stale",
+            "subagent",
+        ]) {
+            repository.ensureSession({
+                credentialFingerprint: "account-1",
+                encryptionVariant: "dataKey",
+                sessionId,
+            });
+        }
+
+        expect(repository.sessionIds("account-1")).toEqual(["chatting", "recent"]);
+        expect(repository.sessionIds("account-1", { limit: 1 })).toEqual(["chatting"]);
+        expect(repository.sessionIds("account-1", { activeSinceMs: 0 })).toEqual([
+            "chatting",
+            "recent",
+            "stale",
+            "session-1",
+        ]);
         repository.close();
     });
 
@@ -158,10 +197,67 @@ function createMessage(localId: string) {
     };
 }
 
-async function createRepository() {
+async function createRepository(now: () => number = Date.now) {
     const directory = await mkdtemp(join(tmpdir(), "rig-happy-repository-"));
     directories.push(directory);
     const databasePath = join(directory, "sessions.sqlite");
     createSessionDatabaseFixture(databasePath);
-    return { databasePath, repository: new HappySyncRepository(databasePath) };
+    return { databasePath, repository: new HappySyncRepository(databasePath, now) };
+}
+
+/*
+ * The restore query joins the owning session rows, so the scope it has to reject
+ * only exists once those rows do.
+ */
+function insertSessions(
+    databasePath: string,
+    rows: readonly {
+        archived?: boolean;
+        id: string;
+        lastMessageAtMs?: number;
+        sessionKind?: string;
+        updatedAtMs: number;
+    }[],
+): void {
+    const opened = openSessionDatabase(databasePath);
+    for (const row of rows) {
+        opened.database
+            .insert(sessions)
+            .values({
+                agentId: `agent-${row.id}`,
+                archived: row.archived ?? false,
+                createdAtMs: 1,
+                cwd: "/workspace",
+                depth: 0,
+                durableSkillsJson: "[]",
+                elapsedMs: 0,
+                externalToolsJson: "[]",
+                id: row.id,
+                interrupted: false,
+                ...(row.lastMessageAtMs === undefined
+                    ? {}
+                    : { lastMessageAtMs: row.lastMessageAtMs }),
+                modelId: "model",
+                modelsJson: "[]",
+                nextTaskId: 1,
+                orderKey: `a-${row.id}`,
+                permissionMode: "workspace_write",
+                projectId: "project-1",
+                providerId: "codex",
+                rootSessionId: row.id,
+                secretIdsJson: "[]",
+                sessionKind: row.sessionKind ?? "primary",
+                status: "idle",
+                tasksJson: "[]",
+                titleStatus: "idle",
+                toolsJson: "[]",
+                totalTokens: 0,
+                trackUnread: false,
+                updatedAtMs: row.updatedAtMs,
+                workflowsEnabled: true,
+                workflowsJson: "[]",
+            })
+            .run();
+    }
+    opened.client.close();
 }

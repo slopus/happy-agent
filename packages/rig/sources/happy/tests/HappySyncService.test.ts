@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ModelCatalog } from "../../protocol/index.js";
+import type { InMemorySession } from "../../session/InMemorySession.js";
 import { PersistentSessionStore } from "../../session/PersistentSessionStore.js";
 import { createHappySpawnSessionId } from "../createHappySpawnSessionId.js";
 import { decryptHappyPayload, encryptHappyPayload } from "../happyEncryption.js";
@@ -253,6 +254,90 @@ describe("HappySyncService daemon restart", () => {
                 "rpc-register",
                 { method: "happy-session-restarted:killSession" },
             ]);
+        } finally {
+            await restartedService?.close();
+            restartedStore?.close();
+            await firstService.close();
+            firstStore.close();
+        }
+    });
+
+    it("restores live sessions without loading the ones it would never reattach", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "rig-happy-service-restore-scope-"));
+        directories.push(directory);
+        const databasePath = join(directory, "sessions.sqlite");
+        const configuration: HappyConnectionConfiguration = {
+            credentials: {
+                encryption: { secret: new Uint8Array(32).fill(6), type: "legacy" },
+                token: "happy-token",
+            },
+            credentialsPath: join(directory, "access.key"),
+            happyHome: join(directory, "happy"),
+            imported: false,
+            serverUrl: "https://happy.example",
+        };
+        const sockets: FakeSocket[] = [];
+        let remoteSessionCount = 0;
+        const request = vi.fn<typeof fetch>(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v1/sessions") {
+                remoteSessionCount += 1;
+                const body = JSON.parse(String(init?.body)) as { metadata: string };
+                return Response.json({
+                    session: {
+                        active: true,
+                        id: `happy-session-scope-${String(remoteSessionCount)}`,
+                        metadata: body.metadata,
+                        metadataVersion: 0,
+                    },
+                });
+            }
+            if (url.pathname.endsWith("/messages")) {
+                return Response.json(
+                    init?.method === "POST" ? {} : { hasMore: false, messages: [] },
+                );
+            }
+            if (url.pathname.endsWith("/archive")) return Response.json({ success: true });
+            return new Response("Not found", { status: 404 });
+        });
+        const createService = (loadSession?: (sessionId: string) => InMemorySession | undefined) =>
+            new HappySyncService({
+                configuration,
+                databasePath,
+                fetch: request,
+                ...(loadSession === undefined ? {} : { loadSession }),
+                socketFactory: () => {
+                    const socket = new FakeSocket();
+                    sockets.push(socket);
+                    return socket;
+                },
+            });
+        const firstStore = new PersistentSessionStore({ databasePath, modelCatalog: catalog() });
+        const archived = firstStore.create({ cwd: directory });
+        const live = firstStore.create({ cwd: directory });
+        const firstService = createService();
+        let restartedService: HappySyncService | undefined;
+        let restartedStore: PersistentSessionStore | undefined;
+
+        try {
+            firstService.attach(archived);
+            firstService.attach(live);
+            await waitFor(
+                () => sockets.length === 2 && sockets.every((socket) => socket.connected),
+            );
+            archived.setArchived(true);
+            await firstService.close();
+            firstStore.close();
+
+            restartedStore = new PersistentSessionStore({ databasePath, modelCatalog: catalog() });
+            const store = restartedStore;
+            const loadSession = vi.fn((sessionId: string) => store.get(sessionId));
+            restartedService = createService(loadSession);
+            restartedService.start();
+
+            await waitFor(() => sockets[2]?.connected === true);
+            expect(loadSession.mock.calls).toEqual([[live.id]]);
+            expect(sockets).toHaveLength(3);
         } finally {
             await restartedService?.close();
             restartedStore?.close();
