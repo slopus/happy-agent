@@ -13,8 +13,7 @@ export async function loadCodexCredential(
     options: LoadCodexCredentialOptions = {},
 ): Promise<CodexCredential | null> {
     const env = options.env ?? process.env;
-    const explicitApiKey =
-        (await tryLoadApiKey(options.apiKey)) ?? (await tryLoadApiKey(env.OPENAI_API_KEY));
+    const explicitApiKey = await tryLoadApiKey(options.apiKey);
     if (explicitApiKey !== null) {
         return explicitApiKey;
     }
@@ -24,16 +23,27 @@ export async function loadCodexCredential(
         ...(options.authFile === undefined ? {} : { authFile: options.authFile }),
     });
     const storedAuth = await readCodexAuthFile(authFile);
-    if (storedAuth === undefined) {
-        return null;
-    }
-    if (storedAuth.authMode === "apikey") {
-        return tryLoadApiKey(storedAuth.apiKey);
+
+    /*
+     * A ChatGPT login outranks OPENAI_API_KEY because the two bill differently:
+     * the session spends the subscription the user already pays for, while the
+     * environment key bills per token. Developers routinely export OPENAI_API_KEY
+     * for unrelated tooling, so letting an ambient value win here would silently
+     * move a Plus/Pro subscriber onto metered API billing. `options.apiKey` is a
+     * deliberate per-call choice and still wins above; the key stored inside an
+     * `auth_mode: "apikey"` file is not a subscription, so the environment still
+     * outranks it below.
+     */
+    if (storedAuth?.authMode === "session" && storedAuth.quotaAuth !== undefined) {
+        return CodexSessionCredential.fromAuth(storedAuth.quotaAuth, { authFile, env });
     }
 
-    return storedAuth.quotaAuth === undefined
-        ? null
-        : CodexSessionCredential.fromAuth(storedAuth.quotaAuth, { authFile, env });
+    const environmentApiKey = await tryLoadApiKey(env.OPENAI_API_KEY);
+    if (environmentApiKey !== null) {
+        return environmentApiKey;
+    }
+
+    return storedAuth?.authMode === "apikey" ? tryLoadApiKey(storedAuth.apiKey) : null;
 }
 
 function tryLoadApiKey(apiKey: string | undefined): Promise<CodexApiKeyCredential | null> {

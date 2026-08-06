@@ -75,6 +75,42 @@ describe("loadCodexCredential", () => {
         ).resolves.toMatchObject({ credential: { apiKey: "environment" } });
     });
 
+    /*
+     * A developer who exports OPENAI_API_KEY for unrelated tooling must keep
+     * spending the ChatGPT subscription they are logged into, not get moved onto
+     * metered API billing by an ambient shell variable.
+     */
+    it("prefers a ChatGPT subscription session over an environment API key", async () => {
+        const authFile = await writeAuthFile({
+            auth_mode: "chatgpt",
+            last_refresh: "2026-08-05T00:00:00.000Z",
+            OPENAI_API_KEY: null,
+            tokens: {
+                access_token: "session",
+                account_id: "account-1",
+                id_token: "id-token",
+                refresh_token: "refresh-token",
+            },
+        });
+
+        await expect(
+            loadCodexCredential({ authFile, env: { OPENAI_API_KEY: "environment" } }),
+        ).resolves.toMatchObject({
+            credential: { accessToken: "session" },
+            name: "codex-session",
+        });
+        await expect(
+            loadCodexCredential({
+                apiKey: "explicit",
+                authFile,
+                env: { OPENAI_API_KEY: "environment" },
+            }),
+        ).resolves.toMatchObject({
+            credential: { apiKey: "explicit" },
+            name: "codex-api-key",
+        });
+    });
+
     it("discovers exactly one Codex credential from the native auth file", async () => {
         const authFile = await writeAuthFile({
             auth_mode: "apikey",
