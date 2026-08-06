@@ -25,12 +25,24 @@ const nativeConfigSchema = Type.Object(
 
 type NativeProvider = Static<typeof nativeProviderSchema>;
 
+export const supportedNativeCodexWireApi = "responses";
+
 export interface NativeCodexProviderConfig {
     baseUrl?: string;
     experimentalBearerToken?: string;
     requiresOpenAiAuth?: boolean;
-    wireApi: "responses";
+    wireApi: string;
 }
+
+/**
+ * How a Codex provider is allowed to authenticate once the native Codex
+ * configuration is taken into account. Both the executor and the capability
+ * probe read this so they can never disagree about a provider.
+ */
+export type NativeCodexCredentialAccess =
+    | { apiKey?: string; status: "available" }
+    | { status: "unavailable" }
+    | { status: "unsupported_wire_api"; wireApi: string };
 
 export async function loadNativeCodexProviderConfig(
     env: NodeJS.ProcessEnv = process.env,
@@ -49,23 +61,57 @@ export async function loadNativeCodexProviderConfig(
     if (!providerId) return null;
     const provider: unknown = parsed.model_providers?.[providerId];
     if (!Value.Check(nativeProviderSchema, provider)) return null;
-    if (provider.wire_api !== undefined && provider.wire_api !== "responses") {
-        throw new Error(
-            "The selected native Codex provider uses an unsupported wire_api. Rig supports responses only.",
-        );
-    }
     return normalizeProvider(provider);
+}
+
+/**
+ * Decides which credential a Codex provider may use, given Rig's own overrides
+ * and the active native Codex provider. This never reads the filesystem and
+ * never throws so both callers can share one decision.
+ */
+export function resolveNativeCodexCredentialAccess(options: {
+    apiKey?: string;
+    authFile?: string;
+    configuredBaseUrl?: string;
+    nativeConfiguration: NativeCodexProviderConfig | null;
+}): NativeCodexCredentialAccess {
+    const explicitApiKey = options.apiKey?.trim() ? options.apiKey : undefined;
+    const available = (apiKey?: string): NativeCodexCredentialAccess => ({
+        ...(apiKey === undefined ? {} : { apiKey }),
+        status: "available",
+    });
+    // An endpoint configured in Rig replaces the native provider entirely.
+    if (options.configuredBaseUrl !== undefined) return available(explicitApiKey);
+    const nativeConfiguration = options.nativeConfiguration;
+    if (nativeConfiguration === null) return available(explicitApiKey);
+    // The native endpoint is still used even when Rig supplies credentials, so
+    // an unsupported wire API is never usable.
+    if (nativeConfiguration.wireApi !== supportedNativeCodexWireApi) {
+        return { status: "unsupported_wire_api", wireApi: nativeConfiguration.wireApi };
+    }
+    if (nativeConfiguration.baseUrl === undefined) return available(explicitApiKey);
+    if (explicitApiKey !== undefined) return available(explicitApiKey);
+    if (options.authFile !== undefined) return available();
+    if (nativeConfiguration.experimentalBearerToken !== undefined) {
+        return available(nativeConfiguration.experimentalBearerToken);
+    }
+    // A custom endpoint only receives OpenAI credentials when the provider opts
+    // in, matching Codex's own false-by-default `requires_openai_auth`.
+    return nativeConfiguration.requiresOpenAiAuth === true
+        ? available()
+        : { status: "unavailable" };
 }
 
 function normalizeProvider(provider: NativeProvider): NativeCodexProviderConfig {
     const baseUrl = provider.base_url?.trim();
     const experimentalBearerToken = provider.experimental_bearer_token?.trim();
+    const wireApi = provider.wire_api?.trim();
     return {
         ...(baseUrl ? { baseUrl } : {}),
         ...(experimentalBearerToken ? { experimentalBearerToken } : {}),
         ...(provider.requires_openai_auth === undefined
             ? {}
             : { requiresOpenAiAuth: provider.requires_openai_auth }),
-        wireApi: "responses",
+        wireApi: wireApi || supportedNativeCodexWireApi,
     };
 }

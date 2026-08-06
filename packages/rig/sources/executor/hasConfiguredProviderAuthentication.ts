@@ -10,7 +10,10 @@ import {
 
 import type { ConfigProvider } from "../config/types.js";
 import { readConfiguredBedrockBearerToken } from "./readConfiguredBedrockBearerToken.js";
-import { loadNativeCodexProviderConfig } from "./loadNativeCodexProviderConfig.js";
+import {
+    loadNativeCodexProviderConfig,
+    resolveNativeCodexCredentialAccess,
+} from "./loadNativeCodexProviderConfig.js";
 
 export async function hasConfiguredProviderAuthentication(options: {
     config: ConfigProvider;
@@ -25,24 +28,15 @@ export async function hasConfiguredProviderAuthentication(options: {
             const configuredBaseUrl = config.baseUrl ?? env.RIG_CODEX_BASE_URL;
             const nativeConfiguration =
                 configuredBaseUrl === undefined ? await loadNativeCodexProviderConfig(env) : null;
-            const nativeBearerToken =
-                configuredBaseUrl === undefined &&
-                config.authFile === undefined &&
-                nativeConfiguration?.baseUrl !== undefined
-                    ? nativeConfiguration.experimentalBearerToken
-                    : undefined;
-            if (
-                configuredBaseUrl === undefined &&
-                config.authFile === undefined &&
-                nativeConfiguration?.baseUrl !== undefined &&
-                nativeConfiguration.requiresOpenAiAuth === false &&
-                nativeBearerToken === undefined
-            ) {
-                return false;
-            }
+            const access = resolveNativeCodexCredentialAccess({
+                ...(config.authFile === undefined ? {} : { authFile: config.authFile }),
+                ...(configuredBaseUrl === undefined ? {} : { configuredBaseUrl }),
+                nativeConfiguration,
+            });
+            if (access.status !== "available") return false;
             return (
                 (await loadCodexCredential({
-                    ...(nativeBearerToken === undefined ? {} : { apiKey: nativeBearerToken }),
+                    ...(access.apiKey === undefined ? {} : { apiKey: access.apiKey }),
                     ...(config.authFile === undefined ? {} : { authFile: config.authFile }),
                     env,
                 })) !== null

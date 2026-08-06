@@ -167,6 +167,57 @@ requires_openai_auth = false
             "Codex authentication is unavailable",
         );
     });
+
+    it("does not send OpenAI credentials to a native provider that never opts in", async () => {
+        const codexHome = await writeCodexHome({
+            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored" },
+            config: `
+model_provider = "local"
+
+[model_providers.local]
+base_url = "https://example.com/local"
+wire_api = "responses"
+`,
+        });
+        const definition = codexExecution({
+            config: { enabled: true, type: "codex" },
+            env: { CODEX_HOME: codexHome, OPENAI_API_KEY: "environment" },
+            id: "codex",
+        });
+        if (typeof definition.native !== "function") expect.fail("Expected lazy Codex provider.");
+        const profile = definition.profiles[0];
+        if (profile === undefined) expect.fail("Expected a Codex model profile.");
+
+        await expect(definition.native(profile)).rejects.toThrow(
+            "Codex authentication is unavailable",
+        );
+    });
+
+    it("explains an unsupported native wire API instead of silently falling back", async () => {
+        const codexHome = await writeCodexHome({
+            auth: { auth_mode: "apikey", OPENAI_API_KEY: "stored" },
+            config: `
+model_provider = "legacy"
+
+[model_providers.legacy]
+base_url = "https://example.net/legacy"
+wire_api = "chat"
+experimental_bearer_token = "legacy"
+`,
+        });
+        const definition = codexExecution({
+            config: { enabled: true, type: "codex" },
+            env: { CODEX_HOME: codexHome },
+            id: "codex",
+        });
+        if (typeof definition.native !== "function") expect.fail("Expected lazy Codex provider.");
+        const profile = definition.profiles[0];
+        if (profile === undefined) expect.fail("Expected a Codex model profile.");
+
+        await expect(definition.native(profile)).rejects.toThrow(
+            "The selected native Codex provider uses an unsupported wire_api (chat). Rig supports responses only.",
+        );
+    });
 });
 
 describe("codexExecution image generation", () => {

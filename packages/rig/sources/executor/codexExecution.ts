@@ -10,7 +10,10 @@ import {
 } from "@slopus/rig-execution";
 
 import type { ConfigCodexProvider } from "../config/types.js";
-import { loadNativeCodexProviderConfig } from "./loadNativeCodexProviderConfig.js";
+import {
+    loadNativeCodexProviderConfig,
+    resolveNativeCodexCredentialAccess,
+} from "./loadNativeCodexProviderConfig.js";
 
 export function codexExecution(options: {
     apiKey?: string;
@@ -27,26 +30,20 @@ export function codexExecution(options: {
     const loadCredential = async (
         nativeConfiguration: Awaited<ReturnType<typeof loadNativeConfiguration>>,
     ) => {
-        const nativeBearerToken =
-            configuredBaseUrl === undefined &&
-            options.config.authFile === undefined &&
-            !options.apiKey?.trim() &&
-            nativeConfiguration?.baseUrl !== undefined
-                ? nativeConfiguration.experimentalBearerToken
-                : undefined;
-        if (
-            configuredBaseUrl === undefined &&
-            options.config.authFile === undefined &&
-            !options.apiKey?.trim() &&
-            nativeConfiguration?.baseUrl !== undefined &&
-            nativeConfiguration.requiresOpenAiAuth === false &&
-            nativeBearerToken === undefined
-        ) {
-            return null;
+        const access = resolveNativeCodexCredentialAccess({
+            ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+            ...(options.config.authFile === undefined ? {} : { authFile: options.config.authFile }),
+            ...(configuredBaseUrl === undefined ? {} : { configuredBaseUrl }),
+            nativeConfiguration,
+        });
+        if (access.status === "unsupported_wire_api") {
+            throw new Error(
+                `The selected native Codex provider uses an unsupported wire_api (${access.wireApi}). Rig supports responses only.`,
+            );
         }
-        const apiKey = options.apiKey ?? nativeBearerToken;
+        if (access.status === "unavailable") return null;
         return loadCodexCredential({
-            ...(apiKey === undefined ? {} : { apiKey }),
+            ...(access.apiKey === undefined ? {} : { apiKey: access.apiKey }),
             env: options.env,
             ...(options.config.authFile === undefined ? {} : { authFile: options.config.authFile }),
         });
@@ -101,7 +98,9 @@ export function codexExecution(options: {
                     );
                 }
                 try {
-                    return await createNative(credential, nativeConfiguration).generateImage(request);
+                    return await createNative(credential, nativeConfiguration).generateImage(
+                        request,
+                    );
                 } catch (error) {
                     if (error instanceof CodexImageGenerationError && error.fallbackEligible) {
                         throw new ExecutorImageGenerationUnavailableError(error.message, {

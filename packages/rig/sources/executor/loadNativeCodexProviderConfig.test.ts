@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadNativeCodexProviderConfig } from "./loadNativeCodexProviderConfig.js";
+import {
+    loadNativeCodexProviderConfig,
+    resolveNativeCodexCredentialAccess,
+} from "./loadNativeCodexProviderConfig.js";
 
 const tempDirectories: string[] = [];
 
@@ -45,16 +48,12 @@ model_provider = "missing"
 base_url = "https://example.org/other"
 `);
 
-        await expect(
-            loadNativeCodexProviderConfig({ CODEX_HOME: codexHome }),
-        ).resolves.toBeNull();
+        await expect(loadNativeCodexProviderConfig({ CODEX_HOME: codexHome })).resolves.toBeNull();
         await writeFile(join(codexHome, "config.toml"), "model_provider = [");
-        await expect(
-            loadNativeCodexProviderConfig({ CODEX_HOME: codexHome }),
-        ).resolves.toBeNull();
+        await expect(loadNativeCodexProviderConfig({ CODEX_HOME: codexHome })).resolves.toBeNull();
     });
 
-    it("rejects an unsupported wire API instead of falling back to the default provider", async () => {
+    it("reports an unsupported wire API instead of failing the load", async () => {
         const codexHome = await writeConfig(`
 model_provider = "legacy"
 
@@ -64,9 +63,86 @@ wire_api = "chat"
 experimental_bearer_token = "legacy"
 `);
 
-        await expect(loadNativeCodexProviderConfig({ CODEX_HOME: codexHome })).rejects.toThrow(
-            "The selected native Codex provider uses an unsupported wire_api. Rig supports responses only.",
-        );
+        await expect(loadNativeCodexProviderConfig({ CODEX_HOME: codexHome })).resolves.toEqual({
+            baseUrl: "https://example.net/legacy",
+            experimentalBearerToken: "legacy",
+            wireApi: "chat",
+        });
+    });
+});
+
+describe("resolveNativeCodexCredentialAccess", () => {
+    it("withholds credentials from a custom endpoint that never opts into OpenAI auth", () => {
+        expect(
+            resolveNativeCodexCredentialAccess({
+                nativeConfiguration: {
+                    baseUrl: "https://example.com/local",
+                    wireApi: "responses",
+                },
+            }),
+        ).toEqual({ status: "unavailable" });
+        expect(
+            resolveNativeCodexCredentialAccess({
+                nativeConfiguration: {
+                    baseUrl: "https://example.com/local",
+                    requiresOpenAiAuth: false,
+                    wireApi: "responses",
+                },
+            }),
+        ).toEqual({ status: "unavailable" });
+    });
+
+    it("keeps every explicitly configured credential source authoritative", () => {
+        const nativeConfiguration = {
+            baseUrl: "https://example.com/local",
+            experimentalBearerToken: "provider",
+            wireApi: "responses",
+        };
+
+        expect(
+            resolveNativeCodexCredentialAccess({ apiKey: "explicit", nativeConfiguration }),
+        ).toEqual({ apiKey: "explicit", status: "available" });
+        expect(
+            resolveNativeCodexCredentialAccess({
+                authFile: "/tmp/codex.json",
+                nativeConfiguration,
+            }),
+        ).toEqual({ status: "available" });
+        expect(
+            resolveNativeCodexCredentialAccess({
+                configuredBaseUrl: "https://example.org/rig",
+                nativeConfiguration,
+            }),
+        ).toEqual({ status: "available" });
+        expect(resolveNativeCodexCredentialAccess({ nativeConfiguration })).toEqual({
+            apiKey: "provider",
+            status: "available",
+        });
+        expect(
+            resolveNativeCodexCredentialAccess({
+                nativeConfiguration: {
+                    baseUrl: "https://example.com/local",
+                    requiresOpenAiAuth: true,
+                    wireApi: "responses",
+                },
+            }),
+        ).toEqual({ status: "available" });
+        expect(resolveNativeCodexCredentialAccess({ nativeConfiguration: null })).toEqual({
+            status: "available",
+        });
+    });
+
+    it("reports an unsupported wire API without throwing", () => {
+        expect(
+            resolveNativeCodexCredentialAccess({
+                authFile: "/tmp/codex.json",
+                nativeConfiguration: {
+                    baseUrl: "https://example.net/legacy",
+                    experimentalBearerToken: "legacy",
+                    wireApi: "chat",
+                },
+            }),
+        ).toEqual({ status: "unsupported_wire_api", wireApi: "chat" });
     });
 });
 
