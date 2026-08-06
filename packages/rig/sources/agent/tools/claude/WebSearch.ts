@@ -1,12 +1,17 @@
 import { Type } from "@sinclair/typebox";
 
 import { defineTool } from "../../types.js";
+import { networkToolPermission } from "../../../runtime/networkToolPermission.js";
 import { quoteVisibleExact } from "../../../permissions/quoteVisibleExact.js";
 import { formatWebSearchOutput } from "../../../tools/claude/webSearch/formatWebSearchOutput.js";
 import { performWebSearch } from "../../../tools/claude/webSearch/performWebSearch.js";
 import type { WebSearchInput, WebSearchOutput } from "../../../tools/claude/webSearch/types.js";
 import type { Model, Provider } from "@slopus/rig-execution";
 import { selectClaudeWebToolModel } from "../../../tools/claude/selectClaudeWebToolModel.js";
+import {
+    searchCallPresentation,
+    searchResultPresentation,
+} from "../../../tools/webSearch/searchPresentation.js";
 
 const searchResultSchema = Type.Object({
     tool_use_id: Type.String({ description: "ID of the web search tool use" }),
@@ -60,10 +65,9 @@ export function createClaudeWebSearchTool(dependencies: ClaudeWebSearchDependenc
             { additionalProperties: false },
         ),
         returnType: claudeWebSearchReturnSchema,
-        requiresAutoOrFullAccess: true,
+        ...networkToolPermission,
         describeAutoPermissionAction: ({ query }) =>
             `searching the web for ${quoteVisibleExact(query)}. Access: network access outside Rig’s shell sandbox`,
-        shouldReviewInAutoMode: () => true,
         execute: async ({ query, allowed_domains, blocked_domains }, _context, execution) => {
             if (query.trim().length < 2) {
                 throw new Error("Error: Web search query must contain at least two characters");
@@ -89,6 +93,10 @@ export function createClaudeWebSearchTool(dependencies: ClaudeWebSearchDependenc
             );
         },
         toLLM: (result) => [{ type: "text", text: formatWebSearchOutput(result) }],
+        // Rig executed this one and Grok's backend executes its own, but a reader is looking at
+        // the same act either way, so both reach the interface as the same thing.
+        toCallPresentation: ({ query }) => searchCallPresentation(query),
+        toPresentation: (result, { query }) => searchResultPresentation(result, query),
         toUI: (result) => {
             const searches = result.results.filter((item) => typeof item !== "string").length;
             const duration =

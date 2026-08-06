@@ -2,6 +2,7 @@ import type { AgentContext } from "../../../context/AgentContext.js";
 import { resolveFileSystemPath } from "../../../context/resolveFileSystemPath.js";
 import { parsePatchPathDirective } from "../../../../patch/parsePatchPathDirective.js";
 import { quoteVisibleExact } from "../../../../permissions/quoteVisibleExact.js";
+import { isProtectedPath } from "../../../../permissions/isProtectedPath.js";
 
 export function describeApplyPatchAutoPermissionAction(
     args: { patch: string; workdir?: string },
@@ -28,6 +29,11 @@ export function describeApplyPatchAutoPermissionAction(
         paths.size === 0
             ? "not available from the patch"
             : [...paths].map(quoteVisibleExact).join(", ");
+    const access = [...paths].some((path) =>
+        isProtectedPath(path, context.permissions?.protectedPaths ?? []),
+    )
+        ? "protected workspace path requiring Full access"
+        : "unrestricted filesystem access outside the workspace sandbox";
 
-    return `applying a patch. Affected paths: ${affectedPaths}. Working directory: ${quoteVisibleExact(workdir)}. Access: unrestricted filesystem access outside the workspace sandbox`;
+    return `applying a patch. Affected paths: ${affectedPaths}. Working directory: ${quoteVisibleExact(workdir)}. Access: ${access}`;
 }

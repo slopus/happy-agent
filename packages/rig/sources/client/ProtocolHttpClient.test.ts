@@ -9,6 +9,38 @@ import { createTestSocketDirectory } from "../testing/createTestSocketDirectory.
 import { ProtocolHttpClient } from "./ProtocolHttpClient.js";
 
 describe("ProtocolHttpClient", () => {
+    it("mounts daemon requests under one validated path prefix", async () => {
+        const directory = await createTestSocketDirectory();
+        const socketPath = join(directory, "server.sock");
+        let path = "";
+        const server = createServer((request, response) => {
+            path = request.url ?? "";
+            response.end('{"transports":[]}');
+        });
+        try {
+            await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+            const client = new ProtocolHttpClient({
+                pathPrefix: "/p2p/peers/peer/api/",
+                socketPath,
+                token: "test-token",
+            });
+
+            await expect(client.getP2pStatus()).resolves.toEqual({ transports: [] });
+            expect(path).toBe("/p2p/peers/peer/api/p2p/status");
+            expect(
+                () =>
+                    new ProtocolHttpClient({
+                        pathPrefix: "/unsafe?query",
+                        socketPath,
+                        token: "test-token",
+                    }),
+            ).toThrow("absolute URL path");
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it("targets a paginated workspace file-tree directory", async () => {
         const directory = await createTestSocketDirectory();
         const socketPath = join(directory, "server.sock");

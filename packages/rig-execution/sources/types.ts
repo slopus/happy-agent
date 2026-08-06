@@ -10,8 +10,11 @@ import type {
     ClaudeAuxiliaryQueryRequest,
     ClaudeAuxiliaryQueryResponse,
     SessionAssistantMessage,
+    SessionProviderError,
     SessionToolResultMessage,
 } from "@slopus/rig-providers";
+
+import type { HostedCapability } from "@/HostedCapability.js";
 
 export type ProfileProviderType = "bedrock" | "claude" | "codex" | "grok";
 export interface ProfilePromptContext {
@@ -32,13 +35,7 @@ export interface ProfilePromptContext {
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 export type ProviderErrorCode = "incomplete_response" | "invalid_image_request";
 /** `resetAt` is a Unix timestamp in milliseconds when present. */
-export type ProviderError =
-    | { type: "authentication" }
-    | { type: "out_of_tokens"; resetAt?: number }
-    | { type: "rate_limit"; resetAt?: number }
-    | { type: "server_overloaded" }
-    | { type: "internal_server_error"; requestId?: string }
-    | { type: "unclassified" };
+export type ProviderError = SessionProviderError;
 export type ProviderImageProfile = "claude" | "codex";
 export type ProviderToolProfile = "claude" | "codex" | "grok";
 export type ServiceTier = "fast";
@@ -336,7 +333,17 @@ export type ProviderAssistantMessageEvent =
      */
     | { type: "server_toolcall_start"; callId: string; name: string }
     | { type: "server_toolcall_delta"; callId: string; delta: string }
-    | { type: "server_toolcall_end"; callId: string; name: string; arguments: string }
+    | {
+          type: "server_toolcall_end";
+          callId: string;
+          name: string;
+          arguments: string;
+          /**
+           * The turn ended before the provider reported back. Not that the call was stopped:
+           * nothing can stop one, so this says its outcome is unknown, not that it never ran.
+           */
+          incomplete?: true;
+      }
     | {
           type: "done";
           reason: Extract<StopReason, "stop" | "length" | "toolUse">;
@@ -365,6 +372,13 @@ export interface Provider {
     /** Dedicated Auto permission review model, when this provider ships one. */
     readonly reviewerModel?: Model | undefined;
     /**
+     * Which provider-run searches a request built right now would declare.
+     *
+     * Asked rather than stored because the answer follows the permission mode, which can change
+     * underneath a live session. A provider whose backend runs no search of its own has none.
+     */
+    hostedCapabilitiesForRequest?(): readonly HostedCapability[];
+    /**
      * An independent provider for work that runs alongside the conversation.
      *
      * Titles and permission reviews are separate conversations and must not disturb the session's
@@ -376,6 +390,13 @@ export interface Provider {
         | ((context: ProfilePromptContext) => ProfilePromptContext | Promise<ProfilePromptContext>)
         | undefined;
     reset?(): Promise<void> | void;
+    /**
+     * Immediately tears down provider-owned session state without waiting behind active inference.
+     *
+     * Side-channel providers use this when their bounded operation is cancelled and the native
+     * stream does not cooperate with its abort signal.
+     */
+    forceClose?(): Promise<void> | void;
     compact?(options: {
         context: Context;
         inputTokens?: number;

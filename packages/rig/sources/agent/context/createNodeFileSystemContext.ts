@@ -29,6 +29,7 @@ export interface CreateNodeFileSystemContextOptions {
     home?: string;
     permissionMode?: () => PermissionMode;
     platform?: NodeJS.Platform;
+    protectedPaths?: readonly string[];
 }
 
 export function createNodeFileSystemContext(
@@ -38,6 +39,7 @@ export function createNodeFileSystemContext(
     const permissionMode = options.permissionMode ?? (() => DEFAULT_PERMISSION_MODE);
     const resolvePath = (path: string) => (isAbsolute(path) ? path : resolve(cwd, path));
     const home = options.home ?? homedir();
+    const protectedPaths = options.protectedPaths ?? [];
     const readPathOptions = {
         allowedPaths: [getBuiltinSkillRoot(), ...createUserSkillRootPaths(home)],
         homeDirectory: home,
@@ -48,7 +50,7 @@ export function createNodeFileSystemContext(
         home,
         async chmod(path, mode) {
             const target = resolvePath(path);
-            await assertCanWritePath(cwd, target, permissionMode());
+            await assertCanWritePath(cwd, target, permissionMode(), protectedPaths);
             await chmod(target, mode);
         },
         async exists(path) {
@@ -93,14 +95,14 @@ export function createNodeFileSystemContext(
         },
         async mkdir(path, options) {
             const target = resolvePath(path);
-            await assertCanWritePath(cwd, target, permissionMode());
+            await assertCanWritePath(cwd, target, permissionMode(), protectedPaths);
             await mkdir(target, { recursive: options?.recursive ?? false });
         },
         async move(source, destination) {
             const sourceTarget = resolvePath(source);
             const destinationTarget = resolvePath(destination);
-            await assertCanWritePath(cwd, sourceTarget, permissionMode());
-            await assertCanWritePath(cwd, destinationTarget, permissionMode());
+            await assertCanWritePath(cwd, sourceTarget, permissionMode(), protectedPaths);
+            await assertCanWritePath(cwd, destinationTarget, permissionMode(), protectedPaths);
             await rename(sourceTarget, destinationTarget);
         },
         async realpath(path) {
@@ -150,7 +152,7 @@ export function createNodeFileSystemContext(
         },
         async rm(path, options) {
             const target = resolvePath(path);
-            await assertCanWritePath(cwd, target, permissionMode());
+            await assertCanWritePath(cwd, target, permissionMode(), protectedPaths);
             await rm(target, {
                 recursive: options?.recursive ?? false,
                 force: options?.force ?? false,
@@ -158,7 +160,7 @@ export function createNodeFileSystemContext(
         },
         async setModificationTime(path, mtimeMs) {
             const target = resolvePath(path);
-            await assertCanWritePath(cwd, target, permissionMode());
+            await assertCanWritePath(cwd, target, permissionMode(), protectedPaths);
             const time = new Date(mtimeMs);
             await utimes(target, time, time);
         },
@@ -169,7 +171,7 @@ export function createNodeFileSystemContext(
         },
         async writeFile(path, content) {
             const target = resolvePath(path);
-            await assertCanWritePath(cwd, target, permissionMode());
+            await assertCanWritePath(cwd, target, permissionMode(), protectedPaths);
             await writeFile(target, content);
         },
     };

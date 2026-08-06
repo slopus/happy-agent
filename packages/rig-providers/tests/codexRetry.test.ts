@@ -7,7 +7,10 @@ import { describe, expect, it } from "vitest";
 
 import { CodexProvider } from "@/vendors/codex/CodexProvider.js";
 import { formatCodexUserAgent } from "@/vendors/codex/impl/codexUserAgent.js";
-import { classifyCodexError } from "@/vendors/codex/errors/codexErrors.js";
+import {
+    classifyCodexError,
+    classifyCodexProviderError,
+} from "@/vendors/codex/errors/codexErrors.js";
 import { codexErrorMessage } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexContextWindowError } from "@/vendors/codex/errors/codexErrors.js";
 import { isRetryableCodexStreamError } from "@/vendors/codex/errors/codexErrors.js";
@@ -20,11 +23,20 @@ import { resolveCodexInstallationIdAt } from "@/vendors/codex/impl/resolveCodexI
 import {
     resolveCodexRetryDelay,
     resolveCodexStreamIdleTimeout,
-    resolveCodexStreamMaxRetries,
     waitForCodexRetry,
 } from "@/vendors/codex/impl/codexRetry.js";
+import { resolveInferenceMaxRetries } from "@/core/inferenceRetrySettings.js";
 
 describe("Codex stream retries", () => {
+    it("classifies a generic HTTP 500 as an internal server error", () => {
+        const error = Object.assign(new Error("request failed"), { status: 500 });
+
+        expect(classifyCodexProviderError(error, error.message, 1)).toMatchObject({
+            type: "internal_server_error",
+            diagnostics: { attempts: 1, status: 500 },
+        });
+    });
+
     it("recognizes the Bedrock prompt-token overflow returned during compaction", () => {
         expect(
             isCodexContextWindowError(
@@ -120,13 +132,20 @@ describe("Codex stream retries", () => {
         expect(isRetryableCodexStreamError(disconnected)).toBe(true);
     });
 
-    it("separates transport faults from server rejections inside the WebSocket wrapper", () => {
+    it("retries WebSocket server rejections unless their code proves they are terminal", () => {
         const rejected = new WebSocketError("Invalid 'input': expected an array.", {
             type: "error",
             code: "invalid_request_error",
             message: "Invalid 'input': expected an array.",
             param: "input",
             sequence_number: 1,
+        });
+        const policyRejected = new WebSocketError("Policy rejected the request.", {
+            type: "error",
+            code: "cyber_policy",
+            message: "Policy rejected the request.",
+            param: "input",
+            sequence_number: 2,
         });
         const connectionLimit = new WebSocketError(
             "Responses websocket connection limit reached (60 minutes). Create a new websocket " +
@@ -142,7 +161,8 @@ describe("Codex stream retries", () => {
             },
         );
 
-        expect(isRetryableCodexStreamError(rejected)).toBe(false);
+        expect(isRetryableCodexStreamError(rejected)).toBe(true);
+        expect(isRetryableCodexStreamError(policyRejected)).toBe(false);
         expect(isRetryableCodexStreamError(connectionLimit)).toBe(true);
     });
 
@@ -203,17 +223,48 @@ describe("Codex stream retries", () => {
     });
 
     it.each([
+        ["insufficient_quota", 429],
+        ["invalid_prompt", 400],
+        ["invalid_request_error", 400],
+        ["model_not_found", 404],
+        ["permission_error", 403],
+    ])("retries provider code %s instead of treating HTTP %i as terminal", (code, status) => {
+        expect(
+            isRetryableCodexStreamError(
+                Object.assign(new Error("The provider rejected the request."), {
+                    code,
+                    headers: { "x-should-retry": "false" },
+                    status,
+                }),
+            ),
+        ).toBe(true);
+    });
+
+    it.each([
         Object.assign(new Error("bad request"), { status: 400 }),
         Object.assign(new Error("unauthorized"), { status: 401 }),
-        Object.assign(new Error("The prompt was rejected."), { code: "invalid_prompt" }),
-        Object.assign(new Error("Policy rejected the request."), { code: "cyber_policy" }),
+        Object.assign(new Error("Policy rejected the request."), {
+            code: "bio_policy",
+            headers: { "x-should-retry": "true" },
+            status: 500,
+        }),
+        Object.assign(new Error("Policy rejected the request."), {
+            code: "content_policy_violation",
+            headers: { "x-should-retry": "true" },
+            status: 500,
+        }),
+        Object.assign(new Error("Policy rejected the request."), {
+            code: "cyber_policy",
+            headers: { "x-should-retry": "true" },
+            status: 500,
+        }),
         Object.assign(new Error("Request failed."), { code: "context_length_exceeded" }),
         new DOMException("Request was aborted", "AbortError"),
     ])("does not retry explicitly fatal errors", (error) => {
         expect(isRetryableCodexStreamError(error)).toBe(false);
     });
 
-    it("preserves fatal response codes from Codex compaction", async () => {
+    it("preserves response codes from Codex compaction", async () => {
         const events = (async function* () {
             yield {
                 type: "response.failed",
@@ -240,8 +291,8 @@ describe("Codex stream retries", () => {
     it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5])(
         "rejects an invalid retry limit",
         (value) => {
-            expect(() => resolveCodexStreamMaxRetries(value)).toThrow(
-                "streamMaxRetries must be a finite nonnegative integer.",
+            expect(() => resolveInferenceMaxRetries(value)).toThrow(
+                "inferenceMaxRetries must be a finite nonnegative integer.",
             );
             expect(
                 () =>
@@ -250,29 +301,29 @@ describe("Codex stream retries", () => {
                             name: "codex-api-key",
                             credential: { apiKey: "test" },
                         },
-                        streamMaxRetries: value,
+                        inferenceMaxRetries: value,
                     }),
-            ).toThrow("streamMaxRetries must be a finite nonnegative integer.");
+            ).toThrow("inferenceMaxRetries must be a finite nonnegative integer.");
         },
     );
 
     it("caps retry limits to the upstream maximum", () => {
-        expect(resolveCodexStreamMaxRetries(101)).toBe(100);
+        expect(resolveInferenceMaxRetries(101)).toBe(100);
     });
 
     it("resolves the retry limit again for a long-lived provider", () => {
-        let streamMaxRetries = 1;
+        let inferenceMaxRetries = 1;
         const provider = new CodexProvider({
             credential: {
                 name: "codex-api-key",
                 credential: { apiKey: "test" },
             },
-            resolveStreamMaxRetries: () => streamMaxRetries,
+            resolveInferenceMaxRetries: () => inferenceMaxRetries,
         });
 
-        expect(provider.streamMaxRetries).toBe(1);
-        streamMaxRetries = 3;
-        expect(provider.streamMaxRetries).toBe(3);
+        expect(provider.inferenceMaxRetries).toBe(1);
+        inferenceMaxRetries = 3;
+        expect(provider.inferenceMaxRetries).toBe(3);
     });
 
     it("uses one persisted installation identity across sessions", async () => {
@@ -321,6 +372,12 @@ describe("Codex stream retries", () => {
             isRetryableCodexStreamError({
                 status: 400,
                 headers: { "x-should-retry": "true" },
+            }),
+        ).toBe(true);
+        expect(
+            isRetryableCodexStreamError({
+                code: "invalid_prompt",
+                headers: { "x-should-retry": "false" },
             }),
         ).toBe(true);
     });

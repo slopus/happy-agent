@@ -239,9 +239,9 @@ there is no model-context state bound to that connection.
 The server may return `x-codex-turn-state` on the HTTP response. Rig retains it only for requests
 in the same user turn. A new user turn gets a fresh turn identity and no inherited sticky token.
 
-In `auto` transport mode, SSE is also the persistent fallback after WebSocket is unavailable or
-its retry budget is exhausted. Once activated, later runs in the same Rig session continue with
-SSE.
+In `auto` transport mode, SSE becomes the persistent fallback when WebSocket is unavailable and
+the shared retry budget still has room for the fallback attempt. A zero retry budget therefore
+disables fallback. Once activated, later runs in the same Rig session continue with SSE.
 
 ## WebSocket
 
@@ -324,11 +324,15 @@ interleaving.
 
 Codex owns inference retries. The outer agent loop must not replay a provider request.
 
-The default stream retry budget is five and is capped at the vanilla maximum of 100. The idle
-timeout is five minutes. Retryable errors include explicit `x-should-retry: true`, 408, 409, 429,
-5xx responses, and common DNS, connection, socket, and timeout failures. Abort and
-`x-should-retry: false` are terminal. Bounded `retry-after-ms` or `retry-after` directives take
-precedence over exponential backoff starting at 200 milliseconds with jitter.
+The shared inference retry budget defaults to ten retries after the initial request and is capped
+at 100. It can change live through Rig's provider-neutral inference setting. The idle timeout is
+five minutes. Retry precedence is deliberate: explicit fatal provider codes are terminal even
+when `x-should-retry` says `true`; `insufficient_quota`, `invalid_prompt`,
+`invalid_request_error`, `model_not_found`, and `permission_error` are retryable even when that
+header says `false`; for every other code, `x-should-retry` is authoritative. Without a
+directive, 408, 409, 429, 5xx responses, and common DNS, connection, socket, and timeout failures
+are retryable. Abort is always terminal. Bounded `retry-after-ms` or `retry-after` directives
+take precedence over exponential backoff starting at 200 milliseconds with jitter.
 
 Codex may retry a retryable mid-stream failure after output begins. Rig emits `block_reset`
 before the retry and rebuilds the complete provider request, allowing the outer runtime to erase
@@ -336,8 +340,9 @@ the tentative attempt before replacement output arrives. Provider inference retr
 execute tools; the outer agent loop never replays a tool, command, or session mutation.
 
 WebSocket capability failures, including an upgrade-required handshake, can fall back directly
-to SSE. Other retryable WebSocket failures consume the WebSocket retry budget first, then fall
-back. Attempt numbers reported to the caller remain monotonic across the transport boundary.
+to SSE only while the shared retry budget has room for that attempt. WebSocket and SSE attempts
+share one total retry budget. Attempt numbers reported to the caller remain monotonic across the
+transport boundary.
 
 ChatGPT credentials have a separate 401 path. Rig first reloads a matching `auth.json`, rebuilds
 the client, and retries. If that credential is also rejected, Rig refreshes the token through the

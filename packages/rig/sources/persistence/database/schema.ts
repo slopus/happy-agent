@@ -24,6 +24,28 @@ export const rigDataIdentityTable = sqliteTable(
     ],
 );
 
+export const p2pPeers = sqliteTable("p2p_peers", {
+    instanceId: text("instance_id").notNull().primaryKey(),
+    publicKey: text("public_key").notNull().unique(),
+    name: text("name").notNull(),
+    bindingsJson: text("bindings_json").notNull(),
+    connectionsJson: text("connections_json").notNull(),
+    createdAtMs: integer("created_at_ms").notNull(),
+    updatedAtMs: integer("updated_at_ms").notNull(),
+});
+
+export const p2pPeerPairings = sqliteTable("p2p_peer_pairings", {
+    pairingId: text("pairing_id").primaryKey(),
+    instanceId: text("instance_id").notNull(),
+    publicKey: text("public_key").notNull(),
+    name: text("name").notNull(),
+    bindingsJson: text("bindings_json").notNull(),
+    connectionsJson: text("connections_json").notNull(),
+    assignPrimary: integer("assign_primary", { mode: "boolean" }).notNull(),
+    state: text("state").notNull(),
+    expiresAtMs: integer("expires_at_ms").notNull(),
+});
+
 export const projectAvatarAssets = sqliteTable("project_avatar_assets", {
     hash: text("hash").primaryKey(),
     mediaType: text("media_type").notNull(),
@@ -183,6 +205,9 @@ export const sessions = sqliteTable(
         workspaceTransferJson: text("workspace_transfer_json")
             .notNull()
             .default('{"status":"idle"}'),
+        workspaceQueueWaiting: integer("workspace_queue_waiting", { mode: "boolean" })
+            .notNull()
+            .default(false),
     },
     (table) => [
         index("sessions_agent_id").on(table.agentId),

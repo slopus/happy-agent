@@ -394,6 +394,7 @@ export type {
     SessionInterruptionReason,
     SessionPartialMessage,
     SessionPermissionReview,
+    SessionProviderToolCall,
     SessionReadResponse,
     SessionStateResponse,
     SessionStreamHello,
@@ -504,12 +505,47 @@ export {
 } from "./WebappProtocol.js";
 export { RIG_PROTOCOL_VERSION } from "./ProtocolVersion.js";
 export {
+    p2pInstanceIdSchema,
+    p2pPeerIdentitySchema,
+    p2pPublicKeySchema,
+    type P2pPeerIdentity,
+} from "./P2pIdentityProtocol.js";
+export {
+    p2pPeerConnectionStatusSchema,
+    p2pPeerStatusSchema,
+    p2pStatusChangedEventSchema,
+    p2pStatusSchema,
+    p2pTransportStatusSchema,
+    type P2pPeerConnectionStatus,
+    type P2pPeerStatus,
+    type P2pStatus,
+    type P2pStatusChangedEvent,
+    type P2pTransportStatus,
+} from "./P2pProtocol.js";
+export {
+    answerP2pVerificationRequestSchema,
+    createP2pInvitationResponseSchema,
+    joinP2pInvitationRequestSchema,
+    joinP2pInvitationResponseSchema,
+    p2pInvitationPayloadSchema,
+    p2pPairingPeerSchema,
+    p2pPairingStateSchema,
+    type AnswerP2pVerificationRequest,
+    type CreateP2pInvitationResponse,
+    type JoinP2pInvitationRequest,
+    type JoinP2pInvitationResponse,
+    type P2pInvitationPayload,
+    type P2pPairingPeer,
+    type P2pPairingState,
+} from "./P2pPairingProtocol.js";
+export {
     SESSION_DRAFT_MAX_CLOCK_SKEW_MS,
     SESSION_DRAFT_MAX_LENGTH,
     SESSION_TRANSCRIPT_NOTICE_LIMIT,
     SESSION_STREAM_TURN_LIMIT,
     submitContextMessageRequestSchema,
     transferSessionRequestSchema,
+    updateDaemonConfigRequestSchema,
 } from "./SessionProtocol.js";
 export {
     AttachmentImagePreviewSchema,

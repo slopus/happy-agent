@@ -49,6 +49,7 @@ import type {
     RigDaemonInstallationDiscovery,
     InstallPluginRequest,
     InstallPluginResponse,
+    P2pStatus,
     GitStateResponse,
     GitWatchResponse,
     GoalSessionResponse,
@@ -133,6 +134,7 @@ import type {
     SessionSharedMetadata,
     RequestSessionSharePeerTerminalResponse,
 } from "../protocol/index.js";
+import { updateDaemonConfigRequestSchema } from "../protocol/index.js";
 import {
     addSessionShareMemberRequestSchema,
     HAPPY_CLOUD_CIPHERTEXT_MAX_LENGTH,
@@ -223,10 +225,7 @@ import { isGoalStatus } from "../goals/index.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
 import { getGeneratedDirectory, resolveGeneratedMediaLocation } from "../generated-media/index.js";
 import { configureSessionRequest } from "../session/configureSessionRequest.js";
-import {
-    DEFAULT_CODEX_STREAM_MAX_RETRIES,
-    MAX_CODEX_STREAM_MAX_RETRIES,
-} from "../config/codexStreamRetrySettings.js";
+import { DEFAULT_INFERENCE_MAX_RETRIES } from "../config/inferenceRetrySettings.js";
 import { getGlobalAgentsMdPath } from "../config/getGlobalAgentsMdPath.js";
 import { GLOBAL_AGENTS_MD_MAX_BYTES } from "../config/globalAgentsMdMaxBytes.js";
 import { readGlobalAgentsMd } from "../config/readGlobalAgentsMd.js";
@@ -287,9 +286,11 @@ import type {
 } from "../protocol/index.js";
 import { isAuthorizedProtocolRequest } from "./isAuthorizedProtocolRequest.js";
 import { attachRemoteTerminalWebSocketServer } from "./attachRemoteTerminalWebSocketServer.js";
+import { attachP2pPeerTunnels } from "./attachP2pPeerTunnels.js";
 import { SessionTerminalTracker } from "../session/SessionTerminalTracker.js";
 import { sessionSummaryWithTerminalPresence } from "../session/sessionSummaryWithTerminalPresence.js";
 import { attachHttpConnectProxy } from "./attachHttpConnectProxy.js";
+import { attachP2pSshBridge } from "./attachP2pSshBridge.js";
 import {
     ProjectFileConflictError,
     ProjectFileOutsideScopeError,
@@ -307,9 +308,21 @@ import {
     FileTreeSymlinkTraversalError,
     listFileTree,
 } from "../file-tree/index.js";
+import type { P2pNetwork } from "../p2p/index.js";
+import type { P2pPairingServiceContract } from "../p2p/P2pPairingService.js";
+import {
+    answerP2pVerificationRequestSchema,
+    joinP2pInvitationRequestSchema,
+    p2pInstanceIdSchema,
+    type CreateP2pInvitationResponse,
+    type JoinP2pInvitationResponse,
+    type P2pPairingState,
+} from "../protocol/index.js";
+import { proxyP2pHttpRequest } from "./proxyP2pHttpRequest.js";
+import { matchP2pPeerRoute } from "./matchP2pPeerRoute.js";
 
 export interface ProtocolHttpServerOptions {
-    codexStreamMaxRetries?: number;
+    inferenceMaxRetries?: number;
     /** Where the user's global AGENTS.md lives. Defaults to the file beside the daemon config. */
     globalInstructionsPath?: string;
     /** Where the user's global SECURITY.md lives. Defaults to the file beside the daemon config. */
@@ -319,6 +332,11 @@ export interface ProtocolHttpServerOptions {
     happyCloud?: HappyCloudServiceContract;
     identity?: DaemonIdentity;
     modelCatalog?: ModelCatalog;
+    p2pNetwork?: P2pNetwork;
+    p2pPairing?: P2pPairingServiceContract;
+    p2pNode?: () => DaemonConfig["p2p"];
+    p2pStatus?: () => P2pStatus;
+    canP2pPeerConfigure?: (peerId: string) => boolean;
     murmur?: MurmurServiceContract;
     /** Workspace and project sharing over Murmur. The daemon always supplies it. */
     scopeShares?: ScopeShareServiceContract;
@@ -329,8 +347,8 @@ export interface ProtocolHttpServerOptions {
     getProviderQuota?: (providerId: string) => Promise<ProviderQuota | undefined>;
     /** Hands out the usage the daemon polls for every configured provider. */
     listProviderUsage?: () => readonly ProviderUsageEntry[];
-    onDaemonSettingsChange?: (
-        settings: DaemonConfig["settings"],
+    onDaemonConfigChange?: (
+        config: DaemonConfig,
     ) => AppliedDaemonSettings | undefined | Promise<AppliedDaemonSettings | undefined>;
     onShutdown?: () => void;
     onReloadHappy?: () => boolean | Promise<boolean>;
@@ -375,17 +393,22 @@ export function createProtocolHttpServer(
     const fileSearchService = options.fileSearchService ?? new FileSearchService();
     const webappContextTokens = new WebappContextTokenStore();
     const runtimeConfig: ProtocolServerRuntimeConfig = {
-        codexStreamMaxRetries: options.codexStreamMaxRetries ?? DEFAULT_CODEX_STREAM_MAX_RETRIES,
+        inferenceMaxRetries: options.inferenceMaxRetries ?? DEFAULT_INFERENCE_MAX_RETRIES,
         gitStateTracker: options.gitStateTracker,
         globalEventQueue: options.globalEventQueue ?? store.globalEventQueue,
         globalInstructionsPath: options.globalInstructionsPath ?? getGlobalAgentsMdPath(),
         globalSecurityPolicyPath: options.globalSecurityPolicyPath ?? getGlobalSecurityMdPath(),
         listProviderUsage: options.listProviderUsage,
+        p2pNetwork: options.p2pNetwork,
+        p2pPairing: options.p2pPairing,
+        p2pNode: options.p2pNode,
+        p2pStatus: options.p2pStatus,
+        canP2pPeerConfigure: options.canP2pPeerConfigure,
         murmur: options.murmur,
         scopeShares: options.scopeShares,
         sessionShares: options.sessionShares,
         happyCloud: options.happyCloud,
-        onDaemonSettingsChange: options.onDaemonSettingsChange,
+        onDaemonConfigChange: options.onDaemonConfigChange,
         onReloadHappy: options.onReloadHappy,
         onStartInspector: options.onStartInspector,
         plugins: options.plugins,
@@ -393,8 +416,22 @@ export function createProtocolHttpServer(
     // The persistent store caches sessions weakly; each open SSE stream needs its own strong lease.
     const sessionEventStreamLeases = new Set<SessionEventStreamLease>();
     const sessionTerminals = new SessionTerminalTracker();
+    const p2pNetwork = options.p2pNetwork;
+    const sshBridgeEnabled = p2pNetwork?.sshBridgeEnabled;
+    const acceptSshBridge =
+        p2pNetwork !== undefined &&
+        typeof sshBridgeEnabled === "function" &&
+        sshBridgeEnabled.call(p2pNetwork) === true
+            ? p2pNetwork.acceptSshBridge.bind(p2pNetwork)
+            : undefined;
 
     attachRemoteTerminalWebSocketServer({ server, store, token: options.token });
+    attachP2pPeerTunnels({
+        ...(p2pNetwork === undefined ? {} : { network: p2pNetwork }),
+        server,
+        token: options.token,
+    });
+    attachP2pSshBridge(server, options.token, acceptSshBridge);
     attachHttpConnectProxy(server, options.token, store);
     server.once("close", () => {
         void store.remoteTerminals.close();
@@ -455,17 +492,22 @@ export function createProtocolHttpServer(
 }
 
 interface ProtocolServerRuntimeConfig {
-    codexStreamMaxRetries: number;
+    canP2pPeerConfigure: ProtocolHttpServerOptions["canP2pPeerConfigure"];
+    inferenceMaxRetries: number;
     gitStateTracker: GitStateTracker | undefined;
     globalEventQueue: GlobalEventQueue;
     globalInstructionsPath: string;
     globalSecurityPolicyPath: string;
     listProviderUsage: (() => readonly ProviderUsageEntry[]) | undefined;
+    p2pNetwork: P2pNetwork | undefined;
+    p2pPairing: P2pPairingServiceContract | undefined;
+    p2pNode: (() => DaemonConfig["p2p"]) | undefined;
+    p2pStatus: (() => P2pStatus) | undefined;
     murmur: MurmurServiceContract | undefined;
     scopeShares: ScopeShareServiceContract | undefined;
     sessionShares: SessionShareServiceContract | undefined;
     happyCloud: HappyCloudServiceContract | undefined;
-    onDaemonSettingsChange: ProtocolHttpServerOptions["onDaemonSettingsChange"];
+    onDaemonConfigChange: ProtocolHttpServerOptions["onDaemonConfigChange"];
     onStartInspector: (() => StartInspectorResponse | Promise<StartInspectorResponse>) | undefined;
     onReloadHappy: (() => boolean | Promise<boolean>) | undefined;
     plugins:
@@ -489,7 +531,7 @@ interface ProtocolServerRuntimeConfig {
 }
 
 interface AppliedDaemonSettings {
-    codexStreamMaxRetries: number;
+    inferenceMaxRetries: number;
     globalEventQueue: GlobalEventQueue;
 }
 
@@ -531,6 +573,7 @@ async function handleRequest(
 ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://unix");
     const route = matchRoute(url.pathname);
+    const p2pPeerRoute = matchP2pPeerRoute(url);
     if (route?.name === "webapp-context") {
         if (request.method !== "GET") {
             sendJson(response, 405, { error: "Method not allowed" });
@@ -553,6 +596,20 @@ async function handleRequest(
         sendJson(response, 401, { error: "Unauthorized" });
         return;
     }
+    if (p2pPeerRoute !== undefined) {
+        if (runtimeConfig.p2pNetwork === undefined) {
+            sendJson(response, 503, { error: "P2P networking is unavailable." });
+            return;
+        }
+        await proxyP2pHttpRequest(
+            runtimeConfig.p2pNetwork,
+            p2pPeerRoute.peerId,
+            p2pPeerRoute.path,
+            request,
+            response,
+        );
+        return;
+    }
     if (route === undefined) {
         sendJson(response, 404, { error: "Not found" });
         return;
@@ -563,6 +620,82 @@ async function handleRequest(
             response,
             200,
             healthResponse(modelCatalog, identity, runtimeConfig.globalEventQueue.durable),
+        );
+        return;
+    }
+
+    if (request.method === "GET" && route.name === "p2p-status") {
+        sendJson<P2pStatus>(response, 200, runtimeConfig.p2pStatus?.() ?? { transports: [] });
+        return;
+    }
+    if (route.name === "p2p-invitations") {
+        if (request.method !== "POST") {
+            sendJson(response, 405, { error: "Method not allowed" });
+            return;
+        }
+        if (runtimeConfig.p2pPairing === undefined) {
+            sendJson(response, 503, { error: "P2P pairing is unavailable." });
+            return;
+        }
+        sendJson<CreateP2pInvitationResponse>(
+            response,
+            201,
+            await runtimeConfig.p2pPairing.createInvitation(),
+        );
+        return;
+    }
+    if (route.name === "p2p-joins") {
+        if (request.method !== "POST") {
+            sendJson(response, 405, { error: "Method not allowed" });
+            return;
+        }
+        if (runtimeConfig.p2pPairing === undefined) {
+            sendJson(response, 503, { error: "P2P pairing is unavailable." });
+            return;
+        }
+        const body = await readCheckedBody(request, joinP2pInvitationRequestSchema);
+        if (body === undefined) {
+            sendJson(response, 400, { error: "The P2P invitation request is invalid." });
+            return;
+        }
+        sendJson<JoinP2pInvitationResponse>(
+            response,
+            202,
+            await runtimeConfig.p2pPairing.join(body.invitation),
+        );
+        return;
+    }
+    if (route.name === "p2p-pairing") {
+        if (request.method !== "GET") {
+            sendJson(response, 405, { error: "Method not allowed" });
+            return;
+        }
+        const state = runtimeConfig.p2pPairing?.get(route.pairingId);
+        if (state === undefined) {
+            sendJson(response, 404, { error: "P2P pairing not found." });
+            return;
+        }
+        sendJson<P2pPairingState>(response, 200, state);
+        return;
+    }
+    if (route.name === "p2p-pairing-answer") {
+        if (request.method !== "POST") {
+            sendJson(response, 405, { error: "Method not allowed" });
+            return;
+        }
+        if (runtimeConfig.p2pPairing === undefined) {
+            sendJson(response, 503, { error: "P2P pairing is unavailable." });
+            return;
+        }
+        const body = await readCheckedBody(request, answerP2pVerificationRequestSchema);
+        if (body === undefined) {
+            sendJson(response, 400, { error: "The P2P verification answer is invalid." });
+            return;
+        }
+        sendJson<P2pPairingState>(
+            response,
+            200,
+            runtimeConfig.p2pPairing.answer(route.pairingId, body.accept),
         );
         return;
     }
@@ -1887,7 +2020,7 @@ async function handleRequest(
     ) {
         const directory = resolveProjectScopeDirectory(store, route);
         if (!directory.ok) {
-            sendJson(response, 404, { error: directory.error });
+            sendJson(response, directory.status, { error: directory.error });
             return;
         }
         if (route.name === "project-file-paths") {
@@ -2685,6 +2818,7 @@ async function handleRequest(
     }
 
     if (request.method === "GET" && route.name === "global-instructions") {
+        if (!authorizeP2pConfigurationRequest(request, response, runtimeConfig)) return;
         sendJson<GetGlobalInstructionsResponse>(response, 200, {
             instructions: (await readGlobalAgentsMd(runtimeConfig.globalInstructionsPath)) ?? "",
         });
@@ -2692,6 +2826,7 @@ async function handleRequest(
     }
 
     if (request.method === "PUT" && route.name === "global-instructions") {
+        if (!authorizeP2pConfigurationRequest(request, response, runtimeConfig)) return;
         const body = await readJson<UpdateGlobalInstructionsRequest>(request);
         const instructions = body.instructions;
         if (typeof instructions !== "string") {
@@ -2713,6 +2848,7 @@ async function handleRequest(
     }
 
     if (request.method === "GET" && route.name === "global-security-policy") {
+        if (!authorizeP2pConfigurationRequest(request, response, runtimeConfig)) return;
         sendJson<GetGlobalSecurityPolicyResponse>(response, 200, {
             policy: (await readGlobalSecurityMd(runtimeConfig.globalSecurityPolicyPath)) ?? "",
         });
@@ -2720,6 +2856,7 @@ async function handleRequest(
     }
 
     if (request.method === "PUT" && route.name === "global-security-policy") {
+        if (!authorizeP2pConfigurationRequest(request, response, runtimeConfig)) return;
         const body = await readJson<unknown>(request, GLOBAL_SECURITY_POLICY_REQUEST_MAX_BYTES);
         if (!Value.Check(globalSecurityPolicySchema, body)) {
             sendJson(response, 400, { error: "Global security policy must be text." });
@@ -2739,10 +2876,15 @@ async function handleRequest(
     }
 
     if (request.method === "GET" && route.name === "config") {
+        if (!authorizeP2pConfigurationRequest(request, response, runtimeConfig)) return;
         sendJson<GetDaemonConfigResponse>(response, 200, {
             config: {
+                p2p: runtimeConfig.p2pNode?.() ?? {
+                    name: "Rig",
+                    role: "primary",
+                },
                 settings: {
-                    codexStreamMaxRetries: runtimeConfig.codexStreamMaxRetries,
+                    inferenceMaxRetries: runtimeConfig.inferenceMaxRetries,
                     durableGlobalEventQueue: runtimeConfig.globalEventQueue.durable,
                 },
             },
@@ -2751,49 +2893,52 @@ async function handleRequest(
     }
 
     if (request.method === "PATCH" && route.name === "config") {
-        const body = await readJson<UpdateDaemonConfigRequest>(request);
-        const codexStreamMaxRetries = body.settings?.codexStreamMaxRetries;
-        const enabled = body.settings?.durableGlobalEventQueue;
-        if (
-            typeof codexStreamMaxRetries !== "number" ||
-            !Number.isInteger(codexStreamMaxRetries) ||
-            codexStreamMaxRetries < 0 ||
-            codexStreamMaxRetries > MAX_CODEX_STREAM_MAX_RETRIES
-        ) {
-            sendJson(response, 400, {
-                error: `Codex reconnect attempts must be a whole number from 0 to ${MAX_CODEX_STREAM_MAX_RETRIES}.`,
-            });
+        if (!authorizeP2pConfigurationRequest(request, response, runtimeConfig)) return;
+        const rawBody = await readJson<unknown>(request);
+        if (!Value.Check(updateDaemonConfigRequestSchema, rawBody)) {
+            sendJson(response, 400, { error: "Daemon settings must use valid values." });
             return;
         }
-        if (typeof enabled !== "boolean") {
-            sendJson(response, 400, {
-                error: "Durable global event queue must be enabled or disabled.",
-            });
-            return;
-        }
-        if (runtimeConfig.onDaemonSettingsChange === undefined) {
+        const body: UpdateDaemonConfigRequest = rawBody;
+        const inferenceMaxRetries = body.settings.inferenceMaxRetries;
+        const enabled = body.settings.durableGlobalEventQueue;
+        if (runtimeConfig.onDaemonConfigChange === undefined) {
             sendJson(response, 409, {
                 error: "This daemon cannot change its settings at runtime.",
             });
             return;
         }
-        const applied = await runtimeConfig.onDaemonSettingsChange({
-            codexStreamMaxRetries,
-            durableGlobalEventQueue: enabled,
+        const currentP2p = runtimeConfig.p2pNode?.() ?? {
+            name: "Rig",
+            role: "primary" as const,
+        };
+        const applied = await runtimeConfig.onDaemonConfigChange({
+            p2p: {
+                ...currentP2p,
+                ...(body.p2p === undefined ? {} : { name: body.p2p.name }),
+            },
+            settings: {
+                inferenceMaxRetries,
+                durableGlobalEventQueue: enabled,
+            },
         });
         if (
             applied === undefined ||
-            applied.codexStreamMaxRetries !== codexStreamMaxRetries ||
+            applied.inferenceMaxRetries !== inferenceMaxRetries ||
             applied.globalEventQueue.durable !== enabled
         ) {
             throw new Error("The daemon could not apply the requested settings.");
         }
-        runtimeConfig.codexStreamMaxRetries = applied.codexStreamMaxRetries;
+        runtimeConfig.inferenceMaxRetries = applied.inferenceMaxRetries;
         runtimeConfig.globalEventQueue = applied.globalEventQueue;
         sendJson<UpdateDaemonConfigResponse>(response, 200, {
             config: {
+                p2p: runtimeConfig.p2pNode?.() ?? {
+                    name: body.p2p?.name ?? "Rig",
+                    role: "primary",
+                },
                 settings: {
-                    codexStreamMaxRetries,
+                    inferenceMaxRetries,
                     durableGlobalEventQueue: enabled,
                 },
             },
@@ -4065,14 +4210,22 @@ async function handleRequest(
 function resolveProjectScopeDirectory(
     store: SessionStore,
     scope: ProjectScope,
-): { ok: true; path: string } | { error: string; ok: false } {
+): { ok: true; path: string } | { error: string; ok: false; status: 404 | 409 } {
     const project = store.getProject(scope.projectId);
-    if (project === undefined) return { error: "Project not found", ok: false };
+    if (project === undefined) return { error: "Project not found", ok: false, status: 404 };
     if (scope.workspaceId === undefined) return { ok: true, path: project.path };
     const workspace = store.getWorkspace(scope.projectId, scope.workspaceId);
-    return workspace === undefined
-        ? { error: "Workspace not found", ok: false }
-        : { ok: true, path: workspace.path };
+    if (workspace === undefined) {
+        return { error: "Workspace not found", ok: false, status: 404 };
+    }
+    if (workspace.status !== "ready" || workspace.presence !== "present") {
+        return {
+            error: "Only ready, available workspaces can access files.",
+            ok: false,
+            status: 409,
+        };
+    }
+    return { ok: true, path: workspace.path };
 }
 
 function healthResponse(
@@ -4246,6 +4399,9 @@ function matchRoute(pathname: string):
               | "debug-inspector"
               | "health"
               | "installation"
+              | "p2p-status"
+              | "p2p-invitations"
+              | "p2p-joins"
               | "happy-cloud-commands"
               | "happy-cloud-profile"
               | "happy-cloud-status"
@@ -4277,6 +4433,11 @@ function matchRoute(pathname: string):
     | {
           cloudSessionId: string;
           name: "happy-cloud-session-blob";
+          sessionId?: undefined;
+      }
+    | {
+          name: "p2p-pairing" | "p2p-pairing-answer";
+          pairingId: string;
           sessionId?: undefined;
       }
     | {
@@ -4472,6 +4633,20 @@ function matchRoute(pathname: string):
     | undefined {
     if (pathname === "/health") return { name: "health" };
     if (pathname === "/installation") return { name: "installation" };
+    if (pathname === "/p2p/status") return { name: "p2p-status" };
+    if (pathname === "/p2p/invitations") return { name: "p2p-invitations" };
+    if (pathname === "/p2p/joins") return { name: "p2p-joins" };
+    const p2pPairing = /^\/p2p\/pairings\/([^/]+)(?:\/(answer))?$/.exec(pathname);
+    if (
+        p2pPairing !== null &&
+        p2pPairing[1] !== undefined &&
+        Value.Check(p2pInstanceIdSchema, p2pPairing[1])
+    ) {
+        return {
+            name: p2pPairing[2] === "answer" ? "p2p-pairing-answer" : "p2p-pairing",
+            pairingId: p2pPairing[1],
+        };
+    }
     if (pathname === "/happy-cloud/commands") return { name: "happy-cloud-commands" };
     if (pathname === "/happy-cloud/profile") return { name: "happy-cloud-profile" };
     if (pathname === "/happy-cloud/status") return { name: "happy-cloud-status" };
@@ -5274,6 +5449,13 @@ function isMutatingProtocolRequest(request: IncomingMessage): boolean {
     const url = new URL(request.url ?? "/", "http://unix");
     const route = matchRoute(url.pathname);
     if (route === undefined) return false;
+    if (
+        route.name === "p2p-invitations" ||
+        route.name === "p2p-joins" ||
+        route.name === "p2p-pairing-answer"
+    ) {
+        return request.method === "POST";
+    }
     if (route.name === "config") return request.method === "PATCH";
     if (route.name === "global-instructions") return request.method === "PUT";
     if (route.name === "global-security-policy") return request.method === "PUT";
@@ -5837,4 +6019,18 @@ function sessionStateHello(
             snapshot: { ...agentSnapshot, messages: [] },
         },
     };
+}
+
+function authorizeP2pConfigurationRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    runtimeConfig: ProtocolServerRuntimeConfig,
+): boolean {
+    const peerId = request.headers["x-rig-p2p-peer"];
+    if (typeof peerId !== "string") return true;
+    if (runtimeConfig.canP2pPeerConfigure?.(peerId) === true) return true;
+    sendJson(response, 403, {
+        error: "Only this secondary Rig's primary may change its configuration.",
+    });
+    return false;
 }

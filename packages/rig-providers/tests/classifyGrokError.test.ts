@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyGrokError } from "@/vendors/grok/errors/grokErrors.js";
+import { classifyGrokError, classifyGrokProviderError } from "@/vendors/grok/errors/grokErrors.js";
 
 describe("classifyGrokError", () => {
     it("classifies context overflow messages like grok-build", () => {
@@ -36,5 +36,33 @@ describe("classifyGrokError", () => {
     it("falls back to unknown for unclassified client errors", () => {
         expect(classifyGrokError("Unauthorized (401): invalid token")).toBe("unknown");
         expect(classifyGrokError("Invalid model parameter")).toBe("unknown");
+    });
+
+    it("preserves Grok status, code, request ID, and attempt count", () => {
+        const error = Object.assign(new Error("service unavailable"), {
+            code: "model_backend_failure",
+            headers: { "x-request-id": "grok-request-1" },
+            status: 503,
+        });
+
+        expect(classifyGrokProviderError(error, error.message, 3)).toEqual({
+            type: "server_overloaded",
+            diagnostics: {
+                attempts: 3,
+                code: "model_backend_failure",
+                requestId: "grok-request-1",
+                status: 503,
+                upstreamMessage: "service unavailable",
+            },
+        });
+    });
+
+    it("classifies a generic HTTP 500 as an internal server error", () => {
+        const error = Object.assign(new Error("request failed"), { status: 500 });
+
+        expect(classifyGrokProviderError(error, error.message, 1)).toMatchObject({
+            type: "internal_server_error",
+            diagnostics: { attempts: 1, status: 500 },
+        });
     });
 });

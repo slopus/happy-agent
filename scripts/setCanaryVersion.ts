@@ -6,7 +6,10 @@ import { resolveReleasePackage } from "./release/resolveReleasePackage.js";
 
 const releasePackage = resolveReleasePackage(process.env.RELEASE_PACKAGE);
 const manifestPath = `${releasePackage.directory}package.json`;
+// Read before writing: the canary follows the release this checkout is on, so the version it
+// replaces is the one it has to be numbered from.
 const canaryVersion = resolveCanaryVersion({
+    baseVersion: readPackageManifest(releasePackage).version,
     buildNumber: process.env.CANARY_BUILD_NUMBER ?? "",
     commit: process.env.CANARY_COMMIT ?? "",
 });

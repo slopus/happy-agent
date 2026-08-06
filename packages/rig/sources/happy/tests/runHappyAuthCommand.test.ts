@@ -2,9 +2,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import tweetnacl from "tweetnacl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+    NACL_NONCE_BYTES,
+    nobleBoxKeyPairFromSecretKey,
+    nobleBoxSeal,
+} from "../../crypto/nobleNaCl.js";
 import { runHappyAuthCommand } from "../runHappyAuthCommand.js";
 
 const directories: string[] = [];
@@ -19,7 +23,7 @@ describe("runHappyAuthCommand", () => {
     it("stores v2 credentials from the mobile QR flow and reloads the daemon", async () => {
         const directory = await mkdtemp(join(tmpdir(), "rig-happy-auth-"));
         directories.push(directory);
-        const keyPair = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(3));
+        const keyPair = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(3));
         const accountPublicKey = new Uint8Array(32).fill(8);
         const responseBundle = encryptAuthenticationResponse(keyPair.publicKey, accountPublicKey);
         let requestCount = 0;
@@ -66,12 +70,12 @@ function encryptAuthenticationResponse(
     recipientPublicKey: Uint8Array,
     accountPublicKey: Uint8Array,
 ): Uint8Array {
-    const sender = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(4));
-    const nonce = new Uint8Array(tweetnacl.box.nonceLength).fill(5);
+    const sender = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(4));
+    const nonce = new Uint8Array(NACL_NONCE_BYTES).fill(5);
     const plaintext = new Uint8Array(33);
     plaintext[0] = 0;
     plaintext.set(accountPublicKey, 1);
-    const ciphertext = tweetnacl.box(plaintext, nonce, recipientPublicKey, sender.secretKey);
+    const ciphertext = nobleBoxSeal(plaintext, nonce, recipientPublicKey, sender.secretKey);
     const bundle = new Uint8Array(sender.publicKey.length + nonce.length + ciphertext.length);
     bundle.set(sender.publicKey, 0);
     bundle.set(nonce, sender.publicKey.length);

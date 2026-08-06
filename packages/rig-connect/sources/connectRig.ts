@@ -87,6 +87,10 @@ import type {
     HappyCloudProfileCiphertextResponse,
     HappyCloudSessionBlobResponse,
     HappyCloudStatus,
+    P2pStatus,
+    CreateP2pInvitationResponse,
+    JoinP2pInvitationResponse,
+    P2pPairingState,
     SendMurmurFriendRequestResponse,
     SignupMurmurAccountRequest,
     SignupMurmurAccountResponse,
@@ -128,6 +132,11 @@ import {
     happyCloudProfileCiphertextResponseSchema,
     happyCloudSessionBlobResponseSchema,
     happyCloudStatusSchema,
+    p2pStatusChangedEventSchema,
+    p2pStatusSchema,
+    createP2pInvitationResponseSchema,
+    joinP2pInvitationResponseSchema,
+    p2pPairingStateSchema,
     listMurmurContactsResponseSchema,
     listMurmurFriendRequestsResponseSchema,
     listPluginsResponseSchema,
@@ -330,6 +339,17 @@ export interface RigHappyCloudConnection {
     close: () => void;
     /** Absent until the first authoritative snapshot has loaded. */
     status: () => HappyCloudStatus | undefined;
+}
+
+export interface RigP2pSubscriptionOptions {
+    onChange: (status: P2pStatus) => void;
+    onError?: (error: unknown) => void;
+}
+
+export interface RigP2pConnection {
+    close: () => void;
+    /** Absent until the first daemon snapshot has loaded. */
+    status: () => P2pStatus | undefined;
 }
 
 export interface RigInboxSubscriptionOptions {
@@ -580,6 +600,12 @@ export interface RigConnection {
     connectInbox: (options: RigInboxSubscriptionOptions) => RigInboxConnection;
     /** Follows the authoritative status plus this client's pending Happy Cloud choices. */
     connectHappyCloud: (options: RigHappyCloudSubscriptionOptions) => RigHappyCloudConnection;
+    /** Follows authenticated P2P transports and trusted peer reachability. */
+    connectP2p: (options: RigP2pSubscriptionOptions) => RigP2pConnection;
+    createP2pInvitation: () => Promise<CreateP2pInvitationResponse>;
+    joinP2pInvitation: (invitation: string) => Promise<JoinP2pInvitationResponse>;
+    getP2pPairing: (id: string) => Promise<P2pPairingState>;
+    answerP2pVerification: (id: string, accept: boolean) => Promise<P2pPairingState>;
     /**
      * Follows how much of each provider account's plan has been used.
      *
@@ -934,6 +960,23 @@ interface HappyCloudEntry {
     subscribers: Set<HappyCloudSubscriber>;
 }
 
+interface P2pSubscriber extends RigP2pSubscriptionOptions {
+    closed: boolean;
+}
+
+interface P2pEntry {
+    controller: AbortController;
+    detachRoot: () => void;
+    eventRevision: number;
+    lastLoadError?: unknown;
+    loading?: Promise<void>;
+    recoveryScheduled: boolean;
+    reloadPending: boolean;
+    started: boolean;
+    status?: P2pStatus;
+    subscribers: Set<P2pSubscriber>;
+}
+
 interface MutationRequest {
     body?: unknown;
     headers?: Readonly<Record<string, string>>;
@@ -1005,6 +1048,7 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
     const presenceClosers = new Set<() => void>();
     let groupsEntry: GroupEntry | undefined;
     let happyCloudEntry: HappyCloudEntry | undefined;
+    let p2pEntry: P2pEntry | undefined;
     let inboxEntry: InboxEntry | undefined;
     let murmurFriendsEntry: MurmurFriendsEntry | undefined;
     let pluginsEntry: PluginsEntry | undefined;
@@ -1040,6 +1084,14 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
     const publishHappyCloud = (): void => {
         const entry = happyCloudEntry;
         if (closed || entry === undefined || !entry.loaded) return;
+        for (const subscriber of [...entry.subscribers]) {
+            if (!subscriber.closed) subscriber.onChange(entry.status);
+        }
+    };
+
+    const publishP2p = (): void => {
+        const entry = p2pEntry;
+        if (closed || entry?.status === undefined) return;
         for (const subscriber of [...entry.subscribers]) {
             if (!subscriber.closed) subscriber.onChange(entry.status);
         }
@@ -2147,6 +2199,9 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
                 // reload path this is deliberately left to the load itself: a view
                 // must not report live while it is still empty.
                 if (hello.resumed && !hello.gap) {
+                    if (p2pEntry !== undefined && p2pEntry.started) {
+                        void loadP2p(p2pEntry);
+                    }
                     if (groupsEntry !== undefined) {
                         publishGroups(groupsEntry, groupsEntry.store.setConnection("live"));
                     }
@@ -2175,6 +2230,9 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
                 gitWatchTimer = undefined;
                 if (happyCloudEntry !== undefined && happyCloudEntry.started) {
                     void requestHappyCloudReload(happyCloudEntry, hello.gap);
+                }
+                if (p2pEntry !== undefined && p2pEntry.started) {
+                    void loadP2p(p2pEntry);
                 }
                 const groups = groupsEntry;
                 if (groups !== undefined && groups.started) {
@@ -2225,6 +2283,21 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
                     return;
                 }
                 rememberGlobalIdentity(event);
+                if (event.type === "p2p_status_changed") {
+                    const entry = p2pEntry;
+                    if (entry === undefined || !entry.started) return;
+                    try {
+                        const changed = Value.Decode(p2pStatusChangedEventSchema, event);
+                        entry.eventRevision += 1;
+                        const statusChanged = !sameP2pStatus(entry.status, changed.data.status);
+                        if (statusChanged) entry.status = changed.data.status;
+                        delete entry.lastLoadError;
+                        if (statusChanged) publishP2p();
+                    } catch {
+                        void loadP2p(entry);
+                    }
+                    return;
+                }
                 if (event.type === "happy_cloud_changed") {
                     const entry = happyCloudEntry;
                     if (entry === undefined || !entry.started) return;
@@ -2647,6 +2720,11 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
             happyCloudEntry.controller.abort();
             happyCloudEntry.detachRoot();
             happyCloudEntry = undefined;
+        }
+        if (p2pEntry !== undefined && p2pEntry.subscribers.size === 0) {
+            p2pEntry.controller.abort();
+            p2pEntry.detachRoot();
+            p2pEntry = undefined;
         }
         if (
             groupsEntry !== undefined &&
@@ -3102,6 +3180,38 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         return { data, status: response.status };
     };
 
+    const requestP2pPairing = async <Schema extends TSchema>(
+        path: string,
+        schema: Schema,
+        init: RequestInit = {},
+    ): Promise<Static<Schema>> => {
+        const response = await requestJson(path, init);
+        try {
+            return Value.Decode(schema, response.data);
+        } catch {
+            throw new Error("Rig returned an invalid P2P pairing response.");
+        }
+    };
+
+    const createP2pInvitation: RigConnection["createP2pInvitation"] = () =>
+        requestP2pPairing("p2p/invitations", createP2pInvitationResponseSchema, {
+            method: "POST",
+        });
+    const joinP2pInvitation: RigConnection["joinP2pInvitation"] = (invitation) =>
+        requestP2pPairing("p2p/joins", joinP2pInvitationResponseSchema, {
+            body: JSON.stringify({ invitation }),
+            headers: { "content-type": "application/json" },
+            method: "POST",
+        });
+    const getP2pPairing: RigConnection["getP2pPairing"] = (id) =>
+        requestP2pPairing(`p2p/pairings/${encodeURIComponent(id)}`, p2pPairingStateSchema);
+    const answerP2pVerification: RigConnection["answerP2pVerification"] = (id, accept) =>
+        requestP2pPairing(`p2p/pairings/${encodeURIComponent(id)}/answer`, p2pPairingStateSchema, {
+            body: JSON.stringify({ accept }),
+            headers: { "content-type": "application/json" },
+            method: "POST",
+        });
+
     const requestSessionShare = async <T extends TSchema>(
         path: string,
         schema: T,
@@ -3556,6 +3666,112 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         } catch {
             throw new Error("Rig returned an invalid Happy Cloud response.");
         }
+    };
+
+    const createP2pEntry = (): P2pEntry => {
+        if (p2pEntry !== undefined) return p2pEntry;
+        const linked = linkedController(rootController.signal);
+        p2pEntry = {
+            controller: linked.controller,
+            detachRoot: linked.detach,
+            eventRevision: 0,
+            recoveryScheduled: false,
+            reloadPending: false,
+            started: false,
+            subscribers: new Set(),
+        };
+        return p2pEntry;
+    };
+
+    const loadP2p = (entry: P2pEntry): Promise<void> => {
+        if (entry.loading !== undefined) {
+            entry.reloadPending = true;
+            return entry.loading;
+        }
+        const eventRevision = entry.eventRevision;
+        let shouldRecover = false;
+        const loading = (async () => {
+            const response = await request(endpointUrl(options.endpoint, "p2p/status"), {
+                headers: {
+                    accept: "application/json",
+                    authorization: `Bearer ${options.token}`,
+                },
+                signal: entry.controller.signal,
+            });
+            if (!response.ok) {
+                throw new Error(`Rig could not read P2P status (${String(response.status)}).`);
+            }
+            const status = Value.Decode(p2pStatusSchema, await response.json());
+            if (entry.controller.signal.aborted || p2pEntry !== entry) return;
+            const statusChanged =
+                entry.eventRevision === eventRevision && !sameP2pStatus(entry.status, status);
+            if (statusChanged) entry.status = status;
+            delete entry.lastLoadError;
+            if (statusChanged) publishP2p();
+        })();
+        entry.loading = loading;
+        void loading
+            .catch((error: unknown) => {
+                if (entry.controller.signal.aborted || p2pEntry !== entry) return;
+                if (entry.eventRevision !== eventRevision) return;
+                const changedError =
+                    entry.lastLoadError instanceof Error && error instanceof Error
+                        ? entry.lastLoadError.message !== error.message
+                        : entry.lastLoadError !== error;
+                entry.lastLoadError = error;
+                if (changedError) {
+                    for (const subscriber of [...entry.subscribers]) subscriber.onError?.(error);
+                }
+                shouldRecover = true;
+            })
+            .finally(() => {
+                if (entry.loading === loading) delete entry.loading;
+                if (entry.controller.signal.aborted || p2pEntry !== entry) return;
+                if (entry.reloadPending) {
+                    entry.reloadPending = false;
+                    void loadP2p(entry);
+                } else if (shouldRecover) {
+                    scheduleP2pRecovery(entry);
+                }
+            });
+        return loading;
+    };
+
+    const scheduleP2pRecovery = (entry: P2pEntry): void => {
+        if (entry.recoveryScheduled || entry.controller.signal.aborted) return;
+        entry.recoveryScheduled = true;
+        void wait(MAXIMUM_MUTATION_RETRY_MS, entry.controller.signal).then(() => {
+            entry.recoveryScheduled = false;
+            if (
+                entry.controller.signal.aborted ||
+                p2pEntry !== entry ||
+                entry.subscribers.size === 0
+            ) {
+                return;
+            }
+            void loadP2p(entry);
+        });
+    };
+
+    const connectP2p: RigConnection["connectP2p"] = (subscription) => {
+        if (closed) throw new Error("This Rig connection is closed.");
+        const entry = createP2pEntry();
+        const subscriber: P2pSubscriber = { ...subscription, closed: false };
+        entry.subscribers.add(subscriber);
+        if (entry.status !== undefined) subscriber.onChange(entry.status);
+        if (entry.lastLoadError !== undefined) subscriber.onError?.(entry.lastLoadError);
+        entry.started = true;
+        ensureLiveStream();
+        void loadP2p(entry);
+        return {
+            status: () => (subscriber.closed ? undefined : entry.status),
+            close: () => {
+                if (subscriber.closed) return;
+                subscriber.closed = true;
+                entry.subscribers.delete(subscriber);
+                releaseUnusedEntries();
+            },
+        };
     };
 
     const getHappyCloudStatus: RigConnection["getHappyCloudStatus"] = (operationOptions = {}) =>
@@ -5015,6 +5231,7 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
     // them gets it loaded and followed without opening a view of its own.
     if (options.onSessionFinished !== undefined) startGroupEntry(createGroupEntry());
     return {
+        answerP2pVerification,
         archiveWorkspace,
         compatibility: () => compatibility,
         markSessionRead,
@@ -5045,6 +5262,10 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
             happyCloudEntry?.detachRoot();
             happyCloudEntry?.subscribers.clear();
             happyCloudEntry = undefined;
+            p2pEntry?.controller.abort();
+            p2pEntry?.detachRoot();
+            p2pEntry?.subscribers.clear();
+            p2pEntry = undefined;
             if (providerUsageEntry !== undefined) {
                 if (providerUsageEntry.timer !== undefined) {
                     clearTimeout(providerUsageEntry.timer);
@@ -5083,6 +5304,7 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         compactSession,
         connectGroups,
         connectHappyCloud,
+        connectP2p,
         connectInbox,
         connectMurmurFriends,
         connectPlugins,
@@ -5090,6 +5312,7 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         connectSession,
         connectTerminalPresence,
         connectTimeline,
+        createP2pInvitation,
         createSessionShare,
         createWorkspace,
         createSession,
@@ -5106,6 +5329,8 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         getHappyCloudProfile,
         getHappyCloudSessionBlob,
         getHappyCloudStatus,
+        getP2pPairing,
+        joinP2pInvitation,
         listMurmurContacts,
         listMurmurFriends,
         listMurmurFriendRequests,
@@ -5147,6 +5372,10 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         signupMurmurAccount,
         uninstallPlugin,
     };
+}
+
+function sameP2pStatus(first: P2pStatus | undefined, second: P2pStatus): boolean {
+    return first !== undefined && JSON.stringify(first) === JSON.stringify(second);
 }
 
 /** One chart per scope and filter, so two identical views share a load. */

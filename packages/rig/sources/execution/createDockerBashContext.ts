@@ -239,6 +239,7 @@ export function createDockerBashContext(
                           command: options.command,
                           commandCwd: runCwd,
                           mode: permissionMode,
+                          protectedPaths: permissions.protectedPaths,
                           ...(containerNetworkBridgeRoot === undefined
                               ? {}
                               : { networkBridgeRoot: containerNetworkBridgeRoot }),
@@ -278,6 +279,7 @@ export function createDockerBashContext(
                       ".agents",
                       ".codex",
                       ".git",
+                      "AGENTS_SECURITY.md",
                       ...(networkPolicyState?.absentProjectConfigNames ?? [
                           "rig.toml",
                           "happy.toml",

@@ -8,11 +8,18 @@ import type {
 } from "../agent/index.js";
 import type { AgentMessage, Message, SystemMessage, UserMessage } from "../agent/types.js";
 import type { Attachment } from "./Attachment.js";
-import type { Model, ServiceTier, StopReason, Usage } from "@slopus/rig-execution";
 import type {
-    ProviderModelCompatibilityType,
-    ProviderQuota,
-    ProviderUsage,
+    Model,
+    ProviderError,
+    ServiceTier,
+    StopReason,
+    Usage,
+} from "@slopus/rig-execution";
+import {
+    MAX_INFERENCE_MAX_RETRIES,
+    type ProviderModelCompatibilityType,
+    type ProviderQuota,
+    type ProviderUsage,
 } from "@slopus/rig-providers";
 import type { PermissionMode } from "../permissions/index.js";
 import type { UserInputRequest, UserInputResponse } from "../user-input/index.js";
@@ -224,8 +231,13 @@ export interface ListModelsResponse {
 }
 
 export interface DaemonConfig {
+    p2p: {
+        name: string;
+        primaryId?: string;
+        role: "primary" | "secondary";
+    };
     settings: {
-        codexStreamMaxRetries: number;
+        inferenceMaxRetries: number;
         durableGlobalEventQueue: boolean;
     };
 }
@@ -234,12 +246,35 @@ export interface GetDaemonConfigResponse {
     config: DaemonConfig;
 }
 
-export interface UpdateDaemonConfigRequest {
-    settings: {
-        codexStreamMaxRetries: number;
-        durableGlobalEventQueue: boolean;
-    };
-}
+export const updateDaemonConfigRequestSchema = Type.Object(
+    {
+        p2p: Type.Optional(
+            Type.Object(
+                {
+                    name: Type.String({
+                        maxLength: 128,
+                        minLength: 1,
+                        pattern: "^[^\\u0000-\\u001f\\u007f]+$",
+                    }),
+                },
+                { additionalProperties: false },
+            ),
+        ),
+        settings: Type.Object(
+            {
+                inferenceMaxRetries: Type.Integer({
+                    minimum: 0,
+                    maximum: MAX_INFERENCE_MAX_RETRIES,
+                }),
+                durableGlobalEventQueue: Type.Boolean(),
+            },
+            { additionalProperties: false },
+        ),
+    },
+    { additionalProperties: false },
+);
+
+export type UpdateDaemonConfigRequest = Static<typeof updateDaemonConfigRequestSchema>;
 
 export type UpdateDaemonConfigResponse = GetDaemonConfigResponse;
 
@@ -279,6 +314,34 @@ export interface SessionPermissionReview {
     risk: "low" | "medium" | "high" | "critical";
     toolCallId: string;
     userAuthorization: "unknown" | "low" | "medium" | "high";
+}
+
+/**
+ * A call the provider ran on its own backend during an assistant message.
+ *
+ * Kept beside the messages rather than inside one. Rig never executes a provider-run call, so it
+ * is deliberately not a block of the assistant message: putting it there would offer the agent
+ * loop a call to complete and the model a result to wait for. But it is the only evidence that
+ * the model reached the network, so it has to be durable in its own right or reopening a session
+ * would leave an answer citing sources it has no visible reason to know.
+ */
+export interface SessionProviderToolCall {
+    /** Provider-owned call identity. */
+    callId: string;
+    createdAt: number;
+    /** The assistant message it accompanied, which is where a rebuilt transcript puts it back. */
+    messageId: string;
+    /** The run this call happened in, and is retained or dropped with, as its turn is. */
+    runId: string;
+    /** Raw provider tool name, humanized for display by whatever renders it. */
+    name: string;
+    /** The provider's own final arguments, which is where a search's sources live. */
+    arguments: string;
+    /**
+     * `interrupted` means the turn ended before the provider reported back, not that the call was
+     * stopped. Nothing can stop one; it runs where Rig has no reach.
+     */
+    status: "completed" | "interrupted";
 }
 
 export interface ProtocolSession {
@@ -426,6 +489,8 @@ export interface SessionTranscriptWindow {
     noticesTruncated?: boolean;
     /** Resolved permission facts for tool calls contained in this page. */
     permissionReviews?: readonly SessionPermissionReview[];
+    /** Calls the provider ran itself during the assistant messages in this page. */
+    providerToolCalls?: readonly SessionProviderToolCall[];
     turns: readonly SessionTranscriptTurn[];
     /** False when the conversation began before the first turn in this window. */
     complete: boolean;
@@ -1112,6 +1177,9 @@ export type RunFinishedEvent = BaseSessionEvent<
         attachments?: readonly Attachment[];
         /** Present whenever `stopReason` is `error`, so the failure stays readable in history. */
         errorMessage?: string;
+        providerError?: ProviderError;
+        providerId?: string;
+        requestedModelId?: string;
         modelLocked: boolean;
         runId: string;
         stopReason: StopReason;
@@ -1136,6 +1204,9 @@ export type RunErrorEvent = BaseSessionEvent<
     {
         errorMessage: string;
         modelLocked: boolean;
+        providerError?: ProviderError;
+        providerId?: string;
+        requestedModelId?: string;
         runId: string;
         startupInterruption?: true;
     }

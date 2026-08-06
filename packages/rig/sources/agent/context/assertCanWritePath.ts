@@ -4,12 +4,13 @@ import { isPathInsideWorkspace } from "./isPathInsideWorkspace.js";
 import { isProtectedGitControlPath } from "./isProtectedGitControlPath.js";
 import { isProtectedProjectConfigPath } from "./isProtectedProjectConfigPath.js";
 import { resolvePotentialPath } from "./resolvePotentialPath.js";
-import type { PermissionMode } from "../../permissions/index.js";
+import { isProtectedPath, type PermissionMode } from "../../permissions/index.js";
 
 export async function assertCanWritePath(
     cwd: string,
     targetPath: string,
     mode: PermissionMode,
+    protectedPaths: readonly string[] = [],
 ): Promise<void> {
     if (mode === "full_access") return;
     if (mode === "read_only") {
@@ -23,6 +24,11 @@ export async function assertCanWritePath(
     }
 
     const absoluteTarget = isAbsolute(targetPath) ? targetPath : resolve(cwd, targetPath);
+    if (isProtectedPath(absoluteTarget, protectedPaths)) {
+        throw new Error(
+            `${mode === "auto" ? "Auto mode" : "Workspace write mode"} cannot modify a protected workspace path without Full access.`,
+        );
+    }
     const canonicalTarget = await resolvePotentialPath(absoluteTarget);
     const canonicalCwd = await resolvePotentialPath(cwd);
     if (

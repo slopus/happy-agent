@@ -7,11 +7,18 @@ export function createProjectConfigSecurityNotice(
     const permission = config.defaults?.permissionMode !== undefined;
     const docker = config.docker !== undefined;
     const providers = config.providerDefaultEnable !== undefined || config.providers !== undefined;
-    const codexRetries = config.settings?.codexStreamMaxRetries !== undefined;
+    const inferenceRetries = config.settings?.inferenceMaxRetries !== undefined;
     const daemonHeapSnapshots = config.settings?.daemonHeapSnapshots !== undefined;
     const durableEventQueue = config.settings?.durableGlobalEventQueue !== undefined;
     const happyIntegration = config.settings?.happyIntegration !== undefined;
-    if (!codexRetries && !daemonHeapSnapshots && !durableEventQueue && !happyIntegration) {
+    const p2p = config.p2p !== undefined;
+    if (
+        !inferenceRetries &&
+        !daemonHeapSnapshots &&
+        !durableEventQueue &&
+        !happyIntegration &&
+        !p2p
+    ) {
         if (!permission && !docker && !providers) return undefined;
         if (providers && !permission && !docker) {
             return `This project's ${configFileName} requested provider availability. Rig applied the other project preferences but kept provider and native authentication choices under your machine-level control.`;
@@ -36,10 +43,11 @@ export function createProjectConfigSecurityNotice(
         ...(permission ? ["permissions"] : []),
         ...(docker ? ["container execution"] : []),
         ...(providers ? ["provider availability"] : []),
-        ...(codexRetries ? ["Codex reconnect attempts"] : []),
+        ...(inferenceRetries ? ["inference retries"] : []),
         ...(daemonHeapSnapshots ? ["daemon heap snapshots"] : []),
         ...(durableEventQueue ? ["the durable event queue"] : []),
         ...(happyIntegration ? ["the Happy integration"] : []),
+        ...(p2p ? ["P2P networking"] : []),
     ];
     if (ignoredSettings.length === 0) return undefined;
 

@@ -1,10 +1,9 @@
 import type { AnyDefinedTool } from "../agent/types.js";
 import type { Model, Provider } from "@slopus/rig-execution";
-import { claudeTools } from "../agent/tools/claude/assembleClaudeTools.js";
+import { claudeToolSurface } from "../agent/tools/claude/assembleClaudeTools.js";
 import { assembleCodexTools } from "../agent/tools/codex/assembleCodexTools.js";
 import { codexCollaborationTools } from "../agent/tools/codex/assembleCodexTools.js";
 import { grokBuildTools } from "../tools/grok/index.js";
-import { createGeminiTools } from "../tools/gemini/createGeminiTools.js";
 import {
     createImageGenerationTool,
     type ImageGenerationProvider,
@@ -13,9 +12,9 @@ import {
     codexImageGenerationSurface,
     imageGenerationSurface,
 } from "../tools/imageGeneration/imageGenerationSurfaces.js";
+import { webSearchCapability } from "./webSearchCapability.js";
 
 export interface SelectToolsForModelOptions {
-    geminiApiKey?: string;
     imageGeneration?: readonly ImageGenerationProvider[];
     provider: Provider;
     model: Model;
@@ -32,24 +31,22 @@ export function selectToolsForModel(
             : options.provider.type;
     const vendor = toolType === "claude" ? "claude" : toolType === "grok" ? "grok" : "codex";
     const collaborationNames = new Set(codexCollaborationTools.map((tool) => tool.name));
+    // Search is chosen when the surface is built, not removed from it afterwards. The endpoint
+    // decides: Bedrock serves the same Anthropic model without Anthropic's server-side search.
+    const webSearch = webSearchCapability(options.provider, options.model) === "claude_auxiliary";
     const baseTools =
         vendor === "claude"
-            ? claudeTools
+            ? claudeToolSurface({ webSearch })
             : vendor === "grok"
               ? grokBuildTools
               : assembleCodexTools(
                     options.model.id,
                     options.provider.type ?? options.provider.id,
                 ).filter((tool) => !collaborationNames.has(tool.name));
-    const providerTools =
-        options.provider.type === "bedrock"
-            ? baseTools.filter((tool) => tool.name !== "WebSearch")
-            : baseTools;
     return [
-        ...providerTools,
-        ...(options.geminiApiKey === undefined ? [] : createGeminiTools(options.geminiApiKey)),
+        ...baseTools,
         ...imageGenerationTools(options.imageGeneration ?? [], vendor),
-    ];
+    ] as readonly AnyDefinedTool[];
 }
 
 /**

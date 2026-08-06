@@ -5,4 +5,4 @@
  * change without changing the wire contract, while an incompatible protocol
  * change must advance this number.
  */
-export const RIG_PROTOCOL_VERSION = 6;
+export const RIG_PROTOCOL_VERSION = 10;

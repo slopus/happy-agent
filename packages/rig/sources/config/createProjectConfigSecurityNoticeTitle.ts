@@ -4,12 +4,16 @@ export function createProjectConfigSecurityNoticeTitle(config: PartialRigConfig)
     const permission = config.defaults?.permissionMode !== undefined;
     const docker = config.docker !== undefined;
     const providers = config.providerDefaultEnable !== undefined || config.providers !== undefined;
-    const codexRetries = config.settings?.codexStreamMaxRetries !== undefined;
+    const inferenceRetries = config.settings?.inferenceMaxRetries !== undefined;
     const daemonHeapSnapshots = config.settings?.daemonHeapSnapshots !== undefined;
     const durableEventQueue = config.settings?.durableGlobalEventQueue !== undefined;
     const happyIntegration = config.settings?.happyIntegration !== undefined;
     const daemonSetting =
-        codexRetries || daemonHeapSnapshots || durableEventQueue || happyIntegration;
+        inferenceRetries ||
+        daemonHeapSnapshots ||
+        durableEventQueue ||
+        happyIntegration ||
+        config.p2p !== undefined;
     if (daemonSetting && (permission || docker || providers)) {
         return "Project machine settings ignored";
     }

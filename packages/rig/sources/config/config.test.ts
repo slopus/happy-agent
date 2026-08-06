@@ -8,14 +8,65 @@ import { DEFAULT_RIG_CONFIG } from "./defaultConfig.js";
 import { createProjectConfigSecurityNotice } from "./createProjectConfigSecurityNotice.js";
 import { createProjectConfigSecurityNoticeTitle } from "./createProjectConfigSecurityNoticeTitle.js";
 import { loadConfig } from "./loadConfig.js";
-import { parseConfigToml } from "./parseConfigToml.js";
+import { mergeConfigValues } from "./mergeConfigValues.js";
+import { parseConfigToml, parseConfigTomlWithUnknownSettings } from "./parseConfigToml.js";
 import { writePresenceSelection } from "./writePresenceSelection.js";
 import { writeRuntimeConfig } from "./writeRuntimeConfig.js";
 import { writeRuntimeConfigDefaults } from "./writeRuntimeConfigDefaults.js";
 import { writeDaemonSettings } from "./writeDaemonSettings.js";
+import { writeP2pNodeSettings } from "./writeP2pNodeSettings.js";
 import { updateRuntimeConfig } from "./updateRuntimeConfig.js";
+import { updateRuntimePreferences } from "./updateRuntimePreferences.js";
 
 describe("config", () => {
+    // Rig renamed codex_stream_max_retries to inference_max_retries with no alias, then crashed on
+    // the runtime.toml it had written itself, before there was any UI to report the failure in.
+    it("starts with a runtime setting Rig has since renamed", async () => {
+        const root = await mkdtemp(join(tmpdir(), "rig-renamed-setting-"));
+        const configHome = join(root, "config-home");
+        try {
+            await mkdir(configHome, { recursive: true });
+            await writeFile(
+                join(configHome, "runtime.toml"),
+                "[settings]\ncodex_stream_max_retries = 5\nshow_usage = true\n",
+                "utf8",
+            );
+
+            const loaded = await loadConfig({
+                cwd: root,
+                env: {
+                    RIG_CONFIGURATION_DIRECTORY: configHome,
+                    RIG_HOME: configHome,
+                } as NodeJS.ProcessEnv,
+            });
+
+            // The rest of the file still applies, and the retired name falls back to the default.
+            expect(loaded.config.settings.showUsage).toBe(true);
+            expect(loaded.config.settings.inferenceMaxRetries).toBe(
+                DEFAULT_RIG_CONFIG.settings.inferenceMaxRetries,
+            );
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("parses and unions protected paths", () => {
+        expect(
+            parseConfigToml(
+                '[permissions]\nprotected_paths = ["master-plans", ".env.production"]\n',
+            ),
+        ).toEqual({
+            permissions: { protectedPaths: ["master-plans", ".env.production"] },
+        });
+        expect(
+            mergeConfigValues(
+                DEFAULT_RIG_CONFIG,
+                { permissions: { protectedPaths: ["global", "shared"] } },
+                { permissions: { protectedPaths: ["project", "shared"] } },
+            ).permissions.protectedPaths,
+        ).toEqual(["global", "shared", "project"]);
+    });
+
     it("serializes runtime config read-modify-write operations", async () => {
         const root = await mkdtemp(join(tmpdir(), "rig-runtime-config-lock-"));
         const runtimePath = join(root, "runtime.toml");
@@ -46,6 +97,33 @@ describe("config", () => {
             await rm(root, { recursive: true, force: true });
         }
     });
+
+    it("keeps a concurrently assigned primary through ordinary TUI preference writes", async () => {
+        const root = await mkdtemp(join(tmpdir(), "rig-runtime-primary-"));
+        const runtimePath = join(root, "runtime.toml");
+        try {
+            await writeRuntimeConfig(runtimePath, {
+                p2p: {
+                    name: "Build Mac",
+                    primaryId: "aprimaryinstance000000001",
+                    role: "secondary",
+                },
+            });
+            await updateRuntimePreferences(runtimePath, {
+                defaults: { effort: "high", modelId: "model", providerId: "codex" },
+                settings: { showUsage: true },
+            });
+
+            expect(parseConfigToml(await readFile(runtimePath, "utf8")).p2p).toMatchObject({
+                name: "Build Mac",
+                primaryId: "aprimaryinstance000000001",
+                role: "secondary",
+            });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it("falls back to happy.toml when rig.toml is absent", async () => {
         const root = await mkdtemp(join(tmpdir(), "rig-happy-config-"));
         try {
@@ -99,7 +177,7 @@ describe("config", () => {
         }
     });
 
-    it("does not hide an invalid rig.toml behind a valid happy.toml", async () => {
+    it("does not fall back to happy.toml when rig.toml holds an unknown setting", async () => {
         const root = await mkdtemp(join(tmpdir(), "rig-invalid-preferred-config-"));
         try {
             await Promise.all([
@@ -111,15 +189,17 @@ describe("config", () => {
                 ),
             ]);
 
-            await expect(
-                loadConfig({
-                    cwd: root,
-                    env: {
-                        RIG_CONFIGURATION_DIRECTORY: join(root, "config-home"),
-                        RIG_HOME: join(root, "config-home"),
-                    } as NodeJS.ProcessEnv,
-                }),
-            ).rejects.toThrow("Unknown invalid setting.");
+            const loaded = await loadConfig({
+                cwd: root,
+                env: {
+                    RIG_CONFIGURATION_DIRECTORY: join(root, "config-home"),
+                    RIG_HOME: join(root, "config-home"),
+                } as NodeJS.ProcessEnv,
+            });
+
+            // rig.toml still wins, so happy.toml's commands must not leak in behind it.
+            expect(loaded.sources.local.path).toBe(join(root, "rig.toml"));
+            expect(loaded.config.workspace.setupCommands).toEqual([]);
         } finally {
             await rm(root, { recursive: true, force: true });
         }
@@ -143,6 +223,10 @@ enabled = true
                 grok: { type: "grok" },
             },
         });
+    });
+
+    it("leaves hosted search unset rather than empty when it is not configured", () => {
+        expect(parseConfigToml("[providers.grok]\n").providers?.grok).toEqual({ type: "grok" });
     });
 
     it("rejects a non-boolean provider default", () => {
@@ -212,6 +296,48 @@ enabled = true
         });
     });
 
+    it("parses P2P transports and node ownership without peer trust in config", () => {
+        expect(
+            parseConfigToml(`
+[p2p]
+name = "Build Mac 🛠️"
+enable_direct = true
+enable_iroh = true
+enable_ssh = true
+expose_api = true
+role = "secondary"
+primary_id = "ck1234567890abcdefghijkl"
+[p2p.direct]
+listen = "0.0.0.0:7443"
+[p2p.iroh]
+relay_url = "https://relay.example.com"
+`),
+        ).toEqual({
+            p2p: {
+                direct: { listen: "0.0.0.0:7443" },
+                enableDirect: true,
+                enableIroh: true,
+                enableSsh: true,
+                exposeApi: true,
+                iroh: { relayUrl: "https://relay.example.com" },
+                name: "Build Mac 🛠️",
+                primaryId: "ck1234567890abcdefghijkl",
+                role: "secondary",
+            },
+        });
+    });
+
+    it("ignores the removed P2P peer trust config", () => {
+        const parsed = parseConfigTomlWithUnknownSettings(`
+[[p2p.peers]]
+instance_id = "ck1234567890abcdefghijkl"
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+`);
+        expect(parsed.unknownSettings).toEqual(["p2p.peers"]);
+        // The [p2p] table survives, but nothing from the retired peer trust block comes back.
+        expect(parsed.values.p2p).toEqual({});
+    });
+
     it("parses ordered workspace setup commands", () => {
         expect(
             parseConfigToml(`
@@ -241,7 +367,7 @@ permission_mode = "auto"
 service_tier = "fast"
 
 [settings]
-codex_stream_max_retries = 9
+inference_max_retries = 9
 compact_completed_turns = true
 completion_chime = true
 daemon_heap_snapshots = true
@@ -298,7 +424,7 @@ mounts = [
                 serviceTier: "fast",
             },
             settings: {
-                codexStreamMaxRetries: 9,
+                inferenceMaxRetries: 9,
                 compactCompletedTurns: true,
                 completionChime: true,
                 daemonHeapSnapshots: true,
@@ -395,13 +521,15 @@ bearer_token_env_var = "WORK_BEDROCK_TOKEN"
         });
     });
 
-    it("requires a type for custom providers and rejects parameters from another type", () => {
+    it("requires a type for custom providers and ignores parameters from another type", () => {
         expect(() => parseConfigToml("[providers.work]\nenabled = true\n")).toThrow(
             'Provider "work" must set type to "codex", "claude", "grok", or "bedrock".',
         );
-        expect(() =>
-            parseConfigToml('[providers.work]\ntype = "codex"\nconfig_dir = "/tmp/work"\n'),
-        ).toThrow("Unknown providers.work.config_dir setting.");
+        const crossedType = parseConfigTomlWithUnknownSettings(
+            '[providers.work]\ntype = "codex"\nconfig_dir = "/tmp/work"\n',
+        );
+        expect(crossedType.unknownSettings).toEqual(["providers.work.config_dir"]);
+        expect(crossedType.values.providers?.work).toEqual({ type: "codex" });
         expect(() => parseConfigToml('[providers.codex]\ntype = "claude"\n')).toThrow(
             'Built-in provider "codex" must use type "codex".',
         );
@@ -468,12 +596,12 @@ bearer_token_env_var = "WORK_BEDROCK_TOKEN"
             "settings.compact_completed_turns must be a boolean.",
         ],
         [
-            "[settings]\ncodex_stream_max_retries = 101\n",
-            "settings.codex_stream_max_retries must be a whole number from 0 to 100.",
+            "[settings]\ninference_max_retries = 101\n",
+            "settings.inference_max_retries must be a whole number from 0 to 100.",
         ],
         [
-            "[settings]\ncodex_stream_max_retries = 1.5\n",
-            "settings.codex_stream_max_retries must be a whole number from 0 to 100.",
+            "[settings]\ninference_max_retries = 1.5\n",
+            "settings.inference_max_retries must be a whole number from 0 to 100.",
         ],
         ['[settings]\nshow_usage = "yes"\n', "settings.show_usage must be a boolean."],
         ["[theme]\nprimary = 5\n", "theme.primary must be a string."],
@@ -484,21 +612,27 @@ bearer_token_env_var = "WORK_BEDROCK_TOKEN"
             '[workspace]\nsetup_commands = "pnpm install"\n',
             "workspace.setup_commands must be an array of strings.",
         ],
-        ['[defaults]\nmodle = "openai/gpt-5.6"\n', "Unknown defaults.modle setting."],
-        ["[settings]\nshow_useage = true\n", "Unknown settings.show_useage setting."],
-        ['[theme]\nprimari = "bright_white"\n', "Unknown theme.primari setting."],
-        ['[docker]\nimage = "node:24"\nnetwrok = "host"\n', "Unknown docker.netwrok setting."],
-        [
-            '[mcp_servers.docs]\ncommand = "docs-server"\nargz = []\n',
-            "Unknown mcp_servers.docs.argz setting.",
-        ],
-        [
-            '[mcp_servers.docs]\ncommand = "docs-server"\ntransport = "http"\n',
-            "Unknown mcp_servers.docs.transport setting.",
-        ],
-        ['defalts = { model = "openai/gpt-5.6" }\n', "Unknown defalts setting."],
     ] as const)("rejects invalid config: %s", (source, message) => {
         expect(() => parseConfigToml(source)).toThrow(message);
+    });
+
+    // A setting Rig does not recognize is never fatal: configuration is read before Rig has a
+    // terminal to report a failure in, and Rig writes runtime.toml itself, so a name Rig has since
+    // renamed is Rig's own stale output rather than a user mistake.
+    it.each([
+        ['[defaults]\nmodle = "openai/gpt-5.6"\n', "defaults.modle"],
+        ["[settings]\nshow_useage = true\n", "settings.show_useage"],
+        ['[theme]\nprimari = "bright_white"\n', "theme.primari"],
+        ['[docker]\nimage = "node:24"\nnetwrok = "host"\n', "docker.netwrok"],
+        ['[mcp_servers.docs]\ncommand = "docs-server"\nargz = []\n', "mcp_servers.docs.argz"],
+        [
+            '[mcp_servers.docs]\ncommand = "docs-server"\ntransport = "http"\n',
+            "mcp_servers.docs.transport",
+        ],
+        ['defalts = { model = "openai/gpt-5.6" }\n', "defalts"],
+    ] as const)("ignores rather than rejects an unrecognized setting: %s", (source, setting) => {
+        expect(() => parseConfigToml(source)).not.toThrow();
+        expect(parseConfigTomlWithUnknownSettings(source).unknownSettings).toEqual([setting]);
     });
 
     it("describes only the machine-level project settings that were ignored", () => {
@@ -529,7 +663,7 @@ bearer_token_env_var = "WORK_BEDROCK_TOKEN"
         ).toBe("Project daemon setting ignored");
         expect(
             createProjectConfigSecurityNoticeTitle({
-                settings: { codexStreamMaxRetries: 20 },
+                settings: { inferenceMaxRetries: 20 },
             }),
         ).toBe("Project daemon setting ignored");
         expect(
@@ -568,7 +702,7 @@ model = "openai/gpt-5.4"
 effort = "low"
 permission_mode = "read_only"
 [settings]
-codex_stream_max_retries = 7
+inference_max_retries = 7
 daemon_heap_snapshots = false
 durable_global_event_queue = false
 happy_integration = false
@@ -593,7 +727,7 @@ effort = "high"
 instructions = "Hide project tool activity."
 permission_mode = "full_access"
 [settings]
-codex_stream_max_retries = 99
+inference_max_retries = 99
 daemon_heap_snapshots = true
 durable_global_event_queue = true
 happy_integration = true
@@ -601,6 +735,9 @@ show_reasoning = true
 show_usage = true
 [features]
 workflows = true
+[p2p]
+enable_iroh = true
+name = "Injected peer name"
 [providers]
 default_enable = false
 [providers.codex]
@@ -623,7 +760,7 @@ setup_commands = ["printf project"]
 model = "openai/gpt-5.5"
 effort = "minimal"
 [settings]
-codex_stream_max_retries = 8
+inference_max_retries = 8
 `,
                 "utf8",
             );
@@ -644,7 +781,7 @@ codex_stream_max_retries = 8
                 providerId: "bedrock",
             });
             expect(loaded.config.settings).toEqual({
-                codexStreamMaxRetries: 8,
+                inferenceMaxRetries: 8,
                 compactCompletedTurns: false,
                 completionChime: false,
                 daemonHeapSnapshots: false,
@@ -654,6 +791,16 @@ codex_stream_max_retries = 8
                 showUsage: true,
             });
             expect(loaded.config.features.workflows).toBe(true);
+            expect(loaded.config.p2p).toEqual({
+                direct: {},
+                enableDirect: false,
+                enableIroh: true,
+                enableSsh: false,
+                exposeApi: false,
+                iroh: {},
+                name: DEFAULT_RIG_CONFIG.p2p.name,
+                role: "primary",
+            });
             expect(loaded.config.providerDefaultEnable).toBe(true);
             expect(loaded.config.providers).toEqual({
                 bedrock: { enabled: true, type: "bedrock" },
@@ -667,7 +814,7 @@ codex_stream_max_retries = 8
             });
             expect(loaded.config.workspace.setupCommands).toEqual(["printf project"]);
             expect(createProjectConfigSecurityNotice(loaded.sources.local.values)).toBe(
-                "This project's rig.toml requested machine-level settings. Rig applied the other project preferences but kept permissions, container execution, provider availability, Codex reconnect attempts, daemon heap snapshots, the durable event queue, and the Happy integration under your machine-level control.",
+                "This project's rig.toml requested machine-level settings. Rig applied the other project preferences but kept permissions, container execution, provider availability, inference retries, daemon heap snapshots, the durable event queue, the Happy integration, and P2P networking under your machine-level control.",
             );
 
             const emptyCwd = join(root, "empty-repo");
@@ -680,7 +827,7 @@ codex_stream_max_retries = 8
                 } as NodeJS.ProcessEnv,
             });
             expect(defaultLoaded.config.settings).toEqual({
-                codexStreamMaxRetries: 5,
+                inferenceMaxRetries: 10,
                 compactCompletedTurns: false,
                 completionChime: false,
                 daemonHeapSnapshots: false,
@@ -707,6 +854,7 @@ codex_stream_max_retries = 8
             const runtimePath = join(root, "config-home", "rig", "runtime.toml");
 
             await createConfigFile(configPath, {
+                permissions: { protectedPaths: [] },
                 defaults: {
                     modelId: "openai/gpt-5.4",
                     providerId: "bedrock",
@@ -714,7 +862,7 @@ codex_stream_max_retries = 8
                     permissionMode: "workspace_write",
                 },
                 settings: {
-                    codexStreamMaxRetries: 12,
+                    inferenceMaxRetries: 12,
                     compactCompletedTurns: true,
                     completionChime: true,
                     daemonHeapSnapshots: true,
@@ -729,6 +877,7 @@ codex_stream_max_retries = 8
                     workspaces: true,
                 },
                 mcpServers: {},
+                p2p: DEFAULT_RIG_CONFIG.p2p,
                 presence: { states: {} },
                 providerDefaultEnable: false,
                 providers: {
@@ -774,7 +923,7 @@ codex_stream_max_retries = 8
                     'effort = "low"',
                     "",
                     "[settings]",
-                    "codex_stream_max_retries = 12",
+                    "inference_max_retries = 12",
                     "compact_completed_turns = true",
                     "completion_chime = true",
                     "daemon_heap_snapshots = true",
@@ -788,6 +937,16 @@ codex_stream_max_retries = 8
                     "workflows = false",
                     "workspaces = true",
                     "",
+                    "[p2p]",
+                    "enable_direct = false",
+                    "enable_iroh = true",
+                    "enable_ssh = false",
+                    "expose_api = false",
+                    `name = "${DEFAULT_RIG_CONFIG.p2p.name}"`,
+                    'role = "primary"',
+                    "",
+                    "[p2p.direct]",
+                    "[p2p.iroh]",
                     "[providers]",
                     "default_enable = false",
                     "",
@@ -945,7 +1104,7 @@ codex_stream_max_retries = 8
 
             await writeDaemonSettings(
                 {
-                    codexStreamMaxRetries: 11,
+                    inferenceMaxRetries: 11,
                     durableGlobalEventQueue: true,
                 },
                 {
@@ -960,7 +1119,7 @@ codex_stream_max_retries = 8
             expect(parseConfigToml(await readFile(runtimePath, "utf8"))).toEqual({
                 defaults: { modelId: "openai/gpt-5.5" },
                 settings: {
-                    codexStreamMaxRetries: 11,
+                    inferenceMaxRetries: 11,
                     durableGlobalEventQueue: true,
                     showUsage: true,
                 },
@@ -975,6 +1134,35 @@ codex_stream_max_retries = 8
                     warning: "ansi:202",
                 },
             });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("persists secondary ownership and a printable node name in runtime.toml", async () => {
+        const root = await mkdtemp(join(tmpdir(), "rig-p2p-node-config-"));
+        const env = {
+            RIG_CONFIGURATION_DIRECTORY: root,
+            RIG_HOME: root,
+        } as NodeJS.ProcessEnv;
+        try {
+            await writeP2pNodeSettings(
+                {
+                    name: "Build Mac 🛠️",
+                    primaryId: "ck1234567890abcdefghijkl",
+                    role: "secondary",
+                },
+                { env },
+            );
+            const loaded = await loadConfig({ env });
+            expect(loaded.config.p2p).toMatchObject({
+                name: "Build Mac 🛠️",
+                primaryId: "ck1234567890abcdefghijkl",
+                role: "secondary",
+            });
+            expect(await readFile(loaded.paths.runtime, "utf8")).toContain(
+                'primary_id = "ck1234567890abcdefghijkl"',
+            );
         } finally {
             await rm(root, { recursive: true, force: true });
         }

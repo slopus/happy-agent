@@ -3,10 +3,13 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import tweetnacl from "tweetnacl";
-
 import { ensureLocalProtocolServer } from "../client/index.js";
 import { getRigHome } from "../config/index.js";
+import {
+    NACL_BOX_SECRET_KEY_BYTES,
+    nobleBoxKeyPairFromSecretKey,
+    type NobleBoxKeyPair,
+} from "../crypto/nobleNaCl.js";
 import { readPackageVersion } from "../readPackageVersion.js";
 import { decryptHappyAuthBundle } from "./happyEncryption.js";
 import { getHappyPaths } from "./getHappyPaths.js";
@@ -22,7 +25,7 @@ export interface RunHappyAuthCommandOptions {
     environment?: NodeJS.ProcessEnv;
     fetch?: typeof fetch;
     homeDirectory?: string;
-    keyPair?: tweetnacl.BoxKeyPair;
+    keyPair?: NobleBoxKeyPair;
     onAuthenticated?: () => Promise<void>;
     pollIntervalMs?: number;
     renderQrCode?: (url: string) => Promise<void>;
@@ -40,9 +43,7 @@ export async function runHappyAuthCommand(
     const request = options.fetch ?? fetch;
     const keyPair =
         options.keyPair ??
-        tweetnacl.box.keyPair.fromSecretKey(
-            new Uint8Array(randomBytes(tweetnacl.box.secretKeyLength)),
-        );
+        nobleBoxKeyPairFromSecretKey(new Uint8Array(randomBytes(NACL_BOX_SECRET_KEY_BYTES)));
     const publicKey = Buffer.from(keyPair.publicKey).toString("base64");
     const authenticationUrl = `happy://terminal?${Buffer.from(keyPair.publicKey).toString("base64url")}`;
     const controller = new AbortController();

@@ -1,5 +1,6 @@
 import type { RigConfig } from "./types.js";
-import { DEFAULT_CODEX_STREAM_MAX_RETRIES } from "./codexStreamRetrySettings.js";
+import { detectP2pNodeName } from "./detectP2pNodeName.js";
+import { DEFAULT_INFERENCE_MAX_RETRIES } from "./inferenceRetrySettings.js";
 
 export const DEFAULT_RIG_CONFIG: RigConfig = {
     defaults: {
@@ -12,6 +13,17 @@ export const DEFAULT_RIG_CONFIG: RigConfig = {
         workspaces: true,
     },
     mcpServers: {},
+    permissions: { protectedPaths: [] },
+    p2p: {
+        direct: {},
+        enableDirect: false,
+        enableIroh: true,
+        enableSsh: false,
+        exposeApi: false,
+        iroh: {},
+        name: detectP2pNodeName(),
+        role: "primary",
+    },
     presence: { states: {} },
     providerDefaultEnable: true,
     providers: {
@@ -33,7 +45,7 @@ export const DEFAULT_RIG_CONFIG: RigConfig = {
         },
     },
     settings: {
-        codexStreamMaxRetries: DEFAULT_CODEX_STREAM_MAX_RETRIES,
+        inferenceMaxRetries: DEFAULT_INFERENCE_MAX_RETRIES,
         compactCompletedTurns: false,
         completionChime: false,
         daemonHeapSnapshots: false,

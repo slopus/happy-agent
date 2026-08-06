@@ -8,6 +8,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { BaseSession } from "@/core/BaseSession.js";
+import {
+    createInferenceMaxRetriesResolver,
+    type InferenceRetryOptions,
+} from "@/core/inferenceRetrySettings.js";
+import { EmptyResponseError, emptyResponseDoneEvent } from "@/core/EmptyResponseError.js";
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import { EMPTY_SESSION_CACHE_USAGE, type SessionCacheUsage } from "@/core/SessionCacheUsage.js";
 import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
@@ -21,6 +26,7 @@ import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import type { SessionReasoningEffort, SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionModelConfiguration } from "@/core/SessionModelConfiguration.js";
 import type { SessionTool } from "@/core/SessionTool.js";
+import { waitForInferenceRetry } from "@/core/waitForInferenceRetry.js";
 import { resolveClaudeModelId } from "@/vendors/claude/impl/resolveClaudeModelId.js";
 import type { ClaudeCredential } from "@/vendors/VendorCredential.js";
 import { claudeUsageFromRateLimitInfo } from "@/vendors/claude/claudeUsageFromRateLimitInfo.js";
@@ -28,6 +34,7 @@ import { ClaudePromptQueue } from "@/vendors/claude/impl/ClaudePromptQueue.js";
 import {
     classifyClaudeError,
     claudeResultErrorMessage,
+    isClaudeMidResponseServerError,
 } from "@/vendors/claude/errors/claudeErrors.js";
 import { ClaudeToolBridge } from "@/vendors/claude/impl/ClaudeToolBridge.js";
 import {
@@ -41,8 +48,7 @@ import { toClaudeRetryEvent } from "@/vendors/claude/impl/toClaudeRetryEvent.js"
 export type ClaudeSdkQuery = typeof defaultClaudeSdkQuery;
 
 const CLAUDE_QUERY_ABORTED = Symbol("claude_query_aborted");
-
-export interface ClaudeSessionOptions {
+export interface ClaudeSessionOptions extends InferenceRetryOptions {
     instructions: string;
     credential: ClaudeCredential;
     env?: NodeJS.ProcessEnv;
@@ -79,6 +85,8 @@ export class ClaudeSession extends BaseSession {
     private activeToolBridge: ClaudeToolBridge | undefined;
     private lastQueryToolCalls: SessionToolCall[] = [];
     private readonly onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
+    private readonly resolveInferenceMaxRetries: () => number;
+    private readonly retryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
 
     constructor(id: string, options: ClaudeSessionOptions) {
         super(id);
@@ -86,6 +94,8 @@ export class ClaudeSession extends BaseSession {
         this.env = options.env ?? process.env;
         this.model = options.model;
         this.activeModel = options.model;
+        this.resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.retryWait = options.waitForInferenceRetry ?? waitForInferenceRetry;
         this.pathToClaudeCodeExecutable = options.pathToClaudeCodeExecutable;
         this.userAgent = options.userAgent;
         this.tools = options.tools;
@@ -223,32 +233,120 @@ export class ClaudeSession extends BaseSession {
             instructions: this.context.instructions,
             messages: [...request.context.messages],
         };
-        let assistantText = "";
-        let reasoningText = "";
-        let reasoning: SessionReasoning[] = [];
-        for await (const event of this.streamQuery({
-            context: this.context,
-            model,
-            ...(effort === undefined ? {} : { effort }),
-            ...(request.abort === undefined ? {} : { abort: request.abort }),
-            ...(request.structuredOutput === undefined
-                ? {}
-                : { structuredOutput: request.structuredOutput }),
-        })) {
-            if (event.type === "text_delta") assistantText += event.delta;
-            if (event.type === "reasoning_delta") reasoningText += event.delta;
-            // The signature closes the thinking block it was issued for, so the pair is banked
-            // together and the buffer reopens for whatever the model reasons about next.
-            if (event.type === "encrypted_reasoning") {
-                reasoning = [...reasoning, { text: reasoningText, signature: event.content }];
-                reasoningText = "";
+        let emptyResponseRetries = 0;
+        let completedMidResponseAttempts = 0;
+        for (;;) {
+            let assistantText = "";
+            let reasoningText = "";
+            let reasoning: SessionReasoning[] = [];
+            let usage: Extract<SessionEvent, { type: "token_usage" }> | undefined;
+            let blockStopped = false;
+            let terminal: Extract<SessionEvent, { type: "done" }> | undefined;
+            for await (const event of this.streamQuery({
+                context: this.context,
+                model,
+                ...(effort === undefined ? {} : { effort }),
+                ...(request.abort === undefined ? {} : { abort: request.abort }),
+                ...(request.structuredOutput === undefined
+                    ? {}
+                    : { structuredOutput: request.structuredOutput }),
+                maxRetries: Math.max(
+                    0,
+                    this.resolveInferenceMaxRetries() - completedMidResponseAttempts,
+                ),
+            })) {
+                if (event.type === "text_delta") assistantText += event.delta;
+                if (event.type === "reasoning_delta") reasoningText += event.delta;
+                // The signature closes the thinking block it was issued for, so the pair is
+                // banked together and the buffer reopens for whatever the model reasons about.
+                if (event.type === "encrypted_reasoning") {
+                    reasoning = [...reasoning, { text: reasoningText, signature: event.content }];
+                    reasoningText = "";
+                }
+                if (event.type === "token_usage") {
+                    usage = event;
+                    continue;
+                }
+                if (event.type === "block_stop") {
+                    blockStopped = true;
+                    continue;
+                }
+                if (event.type === "done") {
+                    terminal = event;
+                    continue;
+                }
+                if (event.type === "block_reset") {
+                    assistantText = "";
+                    reasoningText = "";
+                    reasoning = [];
+                }
+                yield event;
             }
-            if (event.type === "block_reset") {
-                assistantText = "";
-                reasoningText = "";
-                reasoning = [];
+
+            if (terminal === undefined) return;
+            if (
+                terminal.state === "error" &&
+                terminal.providerError?.type === "internal_server_error" &&
+                isClaudeMidResponseServerError(terminal.message)
+            ) {
+                completedMidResponseAttempts += terminal.providerError.diagnostics?.attempts ?? 1;
+                terminal = withClaudeErrorAttempts(terminal, completedMidResponseAttempts);
+                if (completedMidResponseAttempts <= this.resolveInferenceMaxRetries()) {
+                    this.closeActiveQuery();
+                    this.sdkSessionId = randomUUID();
+                    this.lastQueryToolCalls = [];
+                    yield {
+                        type: "retrying",
+                        attempt: completedMidResponseAttempts,
+                        reason: "Claude's response was interrupted by a server error.",
+                    };
+                    try {
+                        await this.retryWait(completedMidResponseAttempts, request.abort);
+                    } catch (delayError) {
+                        if (request.abort?.aborted) {
+                            yield { type: "done", state: "cancelled" };
+                            return;
+                        }
+                        throw delayError;
+                    }
+                    continue;
+                }
             }
-            if (event.type === "done" && event.state !== "error") {
+            if (
+                terminal.state !== "error" &&
+                terminal.state !== "cancelled" &&
+                usage?.usage.output === 0
+            ) {
+                const error = new EmptyResponseError("Claude");
+                this.closeActiveQuery();
+                this.sdkSessionId = randomUUID();
+                this.lastQueryToolCalls = [];
+                yield { type: "block_reset" };
+                if (usage !== undefined) yield usage;
+                if (emptyResponseRetries < this.resolveInferenceMaxRetries()) {
+                    emptyResponseRetries += 1;
+                    yield {
+                        type: "retrying",
+                        attempt: emptyResponseRetries,
+                        reason: error.message,
+                    };
+                    try {
+                        await this.retryWait(emptyResponseRetries, request.abort);
+                    } catch (delayError) {
+                        if (request.abort?.aborted) {
+                            yield { type: "done", state: "cancelled" };
+                            return;
+                        }
+                        throw delayError;
+                    }
+                    continue;
+                }
+                yield emptyResponseDoneEvent(error, emptyResponseRetries + 1);
+                return;
+            }
+
+            if (usage !== undefined) yield usage;
+            if (terminal.state !== "error" && terminal.state !== "cancelled") {
                 this.context = {
                     instructions: this.context.instructions,
                     messages: [
@@ -264,7 +362,9 @@ export class ClaudeSession extends BaseSession {
                     ],
                 };
             }
-            yield event;
+            if (blockStopped) yield { type: "block_stop" };
+            yield terminal;
+            return;
         }
     }
 
@@ -273,6 +373,7 @@ export class ClaudeSession extends BaseSession {
         compaction?: boolean;
         context: SessionContext;
         effort?: SessionReasoningEffort;
+        maxRetries?: number;
         model: string;
         structuredOutput?: SessionRunRequest["structuredOutput"];
     }): AsyncGenerator<SessionEvent> {
@@ -354,6 +455,7 @@ export class ClaudeSession extends BaseSession {
         let assistantError: SDKAssistantMessageError | undefined;
         let rateLimitInfo: SDKRateLimitInfo | undefined;
         let requestId: string | undefined;
+        let attempts = 1;
         let usage = { ...EMPTY_SESSION_CACHE_USAGE };
         let sawInferenceUsage = false;
         try {
@@ -365,6 +467,7 @@ export class ClaudeSession extends BaseSession {
                     context: configuredContext,
                     credential: this.credential,
                     env: this.env,
+                    maxRetries: options.maxRetries ?? this.resolveInferenceMaxRetries(),
                     ...(this.pathToClaudeCodeExecutable === undefined
                         ? {}
                         : { pathToClaudeCodeExecutable: this.pathToClaudeCodeExecutable }),
@@ -421,6 +524,7 @@ export class ClaudeSession extends BaseSession {
                     return;
                 }
                 if (message.type === "system" && message.subtype === "api_retry") {
+                    attempts = Math.max(attempts, message.attempt + 1);
                     yield toClaudeRetryEvent(message);
                     continue;
                 }
@@ -456,7 +560,7 @@ export class ClaudeSession extends BaseSession {
                     const event = message.event;
                     if (event.type === "message_start") {
                         usage = toUsage(event.message.usage);
-                        sawInferenceUsage = true;
+                        sawInferenceUsage = typeof event.message.usage.output_tokens === "number";
                     }
                     if (
                         event.type === "content_block_start" &&
@@ -474,7 +578,7 @@ export class ClaudeSession extends BaseSession {
                             event.content_block.name,
                         );
                         yield {
-                            type: "tool_call_start",
+                            type: "toolcall_start",
                             callId: event.content_block.id,
                             name: event.content_block.name,
                             vendor: { type: "claude_tool_use" },
@@ -500,7 +604,7 @@ export class ClaudeSession extends BaseSession {
                                     arguments: block.arguments + event.delta.partial_json,
                                 });
                                 yield {
-                                    type: "tool_call_delta",
+                                    type: "toolcall_delta",
                                     callId: block.callId,
                                     delta: event.delta.partial_json,
                                 };
@@ -509,13 +613,15 @@ export class ClaudeSession extends BaseSession {
                     }
                     if (event.type === "message_delta") {
                         usage = mergeUsage(usage, event.usage);
-                        sawInferenceUsage = true;
+                        if (typeof event.usage.output_tokens === "number") {
+                            sawInferenceUsage = true;
+                        }
                     }
                     if (event.type === "content_block_stop") {
                         const block = activeTools.get(event.index);
                         if (block !== undefined) {
                             yield {
-                                type: "tool_call_end",
+                                type: "toolcall_end",
                                 callId: block.callId,
                                 arguments: block.arguments,
                             };
@@ -564,7 +670,14 @@ export class ClaudeSession extends BaseSession {
                 // SDK result usage is accumulated across every inference in the active query.
                 // It is only a valid fallback for the query's first inference. Continued
                 // inferences must use their message_delta usage or remain unreported.
-                if (!sawInferenceUsage && !continuingQuery) usage = toUsage(result.usage);
+                if (
+                    !sawInferenceUsage &&
+                    !continuingQuery &&
+                    typeof result.usage.output_tokens === "number"
+                ) {
+                    usage = toUsage(result.usage);
+                    sawInferenceUsage = true;
+                }
                 if (
                     options.structuredOutput !== undefined &&
                     result.subtype === "success" &&
@@ -589,6 +702,7 @@ export class ClaudeSession extends BaseSession {
                             : claudeResultErrorMessage(result);
                     const providerError = classifyClaudeError({
                         ...(assistantError === undefined ? {} : { assistantError }),
+                        attempts,
                         message,
                         ...(rateLimitInfo === undefined ? {} : { rateLimitInfo }),
                         ...(requestId === undefined ? {} : { requestId }),
@@ -624,6 +738,8 @@ export class ClaudeSession extends BaseSession {
             const message = rawMessage.trim() || "Claude inference failed with an unknown error.";
             const providerError = classifyClaudeError({
                 ...(assistantError === undefined ? {} : { assistantError }),
+                attempts,
+                error,
                 message,
                 ...(rateLimitInfo === undefined ? {} : { rateLimitInfo }),
                 ...(requestId === undefined ? {} : { requestId }),
@@ -740,4 +856,21 @@ function toAggregateModelUsage(
 function emptyStream(): SessionStream {
     async function* stream(): AsyncGenerator<SessionEvent> {}
     return stream();
+}
+
+function withClaudeErrorAttempts(
+    event: Extract<SessionEvent, { type: "done"; state: "error" }>,
+    attempts: number,
+): Extract<SessionEvent, { type: "done"; state: "error" }> {
+    if (event.providerError === undefined) return event;
+    return {
+        ...event,
+        providerError: {
+            ...event.providerError,
+            diagnostics: {
+                ...event.providerError.diagnostics,
+                attempts,
+            },
+        },
+    };
 }

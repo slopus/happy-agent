@@ -1,12 +1,16 @@
 import { isAlreadyPublishedError } from "./release/isAlreadyPublishedError.js";
 import { readPackageManifest } from "./release/readPackageManifest.js";
+import { resolveDistributionTag } from "./release/resolveDistributionTag.js";
 import { resolveReleasePackage } from "./release/resolveReleasePackage.js";
 import { runCommand } from "./release/runCommand.js";
 
 const releasePackage = resolveReleasePackage(process.env.RELEASE_PACKAGE);
 const manifest = readPackageManifest(releasePackage);
 
-const distributionTag = process.env.RELEASE_DIST_TAG ?? "latest";
+const distributionTag = resolveDistributionTag({
+    requestedTag: process.env.RELEASE_DIST_TAG,
+    version: manifest.version,
+});
 
 console.log(`Publishing ${manifest.name}@${manifest.version} as ${distributionTag}...`);
 const publishResult = runCommand(

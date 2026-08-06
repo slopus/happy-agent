@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { Agent } from "./Agent.js";
 import type { UserInputContext } from "./context/UserInputContext.js";
-import { defineTool, type AnyDefinedTool } from "./types.js";
+import { defineTool, type AnyDefinedTool, type Message } from "./types.js";
 import { createPermissionContext, createPermissionReviewSideAgent } from "../permissions/index.js";
 import {
     defineModel,
@@ -21,6 +21,110 @@ import { codexExecCommandTool } from "./tools/codex/exec_command.js";
 import { grokRunTerminalCommandTool } from "../tools/grok/run_terminal_command.js";
 
 describe("Auto permissions", () => {
+    it("reviews durable history while tools receive only canonical model context", async () => {
+        const harness = createJustBashToolHarness();
+        harness.context.permissions = createPermissionContext("auto");
+        let reviewedMessages: readonly Message[] | undefined;
+        let executedMessages: readonly Message[] | undefined;
+        const reviewer = {
+            close: vi.fn(async () => {}),
+            reset: vi.fn(async () => {}),
+            review: vi.fn(async (request: { messages: readonly Message[] }) => {
+                reviewedMessages = request.messages;
+                return {
+                    text: JSON.stringify({
+                        outcome: "allow",
+                        risk_level: "low",
+                        user_authorization: "high",
+                        rationale: "The user authorized the check.",
+                    }),
+                    userEvidenceOmitted: false,
+                };
+            }),
+        };
+        const tool = defineTool({
+            name: "context_probe",
+            label: "Context probe",
+            description: "Records the context supplied to a tool.",
+            arguments: Type.Object({}),
+            returnType: Type.Object({ ok: Type.Boolean() }),
+            describeAutoPermissionAction: () => "checking the active context",
+            shouldReviewInAutoMode: () => true,
+            execute: (_args, _context, execution) => {
+                executedMessages = execution.messages;
+                return { ok: true };
+            },
+            toLLM: () => [{ type: "text", text: "Context checked." }],
+            toUI: () => "Checked context",
+            locks: [],
+        });
+        const model = defineModel({
+            id: "openai/gpt-test",
+            name: "GPT Test",
+            thinkingLevels: ["off"],
+            defaultThinkingLevel: "off",
+        });
+        let calls = 0;
+        const provider = defineProvider({
+            id: "codex",
+            models: [model],
+            stream() {
+                calls += 1;
+                return calls === 1
+                    ? streamFor(
+                          assistantMessage({
+                              content: [
+                                  {
+                                      type: "toolCall",
+                                      id: "context-probe-call",
+                                      name: tool.name,
+                                      arguments: {},
+                                  },
+                              ],
+                              stopReason: "toolUse",
+                          }),
+                      )
+                    : streamFor(
+                          assistantMessage({
+                              content: [{ type: "text", text: "Done." }],
+                              stopReason: "stop",
+                          }),
+                      );
+            },
+        });
+        const agent = new Agent({
+            context: harness.context,
+            contextMessages: [
+                {
+                    role: "user",
+                    id: "canonical-checkpoint",
+                    blocks: [{ type: "text", text: "CANONICAL_COMPACTED_CHECKPOINT" }],
+                },
+            ],
+            createPermissionReviewAgent: () => reviewer,
+            messages: [
+                {
+                    role: "user",
+                    id: "durable-authorization",
+                    blocks: [{ type: "text", text: "DURABLE_PRECOMPACTION_AUTHORIZATION" }],
+                },
+            ],
+            modelId: model.id,
+            printToConsole: false,
+            provider,
+            tools: [tool],
+        });
+
+        await agent.send("Run the context probe.");
+
+        expect(JSON.stringify(reviewedMessages)).toContain("DURABLE_PRECOMPACTION_AUTHORIZATION");
+        expect(JSON.stringify(reviewedMessages)).not.toContain("CANONICAL_COMPACTED_CHECKPOINT");
+        expect(JSON.stringify(executedMessages)).toContain("CANONICAL_COMPACTED_CHECKPOINT");
+        expect(JSON.stringify(executedMessages)).not.toContain(
+            "DURABLE_PRECOMPACTION_AUTHORIZATION",
+        );
+    });
+
     it("fails closed when any tool has no permission context", async () => {
         const harness = createJustBashToolHarness();
         delete harness.context.permissions;

@@ -6,10 +6,27 @@ import {
     happyComputeInstanceSchema,
     happyComputePreparationEventSchema,
 } from "../sources/computeTypes.js";
-import { happyPluginManifestSchema } from "../sources/types.js";
+import { createWorkspaceInputSchema, happyPluginManifestSchema } from "../sources/types.js";
 import { HAPPY_PLUGIN_MAX_INTERCEPT_DOMAINS } from "../sources/types.js";
 
 describe("happy plugin manifest", () => {
+    it("accepts a stable identity for idempotent workspace creation", () => {
+        expect(
+            Value.Check(createWorkspaceInputSchema, {
+                id: "g1l4nup1ppbrfvae0pllq6ul",
+                name: "Queued work",
+                projectId: "project-id",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(createWorkspaceInputSchema, {
+                id: "stable-id-for-a-retry",
+                name: "Queued work",
+                projectId: "project-id",
+            }),
+        ).toBe(false);
+    });
+
     it("requires bounded catalog author and category metadata", () => {
         const manifest = {
             author: "Happy",

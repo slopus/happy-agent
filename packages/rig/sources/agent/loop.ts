@@ -1,5 +1,6 @@
 import { createId } from "@paralleldrive/cuid2";
 import { Value } from "@sinclair/typebox/value";
+import { extractProviderErrorDiagnostics } from "@slopus/rig-providers";
 
 import { assistantMessageToAgentMessage } from "./assistantMessageToAgentMessage.js";
 import { boundToolResultBlocks } from "./boundToolResultBlocks.js";
@@ -44,6 +45,7 @@ import type {
     Message as ProviderMessage,
     Model,
     Provider,
+    ProviderError,
     ProviderAssistantMessageEvent,
     ServiceTier,
     StopReason,
@@ -247,7 +249,13 @@ interface AgentLoopOutcome {
  * report an error the session and the transcript are unable to describe.
  */
 export type AgentLoopResult =
-    | (AgentLoopOutcome & { errorMessage: string; stopReason: "error" })
+    | (AgentLoopOutcome & {
+          errorMessage: string;
+          providerError: ProviderError;
+          providerId: string;
+          requestedModelId: string;
+          stopReason: "error";
+      })
     | (AgentLoopOutcome & { errorMessage?: never; stopReason: Exclude<StopReason, "error"> });
 
 export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentLoopResult> {
@@ -322,8 +330,10 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
             onContextChanged: options.onContextChanged,
             onMessage: options.onMessage,
             outcome: "retried",
+            providerId: options.provider.id,
             providerMessages,
             reason,
+            requestedModelId: model.id,
             transcript,
         });
 
@@ -399,8 +409,10 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
                             onContextChanged: options.onContextChanged,
                             onMessage: options.onMessage,
                             outcome: "retried",
+                            providerId: options.provider.id,
                             providerMessages,
                             reason: event.reason,
+                            requestedModelId: model.id,
                             transcript,
                         });
                     }
@@ -460,6 +472,14 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
             }
 
             const errorMessage = errorToMessage(error);
+            const diagnostics = extractProviderErrorDiagnostics(error, {
+                attempts: 1,
+                upstreamMessage: errorMessage,
+            });
+            const providerError: ProviderError = {
+                type: "unclassified",
+                ...(diagnostics === undefined ? {} : { diagnostics }),
+            };
             await appendError({
                 contextTranscript,
                 idFactory,
@@ -467,8 +487,11 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
                 onContextChanged: options.onContextChanged,
                 onMessage: options.onMessage,
                 outcome: "failed",
+                providerError,
+                providerId: options.provider.id,
                 providerMessages,
                 reason: errorMessage,
+                requestedModelId: model.id,
                 transcript,
             });
             await appendSteering(options, transcript, contextTranscript, providerMessages, now);
@@ -476,6 +499,9 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
                 errorMessage,
                 messages: transcript,
                 contextMessages: contextTranscript,
+                providerError,
+                providerId: options.provider.id,
+                requestedModelId: model.id,
                 stopReason: "error",
             };
         }
@@ -602,6 +628,13 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
 
         if (assistantMessage.stopReason === "error") {
             const errorMessage = assistantMessage.errorMessage ?? "The model response failed.";
+            const providerError: ProviderError = assistantMessage.providerError ?? {
+                type: "unclassified",
+                diagnostics: {
+                    attempts: 1,
+                    upstreamMessage: errorMessage,
+                },
+            };
             await appendError({
                 contextTranscript,
                 idFactory,
@@ -609,8 +642,11 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
                 onContextChanged: options.onContextChanged,
                 onMessage: options.onMessage,
                 outcome: "failed",
+                providerError,
+                providerId: options.provider.id,
                 providerMessages,
                 reason: errorMessage,
+                requestedModelId: model.id,
                 transcript,
             });
             await appendSteering(options, transcript, contextTranscript, providerMessages, now);
@@ -618,6 +654,9 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
                 errorMessage,
                 messages: transcript,
                 contextMessages: contextTranscript,
+                providerError,
+                providerId: options.provider.id,
+                requestedModelId: model.id,
                 stopReason: assistantMessage.stopReason,
             };
         }
@@ -676,7 +715,10 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
             return interrupted;
         }
 
-        const toolMessages = transcript.filter((message) => !isExcludedFromModelContext(message));
+        const permissionMessages = transcript.filter(
+            (message) => !isExcludedFromModelContext(message),
+        );
+        const toolMessages = [...contextTranscript];
         const preparedPermissionEntries = await raceWithAbort(
             (async () => {
                 const entries: [string, PreparedToolPermission][] = [];
@@ -684,7 +726,7 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
                     entries.push([
                         toolCall.id,
                         await prepareToolPermission(toolCall, toolsByName, toolContext, {
-                            messages: toolMessages,
+                            messages: permissionMessages,
                             onPermissionReviewStarted: (review) =>
                                 options.signal?.aborted
                                     ? Promise.resolve()
@@ -1100,8 +1142,11 @@ async function appendError(options: {
     onContextChanged: ((messages: readonly Message[]) => void | Promise<void>) | undefined;
     onMessage: ((message: Message) => void | Promise<void>) | undefined;
     outcome: ErrorMessage["outcome"];
+    providerError?: ProviderError;
+    providerId?: string;
     providerMessages: ProviderMessage[];
     reason: string;
+    requestedModelId?: string;
     transcript: Message[];
 }): Promise<void> {
     const message = createErrorMessage(
@@ -1109,6 +1154,16 @@ async function appendError(options: {
         options.reason,
         options.outcome,
         options.attempt,
+        undefined,
+        {
+            ...(options.providerError === undefined
+                ? {}
+                : { providerError: options.providerError }),
+            ...(options.providerId === undefined ? {} : { providerId: options.providerId }),
+            ...(options.requestedModelId === undefined
+                ? {}
+                : { requestedModelId: options.requestedModelId }),
+        },
     );
     options.transcript.push(message);
     options.contextTranscript.push(message);

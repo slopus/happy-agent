@@ -704,7 +704,9 @@ describe("AgentSessionManager", () => {
     });
 
     it("rejects encrypted spawn delivery across provider or region scopes", async () => {
-        const parentTransportScope = vi.fn<() => string | undefined>(() => '["codex",null]');
+        // A transport scope is the provider that issued it, so the parent's scope is its own
+        // provider id. The guard runs after resolution now, so the parent has to be resolvable.
+        const parentTransportScope = vi.fn<() => string | undefined>(() => "codex");
         const child = {
             id: "child-1",
             submit: vi.fn(),
@@ -712,8 +714,10 @@ describe("AgentSessionManager", () => {
         const parent = {
             agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
             encryptedAgentTransportScope: parentTransportScope,
+            hasModel: () => true,
             id: "root-1",
             isSubagent: () => false,
+            providerIdsForModel: () => ["codex"],
             recordSubagentChanged: vi.fn(),
             requestForSubagent: () => ({
                 cwd: "/tmp/rig-manager-test",
@@ -767,6 +771,50 @@ describe("AgentSessionManager", () => {
             }),
         ).rejects.toThrow("Native encrypted collaboration only works within the current");
         expect(createSubagent).not.toHaveBeenCalled();
+    });
+
+    it("refuses encrypted delivery to a second account the request never named", async () => {
+        // The request names no provider, so nothing about it looks like a crossing. Resolution
+        // still moves the child onto whichever account last succeeded for that model, and
+        // ciphertext issued by one account cannot be read by another. Checking the request instead
+        // of the resolved child is how that used to go out silently.
+        const child = { id: "child-1", submit: vi.fn() } as unknown as InMemorySession;
+        const parent = {
+            agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
+            encryptedAgentTransportScope: () => "codex-a",
+            hasModel: () => true,
+            id: "root-1",
+            isSubagent: () => false,
+            providerIdsForModel: () => ["codex-a", "codex-b"],
+            recordSubagentChanged: vi.fn(),
+            requestForSubagent: () => ({
+                cwd: "/tmp/rig-manager-test",
+                modelId: "openai/gpt-5.6-sol",
+                permissionMode: "auto",
+                providerId: "codex-a",
+            }),
+        } as unknown as InMemorySession;
+        const createSubagent = vi.fn(() => child);
+        const manager = new AgentSessionManager({
+            repository: {
+                createSubagent,
+                get: (sessionId) => (sessionId === parent.id ? parent : undefined),
+                listByRoot: () => [],
+            },
+        });
+        manager.recordSuccessfulProvider("openai/gpt-5.6-terra", "codex-b");
+
+        await expect(
+            manager.spawn(parent.id, {
+                encryptedPrompt: "opaque-ciphertext",
+                description: "Silent account crossing",
+                modelId: "openai/gpt-5.6-terra",
+                prompt: "",
+                taskName: "silent_crossing",
+            }),
+        ).rejects.toThrow("Native encrypted collaboration only works within the current");
+        expect(createSubagent).not.toHaveBeenCalled();
+        expect(child.submit).not.toHaveBeenCalled();
     });
 
     it("infers a provider for model-only requests and reuses the last successful provider", async () => {
@@ -1782,6 +1830,52 @@ describe("AgentSessionManager", () => {
         expect(root.recordSubagentsSuspended).toHaveBeenCalledWith([]);
     });
 
+    it("excludes workspace-archived subagents from collaboration lists and waits", async () => {
+        const archived = {
+            agentMetadata: () => ({
+                depth: 1,
+                description: "Archived child",
+                parentSessionId: "root-1",
+                rootSessionId: "root-1",
+                taskName: "archived_child",
+                type: "subagent" as const,
+            }),
+            id: "archived-child-1",
+            isSubagent: () => true,
+            subagentSummary: () => ({
+                agentId: "archived-agent-1",
+                createdAt: 1,
+                depth: 1,
+                description: "Archived child",
+                id: "archived-child-1",
+                modelId: "openai/gpt-5.6-sol",
+                parentSessionId: "root-1",
+                status: "archived" as const,
+                taskName: "archived_child",
+                updatedAt: 2,
+            }),
+        } as unknown as InMemorySession;
+        const root = {
+            agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
+            id: "root-1",
+            isSubagent: () => false,
+        } as unknown as InMemorySession;
+        const manager = new AgentSessionManager({
+            repository: {
+                createSubagent: vi.fn(),
+                get: (sessionId) =>
+                    sessionId === root.id ? root : sessionId === archived.id ? archived : undefined,
+                listByRoot: () => [archived],
+            },
+        });
+
+        expect(manager.list(root.id)).toEqual([]);
+        await expect(manager.wait(root.id, 0)).resolves.toEqual({
+            agents: [],
+            timedOut: false,
+        });
+    });
+
     it("waits for active work instead of returning an older completed agent", async () => {
         let activeStatus: "completed" | "running" = "running";
         const makeChild = (id: string, taskName: string, status: () => "completed" | "running") =>
@@ -2170,6 +2264,7 @@ describe("AgentSessionManager", () => {
             providerIdsForModel: (modelId) => (modelId === "anthropic/sonnet-5" ? ["claude"] : []),
         });
         const createDelegatedSession = vi.fn(() => delegated);
+        let workspacePresence: ProjectWorkspace["presence"] = "missing";
         const manager = new AgentSessionManager({
             repository: {
                 createDelegatedSession,
@@ -2182,6 +2277,7 @@ describe("AgentSessionManager", () => {
                               id: workspaceId,
                               name: "Changelog",
                               path: "/workspaces/changelog",
+                              presence: workspacePresence,
                               projectId,
                               status: "ready",
                           } as ProjectWorkspace)
@@ -2189,17 +2285,20 @@ describe("AgentSessionManager", () => {
             },
         });
 
-        await expect(
-            manager.delegate(delegator.id, {
-                effort: "high",
-                modelId: "anthropic/sonnet-5",
-                prompt: "Update the changelog.",
-                readOnly: true,
-                serviceTier: "fast",
-                title: "Update the changelog",
-                workspaceId: "workspace-2",
-            }),
-        ).resolves.toEqual({
+        const request = {
+            effort: "high",
+            modelId: "anthropic/sonnet-5",
+            prompt: "Update the changelog.",
+            readOnly: true,
+            serviceTier: "fast" as const,
+            title: "Update the changelog",
+            workspaceId: "workspace-2",
+        };
+        await expect(manager.delegate(delegator.id, request)).rejects.toThrow(
+            "directory is unavailable",
+        );
+        workspacePresence = "present";
+        await expect(manager.delegate(delegator.id, request)).resolves.toEqual({
             agentId: "delegate-agent",
             projectId: "project-1",
             sessionId: "delegate-1",
@@ -2404,7 +2503,7 @@ describe("AgentSessionManager", () => {
         ]);
     });
 
-    it("waits for owned workspace initialization before starting its agent", async () => {
+    it("waits for an owned workspace to become ready before starting its agent", async () => {
         const child = {
             agentMetadata: () => ({
                 depth: 1,
@@ -2434,8 +2533,11 @@ describe("AgentSessionManager", () => {
             }),
             snapshot: () => ({ projectId: "project-1" }),
         } as unknown as InMemorySession;
-        let workspaceStatus: ProjectWorkspace["status"] = "initializing";
         const createSubagent = vi.fn(() => child);
+        let workspacePresence: ProjectWorkspace["presence"];
+        let workspaceStatus: ProjectWorkspace["status"] = "initializing";
+        const ready = deferred<ProjectWorkspace>();
+        const waitForWorkspaceReady = vi.fn(() => ready.promise);
         const manager = new AgentSessionManager({
             repository: {
                 createSubagent,
@@ -2446,13 +2548,15 @@ describe("AgentSessionManager", () => {
                         id: "workspace-1",
                         name: "Setup",
                         path: "/workspaces/setup",
+                        presence: workspacePresence,
                         projectId: "project-1",
                         status: workspaceStatus,
                     }) as ProjectWorkspace,
+                waitForWorkspaceReady,
             },
         });
 
-        const spawning = manager.spawnInWorkspace(parent.id, {
+        const request = {
             background: true,
             description: "Wait for setup",
             effort: "medium",
@@ -2461,14 +2565,30 @@ describe("AgentSessionManager", () => {
             providerId: "codex",
             taskName: "wait_for_setup",
             workspaceId: "workspace-1",
-        });
+        };
+        const spawned = manager.spawnInWorkspace(parent.id, request);
         await Promise.resolve();
+        expect(waitForWorkspaceReady).toHaveBeenCalledWith("project-1", "workspace-1", undefined);
         expect(createSubagent).not.toHaveBeenCalled();
+        workspaceStatus = "ready";
+        workspacePresence = "present";
+        ready.resolve({
+            id: "workspace-1",
+            name: "Setup",
+            path: "/workspaces/setup",
+            presence: "present",
+            projectId: "project-1",
+            status: "ready",
+        } as ProjectWorkspace);
+        await expect(spawned).resolves.toMatchObject({ status: "running" });
+        expect(createSubagent).toHaveBeenCalledTimes(1);
 
         workspaceStatus = "ready";
-
-        await expect(spawning).resolves.toMatchObject({ status: "running" });
-        expect(createSubagent).toHaveBeenCalledOnce();
+        workspacePresence = "missing";
+        await expect(manager.spawnInWorkspace(parent.id, request)).rejects.toThrow(
+            "directory is unavailable",
+        );
+        expect(createSubagent).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -2489,6 +2609,14 @@ function delegatorSession(overrides: Partial<InMemorySession> = {}): InMemorySes
         snapshot: () => ({ projectId: "project-1" }),
         ...overrides,
     } as unknown as InMemorySession;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
 }
 
 function historySession(options: {

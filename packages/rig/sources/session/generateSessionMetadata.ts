@@ -3,6 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { Model, Provider, StreamOptions } from "@slopus/rig-execution";
 import { providerModelFamily } from "@slopus/rig-providers";
 import { toLocalDate } from "../executor/toLocalDate.js";
+import { ABORTED_BY_SIGNAL, raceWithAbort } from "../utils/raceWithAbort.js";
 
 const METADATA_PROMPT = `Create concise session metadata from the visible conversation.
 
@@ -76,20 +77,39 @@ export async function generateSessionMetadata(options: {
             },
             streamOptions,
         );
-        for await (const _event of stream) {
-            // Drain the stream; the normalized final message is read below.
-        }
+        const consumed = (async () => {
+            for await (const _event of stream) {
+                // Drain the stream; the normalized final message is read below.
+            }
 
-        const message = await stream.result();
-        const text = message.content
-            .filter((content) => content.type === "text")
-            .map((content) => content.text)
-            .join("")
-            .trim();
-        return parseSessionMetadata(text);
+            const message = await stream.result();
+            const text = message.content
+                .filter((content) => content.type === "text")
+                .map((content) => content.text)
+                .join("")
+                .trim();
+            return parseSessionMetadata(text);
+        })();
+        const result = await raceWithAbort(consumed, options.signal);
+        if (result === ABORTED_BY_SIGNAL) {
+            throw new Error("Session metadata generation was cancelled.");
+        }
+        return result;
     } finally {
-        // The isolated provider exists only for this one request.
-        if (provider !== options.provider) await provider.close?.();
+        // The isolated provider exists only for this request. Cancellation is a hard boundary for
+        // the session queue, so a provider that is slow to acknowledge close cannot retain that
+        // queue barrier. Its stream still receives the abort signal above, and closing the
+        // isolated transport prevents it from sharing the following agent inference.
+        if (provider !== options.provider) {
+            try {
+                const closing =
+                    provider.forceClose === undefined ? provider.close?.() : provider.forceClose();
+                if (closing !== undefined) void Promise.resolve(closing).catch(() => undefined);
+            } catch {
+                // Session naming is optional enrichment. A synchronous teardown failure cannot
+                // replace the cancellation result or stop the durable user run behind it.
+            }
+        }
     }
 }
 

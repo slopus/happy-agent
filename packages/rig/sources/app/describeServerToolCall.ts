@@ -6,6 +6,13 @@ export interface ServerToolCallDescription {
     readonly active: string;
     /** Past tense headline for the history row. */
     readonly title: string;
+    /**
+     * Headline for a call whose turn ended before the provider reported the result.
+     *
+     * Says Rig stopped, not that the search did. Nothing can stop one: it runs on the provider's
+     * own backend, so what is actually known is that it started and its answer never came back.
+     */
+    readonly interrupted: string;
     /** Everything the headline does not already say; empty when there is nothing to add. */
     readonly detail: string;
 }
@@ -28,6 +35,7 @@ export function describeServerToolCall(
     return {
         active: join(subject.active, detail),
         title: subject.title,
+        interrupted: `Stopped while ${lowerFirst(subject.active)}`,
         detail,
     };
 }
@@ -51,6 +59,11 @@ function describeSubject(name: string | undefined): { active: string; title: str
         active: `Running the model's own ${readable} tool`,
         title: `Ran the model's own ${readable} tool`,
     };
+}
+
+/** "Searching X" reads as a headline; "while searching X" needs it to read as a clause. */
+function lowerFirst(subject: string): string {
+    return subject.charAt(0).toLowerCase() + subject.slice(1);
 }
 
 /**

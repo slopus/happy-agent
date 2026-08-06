@@ -4,11 +4,12 @@ import { describe, it } from "node:test";
 import { assertHappyRuntimeDependencies } from "./assertHappyRuntimeDependencies.js";
 
 const dependencies = {
+    "@noble/ciphers": "1.0.0",
+    "@noble/curves": "1.0.0",
     "@vscode/ripgrep": "1.0.0",
     qrcode: "1.0.0",
     "qrcode-terminal": "1.0.0",
     "socket.io-client": "1.0.0",
-    tweetnacl: "1.0.0",
 };
 
 describe("assertHappyRuntimeDependencies", () => {
@@ -36,11 +37,11 @@ describe("assertHappyRuntimeDependencies", () => {
         assert.throws(
             () =>
                 assertHappyRuntimeDependencies({
-                    dependencies: { ...dependencies, tweetnacl: undefined as never },
+                    dependencies: { ...dependencies, "@noble/ciphers": undefined as never },
                     name: "@slopus/rig",
                     version: "1.2.3",
                 }),
-            /tweetnacl/u,
+            /@noble\/ciphers/u,
         );
     });
 });

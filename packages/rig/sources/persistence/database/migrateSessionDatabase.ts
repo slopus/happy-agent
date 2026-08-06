@@ -28,6 +28,8 @@ import { happyCloudEnrollment as createHappyCloudEnrollmentTables } from "./migr
 import { scopeSharing } from "./migrations/24-scope-sharing.js";
 import { sessionShareToolOutput } from "./migrations/25-session-share-tool-output.js";
 import { sessionSharePeerCapabilities } from "./migrations/26-session-share-peer-capabilities.js";
+import { sessionWorkspaceWaiting } from "./migrations/27-session-workspace-waiting.js";
+import { p2pPeerTrust } from "./migrations/28-p2p-peer-trust.js";
 
 interface MigrationContext {
     createDataEpoch: () => string;
@@ -62,6 +64,8 @@ const migrations: readonly SessionDatabaseMigration[] = [
     scopeSharing,
     sessionShareToolOutput,
     sessionSharePeerCapabilities,
+    sessionWorkspaceWaiting,
+    p2pPeerTrust,
 ];
 export const SESSION_DATABASE_APPLICATION_ID = 0x52494732;
 export const RIG_DATA_IDENTITY_MIGRATION_INDEX = 19;

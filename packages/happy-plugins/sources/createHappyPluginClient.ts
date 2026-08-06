@@ -23,6 +23,7 @@ import {
 } from "./computeTypes.js";
 import { startHappyComputeProvider } from "./startHappyComputeProvider.js";
 import { subscribeHappyComputePreparation } from "./subscribeHappyComputePreparation.js";
+import { subscribeHappyWorkspaces } from "./subscribeHappyWorkspaces.js";
 import { startHappyMcpServer } from "./startHappyMcpServer.js";
 import {
     startHappyNetworkRequestHandler,
@@ -391,6 +392,7 @@ export function createHappyPluginClient(
                         workspaceResponseSchema,
                         {
                             ...(input.baseRef === undefined ? {} : { baseRef: input.baseRef }),
+                            ...(input.id === undefined ? {} : { id: input.id }),
                             name: input.name,
                         },
                     )
@@ -469,6 +471,7 @@ export function createHappyPluginClient(
                     )
                 ).workspace;
             },
+            subscribe: (handler) => subscribeHappyWorkspaces(handler, streamTransport),
         },
     };
 }

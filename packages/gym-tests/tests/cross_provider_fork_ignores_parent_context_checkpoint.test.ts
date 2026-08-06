@@ -10,11 +10,13 @@ afterEach(async () => {
 });
 
 describe("cross-provider fork context accounting", () => {
-    it("starts a Fable child without compacting a projected Codex checkpoint", async () => {
-        let parentSessionId: string | undefined;
+    it("starts a Fable child from the parent's compacted canonical checkpoint", async () => {
+        let parentCompactions = 0;
+        let parentSpawned = false;
         let childCompactionSeen = false;
         let childInferenceSeen = false;
         const gym = await createGym({
+            contextWindow: 500,
             environment: { ANTHROPIC_API_KEY: "claude-test-key" },
             homeFiles: {
                 ".codex/auth.json": JSON.stringify({
@@ -49,7 +51,10 @@ describe("cross-provider fork context accounting", () => {
                     }
                     childInferenceSeen = true;
                     expect(JSON.stringify(request.context.messages)).toContain(
-                        "PARENT_CHECKPOINT_CONTEXT",
+                        "<model-switch-history-context>",
+                    );
+                    expect(JSON.stringify(request.context.messages)).not.toContain(
+                        "SOURCE_PROVIDER_OPAQUE_CHECKPOINT",
                     );
                     return {
                         content: [{ text: "CHILD_RAN_WITHOUT_COMPACTION", type: "text" }],
@@ -57,16 +62,41 @@ describe("cross-provider fork context accounting", () => {
                 }
 
                 expect(request.providerId).toBe("codex");
-                parentSessionId ??= sessionId;
-                expect(sessionId).toBe(parentSessionId);
+                if (request.options.intent === "compaction") {
+                    parentCompactions += 1;
+                    expect(JSON.stringify(request.context.messages)).toContain(
+                        parentCompactions === 1
+                            ? "PARENT_REPLACED_VISIBLE_HISTORY"
+                            : "SOURCE_PROVIDER_OPAQUE_CHECKPOINT",
+                    );
+                    return {
+                        compactionContext: {
+                            ...request.context,
+                            messages: [
+                                {
+                                    role: "compaction",
+                                    content: null,
+                                    encryptedContent: "SOURCE_PROVIDER_OPAQUE_CHECKPOINT",
+                                    timestamp: 1,
+                                },
+                            ],
+                        },
+                        content: [],
+                    };
+                }
                 const lastText = messageText(request.context.messages.at(-1));
                 if (lastText.includes("Create the high parent checkpoint.")) {
                     return {
-                        content: [{ text: "PARENT_CHECKPOINT_CONTEXT", type: "text" }],
-                        contextTokens: 331_600,
+                        content: [{ text: "PARENT_REPLACED_VISIBLE_HISTORY", type: "text" }],
+                        contextTokens: 450,
+                        usage: usage(400, 50),
                     };
                 }
-                if (lastText.includes("Start the inherited Fable child.")) {
+                if (lastText.includes("<subagent-notification>")) {
+                    return { content: [{ text: "PARENT_SAW_CHILD_COMPLETE", type: "text" }] };
+                }
+                if (parentCompactions > 0 && !parentSpawned) {
+                    parentSpawned = true;
                     return {
                         content: [
                             {
@@ -86,9 +116,6 @@ describe("cross-provider fork context accounting", () => {
                         ],
                     };
                 }
-                if (lastText.includes("<subagent-notification>")) {
-                    return { content: [{ text: "PARENT_SAW_CHILD_COMPLETE", type: "text" }] };
-                }
                 return { content: [{ text: "PARENT_STARTED_CHILD", type: "text" }] };
             },
             modelId: "openai/gpt-5.6-sol",
@@ -101,7 +128,7 @@ describe("cross-provider fork context accounting", () => {
         submit(gym, "Create the high parent checkpoint.");
         await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("PARENT_CHECKPOINT_CONTEXT") &&
+                snapshot.text.includes("PARENT_REPLACED_VISIBLE_HISTORY") &&
                 snapshot.text.includes("Ask Rig to do anything"),
             "the parent checkpoint turn to settle",
             30_000,
@@ -116,10 +143,125 @@ describe("cross-provider fork context accounting", () => {
             30_000,
         );
 
+        expect(parentCompactions).toBeGreaterThan(0);
         expect(childCompactionSeen).toBe(false);
         expect(completed.text).not.toContain(
             "Claude completed compaction without reporting token usage",
         );
+    }, 120_000);
+
+    it("keeps a large native checkpoint for a compatible child without durable replay", async () => {
+        const replacement =
+            "COMPATIBLE_CHECKPOINT_START\n" + "C".repeat(500_000) + "\nCOMPATIBLE_CHECKPOINT_END";
+        let parentCompactions = 0;
+        let parentSpawned = false;
+        let childInferenceSeen = false;
+        let compactionAfterSpawn = false;
+        const gym = await createGym({
+            contextWindow: 1_000_000,
+            homeFiles: {
+                ".codex/auth.json": JSON.stringify({
+                    auth_mode: "chatgpt",
+                    tokens: {
+                        access_token: "gym-codex-token",
+                        account_id: "gym-account",
+                    },
+                }),
+            },
+            inference(request) {
+                const sessionId = request.options.sessionId;
+                if (sessionId?.endsWith(":title") === true) {
+                    return {
+                        content: [{ text: "Compatible checkpoint regression", type: "text" }],
+                    };
+                }
+
+                expect(request.providerId).toBe("codex");
+                if (request.options.intent === "compaction") {
+                    parentCompactions += 1;
+                    if (parentSpawned) compactionAfterSpawn = true;
+                    expect(JSON.stringify(request.context.messages)).toContain(
+                        "COMPATIBLE_REPLACED_VISIBLE_HISTORY",
+                    );
+                    return {
+                        compactionContext: {
+                            ...request.context,
+                            messages: [{ role: "user", content: replacement, timestamp: 1 }],
+                        },
+                        content: [],
+                    };
+                }
+
+                const lastText = messageText(request.context.messages.at(-1));
+                if (lastText.includes("Build the compatible native checkpoint.")) {
+                    return {
+                        content: [{ text: "COMPATIBLE_REPLACED_VISIBLE_HISTORY", type: "text" }],
+                        contextTokens: 980_000,
+                        usage: usage(930_000, 50_000),
+                    };
+                }
+                if (lastText.includes("Inspect the compatible inherited checkpoint.")) {
+                    const childMessages = JSON.stringify(request.context.messages);
+                    expect(childMessages).toContain("COMPATIBLE_CHECKPOINT_START");
+                    expect(childMessages).toContain("COMPATIBLE_CHECKPOINT_END");
+                    expect(childMessages).not.toContain("COMPATIBLE_REPLACED_VISIBLE_HISTORY");
+                    expect(childMessages.length).toBeGreaterThan(500_000);
+                    childInferenceSeen = true;
+                    return { content: [{ text: "COMPATIBLE_CHILD_DONE", type: "text" }] };
+                }
+                if (lastText.includes("<subagent-notification>")) {
+                    return { content: [{ text: "COMPATIBLE_PARENT_DONE", type: "text" }] };
+                }
+                if (parentCompactions > 0 && !parentSpawned) {
+                    parentSpawned = true;
+                    return {
+                        content: [
+                            {
+                                arguments: {
+                                    fork_turns: "all",
+                                    message: "Inspect the compatible inherited checkpoint.",
+                                    model: "openai/gpt-5.6-sol",
+                                    provider: "codex",
+                                    reasoning_effort: "medium",
+                                    task_name: "compatible_checkpoint_child",
+                                },
+                                id: "spawn-compatible-checkpoint-child",
+                                name: "spawn_agent",
+                                namespace: "collaboration_ext",
+                                type: "toolCall",
+                            },
+                        ],
+                    };
+                }
+                return { content: [{ text: "COMPATIBLE_PARENT_STARTED_CHILD", type: "text" }] };
+            },
+            modelId: "openai/gpt-5.6-sol",
+            providerId: "codex",
+            providerOverrides: ["codex"],
+            rows: 28,
+        });
+        running.add(gym);
+
+        submit(gym, "Build the compatible native checkpoint.");
+        await gym.terminal.waitUntil(
+            (snapshot) =>
+                snapshot.text.includes("COMPATIBLE_REPLACED_VISIBLE_HISTORY") &&
+                snapshot.text.includes("Ask Rig to do anything"),
+            "the compatible parent checkpoint turn to settle",
+            30_000,
+        );
+
+        submit(gym, "Start the compatible inherited child.");
+        await gym.terminal.waitUntil(
+            (snapshot) =>
+                childInferenceSeen &&
+                snapshot.text.includes('"Compatible checkpoint child" completed in'),
+            "the compatible child to inherit the native checkpoint",
+            30_000,
+        );
+
+        expect(parentCompactions).toBe(1);
+        expect(compactionAfterSpawn).toBe(false);
     }, 120_000);
 });
 
@@ -137,4 +279,15 @@ function messageText(
         .filter((block): block is { text: string; type: string } => typeof block.text === "string")
         .map((block) => block.text)
         .join("");
+}
+
+function usage(input: number, output: number) {
+    return {
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
+        input,
+        output,
+        totalTokens: input + output,
+    };
 }

@@ -12,6 +12,7 @@ describe("describeServerToolCall", () => {
         ).toEqual({
             active: 'Searching X for "Claude Code"',
             title: "Searched X",
+            interrupted: "Stopped while searching X",
             detail: 'for "Claude Code"',
         });
         expect(
@@ -25,6 +26,7 @@ describe("describeServerToolCall", () => {
         ).toEqual({
             active: 'Searching the web for "Node.js current stable version"',
             title: "Searched the web",
+            interrupted: "Stopped while searching the web",
             detail: 'for "Node.js current stable version"',
         });
     });
@@ -33,6 +35,7 @@ describe("describeServerToolCall", () => {
         expect(describeServerToolCall("x_keyword_search", "")).toEqual({
             active: "Searching X",
             title: "Searched X",
+            interrupted: "Stopped while searching X",
             detail: "",
         });
         expect(describeServerToolCall("x_keyword_search", '{"que')).toMatchObject({
@@ -69,15 +72,28 @@ describe("describeServerToolCall", () => {
         expect(description.active.endsWith('…"')).toBe(true);
     });
 
+    // Stopping the turn stopped Rig reading the answer, not the search, which already ran on the
+    // provider's own backend. The wording says which of those actually happened.
+    it("says Rig stopped rather than claiming the search did", () => {
+        expect(
+            describeServerToolCall("x_keyword_search", '{"query":"Claude Code"}').interrupted,
+        ).toBe("Stopped while searching X");
+        expect(describeServerToolCall("web_search", "").interrupted).toBe(
+            "Stopped while searching the web",
+        );
+    });
+
     it("describes an unfamiliar provider-run tool in plain English", () => {
         expect(describeServerToolCall("browse_page", '{"url":"https://example.com"}')).toEqual({
             active: "Running the model's own browse page tool",
             title: "Ran the model's own browse page tool",
+            interrupted: "Stopped while running the model's own browse page tool",
             detail: "",
         });
         expect(describeServerToolCall(undefined, "")).toEqual({
             active: "Working on the model's own servers",
             title: "Ran a tool on the model's own servers",
+            interrupted: "Stopped while working on the model's own servers",
             detail: "",
         });
     });

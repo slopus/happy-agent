@@ -10,6 +10,7 @@ import { Type } from "@sinclair/typebox";
 import type { SessionContext } from "@/core/SessionContext.js";
 import type { SessionReasoningEffort, SessionStructuredOutput } from "@/core/SessionRunRequest.js";
 import type { SessionTool } from "@/core/SessionTool.js";
+import { DEFAULT_INFERENCE_MAX_RETRIES } from "@/core/inferenceRetrySettings.js";
 import type { ClaudeCredential } from "@/vendors/VendorCredential.js";
 import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
 
@@ -22,6 +23,7 @@ export function toClaudeSdkOptions(options: {
     effort?: SessionReasoningEffort;
     env: NodeJS.ProcessEnv;
     model: string;
+    maxRetries?: number;
     pathToClaudeCodeExecutable?: string;
     sessionId: string;
     structuredOutput?: SessionStructuredOutput;
@@ -55,7 +57,7 @@ export function toClaudeSdkOptions(options: {
             CLAUDE_CODE_DISABLE_ATTACHMENTS: "1",
             CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1",
             CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
-            CLAUDE_CODE_MAX_RETRIES: "10",
+            CLAUDE_CODE_MAX_RETRIES: String(options.maxRetries ?? DEFAULT_INFERENCE_MAX_RETRIES),
         },
         extraArgs: options.compaction ? {} : { "disable-slash-commands": null },
         includePartialMessages: true,

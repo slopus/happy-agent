@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { Agent, createNodeAgentContext } from "../../agent/index.js";
@@ -11,11 +15,26 @@ import {
     defineModel,
     defineProvider,
     type AssistantMessage,
+    type ProviderError,
 } from "@slopus/rig-execution";
 import { InMemorySession } from "../InMemorySession.js";
+import { PersistentSessionStore } from "../PersistentSessionStore.js";
 
 const PROVIDER_FAILURE =
     "An error occurred while processing your request. Please include the request ID 2c64043a in your message.";
+const PROVIDER_ERROR = {
+    diagnostics: {
+        attempts: 3,
+        code: "model_backend_failure",
+        errorType: "server_error",
+        requestId: "2c64043a",
+        responseId: "response-1",
+        retryDirective: false,
+        status: 502,
+        upstreamMessage: PROVIDER_FAILURE,
+    },
+    type: "internal_server_error",
+} as const satisfies ProviderError;
 
 describe("InMemorySession provider failures", () => {
     it("keeps the provider error text on the durable run boundary", async () => {
@@ -32,11 +51,19 @@ describe("InMemorySession provider failures", () => {
         });
 
         const boundary = runBoundary(session, run.runId);
-        expect(boundary.data).toMatchObject({ errorMessage: PROVIDER_FAILURE });
+        expect(boundary.data).toMatchObject({
+            errorMessage: PROVIDER_FAILURE,
+            providerError: PROVIDER_ERROR,
+            providerId: "test",
+            requestedModelId: "test/provider-failure",
+        });
         expect(session.state().messages.map((entry) => entry.message)).toContainEqual(
             expect.objectContaining({
                 blocks: [{ text: PROVIDER_FAILURE, type: "text" }],
                 outcome: "failed",
+                providerError: PROVIDER_ERROR,
+                providerId: "test",
+                requestedModelId: "test/provider-failure",
                 role: "error",
             }),
         );
@@ -44,6 +71,9 @@ describe("InMemorySession provider failures", () => {
             expect.objectContaining({
                 blocks: [{ text: PROVIDER_FAILURE, type: "text" }],
                 outcome: "failed",
+                providerError: PROVIDER_ERROR,
+                providerId: "test",
+                requestedModelId: "test/provider-failure",
                 role: "error",
             }),
         );
@@ -72,9 +102,78 @@ describe("InMemorySession provider failures", () => {
             ]),
         );
     });
+
+    it("restores structured provider diagnostics from messages and run events", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "rig-provider-failure-"));
+        const databasePath = join(directory, "sessions.sqlite");
+        const fixture = createFixture();
+        try {
+            const initial = new PersistentSessionStore({
+                createRuntime: fixture.createRuntime,
+                databasePath,
+                modelCatalog: fixture.catalog,
+            });
+            const session = initial.create({
+                cwd: "/tmp/rig-provider-failure-persistence",
+                modelId: fixture.model.id,
+                providerId: fixture.provider.id,
+            });
+            const run = session.submit({ text: "Persist this failure." });
+            await session.waitForRun(run.runId);
+            const sessionId = session.id;
+            initial.close();
+
+            const restoredStore = new PersistentSessionStore({
+                createRuntime: fixture.createRuntime,
+                databasePath,
+                modelCatalog: fixture.catalog,
+            });
+            try {
+                const restored = restoredStore.get(sessionId)!;
+                expect(
+                    restored.state().messages.find((entry) => entry.message.role === "error")
+                        ?.message,
+                ).toMatchObject({
+                    providerError: PROVIDER_ERROR,
+                    providerId: "test",
+                    requestedModelId: "test/provider-failure",
+                });
+                expect(
+                    restored.state().contextMessages?.find((message) => message.role === "error"),
+                ).toMatchObject({
+                    providerError: PROVIDER_ERROR,
+                    providerId: "test",
+                    requestedModelId: "test/provider-failure",
+                });
+                expect(runBoundary(restored, run.runId).data).toMatchObject({
+                    providerError: PROVIDER_ERROR,
+                    providerId: "test",
+                    requestedModelId: "test/provider-failure",
+                });
+            } finally {
+                restoredStore.close();
+            }
+        } finally {
+            await rm(directory, { force: true, recursive: true });
+        }
+    });
 });
 
 function createSession(): InMemorySession {
+    const fixture = createFixture();
+    return new InMemorySession({
+        createEventId: createEventIdFactory(),
+        createRuntime: fixture.createRuntime,
+        modelCatalog: fixture.catalog,
+        request: {
+            cwd: "/tmp/rig-provider-failure",
+            modelId: fixture.model.id,
+            providerId: fixture.provider.id,
+        },
+    });
+}
+
+function createFixture() {
     const model = defineModel({
         defaultThinkingLevel: "off",
         id: "test/provider-failure",
@@ -99,16 +198,13 @@ function createSession(): InMemorySession {
         models: [model],
         providers: [{ providerId: provider.id, models: [model] }],
     };
-    return new InMemorySession({
-        createEventId: createEventIdFactory(),
-        createRuntime: (options) => createRuntime(options, provider),
-        modelCatalog: catalog,
-        request: {
-            cwd: "/tmp/rig-provider-failure",
-            modelId: model.id,
-            providerId: provider.id,
-        },
-    });
+    return {
+        catalog,
+        createRuntime: (options: CreateCodingAssistantAgentOptions) =>
+            createRuntime(options, provider),
+        model,
+        provider,
+    };
 }
 
 function createRuntime(
@@ -139,6 +235,7 @@ function assistantError(model: string): AssistantMessage {
         errorMessage: PROVIDER_FAILURE,
         model,
         provider: "test",
+        providerError: PROVIDER_ERROR,
         role: "assistant",
         stopReason: "error",
         timestamp: Date.now(),

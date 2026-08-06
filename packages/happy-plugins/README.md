@@ -699,14 +699,46 @@ const all = await happy.workspaces.list();
 const projectWorkspaces = await happy.workspaces.list({ projectId: "project-id" });
 ```
 
-Create a managed workspace:
+Create a managed workspace and subscribe before creating it so its readiness transition cannot be
+missed:
 
 ```ts
+const workspaceId = "g1l4nup1ppbrfvae0pllq6ul";
+let resolveWorkspace!: (workspace: HappyWorkspace) => void;
+let rejectWorkspace!: (error: Error) => void;
+const ready = new Promise<HappyWorkspace>((resolve, reject) => {
+    resolveWorkspace = resolve;
+    rejectWorkspace = reject;
+});
+const subscription = await happy.workspaces.subscribe((event) => {
+    if (event.workspace.id !== workspaceId) return;
+    if (event.workspace.status === "ready") resolveWorkspace(event.workspace);
+    if (event.workspace.status === "failed" || event.workspace.status === "archived") {
+        rejectWorkspace(
+            new Error(event.workspace.error ?? "Workspace initialization did not complete."),
+        );
+    }
+});
 const workspace = await happy.workspaces.create({
+    id: workspaceId,
     projectId: "project-id",
     name: "Investigate parser",
     // baseRef: "main",
 });
+try {
+    const readyWorkspace =
+        workspace.status === "ready"
+            ? workspace // an idempotent retry may already be complete and emit no new event
+            : workspace.status === "failed" || workspace.status === "archived"
+              ? (() => {
+                    throw new Error(
+                        workspace.error ?? "Workspace initialization did not complete.",
+                    );
+                })()
+              : await ready;
+} finally {
+    await subscription.close();
+}
 ```
 
 Rename or archive a workspace using its current version:
@@ -765,7 +797,16 @@ happy.workspaces.create(input: {
     projectId: string;
     name: string;
     baseRef?: string;
+    id?: string;
 }): Promise<HappyWorkspace>
+
+// Creation returns an `initializing` reservation immediately. Subscribe before creating, then
+// wait for that workspace's `workspace_updated` event with status `ready` before calling file or
+// command operations. A `failed` or `archived` update is terminal.
+
+happy.workspaces.subscribe(
+    handler: (event: HappyWorkspaceEvent) => void | Promise<void>,
+): Promise<HappyWorkspaceSubscription>
 
 happy.workspaces.rename(input: {
     projectId: string;

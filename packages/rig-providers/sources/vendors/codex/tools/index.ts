@@ -1,3 +1,5 @@
+import type { SessionTool } from "@/core/SessionTool.js";
+
 export { apply_patch } from "./apply_patch.js";
 export { exec } from "./exec.js";
 export { exec_command } from "./exec_command.js";
@@ -17,5 +19,15 @@ export { update_plan } from "./update_plan.js";
 export { view_image } from "./view_image.js";
 export { wait } from "./wait.js";
 export { wait_agent } from "./wait_agent.js";
-export { web_search } from "./web_search.js";
+import { web_search } from "./web_search.js";
+
+export { web_search };
+
+/**
+ * Tools OpenAI runs on its own backend inside a single response.
+ *
+ * Named the same way Grok's are, because the product decides which searches an agent holds without
+ * knowing whose backend answers them.
+ */
+export const codex_hosted_tools = [web_search] as const satisfies readonly SessionTool[];
 export { write_stdin } from "./write_stdin.js";

@@ -84,7 +84,8 @@ Two encryption variants are in use:
 - **DataKey**, when a client supports per-session and per-machine data keys:
   AES-256-GCM with a 12-byte nonce and 16-byte tag, laid out as a version byte,
   nonce, ciphertext, and tag. The content key itself is wrapped with
-  `tweetnacl.box` under an ephemeral keypair and travels as a versioned bundle
+  NaCl-compatible X25519/XSalsa20-Poly1305 under an ephemeral keypair and
+  travels as a versioned bundle
   in fields such as `dataEncryptionKey`.
 
 Everything encrypted becomes base64 on the wire. Identifiers, versions, and

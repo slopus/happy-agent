@@ -281,7 +281,7 @@ async function reconcileDaemonSettings(client: ProtocolHttpClient): Promise<void
     const daemonSettings = await loadDaemonSettings();
     const current = await client.getDaemonConfig();
     if (
-        current.config.settings.codexStreamMaxRetries === daemonSettings.codexStreamMaxRetries &&
+        current.config.settings.inferenceMaxRetries === daemonSettings.inferenceMaxRetries &&
         current.config.settings.durableGlobalEventQueue === daemonSettings.durableGlobalEventQueue
     ) {
         return;
@@ -289,12 +289,12 @@ async function reconcileDaemonSettings(client: ProtocolHttpClient): Promise<void
 
     const updated = await client.updateDaemonConfig({
         settings: {
-            codexStreamMaxRetries: daemonSettings.codexStreamMaxRetries,
+            inferenceMaxRetries: daemonSettings.inferenceMaxRetries,
             durableGlobalEventQueue: daemonSettings.durableGlobalEventQueue,
         },
     });
     if (
-        updated.config.settings.codexStreamMaxRetries !== daemonSettings.codexStreamMaxRetries ||
+        updated.config.settings.inferenceMaxRetries !== daemonSettings.inferenceMaxRetries ||
         updated.config.settings.durableGlobalEventQueue !== daemonSettings.durableGlobalEventQueue
     ) {
         throw new Error("The local daemon did not apply the requested configuration.");

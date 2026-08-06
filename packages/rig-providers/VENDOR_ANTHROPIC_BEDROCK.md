@@ -17,6 +17,13 @@ The provider follows Claude Code's foreground inference shape:
 - the caller's complete rebuilt transcript, including signed thinking, tool calls, tool results,
   and images.
 
+An inference request that replays a native compaction checkpoint additionally enables the
+`compact-2026-01-12` beta and declares a `compact_20260112` edit, because the API rejects
+compaction blocks whose strategy is undeclared and offers no way to declare it with compaction
+disabled. The replay edit's trigger sits beyond the 1M context window so the provider never
+compacts mid-run; only `compact()` sends the edit with a real trigger and
+`pause_after_compaction` to ask the provider for a new checkpoint.
+
 On Mantle, the SDK sends the normal Anthropic request to `/v1/messages`, retains the direct model
 ID, and puts betas in the `anthropic-beta` header. On Runtime, it adds
 `anthropic_version: "bedrock-2023-05-31"`, moves betas to `anthropic_beta`, removes `model` and
@@ -69,5 +76,6 @@ executor/configuration layer.
 `tests/anthropicBedrockProvider.test.ts` exercises regional routing, signed-thinking replay,
 provider-owned retry, native compaction, Mantle and Runtime wire shapes, exact current Rig prompt
 and tools, and the captured Claude golden response stream.
-`tests/anthropicBedrock.live.test.ts` performs a real preferred-endpoint turn when
-`RIG_LIVE_TEST=1` and a bearer token are available.
+`tests/anthropicBedrock.live.test.ts` performs a real preferred-endpoint turn and a real native
+compaction followed by a checkpoint-replay turn when `RIG_LIVE_TEST=1` and a bearer token are
+available.

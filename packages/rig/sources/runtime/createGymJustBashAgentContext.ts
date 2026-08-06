@@ -18,6 +18,7 @@ import type { WorkflowContext } from "../workflows/index.js";
 export interface CreateGymJustBashAgentContextOptions {
     goals?: GoalContext;
     permissionMode?: PermissionMode;
+    protectedPaths?: readonly string[];
     secrets?: SessionSecretContext;
     tasks?: TaskContext;
     userInput?: UserInputContext;
@@ -36,11 +37,17 @@ export function createGymJustBashAgentContext(
             { filesystem: new ReadWriteFs({ root: homePath }), mountPoint: "/home/rig" },
         ],
     });
-    const context = createJustBashAgentContext(new Bash({ cwd: "/workspace", fs }), "/workspace");
-    context.fs.home = "/home/rig";
-    context.permissions = createPermissionContext(
-        options.permissionMode ?? DEFAULT_PERMISSION_MODE,
+    const permissions = createPermissionContext(options.permissionMode ?? DEFAULT_PERMISSION_MODE, {
+        protectedPaths: (options.protectedPaths ?? []).map((path) =>
+            path.startsWith("/") ? path : `/workspace/${path}`,
+        ),
+    });
+    const context = createJustBashAgentContext(
+        new Bash({ cwd: "/workspace", fs }),
+        "/workspace",
+        permissions,
     );
+    context.fs.home = "/home/rig";
     if (options.secrets !== undefined) context.secrets = options.secrets;
     if (options.userInput !== undefined) context.userInput = options.userInput;
     if (options.goals !== undefined) context.goals = options.goals;

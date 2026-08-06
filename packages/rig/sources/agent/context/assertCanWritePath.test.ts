@@ -16,11 +16,27 @@ afterEach(async () => {
 });
 
 describe("direct filesystem project configuration protection", () => {
+    it("blocks configured files and directory descendants", async () => {
+        const workspace = await mkdtemp(join(tmpdir(), "rig-protected-path-security-"));
+        temporaryDirectories.push(workspace);
+        await mkdir(join(workspace, "plans"));
+        await writeFile(join(workspace, "plans", "one.md"), "original\n");
+        const context = createNodeFileSystemContext(workspace, {
+            permissionMode: () => "workspace_write",
+            protectedPaths: [join(workspace, "plans")],
+        });
+
+        await expect(context.writeFile("plans/one.md", "changed\n")).rejects.toThrow(
+            "protected workspace path",
+        );
+        await expect(context.writeFile("ordinary.md", "allowed\n")).resolves.toBeUndefined();
+    });
+
     it("blocks changes to root project config files in restricted write modes", async () => {
         const workspace = await mkdtemp(join(tmpdir(), "rig-project-config-security-"));
         temporaryDirectories.push(workspace);
         await Promise.all(
-            ["rig.toml", "happy.toml"].map((name) =>
+            ["rig.toml", "happy.toml", "AGENTS_SECURITY.md"].map((name) =>
                 writeFile(join(workspace, name), "[network]\nallowed_ports = [443]\n"),
             ),
         );
@@ -31,7 +47,7 @@ describe("direct filesystem project configuration protection", () => {
 
         for (const restrictedMode of ["workspace_write", "auto"] as const) {
             mode = restrictedMode;
-            for (const name of ["rig.toml", "happy.toml"]) {
+            for (const name of ["rig.toml", "happy.toml", "AGENTS_SECURITY.md"]) {
                 await expect(context.writeFile(name, "compromised\n")).rejects.toThrow(
                     `cannot modify the project ${name}`,
                 );
@@ -39,7 +55,7 @@ describe("direct filesystem project configuration protection", () => {
             }
         }
 
-        for (const name of ["rig.toml", "happy.toml"]) {
+        for (const name of ["rig.toml", "happy.toml", "AGENTS_SECURITY.md"]) {
             await expect(readFile(join(workspace, name), "utf8")).resolves.toBe(
                 "[network]\nallowed_ports = [443]\n",
             );
@@ -56,6 +72,20 @@ describe("direct filesystem project configuration protection", () => {
         await context.writeFile("rig.toml", "[network]\nallowed_ports = [8443]\n");
 
         await expect(readFile(join(workspace, "rig.toml"), "utf8")).resolves.toContain("8443");
+    });
+
+    it("allows explicit Full access to change the root AGENTS_SECURITY.md", async () => {
+        const workspace = await mkdtemp(join(tmpdir(), "rig-project-security-full-access-"));
+        temporaryDirectories.push(workspace);
+        const context = createNodeFileSystemContext(workspace, {
+            permissionMode: () => "full_access",
+        });
+
+        await context.writeFile("AGENTS_SECURITY.md", "Require reviewed deployment commands.\n");
+
+        await expect(readFile(join(workspace, "AGENTS_SECURITY.md"), "utf8")).resolves.toContain(
+            "reviewed deployment",
+        );
     });
 });
 

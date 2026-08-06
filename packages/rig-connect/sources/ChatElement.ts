@@ -46,6 +46,7 @@ export type ChatElement =
     | AgentAttachmentsElement
     | ThinkingElement
     | ToolCallElement
+    | ProviderToolCallElement
     | CompactionElement
     | FailureElement
     | GroupEndElement;
@@ -152,6 +153,63 @@ export interface ToolCallElement extends BaseChatElement {
     permissionReview?: ToolPermissionReviewState;
     /** Set when adjacent calls were issued together, so a UI can draw one unit. */
     toolCallGroupId?: string;
+}
+
+export interface ProviderToolCallSource {
+    url: string;
+    title?: string;
+}
+
+/**
+ * What a provider ran, in application terms. Narrow on `kind`; an unrecognized
+ * provider tool still renders as itself rather than disappearing.
+ */
+export type ProviderToolCallPresentation =
+    | {
+          kind: "search";
+          target: "web" | "x";
+          method?: "keyword" | "semantic";
+          query?: string;
+          sources: readonly ProviderToolCallSource[];
+      }
+    | {
+          /**
+           * A page the provider opened and read. Its own sub-action of a hosted search — the
+           * backend searches, then reads what it found — and calling that a search would report
+           * work that did not happen.
+           */
+          kind: "page_read";
+          url: string;
+      }
+    | {
+          kind: "provider_tool";
+          label: string;
+      };
+
+/**
+ * A call the provider ran itself, such as Grok's hosted `x_search`.
+ *
+ * Deliberately not a `ToolCallElement`. Rig never executes one, so it has no
+ * permission review, no result, and no execution lifecycle; treating it as an
+ * ordinary call would invite a consumer to wait for a completion that cannot
+ * arrive. It is evidence that the provider searched, and that is all.
+ */
+export interface ProviderToolCallElement extends BaseChatElement {
+    kind: "provider_tool_call";
+    /** Provider-owned call identity, from the `server_toolcall_*` events. */
+    providerToolCallId: string;
+    /** Raw provider tool name, kept for diagnostics and unknown-tool fallback. */
+    name: string;
+    /** The call's input, assembled as the provider streams it. */
+    argumentsText: string;
+    argumentsComplete: boolean;
+    /**
+     * `interrupted` and `failed` mean the turn ended before the provider reported the result, not
+     * that the call was stopped. Nothing can stop one: it runs on the provider's own backend, so
+     * these say the outcome is unknown rather than that nothing happened.
+     */
+    status: "running" | "completed" | "interrupted" | "failed";
+    presentation: ProviderToolCallPresentation;
 }
 
 export type ToolPermissionReviewState =

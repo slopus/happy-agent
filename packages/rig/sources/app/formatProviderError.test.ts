@@ -60,10 +60,22 @@ describe("formatProviderError", () => {
         ).toBe("Codex servers are overloaded. Try again later.");
         expect(
             formatProviderError(
-                { type: "internal_server_error", requestId: "request-123" },
+                {
+                    type: "internal_server_error",
+                    diagnostics: { requestId: "request-123" },
+                },
                 { fallbackMessage: "raw internal error", providerId: "codex" },
             ),
         ).toBe("Codex encountered an internal server error. Try again. Request ID: request-123.");
+    });
+
+    it("reports exhausted empty responses", () => {
+        expect(
+            formatProviderError(
+                { type: "empty_response", diagnostics: { attempts: 3 } },
+                { fallbackMessage: "raw empty response", providerId: "codex" },
+            ),
+        ).toBe("Codex repeatedly returned an empty response. Try again.");
     });
 
     it("explains expired credentials instead of showing the upstream diagnostic string", () => {

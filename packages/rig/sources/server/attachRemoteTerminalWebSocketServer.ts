@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import { WebSocketDuplex } from "../terminal/WebSocketDuplex.js";
 import { createNodeBinaryWebSocket } from "../terminal/createNodeBinaryWebSocket.js";
 import { isAuthorizedProtocolRequest } from "./isAuthorizedProtocolRequest.js";
+import { matchP2pPeerRoute } from "./matchP2pPeerRoute.js";
 import type { SessionStore } from "../session/SessionStore.js";
 
 const MAX_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
@@ -21,7 +22,8 @@ export function attachRemoteTerminalWebSocketServer(options: {
         perMessageDeflate: false,
     });
     options.server.on("upgrade", (request, socket, head) => {
-        const route = parseAttachRoute(request.url);
+        if (matchP2pPeerRoute(request.url) !== undefined) return;
+        const route = matchRemoteTerminalAttachRoute(request.url);
         if (route === undefined) {
             rejectUpgrade(socket, 404, "Not Found");
             return;
@@ -49,7 +51,7 @@ export function attachRemoteTerminalWebSocketServer(options: {
     };
 }
 
-function parseAttachRoute(requestUrl: string | undefined):
+export function matchRemoteTerminalAttachRoute(requestUrl: string | undefined):
     | {
           scope: { projectId: string; workspaceId?: string };
           terminalId: string;

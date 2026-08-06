@@ -91,6 +91,7 @@ export function sessionSave(
             workflowsEnabled: state.workflowsEnabled !== false,
             workflowsJson: JSON.stringify(state.workflows ?? []),
             workspaceId: state.workspaceId ?? null,
+            workspaceQueueWaiting: state.workspaceQueueWaiting === true,
             workspaceTransferJson: JSON.stringify(state.workspaceTransfer ?? { status: "idle" }),
         };
         const { createdAtMs: _createdAtMs, id: _id, ...updates } = values;

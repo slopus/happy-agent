@@ -9,6 +9,7 @@ export function workspaceMarkReady(tx: TX, projectId: string, id: string, now: n
             .update(projectWorkspaces)
             .set({
                 error: null,
+                presence: "present",
                 status: "ready",
                 updatedAtMs: now,
                 version: sql`${projectWorkspaces.version} + 1`,

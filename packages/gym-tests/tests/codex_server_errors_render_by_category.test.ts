@@ -28,7 +28,9 @@ describe("Codex typed server errors", () => {
                     errorMessage: "An error occurred while processing your request.",
                     providerError: {
                         type: "internal_server_error",
-                        requestId: "a22a6855-605a-4f23-9955-429f689b87c1",
+                        diagnostics: {
+                            requestId: "a22a6855-605a-4f23-9955-429f689b87c1",
+                        },
                     },
                     stopReason: "error",
                 },

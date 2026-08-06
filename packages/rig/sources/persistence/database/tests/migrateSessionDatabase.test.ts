@@ -48,6 +48,18 @@ describe("migrateSessionDatabase", () => {
                 .map((table) => getTableConfig(table).name)
                 .sort(),
         );
+        expect(
+            opened.database.get<{ workspaceQueueWaiting: number }>(
+                sql.raw(
+                    "SELECT workspace_queue_waiting AS workspaceQueueWaiting FROM sessions LIMIT 1",
+                ),
+            ),
+        ).toBeUndefined();
+        expect(
+            opened.database
+                .all<{ name: string }>(sql.raw("PRAGMA table_info(sessions)"))
+                .map((column) => column.name),
+        ).toContain("workspace_queue_waiting");
 
         opened.client.close();
     });

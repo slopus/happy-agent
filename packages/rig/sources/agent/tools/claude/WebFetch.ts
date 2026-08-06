@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { networkToolPermission } from "../../../runtime/networkToolPermission.js";
 
 import { defineTool } from "../../types.js";
 import { quoteVisibleExact } from "../../../permissions/quoteVisibleExact.js";
@@ -71,10 +72,9 @@ export function createClaudeWebFetchTool(dependencies: ClaudeWebFetchDependencie
             { additionalProperties: false },
         ),
         returnType: claudeWebFetchReturnSchema,
-        requiresAutoOrFullAccess: true,
+        ...networkToolPermission,
         describeAutoPermissionAction: ({ url }) =>
             `fetching ${quoteVisibleExact(url)}. Access: network access outside Rig’s shell sandbox`,
-        shouldReviewInAutoMode: () => true,
         execute: async ({ url, prompt }, _context, execution) => {
             try {
                 new URL(url);

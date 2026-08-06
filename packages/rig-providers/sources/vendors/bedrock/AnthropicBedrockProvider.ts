@@ -1,4 +1,8 @@
 import { BaseProvider } from "@/core/BaseProvider.js";
+import {
+    createInferenceMaxRetriesResolver,
+    type InferenceRetryOptions,
+} from "@/core/inferenceRetrySettings.js";
 import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
 import type { BedrockCredential } from "@/vendors/VendorCredential.js";
@@ -10,7 +14,7 @@ import type { AnthropicBedrockTransport } from "@/vendors/bedrock/AnthropicBedro
 import { assertBedrockCredential } from "@/vendors/bedrock/impl/assertBedrockCredential.js";
 import { BEDROCK_DEFAULT_REGION } from "@/vendors/bedrock/impl/bedrockConstants.js";
 
-export interface AnthropicBedrockProviderOptions {
+export interface AnthropicBedrockProviderOptions extends InferenceRetryOptions {
     credential: BedrockCredential;
     client?: AnthropicBedrockClient;
     endpoint?: string;
@@ -33,6 +37,8 @@ export class AnthropicBedrockProvider extends BaseProvider {
     readonly region: string;
     readonly transport: AnthropicBedrockTransport;
     readonly userAgent: string | undefined;
+    readonly #resolveInferenceMaxRetries: () => number;
+    readonly #waitForInferenceRetry: InferenceRetryOptions["waitForInferenceRetry"];
 
     constructor(options: AnthropicBedrockProviderOptions) {
         super();
@@ -44,6 +50,8 @@ export class AnthropicBedrockProvider extends BaseProvider {
         this.region = options.region?.trim() || BEDROCK_DEFAULT_REGION;
         this.transport = options.transport ?? "mantle";
         this.userAgent = options.userAgent;
+        this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.#waitForInferenceRetry = options.waitForInferenceRetry;
     }
 
     override async session(id: string, options: SessionOptions): Promise<AnthropicBedrockSession> {
@@ -54,6 +62,10 @@ export class AnthropicBedrockProvider extends BaseProvider {
             ...(this.endpoint === undefined ? {} : { endpoint: this.endpoint }),
             ...(this.model === undefined ? {} : { model: this.model }),
             region: this.region,
+            resolveInferenceMaxRetries: this.#resolveInferenceMaxRetries,
+            ...(this.#waitForInferenceRetry === undefined
+                ? {}
+                : { waitForInferenceRetry: this.#waitForInferenceRetry }),
             transport: this.transport,
             ...(this.userAgent === undefined ? {} : { userAgent: this.userAgent }),
         });

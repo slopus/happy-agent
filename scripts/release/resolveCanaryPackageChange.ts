@@ -1,4 +1,6 @@
-const CANARY_VERSION = /^0\.0\.0-canary\.\d+\.([0-9a-f]{7})$/u;
+// A canary is numbered from the release it followed, so the base moves; the commit it references
+// is the part being read here, and every canary ever published still matches.
+const CANARY_VERSION = /^\d+\.\d+\.\d+-canary\.\d+\.([0-9a-f]{7})$/u;
 
 export interface CanaryPackageChangeInput {
     fallbackBase: string;

@@ -7,16 +7,17 @@ import { inTx } from "../inTx.js";
 import type { TX } from "../Transaction.js";
 
 export interface WorkspaceReserveInput {
-    baseCommit: string;
-    baseRef: string;
+    baseCommit?: string;
+    baseRef?: string;
     creatorSessionId?: string;
-    gitCommonDir: string;
+    gitCommonDir?: string;
     id: string;
     isStorageKeyUnavailable?: (storageKey: string) => boolean;
     name: string;
     now: number;
     pathForStorageKey: (storageKey: string) => string;
     projectId: string;
+    storageKeySeed?: string;
 }
 
 export function workspaceReserve(
@@ -40,7 +41,7 @@ export function workspaceReserve(
             if (retry.projectId !== input.projectId) {
                 throw new Error("That workspace ID already names a workspace in another project.");
             }
-            if (retry.baseRef !== input.baseRef) {
+            if (input.baseRef !== undefined && retry.baseRef !== input.baseRef) {
                 throw new Error(
                     "That workspace ID already names a workspace with a different base.",
                 );
@@ -62,21 +63,24 @@ export function workspaceReserve(
                     .get() !== undefined
             );
         });
-        const storageKey = reserveUniqueKey(projectStorageKey(input.name), (candidate) => {
-            return (
-                input.isStorageKeyUnavailable?.(candidate) === true ||
-                tx
-                    .select({ id: projectWorkspaces.id })
-                    .from(projectWorkspaces)
-                    .where(
-                        and(
-                            eq(projectWorkspaces.projectId, input.projectId),
-                            sql`${projectWorkspaces.storageKey} = ${candidate} COLLATE NOCASE`,
-                        ),
-                    )
-                    .get() !== undefined
-            );
-        });
+        const storageKey = reserveUniqueKey(
+            input.storageKeySeed ?? projectStorageKey(input.name),
+            (candidate) => {
+                return (
+                    input.isStorageKeyUnavailable?.(candidate) === true ||
+                    tx
+                        .select({ id: projectWorkspaces.id })
+                        .from(projectWorkspaces)
+                        .where(
+                            and(
+                                eq(projectWorkspaces.projectId, input.projectId),
+                                sql`${projectWorkspaces.storageKey} = ${candidate} COLLATE NOCASE`,
+                            ),
+                        )
+                        .get() !== undefined
+                );
+            },
+        );
         const first = tx
             .select({ orderKey: projectWorkspaces.orderKey })
             .from(projectWorkspaces)
@@ -86,13 +90,15 @@ export function workspaceReserve(
             .get();
         tx.insert(projectWorkspaces)
             .values({
-                baseCommit: input.baseCommit,
-                baseRef: input.baseRef,
+                baseCommit: input.baseCommit ?? null,
+                baseRef: input.baseRef ?? null,
                 creatorSessionId: input.creatorSessionId,
                 createdAtMs: input.now,
                 gitAhead: 0,
                 gitBehind: 0,
-                gitCommonDir: input.gitCommonDir,
+                // Git discovery follows the durable reservation. Ready workspaces always replace
+                // this sentinel with the resolved common directory before materialization.
+                gitCommonDir: input.gitCommonDir ?? "",
                 gitDetached: false,
                 id: input.id,
                 kind: "git_worktree",

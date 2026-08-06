@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import tweetnacl from "tweetnacl";
 
+import {
+    NACL_NONCE_BYTES,
+    nobleBoxKeyPairFromSecretKey,
+    nobleBoxOpen,
+    nobleSecretBoxSeal,
+} from "../../crypto/nobleNaCl.js";
 import { createSessionDatabaseFixture } from "../../persistence/database/tests/createSessionDatabaseFixture.js";
 import type { AbortRunOptions } from "../../protocol/index.js";
 import type { InMemorySession } from "../../session/InMemorySession.js";
@@ -27,7 +32,7 @@ describe("HappySessionClient", () => {
     it("creates a v3 session, flushes encrypted messages, and delivers mobile input once", async () => {
         const { databasePath, repository } = await createRepository();
         const sessionKey = new Uint8Array(32).fill(7);
-        const account = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+        const account = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(9));
         repository.ensureSession({
             credentialFingerprint: "account",
             encryptionKey: sessionKey,
@@ -131,7 +136,7 @@ describe("HappySessionClient", () => {
     it("publishes Rig identity, provider-qualified models, reasoning, and live activity", async () => {
         const { repository } = await createRepository();
         const sessionKey = new Uint8Array(32).fill(7);
-        const account = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+        const account = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(9));
         repository.ensureSession({
             credentialFingerprint: "account",
             encryptionKey: sessionKey,
@@ -303,7 +308,7 @@ describe("HappySessionClient", () => {
     it("applies provider-qualified model and reasoning, decrypts attachments, and handles abort RPC", async () => {
         const { repository } = await createRepository();
         const sessionKey = new Uint8Array(32).fill(7);
-        const account = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+        const account = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(9));
         repository.ensureSession({
             credentialFingerprint: "account",
             encryptionKey: sessionKey,
@@ -477,7 +482,7 @@ describe("HappySessionClient", () => {
         vi.spyOn(Date, "now").mockImplementation(() => now);
         const { repository } = await createRepository();
         const sessionKey = new Uint8Array(32).fill(7);
-        const account = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+        const account = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(9));
         repository.ensureSession({
             credentialFingerprint: "account",
             encryptionKey: sessionKey,
@@ -656,7 +661,7 @@ describe("HappySessionClient", () => {
     it("clears stale agent state when reconnecting an existing Happy session", async () => {
         const { repository } = await createRepository();
         const sessionKey = new Uint8Array(32).fill(7);
-        const account = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+        const account = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(9));
         repository.ensureSession({
             credentialFingerprint: "account",
             encryptionKey: sessionKey,
@@ -709,7 +714,7 @@ describe("HappySessionClient", () => {
     it("retries a versioned metadata update after a concurrent Happy update", async () => {
         const { repository } = await createRepository();
         const sessionKey = new Uint8Array(32).fill(7);
-        const account = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+        const account = nobleBoxKeyPairFromSecretKey(new Uint8Array(32).fill(9));
         repository.ensureSession({
             credentialFingerprint: "account",
             encryptionKey: sessionKey,
@@ -966,8 +971,8 @@ function deriveBlobKey(key: Uint8Array, variant: "dataKey" | "legacy"): Uint8Arr
 }
 
 function encryptBlob(data: Uint8Array, key: Uint8Array): Uint8Array {
-    const nonce = new Uint8Array(tweetnacl.secretbox.nonceLength).fill(3);
-    const encrypted = tweetnacl.secretbox(data, nonce, key);
+    const nonce = new Uint8Array(NACL_NONCE_BYTES).fill(3);
+    const encrypted = nobleSecretBoxSeal(data, nonce, key);
     return new Uint8Array([...nonce, ...encrypted]);
 }
 
@@ -991,13 +996,11 @@ function configuration(publicKey: Uint8Array): HappyConnectionConfiguration {
 function unwrapDataKey(value: string, accountSecretKey: Uint8Array): Uint8Array | undefined {
     const bundle = new Uint8Array(Buffer.from(value, "base64"));
     if (bundle[0] !== 0) return undefined;
-    return (
-        tweetnacl.box.open(
-            bundle.slice(57),
-            bundle.slice(33, 57),
-            bundle.slice(1, 33),
-            accountSecretKey,
-        ) ?? undefined
+    return nobleBoxOpen(
+        bundle.slice(57),
+        bundle.slice(33, 57),
+        bundle.slice(1, 33),
+        accountSecretKey,
     );
 }
 

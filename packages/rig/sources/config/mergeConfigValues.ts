@@ -14,6 +14,12 @@ export function mergeConfigValues(
     const features = { ...baseDefaults.features };
     const mcpServers = { ...baseDefaults.mcpServers };
     let network = baseDefaults.network;
+    const protectedPaths = new Set(baseDefaults.permissions.protectedPaths);
+    const p2p = {
+        ...baseDefaults.p2p,
+        direct: { ...baseDefaults.p2p.direct },
+        iroh: { ...baseDefaults.p2p.iroh },
+    };
     const presence: ConfigPresence = {
         ...baseDefaults.presence,
         states: { ...baseDefaults.presence.states },
@@ -55,8 +61,8 @@ export function mergeConfigValues(
         if (config.settings?.compactCompletedTurns !== undefined) {
             settings.compactCompletedTurns = config.settings.compactCompletedTurns;
         }
-        if (config.settings?.codexStreamMaxRetries !== undefined) {
-            settings.codexStreamMaxRetries = config.settings.codexStreamMaxRetries;
+        if (config.settings?.inferenceMaxRetries !== undefined) {
+            settings.inferenceMaxRetries = config.settings.inferenceMaxRetries;
         }
         if (config.settings?.showReasoning !== undefined) {
             settings.showReasoning = config.settings.showReasoning;
@@ -84,6 +90,22 @@ export function mergeConfigValues(
         if (config.features?.crossWorkspace !== undefined) {
             features.crossWorkspace = config.features.crossWorkspace;
         }
+        if (config.p2p?.enableDirect !== undefined) p2p.enableDirect = config.p2p.enableDirect;
+        if (config.p2p?.enableIroh !== undefined) p2p.enableIroh = config.p2p.enableIroh;
+        if (config.p2p?.enableSsh !== undefined) p2p.enableSsh = config.p2p.enableSsh;
+        if (config.p2p?.exposeApi !== undefined) p2p.exposeApi = config.p2p.exposeApi;
+        if (config.p2p?.direct?.listen !== undefined) {
+            p2p.direct.listen = config.p2p.direct.listen;
+        }
+        if (config.p2p?.iroh?.relayUrl !== undefined) {
+            p2p.iroh.relayUrl = config.p2p.iroh.relayUrl;
+        }
+        if (config.p2p?.name !== undefined) p2p.name = config.p2p.name;
+        if (config.p2p?.role !== undefined) {
+            p2p.role = config.p2p.role;
+            if (config.p2p.role === "primary") delete p2p.primaryId;
+        }
+        if (config.p2p?.primaryId !== undefined) p2p.primaryId = config.p2p.primaryId;
         if (config.providerDefaultEnable !== undefined) {
             providerDefaultEnable = config.providerDefaultEnable;
         }
@@ -102,6 +124,7 @@ export function mergeConfigValues(
             Object.assign(mcpServers, config.mcpServers);
         }
         if (config.network !== undefined) network = config.network;
+        for (const path of config.permissions?.protectedPaths ?? []) protectedPaths.add(path);
         if (config.presence !== undefined) {
             if (config.presence.current !== undefined) {
                 presence.current = config.presence.current;
@@ -132,6 +155,8 @@ export function mergeConfigValues(
         features,
         mcpServers,
         ...(network === undefined ? {} : { network }),
+        permissions: { protectedPaths: [...protectedPaths] },
+        p2p,
         presence,
         providerDefaultEnable,
         providers: Object.fromEntries(

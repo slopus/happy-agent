@@ -49,6 +49,13 @@ export async function runClaudeAuxiliaryQuery(
                 }
                 content.push(...message.message.content);
             }
+            // What a built-in tool actually found comes back on a user message, because that is
+            // where a tool result belongs in a conversation. Keeping only the assistant's half
+            // left the caller with the helper's summary of the work and no way to see the work:
+            // for a search, the pages it consulted arrive here and nowhere else.
+            if (message.type === "user" && Array.isArray(message.message.content)) {
+                content.push(...message.message.content);
+            }
             if (message.type === "result" && (message.subtype !== "success" || message.is_error)) {
                 const detail =
                     message.subtype === "success"

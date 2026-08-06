@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, lstat, readFile, readlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
 import { RigUserError } from "../RigUserError.js";
+import { HAPPY_DESKTOP_PACKAGE } from "./desktopApplicationBuild.js";
 import { desktopApplicationName, desktopLocalWebOrigin } from "./desktopApplicationRuntime.js";
 
 const desktopBuildStampSchema = Type.Object(
@@ -44,7 +45,7 @@ export async function desktopApplicationContentHash(
         "package.json",
         "pnpm-lock.yaml",
         "scripts/create-mac-icon.mjs",
-        "packages/happy2-desktop",
+        `packages/${HAPPY_DESKTOP_PACKAGE}`,
     ]);
     return hash.digest("hex");
 }
@@ -114,15 +115,16 @@ export async function happy2RepositoryRootResolve(
     const candidates = [
         ...(configured ? [configured] : []),
         ...(environment ? [environment] : []),
-        resolve(rigRoot, "..", "happy2"),
-        resolve(rigRoot, "..", "..", "happy2"),
-        join(homedir(), "Developer", "happy2"),
+        resolve(rigRoot, "..", "happy-desktop"),
+        resolve(rigRoot, "..", "..", "happy-desktop"),
+        join(homedir(), "projects", "happy-desktop"),
+        join(homedir(), "Developer", "happy-desktop"),
     ];
     for (const candidate of candidates) {
         const root = resolve(candidate);
         if (
             (await pathExists(join(root, "package.json"))) &&
-            (await pathExists(join(root, "packages", "happy2-desktop", "package.json")))
+            (await pathExists(join(root, "packages", HAPPY_DESKTOP_PACKAGE, "package.json")))
         ) {
             return root;
         }
@@ -144,9 +146,15 @@ async function repositoryFilesHash(
     );
     const files = listed.toString("utf8").split("\0").filter(Boolean).sort();
     for (const file of files) {
-        hash.update(relative(root, join(root, file)));
+        const path = join(root, file);
+        hash.update(relative(root, path));
         hash.update("\0");
-        hash.update(await readFile(join(root, file)));
+        // A symlink's content is where it points, and reading through it is wrong twice over: the
+        // app ships links into a packaged layout that does not exist in a source checkout, so
+        // following them fails outright, and a link that did resolve would hash its target's bytes
+        // and miss the retarget that is the only change a symlink can have.
+        const stats = await lstat(path);
+        hash.update(stats.isSymbolicLink() ? await readlink(path) : await readFile(path));
         hash.update("\0");
     }
 }

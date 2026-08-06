@@ -7,6 +7,7 @@ import { isProtectedGitControlPath } from "../agent/context/isProtectedGitContro
 import { isProtectedProjectConfigPath } from "../agent/context/isProtectedProjectConfigPath.js";
 import { resolvePotentialPath } from "../agent/context/resolvePotentialPath.js";
 import { resolveFileSystemPath } from "../agent/context/resolveFileSystemPath.js";
+import { isProtectedPath } from "./isProtectedPath.js";
 
 export async function shouldReviewPathInAutoMode(
     path: string,
@@ -36,6 +37,7 @@ export async function shouldReviewPathInAutoMode(
         return true;
     }
     if (!options.write) return false;
+    if (isProtectedPath(resolvedPath, context.permissions?.protectedPaths ?? [])) return true;
     const canonicalCwd = await resolvePotentialPath(context.fs.cwd);
     const canonicalTarget = await resolvePotentialPath(resolvedPath);
     return (

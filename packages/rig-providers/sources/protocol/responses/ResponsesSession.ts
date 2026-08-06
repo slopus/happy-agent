@@ -1,12 +1,22 @@
 import OpenAI from "openai";
 
 import { BaseSession } from "@/core/BaseSession.js";
+import {
+    createInferenceMaxRetriesResolver,
+    type InferenceRetryOptions,
+} from "@/core/inferenceRetrySettings.js";
+import {
+    EmptyResponseError,
+    emptyResponseDoneEvent,
+    isEmptyResponseError,
+} from "@/core/EmptyResponseError.js";
 import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
 import type { SessionContext, SessionMessage, SessionUserMessage } from "@/core/SessionContext.js";
 import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import type { SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
 import type { SessionTool } from "@/core/SessionTool.js";
+import { waitForInferenceRetry } from "@/core/waitForInferenceRetry.js";
 import {
     MINIMAL_RESPONSES_CAPABILITIES,
     type ResponsesCapabilities,
@@ -17,7 +27,7 @@ import { mapOpenAIResponseStream } from "@/protocol/responses/mapOpenAIResponseS
 import { toOpenAIResponseInput } from "@/protocol/responses/toOpenAIResponseInput.js";
 import { toSessionCacheUsage } from "@/protocol/responses/toSessionCacheUsage.js";
 
-export interface ResponsesSessionOptions extends SessionOptions {
+export interface ResponsesSessionOptions extends SessionOptions, InferenceRetryOptions {
     apiKey: string;
     endpoint: string;
     headers?: Readonly<Record<string, string>>;
@@ -35,6 +45,8 @@ export class ResponsesSession extends BaseSession {
     private readonly nativeCompaction: boolean;
     private readonly tools: readonly SessionTool[];
     private readonly capabilities: ResponsesCapabilities;
+    private readonly resolveInferenceMaxRetries: () => number;
+    private readonly retryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
 
     constructor(id: string, options: ResponsesSessionOptions) {
         super(id);
@@ -51,6 +63,8 @@ export class ResponsesSession extends BaseSession {
         this.nativeCompaction = options.nativeCompaction ?? true;
         this.tools = options.tools ?? [];
         this.capabilities = options.capabilities ?? MINIMAL_RESPONSES_CAPABILITIES;
+        this.resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.retryWait = options.waitForInferenceRetry ?? waitForInferenceRetry;
     }
 
     run(request: SessionRunRequest): SessionStream {
@@ -173,80 +187,115 @@ export class ResponsesSession extends BaseSession {
         }
         this.activeModel = model;
 
-        yield { type: "block_start" };
-        try {
-            const responseStream = await this.client.responses.create(
-                createOpenAIResponseRequest({
-                    context,
-                    model,
-                    ...(request.structuredOutput === undefined
-                        ? {}
-                        : { structuredOutput: request.structuredOutput }),
-                    tools: this.tools,
-                    capabilities: this.capabilities,
-                    ...(request.effort === undefined ? {} : { effort: request.effort }),
-                }),
-                abort === undefined ? undefined : { signal: abort },
-            );
-            const inference = mapOpenAIResponseStream(responseStream, {
-                failureMessage: `${model} failed to generate a response.`,
-                requireTerminalEvent: true,
-                vendor: "responses",
-                ...(abort === undefined ? {} : { signal: abort }),
-            });
-            let result;
-            let terminal: Extract<SessionEvent, { type: "done" }> | undefined;
-            for (;;) {
-                const next = await inference.next();
-                if (next.done) {
-                    result = next.value;
-                    break;
+        let emptyResponseRetries = 0;
+        for (;;) {
+            const attemptUsage: Extract<SessionEvent, { type: "token_usage" }>[] = [];
+            yield { type: "block_start" };
+            try {
+                const responseStream = await this.client.responses.create(
+                    createOpenAIResponseRequest({
+                        context,
+                        model,
+                        ...(request.structuredOutput === undefined
+                            ? {}
+                            : { structuredOutput: request.structuredOutput }),
+                        tools: this.tools,
+                        capabilities: this.capabilities,
+                        ...(request.effort === undefined ? {} : { effort: request.effort }),
+                    }),
+                    abort === undefined ? undefined : { signal: abort },
+                );
+                const inference = mapOpenAIResponseStream(responseStream, {
+                    failureMessage: `${model} failed to generate a response.`,
+                    requireTerminalEvent: true,
+                    vendor: "responses",
+                    ...(abort === undefined ? {} : { signal: abort }),
+                });
+                let result;
+                let terminal: Extract<SessionEvent, { type: "done" }> | undefined;
+                for (;;) {
+                    const next = await inference.next();
+                    if (next.done) {
+                        result = next.value;
+                        break;
+                    }
+                    if (next.value.type === "done") {
+                        terminal = next.value;
+                    } else if (next.value.type === "token_usage") {
+                        attemptUsage.push(next.value);
+                    } else {
+                        yield next.value;
+                    }
                 }
-                if (next.value.type === "done") {
-                    terminal = next.value;
-                } else {
-                    yield next.value;
+                if (result.outputTokensReported && result.usage.output === 0) {
+                    throw new EmptyResponseError("Responses API");
                 }
-            }
-            if (
-                result.assistantText.length > 0 ||
-                result.encryptedReasoning !== undefined ||
-                result.toolCalls.length > 0 ||
-                result.responseItems.length > 0
-            ) {
-                this.context = {
-                    instructions: this.context.instructions,
-                    messages: [
-                        ...this.context.messages,
-                        {
-                            role: "assistant",
-                            content: result.assistantText,
-                            ...(result.encryptedReasoning === undefined
-                                ? {}
-                                : { encryptedReasoning: result.encryptedReasoning }),
-                            ...(result.toolCalls.length === 0
-                                ? {}
-                                : { toolCalls: result.toolCalls }),
-                            ...(result.responseItems.length === 0
-                                ? {}
-                                : { responseItems: result.responseItems }),
-                        },
-                    ],
-                };
-            }
-            if (result.responseItems.length > 0) {
-                yield { type: "response_items", items: result.responseItems };
-            }
-            yield { type: "block_stop" };
-            if (terminal !== undefined) yield terminal;
-        } catch (error) {
-            if (abort?.aborted) {
+                for (const event of attemptUsage) yield event;
+                if (
+                    result.assistantText.length > 0 ||
+                    result.encryptedReasoning !== undefined ||
+                    result.toolCalls.length > 0 ||
+                    result.responseItems.length > 0
+                ) {
+                    this.context = {
+                        instructions: this.context.instructions,
+                        messages: [
+                            ...this.context.messages,
+                            {
+                                role: "assistant",
+                                content: result.assistantText,
+                                ...(result.encryptedReasoning === undefined
+                                    ? {}
+                                    : { encryptedReasoning: result.encryptedReasoning }),
+                                ...(result.toolCalls.length === 0
+                                    ? {}
+                                    : { toolCalls: result.toolCalls }),
+                                ...(result.responseItems.length === 0
+                                    ? {}
+                                    : { responseItems: result.responseItems }),
+                            },
+                        ],
+                    };
+                }
+                if (result.responseItems.length > 0) {
+                    yield { type: "response_items", items: result.responseItems };
+                }
+                yield { type: "block_stop" };
+                if (terminal !== undefined) yield terminal;
+                return;
+            } catch (error) {
                 yield { type: "block_reset" };
-                yield { type: "done", state: "cancelled" };
+                for (const event of attemptUsage) yield event;
+                if (abort?.aborted) {
+                    yield { type: "done", state: "cancelled" };
+                    return;
+                }
+                if (
+                    isEmptyResponseError(error) &&
+                    emptyResponseRetries < this.resolveInferenceMaxRetries()
+                ) {
+                    emptyResponseRetries += 1;
+                    yield {
+                        type: "retrying",
+                        attempt: emptyResponseRetries,
+                        reason: error.message,
+                    };
+                    try {
+                        await this.retryWait(emptyResponseRetries, abort);
+                    } catch (delayError) {
+                        if (abort?.aborted) {
+                            yield { type: "done", state: "cancelled" };
+                            return;
+                        }
+                        throw delayError;
+                    }
+                    continue;
+                }
+                yield isEmptyResponseError(error)
+                    ? emptyResponseDoneEvent(error, emptyResponseRetries + 1)
+                    : classifyResponsesError(error);
                 return;
             }
-            yield { type: "block_reset" };
-            yield classifyResponsesError(error);
         }
     }
 }

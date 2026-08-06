@@ -10,6 +10,7 @@ import { projectSetAvatar } from "../projectSetAvatar.js";
 import { projectSetSettings } from "../projectSetSettings.js";
 import { queryProject } from "../queryProject.js";
 import { workspaceReserve } from "../workspaceReserve.js";
+import { workspaceApplyProbe } from "../workspaceApplyProbe.js";
 
 describe("project persistence", () => {
     it("rolls back the avatar asset and project reference together", () => {
@@ -58,6 +59,46 @@ describe("project persistence", () => {
         ).toThrow("fail after workspace");
 
         expect(opened.database.select().from(projectWorkspaces).all()).toEqual([]);
+        opened.client.close();
+    });
+
+    it("does not let an initialization-era probe overwrite workspace presence", () => {
+        const opened = databaseWithProject();
+        workspaceReserve(opened.database, {
+            id: "workspace-1",
+            name: "Feature",
+            now: 2,
+            pathForStorageKey: (key) => `/state/workspaces/project/${key}`,
+            projectId: "project-1",
+        });
+
+        expect(
+            workspaceApplyProbe(
+                opened.database,
+                "project-1",
+                "workspace-1",
+                {
+                    gitAhead: 0,
+                    gitBehind: 0,
+                    gitBranch: null,
+                    gitDetached: false,
+                    gitHead: null,
+                    gitUpstream: null,
+                    presence: "missing",
+                },
+                3,
+            ),
+        ).toBe(0);
+        expect(
+            opened.database
+                .select({
+                    presence: projectWorkspaces.presence,
+                    status: projectWorkspaces.status,
+                })
+                .from(projectWorkspaces)
+                .where(eq(projectWorkspaces.id, "workspace-1"))
+                .get(),
+        ).toEqual({ presence: "present", status: "initializing" });
         opened.client.close();
     });
 

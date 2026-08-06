@@ -54,9 +54,23 @@ export type {
     SessionErrorKind,
     SessionEvent,
     SessionProviderError,
+    SessionProviderErrorDiagnostics,
     SessionStream,
 } from "@/core/SessionEvent.js";
 export { isSessionDoneEvent, isSessionErrorDone } from "@/core/SessionEvent.js";
+export {
+    sessionProviderErrorDiagnosticsSchema,
+    sessionProviderErrorSchema,
+} from "@/core/SessionProviderError.js";
+export {
+    extractProviderErrorDiagnostics,
+    extractProviderRetryResetAt,
+} from "@/core/extractProviderErrorDiagnostics.js";
+export {
+    EmptyResponseError,
+    emptyResponseDoneEvent,
+    isEmptyResponseError,
+} from "@/core/EmptyResponseError.js";
 export { committedSessionEvents } from "@/core/committedSessionEvents.js";
 export type {
     SessionReasoningEffort,
@@ -107,6 +121,7 @@ export {
     type FetchGrokProviderUsageOptions,
 } from "@/vendors/grok/fetchGrokProviderUsage.js";
 export { GrokSession, type GrokSessionOptions } from "@/vendors/grok/GrokSession.js";
+export { codex_hosted_tools } from "@/vendors/codex/tools/index.js";
 export { grok_hosted_tools } from "@/vendors/grok/tools/index.js";
 export type { GrokToolVendor } from "@/vendors/grok/GrokToolVendor.js";
 export { CodexProvider, type CodexProviderOptions } from "@/vendors/codex/CodexProvider.js";
@@ -136,10 +151,12 @@ export {
     type CodexTransport,
 } from "@/vendors/codex/impl/codexConstants.js";
 export {
-    DEFAULT_CODEX_STREAM_MAX_RETRIES,
-    MAX_CODEX_STREAM_MAX_RETRIES,
-    resolveCodexStreamMaxRetries,
-} from "@/vendors/codex/impl/codexRetry.js";
+    DEFAULT_INFERENCE_MAX_RETRIES,
+    MAX_INFERENCE_MAX_RETRIES,
+    createInferenceMaxRetriesResolver,
+    resolveInferenceMaxRetries,
+    type InferenceRetryOptions,
+} from "@/core/inferenceRetrySettings.js";
 export {
     AnthropicBedrockProvider,
     type AnthropicBedrockProviderOptions,

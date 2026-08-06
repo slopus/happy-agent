@@ -4,7 +4,9 @@ import { AGENTS_MD_PROJECT_DOC_MAX_BYTES } from "./agentsMdProjectDocMaxBytes.js
 import type { FileSystemContext } from "./context/FileSystemContext.js";
 import { findAgentsMdPaths } from "./findAgentsMdPaths.js";
 import { formatAgentsMdInstructions } from "./formatAgentsMdInstructions.js";
+import { formatAgentsSecurityInstructions } from "./formatAgentsSecurityInstructions.js";
 import { formatGlobalAgentsMdInstructions } from "./formatGlobalAgentsMdInstructions.js";
+import { isFileAtPath } from "./isFileAtPath.js";
 import { readAgentsMdFile } from "./readAgentsMdFile.js";
 
 export async function loadAgentsMdInstructions(
@@ -17,6 +19,18 @@ export async function loadAgentsMdInstructions(
     // of them rather than the other way round.
     if (options.globalInstructions !== undefined && options.globalInstructions.trim().length > 0) {
         sections.push(formatGlobalAgentsMdInstructions(options.globalInstructions));
+    }
+
+    const securityPath = resolve(fs.cwd, "AGENTS_SECURITY.md");
+    if (await isFileAtPath(fs, securityPath)) {
+        const securityRules = await readAgentsMdFile(
+            fs,
+            securityPath,
+            AGENTS_MD_PROJECT_DOC_MAX_BYTES,
+        );
+        if (securityRules !== undefined) {
+            sections.push(formatAgentsSecurityInstructions(resolve(fs.cwd), securityRules));
+        }
     }
 
     const paths = await findAgentsMdPaths(fs);

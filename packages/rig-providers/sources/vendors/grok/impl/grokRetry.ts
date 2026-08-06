@@ -1,3 +1,6 @@
+import { isEmptyResponseError } from "@/core/EmptyResponseError.js";
+import { GROK_INFERENCE_RETRY_INITIAL_DELAY_MS } from "@/vendors/grok/impl/grokConstants.js";
+
 const RETRYABLE_ERROR_CODES = new Set([
     "EAI_AGAIN",
     "ECONNABORTED",
@@ -24,6 +27,7 @@ const TRANSPORT_MESSAGE_PATTERNS = [
 ];
 
 export function isRetryableGrokError(value: unknown): boolean {
+    if (isEmptyResponseError(value)) return true;
     if (isAbortError(value)) return false;
     if (errorHeader(value, "x-should-retry")?.toLowerCase() === "false") return false;
 
@@ -121,4 +125,3 @@ function isAbortError(value: unknown): boolean {
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
-import { GROK_INFERENCE_RETRY_INITIAL_DELAY_MS } from "@/vendors/grok/impl/grokConstants.js";

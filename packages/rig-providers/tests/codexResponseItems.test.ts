@@ -91,7 +91,7 @@ describe("Codex response items", () => {
         }
 
         expect(events).toContainEqual({
-            type: "tool_call_start",
+            type: "toolcall_start",
             callId: "spawn-call",
             name: "spawn_agent",
             namespace: "collaboration",
@@ -367,7 +367,7 @@ describe("Codex response items", () => {
             expect.fail("Missing mapped result.");
         expect(result.responseItems.map((item) => JSON.parse(item))).toEqual(output);
         expect(events).toContainEqual({
-            type: "tool_call_start",
+            type: "toolcall_start",
             callId: "search-call",
             name: "tool_search",
             vendor: {

@@ -107,7 +107,7 @@ function uncommentTemplateSettings(template: string, dockerSource: "container" |
                         : '# image = "my-project-dev:latest"') && !imageOnlySettings.has(line),
         )
         .flatMap((line) => {
-            const commented = /^# (\[.+\]|[a-z_]+ = .+)$/u.exec(line);
+            const commented = /^# (\[.+\]|[a-z0-9_]+ = .+)$/u.exec(line);
             return commented === null ? [] : [commented[1]!];
         })
         .join("\n");

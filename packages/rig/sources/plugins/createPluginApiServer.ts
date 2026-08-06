@@ -12,6 +12,7 @@ import type {
     HappySlotEntry,
     HappySession,
     HappyWorkspace,
+    HappyWorkspaceEvent,
     PublishedHappyMedia,
 } from "happy-plugins";
 import {
@@ -214,6 +215,30 @@ async function handleRequest(
         sendJson<{ workspaces: readonly HappyWorkspace[] }>(response, 200, {
             workspaces: options.store.listWorkspaces(input.projectId).map(toHappyWorkspace),
         });
+        return;
+    }
+    if (request.method === "GET" && url.pathname === "/workspaces/events") {
+        response.writeHead(200, {
+            "cache-control": "no-store",
+            "content-type": "application/x-ndjson",
+        });
+        response.flushHeaders();
+        const unsubscribe = options.store.liveEvents.subscribe((entry) => {
+            if (
+                (entry.event.type !== "workspace_created" &&
+                    entry.event.type !== "workspace_updated") ||
+                response.destroyed ||
+                response.writableEnded
+            ) {
+                return;
+            }
+            const event: HappyWorkspaceEvent = {
+                type: entry.event.type,
+                workspace: toHappyWorkspace(entry.event.data.workspace),
+            };
+            response.write(`${JSON.stringify(event)}\n`);
+        });
+        response.once("close", unsubscribe);
         return;
     }
     if (request.method === "GET" && url.pathname === "/sessions") {
@@ -626,6 +651,12 @@ async function handleRequest(
             sendJson(response, 404, { error: "Workspace not found." });
             return;
         }
+        if (workspace.status !== "ready" || workspace.presence !== "present") {
+            sendJson(response, 409, {
+                error: "The workspace is still initializing or its directory is unavailable.",
+            });
+            return;
+        }
         if (parts.length === 3 && parts[2] === "exec") {
             const body = await readJson(
                 request,
@@ -988,17 +1019,26 @@ async function handleRequest(
         const projectId = parts[1];
         if (request.method === "POST" && parts.length === 3) {
             const body = await readJson(request, createWorkspaceBodySchema, "Workspace settings");
-            const workspace = await options.store.createWorkspace(projectId, {
-                ...(body.baseRef === undefined ? {} : { baseRef: body.baseRef }),
-                name: body.name,
-            });
-            if (workspace === undefined) {
-                sendJson(response, 404, { error: "Project not found." });
-                return;
+            try {
+                const workspace = await options.store.createWorkspace(projectId, {
+                    ...(body.baseRef === undefined ? {} : { baseRef: body.baseRef }),
+                    ...(body.id === undefined ? {} : { id: body.id }),
+                    name: body.name,
+                });
+                if (workspace === undefined) {
+                    sendJson(response, 404, { error: "Project not found." });
+                    return;
+                }
+                sendJson<{ workspace: HappyWorkspace }>(response, 202, {
+                    workspace: toHappyWorkspace(workspace),
+                });
+            } catch (error) {
+                if (isDatabaseFailure(error)) throw error;
+                const message = errorToMessage(error);
+                sendJson(response, message.includes("already names") ? 409 : 400, {
+                    error: message,
+                });
             }
-            sendJson<{ workspace: HappyWorkspace }>(response, 202, {
-                workspace: toHappyWorkspace(workspace),
-            });
             return;
         }
         const workspaceId = parts[3];

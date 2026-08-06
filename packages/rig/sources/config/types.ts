@@ -1,8 +1,9 @@
 import type { PermissionMode } from "../permissions/index.js";
 import type { McpServerConfig } from "../mcp/types.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { HostedCapability, ServiceTier } from "@slopus/rig-execution";
 import type { BedrockModelOverrides } from "../executor/bedrock-model-overrides.js";
+import type { ConfigPermissions, PartialConfigPermissions } from "./configPermissions.js";
 
 export interface ConfigDefaults {
     effort?: string;
@@ -23,7 +24,7 @@ export interface PartialConfigDefaults {
 }
 
 export interface ConfigSettings {
-    codexStreamMaxRetries: number;
+    inferenceMaxRetries: number;
     compactCompletedTurns: boolean;
     completionChime: boolean;
     daemonHeapSnapshots: boolean;
@@ -34,7 +35,7 @@ export interface ConfigSettings {
 }
 
 export interface PartialConfigSettings {
-    codexStreamMaxRetries?: number;
+    inferenceMaxRetries?: number;
     compactCompletedTurns?: boolean;
     completionChime?: boolean;
     daemonHeapSnapshots?: boolean;
@@ -158,12 +159,52 @@ export interface ConfigNetwork {
     deniedDomains?: readonly string[];
 }
 
+export interface ConfigIrohTransport {
+    relayUrl?: string;
+}
+
+export type PartialConfigIrohTransport = Partial<ConfigIrohTransport>;
+
+export interface ConfigDirectTransport {
+    listen?: string;
+}
+
+export type PartialConfigDirectTransport = Partial<ConfigDirectTransport>;
+
+export type P2pNodeRole = "primary" | "secondary";
+
+export interface ConfigP2p {
+    direct: ConfigDirectTransport;
+    enableDirect: boolean;
+    enableIroh: boolean;
+    enableSsh: boolean;
+    exposeApi: boolean;
+    iroh: ConfigIrohTransport;
+    name: string;
+    primaryId?: string;
+    role: P2pNodeRole;
+}
+
+export interface PartialConfigP2p {
+    direct?: PartialConfigDirectTransport;
+    enableDirect?: boolean;
+    enableIroh?: boolean;
+    enableSsh?: boolean;
+    exposeApi?: boolean;
+    iroh?: PartialConfigIrohTransport;
+    name?: string;
+    primaryId?: string;
+    role?: P2pNodeRole;
+}
+
 export interface RigConfig {
     docker?: DockerExecutionConfig;
     defaults: ConfigDefaults;
     features: ConfigFeatures;
     mcpServers: Readonly<Record<string, McpServerConfig>>;
     network?: ConfigNetwork;
+    permissions: ConfigPermissions;
+    p2p: ConfigP2p;
     presence: ConfigPresence;
     providerDefaultEnable: boolean;
     providers: ConfigProviders;
@@ -178,6 +219,8 @@ export interface PartialRigConfig {
     features?: PartialConfigFeatures;
     mcpServers?: Readonly<Record<string, McpServerConfig>>;
     network?: ConfigNetwork;
+    permissions?: PartialConfigPermissions;
+    p2p?: PartialConfigP2p;
     presence?: PartialConfigPresence;
     providerDefaultEnable?: boolean;
     providers?: PartialConfigProviders;
@@ -215,7 +258,7 @@ export interface LoadConfigOptions {
 }
 
 export interface DaemonSettings {
-    codexStreamMaxRetries: number;
+    inferenceMaxRetries: number;
     daemonHeapSnapshots: boolean;
     durableGlobalEventQueue: boolean;
 }

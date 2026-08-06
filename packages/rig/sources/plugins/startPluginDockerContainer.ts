@@ -135,8 +135,11 @@ export async function startPluginDockerContainer(options: {
     }
 
     const paths = await resolvePluginSdkRuntimePaths();
-    await writeFile(tokenFilePath, `${options.token}\n`, { mode: 0o600 });
-    await chmod(tokenFilePath, 0o600);
+    // The containing .runtime directory is 0700. The file itself must still be
+    // world-readable because some VM file-sharing runtimes preserve the host UID
+    // on bind mounts while the container has every capability dropped.
+    await writeFile(tokenFilePath, `${options.token}\n`, { mode: 0o644 });
+    await chmod(tokenFilePath, 0o644);
     let container: Dockerode.Container;
     try {
         container = await docker.createContainer(

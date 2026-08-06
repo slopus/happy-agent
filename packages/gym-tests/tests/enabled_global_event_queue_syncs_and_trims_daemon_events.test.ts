@@ -135,7 +135,7 @@ if (process.argv[2] === "enable") {
     const before = await requestJson("GET", "/config");
     const beforeQueued = await requestJson("GET", "/events?limit=100");
     const updated = await requestJson("PATCH", "/config", {
-        settings: { codexStreamMaxRetries: 5, durableGlobalEventQueue: true },
+        settings: { inferenceMaxRetries: 10, durableGlobalEventQueue: true },
     });
     await requestJson("POST", "/sessions", { cwd: "/home/rig" });
     await mkdir("/workspace/second-project");

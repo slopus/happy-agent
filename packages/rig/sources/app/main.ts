@@ -12,6 +12,8 @@ import { formatCliHelp, formatDesktopCliHelp } from "./formatCliHelp.js";
 import { readPackageVersion } from "../readPackageVersion.js";
 import { RigUserError } from "../RigUserError.js";
 import { rigInspectionExitCode, runRigInspection } from "./runRigInspection.js";
+import { runP2pBridgeCommand } from "./runP2pBridgeCommand.js";
+import { runP2pPairingCommand } from "./runP2pPairingCommand.js";
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<0 | 2 | void> {
     if (argv.length === 1 && argv[0] === "--server") {
@@ -24,6 +26,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
                 ? { tokenPath: process.env.RIG_SERVER_TOKEN_PATH }
                 : {}),
         });
+        return;
+    }
+    if (argv.length === 3 && argv[0] === "p2p" && argv[1] === "bridge" && argv[2] === "--stdio") {
+        await runP2pBridgeCommand();
         return;
     }
 
@@ -86,6 +92,24 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
             });
         }
         await runDaemonCommand(daemonCommand);
+        return;
+    }
+    if (command === "invite") {
+        if (commandArgs.length !== 0) {
+            throw new RigUserError("Rig invite does not take arguments.", {
+                hint: "Usage: rig invite",
+            });
+        }
+        await runP2pPairingCommand("invite");
+        return;
+    }
+    if (command === "join") {
+        if (commandArgs.length !== 1) {
+            throw new RigUserError("Rig needs one invitation link.", {
+                hint: "Usage: rig join <rig://join/...>",
+            });
+        }
+        await runP2pPairingCommand("join", commandArgs[0]);
         return;
     }
     if (command === "happy") {

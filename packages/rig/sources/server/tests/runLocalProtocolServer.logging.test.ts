@@ -34,7 +34,7 @@ describe("runLocalProtocolServer logging", () => {
         ]);
         await writeFile(
             join(configDirectory, "happy.toml"),
-            "[providers]\ndefault_enable = false\n\n[providers.bedrock]\nenabled = true\n",
+            "[p2p]\nenable_iroh = false\n\n[providers]\ndefault_enable = false\n\n[providers.bedrock]\nenabled = true\n",
         );
         vi.stubEnv("AWS_BEARER_TOKEN_BEDROCK", "test-token");
         vi.stubEnv("RIG_CONFIGURATION_DIRECTORY", configDirectory);

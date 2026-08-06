@@ -38,6 +38,20 @@ export const claudeTools = [
     claudeAskUserQuestionTool,
 ] as const;
 
+/**
+ * Claude's curated surface, with or without its own search.
+ *
+ * Whether that search works depends on the endpoint serving the model rather than on the model, so
+ * the caller says. The surface is built without it rather than assembled and then stripped by tool
+ * name: a name filter has to know every tool that might be a search, and stops working silently
+ * the moment one is renamed or another is added.
+ */
+export function claudeToolSurface(options: { webSearch: boolean }): readonly AnyDefinedTool[] {
+    return options.webSearch
+        ? claudeTools
+        : claudeTools.filter((tool) => tool !== claudeWebSearchTool);
+}
+
 export const claudeCollaborationTools = [
     claudeAgentTool,
     claudeWorkflowTool,

@@ -1,4 +1,4 @@
-import { and, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { projectWorkspaces } from "../database/schema.js";
 import type { TX } from "../Transaction.js";
 import { type GitValues, workspaceGitChanged } from "./projectConditions.js";
@@ -22,6 +22,7 @@ export function workspaceApplyProbe(
             .where(
                 and(
                     workspaceScope(projectId, id),
+                    eq(projectWorkspaces.status, "ready"),
                     sql`(
         ${projectWorkspaces.presence} IS NOT ${values.presence} OR ${workspaceGitChanged(values)}
     )`,

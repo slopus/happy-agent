@@ -424,6 +424,21 @@ brand = "ansi:202"
 accent = "cyan"
 ```
 
+### Protected paths
+
+Add existing workspace-relative files or directories to a project's
+`happy.toml` when modifying them should require Full access:
+
+```toml
+[permissions]
+protected_paths = ["master-plans", ".env.production"]
+```
+
+The user-wide `happy.toml` supports the same list, and Rig merges the user and
+project entries. Directory entries cover their descendants. Missing entries
+are ignored when the session starts; recreating the session picks up paths that
+were created later.
+
 ### Managed workspace setup
 
 A repository can prepare every managed workspace before Rig starts an agent in
@@ -579,6 +594,90 @@ that ignores them still cannot connect directly:
 In restricted Docker sessions, `allowed_loopback_ports` refers to loopback on
 the machine running Rig, not an arbitrary container port. Full access remains
 unrestricted and can bypass the managed proxy by design.
+
+### P2P networking
+
+P2P networking is opt-in and machine-wide. Configure each stable Rig identity
+once, then add any combination of Iroh, direct TLS, and SSH address hints:
+
+```toml
+[p2p]
+enable_direct = true
+enable_iroh = true
+enable_ssh = true
+expose_api = true
+
+[p2p.direct]
+listen = "0.0.0.0:7443"
+
+[[p2p.peers]]
+instance_id = "ck1234567890abcdefghijkl"
+public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+[p2p.peers.direct]
+address = "other-rig.example.com:7443"
+
+[p2p.peers.iroh]
+endpoint_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+[p2p.peers.ssh]
+auth = "agent"
+host = "other-rig.example.com"
+host_key_sha256 = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+port = 22
+username = "steve"
+
+[p2p.iroh]
+# relay_url = "https://relay.example.com"
+```
+
+Each Rig installation owns a stable cuid2 instance ID and one protected
+Ed25519 identity key. The same public key is the only key other parties need:
+Rig converts it to X25519 when encrypting, using the standard
+Edwards-to-Montgomery conversion.
+
+Every transport completes the same signed, expiring mutual hello before ping or
+HTTP traffic. The signatures cover both identities, fresh challenges, the
+transport kind, and its authenticated channel binding: Iroh endpoint IDs, TLS
+exporter bytes, or the verified SSH host-key hash. Direct TLS additionally
+requires the self-signed certificate to contain the configured stable Ed25519
+key before Rig reads application data.
+
+Configure the same peer on both daemons for bidirectional Iroh or direct TLS.
+SSH is intentionally initiator-only: it strictly pins the SSH host key,
+authenticates with an SSH agent or an owner-only private-key file, and runs the
+fixed remote command `rig p2p bridge --stdio`. Passwords and private-key
+contents do not belong in the configuration. The serving daemon needs only the
+initiator's `instance_id` and `public_key` entry; it does not need a reverse SSH
+address. All transports for one instance share the same peer route; Rig pins the
+chosen transport for each ordinary or streaming response.
+
+`expose_api` is separate from connectivity and defaults to `false`. When the
+serving machine enables it, its daemon API is available through the consuming
+machine's local authenticated daemon at:
+
+```text
+/p2p/peers/<instance-id>/api
+```
+
+For example, Happy can pass that URL prefix and the local daemon token to
+`rig-connect`; ordinary requests and long-lived event streams use the same
+prefix. Tokens never cross a P2P transport. The remote daemon authenticates the
+stable identity, then injects its own local token when dispatching the request.
+
+API exposure grants substantial authority. A trusted instance can read
+transcripts, send messages that run agents and tools, change project files,
+install plugins, and manage workspaces as this Rig user. Only configure machines
+you trust to act as you. Rig does not forward P2P topology routes, daemon
+shutdown, the debug inspector, or one-time webapp context exchanges.
+
+When `relay_url` is absent, Iroh uses its default discovery and relay services.
+The stable Rig identity seed and the Iroh transport identity are stored
+separately beside Rig's durable database with owner-only permissions. Learned
+peer pins are durable there as well. Project configuration cannot enable P2P
+networking. Upstream Iroh does not currently publish a native binding for Intel
+macOS; on that platform Rig reports P2P as unavailable and continues running
+normally.
 
 Provider availability is machine-wide because the local daemon owns the model
 catalog and authentication paths. Configure it in the user `happy.toml`:

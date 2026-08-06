@@ -14,6 +14,7 @@ import {
 } from "@slopus/rig-providers";
 
 import type { ExecutorEvent } from "@/ExecutorEvent.js";
+import type { HostedCapability } from "@/HostedCapability.js";
 import type {
     ExecutorModelProfile,
     ExecutorRunRequest,
@@ -65,6 +66,7 @@ export class Executor {
     private inferencePending: Promise<void> = Promise.resolve();
     private sessionResolutionPending: Promise<void> = Promise.resolve();
     private sessionSequence = 0;
+    private forceClosed = false;
 
     constructor(
         providers: readonly ExecutorProvider[],
@@ -114,6 +116,11 @@ export class Executor {
             .map((profile) => profile.model);
     }
 
+    /** What the selected definition would declare on a request built right now. */
+    hostedCapabilitiesForRequest(): readonly HostedCapability[] {
+        return this.selectedProvider.hostedCapabilitiesForRequest?.() ?? [];
+    }
+
     get reviewerModel(): Model | undefined {
         return reviewerModelForProvider(this.selectedProvider.profiles);
     }
@@ -157,10 +164,12 @@ export class Executor {
      */
     isolate(label: string): Executor {
         const isolated = new Executor(
-            this.providers.map(({ destroy: _destroy, ...provider }) => ({
-                ...provider,
-                sessionId: `${provider.sessionId ?? provider.id}:${label}`,
-            })),
+            this.providers.map((provider) => {
+                // Each definition decides what it is willing to lend; a capability it runs on its
+                // own backend does not travel into work the person never asked for.
+                const { destroy: _destroy, ...lent } = provider.isolated?.() ?? provider;
+                return { ...lent, sessionId: `${provider.sessionId ?? provider.id}:${label}` };
+            }),
             { environment: this.environment, identity: this.identity },
         );
         isolated.selectProvider(this.selectedProviderId);
@@ -230,6 +239,7 @@ export class Executor {
     async *run(request: ExecutorRunRequest): AsyncGenerator<ExecutorEvent> {
         const releaseInference = await this.acquireInference();
         try {
+            if (this.forceClosed) throw new Error("The executor is closed.");
             const profile = this.profile(request.selection);
             const resolution = await this.serializeSessionResolution(async () => {
                 if (
@@ -384,6 +394,20 @@ export class Executor {
         await this.destroy();
     }
 
+    /**
+     * Tears down this executor's active provider session without entering its inference queue.
+     *
+     * Normal reset/close serialization protects conversational state. An isolated bounded query
+     * has no future conversational state to preserve, and waiting behind an inference that ignored
+     * abort would make its deadline ineffective.
+     */
+    forceClose(): Promise<void> | void {
+        this.forceClosed = true;
+        const active = this.active;
+        this.active = undefined;
+        return active?.session.destroy();
+    }
+
     private profile(selection: ExecutorSelection): ExecutorModelProfile {
         const profile = this.profilesByKey.get(selectionKey(selection));
         if (profile === undefined) {
@@ -401,6 +425,7 @@ export class Executor {
         systemPrompt: string | undefined,
         tools: readonly import("@slopus/rig-providers").SessionTool[],
     ) {
+        if (this.forceClosed) throw new Error("The executor is closed.");
         const providerTools = filterProviderCompatibleSessionTools(tools);
         const toolsKey = JSON.stringify(providerTools);
         const provider = this.providersById.get(profile.providerId)!;
@@ -445,14 +470,19 @@ export class Executor {
             modelConfigurations,
             tools: providerTools,
         });
-        return (this.active = {
+        const resolved = {
             context,
             contextInstructions,
             profile,
             session,
             systemPrompt,
             toolsKey,
-        });
+        };
+        if (this.forceClosed) {
+            await session.destroy();
+            throw new Error("The executor is closed.");
+        }
+        return (this.active = resolved);
     }
 
     private async serializeSessionResolution<T>(operation: () => Promise<T>): Promise<T> {

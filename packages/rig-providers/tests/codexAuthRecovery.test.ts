@@ -49,7 +49,7 @@ describe("Codex ChatGPT unauthorized recovery", () => {
             }
             response.writeHead(200, { "content-type": "text/event-stream" });
             response.end(
-                'data: {"type":"response.completed","response":{"id":"response","output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}\n\ndata: [DONE]\n\n',
+                'data: {"type":"response.completed","response":{"id":"response","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\ndata: [DONE]\n\n',
             );
         });
         await new Promise<void>((resolve, reject) => {

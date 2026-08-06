@@ -18,12 +18,14 @@ import {
 } from "../../execution/index.js";
 import type { SessionSecretContext } from "../../secrets/index.js";
 import type { PluginContext } from "./PluginContext.js";
+import { posix } from "node:path";
 
 export interface CreateDockerAgentContextOptions {
     docker: DockerExecutionConfig;
     goals?: GoalContext;
     permissionMode?: PermissionMode;
     plugins?: PluginContext;
+    protectedPaths?: readonly string[];
     secrets?: SessionSecretContext;
     sessionId: string;
     tasks?: TaskContext;
@@ -32,8 +34,13 @@ export interface CreateDockerAgentContextOptions {
 }
 
 export function createDockerAgentContext(options: CreateDockerAgentContextOptions): AgentContext {
-    const permissions = createPermissionContext(options.permissionMode ?? DEFAULT_PERMISSION_MODE);
     const environment = new DockerEnvironment(options.docker, options.sessionId);
+    const protectedPaths = (options.protectedPaths ?? []).map((path) =>
+        posix.resolve(environment.config.workingDirectory, path),
+    );
+    const permissions = createPermissionContext(options.permissionMode ?? DEFAULT_PERMISSION_MODE, {
+        protectedPaths,
+    });
     const context: AgentContext = {
         bash: createDockerBashContext(
             environment,

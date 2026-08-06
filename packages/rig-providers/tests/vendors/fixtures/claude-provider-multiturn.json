@@ -29,7 +29,7 @@
                     "content": "EvwCCokBCBAYAipAbhB5YupQeSrDDg5Wig3GZsOtkqRxoZPi52w6SbXi+F2649jOF+0Nax6/UJT0HABpb0WjkzREcC5iYOTAagGzdTIPY2xhdWRlLW9wdXMtNC04OABCCHRoaW5raW5nWiQ1Y2RiN2YwMy05NzI1LTRjNWQtYTQxNC1hMmRiOTgwYzk3ODcSDCSrgsy+ouu2/y4MkBoMiR2qZ5QLXdv6San5IjCEg/LzceqpoQExzedUihMKU1g8Suxgm6TTebb3E2rR/1c22olKIHQkQtwuKfuwpmEqnwF/kVT8sBy2cukxwM4/8I1A+YTwG1hAvpPXAqugRClnwCKi0Ee5RZjqX4Jj2jLiwuAZ1+HrI3+1J4+lcNSYA/nPuI6tRCbLznmVOMcxXBiiaWkeKaUyrRP92+PUKSO6/o38DUaWxtk5Oul5jSjbaBSl068r7wrpRNzGrfLN0R4eMjUw2f3h03c48xRUGj1cdt9v/YzW05p5AYh1E1omVU0YAQ=="
                 },
                 {
-                    "type": "tool_call_start",
+                    "type": "toolcall_start",
                     "callId": "<TOOLU_ID>",
                     "name": "Read",
                     "vendor": {

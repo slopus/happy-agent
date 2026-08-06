@@ -6,6 +6,7 @@ import type { CreateCodingAssistantAgentOptions } from "../../runtime/createCodi
 import { NativeProcessManager } from "../../processes/index.js";
 import { createEventIdFactory, type ModelCatalog } from "../../protocol/index.js";
 import { defineModel, defineProvider } from "@slopus/rig-execution";
+import type { Message } from "../../agent/types.js";
 import type { AgentSessionManager } from "../AgentSessionManager.js";
 import { InMemorySession } from "../InMemorySession.js";
 
@@ -295,6 +296,148 @@ describe("InMemorySession queued configuration", () => {
         // Absent would mean "the context is the visible transcript", which still holds this
         // message, and the run would then send it a second time.
         expect(session.snapshot().snapshot.contextMessages).toEqual([]);
+    });
+
+    it("keeps compatible fork checkpoints and normalizes incompatible ones", () => {
+        const codexModel = defineModel({
+            defaultThinkingLevel: "off",
+            id: "openai/codex",
+            name: "Codex model",
+            thinkingLevels: ["off"],
+        });
+        const claudeModel = defineModel({
+            defaultThinkingLevel: "off",
+            id: "anthropic/claude",
+            name: "Claude model",
+            thinkingLevels: ["off"],
+        });
+        const modelCatalog: ModelCatalog = {
+            defaultModelId: codexModel.id,
+            defaultProviderId: "codex",
+            models: [codexModel, claudeModel],
+            providers: [
+                { models: [codexModel], providerId: "codex", providerType: "codex" },
+                { models: [claudeModel], providerId: "claude", providerType: "claude" },
+            ],
+        };
+        const durableMessage: Message = {
+            blocks: [{ type: "text", text: "OLDER_DURABLE_PARENT_HISTORY" }],
+            id: "durable-parent-message",
+            role: "user",
+        };
+        const latestMessage: Message = {
+            blocks: [{ type: "text", text: "LATEST_SELECTED_PARENT_TURN" }],
+            id: "latest-parent-message",
+            role: "user",
+        };
+        const currentSpawnMessage: Message = {
+            blocks: [
+                {
+                    arguments: { message: "CURRENT_SPAWN_CALL" },
+                    id: "current-spawn-call",
+                    name: "spawn_agent",
+                    type: "tool_call",
+                },
+            ],
+            id: "current-spawn-message",
+            role: "agent",
+        };
+        const opaqueCheckpoint: Message = {
+            blocks: [],
+            id: "codex-checkpoint",
+            providerId: "codex",
+            replacedMessageIds: [durableMessage.id, latestMessage.id],
+            replacementMessages: [
+                {
+                    role: "compaction",
+                    content: null,
+                    encryptedContent: "SOURCE_PROVIDER_OPAQUE_CHECKPOINT",
+                    timestamp: 1,
+                },
+            ],
+            role: "compaction",
+            statistics: {
+                after: { exact: true, tokens: 100 },
+                before: { exact: true, tokens: 1_000 },
+            },
+        };
+        const canonicalContext = [opaqueCheckpoint];
+        const session = new InMemorySession({
+            createEventId: createEventIdFactory(),
+            modelCatalog,
+            request: {
+                cwd: "/tmp/rig-subagent-context",
+                modelId: codexModel.id,
+                providerId: "codex",
+            },
+            restore: {
+                agent: {
+                    depth: 0,
+                    rootSessionId: "parent-session",
+                    type: "primary",
+                },
+                agentId: "parent-agent",
+                cwd: "/tmp/rig-subagent-context",
+                id: "parent-session",
+                messages: [
+                    {
+                        isPartial: false,
+                        message: durableMessage,
+                        position: 0,
+                        runId: "parent-run",
+                    },
+                    {
+                        isPartial: false,
+                        message: latestMessage,
+                        position: 1,
+                        runId: "parent-run",
+                    },
+                    {
+                        isPartial: false,
+                        message: currentSpawnMessage,
+                        position: 2,
+                        runId: "parent-run",
+                    },
+                ],
+                modelId: codexModel.id,
+                models: [codexModel],
+                nextTaskId: 1,
+                orderKey: "a0",
+                permissionMode: "auto",
+                providerId: "codex",
+                queuedRuns: [],
+                status: "idle",
+                tasks: [],
+                titleStatus: "idle",
+                tools: [],
+            },
+        });
+
+        expect(
+            session.contextMessagesForSubagent(canonicalContext, {
+                modelId: codexModel.id,
+                providerId: "codex",
+            }),
+        ).toBe(canonicalContext);
+
+        const incompatible = session.contextMessagesForSubagent(canonicalContext, {
+            modelId: claudeModel.id,
+            parentToolCallId: "current-spawn-call",
+            providerId: "claude",
+        });
+        expect(JSON.stringify(incompatible)).toContain("<model-switch-history-context>");
+        expect(JSON.stringify(incompatible)).toContain("OLDER_DURABLE_PARENT_HISTORY");
+        expect(JSON.stringify(incompatible)).toContain("LATEST_SELECTED_PARENT_TURN");
+        expect(JSON.stringify(incompatible)).not.toContain("CURRENT_SPAWN_CALL");
+        expect(JSON.stringify(incompatible)).not.toContain("SOURCE_PROVIDER_OPAQUE_CHECKPOINT");
+
+        const limited = session.contextMessagesForSubagent([latestMessage], {
+            modelId: claudeModel.id,
+            parentToolCallId: "current-spawn-call",
+            providerId: "claude",
+        });
+        expect(JSON.stringify(limited)).toContain("LATEST_SELECTED_PARENT_TURN");
+        expect(JSON.stringify(limited)).not.toContain("OLDER_DURABLE_PARENT_HISTORY");
     });
 });
 

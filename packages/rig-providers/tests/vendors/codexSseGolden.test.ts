@@ -535,7 +535,7 @@ function completeSse(response: ServerResponse, turnState?: string, finalText?: s
                 response: {
                     id: "response",
                     output: finalItem === undefined ? [] : [finalItem],
-                    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+                    usage: { input_tokens: 0, output_tokens: 1, total_tokens: 1 },
                 },
             },
         ]

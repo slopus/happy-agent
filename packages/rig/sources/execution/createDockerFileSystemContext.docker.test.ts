@@ -55,7 +55,7 @@ for (const fixture of [
         afterAll(async () => {
             if (container === undefined) return;
             await container.remove({ force: true });
-        });
+        }, 30_000);
 
         it("pages special names and batches their metadata", async () => {
             const environment = {

@@ -8,7 +8,206 @@ import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivac
 import { collectSessionEvents, textFromSessionEvents } from "./helpers/collectSessionEvents.js";
 
 describe("ClaudeSession", () => {
-    it("preserves weekly quota classification, reset time, and the native error", async () => {
+    it("retries a server error after rolling back its incomplete response", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const firstClose = vi.fn();
+        const waitForInferenceRetry = vi.fn(async () => {});
+        let queryCount = 0;
+        const query = vi.fn<ClaudeSdkQuery>(() => {
+            queryCount += 1;
+            return queryCount === 1
+                ? midResponseServerErrorQuery(firstClose)
+                : fakeQuery("RECOVERED");
+        });
+        const session = new ClaudeSession("mid-response-retry-session", {
+            instructions: "",
+            credential,
+            inferenceMaxRetries: 1,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry,
+        });
+
+        const events = await collectSessionEvents(
+            session.run({
+                context: {
+                    messages: [{ role: "user", content: "Retry the incomplete response." }],
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(firstClose).toHaveBeenCalledOnce();
+        expect(waitForInferenceRetry).toHaveBeenCalledWith(1, undefined);
+        expect(events).toContainEqual({
+            type: "retrying",
+            attempt: 1,
+            reason: "Claude's response was interrupted by a server error.",
+        });
+        expect(textFromSessionEvents(events)).toBe("RECOVERED");
+        expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
+        expect(query.mock.calls[0]?.[0].options?.env?.CLAUDE_CODE_MAX_RETRIES).toBe("1");
+        expect(query.mock.calls[1]?.[0].options?.env?.CLAUDE_CODE_MAX_RETRIES).toBe("0");
+    });
+
+    it("surfaces a mid-response server error after exhausting the shared retry budget", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() =>
+            midResponseServerErrorQuery(
+                () => {},
+                "API Error: Connection closed mid-response. The response above may be incomplete.",
+                false,
+            ),
+        );
+        const session = new ClaudeSession("mid-response-exhausted-session", {
+            instructions: "",
+            credential,
+            inferenceMaxRetries: 1,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry: async () => {},
+        });
+
+        const events = [];
+        for await (const event of session.run({
+            context: {
+                messages: [{ role: "user", content: "Retry the incomplete response." }],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(1);
+        expect(textFromSessionEvents(events)).toBe("");
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "internal_error",
+            providerError: {
+                type: "internal_server_error",
+                diagnostics: { attempts: 2 },
+            },
+        });
+        expect(
+            query.mock.calls.map(([request]) => request.options?.env?.CLAUDE_CODE_MAX_RETRIES),
+        ).toEqual(["1", "0"]);
+    });
+
+    it("retries a successful result with zero output tokens", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const firstClose = vi.fn();
+        const query = vi.fn<ClaudeSdkQuery>(() => {
+            if (query.mock.calls.length > 1) return fakeQuery("RECOVERED");
+            async function* messages() {
+                yield {
+                    type: "result",
+                    subtype: "success",
+                    duration_ms: 1,
+                    duration_api_ms: 1,
+                    is_error: false,
+                    num_turns: 1,
+                    result: "",
+                    stop_reason: "end_turn",
+                    total_cost_usd: 0,
+                    usage: {
+                        input_tokens: 1,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                    modelUsage: {},
+                    permission_denials: [],
+                    uuid: "empty-result",
+                    session_id: "empty-output-session",
+                };
+            }
+            return Object.assign(messages(), {
+                close: firstClose,
+            }) as unknown as ReturnType<ClaudeSdkQuery>;
+        });
+        const session = new ClaudeSession("empty-output-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry: async () => {},
+        });
+
+        const events = await collectSessionEvents(
+            session.run({
+                context: { messages: [{ role: "user", content: "Retry empty output." }] },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(firstClose).toHaveBeenCalledOnce();
+        expect(events).toContainEqual({
+            type: "retrying",
+            attempt: 1,
+            reason: "Claude returned a response with zero output tokens.",
+        });
+        expect(events.filter((event) => event.type === "token_usage")).toEqual([
+            {
+                type: "token_usage",
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 1,
+                    output: 0,
+                    totalTokens: 1,
+                },
+            },
+            {
+                type: "token_usage",
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 10,
+                    output: 2,
+                    totalTokens: 12,
+                },
+            },
+        ]);
+        expect(textFromSessionEvents(events)).toBe("RECOVERED");
+        expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
+    });
+
+    it("preserves a non-abort empty-response retry delay failure", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const delayError = Object.assign(new Error("retry timer failed"), {
+            code: "RETRY_TIMER_FAILURE",
+        });
+        const session = new ClaudeSession("empty-output-delay-failure", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query: () => fakeQuery("", 0),
+            tools: [],
+            waitForInferenceRetry: async () => {
+                throw delayError;
+            },
+        });
+
+        await expect(
+            collectSessionEvents(
+                session.run({
+                    context: {
+                        messages: [{ role: "user", content: "Retry empty output." }],
+                    },
+                }),
+            ),
+        ).rejects.toBe(delayError);
+    });
+
+    it("preserves weekly quota classification, reset time, retries, and the native error", async () => {
         const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
         if (credential === null) throw new Error("Expected test credential.");
         const session = new ClaudeSession("quota-session", {
@@ -17,6 +216,17 @@ describe("ClaudeSession", () => {
             model: "sonnet[1m]",
             query: (() => {
                 async function* messages() {
+                    yield {
+                        type: "system",
+                        subtype: "api_retry",
+                        attempt: 2,
+                        max_retries: 10,
+                        retry_delay_ms: 1_500,
+                        error_status: 429,
+                        error: "rate_limit",
+                        uuid: "quota-retry-id",
+                        session_id: "quota-session",
+                    };
                     yield {
                         type: "rate_limit_event",
                         rate_limit_info: {
@@ -90,7 +300,15 @@ describe("ClaudeSession", () => {
             state: "error",
             kind: "unknown",
             message: "You've hit your weekly limit · resets Jul 25 at 5am",
-            providerError: { type: "rate_limit", resetAt: 2_000_000 },
+            providerError: {
+                type: "rate_limit",
+                resetAt: 2_000_000,
+                diagnostics: {
+                    attempts: 3,
+                    code: "rate_limit",
+                    upstreamMessage: "You've hit your weekly limit · resets Jul 25 at 5am",
+                },
+            },
         });
     });
 
@@ -128,7 +346,7 @@ describe("ClaudeSession", () => {
                         total_cost_usd: 0,
                         usage: {
                             input_tokens: 0,
-                            output_tokens: 0,
+                            output_tokens: 1,
                             cache_creation_input_tokens: 0,
                             cache_read_input_tokens: 0,
                         },
@@ -706,6 +924,59 @@ describe("ClaudeSession", () => {
         ).rejects.toThrow("SDK construction failed.");
         expect(addAbortListener).toHaveBeenCalledOnce();
         expect(removeAbortListener).toHaveBeenCalledOnce();
+    });
+
+    it("commits a terminal result when abort races after the terminal was observed", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const controller = new AbortController();
+        const usage = {
+            input_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            get output_tokens() {
+                controller.abort();
+                return 1;
+            },
+        };
+        const session = new ClaudeSession("terminal-abort-race", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query: (() => {
+                async function* messages() {
+                    yield {
+                        type: "result",
+                        subtype: "success",
+                        duration_ms: 1,
+                        duration_api_ms: 1,
+                        is_error: false,
+                        num_turns: 1,
+                        result: "completed",
+                        stop_reason: "end_turn",
+                        total_cost_usd: 0,
+                        usage,
+                        modelUsage: {},
+                        permission_denials: [],
+                        uuid: "terminal-abort-race-result",
+                        session_id: "terminal-abort-race",
+                    };
+                }
+                return Object.assign(messages(), { close: () => {} });
+            }) as unknown as ClaudeSdkQuery,
+            tools: [],
+        });
+
+        const events = await collectSessionEvents(
+            session.run({
+                abort: controller.signal,
+                context: { messages: [{ role: "user", content: "Finish." }] },
+            }),
+        );
+
+        expect(controller.signal.aborted).toBe(true);
+        expect(events).toContainEqual({ type: "block_stop" });
+        expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
     });
 
     it("stops immediately when the Claude SDK does not settle after interruption", async () => {
@@ -1338,7 +1609,7 @@ function fakeNativeCompactQuery(
     return Object.assign(generator, { close: () => {} }) as unknown as ReturnType<ClaudeSdkQuery>;
 }
 
-function fakeQuery(text: string): ReturnType<ClaudeSdkQuery> {
+function fakeQuery(text: string, outputTokens = 2): ReturnType<ClaudeSdkQuery> {
     const result = {
         type: "result",
         subtype: "success",
@@ -1352,7 +1623,7 @@ function fakeQuery(text: string): ReturnType<ClaudeSdkQuery> {
         total_cost_usd: 0,
         usage: {
             input_tokens: 10,
-            output_tokens: 2,
+            output_tokens: outputTokens,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
         },
@@ -1367,6 +1638,71 @@ function fakeQuery(text: string): ReturnType<ClaudeSdkQuery> {
     return Object.assign(generator, {
         close: () => {},
     }) as unknown as ReturnType<ClaudeSdkQuery>;
+}
+
+function midResponseServerErrorQuery(
+    close: () => void,
+    message = "API Error: Server error mid-response. The response above may be incomplete.",
+    includeAssistantError = true,
+): ReturnType<ClaudeSdkQuery> {
+    async function* messages() {
+        yield streamEvent("partial-text", {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "INCOMPLETE" },
+        });
+        if (includeAssistantError) {
+            yield {
+                type: "assistant",
+                error: "server_error",
+                message: {
+                    id: "mid-response-error",
+                    type: "message",
+                    role: "assistant",
+                    model: "claude-sonnet-5",
+                    content: [
+                        {
+                            type: "text",
+                            text: message,
+                        },
+                    ],
+                    stop_reason: "stop_sequence",
+                    stop_sequence: "",
+                    usage: {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                },
+                parent_tool_use_id: null,
+                uuid: "mid-response-assistant",
+                session_id: "mid-response-retry-session",
+            };
+        }
+        yield {
+            type: "result",
+            subtype: "success",
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: true,
+            num_turns: 1,
+            result: message,
+            stop_reason: "stop_sequence",
+            session_id: "mid-response-retry-session",
+            total_cost_usd: 0,
+            usage: {
+                input_tokens: 1,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            modelUsage: {},
+            permission_denials: [],
+            uuid: "mid-response-result",
+        };
+    }
+    return Object.assign(messages(), { close }) as unknown as ReturnType<ClaudeSdkQuery>;
 }
 
 function fakeToolCallQuery(close: () => void): ReturnType<ClaudeSdkQuery> {

@@ -2,6 +2,7 @@ import {
     eventIdsShareScope,
     type EventId,
     type SessionPermissionReview,
+    type SessionProviderToolCall,
     type SessionEvent,
     type ShellCommandState,
 } from "../protocol/index.js";
@@ -28,6 +29,8 @@ export class SessionEventLog {
     #messageSteeringEventId = new Map<string, EventId>();
     #permissionReviews = new Map<string, SessionPermissionReview>();
     #permissionReviewEventIds = new Map<string, EventId>();
+    #providerToolCalls = new Map<string, SessionProviderToolCall>();
+    #providerToolCallEventIds = new Map<string, EventId>();
     #messageSubmissions = new Map<string, SessionEvent & { type: "message_submitted" }>();
     #providerQuotas = new Map<string, ProviderQuota>();
     #shellCommands = new Map<string, ShellCommandState>();
@@ -58,6 +61,7 @@ export class SessionEventLog {
             }
             this.#recordMessageTime(event);
             this.#recordPermissionReview(event);
+            this.#recordProviderToolCall(event);
             this.#recordCurrentState(event);
         }
         this.#nextEventIndex = this.#events.length;
@@ -78,6 +82,7 @@ export class SessionEventLog {
             }
             this.#recordMessageTime(event);
             this.#recordPermissionReview(event);
+            this.#recordProviderToolCall(event);
             this.#recordCurrentState(event);
             if (this.#events.length > this.#retentionLimit) {
                 const removed = this.#events.shift();
@@ -147,6 +152,19 @@ export class SessionEventLog {
             const review = this.#permissionReviews.get(toolCallId);
             return review === undefined ? [] : [review];
         });
+    }
+
+    /**
+     * The calls the provider ran itself during the given runs, oldest first.
+     *
+     * Read from the log rather than kept beside it, so a page rebuilt from disk and a live window
+     * are the same answer. Rig never executes one of these, so the assistant message has no
+     * record of it and this is the only place the evidence lives.
+     */
+    providerToolCalls(runIds: ReadonlySet<string>): SessionProviderToolCall[] {
+        return [...this.#providerToolCalls.values()]
+            .filter((call) => runIds.has(call.runId))
+            .sort((left, right) => left.createdAt - right.createdAt);
     }
 
     /**
@@ -266,6 +284,29 @@ export class SessionEventLog {
         this.#permissionReviewEventIds.set(review.toolCallId, event.id);
     }
 
+    #recordProviderToolCall(event: SessionEvent): void {
+        if (event.type === "session_reset") {
+            this.#providerToolCalls.clear();
+            this.#providerToolCallEventIds.clear();
+            return;
+        }
+        if (event.type !== "agent_event") return;
+        const inner = event.data.event;
+        if (inner.type !== "server_toolcall_end" || inner.callId.length === 0) return;
+        const runId = event.data.runId;
+        if (typeof runId !== "string" || runId.length === 0) return;
+        this.#providerToolCalls.set(inner.callId, {
+            arguments: inner.arguments,
+            callId: inner.callId,
+            createdAt: event.createdAt,
+            messageId: inner.messageId,
+            name: inner.name,
+            runId,
+            status: inner.incomplete === true ? "interrupted" : "completed",
+        });
+        this.#providerToolCallEventIds.set(inner.callId, event.id);
+    }
+
     #forgetEventIndexes(event: SessionEvent): void {
         if (
             event.type === "message_submitted" ||
@@ -300,6 +341,13 @@ export class SessionEventLog {
             if (this.#permissionReviewEventIds.get(toolCallId) === event.id) {
                 this.#permissionReviews.delete(toolCallId);
                 this.#permissionReviewEventIds.delete(toolCallId);
+            }
+        }
+        if (event.type === "agent_event" && event.data.event.type === "server_toolcall_end") {
+            const callId = event.data.event.callId;
+            if (this.#providerToolCallEventIds.get(callId) === event.id) {
+                this.#providerToolCalls.delete(callId);
+                this.#providerToolCallEventIds.delete(callId);
             }
         }
     }

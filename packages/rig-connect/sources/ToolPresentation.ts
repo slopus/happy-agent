@@ -1,4 +1,9 @@
-import type { FileDiff, ToolCallPresentation, ToolResultPresentation } from "./protocol.js";
+import type {
+    FileDiff,
+    SearchSource,
+    ToolCallPresentation,
+    ToolResultPresentation,
+} from "./protocol.js";
 
 /**
  * One thing a tool looked at while exploring the workspace.
@@ -63,10 +68,25 @@ export interface TerminalInputPresentation {
  * reason the projection exists. A kind this library does not know projects to
  * `undefined`, and the call's plain `result` text remains the fallback.
  */
+/**
+ * A search of the world outside the workspace.
+ *
+ * The same value whether Rig ran the search through a tool of its own or the provider ran it on
+ * its own backend. Those lifecycles stay separate — one has a result and the other cannot — but a
+ * reader is looking at one act, and this is it. `sources` is empty until they are known.
+ */
+export interface SearchPresentation {
+    readonly kind: "search";
+    readonly target: "web" | "x";
+    readonly query: string;
+    readonly sources: readonly SearchSource[];
+}
+
 export type ToolPresentation =
     | CommandPresentation
     | ExplorationPresentation
     | FileEditPresentation
+    | SearchPresentation
     | TerminalInputPresentation;
 
 /**
@@ -108,6 +128,13 @@ export function projectToolPresentation(
                         ? {}
                         : { omittedFiles: result.omittedFiles }),
                 };
+            case "search":
+                return {
+                    kind: "search",
+                    query: result.query,
+                    sources: result.sources,
+                    target: result.target,
+                };
         }
     }
 
@@ -121,6 +148,10 @@ export function projectToolPresentation(
                 // The operations are already application-shaped, so they pass
                 // through unchanged.
                 return { kind: "exploration", steps: call.operations };
+            case "search":
+                // No sources yet: the same shape the finished search will carry,
+                // so a UI does not swap one kind for another mid-flight.
+                return { kind: "search", query: call.query, sources: [], target: call.target };
         }
     }
 

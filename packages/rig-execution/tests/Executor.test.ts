@@ -8,7 +8,7 @@ import {
     type SessionRunRequest,
 } from "@slopus/rig-providers";
 import { Type } from "@sinclair/typebox";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { Executor } from "@/Executor.js";
 
@@ -579,6 +579,35 @@ describe("Executor", () => {
         await executor.close();
         expect(teardownCount).toBe(1);
     });
+
+    it("force-closes an isolated session without waiting behind ignored inference abort", async () => {
+        const native = new ForceCloseProvider();
+        const executor = new Executor(
+            [
+                {
+                    id: "codex",
+                    native,
+                    profiles: [profile("codex", "codex", "openai/sol", "Sol")],
+                    sessionId: "conversation",
+                },
+            ],
+            { environment: TEST_ENVIRONMENT },
+        );
+        const isolated = executor.isolate("title");
+        const running = collect(
+            isolated.run({
+                abort: AbortSignal.abort(),
+                context: { messages: [] },
+                selection: { modelId: "openai/sol", providerId: "codex" },
+            }),
+        );
+        await vi.waitFor(() => expect(native.sessions[0]?.running).toBe(true));
+
+        await isolated.forceClose();
+        await running;
+
+        expect(native.sessions[0]?.destroyed).toBe(true);
+    });
 });
 
 class RecordingProvider extends BaseProvider {
@@ -660,6 +689,48 @@ class AuxiliarySession extends BaseSession {
         this.requests.push(request);
         yield { type: "text_delta", delta: "SELECTED" };
         yield { type: "done", state: "normal" };
+    }
+}
+
+class ForceCloseProvider extends BaseProvider {
+    static override readonly name = "force-close";
+    static override readonly inputTypes = ["text"] as const;
+    static override readonly outputTypes = ["text"] as const;
+    readonly sessions: ForceCloseSession[] = [];
+
+    override async session(id: string) {
+        const session = new ForceCloseSession(id);
+        this.sessions.push(session);
+        return session;
+    }
+}
+
+class ForceCloseSession extends BaseSession {
+    destroyed = false;
+    running = false;
+    readonly #stopped: Promise<void>;
+    #stop: (() => void) | undefined;
+
+    constructor(id: string) {
+        super(id);
+        this.#stopped = new Promise<void>((resolve) => {
+            this.#stop = resolve;
+        });
+    }
+
+    override async compact(): Promise<SessionCompaction> {
+        throw new Error("Not used");
+    }
+
+    override destroy(): void {
+        this.destroyed = true;
+        this.#stop?.();
+    }
+
+    override async *run(): AsyncGenerator<SessionEvent> {
+        this.running = true;
+        await this.#stopped;
+        yield { type: "done", state: "cancelled" };
     }
 }
 

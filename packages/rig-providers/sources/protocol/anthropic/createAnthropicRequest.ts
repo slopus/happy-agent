@@ -23,7 +23,8 @@ export function createAnthropicRequest(options: {
     const system = toAnthropicSystem(options);
     const tools = toAnthropicTools(options.tools);
     const hasCompaction = options.context.messages.some((message) => message.role === "compaction");
-    const usesCompaction = options.compaction !== undefined || hasCompaction;
+    const requestsCompaction = options.compaction !== undefined;
+    const usesCompaction = requestsCompaction || hasCompaction;
     const betas = ["context-1m-2025-08-07", "interleaved-thinking-2025-05-14"];
     if (usesCompaction) betas.push("compact-2026-01-12");
     if (options.structuredOutput !== undefined) betas.push("structured-outputs-2025-12-15");
@@ -34,14 +35,24 @@ export function createAnthropicRequest(options: {
             : {
                   context_management: {
                       edits: [
-                          {
-                              type: "compact_20260112" as const,
-                              ...(options.compaction?.instructions === undefined
-                                  ? {}
-                                  : { instructions: options.compaction.instructions }),
-                              pause_after_compaction: true,
-                              trigger: { type: "input_tokens" as const, value: 50_000 },
-                          },
+                          requestsCompaction
+                              ? {
+                                    type: "compact_20260112" as const,
+                                    ...(options.compaction?.instructions === undefined
+                                        ? {}
+                                        : { instructions: options.compaction.instructions }),
+                                    pause_after_compaction: true,
+                                    trigger: { type: "input_tokens" as const, value: 50_000 },
+                                }
+                              : {
+                                    // The API rejects compaction blocks whose strategy is not
+                                    // declared, but offers no way to declare it with compaction
+                                    // disabled. Rig owns compaction timing and the run path
+                                    // treats a mid-run compaction as an error, so the trigger
+                                    // sits beyond the 1M context window and can never fire.
+                                    type: "compact_20260112" as const,
+                                    trigger: { type: "input_tokens" as const, value: 2_000_000 },
+                                },
                       ],
                   },
               }),

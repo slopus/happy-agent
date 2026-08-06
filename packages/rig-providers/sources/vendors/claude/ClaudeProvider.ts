@@ -1,6 +1,10 @@
 import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import { BaseProvider } from "@/core/BaseProvider.js";
+import {
+    createInferenceMaxRetriesResolver,
+    type InferenceRetryOptions,
+} from "@/core/inferenceRetrySettings.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
 import type { ClaudeCredential } from "@/vendors/VendorCredential.js";
 import { ClaudeSession, type ClaudeSdkQuery } from "@/vendors/claude/ClaudeSession.js";
@@ -11,7 +15,7 @@ import type {
 } from "@/vendors/claude/ClaudeAuxiliaryQuery.js";
 import { runClaudeAuxiliaryQuery } from "@/vendors/claude/impl/runClaudeAuxiliaryQuery.js";
 
-export interface ClaudeProviderOptions {
+export interface ClaudeProviderOptions extends InferenceRetryOptions {
     credential: ClaudeCredential;
     env?: NodeJS.ProcessEnv;
     model?: string;
@@ -35,6 +39,8 @@ export class ClaudeProvider extends BaseProvider {
     readonly pathToClaudeCodeExecutable: string | undefined;
     readonly query: ClaudeSdkQuery | undefined;
     readonly userAgent: string | undefined;
+    readonly #resolveInferenceMaxRetries: () => number;
+    readonly #waitForInferenceRetry: InferenceRetryOptions["waitForInferenceRetry"];
 
     constructor(options: ClaudeProviderOptions) {
         super();
@@ -45,6 +51,8 @@ export class ClaudeProvider extends BaseProvider {
         this.pathToClaudeCodeExecutable = options.pathToClaudeCodeExecutable;
         this.query = options.query;
         this.userAgent = options.userAgent;
+        this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.#waitForInferenceRetry = options.waitForInferenceRetry;
     }
 
     override async session(id: string, options: SessionOptions): Promise<ClaudeSession> {
@@ -58,6 +66,10 @@ export class ClaudeProvider extends BaseProvider {
                 ? {}
                 : { pathToClaudeCodeExecutable: this.pathToClaudeCodeExecutable }),
             ...(this.query === undefined ? {} : { query: this.query }),
+            resolveInferenceMaxRetries: this.#resolveInferenceMaxRetries,
+            ...(this.#waitForInferenceRetry === undefined
+                ? {}
+                : { waitForInferenceRetry: this.#waitForInferenceRetry }),
             ...(this.userAgent === undefined ? {} : { userAgent: this.userAgent }),
         });
     }

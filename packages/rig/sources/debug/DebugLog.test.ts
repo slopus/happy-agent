@@ -49,6 +49,11 @@ describe("DebugLog", () => {
         const directory = join(root, ".happy", "rig", "debug", "request-error");
         const log = new DebugLog({ directory });
         const error = new Error("outer failure", { cause: new Error("inner failure") });
+        Object.assign(error, {
+            code: "model_backend_failure",
+            headers: { "x-request-id": "request-123", authorization: "secret" },
+            status: 502,
+        });
         (error.cause as Error).cause = { outer: error };
 
         await log.record("run-error", { error });
@@ -64,7 +69,14 @@ describe("DebugLog", () => {
             },
             message: "outer failure",
             name: "Error",
+            providerDiagnostics: {
+                code: "model_backend_failure",
+                requestId: "request-123",
+                status: 502,
+                upstreamMessage: "outer failure",
+            },
         });
+        expect(JSON.stringify(record)).not.toContain("secret");
         expect(record.data.error.stack).toContain("outer failure");
     });
 

@@ -136,17 +136,50 @@ work into history without making the composer jump.
 
 ## Publishing
 
-From a clean, current `main` branch, publish with:
+From a clean, current `main` branch, publish a release with new features in it:
 
 ```sh
-pnpm release 0.1.0
+pnpm release minor
 ```
 
-The release command also accepts `patch`, `minor`, or `major`. It runs type
-checks and tests, builds the package, creates the release commit and tag,
-previews the package contents, and pushes the release to `main`. Pushing a tag
-named `v<package version>` starts the `Publish package` GitHub Actions workflow,
-which repeats the validation and publishes `@slopus/rig` to npm.
+or one that only fixes things:
+
+```sh
+pnpm release patch
+```
+
+Both are ordinary releases; pick by what is in it rather than by how large it
+feels. An exact version such as `pnpm release 0.4.0` says the same thing
+explicitly, and there are `pnpm release:minor` and `pnpm release:patch`
+shorthands.
+
+Rig is still on `0.x` and takes no major release, which the command refuses. A
+major version is a promise about compatibility, and Rig deliberately changes its
+own schemas, protocol, and configuration instead of carrying migrations for
+them. Leaving `0.x` is a decision about the product rather than about one
+release, so it is made by changing the rule in
+`scripts/release/assertReleaseBumpAllowed.ts` rather than by passing a flag.
+
+The command runs type checks and tests, builds the package, creates the release
+commit and tag, previews the package contents, and pushes the release to `main`.
+Pushing a tag named `v<package version>` starts the `Publish package` GitHub
+Actions workflow, which repeats the validation and publishes `@slopus/rig` to
+npm.
+
+### Canary builds
+
+Every push to `main` publishes a canary to npm under the `canary` distribution
+tag, so a change can be installed and used before it is released:
+
+```sh
+npm install --global @slopus/rig@canary
+```
+
+A canary is versioned from the release it followed — `0.0.148-canary.<build>.<commit>`
+after `0.0.147` — so reading one tells you what it is built on. Being a
+prerelease keeps it out of the way: npm excludes prereleases from ranges that do
+not ask for them, so no ordinary install resolves a canary, and publishing one
+never moves `latest`. Nothing needs versioning by hand; the workflow sets it.
 
 If the local release is interrupted before the tag is pushed, rerun the command
 with the exact version to resume safely. If the GitHub Actions job fails, fix the

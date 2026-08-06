@@ -14,6 +14,7 @@ export async function requestAnthropicBedrockCompaction(options: {
     client: AnthropicBedrockClient;
     request: AnthropicRequest;
     signal?: AbortSignal;
+    maxRetries: number;
 }): Promise<CollectedAnthropicCompaction> {
     let failedAttempts = 0;
     for (;;) {
@@ -32,7 +33,8 @@ export async function requestAnthropicBedrockCompaction(options: {
         } catch (error) {
             if (responseContentStarted) throw error;
             failedAttempts += 1;
-            if (!shouldRetryAnthropicBedrock(error, failedAttempts)) throw error;
+            if (!shouldRetryAnthropicBedrock(error, failedAttempts, options.maxRetries))
+                throw error;
             const delay = resolveAnthropicBedrockRetryDelay(error, failedAttempts);
             await waitForAnthropicBedrockRetry(delay, options.signal);
         }

@@ -1,16 +1,18 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { renameSync, rmSync } from "node:fs";
 import {
     access,
     mkdir,
     mkdtemp,
     readFile,
     realpath,
+    rename,
     rm,
     symlink,
     writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 import { createId } from "@paralleldrive/cuid2";
@@ -574,7 +576,12 @@ describe("projects", () => {
         const provider = defineProvider({
             id: "codex",
             models: [modelOpenaiGpt56Sol],
-            stream() {
+            stream(_model, _context, options) {
+                if (options?.sessionId?.endsWith(":title")) {
+                    return transferResponseStream(
+                        JSON.stringify({ recap: "Transfer test.", title: "Transfer test" }),
+                    );
+                }
                 response += 1;
                 if (response === 1) {
                     firstStarted.resolve();
@@ -652,7 +659,12 @@ describe("projects", () => {
         const provider = defineProvider({
             id: "codex",
             models: [modelOpenaiGpt56Sol],
-            stream() {
+            stream(_model, _context, options) {
+                if (options?.sessionId?.endsWith(":title")) {
+                    return transferResponseStream(
+                        JSON.stringify({ recap: "Transfer test.", title: "Transfer test" }),
+                    );
+                }
                 started.resolve();
                 return transferResponseStream("Turn complete.", finish.promise);
             },
@@ -830,7 +842,12 @@ describe("projects", () => {
         const provider = defineProvider({
             id: "codex",
             models: [modelOpenaiGpt56Sol],
-            stream() {
+            stream(_model, _context, options) {
+                if (options?.sessionId?.endsWith(":title")) {
+                    return transferResponseStream(
+                        JSON.stringify({ recap: "Transfer test.", title: "Transfer test" }),
+                    );
+                }
                 started.resolve();
                 return transferResponseStream("Still running.", neverFinish.promise);
             },
@@ -1038,7 +1055,658 @@ describe("projects", () => {
         ).toThrow("failed");
     });
 
-    it("skips workspace storage keys already occupied on disk or by a Git branch", async () => {
+    it("serializes same-project Git work without serializing workspace setup", async () => {
+        const fixture = await createFixture();
+        const repository = await createRepository(fixture.root, "parallel-setup-source");
+        const releasePath = join(repository, "release-workspace-setup");
+        const setupCommand = [
+            "printf started > setup-started.txt",
+            `while [ ! -f ${JSON.stringify(releasePath)} ]; do sleep 0.02; done`,
+        ].join("; ");
+        await writeFile(
+            join(repository, "rig.toml"),
+            ["[workspace]", `setup_commands = [${JSON.stringify(setupCommand)}]`, ""].join("\n"),
+        );
+        await git(repository, ["add", "rig.toml"]);
+        await git(repository, ["commit", "-m", "Configure parallel workspace setup"]);
+        const source = fixture.store.create({ cwd: repository });
+
+        const first = await fixture.store.createWorkspace(source.snapshot().projectId, {
+            baseRef: "HEAD",
+            name: "First Setup",
+        });
+        if (first === undefined) throw new Error("Expected the first workspace.");
+        await waitForPath(join(first.path, "setup-started.txt"));
+        const second = await fixture.store.createWorkspace(source.snapshot().projectId, {
+            baseRef: "HEAD",
+            name: "Second Setup",
+        });
+        if (second === undefined) throw new Error("Expected the second workspace.");
+        try {
+            await waitForPath(join(second.path, "setup-started.txt"), 1_000);
+        } finally {
+            await writeFile(releasePath, "release\n");
+        }
+
+        await Promise.all([
+            waitForWorkspace(
+                fixture.store,
+                first.projectId,
+                first.id,
+                (workspace) => workspace.status === "ready",
+            ),
+            waitForWorkspace(
+                fixture.store,
+                second.projectId,
+                second.id,
+                (workspace) => workspace.status === "ready",
+            ),
+        ]);
+    });
+
+    it("bounds recovery setup work while retaining per-project Git serialization", async () => {
+        const fixture = await createFixture();
+        const repository = await createRepository(fixture.root, "bounded-recovery-source");
+        const source = fixture.store.create({ cwd: repository });
+        const reserved = await Promise.all(
+            Array.from({ length: 5 }, (_, index) =>
+                fixture.store.createWorkspace(source.snapshot().projectId, {
+                    baseRef: "HEAD",
+                    name: `Recovery ${index + 1}`,
+                }),
+            ),
+        );
+        if (reserved.some((workspace) => workspace === undefined)) {
+            throw new Error("Expected recovery workspaces.");
+        }
+        const workspaces = await Promise.all(
+            reserved.map(async (workspace) => {
+                const value = workspace;
+                if (value === undefined) throw new Error("Expected a recovery workspace.");
+                return await waitForWorkspace(
+                    fixture.store,
+                    value.projectId,
+                    value.id,
+                    (candidate) => candidate.status === "ready",
+                );
+            }),
+        );
+        const releasePath = join(fixture.root, "release-recovery-setup");
+        const setupCommand = [
+            "printf started > recovery-setup-started.txt",
+            `while [ ! -f ${JSON.stringify(releasePath)} ]; do sleep 0.02; done`,
+        ].join("; ");
+        await Promise.all(
+            workspaces.map((workspace) =>
+                writeFile(
+                    join(workspace.path, "rig.toml"),
+                    ["[workspace]", `setup_commands = [${JSON.stringify(setupCommand)}]`, ""].join(
+                        "\n",
+                    ),
+                ),
+            ),
+        );
+
+        fixture.store.close();
+        const opened = openSessionDatabase(fixture.databasePath);
+        opened.database
+            .update(projectWorkspaces)
+            .set({ status: "initializing" })
+            .where(eq(projectWorkspaces.projectId, source.snapshot().projectId))
+            .run();
+        opened.client.close();
+
+        const recovered = await fixture.restart();
+        try {
+            const markerPaths = workspaces.map((workspace) =>
+                join(workspace.path, "recovery-setup-started.txt"),
+            );
+            const deadline = Date.now() + 10_000;
+            let started = 0;
+            while (started < 4) {
+                started = (
+                    await Promise.all(
+                        markerPaths.map(async (path) => {
+                            try {
+                                await access(path);
+                                return true;
+                            } catch {
+                                return false;
+                            }
+                        }),
+                    )
+                ).filter(Boolean).length;
+                if (Date.now() >= deadline) {
+                    throw new Error("Timed out waiting for bounded recovery setup work.");
+                }
+                await new Promise<void>((resolve) => setTimeout(resolve, 20));
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+            const startedBeforeRelease = (
+                await Promise.all(
+                    markerPaths.map(async (path) => {
+                        try {
+                            await access(path);
+                            return true;
+                        } catch {
+                            return false;
+                        }
+                    }),
+                )
+            ).filter(Boolean).length;
+            expect(startedBeforeRelease).toBe(4);
+
+            await writeFile(releasePath, "release\n");
+            await Promise.all(
+                workspaces.map((workspace) =>
+                    waitForWorkspace(
+                        recovered,
+                        workspace.projectId,
+                        workspace.id,
+                        (candidate) => candidate.status === "ready",
+                    ),
+                ),
+            );
+        } finally {
+            await writeFile(releasePath, "release\n");
+            recovered.close();
+        }
+    });
+
+    it("reserves an initializing workspace before base preparation finishes and retries it idempotently", async () => {
+        const baseResolutionStarted = deferred<void>();
+        const releaseBaseResolution = deferred<void>();
+        let blockBaseResolution = false;
+        const fixture = await createFixture({
+            durableGlobalEventQueue: true,
+            projectGit: async (cwd, args) => {
+                if (
+                    blockBaseResolution &&
+                    args[0] === "rev-parse" &&
+                    args[1] === "--verify" &&
+                    args[2] === "--end-of-options" &&
+                    args[3] === "HEAD^{commit}"
+                ) {
+                    baseResolutionStarted.resolve(undefined);
+                    await releaseBaseResolution.promise;
+                }
+                return git(cwd, args);
+            },
+        });
+        const repository = await createRepository(fixture.root, "reserved-before-base");
+        const source = fixture.store.create({ cwd: repository });
+        const projectId = source.snapshot().projectId;
+        const workspaceId = createId();
+        blockBaseResolution = true;
+
+        const creating = fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            id: workspaceId,
+            name: "Reserved Before Base",
+        });
+        await baseResolutionStarted.promise;
+
+        try {
+            expect(fixture.store.getWorkspace(projectId, workspaceId)).toMatchObject({
+                id: workspaceId,
+                status: "initializing",
+            });
+            expect(
+                fixture.store.globalEventQueue
+                    .list()
+                    ?.filter((entry) => entry.event.type === "workspace_created"),
+            ).toHaveLength(1);
+
+            const created = await creating;
+            expect(created).toMatchObject({ id: workspaceId, status: "initializing" });
+            await expect(
+                fixture.store.createWorkspace(projectId, {
+                    baseRef: "HEAD",
+                    id: workspaceId,
+                    name: "Reserved Before Base",
+                }),
+            ).resolves.toMatchObject({ id: workspaceId, status: "initializing" });
+            expect(fixture.store.listWorkspaces(projectId)).toHaveLength(1);
+        } finally {
+            releaseBaseResolution.resolve(undefined);
+            await creating.catch(() => undefined);
+        }
+
+        await expect(
+            waitForWorkspace(
+                fixture.store,
+                projectId,
+                workspaceId,
+                (workspace) => workspace.status === "ready",
+            ),
+        ).resolves.toMatchObject({ status: "ready" });
+    });
+
+    it("keeps a reservation and marks it failed when delayed base preparation fails", async () => {
+        const baseResolutionStarted = deferred<void>();
+        const failBaseResolution = deferred<void>();
+        let blockBaseResolution = false;
+        const fixture = await createFixture({
+            projectGit: async (cwd, args) => {
+                if (
+                    blockBaseResolution &&
+                    args[0] === "rev-parse" &&
+                    args[1] === "--verify" &&
+                    args[2] === "--end-of-options" &&
+                    args[3] === "HEAD^{commit}"
+                ) {
+                    baseResolutionStarted.resolve(undefined);
+                    await failBaseResolution.promise;
+                    throw new Error("Injected base preparation failure.");
+                }
+                return git(cwd, args);
+            },
+        });
+        const repository = await createRepository(fixture.root, "reserved-base-failure");
+        const source = fixture.store.create({ cwd: repository });
+        const projectId = source.snapshot().projectId;
+        const workspaceId = createId();
+        blockBaseResolution = true;
+
+        const creating = fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            id: workspaceId,
+            name: "Reserved Base Failure",
+        });
+        await baseResolutionStarted.promise;
+
+        try {
+            expect(fixture.store.getWorkspace(projectId, workspaceId)).toMatchObject({
+                id: workspaceId,
+                status: "initializing",
+            });
+            await expect(creating).resolves.toMatchObject({
+                id: workspaceId,
+                status: "initializing",
+            });
+        } finally {
+            failBaseResolution.resolve(undefined);
+            await creating.catch(() => undefined);
+        }
+
+        await expect(
+            waitForWorkspace(
+                fixture.store,
+                projectId,
+                workspaceId,
+                (workspace) => workspace.status === "failed",
+            ),
+        ).resolves.toMatchObject({
+            error: expect.stringContaining('The workspace base "HEAD" did not resolve'),
+            status: "failed",
+        });
+    });
+
+    it("versions and publishes resolved initialization facts before materialization", async () => {
+        const worktreeAddStarted = deferred<void>();
+        const releaseWorktreeAdd = deferred<void>();
+        const fixture = await createFixture({
+            durableGlobalEventQueue: true,
+            projectGit: async (cwd, args) => {
+                if (args[0] === "worktree" && args[1] === "add") {
+                    worktreeAddStarted.resolve(undefined);
+                    await releaseWorktreeAdd.promise;
+                }
+                return git(cwd, args);
+            },
+        });
+        const repository = await createRepository(fixture.root, "versioned-initialization");
+        const source = fixture.store.create({ cwd: repository });
+        const workspace = await fixture.store.createWorkspace(source.snapshot().projectId, {
+            baseRef: "HEAD",
+            name: "Versioned Initialization",
+        });
+        if (workspace === undefined) throw new Error("Expected a workspace.");
+        await worktreeAddStarted.promise;
+
+        try {
+            const recorded = fixture.store.getWorkspace(workspace.projectId, workspace.id);
+            expect(recorded).toMatchObject({
+                baseCommit: expect.any(String),
+                baseRef: "HEAD",
+                gitCommonDir: expect.any(String),
+                id: workspace.id,
+                status: "initializing",
+                version: workspace.version + 1,
+            });
+            const initializationUpdates =
+                fixture.store.globalEventQueue.list()?.flatMap((entry) => {
+                    if (
+                        entry.event.type !== "workspace_updated" ||
+                        !("workspace" in entry.event.data)
+                    ) {
+                        return [];
+                    }
+                    const eventWorkspace = entry.event.data.workspace;
+                    return eventWorkspace.id === workspace.id &&
+                        eventWorkspace.status === "initializing"
+                        ? [eventWorkspace]
+                        : [];
+                }) ?? [];
+            expect(initializationUpdates.at(-1)?.version).toBe(workspace.version + 1);
+        } finally {
+            releaseWorktreeAdd.resolve(undefined);
+        }
+
+        await expect(
+            waitForWorkspace(
+                fixture.store,
+                workspace.projectId,
+                workspace.id,
+                (value) => value.status === "ready",
+            ),
+        ).resolves.toMatchObject({ version: workspace.version + 2 });
+    });
+
+    it("serializes initialization Git work within one project while other projects continue", async () => {
+        const firstBaseResolutionStarted = deferred<void>();
+        const otherBaseResolutionStarted = deferred<void>();
+        const releaseFirstBaseResolution = deferred<void>();
+        let serializedRepositoryName: string | undefined;
+        let baseResolutions = 0;
+        let otherBaseResolutions = 0;
+        const fixture = await createFixture({
+            projectGit: async (cwd, args) => {
+                if (
+                    args[0] === "rev-parse" &&
+                    args[1] === "--verify" &&
+                    args[2] === "--end-of-options" &&
+                    args[3] === "HEAD^{commit}"
+                ) {
+                    if (basename(cwd) === serializedRepositoryName) {
+                        baseResolutions += 1;
+                        if (baseResolutions === 1) {
+                            firstBaseResolutionStarted.resolve(undefined);
+                            await releaseFirstBaseResolution.promise;
+                        }
+                    } else {
+                        otherBaseResolutions += 1;
+                        otherBaseResolutionStarted.resolve(undefined);
+                    }
+                }
+                return git(cwd, args);
+            },
+        });
+        const repository = await createRepository(fixture.root, "serialized-initialization");
+        serializedRepositoryName = basename(repository);
+        const source = fixture.store.create({ cwd: repository });
+        const first = await fixture.store.createWorkspace(source.snapshot().projectId, {
+            baseRef: "HEAD",
+            name: "First",
+        });
+        if (first === undefined) throw new Error("Expected the first workspace.");
+        await firstBaseResolutionStarted.promise;
+        const second = await fixture.store.createWorkspace(source.snapshot().projectId, {
+            baseRef: "HEAD",
+            name: "Second",
+        });
+        if (second === undefined) throw new Error("Expected the second workspace.");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(baseResolutions).toBe(1);
+
+        const otherRepository = await createRepository(fixture.root, "parallel-initialization");
+        const otherSource = fixture.store.create({ cwd: otherRepository });
+        const other = await fixture.store.createWorkspace(otherSource.snapshot().projectId, {
+            baseRef: "HEAD",
+            name: "Other Project",
+        });
+        if (other === undefined) throw new Error("Expected the other workspace.");
+        const startedInParallel = await Promise.race([
+            otherBaseResolutionStarted.promise.then(() => true),
+            new Promise<false>((resolve) => setTimeout(() => resolve(false), 500)),
+        ]);
+        releaseFirstBaseResolution.resolve(undefined);
+        expect(startedInParallel).toBe(true);
+        expect(otherBaseResolutions).toBe(1);
+        const initialized = await Promise.all([
+            waitForWorkspace(
+                fixture.store,
+                first.projectId,
+                first.id,
+                (value) => value.status === "ready" || value.status === "failed",
+            ),
+            waitForWorkspace(
+                fixture.store,
+                second.projectId,
+                second.id,
+                (value) => value.status === "ready" || value.status === "failed",
+            ),
+            waitForWorkspace(
+                fixture.store,
+                other.projectId,
+                other.id,
+                (value) => value.status === "ready" || value.status === "failed",
+            ),
+        ]);
+        expect(initialized.map((workspace) => workspace.status)).toEqual([
+            "ready",
+            "ready",
+            "ready",
+        ]);
+        expect(baseResolutions).toBe(2);
+    });
+
+    it("starts every waiting session automatically and preserves each session's submission order", async () => {
+        const worktreeAddStarted = deferred<void>();
+        const releaseWorktreeAdd = deferred<void>();
+        const runtimeOptions: CreateCodingAssistantAgentOptions[] = [];
+        const submissionOrder: string[] = [];
+        const provider = defineProvider({
+            id: "codex",
+            models: [modelOpenaiGpt56Sol],
+            stream(_model, context, options) {
+                if (!options?.sessionId?.endsWith(":title")) {
+                    const message = context.messages.findLast(
+                        (candidate) => candidate.role === "user",
+                    );
+                    const text =
+                        message?.role === "user" && Array.isArray(message.content)
+                            ? message.content
+                                  .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                                  .join("\n")
+                            : "";
+                    submissionOrder.push(text);
+                }
+                return transferResponseStream("Completed.");
+            },
+        });
+        const fixture = await createFixture({
+            createRuntime: (options) => {
+                runtimeOptions.push(options);
+                return createTransferTestRuntime(options, provider);
+            },
+            projectGit: async (cwd, args) => {
+                if (args[0] === "worktree" && args[1] === "add") {
+                    worktreeAddStarted.resolve();
+                    await releaseWorktreeAdd.promise;
+                }
+                return git(cwd, args);
+            },
+        });
+        const repository = await createRepository(fixture.root, "waiting-sessions");
+        const projectId = fixture.store.create({ cwd: repository }).snapshot().projectId;
+        const workspace = await fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            name: "Waiting Sessions",
+        });
+        if (workspace === undefined) throw new Error("Expected a workspace.");
+        await worktreeAddStarted.promise;
+
+        const first = fixture.store.create({ cwd: workspace.path, workspaceId: workspace.id });
+        const second = fixture.store.create({ cwd: workspace.path, workspaceId: workspace.id });
+        const equivalentPath = fixture.store.create({
+            cwd: `${workspace.path}/.`,
+            workspaceId: workspace.id,
+        });
+        const firstRun = first.submit({ text: "First submission." });
+        const secondRun = first.submit({ text: "Second submission." });
+        const otherRun = second.submit({ text: "Other session." });
+        const equivalentPathRun = equivalentPath.submit({ text: "Equivalent path." });
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(runtimeOptions).toEqual([]);
+        expect(first.state().queuedRuns).toHaveLength(2);
+        expect(second.state().queuedRuns).toHaveLength(1);
+
+        releaseWorktreeAdd.resolve();
+        await Promise.all([
+            first.waitForRun(firstRun.runId),
+            first.waitForRun(secondRun.runId),
+            second.waitForRun(otherRun.runId),
+            equivalentPath.waitForRun(equivalentPathRun.runId),
+        ]);
+
+        expect(submissionOrder).toEqual(
+            expect.arrayContaining([
+                "First submission.",
+                "Second submission.",
+                "Other session.",
+                "Equivalent path.",
+            ]),
+        );
+        expect(submissionOrder.indexOf("First submission.")).toBeLessThan(
+            submissionOrder.indexOf("Second submission."),
+        );
+        expect(runtimeOptions).toHaveLength(3);
+    });
+
+    it("fails a waiting run durably without removing its session or user message", async () => {
+        const baseResolutionStarted = deferred<void>();
+        const failBaseResolution = deferred<void>();
+        let runtimes = 0;
+        const fixture = await createFixture({
+            createRuntime: () => {
+                runtimes += 1;
+                throw new Error("A failed workspace must not create a runtime.");
+            },
+            projectGit: async (cwd, args) => {
+                if (
+                    args[0] === "rev-parse" &&
+                    args[1] === "--verify" &&
+                    args[2] === "--end-of-options" &&
+                    args[3] === "HEAD^{commit}"
+                ) {
+                    baseResolutionStarted.resolve();
+                    await failBaseResolution.promise;
+                    throw new Error("Injected unavailable base.");
+                }
+                return git(cwd, args);
+            },
+        });
+        const repository = await createRepository(fixture.root, "waiting-failure");
+        const projectId = fixture.store.create({ cwd: repository }).snapshot().projectId;
+        const workspace = await fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            name: "Waiting Failure",
+        });
+        if (workspace === undefined) throw new Error("Expected a workspace.");
+        await baseResolutionStarted.promise;
+        const session = fixture.store.create({ cwd: workspace.path, workspaceId: workspace.id });
+        const submitted = session.submit({
+            clientSubmissionId: "waiting-failure-message",
+            debug: true,
+            text: "Keep this message.",
+        });
+
+        failBaseResolution.resolve();
+        await session.waitForRun(submitted.runId);
+
+        expect(fixture.store.get(session.id)).toBe(session);
+        expect(session.state().queuedRuns).toEqual([]);
+        expect(session.state().messages).toMatchObject([
+            { message: { id: "waiting-failure-message", role: "user" } },
+        ]);
+        expect(
+            session.events
+                .since(undefined)
+                ?.find(
+                    (event) => event.type === "run_error" && event.data.runId === submitted.runId,
+                ),
+        ).toMatchObject({
+            data: { errorMessage: expect.stringContaining("workspace initialization failed") },
+            type: "run_error",
+        });
+        await expect(access(workspace.path)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(runtimes).toBe(0);
+    });
+
+    it("resumes a waiting workspace run after daemon restart", async () => {
+        const worktreeAddStarted = deferred<void>();
+        const releaseWorktreeAdd = deferred<void>();
+        const worktreeAddFinished = deferred<void>();
+        const providerRuns: string[] = [];
+        const provider = defineProvider({
+            id: "codex",
+            models: [modelOpenaiGpt56Sol],
+            stream(_model, context, options) {
+                if (!options?.sessionId?.endsWith(":title")) {
+                    const message = context.messages.findLast(
+                        (candidate) => candidate.role === "user",
+                    );
+                    if (message?.role === "user" && Array.isArray(message.content)) {
+                        providerRuns.push(
+                            message.content
+                                .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                                .join("\n"),
+                        );
+                    }
+                }
+                return transferResponseStream("Recovered.");
+            },
+        });
+        let blockFirstAdd = true;
+        const fixture = await createFixture({
+            createRuntime: (options) => createTransferTestRuntime(options, provider),
+            projectGit: async (cwd, args) => {
+                if (blockFirstAdd && args[0] === "worktree" && args[1] === "add") {
+                    worktreeAddStarted.resolve();
+                    await releaseWorktreeAdd.promise;
+                    try {
+                        return await git(cwd, args);
+                    } finally {
+                        blockFirstAdd = false;
+                        worktreeAddFinished.resolve();
+                    }
+                }
+                return git(cwd, args);
+            },
+        });
+        const repository = await createRepository(fixture.root, "waiting-restart");
+        const projectId = fixture.store.create({ cwd: repository }).snapshot().projectId;
+        const workspace = await fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            name: "Waiting Restart",
+        });
+        if (workspace === undefined) throw new Error("Expected a workspace.");
+        await worktreeAddStarted.promise;
+        const session = fixture.store.create({ cwd: workspace.path, workspaceId: workspace.id });
+        const submitted = session.submit({
+            clientSubmissionId: "waiting-restart-message",
+            text: "Resume after restart.",
+        });
+        fixture.store.close();
+        releaseWorktreeAdd.resolve();
+        await worktreeAddFinished.promise;
+
+        const restarted = await fixture.restart();
+        const restored = restarted.get(session.id);
+        if (restored === undefined) throw new Error("Expected the waiting session.");
+        await restored.waitForRun(submitted.runId);
+
+        expect(providerRuns).toEqual(["Resume after restart."]);
+        expect(restored.state().messages).toMatchObject([
+            { message: { id: "waiting-restart-message", role: "user" } },
+            { message: { role: "agent" } },
+        ]);
+        expect(restored.state().interruption).toBeUndefined();
+    });
+
+    it("skips workspace storage keys already occupied on disk or in packed Git refs", async () => {
         const fixture = await createFixture();
         const repository = await createRepository(fixture.root, "collision-source");
         const source = fixture.store.create({ cwd: repository });
@@ -1048,6 +1716,7 @@ describe("projects", () => {
             recursive: true,
         });
         await git(repository, ["branch", "worktree/workspace-2"]);
+        await git(repository, ["pack-refs", "--all", "--prune"]);
 
         const created = await fixture.store.createWorkspace(project.id, {
             baseRef: "HEAD",
@@ -1070,6 +1739,114 @@ describe("projects", () => {
             projectId: project.id,
             workspaceId: ready.id,
         });
+    });
+
+    it("finds packed workspace branches through a linked worktree gitdir", async () => {
+        const fixture = await createFixture();
+        const repository = await createRepository(fixture.root, "linked-collision-source");
+        const linkedWorktree = join(fixture.root, "linked-collision-worktree");
+        await git(repository, [
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked-collision-worktree",
+            linkedWorktree,
+        ]);
+        await git(repository, ["branch", "worktree/workspace"]);
+        await git(repository, ["pack-refs", "--all", "--prune"]);
+
+        const source = fixture.store.create({ cwd: linkedWorktree });
+        const project = fixture.store.getProject(source.snapshot().projectId);
+        if (project === undefined) throw new Error("Expected a project.");
+        const created = await fixture.store.createWorkspace(project.id, {
+            baseRef: "HEAD",
+            name: "Workspace",
+        });
+        if (created === undefined) throw new Error("Expected a workspace.");
+        const ready = await waitForWorkspace(
+            fixture.store,
+            project.id,
+            created.id,
+            (value) => value.status === "ready" || value.status === "failed",
+        );
+
+        expect(ready).toMatchObject({
+            status: "ready",
+            storageKey: "workspace-2",
+        });
+        expect(await git(ready.path, ["branch", "--show-current"])).toBe("worktree/workspace-2");
+    });
+
+    it("keeps human-readable workspace keys when packed refs exceed 256 KiB", async () => {
+        const fixture = await createFixture();
+        const repository = await createRepository(fixture.root, "large-packed-refs-source");
+        const source = fixture.store.create({ cwd: repository });
+        const project = fixture.store.getProject(source.snapshot().projectId);
+        if (project === undefined) throw new Error("Expected a project.");
+        const commit = await git(repository, ["rev-parse", "HEAD"]);
+        const packedRefs = [
+            `${commit} refs/heads/worktree/workspace`,
+            ...Array.from(
+                { length: 5_000 },
+                (_value, index) =>
+                    `${commit} refs/heads/generated/ref-${String(index).padStart(5, "0")}`,
+            ),
+        ].join("\n");
+        await writeFile(join(repository, ".git", "packed-refs"), `${packedRefs}\n`);
+        const id = createId();
+
+        const created = await fixture.store.createWorkspace(project.id, {
+            baseRef: "HEAD",
+            id,
+            name: "Workspace",
+        });
+        if (created === undefined) throw new Error("Expected a workspace.");
+        expect(created).toMatchObject({
+            id,
+            status: "initializing",
+            storageKey: "workspace-2",
+        });
+
+        const ready = await waitForWorkspace(
+            fixture.store,
+            project.id,
+            created.id,
+            (value) => value.status === "ready" || value.status === "failed",
+        );
+        expect(ready.status).toBe("ready");
+    });
+
+    it("uses a collision-safe identity when Git metadata cannot be inspected", async () => {
+        const fixture = await createFixture();
+        const repository = await createRepository(fixture.root, "unreadable-git-metadata");
+        const source = fixture.store.create({ cwd: repository });
+        const projectId = source.snapshot().projectId;
+        const realGitDirectory = join(repository, ".git-real");
+        await rename(join(repository, ".git"), realGitDirectory);
+        await writeFile(join(repository, ".git"), "not-a-gitdir\n");
+        const id = createId();
+
+        const created = await fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            id,
+            name: "Workspace",
+        });
+        if (created === undefined) throw new Error("Expected a workspace.");
+        expect(created.storageKey).toBe(`workspace-${id}`);
+
+        // Restore the repository without yielding to the setImmediate initialization callback.
+        // An asynchronous rm followed by rename lets Linux begin initialization between them.
+        rmSync(join(repository, ".git"), { force: true });
+        renameSync(realGitDirectory, join(repository, ".git"));
+        await expect(
+            waitForWorkspace(
+                fixture.store,
+                projectId,
+                id,
+                (workspace) => workspace.status === "ready" || workspace.status === "failed",
+            ),
+        ).resolves.toMatchObject({ status: "ready" });
     });
 
     it("keeps archival committed when physical workspace cleanup fails", async () => {
@@ -1349,11 +2126,13 @@ describe("projects", () => {
         });
         if (workspace === undefined) throw new Error("Expected a workspace.");
         await addStarted.promise;
+        const current = fixture.store.getWorkspace(workspace.projectId, workspace.id);
+        if (current === undefined) throw new Error("Expected recorded initialization facts.");
 
         const archive = fixture.store.archiveWorkspace(
             workspace.projectId,
             workspace.id,
-            workspace.version,
+            current.version,
         );
         await waitForWorkspace(
             fixture.store,
@@ -1407,11 +2186,13 @@ describe("projects", () => {
         });
         if (workspace === undefined) throw new Error("Expected a workspace.");
         await waitForPath(join(workspace.path, "setup-started.txt"));
+        const current = fixture.store.getWorkspace(workspace.projectId, workspace.id);
+        if (current === undefined) throw new Error("Expected recorded initialization facts.");
 
         const archiving = await fixture.store.archiveWorkspace(
             workspace.projectId,
             workspace.id,
-            workspace.version,
+            current.version,
         );
         expect(archiving?.status).toBe("archiving");
         await waitForWorkspace(
@@ -1572,19 +2353,79 @@ describe("projects", () => {
         expect(project.worktreeSupportReason).toBe("This folder no longer exists.");
     });
 
+    it("refuses immediate checkout operations when a ready workspace directory is missing", async () => {
+        const fixture = await createFixture();
+        const repository = await createRepository(fixture.root, "missing-workspace-source");
+        const projectId = fixture.store.create({ cwd: repository }).snapshot().projectId;
+        const sourceReservation = await fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            name: "Missing Source",
+        });
+        const targetReservation = await fixture.store.createWorkspace(projectId, {
+            baseRef: "HEAD",
+            name: "Available Target",
+        });
+        if (sourceReservation === undefined || targetReservation === undefined) {
+            throw new Error("Expected workspace reservations.");
+        }
+        const [source, target] = await Promise.all([
+            waitForWorkspace(
+                fixture.store,
+                projectId,
+                sourceReservation.id,
+                (workspace) => workspace.status === "ready",
+            ),
+            waitForWorkspace(
+                fixture.store,
+                projectId,
+                targetReservation.id,
+                (workspace) => workspace.status === "ready",
+            ),
+        ]);
+        const session = fixture.store.create({ cwd: source.path, workspaceId: source.id });
+        fixture.store.close();
+        await rm(source.path, { force: true, recursive: true });
+
+        const restarted = await fixture.restart();
+        await waitForWorkspace(
+            restarted,
+            projectId,
+            source.id,
+            (workspace) => workspace.presence === "missing",
+        );
+
+        expect(() => restarted.fork(session.id)).toThrow("unavailable workspace");
+        await expect(
+            restarted.remoteTerminals.create(
+                { projectId, workspaceId: source.id },
+                { command: "pwd" },
+            ),
+        ).rejects.toThrow("ready, available");
+        await expect(
+            restarted.transferSession(session.id, { targetWorkspaceId: target.id }),
+        ).rejects.toThrow("not ready and available");
+    });
+
     it("persists the resolved base commit so a moving base ref cannot rewrite history", async () => {
         const fixture = await createFixture();
         const repository = await createRepository(fixture.root, "based");
         const projectId = fixture.store.create({ cwd: repository }).snapshot().projectId;
         const expected = await git(repository, ["rev-parse", "HEAD"]);
 
-        const workspace = await fixture.store.createWorkspace(projectId, {
+        const created = await fixture.store.createWorkspace(projectId, {
             baseRef: "main",
             name: "Based",
         });
+        if (created === undefined) throw new Error("Expected a workspace.");
+        const workspace = await waitForWorkspace(
+            fixture.store,
+            projectId,
+            created.id,
+            (value) => value.baseCommit !== undefined,
+        );
 
-        expect(workspace?.baseRef).toBe("main");
-        expect(workspace?.baseCommit).toBe(expected.toLowerCase());
+        expect(workspace.baseRef).toBe("main");
+        expect(workspace.baseCommit).toBe(expected.toLowerCase());
     });
 
     it("forks the remote trunk instead of the project's local branch", async () => {
@@ -2094,8 +2935,8 @@ async function waitFor<T>(read: () => T | undefined, predicate: (value: T) => bo
     }
 }
 
-async function waitForPath(path: string): Promise<void> {
-    const deadline = Date.now() + 10_000;
+async function waitForPath(path: string, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
     for (;;) {
         try {
             await access(path);

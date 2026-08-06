@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DaemonLog } from "../DaemonLog.js";
 import { installDaemonProcessFailureLogging } from "../installDaemonProcessFailureLogging.js";
+import { recordProviderFailure } from "../recordProviderFailure.js";
 
 describe("DaemonLog", () => {
     it("writes timestamped JSON lines with daemon identity and event details", () => {
@@ -130,5 +131,55 @@ describe("DaemonLog", () => {
         expect(() =>
             log.record("error", "daemon_startup_failed", "Rig daemon could not start."),
         ).not.toThrow();
+    });
+
+    it("records bounded provider diagnostics from a durable terminal event", () => {
+        const lines: string[] = [];
+        const log = new DaemonLog({
+            path: "/state/server.log",
+            write: (_path, line) => lines.push(line),
+        });
+
+        recordProviderFailure(log, {
+            createdAt: 1,
+            data: {
+                errorMessage: "Internal server error",
+                modelLocked: false,
+                providerError: {
+                    type: "internal_server_error",
+                    diagnostics: {
+                        attempts: 3,
+                        code: "model_backend_failure",
+                        requestId: "request-123",
+                        status: 502,
+                        upstreamMessage: "Internal server error",
+                    },
+                },
+                providerId: "bedrock",
+                requestedModelId: "openai.gpt-5.6-sol",
+                runId: "run-1",
+                stopReason: "error",
+            },
+            id: "event-1",
+            sessionId: "session-1",
+            type: "run_finished",
+        });
+
+        expect(JSON.parse(lines[0]!)).toMatchObject({
+            attempts: 3,
+            category: "internal_server_error",
+            code: "model_backend_failure",
+            event: "provider_inference_failed",
+            level: "error",
+            message:
+                'provider:inference-failed sessionId=session-1 runId=run-1 providerId=bedrock modelId=openai.gpt-5.6-sol category=internal_server_error status=502 code=model_backend_failure requestId=request-123 reason="Internal server error"',
+            providerId: "bedrock",
+            requestId: "request-123",
+            requestedModelId: "openai.gpt-5.6-sol",
+            runId: "run-1",
+            sessionId: "session-1",
+            status: 502,
+            upstreamMessage: "Internal server error",
+        });
     });
 });

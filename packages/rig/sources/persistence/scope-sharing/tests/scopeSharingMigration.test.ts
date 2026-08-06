@@ -36,6 +36,8 @@ const SCOPE_SHARING_TABLES = [
  * migration that lands after this one adds its tables here.
  */
 const TABLES_ADDED_AFTER_SCOPE_SHARING = [
+    "p2p_peer_pairings",
+    "p2p_peers",
     "session_share_capabilities",
     "session_share_peer_actions",
 ];

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, existsSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import {
     access,
     lstat,
@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 import { createId } from "@paralleldrive/cuid2";
 import sharp from "sharp";
@@ -70,6 +71,7 @@ import { workspaceInheritTitle } from "../persistence/project/workspaceInheritTi
 import { workspaceMarkInitializationFailed } from "../persistence/project/workspaceMarkInitializationFailed.js";
 import { workspaceMarkFailed } from "../persistence/project/workspaceMarkFailed.js";
 import { workspaceMarkReady } from "../persistence/project/workspaceMarkReady.js";
+import { workspaceRecordInitialization } from "../persistence/project/workspaceRecordInitialization.js";
 import { workspaceRename } from "../persistence/project/workspaceRename.js";
 import { workspaceReorder } from "../persistence/project/workspaceReorder.js";
 import { projectSetDefaultBranch } from "../persistence/project/projectSetDefaultBranch.js";
@@ -100,14 +102,18 @@ import { selectGitRemoteUrl } from "../git/selectGitRemoteUrl.js";
 import type { GitCommandRunner } from "../git/types.js";
 import type { SessionDatabase } from "../persistence/database/openSessionDatabase.js";
 import type { TaskDrain } from "../utils/TrackedTaskDrain.js";
-import { folderProjectName, validateProjectName } from "./projectIdentity.js";
-import { workspaceStorageKeysInUse } from "./workspaceStorageKeysInUse.js";
+import { folderProjectName, projectStorageKey, validateProjectName } from "./projectIdentity.js";
 import { loadConfig } from "../config/loadConfig.js";
 import { runWorkspaceSetupCommands } from "./runWorkspaceSetupCommands.js";
+import { asyncLock, asyncQueue, type AsyncLock } from "../concurrency/index.js";
 
 const AVATAR_GARBAGE_DELAY_MS = 24 * 60 * 60 * 1_000;
 const GIT_PROBE_CONCURRENCY = 4;
+const WORKSPACE_INITIALIZATION_CONCURRENCY = 4;
 const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
+const MAX_GIT_PATH_DIRECTIVE_BYTES = 4 * 1024;
+const MAX_PACKED_REFS_RESERVATION_BYTES = 8 * 1024 * 1024;
+const PACKED_REFS_RESERVATION_READ_BYTES = 64 * 1024;
 const IMAGE_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"]);
 const SKIPPED_DIRECTORIES = new Set([
     ".git",
@@ -178,6 +184,7 @@ export class ProjectRepository {
     readonly #homeDirectory: string;
     readonly #initializing = new Set<string>();
     readonly #pendingInitializations: string[] = [];
+    readonly #projectInitializationLocks = new Map<string, AsyncLock>();
     readonly #now: () => number;
     readonly #onEvent: ((event: ProjectEvent | ProjectWorkspaceEvent) => void) | undefined;
     readonly #onWorkspaceCleanupError:
@@ -246,6 +253,51 @@ export class ProjectRepository {
     ): ResolvedProjectOwnership {
         const path = normalizeProjectCwd(cwd);
         return this.#resolvePath(path, assertedWorkspaceId, requestedProjectId);
+    }
+
+    /**
+     * Resolves the explicit durable owner of a new user session.
+     *
+     * Unlike generic path resolution, this accepts an initializing managed workspace whose folder
+     * does not exist yet. The caller has to name both its reserved identity and exact future path;
+     * every operation that needs that path immediately continues through the ready-only resolver.
+     */
+    resolveSessionOwnership(
+        cwd: string,
+        workspaceId: string,
+        assertedProjectId?: string,
+    ): ResolvedProjectOwnership {
+        const path = normalizeProjectCwd(cwd);
+        const workspace = queryWorkspaceById(this.#database, workspaceId);
+        if (workspace === undefined || workspace.path !== path) {
+            throw new Error("The workspace ID does not match the session directory.");
+        }
+        if (assertedProjectId !== undefined && workspace.projectId !== assertedProjectId) {
+            throw new Error("The workspace does not belong to that project.");
+        }
+        if (workspace.status !== "initializing" && workspace.status !== "ready") {
+            throw new ProjectRegistrationError(
+                "managed_workspace_unavailable",
+                `The managed workspace '${workspace.name}' is ${workspace.status.replaceAll("_", " ")}.`,
+            );
+        }
+        if (
+            workspace.status === "ready" &&
+            (workspace.presence !== "present" || !existsSync(workspace.path))
+        ) {
+            throw new ProjectRegistrationError(
+                "managed_workspace_unavailable",
+                `The managed workspace '${workspace.name}' is unavailable.`,
+            );
+        }
+        const project = this.getProject(workspace.projectId);
+        if (project === undefined) {
+            throw new ProjectRegistrationError(
+                "managed_workspace_unavailable",
+                "The managed workspace's project was not found.",
+            );
+        }
+        return { project: this.unarchiveProject(project.id) ?? project, workspace };
     }
 
     /**
@@ -496,8 +548,12 @@ export class ProjectRepository {
         if (source === undefined) {
             throw new Error("The session's current workspace was not found.");
         }
-        if (source.status !== "ready") {
-            throw new Error("The session's current workspace is not ready.");
+        if (
+            source.status !== "ready" ||
+            source.presence !== "present" ||
+            !existsSync(source.path)
+        ) {
+            throw new Error("The session's current workspace is not ready and available.");
         }
         const target = this.getWorkspace(projectId, targetWorkspaceId);
         if (target === undefined) {
@@ -513,12 +569,21 @@ export class ProjectRepository {
         const workspaces = this.listWorkspaces().filter(
             (workspace) => workspace.status === "initializing",
         );
-        for (const workspace of workspaces) {
-            if (this.#closed) return;
-            await this.#withWorkspaceLifecycleLock(workspace.id, () =>
-                this.#reconcileInitializingWorkspace(workspace),
-            );
-        }
+        let next = 0;
+        const worker = async (): Promise<void> => {
+            for (;;) {
+                if (this.#closed || this.#taskDrain?.closing === true) return;
+                const workspace = workspaces[next++];
+                if (workspace === undefined) return;
+                await this.#initializeWorkspace(workspace);
+            }
+        };
+        await Promise.all(
+            Array.from(
+                { length: Math.min(WORKSPACE_INITIALIZATION_CONCURRENCY, workspaces.length) },
+                worker,
+            ),
+        );
     }
 
     /**
@@ -536,7 +601,7 @@ export class ProjectRepository {
                 .filter((project) => project.archivedAt === undefined)
                 .map((value) => ({ kind: "project" as const, value })),
             ...this.listWorkspaces()
-                .filter((workspace) => workspace.status !== "archived")
+                .filter((workspace) => workspace.status === "ready")
                 .map((value) => ({ kind: "workspace" as const, value })),
         ];
         let next = 0;
@@ -852,51 +917,26 @@ export class ProjectRepository {
         const requestedId =
             request.id === undefined ? undefined : clientChosenId(request.id, "workspace");
         const requestedRef = requestedBaseRef(request.baseRef);
-        // A repeat that names its base can be answered from what is already stored. One that leaves
-        // the base to the project cannot: the base has to be resolved before there is anything to
-        // compare, so it falls through to the reservation, which rejects a genuine mismatch.
-        const retry =
-            requestedRef === undefined
-                ? undefined
-                : this.#retriedWorkspace(projectId, requestedId, requestedRef);
+        const retry = this.#retriedWorkspace(projectId, requestedId, requestedRef);
         if (retry !== undefined) return retry;
 
-        const gitTopLevel = await readGitTopLevel(this.#git, project.path);
-        if (gitTopLevel !== project.path) {
-            throw new Error("Managed workspaces require a Git repository project.");
-        }
-        // A project added before its trunk was recorded, or one whose detection failed, learns the
-        // branch now rather than forking whatever the project folder is checked out on.
-        const defaultBranch =
-            requestedRef === undefined ? await this.#projectDefaultBranch(project) : undefined;
-        const gitCommonDir = await readGitCommonDir(this.#git, project.path);
-        const base = await resolveWorkspaceBase({
-            ...(defaultBranch === undefined ? {} : { defaultBranch }),
-            git: this.#git,
-            projectPath: project.path,
-            ...(requestedRef === undefined ? {} : { requestedRef }),
-        });
-        const { commit } = base;
         const workspaceRoot = join(this.#workspacesDirectory, project.storageKey);
-        const unavailableStorageKeys = await workspaceStorageKeysInUse({
-            git: this.#git,
-            projectPath: project.path,
-            workspaceRoot,
-        });
+        const workspaceId = requestedId ?? createId();
+        const gitRefs = workspaceGitRefSnapshot(project.path);
+        const fallbackStorageKey = `${projectStorageKey(name).slice(0, 20)}-${workspaceId}`;
 
         const reservation = this.#mutate((tx) => {
             const result = workspaceReserve(tx, {
-                baseCommit: commit,
-                baseRef: base.ref,
+                ...(requestedRef === undefined ? {} : { baseRef: requestedRef }),
                 ...(creatorSessionId === undefined ? {} : { creatorSessionId }),
-                gitCommonDir,
-                id: requestedId ?? createId(),
+                id: workspaceId,
                 isStorageKeyUnavailable: (storageKey) =>
-                    unavailableStorageKeys.has(storageKey.toLocaleLowerCase("en-US")),
+                    this.#workspaceStorageKeyExists(gitRefs, workspaceRoot, storageKey),
                 name,
                 now: this.#now(),
                 pathForStorageKey: (storageKey) => join(workspaceRoot, storageKey),
                 projectId,
+                ...(gitRefs.complete ? {} : { storageKeySeed: fallbackStorageKey }),
             });
             const workspace = this.getWorkspace(projectId, result.workspaceId);
             if (workspace === undefined) throw new Error("The workspace could not be reserved.");
@@ -908,9 +948,7 @@ export class ProjectRepository {
         const { workspace } = reservation;
         if (reservation.created) {
             setImmediate(() => {
-                this.#runBackgroundTask(() =>
-                    this.#materializeWorkspace(workspace, project.path, commit),
-                );
+                this.#runBackgroundTask(() => this.#initializeWorkspace(workspace));
             });
         }
         return workspace;
@@ -947,7 +985,7 @@ export class ProjectRepository {
     #retriedWorkspace(
         projectId: string,
         requestedId: string | undefined,
-        baseRef: string,
+        baseRef: string | undefined,
     ): ProjectWorkspace | undefined {
         if (requestedId === undefined) return undefined;
         const workspace = queryWorkspaceById(this.#database, requestedId);
@@ -955,10 +993,30 @@ export class ProjectRepository {
         if (workspace.projectId !== projectId) {
             throw new Error("That workspace ID already names a workspace in another project.");
         }
-        if (workspace.baseRef !== baseRef) {
+        if (baseRef !== undefined && workspace.baseRef !== baseRef) {
             throw new Error("That workspace ID already names a workspace with a different base.");
         }
         return workspace;
+    }
+
+    /**
+     * Avoids directory and branch collisions without spawning Git before the reservation.
+     *
+     * Git stores branch names in loose refs or packed-refs. A bounded, one-time metadata snapshot
+     * works for a main worktree and a linked worktree whose `.git` is a gitdir file. Candidate
+     * checks inside the write transaction are then only path probes and set membership. Oversized
+     * or unreadable packed refs select an identity-bearing key instead of delaying reservation.
+     */
+    #workspaceStorageKeyExists(
+        gitRefs: WorkspaceGitRefSnapshot,
+        workspaceRoot: string,
+        storageKey: string,
+    ): boolean {
+        if (existsSync(join(workspaceRoot, storageKey))) return true;
+        const commonDirectory = gitRefs.commonDirectory;
+        if (commonDirectory === undefined) return false;
+        const ref = `refs/heads/worktree/${storageKey}`;
+        return existsSync(join(commonDirectory, ...ref.split("/"))) || gitRefs.packedRefs.has(ref);
     }
 
     renameWorkspace(
@@ -1428,8 +1486,6 @@ export class ProjectRepository {
     }
 
     async #reconcileInitializingWorkspace(workspace: ProjectWorkspace): Promise<void> {
-        const current = this.getWorkspace(workspace.projectId, workspace.id);
-        if (current?.status !== "initializing") return;
         const project = this.getProject(workspace.projectId);
         if (project === undefined) {
             this.#markWorkspaceInitializationFailed(
@@ -1439,35 +1495,84 @@ export class ProjectRepository {
             return;
         }
         try {
-            if (existsSync(workspace.path)) {
-                const adoptable = await isGitWorktreeAt({
-                    commonDir: workspace.gitCommonDir,
-                    git: this.#git,
-                    path: workspace.path,
-                });
-                if (adoptable) {
-                    await this.#setupWorkspace(workspace);
-                    if (this.#closed) return;
-                    this.#markWorkspaceReady(workspace);
-                    return;
-                }
-                // A partial managed worktree is cleaned up before retrying creation.
-                await this.#removeWorkspaceDirectory(project, workspace);
-            }
+            const current = await this.#projectInitializationLock(workspace.projectId).runInLock(
+                async () => {
+                    let locked = this.getWorkspace(workspace.projectId, workspace.id);
+                    if (locked?.status !== "initializing") return undefined;
+                    locked = await this.#prepareWorkspaceInitialization(locked, project);
+                    if (locked?.status !== "initializing") return undefined;
+                    if (existsSync(locked.path)) {
+                        const adoptable = await isGitWorktreeAt({
+                            commonDir: locked.gitCommonDir,
+                            git: this.#git,
+                            path: locked.path,
+                        });
+                        if (adoptable) return locked;
+                        // A partial managed worktree is cleaned up before retrying creation.
+                        await this.#removeWorkspaceDirectory(project, locked);
+                    }
+                    if (this.#closed) return undefined;
+                    // The workspace is anchored to the commit it was reserved on, so an
+                    // interrupted creation resumes onto exactly the promised base.
+                    if (locked.baseCommit === undefined) {
+                        throw new Error("The workspace base commit is unavailable.");
+                    }
+                    await this.#createWorkspaceCheckoutLocked(
+                        locked,
+                        project.path,
+                        locked.baseCommit,
+                    );
+                    return locked;
+                },
+            );
+            if (current === undefined || this.#closed) return;
+            await this.#setupWorkspace(current);
             if (this.#closed) return;
-            // The workspace is anchored to the commit it was reserved on, so an interrupted
-            // creation resumes onto exactly the base the workspace was promised, however far the
-            // branch it came from has moved since.
-            if (workspace.baseCommit === undefined) {
-                throw new Error("The workspace base commit is unavailable.");
-            }
-            await this.#materializeWorkspaceLocked(workspace, project.path, workspace.baseCommit);
+            this.#markWorkspaceReady(current);
         } catch (error) {
             if (isDatabaseFailure(error)) throw error;
             if (!this.#closed) {
                 this.#markWorkspaceInitializationFailed(workspace, errorToMessage(error));
             }
         }
+    }
+
+    async #prepareWorkspaceInitialization(
+        workspace: ProjectWorkspace,
+        project: Project,
+    ): Promise<ProjectWorkspace | undefined> {
+        if (workspace.baseCommit !== undefined && workspace.gitCommonDir.length > 0) {
+            return workspace;
+        }
+        const gitTopLevel = await readGitTopLevel(this.#git, project.path);
+        if (gitTopLevel !== project.path) {
+            throw new Error("Managed workspaces require a Git repository project.");
+        }
+        const defaultBranch =
+            workspace.baseRef === undefined ? await this.#projectDefaultBranch(project) : undefined;
+        const gitCommonDir = await readGitCommonDir(this.#git, project.path);
+        const base = await resolveWorkspaceBase({
+            ...(defaultBranch === undefined ? {} : { defaultBranch }),
+            git: this.#git,
+            projectPath: project.path,
+            ...(workspace.baseRef === undefined ? {} : { requestedRef: workspace.baseRef }),
+        });
+        if (this.#closed) return undefined;
+        const changed = this.#mutate((tx) =>
+            workspaceRecordInitialization(
+                tx,
+                workspace.projectId,
+                workspace.id,
+                {
+                    baseCommit: base.commit,
+                    baseRef: base.ref,
+                    gitCommonDir,
+                },
+                this.#now(),
+            ),
+        );
+        if (changed > 0) this.#publishedWorkspace(workspace.projectId, workspace.id);
+        return this.getWorkspace(workspace.projectId, workspace.id);
     }
 
     async #removeWorkspaceDirectory(project: Project, workspace: ProjectWorkspace): Promise<void> {
@@ -1523,40 +1628,20 @@ export class ProjectRepository {
         }
     }
 
-    async #materializeWorkspace(
-        workspace: ProjectWorkspace,
-        projectPath: string,
-        commit: string,
-    ): Promise<void> {
-        await this.#withWorkspaceLifecycleLock(workspace.id, () =>
-            this.#materializeWorkspaceLocked(workspace, projectPath, commit),
-        );
-    }
-
-    async #materializeWorkspaceLocked(
+    async #createWorkspaceCheckoutLocked(
         workspace: ProjectWorkspace,
         projectPath: string,
         commit: string,
     ): Promise<void> {
         if (this.#closed) return;
-        try {
-            await createGitWorktree({
-                branch: `worktree/${workspace.storageKey}`,
-                commit,
-                expectedCommonDir: workspace.gitCommonDir,
-                git: this.#git,
-                projectPath,
-                workspacePath: workspace.path,
-            });
-            if (this.#closed) return;
-            await this.#setupWorkspace(workspace);
-            if (this.#closed) return;
-            this.#markWorkspaceReady(workspace);
-        } catch (error) {
-            if (isDatabaseFailure(error)) throw error;
-            if (this.#closed) return;
-            this.#markWorkspaceInitializationFailed(workspace, errorToMessage(error));
-        }
+        await createGitWorktree({
+            branch: `worktree/${workspace.storageKey}`,
+            commit,
+            expectedCommonDir: workspace.gitCommonDir,
+            git: this.#git,
+            projectPath,
+            workspacePath: workspace.path,
+        });
     }
 
     async #setupWorkspace(workspace: ProjectWorkspace): Promise<void> {
@@ -1566,7 +1651,10 @@ export class ProjectRepository {
             if (this.getWorkspace(workspace.projectId, workspace.id)?.status !== "initializing") {
                 return;
             }
-            const loaded = await loadConfig({ cwd: workspace.path });
+            const loaded = await loadConfig({
+                cwd: workspace.path,
+                homeDirectory: this.#homeDirectory,
+            });
             await runWorkspaceSetupCommands(workspace.path, loaded.config.workspace.setupCommands, {
                 signal: controller.signal,
             });
@@ -1665,6 +1753,23 @@ export class ProjectRepository {
                 this.#workspaceLifecycle.delete(workspaceId);
             }
         }
+    }
+
+    async #initializeWorkspace(workspace: ProjectWorkspace): Promise<void> {
+        await this.#withWorkspaceLifecycleLock(workspace.id, () =>
+            this.#reconcileInitializingWorkspace(workspace),
+        );
+    }
+
+    #projectInitializationLock(projectId: string): AsyncLock {
+        const lock =
+            this.#projectInitializationLocks.get(projectId) ??
+            (() => {
+                const created = asyncLock();
+                this.#projectInitializationLocks.set(projectId, created);
+                return created;
+            })();
+        return lock;
     }
 
     #publishedProject(projectId: string, mutationId?: string): Project | undefined {
@@ -1894,6 +1999,141 @@ function normalizeFuturePath(path: string): string {
         existingAncestor = parent;
     }
     return resolve(normalizeProjectCwd(existingAncestor), ...missingSegments);
+}
+
+interface GitCommonDirectoryResolution {
+    complete: boolean;
+    path?: string;
+}
+
+function gitCommonDirectoryPath(projectPath: string): GitCommonDirectoryResolution {
+    const dotGit = join(projectPath, ".git");
+    let gitDirectory: string;
+    try {
+        const metadata = statSync(dotGit);
+        if (metadata.isDirectory()) {
+            gitDirectory = dotGit;
+        } else if (metadata.isFile()) {
+            const directive = readGitPathDirective(dotGit, "gitdir:", false);
+            if (!directive.complete || directive.value === undefined) {
+                return { complete: false };
+            }
+            gitDirectory = resolve(projectPath, directive.value);
+        } else {
+            return { complete: false };
+        }
+    } catch (error) {
+        return {
+            complete: isMissingPathError(error),
+        };
+    }
+
+    const commonDirectory = readGitPathDirective(join(gitDirectory, "commondir"), "", true);
+    if (!commonDirectory.complete) return { complete: false };
+    return {
+        complete: true,
+        path:
+            commonDirectory.value === undefined
+                ? gitDirectory
+                : resolve(gitDirectory, commonDirectory.value),
+    };
+}
+
+function readGitPathDirective(
+    path: string,
+    prefix: string,
+    missingIsComplete: boolean,
+): { complete: boolean; value?: string } {
+    let descriptor: number | undefined;
+    try {
+        descriptor = openSync(path, "r");
+        const size = fstatSync(descriptor).size;
+        if (size > MAX_GIT_PATH_DIRECTIVE_BYTES) return { complete: false };
+        const bytes = Buffer.alloc(size);
+        if (size > 0 && readSync(descriptor, bytes, 0, size, 0) !== size) {
+            return { complete: false };
+        }
+        const value = bytes.toString("utf8").trim();
+        if (prefix.length === 0) {
+            return value.length === 0 ? { complete: false } : { complete: true, value };
+        }
+        if (!value.startsWith(prefix)) return { complete: false };
+        const pathValue = value.slice(prefix.length).trim();
+        return pathValue.length === 0 ? { complete: false } : { complete: true, value: pathValue };
+    } catch (error) {
+        return {
+            complete: missingIsComplete && isMissingPathError(error),
+        };
+    } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+    }
+}
+
+interface WorkspaceGitRefSnapshot {
+    commonDirectory?: string;
+    complete: boolean;
+    packedRefs: ReadonlySet<string>;
+}
+
+function workspaceGitRefSnapshot(projectPath: string): WorkspaceGitRefSnapshot {
+    const commonDirectory = gitCommonDirectoryPath(projectPath);
+    if (commonDirectory.path === undefined) {
+        return { complete: commonDirectory.complete, packedRefs: new Set() };
+    }
+    const packed = readBoundedPackedRefs(commonDirectory.path);
+    return { commonDirectory: commonDirectory.path, ...packed };
+}
+
+function readBoundedPackedRefs(
+    gitCommonDirectory: string,
+): Pick<WorkspaceGitRefSnapshot, "complete" | "packedRefs"> {
+    let descriptor: number | undefined;
+    try {
+        descriptor = openSync(join(gitCommonDirectory, "packed-refs"), "r");
+        const size = fstatSync(descriptor).size;
+        if (size > MAX_PACKED_REFS_RESERVATION_BYTES) {
+            return { complete: false, packedRefs: new Set() };
+        }
+        const bytes = Buffer.allocUnsafe(Math.min(PACKED_REFS_RESERVATION_READ_BYTES, size));
+        const decoder = new StringDecoder("utf8");
+        const refs = new Set<string>();
+        let offset = 0;
+        let remainder = "";
+        while (offset < size) {
+            const read = readSync(
+                descriptor,
+                bytes,
+                0,
+                Math.min(bytes.length, size - offset),
+                offset,
+            );
+            if (read === 0) return { complete: false, packedRefs: new Set() };
+            offset += read;
+            const lines = `${remainder}${decoder.write(bytes.subarray(0, read))}`.split(/\r?\n/u);
+            remainder = lines.pop() ?? "";
+            for (const line of lines) addPackedWorkspaceRef(refs, line);
+        }
+        addPackedWorkspaceRef(refs, `${remainder}${decoder.end()}`);
+        return { complete: true, packedRefs: refs };
+    } catch (error) {
+        // Missing packed-refs is the normal loose-ref case. Other failures select a
+        // reservation key containing the workspace's client identity, avoiding an unbounded read
+        // or an unsafe assumption while materialization remains asynchronous.
+        return {
+            complete: (error as NodeJS.ErrnoException).code === "ENOENT",
+            packedRefs: new Set(),
+        };
+    } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+    }
+}
+
+function addPackedWorkspaceRef(refs: Set<string>, line: string): void {
+    if (line.length === 0 || line.startsWith("#") || line.startsWith("^")) return;
+    const separator = line.indexOf(" ");
+    if (separator === -1) return;
+    const ref = line.slice(separator + 1);
+    if (ref.startsWith("refs/heads/worktree/")) refs.add(ref);
 }
 
 function isMissingPathError(error: unknown): boolean {

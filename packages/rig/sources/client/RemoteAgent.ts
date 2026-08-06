@@ -27,6 +27,7 @@ import {
     defineProvider,
     type Model,
     type Provider,
+    type ProviderError,
     type ServiceTier,
     type StopReason,
 } from "@slopus/rig-execution";
@@ -317,6 +318,9 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                   agentRunId?: string;
                   errorMessage?: string;
                   messages: AgentSnapshot["messages"];
+                  providerError?: ProviderError;
+                  providerId?: string;
+                  requestedModelId?: string;
                   stopReason: StopReason;
               }
             | undefined;
@@ -362,6 +366,15 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                             ? {}
                             : { errorMessage: event.data.errorMessage }),
                         messages: this.#session.snapshot.messages,
+                        ...(event.data.providerError === undefined
+                            ? {}
+                            : { providerError: event.data.providerError }),
+                        ...(event.data.providerId === undefined
+                            ? {}
+                            : { providerId: event.data.providerId }),
+                        ...(event.data.requestedModelId === undefined
+                            ? {}
+                            : { requestedModelId: event.data.requestedModelId }),
                         stopReason: event.data.stopReason,
                     };
                     streamController.abort();
@@ -396,6 +409,15 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                 errorMessage: "The remote run ended without a completion event.",
                 messages,
                 contextMessages,
+                providerError: {
+                    type: "unclassified",
+                    diagnostics: {
+                        attempts: 1,
+                        upstreamMessage: "The remote run ended without a completion event.",
+                    },
+                },
+                providerId: this.#providerId,
+                requestedModelId: this.#modelId,
                 runId: submitted.runId,
                 stopReason: "error",
             };
@@ -407,6 +429,15 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                 errorMessage: finished.errorMessage ?? "The model response failed.",
                 messages: finished.messages,
                 contextMessages,
+                providerError: finished.providerError ?? {
+                    type: "unclassified",
+                    diagnostics: {
+                        attempts: 1,
+                        upstreamMessage: finished.errorMessage ?? "The model response failed.",
+                    },
+                },
+                providerId: finished.providerId ?? this.#providerId,
+                requestedModelId: finished.requestedModelId ?? this.#modelId,
                 runId: finished.agentRunId ?? submitted.runId,
                 stopReason: "error",
             };

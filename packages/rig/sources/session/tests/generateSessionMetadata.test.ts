@@ -214,4 +214,54 @@ describe("parseSessionMetadata", () => {
         expect(mainStreamCount).toBe(0);
         expect(isolatedCloseCount).toBe(1);
     });
+
+    it("settles cancellation even when an isolated provider ignores its abort signal", async () => {
+        const model = defineModel({
+            defaultThinkingLevel: "off",
+            id: "openai/gpt-5.6-sol",
+            name: "Sol",
+            thinkingLevels: ["off"],
+        });
+        let isolatedCloseCount = 0;
+        let isolatedForceCloseCount = 0;
+        const isolatedBase = defineProvider({
+            close() {
+                isolatedCloseCount += 1;
+            },
+            id: "codex",
+            models: [model],
+            stream() {
+                return createInferenceStream(async function* () {
+                    await new Promise<void>(() => {});
+                    throw new Error("unreachable");
+                });
+            },
+        });
+        const isolated = {
+            ...isolatedBase,
+            forceClose() {
+                isolatedForceCloseCount += 1;
+                return Promise.reject(new Error("Expected teardown failure."));
+            },
+        };
+        const provider = {
+            ...isolated,
+            isolate: () => isolated,
+        };
+        const controller = new AbortController();
+        const metadata = generateSessionMetadata({
+            modelId: model.id,
+            provider,
+            sessionId: "session-1",
+            signal: controller.signal,
+            transcript: "User: Do not hang after cancellation.",
+        });
+
+        controller.abort();
+
+        await expect(metadata).rejects.toThrow("cancelled");
+        await Promise.resolve();
+        expect(isolatedForceCloseCount).toBe(1);
+        expect(isolatedCloseCount).toBe(0);
+    });
 });

@@ -127,7 +127,7 @@ function requestJson(method, path, body) {
 const phase = process.argv[2];
 if (phase === "before") {
     await requestJson("PATCH", "/config", {
-        settings: { codexStreamMaxRetries: 5, durableGlobalEventQueue: true },
+        settings: { inferenceMaxRetries: 10, durableGlobalEventQueue: true },
     });
     const visible = await requestJson("POST", "/sessions", { cwd: "/workspace" });
     const hidden = await requestJson("POST", "/sessions", { cwd: "/workspace" });

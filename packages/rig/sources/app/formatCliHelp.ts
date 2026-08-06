@@ -6,6 +6,8 @@ export function formatCliHelp(): string {
         "       rig resume [--last | --all | SESSION_ID]",
         "       rig fork [--last | --all | SESSION_ID]",
         "       rig inspect [--json]",
+        "       rig invite",
+        "       rig join <rig://join/...>",
         "       rig daemon <start|stop|status|reload>",
         "       rig happy auth",
         "       rig monit",

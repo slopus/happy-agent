@@ -10,6 +10,13 @@ import {
 } from "./desktopApplicationRuntime.js";
 import { desktopApplicationResolve, desktopBuildStampWrite } from "./desktopApplicationState.js";
 
+/**
+ * The Electron package, whose directory name and workspace name are the same string. Named once
+ * because a build that looks for the wrong one does not fail here — it fails several steps later,
+ * or silently packages nothing.
+ */
+export const HAPPY_DESKTOP_PACKAGE = "happy-desktop-electron";
+
 /** Builds and installs one current-architecture Happy app with a bundled Rig runtime. */
 export async function desktopApplicationBuild(input: {
     contentHash: string;
@@ -17,7 +24,7 @@ export async function desktopApplicationBuild(input: {
     happy2Root: string;
     rigRoot: string;
 }): Promise<string> {
-    const desktopDirectory = join(input.happy2Root, "packages", "happy2-desktop");
+    const desktopDirectory = join(input.happy2Root, "packages", HAPPY_DESKTOP_PACKAGE);
     const stagingRoot = join(input.desktopRoot, ".staging");
     const happy2Staging = join(stagingRoot, "happy2");
     const rigRuntime = join(stagingRoot, "rig-runtime");
@@ -61,7 +68,7 @@ export async function desktopApplicationBuild(input: {
                 "--config.inject-workspace-packages=true",
                 "--config.node-linker=hoisted",
                 "--filter",
-                "happy2-desktop",
+                HAPPY_DESKTOP_PACKAGE,
                 "deploy",
                 "--prod",
                 happy2Staging,

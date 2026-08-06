@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { selectToolsForModel } from "./selectToolsForModel.js";
+import { selectCommonToolsForModel } from "./selectCommonToolsForModel.js";
 import { modelAnthropicSonnet46, modelXaiGrokBuild } from "@slopus/rig-execution";
 import { defineProvider } from "@slopus/rig-execution";
 import { grokBuildTools } from "../tools/grok/index.js";
@@ -70,27 +71,56 @@ describe("selectToolsForModel", () => {
         expect(tools.map((tool) => tool.name)).not.toContain("WebSearch");
     });
 
-    it("adds every universal Gemini tool to every provider-owned tool profile", () => {
+    // Gemini is Rig's own tool, configured by holding a Gemini credential rather than by anything
+    // about the selected model, so the common seam owns it and no vendor has to be taught about it.
+    it("leaves Rig's own Gemini tools to the common seam", () => {
         for (const toolProfile of ["claude", "codex", "grok"] as const) {
-            const provider = providerWithToolProfile(toolProfile);
-
-            const tools = selectToolsForModel({
-                geminiApiKey: "gemini-key",
+            const names = selectToolsForModel({
                 model: modelXaiGrokBuild,
-                provider,
-            });
+                provider: providerWithToolProfile(toolProfile),
+            }).map((tool) => tool.name);
 
-            expect(tools.map((tool) => tool.name)).toEqual(
-                expect.arrayContaining([
-                    "gemini_search",
-                    "gemini_generate_image",
-                    "gemini_generate_music",
-                    "gemini_analyze_media",
-                ]),
-            );
-            if (toolProfile === "claude") {
-                expect(tools.filter((tool) => tool.name === "WebSearch")).toHaveLength(1);
-            }
+            expect(names).not.toContain("gemini_search");
+        }
+
+        expect(
+            selectCommonToolsForModel({
+                geminiApiKey: "gemini-key",
+                hasWorkspaceContext: false,
+                isSubagent: false,
+            }).map((tool) => tool.name),
+        ).toEqual(
+            expect.arrayContaining([
+                "gemini_search",
+                "gemini_generate_image",
+                "gemini_generate_music",
+                "gemini_analyze_media",
+            ]),
+        );
+        expect(
+            selectCommonToolsForModel({ hasWorkspaceContext: false, isSubagent: false }).map(
+                (tool) => tool.name,
+            ),
+        ).not.toContain("gemini_search");
+    });
+
+    // The endpoint decides, not the tool's name. Bedrock serves the same Anthropic model without
+    // Anthropic's server-side search, so it is never added there rather than added and removed.
+    it("gives Claude's own search to the endpoints that can actually run it", () => {
+        expect(
+            selectToolsForModel({
+                model: modelXaiGrokBuild,
+                provider: providerWithToolProfile("claude"),
+            }).filter((tool) => tool.name === "WebSearch"),
+        ).toHaveLength(1);
+
+        for (const toolProfile of ["codex", "grok"] as const) {
+            expect(
+                selectToolsForModel({
+                    model: modelXaiGrokBuild,
+                    provider: providerWithToolProfile(toolProfile),
+                }).map((tool) => tool.name),
+            ).not.toContain("WebSearch");
         }
     });
 });

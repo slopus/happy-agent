@@ -42,7 +42,7 @@ export const createWorkspaceTool = defineTool({
     name: "create_workspace",
     label: "Create workspace",
     description:
-        "Create a managed Git workspace owned by this session. A workspace isolates one piece of work from the others running alongside it: each parallel task gets its own fresh workspace so their changes never collide, while subtasks of the current work stay in the current workspace. It is a separate checkout with its own dependencies and context, so create one only when that isolation is needed. Only this session can later archive it or start a workspace agent inside it.",
+        "Create a managed Git workspace owned by this session. The durable reservation returns immediately with status initializing while its checkout and setup continue in the background. You may immediately call spawn_workspace_agent or delegate_to_workspace for it: those tools wait for readiness and stop clearly if setup fails or the call is aborted. Files, terminals, and shell still require ready status. A workspace isolates one piece of work from the others running alongside it: each parallel task gets its own fresh workspace so their changes never collide, while subtasks of the current work stay in the current workspace. It is a separate checkout with its own dependencies and context, so create one only when that isolation is needed. Only this session can later archive it or start a workspace agent inside it.",
     arguments: Type.Object(
         {
             base_ref: Type.Optional(
@@ -90,7 +90,7 @@ export const spawnWorkspaceAgentTool = defineTool({
     name: "spawn_workspace_agent",
     label: "Start workspace agent",
     description:
-        "Start a managed subagent inside a workspace created by this session. It is hidden from the ordinary session list, appears under this session as a subagent, and reports its result back here. For a task that runs alongside other work, create a fresh workspace first instead of reusing one that holds other work.",
+        "Start a managed subagent inside a workspace created by this session. If its checkout is still initializing, this call waits for it to become ready without starting the agent early. It is hidden from the ordinary session list, appears under this session as a subagent, and reports its result back here. For a task that runs alongside other work, create a fresh workspace first instead of reusing one that holds other work.",
     arguments: Type.Object(
         {
             workspace_id: Type.String({ description: "Owned, ready workspace ID." }),
@@ -333,7 +333,7 @@ export const delegateToWorkspaceTool = defineTool({
     name: "delegate_to_workspace",
     label: "Delegate to workspace",
     description:
-        "Start a visible conversation in another workspace and give it a task. The new session appears in the user's session list, keeps this session as its parent, and can be reached afterwards with agent_info and agent_send using the returned agent ID. When the user writes to it themselves, this session is told what they said.",
+        "Start a visible conversation in another workspace and give it a task. If its checkout is still initializing, this call waits for it to become ready without starting the conversation early. The new session appears in the user's session list, keeps this session as its parent, and can be reached afterwards with agent_info and agent_send using the returned agent ID. When the user writes to it themselves, this session is told what they said.",
     arguments: Type.Object(
         {
             workspace_id: Type.String({
@@ -388,7 +388,7 @@ export const delegateToWorkspaceTool = defineTool({
     shouldReviewInAutoMode: () => true,
     describeAutoPermissionAction: ({ workspace_id }) =>
         `start a user-visible agent session in workspace ${JSON.stringify(workspace_id)}, which works outside this conversation's own workspace`,
-    execute: (
+    execute: async (
         {
             model,
             project_id,
@@ -401,8 +401,10 @@ export const delegateToWorkspaceTool = defineTool({
             workspace_id,
         },
         context,
-    ) =>
-        requireWorkspaces(context).delegate({
+        execution,
+    ) => {
+        const workspaces = requireWorkspaces(context);
+        const request = {
             effort: reasoning_effort,
             modelId: model,
             prompt,
@@ -412,7 +414,11 @@ export const delegateToWorkspaceTool = defineTool({
             ...(read_only === undefined ? {} : { readOnly: read_only }),
             ...(service_tier === "priority" ? { serviceTier: "fast" as const } : {}),
             ...(title === undefined ? {} : { title }),
-        }),
+        };
+        return execution.signal === undefined
+            ? workspaces.delegate(request)
+            : workspaces.delegate(request, execution.signal);
+    },
     toLLM: (result) => [{ type: "text", text: JSON.stringify(result) }],
     toUI: (result) => `Started ${result.title} in another workspace.`,
     locks: [],

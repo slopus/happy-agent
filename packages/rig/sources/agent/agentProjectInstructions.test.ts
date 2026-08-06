@@ -120,6 +120,21 @@ describe("project instructions in the conversation", () => {
         expect(systemPrompts[0]).not.toContain("Always run the linter.");
     });
 
+    it("hands root AGENTS_SECURITY.md rules to the model ahead of the first user message", async () => {
+        const { provider, contexts, systemPrompts } = createRecordingProvider();
+        const { agent, writeInstructions } = await createWorkspace(provider);
+        await writeInstructions("Always require a deployment review.\n");
+        const harness = agent.context.fs;
+        await harness.move("/workspace/AGENTS.md", "/workspace/AGENTS_SECURITY.md");
+
+        await agent.send("Deploy the service.");
+
+        const leading = textOfFirstUserContent(contexts[0]!);
+        expect(leading).toContain("Always require a deployment review.");
+        expect(leading).toContain("# AGENTS_SECURITY.md rules for");
+        expect(systemPrompts[0]).not.toContain("Always require a deployment review.");
+    });
+
     it("keeps the recorded instructions out of the visible transcript", async () => {
         const { provider } = createRecordingProvider();
         const { agent } = await createWorkspace(provider, "Always run the linter.\n");

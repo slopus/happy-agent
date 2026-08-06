@@ -9,17 +9,6 @@
 
 import { readCodexErrorHeader } from "@/vendors/codex/errors/codexErrors.js";
 
-export const DEFAULT_CODEX_STREAM_MAX_RETRIES = 5;
-export const MAX_CODEX_STREAM_MAX_RETRIES = 100;
-
-export function resolveCodexStreamMaxRetries(value?: number): number {
-    if (value === undefined) return DEFAULT_CODEX_STREAM_MAX_RETRIES;
-    if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
-        throw new TypeError("streamMaxRetries must be a finite nonnegative integer.");
-    }
-    return Math.min(value, MAX_CODEX_STREAM_MAX_RETRIES);
-}
-
 const DEFAULT_CODEX_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 export function resolveCodexStreamIdleTimeout(value?: number): number {

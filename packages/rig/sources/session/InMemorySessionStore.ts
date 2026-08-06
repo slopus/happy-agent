@@ -76,6 +76,8 @@ import {
     executeSessionWorkspaceTransfer,
     scheduleSessionWorkspaceTransfer,
 } from "./transferSessionWorkspace.js";
+import { workspaceRunReadiness } from "./workspaceRunReadiness.js";
+import { createWorkspaceReadyWaiters } from "./workspaceReadyWaiters.js";
 
 export interface InMemorySessionStoreOptions {
     createRuntime?: InMemorySessionOptions["createRuntime"];
@@ -105,6 +107,7 @@ export class InMemorySessionStore implements SessionStore {
     readonly #createPresenceEventId = createEventIdFactory();
     readonly #createTerminalEventId = createEventIdFactory();
     readonly #projects: ProjectRepository;
+    #workspaceReadyWaiters!: ReturnType<typeof createWorkspaceReadyWaiters>;
     readonly dataEpoch: string;
     readonly dataSchemaVersion: number;
     readonly globalEventQueue = new InMemoryGlobalEventQueue();
@@ -144,7 +147,7 @@ export class InMemorySessionStore implements SessionStore {
             ...(options.homeDirectory === undefined
                 ? {}
                 : { homeDirectory: options.homeDirectory }),
-            onEvent: (event) => this.#publishGlobalEvent(event),
+            onEvent: (event) => this.#projectEvent(event),
             ...(options.onWorkspaceCleanupError === undefined
                 ? {}
                 : { onWorkspaceCleanupError: options.onWorkspaceCleanupError }),
@@ -156,6 +159,9 @@ export class InMemorySessionStore implements SessionStore {
                 ? {}
                 : { workspacesDirectory: options.workspacesDirectory }),
         });
+        this.#workspaceReadyWaiters = createWorkspaceReadyWaiters((projectId, workspaceId) =>
+            this.#projects.getWorkspace(projectId, workspaceId),
+        );
         this.remoteTerminals = new ProjectRemoteTerminalStore({
             onChange: (scope, terminals) => {
                 const event = {
@@ -213,6 +219,8 @@ export class InMemorySessionStore implements SessionStore {
                 queryAgentTreeUsage: (sessionId) => this.queryAgentTreeUsage(sessionId),
                 ownedWorkspace: (ownerSessionId, projectId, workspaceId) =>
                     this.#projects.getOwnedWorkspace(ownerSessionId, projectId, workspaceId),
+                waitForWorkspaceReady: (projectId, workspaceId, signal) =>
+                    this.#workspaceReadyWaiters.wait(projectId, workspaceId, signal),
                 completeScheduledSessionTransfer: async (sessionId, targetWorkspaceId) => {
                     const result = await this.#executeSessionTransfer(
                         sessionId,
@@ -367,13 +375,21 @@ export class InMemorySessionStore implements SessionStore {
                 sourceSnapshot.projectId,
                 sourceSnapshot.workspaceId,
             );
-            if (workspace?.status !== "ready") {
+            if (
+                workspace === undefined ||
+                workspaceRunReadiness(this.#projects, {
+                    cwd: sourceSnapshot.cwd,
+                    projectId: sourceSnapshot.projectId,
+                    workspaceId: sourceSnapshot.workspaceId,
+                }).state !== "ready"
+            ) {
                 throw new Error("A session in an unavailable workspace cannot be forked.");
             }
         }
         const session = new InMemorySession({
             presence: this.presence,
             agentManager: this.#agentManager,
+            workspaceRunReadiness: (target) => workspaceRunReadiness(this.#projects, target),
             createEventId: createEventIdFactory(),
             ...(targetSessionId === undefined ? {} : { id: targetSessionId }),
             ...(this.#createRuntime === undefined ? {} : { createRuntime: this.#createRuntime }),
@@ -430,12 +446,27 @@ export class InMemorySessionStore implements SessionStore {
             inherited?.workspaceId === undefined
                 ? undefined
                 : this.#projects.getWorkspace(inherited.projectId, inherited.workspaceId);
-        if (inherited?.workspaceId !== undefined && inheritedWorkspace?.status !== "ready") {
-            throw new Error("The parent session workspace is not ready.");
+        if (
+            inherited?.workspaceId !== undefined &&
+            (inheritedWorkspace === undefined ||
+                workspaceRunReadiness(this.#projects, {
+                    cwd: inherited.cwd,
+                    projectId: inherited.projectId,
+                    workspaceId: inherited.workspaceId,
+                }).state !== "ready")
+        ) {
+            throw new Error("The parent session workspace is not ready and available.");
         }
         const ownership = (() => {
             if (inherited === undefined) {
-                return this.#projects.resolve(request.cwd, request.workspaceId, request.projectId);
+                if (request.workspaceId !== undefined) {
+                    return this.#projects.resolveSessionOwnership(
+                        request.cwd,
+                        request.workspaceId,
+                        request.projectId,
+                    );
+                }
+                return this.#projects.resolve(request.cwd, undefined, request.projectId);
             }
             if (
                 request.workspaceId !== undefined &&
@@ -462,6 +493,7 @@ export class InMemorySessionStore implements SessionStore {
         const session = new InMemorySession({
             presence: this.presence,
             agentManager: this.#agentManager,
+            workspaceRunReadiness: (target) => workspaceRunReadiness(this.#projects, target),
             createEventId: createEventIdFactory(),
             ...(this.#createRuntime === undefined ? {} : { createRuntime: this.#createRuntime }),
             modelCatalog: this.#modelCatalog,
@@ -924,8 +956,15 @@ export class InMemorySessionStore implements SessionStore {
         if (scope.workspaceId !== undefined && workspace === undefined) {
             throw new Error("Workspace not found.");
         }
-        if (workspace !== undefined && workspace.status !== "ready") {
-            throw new Error("Only ready workspaces can open terminals.");
+        if (
+            workspace !== undefined &&
+            workspaceRunReadiness(this.#projects, {
+                cwd: workspace.path,
+                projectId: workspace.projectId,
+                workspaceId: workspace.id,
+            }).state !== "ready"
+        ) {
+            throw new Error("Only ready, available workspaces can open terminals.");
         }
         const cwd = workspace?.path ?? project.path;
         const docker = configureSessionRequest({ cwd }, this.#defaultDocker, () =>
@@ -971,6 +1010,24 @@ export class InMemorySessionStore implements SessionStore {
         if (this.#workspaceTransferReservations.get(workspaceId) === sessionId) {
             this.#workspaceTransferReservations.delete(workspaceId);
         }
+    }
+
+    #projectEvent(event: Parameters<GlobalEventQueue["append"]>[0]): void {
+        this.#publishGlobalEvent(event);
+        if (event.type !== "workspace_created" && event.type !== "workspace_updated") return;
+        if (event.data.workspace.status === "initializing") return;
+        this.#afterTransactionCommit(() => {
+            this.#workspaceReadyWaiters.changed(event.projectId, event.workspaceId);
+            for (const session of this.#sessions.values()) {
+                const state = session.state();
+                if (
+                    state.workspaceId === event.workspaceId &&
+                    state.workspaceQueueWaiting === true
+                ) {
+                    session.workspaceReadinessChanged();
+                }
+            }
+        });
     }
 
     #publishGlobalEvent(event: Parameters<GlobalEventQueue["append"]>[0]): void {
@@ -1022,6 +1079,7 @@ export class InMemorySessionStore implements SessionStore {
 
     close(): void {
         void this.remoteTerminals.close();
+        this.#workspaceReadyWaiters.close();
         this.#projects.close();
         this.liveEvents.close();
         this.globalEventQueue.deactivate();

@@ -6,6 +6,174 @@ import { createOpenAIResponseRequest } from "@/protocol/responses/createOpenAIRe
 import { collectSessionEvents, textFromSessionEvents } from "./helpers/collectSessionEvents.js";
 
 describe("ResponsesProvider", () => {
+    it("retries a completed response with zero output tokens", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return sseResponse(
+                    attempts === 1
+                        ? [completedResponse([], 0)]
+                        : [
+                              {
+                                  type: "response.output_item.added",
+                                  output_index: 0,
+                                  item: {
+                                      type: "message",
+                                      id: "message-recovered",
+                                      role: "assistant",
+                                      content: [],
+                                  },
+                              },
+                              {
+                                  type: "response.output_text.delta",
+                                  output_index: 0,
+                                  content_index: 0,
+                                  delta: "recovered",
+                              },
+                              completedResponse(
+                                  [
+                                      {
+                                          type: "message",
+                                          id: "message-recovered",
+                                          role: "assistant",
+                                          status: "completed",
+                                          content: [
+                                              {
+                                                  type: "output_text",
+                                                  text: "recovered",
+                                                  annotations: [],
+                                              },
+                                          ],
+                                      },
+                                  ],
+                                  1,
+                              ),
+                          ],
+                );
+            },
+        });
+        const session = await provider.session("responses-empty-retry", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events = await collectSessionEvents(
+            session.run({
+                context: { messages: [{ role: "user", content: "Try again if empty." }] },
+            }),
+        );
+
+        expect(attempts).toBe(2);
+        expect(events).toContainEqual({
+            type: "retrying",
+            attempt: 1,
+            reason: "Responses API returned a response with zero output tokens.",
+        });
+        expect(events.filter((event) => event.type === "token_usage")).toEqual([
+            {
+                type: "token_usage",
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 1,
+                    output: 0,
+                    totalTokens: 1,
+                },
+            },
+            {
+                type: "token_usage",
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 1,
+                    output: 1,
+                    totalTokens: 2,
+                },
+            },
+        ]);
+        expect(textFromSessionEvents(events)).toBe("recovered");
+        expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
+    });
+
+    it("preserves diagnostics when zero-output retries are exhausted", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return sseResponse([completedResponse([], 0)]);
+            },
+        });
+        const session = await provider.session("responses-empty-exhausted", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events = [];
+        for await (const event of session.run({
+            context: { messages: [{ role: "user", content: "Keep trying." }] },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(11);
+        expect(events.filter((event) => event.type === "token_usage")).toHaveLength(11);
+        expect(events.at(-1)).toEqual({
+            type: "done",
+            state: "error",
+            kind: "internal_error",
+            message: "Responses API returned a response with zero output tokens.",
+            providerError: {
+                type: "empty_response",
+                diagnostics: {
+                    attempts: 11,
+                    code: "empty_response",
+                    errorType: "empty_response",
+                    upstreamMessage: "Responses API returned a response with zero output tokens.",
+                },
+            },
+        });
+    });
+
+    it("does not interpret missing usage as zero output", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            fetch: async () => {
+                attempts += 1;
+                return sseResponse([
+                    {
+                        type: "response.completed",
+                        response: { id: "response-without-usage", output: [] },
+                    },
+                ]);
+            },
+        });
+        const session = await provider.session("responses-missing-usage", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events = await collectSessionEvents(
+            session.run({
+                context: { messages: [{ role: "user", content: "Usage may be absent." }] },
+            }),
+        );
+
+        expect(attempts).toBe(1);
+        expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
+    });
+
     it("runs the standard Responses SSE protocol with configured endpoint and model", async () => {
         let requestBody: unknown;
         const provider = new ResponsesProvider({
@@ -237,4 +405,21 @@ function sseResponse(events: readonly unknown[]): Response {
         status: 200,
         headers: { "content-type": "text/event-stream" },
     });
+}
+
+function completedResponse(output: readonly unknown[], outputTokens: number): unknown {
+    return {
+        type: "response.completed",
+        response: {
+            id: `response-${String(outputTokens)}`,
+            output,
+            usage: {
+                input_tokens: 1,
+                input_tokens_details: { cached_tokens: 0 },
+                output_tokens: outputTokens,
+                output_tokens_details: { reasoning_tokens: 0 },
+                total_tokens: 1 + outputTokens,
+            },
+        },
+    };
 }

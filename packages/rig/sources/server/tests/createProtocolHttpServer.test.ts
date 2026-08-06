@@ -505,6 +505,108 @@ describe("createProtocolHttpServer", () => {
         }
     });
 
+    it("accepts sessions and durable messages while a managed workspace initializes", async () => {
+        const projectDirectory = await mkdtemp(join(tmpdir(), "rig-workspace-queued-session-"));
+        const stateDirectory = await mkdtemp(join(tmpdir(), "rig-workspace-queued-state-"));
+        const workspacesDirectory = join(stateDirectory, "workspaces");
+        await execFile("git", ["-C", projectDirectory, "init"]);
+        await execFile("git", ["-C", projectDirectory, "config", "user.email", "rig@example.test"]);
+        await execFile("git", ["-C", projectDirectory, "config", "user.name", "Rig Test"]);
+        await writeFile(join(projectDirectory, "README.md"), "fixture\n");
+        await execFile("git", ["-C", projectDirectory, "add", "README.md"]);
+        await execFile("git", ["-C", projectDirectory, "commit", "-m", "Initial"]);
+        const worktreeAddStarted = deferred<void>();
+        const createRuntime = vi.fn();
+        const search = vi.fn(async () => []);
+        const store = new PersistentSessionStore({
+            createRuntime,
+            databasePath: join(stateDirectory, "sessions.sqlite"),
+            projectGit: async (cwd, args) => {
+                if (args[0] === "worktree" && args[1] === "add") {
+                    worktreeAddStarted.resolve();
+                    await new Promise<void>(() => undefined);
+                }
+                const result = await execFile("git", args, { cwd });
+                return result.stdout.trim();
+            },
+            stateDirectory,
+            workspacesDirectory,
+        });
+        const { client, close } = await startServer({
+            fileSearchService: { close: vi.fn(), search },
+            store,
+        });
+        try {
+            const source = await client.createSession({ cwd: projectDirectory });
+            const workspace = (
+                await client.createProjectWorkspace(source.session.projectId, {
+                    baseRef: "HEAD",
+                    id: createId(),
+                    name: "Queued session",
+                })
+            ).workspace;
+            expect(workspace.status).toBe("initializing");
+            await worktreeAddStarted.promise;
+
+            const sessionId = createId();
+            const request = {
+                cwd: workspace.path,
+                id: sessionId,
+                projectId: source.session.projectId,
+                workspaceId: workspace.id,
+            };
+            const created = await client.createSession(request);
+            await expect(client.createSession(request)).resolves.toMatchObject({
+                session: { id: sessionId, workspaceId: workspace.id },
+            });
+
+            const submission = {
+                clientSubmissionId: createId(),
+                text: "Wait until the checkout is ready.",
+            };
+            const first = await client.submitMessage(created.session.id, submission);
+            await expect(client.submitMessage(created.session.id, submission)).resolves.toEqual(
+                first,
+            );
+            expect(store.get(created.session.id)?.snapshot()).toMatchObject({
+                status: "queued",
+                workspaceId: workspace.id,
+            });
+            expect(createRuntime).not.toHaveBeenCalled();
+
+            await expect(
+                client.searchFiles(
+                    { projectId: source.session.projectId, workspaceId: workspace.id },
+                    "README",
+                ),
+            ).rejects.toThrow();
+            expect(search).not.toHaveBeenCalled();
+
+            const events = (await client.getGlobalEvents()).events.map((entry) => entry.event);
+            expect(events).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        type: "workspace_created",
+                        workspaceId: workspace.id,
+                    }),
+                    expect.objectContaining({
+                        sessionId: created.session.id,
+                        type: "session_created",
+                    }),
+                    expect.objectContaining({
+                        sessionId: created.session.id,
+                        type: "message_submitted",
+                    }),
+                ]),
+            );
+        } finally {
+            await close();
+            store.close();
+            await rm(projectDirectory, removeFixtureOptions);
+            await rm(stateDirectory, removeFixtureOptions);
+        }
+    });
+
     it("creates a workspace without a client-chosen ID and resolves sessions from its cwd", async () => {
         const projectDirectory = await mkdtemp(join(tmpdir(), "rig-workspace-without-id-"));
         await execFile("git", ["-C", projectDirectory, "init"]);
@@ -1570,8 +1672,12 @@ describe("createProtocolHttpServer", () => {
         try {
             await expect(client.getDaemonConfig()).resolves.toEqual({
                 config: {
+                    p2p: {
+                        name: "Rig",
+                        role: "primary",
+                    },
                     settings: {
-                        codexStreamMaxRetries: 5,
+                        inferenceMaxRetries: 10,
                         durableGlobalEventQueue: false,
                     },
                 },
@@ -1615,7 +1721,7 @@ describe("createProtocolHttpServer", () => {
         const store = new PersistentSessionStore({ databasePath: ":memory:" });
         const { client, close } = await startServer({
             onDaemonSettingsChange: (settings) => ({
-                codexStreamMaxRetries: settings.codexStreamMaxRetries,
+                inferenceMaxRetries: settings.inferenceMaxRetries,
                 globalEventQueue: store.setDurableGlobalEventQueue(
                     settings.durableGlobalEventQueue,
                 ),
@@ -1623,25 +1729,31 @@ describe("createProtocolHttpServer", () => {
             store,
         });
         try {
+            for (const inferenceMaxRetries of [-1, 1.5, 101]) {
+                await expect(
+                    client.updateDaemonConfig({
+                        settings: {
+                            inferenceMaxRetries,
+                            durableGlobalEventQueue: false,
+                        },
+                    }),
+                ).rejects.toThrow("Daemon settings must use valid values.");
+            }
             await expect(
                 client.updateDaemonConfig({
                     settings: {
-                        codexStreamMaxRetries: 101,
-                        durableGlobalEventQueue: false,
-                    },
-                }),
-            ).rejects.toThrow("Codex reconnect attempts must be a whole number from 0 to 100.");
-            await expect(
-                client.updateDaemonConfig({
-                    settings: {
-                        codexStreamMaxRetries: 7,
+                        inferenceMaxRetries: 7,
                         durableGlobalEventQueue: true,
                     },
                 }),
             ).resolves.toEqual({
                 config: {
+                    p2p: {
+                        name: "Rig",
+                        role: "primary",
+                    },
                     settings: {
-                        codexStreamMaxRetries: 7,
+                        inferenceMaxRetries: 7,
                         durableGlobalEventQueue: true,
                     },
                 },
@@ -1671,15 +1783,19 @@ describe("createProtocolHttpServer", () => {
 
             await client.updateDaemonConfig({
                 settings: {
-                    codexStreamMaxRetries: 7,
+                    inferenceMaxRetries: 7,
                     durableGlobalEventQueue: false,
                 },
             });
             await expect(client.getGlobalEvents()).resolves.toEqual({ events: [] });
             await expect(client.getDaemonConfig()).resolves.toEqual({
                 config: {
+                    p2p: {
+                        name: "Rig",
+                        role: "primary",
+                    },
                     settings: {
-                        codexStreamMaxRetries: 7,
+                        inferenceMaxRetries: 7,
                         durableGlobalEventQueue: false,
                     },
                 },
@@ -1687,7 +1803,7 @@ describe("createProtocolHttpServer", () => {
 
             await client.updateDaemonConfig({
                 settings: {
-                    codexStreamMaxRetries: 7,
+                    inferenceMaxRetries: 7,
                     durableGlobalEventQueue: true,
                 },
             });
@@ -3357,13 +3473,13 @@ async function startServer(
         globalEventQueue?: GlobalEventQueue;
         getProviderQuota?: (providerId: string) => Promise<ProviderQuota | undefined>;
         onDaemonSettingsChange?: (settings: {
-            codexStreamMaxRetries: number;
+            inferenceMaxRetries: number;
             durableGlobalEventQueue: boolean;
         }) =>
-            | { codexStreamMaxRetries: number; globalEventQueue: GlobalEventQueue }
+            | { inferenceMaxRetries: number; globalEventQueue: GlobalEventQueue }
             | undefined
             | Promise<
-                  { codexStreamMaxRetries: number; globalEventQueue: GlobalEventQueue } | undefined
+                  { inferenceMaxRetries: number; globalEventQueue: GlobalEventQueue } | undefined
               >;
         onShutdown?: () => void;
         onReloadHappy?: () => boolean | Promise<boolean>;
@@ -3405,7 +3521,8 @@ async function startServer(
         ...(options.onDaemonSettingsChange === undefined
             ? {}
             : {
-                  onDaemonSettingsChange: options.onDaemonSettingsChange,
+                  onDaemonConfigChange: (config) =>
+                      options.onDaemonSettingsChange!(config.settings),
               }),
         store,
         ...(options.taskDrain === undefined ? {} : { taskDrain: options.taskDrain }),

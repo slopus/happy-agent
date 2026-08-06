@@ -137,7 +137,7 @@ function completeSse(response: ServerResponse): void {
             response: {
                 id: "response",
                 output: [],
-                usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+                usage: { input_tokens: 0, output_tokens: 1, total_tokens: 1 },
             },
         })}\n\ndata: [DONE]\n\n`,
     );

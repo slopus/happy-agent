@@ -38,6 +38,10 @@ import type {
     ListProviderUsageResponse,
     GlobalStreamHello,
     HealthResponse,
+    P2pStatus,
+    CreateP2pInvitationResponse,
+    JoinP2pInvitationResponse,
+    P2pPairingState,
     HappyCloudCommand,
     HappyCloudCommandResponse,
     HappyCloudProfileCiphertextResponse,
@@ -141,6 +145,8 @@ import { waitForGymSessionEventBarrier } from "./waitForGymSessionEventBarrier.j
 import { SessionTerminalConnection } from "./SessionTerminalConnection.js";
 
 export interface ProtocolHttpClientOptions {
+    /** Mounts every daemon route under a local gateway such as a P2P peer prefix. */
+    pathPrefix?: string;
     socketPath: string;
     token: string;
 }
@@ -177,14 +183,38 @@ export interface ProxyHttpResponse {
 export class ProtocolHttpClient {
     readonly socketPath: string;
     readonly token: string;
+    readonly #pathPrefix: string;
 
     constructor(options: ProtocolHttpClientOptions) {
         this.socketPath = options.socketPath;
         this.token = options.token;
+        this.#pathPrefix = normalizePathPrefix(options.pathPrefix);
     }
 
     getHappyCloudStatus(): Promise<HappyCloudStatus> {
         return this.#requestJson("GET", "/happy-cloud/status");
+    }
+
+    getP2pStatus(): Promise<P2pStatus> {
+        return this.#requestJson("GET", "/p2p/status");
+    }
+
+    createP2pInvitation(): Promise<CreateP2pInvitationResponse> {
+        return this.#requestJson("POST", "/p2p/invitations");
+    }
+
+    joinP2pInvitation(invitation: string): Promise<JoinP2pInvitationResponse> {
+        return this.#requestJson("POST", "/p2p/joins", { invitation });
+    }
+
+    getP2pPairing(id: string): Promise<P2pPairingState> {
+        return this.#requestJson("GET", `/p2p/pairings/${encodeURIComponent(id)}`);
+    }
+
+    answerP2pVerification(id: string, accept: boolean): Promise<P2pPairingState> {
+        return this.#requestJson("POST", `/p2p/pairings/${encodeURIComponent(id)}/answer`, {
+            accept,
+        });
     }
 
     applyHappyCloudCommand(command: HappyCloudCommand): Promise<HappyCloudCommandResponse> {
@@ -470,7 +500,7 @@ export class ProtocolHttpClient {
         let stream: Duplex;
         try {
             stream = await connectRemoteTerminalWebSocket({
-                path: `${this.#remoteTerminalPath(scope, terminalId)}/attach`,
+                path: this.#path(`${this.#remoteTerminalPath(scope, terminalId)}/attach`),
                 socketPath: this.socketPath,
                 token: this.token,
             });
@@ -933,7 +963,7 @@ export class ProtocolHttpClient {
             const request = httpRequest({
                 headers: { authorization: `Bearer ${this.token}` },
                 method: "CONNECT",
-                path: `${this.#projectScopePath(scope)}/proxy`,
+                path: this.#path(`${this.#projectScopePath(scope)}/proxy`),
                 socketPath: this.socketPath,
             });
             request.once("connect", (response, socket, head) => {
@@ -1215,7 +1245,7 @@ export class ProtocolHttpClient {
                 {
                     headers,
                     method,
-                    path,
+                    path: this.#path(path),
                     socketPath: this.socketPath,
                 },
                 (response) => {
@@ -1265,7 +1295,7 @@ export class ProtocolHttpClient {
                         ...extraHeaders,
                     },
                     method,
-                    path,
+                    path: this.#path(path),
                     socketPath: this.socketPath,
                 },
                 (response) => {
@@ -1321,7 +1351,7 @@ export class ProtocolHttpClient {
                         authorization: `Bearer ${this.token}`,
                     },
                     method: "GET",
-                    path: requestPath,
+                    path: this.#path(requestPath),
                     socketPath: this.socketPath,
                 },
                 (response) => {
@@ -1392,6 +1422,10 @@ export class ProtocolHttpClient {
             : `${project}/workspaces/${encodeURIComponent(scope.workspaceId)}`;
     }
 
+    #path(path: string): string {
+        return `${this.#pathPrefix}${path}`;
+    }
+
     #remoteTerminalCollectionPath(scope: ProjectScope): string {
         return `${this.#projectScopePath(scope)}/terminals`;
     }
@@ -1399,6 +1433,27 @@ export class ProtocolHttpClient {
     #remoteTerminalPath(scope: ProjectScope, terminalId: string): string {
         return `${this.#remoteTerminalCollectionPath(scope)}/${encodeURIComponent(terminalId)}`;
     }
+}
+
+function normalizePathPrefix(pathPrefix: string | undefined): string {
+    if (pathPrefix === undefined || pathPrefix === "" || pathPrefix === "/") return "";
+    if (
+        !pathPrefix.startsWith("/") ||
+        pathPrefix.includes("?") ||
+        pathPrefix.includes("#") ||
+        hasControlCharacter(pathPrefix)
+    ) {
+        throw new Error("A protocol HTTP path prefix must be an absolute URL path.");
+    }
+    return pathPrefix.endsWith("/") ? pathPrefix.slice(0, -1) : pathPrefix;
+}
+
+function hasControlCharacter(value: string): boolean {
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code < 0x20 || code === 0x7f) return true;
+    }
+    return false;
 }
 
 function singleSocketAgent(socket: Duplex): Agent {

@@ -2,11 +2,27 @@ import type { Bash } from "just-bash";
 
 import type { FileSystemContext } from "./FileSystemContext.js";
 import { toFileSystemStat } from "./toFileSystemStat.js";
+import { isProtectedPath, type PermissionContext } from "../../permissions/index.js";
+import { resolve } from "node:path";
 
-export function createJustBashFileSystemContext(bash: Bash, cwd: string): FileSystemContext {
+export function createJustBashFileSystemContext(
+    bash: Bash,
+    cwd: string,
+    permissions?: PermissionContext,
+): FileSystemContext {
+    const assertWritable = (path: string) => {
+        if (permissions === undefined || permissions.mode === "full_access") return;
+        if (permissions.mode === "read_only") {
+            throw new Error("File changes are disabled in read-only mode.");
+        }
+        if (isProtectedPath(resolve(cwd, path), permissions.protectedPaths)) {
+            throw new Error("Cannot modify a protected workspace path without Full access.");
+        }
+    };
     return {
         cwd,
         async chmod(path, mode) {
+            assertWritable(path);
             await bash.fs.chmod(path, mode);
         },
         async exists(path) {
@@ -38,9 +54,12 @@ export function createJustBashFileSystemContext(bash: Bash, cwd: string): FileSy
             );
         },
         async mkdir(path, mkdirOptions) {
+            assertWritable(path);
             await bash.fs.mkdir(path, mkdirOptions);
         },
         async move(source, destination) {
+            assertWritable(source);
+            assertWritable(destination);
             await bash.fs.mv(source, destination);
         },
         async realpath(path) {
@@ -82,9 +101,11 @@ export function createJustBashFileSystemContext(bash: Bash, cwd: string): FileSy
             };
         },
         async rm(path, rmOptions) {
+            assertWritable(path);
             await bash.fs.rm(path, rmOptions);
         },
         async setModificationTime(path, mtimeMs) {
+            assertWritable(path);
             const time = new Date(mtimeMs);
             await bash.fs.utimes(path, time, time);
         },
@@ -93,6 +114,7 @@ export function createJustBashFileSystemContext(bash: Bash, cwd: string): FileSy
             return toFileSystemStat(stats);
         },
         async writeFile(path, content) {
+            assertWritable(path);
             await bash.fs.writeFile(path, content);
         },
     };

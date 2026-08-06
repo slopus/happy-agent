@@ -100,9 +100,9 @@ describeLive("GrokProvider live", () => {
             session.run({ context: { messages: [user] }, effort: "low" }),
         );
         expect(first.at(-1)).toEqual({ type: "done", state: "tool_call" });
-        const callId = first.find((event) => event.type === "tool_call_delta")?.callId;
+        const callId = first.find((event) => event.type === "toolcall_delta")?.callId;
         const argumentsJson = first
-            .filter((event) => event.type === "tool_call_delta")
+            .filter((event) => event.type === "toolcall_delta")
             .map((event) => event.delta)
             .join("");
         const encryptedReasoning = first.find(
@@ -201,7 +201,7 @@ describeLive("GrokProvider live", () => {
             expect.fail("RIG_LIVE_TEST=1 is set but no grok credentials were found");
         }
 
-        const provider = new GrokProvider({ credential, hostedTools: grok_hosted_tools });
+        const provider = new GrokProvider({ credential, hostedTools: () => grok_hosted_tools });
         const session = await provider.session(`grok-x-search-live-${Date.now()}`, {
             instructions: "You are a concise assistant.",
             tools: [],
@@ -222,10 +222,10 @@ describeLive("GrokProvider live", () => {
             }),
         );
 
-        const searches = events.filter((event) => event.type === "server_tool_call_start");
+        const searches = events.filter((event) => event.type === "server_toolcall_start");
         expect(searches.length).toBeGreaterThan(0);
         expect(searches.every((event) => event.name.startsWith("x_"))).toBe(true);
-        expect(events.filter((event) => event.type === "tool_call_start")).toEqual([]);
+        expect(events.filter((event) => event.type === "toolcall_start")).toEqual([]);
         expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
         expect(textFromSessionEvents(events)).toContain("x.com/");
     }, 180_000);

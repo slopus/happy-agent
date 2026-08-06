@@ -121,8 +121,10 @@ describe("createLinuxBubblewrapCommand", () => {
         await Promise.all([
             mkdir(join(root, ".agents")),
             mkdir(join(root, ".codex")),
+            mkdir(join(root, "plans")),
             writeFile(join(root, "rig.toml"), "[network]\n"),
             writeFile(join(root, "happy.toml"), "[network]\n"),
+            writeFile(join(root, "AGENTS_SECURITY.md"), "Require approval.\n"),
         ]);
 
         const result = await createLinuxBubblewrapCommand({
@@ -131,13 +133,23 @@ describe("createLinuxBubblewrapCommand", () => {
             commandCwd: root,
             cwd: root,
             mode: "workspace_write",
+            protectedPaths: [join(root, "plans"), join(root, "missing")],
             shell: "/bin/sh",
             temporaryDirectory: privateTemporaryRoot,
         });
 
-        for (const name of [".agents", ".codex", "rig.toml", "happy.toml"]) {
+        for (const name of [
+            ".agents",
+            ".codex",
+            "rig.toml",
+            "happy.toml",
+            "AGENTS_SECURITY.md",
+            "plans",
+        ]) {
             expect(bindMode(result.args, join(root, name))).toBe("--ro-bind");
         }
+        expect(bindMode(result.args, join(root, "missing"))).toBeUndefined();
+        expect(result.protectedCreatePaths).not.toContain(join(root, "missing"));
     });
 
     it("rebinds a Read only workspace below /tmp after the private tmpfs mount", async () => {

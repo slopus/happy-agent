@@ -27,7 +27,7 @@ describe("committedSessionEvents", () => {
         expect(
             committedSessionEvents([
                 { type: "block_start" },
-                { type: "tool_call_delta", callId: "call", delta: '{"cmd":' },
+                { type: "toolcall_delta", callId: "call", delta: '{"cmd":' },
             ]),
         ).toEqual([]);
     });

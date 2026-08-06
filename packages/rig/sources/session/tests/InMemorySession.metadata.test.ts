@@ -5,7 +5,11 @@ import { Agent, createNodeAgentContext } from "../../agent/index.js";
 import type { CodingAssistantRuntime } from "../../runtime/CodingAssistantRuntime.js";
 import type { CreateCodingAssistantAgentOptions } from "../../runtime/createCodingAssistantAgent.js";
 import { NativeProcessManager } from "../../processes/index.js";
-import { createEventIdFactory, type ModelCatalog } from "../../protocol/index.js";
+import {
+    createEventIdFactory,
+    type ModelCatalog,
+    type SessionEvent,
+} from "../../protocol/index.js";
 import { createInferenceStream } from "@slopus/rig-execution";
 import { toLocalDate } from "../../executor/toLocalDate.js";
 import {
@@ -15,7 +19,11 @@ import {
     type Context,
     type StreamOptions,
 } from "@slopus/rig-execution";
-import { InMemorySession } from "../InMemorySession.js";
+import {
+    InMemorySession,
+    type PersistedSessionState,
+    type WorkspaceRunReadiness,
+} from "../InMemorySession.js";
 import { TrackedTaskDrain } from "../../utils/TrackedTaskDrain.js";
 
 afterEach(() => {
@@ -28,6 +36,9 @@ describe("InMemorySession metadata settlement", () => {
 
         const first = harness.session.submit({ text: "Implement immediate session metadata." });
         await vi.waitFor(() => expect(harness.metadataContexts).toHaveLength(1));
+        await vi.waitFor(() =>
+            expect(harness.inferenceKinds.slice(0, 2)).toEqual(["metadata", "agent"]),
+        );
         expect(JSON.stringify(harness.metadataContexts[0])).toContain(
             "Implement immediate session metadata.",
         );
@@ -51,6 +62,164 @@ describe("InMemorySession metadata settlement", () => {
                 titleStatus: "ready",
             }),
         );
+    });
+
+    it("finishes restored first-message naming before releasing a ready workspace run", async () => {
+        const waiting = createHarness({
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "waiting" }),
+        });
+        const submitted = waiting.session.submit({ text: "Resume after workspace setup." });
+        const restoredState = waiting.session.state();
+        const restoredEvents = waiting.session.events.since(undefined) ?? [];
+        let releaseMetadata: (() => void) | undefined;
+        const metadataGate = new Promise<void>((resolve) => {
+            releaseMetadata = resolve;
+        });
+        const restored = createHarness({
+            events: restoredEvents,
+            restore: restoredState,
+            staleMetadata: metadataGate,
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "ready" }),
+        });
+
+        restored.session.workspaceReadinessChanged();
+        await vi.waitFor(() => expect(restored.inferenceKinds).toEqual(["metadata"]));
+        expect(restored.session.state().queuedRuns).toHaveLength(1);
+
+        releaseMetadata?.();
+        await restored.session.waitForRun(submitted.runId);
+        expect(restored.inferenceKinds.slice(0, 2)).toEqual(["metadata", "agent"]);
+    });
+
+    it("releases a ready workspace run when first-message naming reaches its deadline", async () => {
+        vi.useFakeTimers();
+        const neverSettles = new Promise<void>(() => {});
+        const waiting = createHarness({
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "waiting" }),
+        });
+        const submitted = waiting.session.submit({ text: "Do not wait forever for naming." });
+        const restored = createHarness({
+            afterMetadataAbort: neverSettles,
+            events: waiting.session.events.since(undefined) ?? [],
+            restore: waiting.session.state(),
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "ready" }),
+        });
+
+        restored.session.workspaceReadinessChanged();
+        await vi.waitFor(() => expect(restored.inferenceKinds).toEqual(["metadata"]));
+        await vi.advanceTimersByTimeAsync(30_000);
+        await restored.session.waitForRun(submitted.runId);
+
+        expect(restored.inferenceKinds.slice(0, 2)).toEqual(["metadata", "agent"]);
+        await restored.session.beginShutdown();
+        expect(restored.session.snapshot().titleStatus).toBe("idle");
+    });
+
+    it("retries an inconclusive ready-workspace probe without another workspace event", async () => {
+        vi.useFakeTimers();
+        const waiting = createHarness({
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "waiting" }),
+        });
+        const submitted = waiting.session.submit({ text: "Retry the transient directory probe." });
+        let probes = 0;
+        const restored = createHarness({
+            events: waiting.session.events.since(undefined) ?? [],
+            restore: waiting.session.state(),
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () =>
+                probes++ === 0 ? { retryable: true, state: "waiting" } : { state: "ready" },
+        });
+
+        restored.session.workspaceReadinessChanged();
+        await vi.advanceTimersByTimeAsync(100);
+        await restored.session.waitForRun(submitted.runId);
+
+        expect(restored.inferenceKinds.slice(0, 2)).toEqual(["metadata", "agent"]);
+    });
+
+    it("durably fails after bounded ready-workspace probe retries are exhausted", async () => {
+        vi.useFakeTimers();
+        const waiting = createHarness({
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "waiting" }),
+        });
+        const submitted = waiting.session.submit({ text: "Bound repeated directory probes." });
+        const restored = createHarness({
+            events: waiting.session.events.since(undefined) ?? [],
+            restore: waiting.session.state(),
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ retryable: true, state: "waiting" }),
+        });
+
+        restored.session.workspaceReadinessChanged();
+        await vi.runAllTimersAsync();
+        await restored.session.waitForRun(submitted.runId);
+
+        expect(restored.inferenceKinds).toEqual([]);
+        expect(restored.session.state().queuedRuns).toEqual([]);
+        expect(
+            restored.session.events
+                .since(undefined)
+                ?.find(
+                    (event) => event.type === "run_error" && event.data.runId === submitted.runId,
+                ),
+        ).toMatchObject({
+            data: {
+                errorMessage: expect.stringContaining("after repeated attempts"),
+            },
+        });
+    });
+
+    it("keeps a retryable workspace run durable when shutdown wins the drain race", async () => {
+        const taskDrain = new TrackedTaskDrain();
+        const harness = createHarness({
+            taskDrain,
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ retryable: true, state: "waiting" }),
+        });
+        const submitted = harness.session.submit({ text: "Keep this queued through shutdown." });
+
+        const shutdown = harness.session.beginShutdown();
+        await taskDrain.drain();
+        await shutdown;
+
+        expect(harness.session.state().queuedRuns).toMatchObject([{ runId: submitted.runId }]);
+        expect(
+            harness.session.events
+                .since(undefined)
+                ?.some(
+                    (event) => event.type === "run_error" && event.data.runId === submitted.runId,
+                ),
+        ).toBe(false);
+    });
+
+    it("lets the user abort a queued run while its metadata barrier is active", async () => {
+        const waiting = createHarness({
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "waiting" }),
+        });
+        waiting.session.submit({ text: "Stop this before naming finishes." });
+        const restored = createHarness({
+            afterMetadataAbort: Promise.resolve(),
+            events: waiting.session.events.since(undefined) ?? [],
+            restore: waiting.session.state(),
+            workspaceId: "workspace-1",
+            workspaceRunReadiness: () => ({ state: "ready" }),
+        });
+
+        restored.session.workspaceReadinessChanged();
+        await vi.waitFor(() => expect(restored.inferenceKinds).toEqual(["metadata"]));
+        await expect(restored.session.abort()).resolves.toMatchObject({ aborted: true });
+        await Promise.resolve();
+
+        expect(restored.inferenceKinds).toEqual(["metadata"]);
+        expect(restored.session.state().queuedRuns).toEqual([]);
+        expect(restored.session.snapshot().titleStatus).toBe("idle");
     });
 
     it("uses the second user message as the one refinement trigger when it arrives first", async () => {
@@ -101,9 +270,8 @@ describe("InMemorySession metadata settlement", () => {
                 workspaceId: "workspace-1",
             });
 
-            const first = harness.session.submit({ text: "Name this workspace from the chat." });
-            await harness.session.waitForRun(first.runId);
-            await vi.waitFor(() => expect(harness?.metadataContexts).toHaveLength(2));
+            harness.session.submit({ text: "Name this workspace from the chat." });
+            await vi.waitFor(() => expect(harness?.metadataContexts).toHaveLength(1));
         });
 
         expect(escaped).toBe(databaseError);
@@ -186,13 +354,10 @@ describe("InMemorySession metadata settlement", () => {
         expect(harness.metadataContexts).toHaveLength(4);
     });
 
-    it("awaits an aborted metadata generation continuation during shutdown", async () => {
+    it("does not let a provider that ignores abort block task-drain shutdown", async () => {
         vi.useFakeTimers();
         const taskDrain = new TrackedTaskDrain();
-        let releaseAfterAbort: (() => void) | undefined;
-        const afterAbort = new Promise<void>((resolve) => {
-            releaseAfterAbort = resolve;
-        });
+        const afterAbort = new Promise<void>(() => {});
         let observedAbort = false;
         const harness = createHarness({
             afterMetadataAbort: afterAbort,
@@ -209,16 +374,8 @@ describe("InMemorySession metadata settlement", () => {
         const shuttingDown = harness.session.beginShutdown();
         const draining = taskDrain.drain();
         await vi.waitFor(() => expect(observedAbort).toBe(true));
-        let drained = false;
-        void draining.then(() => {
-            drained = true;
-        });
-        await Promise.resolve();
-        expect(drained).toBe(false);
-
-        releaseAfterAbort?.();
-        await shuttingDown;
         await draining;
+        await shuttingDown;
         expect(harness.session.snapshot().titleStatus).toBe("idle");
     });
 });
@@ -227,7 +384,9 @@ function createHarness(
     options: {
         agentGate?: Promise<void>;
         afterMetadataAbort?: Promise<void>;
+        events?: readonly SessionEvent[];
         onMetadataAbort?: () => void;
+        restore?: PersistedSessionState;
         staleMetadata?: Promise<void>;
         taskDrain?: TrackedTaskDrain;
         inheritedTitles?: string[];
@@ -238,6 +397,7 @@ function createHarness(
             workspaceId: string;
         }) => void;
         workspaceId?: string;
+        workspaceRunReadiness?: () => WorkspaceRunReadiness;
     } = {},
 ) {
     const model = defineModel({
@@ -248,6 +408,7 @@ function createHarness(
     });
     const metadataContexts: Context[] = [];
     const metadataSignals: AbortSignal[] = [];
+    const inferenceKinds: ("agent" | "metadata")[] = [];
     let agentResponses = 0;
     let metadataResponses = 0;
     const provider = defineProvider({
@@ -255,6 +416,7 @@ function createHarness(
         models: [model],
         stream(_model, context, streamOptions: StreamOptions = {}) {
             if (streamOptions.sessionId?.endsWith(":title")) {
+                inferenceKinds.push("metadata");
                 metadataContexts.push(context);
                 if (streamOptions.signal !== undefined) metadataSignals.push(streamOptions.signal);
                 metadataResponses += 1;
@@ -293,6 +455,7 @@ function createHarness(
                     return message;
                 });
             }
+            inferenceKinds.push("agent");
             agentResponses += 1;
             const message = assistantMessage(`Final visible response ${agentResponses}.`);
             return createInferenceStream(async function* () {
@@ -317,6 +480,7 @@ function createHarness(
             return createRuntime(runtimeOptions, provider);
         },
         modelCatalog: catalog,
+        ...(options.events === undefined ? {} : { events: options.events }),
         ...(options.onInitialTitle === undefined && options.inheritedTitles === undefined
             ? {}
             : {
@@ -328,10 +492,15 @@ function createHarness(
               }),
         projectId: "project-1",
         request: { cwd: "/tmp/rig-metadata-test", modelId: model.id, providerId: provider.id },
+        ...(options.restore === undefined ? {} : { restore: options.restore }),
         ...(options.taskDrain === undefined ? {} : { taskDrain: options.taskDrain }),
         ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }),
+        ...(options.workspaceRunReadiness === undefined
+            ? {}
+            : { workspaceRunReadiness: options.workspaceRunReadiness }),
     });
     return {
+        inferenceKinds,
         metadataContexts,
         metadataSignals,
         runtimeStartDates,

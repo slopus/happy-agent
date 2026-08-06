@@ -707,9 +707,30 @@ export interface ExecCommandToolCallPresentation {
     readonly type: "exec_command";
 }
 
+/** One page a search consulted. */
+export interface SearchSource {
+    readonly url: string;
+    readonly title?: string;
+}
+
+/** A search of the world outside the workspace, whoever ran it. */
+export interface SearchToolCallPresentation {
+    readonly type: "search";
+    readonly target: "web" | "x";
+    readonly query: string;
+}
+
+export interface SearchToolResultPresentation {
+    readonly type: "search";
+    readonly target: "web" | "x";
+    readonly query: string;
+    readonly sources: readonly SearchSource[];
+}
+
 export type ToolCallPresentation =
     | ExecCommandToolCallPresentation
-    | ExplorationToolCallPresentation;
+    | ExplorationToolCallPresentation
+    | SearchToolCallPresentation;
 
 export type FileDiffKind = "add" | "delete" | "update";
 export type FileDiffLineKind = "add" | "context" | "delete";
@@ -759,7 +780,8 @@ export type ToolResultPresentation =
     | BackgroundTerminalInteractionPresentation
     | ExecCommandResultPresentation
     | ExplorationToolCallPresentation
-    | FileDiffToolResultPresentation;
+    | FileDiffToolResultPresentation
+    | SearchToolResultPresentation;
 
 export type AgentBlock = ContentBlock | ThinkingBlock | ToolCallBlock | ToolResultBlock;
 
@@ -1339,9 +1361,29 @@ export interface SessionTranscriptWindow {
     /** True when this bounded window omitted older service notices in its position range. */
     noticesTruncated?: boolean;
     permissionReviews?: readonly PermissionReviewState[];
+    /** Calls the provider ran itself during the assistant messages in this page. */
+    providerToolCalls?: readonly ProviderToolCallRecord[];
     turns: readonly SessionTranscriptTurn[];
     /** False when the conversation began before the first turn in this window. */
     complete: boolean;
+}
+
+/**
+ * A call the provider ran on its own backend, as the daemon durably recorded it.
+ *
+ * Rig never executes one, so it is deliberately not part of the assistant message and this is the
+ * only place a reopened session can learn that the model reached the network at all.
+ */
+export interface ProviderToolCallRecord {
+    arguments: string;
+    callId: string;
+    createdAt: number;
+    /** The assistant message it accompanied, which is where a rebuilt transcript puts it back. */
+    messageId: string;
+    name: string;
+    runId: string;
+    /** `interrupted` means the turn ended before the provider reported back. */
+    status: "completed" | "interrupted";
 }
 
 export interface SessionStreamHello {
@@ -1552,6 +1594,15 @@ export type AgentLoopEvent =
           contentIndex: number;
           messageId: string;
           toolCall: { arguments?: unknown; id: string; name: string };
+      }
+    | { type: "server_toolcall_start"; callId: string; messageId: string; name: string }
+    | { type: "server_toolcall_delta"; callId: string; delta: string; messageId: string }
+    | {
+          type: "server_toolcall_end";
+          arguments: string;
+          callId: string;
+          messageId: string;
+          name: string;
       }
     | { type: "tool_execution_start"; toolCall: ToolCallBlock }
     | { type: "tool_execution_progress"; display: string; toolCallId: string }
@@ -2492,9 +2543,201 @@ export type SessionShareCapabilitiesChangedEvent = Static<
     typeof sessionShareCapabilitiesChangedEventSchema
 >;
 
+export const p2pPeerConnectionStatusSchema = Type.Union([
+    Type.Literal("connecting"),
+    Type.Literal("connected"),
+    Type.Literal("unreachable"),
+]);
+export const p2pPeerStatusSchema = Type.Object(
+    {
+        address: Type.String({ minLength: 1 }),
+        error: Type.Optional(Type.String()),
+        lastSeenAt: Type.Optional(Type.Number()),
+        name: Type.Optional(Type.String({ maxLength: 128, minLength: 1 })),
+        peerId: Type.Optional(
+            Type.String({
+                maxLength: 32,
+                minLength: 2,
+                pattern: "^[a-z][a-z0-9]+$",
+            }),
+        ),
+        publicKey: Type.Optional(
+            Type.String({
+                maxLength: 43,
+                minLength: 43,
+                pattern: "^[A-Za-z0-9_-]+$",
+            }),
+        ),
+        rttMs: Type.Optional(Type.Number({ minimum: 0 })),
+        status: p2pPeerConnectionStatusSchema,
+    },
+    { additionalProperties: false },
+);
+export const p2pTransportKindSchema = Type.Union([
+    Type.Literal("direct"),
+    Type.Literal("iroh"),
+    Type.Literal("ssh"),
+]);
+export const p2pTransportStatusSchema = Type.Union([
+    Type.Object(
+        {
+            error: Type.String({ minLength: 1 }),
+            state: Type.Literal("unavailable"),
+            transport: p2pTransportKindSchema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            apiExposed: Type.Optional(Type.Boolean()),
+            localAddress: Type.String({ minLength: 1 }),
+            peers: Type.Array(p2pPeerStatusSchema),
+            relayUrl: Type.Optional(Type.String({ minLength: 1 })),
+            state: Type.Literal("ready"),
+            transport: Type.Literal("iroh"),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            apiExposed: Type.Optional(Type.Boolean()),
+            localAddress: Type.Optional(Type.String({ minLength: 1 })),
+            peers: Type.Array(p2pPeerStatusSchema),
+            state: Type.Literal("ready"),
+            transport: Type.Literal("direct"),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            direction: Type.Literal("outbound"),
+            peers: Type.Array(p2pPeerStatusSchema),
+            state: Type.Literal("ready"),
+            transport: Type.Literal("ssh"),
+        },
+        { additionalProperties: false },
+    ),
+]);
+export const p2pStatusSchema = Type.Object(
+    {
+        instanceId: Type.Optional(
+            Type.String({
+                maxLength: 32,
+                minLength: 2,
+                pattern: "^[a-z][a-z0-9]+$",
+            }),
+        ),
+        name: Type.Optional(Type.String({ maxLength: 128, minLength: 1 })),
+        publicKey: Type.Optional(
+            Type.String({
+                maxLength: 43,
+                minLength: 43,
+                pattern: "^[A-Za-z0-9_-]+$",
+            }),
+        ),
+        transports: Type.Array(p2pTransportStatusSchema),
+    },
+    { additionalProperties: false },
+);
+export type P2pStatus = Static<typeof p2pStatusSchema>;
+
+const p2pPairingInstanceIdSchema = Type.String({
+    maxLength: 32,
+    minLength: 2,
+    pattern: "^[a-z][a-z0-9]+$",
+});
+const p2pPairingPublicKeySchema = Type.String({
+    maxLength: 43,
+    minLength: 43,
+    pattern: "^[A-Za-z0-9_-]+$",
+});
+
+export const createP2pInvitationResponseSchema = Type.Object(
+    {
+        id: p2pPairingInstanceIdSchema,
+        invitation: Type.String({ maxLength: 8_192, minLength: 1 }),
+    },
+    { additionalProperties: false },
+);
+export type CreateP2pInvitationResponse = Static<typeof createP2pInvitationResponseSchema>;
+
+export const joinP2pInvitationResponseSchema = Type.Object(
+    { id: p2pPairingInstanceIdSchema },
+    { additionalProperties: false },
+);
+export type JoinP2pInvitationResponse = Static<typeof joinP2pInvitationResponseSchema>;
+
+export const p2pPairingPeerSchema = Type.Object(
+    {
+        instanceId: p2pPairingInstanceIdSchema,
+        name: Type.String({
+            maxLength: 128,
+            minLength: 1,
+            pattern: "^[^\\u0000-\\u001f\\u007f]+$",
+        }),
+        publicKey: p2pPairingPublicKeySchema,
+    },
+    { additionalProperties: false },
+);
+const p2pPairingBase = {
+    expiresAt: Type.Integer({ minimum: 0 }),
+    id: p2pPairingInstanceIdSchema,
+    role: Type.Union([Type.Literal("inviter"), Type.Literal("joiner")]),
+};
+export const p2pPairingStateSchema = Type.Union([
+    Type.Object(
+        {
+            ...p2pPairingBase,
+            phase: Type.Union([Type.Literal("connecting"), Type.Literal("waiting")]),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...p2pPairingBase,
+            emojis: Type.Tuple([Type.String(), Type.String(), Type.String(), Type.String()]),
+            peer: p2pPairingPeerSchema,
+            phase: Type.Literal("verifying"),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...p2pPairingBase,
+            peer: p2pPairingPeerSchema,
+            phase: Type.Literal("connected"),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...p2pPairingBase,
+            error: Type.Optional(Type.String({ maxLength: 1_024, minLength: 1 })),
+            phase: Type.Union([
+                Type.Literal("expired"),
+                Type.Literal("failed"),
+                Type.Literal("rejected"),
+            ]),
+        },
+        { additionalProperties: false },
+    ),
+]);
+export type P2pPairingState = Static<typeof p2pPairingStateSchema>;
+export const p2pStatusChangedEventSchema = Type.Object(
+    {
+        createdAt: Type.Number(),
+        data: Type.Object({ status: p2pStatusSchema }, { additionalProperties: false }),
+        id: Type.String({ minLength: 1 }),
+        type: Type.Literal("p2p_status_changed"),
+    },
+    { additionalProperties: false },
+);
+export type P2pStatusChangedEvent = Static<typeof p2pStatusChangedEventSchema>;
+
 export type GlobalEvent =
     | ComputePreparationEvent
     | HappyCloudChangedEvent
+    | P2pStatusChangedEvent
     | SessionShareCapabilitiesChangedEvent
     | BaseGlobalEvent<"project_created", { mutationId?: MutationId; project: Project }>
     | BaseGlobalEvent<"project_updated", { mutationId?: MutationId; project: Project }>

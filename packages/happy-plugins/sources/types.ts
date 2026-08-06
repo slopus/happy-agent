@@ -22,6 +22,11 @@ import {
 
 const exact = { additionalProperties: false } as const;
 const nonEmptyText = Type.String({ minLength: 1 });
+const clientChosenIdSchema = Type.String({
+    maxLength: 24,
+    minLength: 24,
+    pattern: "^[a-z0-9]{24}$",
+});
 
 // Must stay in sync with MAX_INSTALLED_PLUGINS in Rig's plugin discovery.
 export const HAPPY_PLUGIN_MAX_LIST_ITEMS = 64;
@@ -72,6 +77,30 @@ export const happyWorkspaceSchema = Type.Object(
 );
 export type HappyWorkspace = Static<typeof happyWorkspaceSchema>;
 
+export const happyWorkspaceEventSchema = Type.Union([
+    Type.Object(
+        {
+            type: Type.Literal("workspace_created"),
+            workspace: happyWorkspaceSchema,
+        },
+        exact,
+    ),
+    Type.Object(
+        {
+            type: Type.Literal("workspace_updated"),
+            workspace: happyWorkspaceSchema,
+        },
+        exact,
+    ),
+]);
+export type HappyWorkspaceEvent = Static<typeof happyWorkspaceEventSchema>;
+
+export interface HappyWorkspaceSubscription {
+    readonly failure: string | undefined;
+    readonly status: HappyPluginStreamStatus;
+    close(): Promise<void>;
+}
+
 export const happySessionSchema = Type.Object(
     {
         agentId: nonEmptyText,
@@ -90,6 +119,8 @@ export type HappySession = Static<typeof happySessionSchema>;
 export const createWorkspaceInputSchema = Type.Object(
     {
         baseRef: Type.Optional(Type.String()),
+        /** Stable client identity used to reconcile retries with the original reservation. */
+        id: Type.Optional(clientChosenIdSchema),
         name: nonEmptyText,
         projectId: nonEmptyText,
     },
@@ -1409,5 +1440,9 @@ export interface HappyPluginClient {
         };
         list(input?: ListWorkspacesInput): Promise<readonly HappyWorkspace[]>;
         rename(input: RenameWorkspaceInput): Promise<HappyWorkspace>;
+        /** Observe workspace reservations and readiness changes through Rig's live event stream. */
+        subscribe(
+            handler: (event: HappyWorkspaceEvent) => void | Promise<void>,
+        ): Promise<HappyWorkspaceSubscription>;
     };
 }

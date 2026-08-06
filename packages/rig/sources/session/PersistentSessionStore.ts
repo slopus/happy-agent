@@ -12,6 +12,7 @@ import type {
     GetTimelineRequest,
     GitChangeSnapshot,
     GitRepositoryFacts,
+    GlobalEventQueueEntry,
     ModelCatalog,
     Project,
     ProjectSettingsUpdate,
@@ -101,9 +102,11 @@ import { projectSecretDetach } from "../persistence/session/projectSecretDetach.
 import { secretRegister } from "../persistence/session/secretRegister.js";
 import { secretUnregister } from "../persistence/session/secretUnregister.js";
 import { sessionAdvanceEventCursor } from "../persistence/session/sessionAdvanceEventCursor.js";
+import { sessionAcceptQueuedRun } from "../persistence/session/sessionAcceptQueuedRun.js";
 import { sessionAppendEvent } from "../persistence/session/sessionAppendEvent.js";
 import { sessionClearMessages } from "../persistence/session/sessionClearMessages.js";
 import { sessionDeleteQueuedRun } from "../persistence/session/sessionDeleteQueuedRun.js";
+import { sessionFailQueuedRun } from "../persistence/session/sessionFailQueuedRun.js";
 import { sessionReconcileTerminalRun } from "../persistence/session/sessionReconcileTerminalRun.js";
 import { sessionRepairInterruptedTitles } from "../persistence/session/sessionRepairInterruptedTitles.js";
 import { sessionRewind } from "../persistence/session/sessionRewind.js";
@@ -111,6 +114,7 @@ import { sessionSave } from "../persistence/session/sessionSave.js";
 import { sessionSaveMessage } from "../persistence/session/sessionSaveMessage.js";
 import { sessionSaveQueuedRun } from "../persistence/session/sessionSaveQueuedRun.js";
 import { sessionSavePendingContextMessage } from "../persistence/session/sessionSavePendingContextMessage.js";
+import { sessionStartQueuedRun } from "../persistence/session/sessionStartQueuedRun.js";
 import { sessionDrainPendingContextMessages } from "../persistence/session/sessionDrainPendingContextMessages.js";
 import { sessionDrainFriendContextMessages } from "../persistence/session-sharing/sessionDrainFriendContextMessages.js";
 import { sessionTransferWorkspace } from "../persistence/session/sessionTransferWorkspace.js";
@@ -127,6 +131,7 @@ import { queryInterruptedSessionCandidates } from "../persistence/session/queryI
 import { queryProjectSecretIds } from "../persistence/session/queryProjectSecretIds.js";
 import { queryRootSessionIdsForProject } from "../persistence/session/queryRootSessionIdsForProject.js";
 import { queryWorkspaceSessions } from "../persistence/session/queryWorkspaceSessions.js";
+import { queryWorkspaceQueuedSessionIds } from "../persistence/session/queryWorkspaceQueuedSessionIds.js";
 import { querySecretRegistrations } from "../persistence/session/querySecretRegistrations.js";
 import { querySessionEvents } from "../persistence/session/querySessionEvents.js";
 import { querySessionHasEarlierTranscriptMessage } from "../persistence/session/querySessionHasEarlierTranscriptMessage.js";
@@ -166,6 +171,8 @@ import {
     scheduleSessionWorkspaceTransfer,
 } from "./transferSessionWorkspace.js";
 import { HappyCloudService } from "../happy-cloud/index.js";
+import { workspaceRunReadiness } from "./workspaceRunReadiness.js";
+import { createWorkspaceReadyWaiters } from "./workspaceReadyWaiters.js";
 
 const RESTORED_SESSION_EVENT_LIMIT = 4_096;
 const MAX_SCHEDULE_TIMER_DELAY_MS = 2_147_000_000;
@@ -212,7 +219,9 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         | ((error: unknown, projectId: string, workspaceId: string) => void)
         | undefined;
     #globalEventQueue: GlobalEventQueue;
+    #precommittedGlobalEvents = new Map<EventId, GlobalEventQueueEntry | null>();
     #projects: ProjectRepository;
+    #workspaceReadyWaiters!: ReturnType<typeof createWorkspaceReadyWaiters>;
     #secrets: SecretRegistry;
     readonly #workspaceFeatures: WorkspaceFeatures;
     #sessions = new Map<string, WeakRef<InMemorySession>>();
@@ -319,7 +328,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             ...(options.homeDirectory === undefined
                 ? {}
                 : { homeDirectory: options.homeDirectory }),
-            onEvent: (event) => this.#publishGlobalEvent(event),
+            onEvent: (event) => this.#projectEvent(event),
             ...(options.onWorkspaceCleanupError === undefined
                 ? {}
                 : { onWorkspaceCleanupError: options.onWorkspaceCleanupError }),
@@ -334,6 +343,9 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 ? {}
                 : { workspacesDirectory: options.workspacesDirectory }),
         });
+        this.#workspaceReadyWaiters = createWorkspaceReadyWaiters((projectId, workspaceId) =>
+            this.#projects.getWorkspace(projectId, workspaceId),
+        );
         this.remoteTerminals = new ProjectRemoteTerminalStore({
             onChange: (scope, terminals) => {
                 const event = {
@@ -375,6 +387,8 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                     this.#projects.getOwnedWorkspace(ownerSessionId, projectId, workspaceId),
                 workspace: (projectId, workspaceId) =>
                     this.#projects.getWorkspace(projectId, workspaceId),
+                waitForWorkspaceReady: (projectId, workspaceId, signal) =>
+                    this.#workspaceReadyWaiters.wait(projectId, workspaceId, signal),
                 completeScheduledSessionTransfer: async (sessionId, targetWorkspaceId) => {
                     const result = await this.#executeSessionTransfer(
                         sessionId,
@@ -493,6 +507,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             this.#scheduledMessageTimer = undefined;
         }
         void this.remoteTerminals.close();
+        this.#workspaceReadyWaiters.close();
         this.#projects.close();
         this.liveEvents.close();
         this.#globalEventQueue.deactivate();
@@ -573,7 +588,14 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 sourceSnapshot.projectId,
                 sourceSnapshot.workspaceId,
             );
-            if (workspace?.status !== "ready") {
+            if (
+                workspace === undefined ||
+                workspaceRunReadiness(this.#projects, {
+                    cwd: sourceSnapshot.cwd,
+                    projectId: sourceSnapshot.projectId,
+                    workspaceId: sourceSnapshot.workspaceId,
+                }).state !== "ready"
+            ) {
                 throw new Error("A session in an unavailable workspace cannot be forked.");
             }
         }
@@ -583,6 +605,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 presence: this.presence,
                 agentManager: this.#agentManager,
                 workspaceFeatures: this.#workspaceFeatures,
+                workspaceRunReadiness: (target) => workspaceRunReadiness(this.#projects, target),
                 createEventId: createEventIdFactory(),
                 ...(this.#createRuntime === undefined
                     ? {}
@@ -653,16 +676,27 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 inherited?.workspaceId === undefined
                     ? undefined
                     : this.#projects.getWorkspace(inherited.projectId, inherited.workspaceId);
-            if (inherited?.workspaceId !== undefined && inheritedWorkspace?.status !== "ready") {
-                throw new Error("The parent session workspace is not ready.");
+            if (
+                inherited?.workspaceId !== undefined &&
+                (inheritedWorkspace === undefined ||
+                    workspaceRunReadiness(this.#projects, {
+                        cwd: inherited.cwd,
+                        projectId: inherited.projectId,
+                        workspaceId: inherited.workspaceId,
+                    }).state !== "ready")
+            ) {
+                throw new Error("The parent session workspace is not ready and available.");
             }
             const ownership = (() => {
                 if (inherited === undefined) {
-                    return this.#projects.resolve(
-                        request.cwd,
-                        request.workspaceId,
-                        request.projectId,
-                    );
+                    if (request.workspaceId !== undefined) {
+                        return this.#projects.resolveSessionOwnership(
+                            request.cwd,
+                            request.workspaceId,
+                            request.projectId,
+                        );
+                    }
+                    return this.#projects.resolve(request.cwd, undefined, request.projectId);
                 }
                 if (
                     request.workspaceId !== undefined &&
@@ -690,6 +724,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 presence: this.presence,
                 agentManager: this.#agentManager,
                 workspaceFeatures: this.#workspaceFeatures,
+                workspaceRunReadiness: (target) => workspaceRunReadiness(this.#projects, target),
                 createEventId: createEventIdFactory(),
                 ...(this.#createRuntime === undefined
                     ? {}
@@ -730,6 +765,40 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
 
     deleteQueuedRun(sessionId: string, runId: string): void {
         sessionDeleteQueuedRun(this.#tx(), sessionId, runId);
+    }
+
+    acceptQueuedRun(
+        input: Parameters<NonNullable<InMemorySessionPersistence["acceptQueuedRun"]>>[0],
+    ): void {
+        let globalEntry: GlobalEventQueueEntry | undefined;
+        this.#transaction((tx) => {
+            sessionAcceptQueuedRun(tx, {
+                ...input,
+                now: input.submittedAt,
+                sessionId: input.event.sessionId,
+            });
+            if (this.#globalEventQueue.durable) {
+                globalEntry = this.#globalEventQueue.append(input.event, tx);
+            }
+        });
+        this.#precommittedGlobalEvents.set(input.event.id, globalEntry ?? null);
+    }
+
+    failQueuedRun(
+        input: Parameters<NonNullable<InMemorySessionPersistence["failQueuedRun"]>>[0],
+    ): void {
+        let globalEntry: GlobalEventQueueEntry | undefined;
+        this.#transaction((tx) => {
+            sessionFailQueuedRun(tx, {
+                ...input,
+                now: this.#now(),
+                sessionId: input.event.sessionId,
+            });
+            if (this.#globalEventQueue.durable) {
+                globalEntry = this.#globalEventQueue.append(input.event, tx);
+            }
+        });
+        this.#precommittedGlobalEvents.set(input.event.id, globalEntry ?? null);
     }
 
     get(sessionId: string): InMemorySession | undefined {
@@ -776,6 +845,36 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
 
     insertQueuedRun(sessionId: string, run: PersistedQueuedRun): void {
         sessionSaveQueuedRun(this.#tx(), sessionId, run, this.#now());
+    }
+
+    startQueuedRun(
+        input: Parameters<NonNullable<InMemorySessionPersistence["startQueuedRun"]>>[0],
+    ): ReturnType<NonNullable<InMemorySessionPersistence["startQueuedRun"]>> {
+        let globalEntry: GlobalEventQueueEntry | undefined;
+        const drained = this.#transaction((tx) => {
+            const sessionId = input.event.sessionId;
+            sessionStartQueuedRun(tx, {
+                activeSince: input.activeSince,
+                event: input.event,
+                now: this.#now(),
+                runId: input.runId,
+                sessionId,
+            });
+            if (this.#globalEventQueue.durable) {
+                globalEntry = this.#globalEventQueue.append(input.event, tx);
+            }
+            return {
+                regular: sessionDrainPendingContextMessages(tx, sessionId, input.regularMessageIds),
+                friends: sessionDrainFriendContextMessages(tx, {
+                    limits: input.friendLimits,
+                    now: this.#now(),
+                    runId: input.runId,
+                    sessionId,
+                }),
+            };
+        });
+        this.#precommittedGlobalEvents.set(input.event.id, globalEntry ?? null);
+        return drained;
     }
 
     insertPendingContextMessage(sessionId: string, pending: PersistedPendingContextMessage): void {
@@ -1176,6 +1275,15 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
 
             const state = session.state();
             const runId = state.activeRunId ?? state.queuedRuns.at(0)?.runId;
+            if (
+                activeRunId === undefined &&
+                state.workspaceId !== undefined &&
+                state.queuedRuns.length > 0 &&
+                state.workspaceQueueWaiting === true
+            ) {
+                session.workspaceReadinessChanged();
+                continue;
+            }
             if (session.hasDurableToolRun()) {
                 session.resumeDurableToolRun();
                 continue;
@@ -1459,11 +1567,13 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             return;
         }
         const eventFacts = sessionEventFacts(event);
-        let globalEntry: ReturnType<GlobalEventQueue["append"]>;
+        const precommitted = this.#precommittedGlobalEvents.has(event.id);
+        let globalEntry = this.#precommittedGlobalEvents.get(event.id) ?? undefined;
+        this.#precommittedGlobalEvents.delete(event.id);
         let inserted = false;
         this.#transaction((tx) => {
             inserted = sessionAppendEvent(tx, event, eventFacts, this.#now()) === "inserted";
-            if (inserted && this.#globalEventQueue.durable) {
+            if (!precommitted && inserted && this.#globalEventQueue.durable) {
                 globalEntry = this.#globalEventQueue.append(event, tx);
             }
         });
@@ -1473,7 +1583,11 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         if (this.#globalEventQueue.durable && globalEntry !== undefined) {
             const queue = this.#globalEventQueue;
             this.#afterTransactionCommit(() => queue.publish(globalEntry!));
-        } else if (inserted && !this.#globalEventQueue.durable && shouldPublishGlobalEvent(event)) {
+        } else if (
+            (inserted || precommitted) &&
+            !this.#globalEventQueue.durable &&
+            shouldPublishGlobalEvent(event)
+        ) {
             const queue = this.#globalEventQueue;
             this.#afterTransactionCommit(() => {
                 const entry = queue.append(event);
@@ -1492,6 +1606,22 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
     #publishLiveStream(event: GlobalEvent): void {
         const queue = this.liveEvents;
         this.#afterTransactionCommit(() => queue.publish(event));
+    }
+
+    #projectEvent(event: GlobalEvent): void {
+        this.#publishGlobalEvent(event);
+        if (event.type !== "workspace_created" && event.type !== "workspace_updated") return;
+        if (event.data.workspace.status === "initializing") return;
+        this.#afterTransactionCommit(() => {
+            this.#workspaceReadyWaiters.changed(event.projectId, event.workspaceId);
+            this.#workspaceReadinessChanged(event.workspaceId);
+        });
+    }
+
+    #workspaceReadinessChanged(workspaceId: string): void {
+        for (const sessionId of queryWorkspaceQueuedSessionIds(this.#tx(), workspaceId)) {
+            this.get(sessionId)?.workspaceReadinessChanged();
+        }
     }
 
     #publishGlobalEvent(event: GlobalEvent): void {
@@ -1572,6 +1702,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             presence: this.presence,
             agentManager: this.#agentManager,
             workspaceFeatures: this.#workspaceFeatures,
+            workspaceRunReadiness: (target) => workspaceRunReadiness(this.#projects, target),
             createEventId: createEventIdFactory(
                 loaded.lastEventId === undefined ? {} : { after: loaded.lastEventId },
             ),
@@ -1693,11 +1824,15 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             ),
         );
         const permissionReviews = eventLog.permissionReviews(toolCallIds);
+        const providerToolCalls = eventLog.providerToolCalls(
+            new Set(window.turns.map((turn) => turn.runId)),
+        );
         return {
             ...window,
             complete,
             ...(noticesTruncated ? { noticesTruncated: true } : {}),
             ...(permissionReviews.length === 0 ? {} : { permissionReviews }),
+            ...(providerToolCalls.length === 0 ? {} : { providerToolCalls }),
         };
     }
 
@@ -1735,8 +1870,15 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         if (scope.workspaceId !== undefined && workspace === undefined) {
             throw new Error("Workspace not found.");
         }
-        if (workspace !== undefined && workspace.status !== "ready") {
-            throw new Error("Only ready workspaces can open terminals.");
+        if (
+            workspace !== undefined &&
+            workspaceRunReadiness(this.#projects, {
+                cwd: workspace.path,
+                projectId: workspace.projectId,
+                workspaceId: workspace.id,
+            }).state !== "ready"
+        ) {
+            throw new Error("Only ready, available workspaces can open terminals.");
         }
         const cwd = workspace?.path ?? project.path;
         const docker = configureSessionRequest({ cwd }, this.#defaultDocker, () =>
@@ -1756,12 +1898,13 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         // Each step resumes after an await, by which point the store may have been closed. Asking a
         // connection that is already gone would fail for a reason that is not a database fault.
         if (!this.#client.open) return;
-        await this.#projects.reconcileInitializingWorkspaces();
         for (const workspace of this.#projects.listWorkspaces()) {
             if (workspace.status !== "archiving") continue;
             if (!this.#client.open) return;
             await this.#archiveWorkspace(workspace.projectId, workspace.id);
         }
+        if (!this.#client.open) return;
+        await this.#projects.reconcileInitializingWorkspaces();
         if (!this.#client.open) return;
         // Presence and Git facts are enrichment, so they run only after archival recovery, which is
         // user-visible correctness.

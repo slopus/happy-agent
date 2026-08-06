@@ -1,3 +1,5 @@
+import { extractProviderErrorDiagnostics } from "@slopus/rig-providers";
+
 export function createDebugJsonReplacer(): (key: string, value: unknown) => unknown {
     const ancestors: object[] = [];
 
@@ -10,11 +12,15 @@ export function createDebugJsonReplacer(): (key: string, value: unknown) => unkn
             if (ancestors.includes(value)) return "[Circular]";
         }
         if (value instanceof Error) {
+            const providerDiagnostics = extractProviderErrorDiagnostics(value, {
+                upstreamMessage: value.message,
+            });
             const serialized = {
                 name: value.name,
                 message: value.message,
                 ...(value.stack === undefined ? {} : { stack: value.stack }),
                 ...(value.cause === undefined ? {} : { cause: value.cause }),
+                ...(providerDiagnostics === undefined ? {} : { providerDiagnostics }),
             };
             ancestors.push(value, serialized);
             return serialized;

@@ -263,6 +263,7 @@ export function createNodeBashContext(options: CreateNodeBashContextOptions): Ba
                     commandCwd: cwd,
                     cwd: options.cwd,
                     mode: permissionMode,
+                    protectedPaths: options.permissions.protectedPaths,
                     ...networkSandboxOptions(networkPolicy, managedNetwork),
                     ...(toolEnvironment.PATH === undefined ? {} : { path: toolEnvironment.PATH }),
                     shell,
@@ -373,6 +374,7 @@ export function createNodeBashContext(options: CreateNodeBashContextOptions): Ba
                         commandCwd: cwd,
                         cwd: options.cwd,
                         mode: permissionMode,
+                        protectedPaths: options.permissions.protectedPaths,
                         ...networkSandboxOptions(networkPolicy, managedNetwork),
                         ...(toolEnvironment.PATH === undefined
                             ? {}

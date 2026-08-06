@@ -52,8 +52,8 @@ vi.mock("@/vendors/codex/impl/createCodexClient.js", () => ({
                                     output: [],
                                     usage: {
                                         input_tokens: 0,
-                                        output_tokens: 0,
-                                        total_tokens: 0,
+                                        output_tokens: 1,
+                                        total_tokens: 1,
                                     },
                                 },
                             };
@@ -387,8 +387,8 @@ vi.mock("openai/resources/responses/ws", () => ({
                         output: responseOutput,
                         usage: {
                             input_tokens: websocket.usageTotalTokens,
-                            output_tokens: 0,
-                            total_tokens: websocket.usageTotalTokens,
+                            output_tokens: 1,
+                            total_tokens: websocket.usageTotalTokens + 1,
                         },
                     },
                 },
@@ -1172,7 +1172,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
             } as never,
             endpoint: "http://localhost.invalid/backend-api/codex",
             model: "gpt-5.6-sol",
-            streamMaxRetries: 1,
+            inferenceMaxRetries: 1,
             transport: "websocket",
         });
         const session = await provider.session("<SESSION_ID>", {
@@ -1213,7 +1213,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
             } as never,
             endpoint: "http://localhost.invalid/backend-api/codex",
             model: "gpt-5.6-sol",
-            streamMaxRetries: 1,
+            inferenceMaxRetries: 1,
             transport: "websocket",
         });
         const session = await provider.session("<SESSION_ID>", {
@@ -1228,7 +1228,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
             events.push(event);
         }
 
-        const toolDelta = events.findIndex((event) => event.type === "tool_call_delta");
+        const toolDelta = events.findIndex((event) => event.type === "toolcall_delta");
         const reset = events.findIndex((event) => event.type === "block_reset");
         expect(toolDelta).toBeGreaterThanOrEqual(0);
         expect(reset).toBeGreaterThan(toolDelta);
@@ -1254,7 +1254,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
             } as never,
             endpoint: "http://localhost.invalid/backend-api/codex",
             model: "gpt-5.6-sol",
-            streamMaxRetries: 1,
+            inferenceMaxRetries: 1,
             transport: "websocket",
         });
         const session = await provider.session("<SESSION_ID>", {
@@ -1289,7 +1289,8 @@ describe("Codex CLI mode WebSocket goldens", () => {
 
     it("reports monotonic attempts across WebSocket fallback and SSE retry", async () => {
         const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
-        websocket.beforeOutputFailures = 2;
+        websocket.beforeOutputFailures = 1;
+        websocket.unavailableOnce = true;
         sse.failures = 1;
         const provider = new CodexProvider({
             credential: {
@@ -1298,7 +1299,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
             } as never,
             endpoint: "http://localhost.invalid/backend-api/codex",
             model: "gpt-5.6-sol",
-            streamMaxRetries: 1,
+            inferenceMaxRetries: 3,
             transport: "auto",
         });
         const session = await provider.session("<SESSION_ID>", {
@@ -1338,13 +1339,13 @@ describe("Codex CLI mode WebSocket goldens", () => {
         }
 
         expect(first).toContainEqual({
-            type: "tool_call_start",
+            type: "toolcall_start",
             callId: "custom-call",
             name: "exec",
             vendor: { provider: "codex", type: "custom_tool_call" },
         });
         expect(first).toContainEqual({
-            type: "tool_call_end",
+            type: "toolcall_end",
             callId: "custom-call",
             arguments: "text(true);",
         });
@@ -1700,7 +1701,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
             } as never,
             endpoint: "http://localhost.invalid/backend-api/codex",
             model: "gpt-5.6-sol",
-            streamMaxRetries: 1,
+            inferenceMaxRetries: 1,
             transport: "websocket",
         });
         const session = await provider.session("<SESSION_ID>", {
@@ -2024,7 +2025,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
     it("falls back immediately when WebSocket is unavailable", async () => {
         const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
         websocket.unavailableOnce = true;
-        const session = await codexProvider("auto", 0).session("<SESSION_ID>", {
+        const session = await codexProvider("auto", 1).session("<SESSION_ID>", {
             instructions: prompt.instructions,
             tools: codexCliTools("gpt-5.6-sol"),
         });
@@ -2042,11 +2043,56 @@ describe("Codex CLI mode WebSocket goldens", () => {
         session.destroy();
     });
 
+    it("does not fall back when the shared retry budget is zero", async () => {
+        const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
+        websocket.unavailableOnce = true;
+        const session = await codexProvider("auto", 0).session("<SESSION_ID>", {
+            instructions: prompt.instructions,
+            tools: codexCliTools("gpt-5.6-sol"),
+        });
+        const events = [];
+        for await (const event of session.run({
+            context: { messages: [{ role: "user", content: "do not retry" }] },
+            effort: "low",
+        })) {
+            events.push(event);
+        }
+
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(sse.requests).toEqual([]);
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "error" });
+        session.destroy();
+    });
+
+    it("does not retry SSE after fallback exhausts the shared budget", async () => {
+        const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
+        websocket.unavailableOnce = true;
+        sse.failures = 1;
+        const session = await codexProvider("auto", 1).session("<SESSION_ID>", {
+            instructions: prompt.instructions,
+            tools: codexCliTools("gpt-5.6-sol"),
+        });
+        const events = [];
+        for await (const event of session.run({
+            context: { messages: [{ role: "user", content: "one retry only" }] },
+            effort: "low",
+        })) {
+            events.push(event);
+        }
+
+        expect(
+            events.filter((event) => event.type === "retrying").map((event) => event.attempt),
+        ).toEqual([1]);
+        expect(sse.requests).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "error" });
+        session.destroy();
+    });
+
     it("stops when the turn is aborted as it announces the SSE fallback", async () => {
         const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
         websocket.unavailableOnce = true;
         const controller = new AbortController();
-        const session = await codexProvider("auto", 0).session("<SESSION_ID>", {
+        const session = await codexProvider("auto", 1).session("<SESSION_ID>", {
             instructions: prompt.instructions,
             tools: codexCliTools("gpt-5.6-sol"),
         });
@@ -2088,7 +2134,7 @@ function blockLifecycle(events: readonly { type: string }[]): string[] {
 
 function codexProvider(
     transport: "auto" | "websocket",
-    streamMaxRetries: number,
+    inferenceMaxRetries: number,
     parallelToolCalls?: boolean,
 ): CodexProvider {
     return new CodexProvider({
@@ -2099,7 +2145,7 @@ function codexProvider(
         endpoint: "http://localhost.invalid/backend-api/codex",
         model: "gpt-5.6-sol",
         ...(parallelToolCalls === undefined ? {} : { parallelToolCalls }),
-        streamMaxRetries,
+        inferenceMaxRetries,
         transport,
     });
 }

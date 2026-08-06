@@ -385,6 +385,46 @@ describe("Happy plugin test host", () => {
         }
     });
 
+    it("returns an initializing workspace reservation before the host completes it", async () => {
+        const host = await createHappyPluginTestHost({}, { temporaryDirectory: process.cwd() });
+        hosts.push(host);
+        const workspace = await host.client.workspaces.create({
+            id: "g1l4nup1ppbrfvae0pllq6ul",
+            name: "Initializing workspace",
+            projectId: "project-1",
+        });
+
+        expect(workspace.status).toBe("initializing");
+        const root = host.rootDirectory;
+        await host.close();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("publishes an asynchronous workspace-ready event for a new reservation", async () => {
+        const host = await createHappyPluginTestHost({}, { temporaryDirectory: process.cwd() });
+        hosts.push(host);
+        let resolveReady: (id: string) => void = () => {};
+        const ready = new Promise<string>((resolve) => {
+            resolveReady = resolve;
+        });
+        const subscription = await host.client.workspaces.subscribe((event) => {
+            if (event.type === "workspace_updated" && event.workspace.status === "ready") {
+                resolveReady(event.workspace.id);
+            }
+        });
+
+        const workspace = await host.client.workspaces.create({
+            id: "g1l4nup1ppbrfvae0pllq6ul",
+            name: "Observable workspace",
+            projectId: "project-1",
+        });
+
+        expect(workspace.status).toBe("initializing");
+        await expect(ready).resolves.toBe(workspace.id);
+        await subscription.close();
+    });
+
     it("mirrors production request-error status codes", async () => {
         const host = await createHappyPluginTestHost(
             {

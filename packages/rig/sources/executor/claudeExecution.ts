@@ -17,6 +17,7 @@ export function claudeExecution(options: {
     id: string;
     /** Receives the account usage Claude reports while it is already answering. */
     onAccountUsage?: (usage: ProviderUsage) => void;
+    resolveInferenceMaxRetries?: () => number;
     sessionId?: string;
 }): ExecutorProvider {
     const executable = options.config.executable ?? options.env.RIG_CLAUDE_CODE_EXECUTABLE;
@@ -60,6 +61,9 @@ export function claudeExecution(options: {
             return new ClaudeProvider({
                 credential,
                 env: environment,
+                ...(options.resolveInferenceMaxRetries === undefined
+                    ? {}
+                    : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),
                 ...(options.onAccountUsage === undefined
                     ? {}
                     : {

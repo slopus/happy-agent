@@ -1,11 +1,17 @@
 import { APIConnectionError, APIError } from "@anthropic-ai/sdk/error";
 
-const MAX_RETRIES = 10;
+import { isEmptyResponseError } from "@/core/EmptyResponseError.js";
+
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 32_000;
 
-export function shouldRetryAnthropicBedrock(error: unknown, failedAttempts: number): boolean {
-    if (failedAttempts > MAX_RETRIES) return false;
+export function shouldRetryAnthropicBedrock(
+    error: unknown,
+    failedAttempts: number,
+    maxRetries: number,
+): boolean {
+    if (failedAttempts > maxRetries) return false;
+    if (isEmptyResponseError(error)) return true;
     if (error instanceof APIConnectionError) return true;
     if (!(error instanceof APIError)) return false;
     return (
@@ -62,12 +68,14 @@ export function describeAnthropicBedrockRetry(
     error: unknown,
     failedAttempts: number,
     delay: number,
+    maxRetries: number,
 ): string {
+    if (isEmptyResponseError(error)) return error.message;
     const status =
         error instanceof APIError && error.status !== undefined
             ? `HTTP ${error.status}`
             : "connection failure";
-    return `Anthropic Bedrock ${status}; retrying in ${formatDelay(delay)}, attempt ${failedAttempts} of ${MAX_RETRIES}.`;
+    return `Anthropic Bedrock ${status}; retrying in ${formatDelay(delay)}, attempt ${failedAttempts} of ${maxRetries}.`;
 }
 
 function formatDelay(milliseconds: number): string {

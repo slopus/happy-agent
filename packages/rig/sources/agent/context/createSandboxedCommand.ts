@@ -44,6 +44,7 @@ export async function createSandboxedCommand(options: {
         socks: string;
     };
     path?: string;
+    protectedPaths?: readonly string[];
     shell: string;
 }): Promise<SandboxedCommand> {
     if (options.mode === "full_access") {

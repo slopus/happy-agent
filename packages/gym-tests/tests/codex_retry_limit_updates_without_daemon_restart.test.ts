@@ -28,7 +28,7 @@ describe("Codex retry configuration", () => {
             },
             homeFiles: {
                 ".codex/auth.json": codexAuth(),
-                "happy/config/happy.toml": "[settings]\ncodex_stream_max_retries = 0\n",
+                "happy/config/happy.toml": "[settings]\ninference_max_retries = 0\n",
             },
             modelId: "openai/gpt-5.6-sol",
             providerId: "codex",
@@ -46,13 +46,13 @@ describe("Codex retry configuration", () => {
         );
 
         submit(gym, "/configure");
-        await gym.terminal.waitForText("Codex retries · 0", 30_000);
+        await gym.terminal.waitForText("Inference retries · 0", 30_000);
         for (let index = 0; index < 5; index += 1) gym.terminal.press("down");
         gym.terminal.press("enter");
         await gym.terminal.waitForText("Enter a whole number from 0 to 100.", 30_000);
         gym.terminal.type("2");
         gym.terminal.press("enter");
-        await gym.terminal.waitForText("Codex reconnect attempts set to 2.", 30_000);
+        await gym.terminal.waitForText("Inference retries set to 2.", 30_000);
 
         submit(gym, "Recover this turn after two dropped Codex streams.");
         const recovered = await gym.terminal.waitForText("CODEX_RETRY_LIMIT_RECOVERED", 30_000);

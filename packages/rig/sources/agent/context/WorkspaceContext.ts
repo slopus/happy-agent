@@ -84,7 +84,7 @@ export interface WorkspaceContext {
     archive(workspaceId: string): Promise<AgentWorkspace>;
     addProject(path: string): Promise<AgentProject>;
     create(input: { baseRef?: string; name: string }): Promise<AgentWorkspace>;
-    delegate(request: DelegatedSessionRequest): Promise<DelegatedSession>;
+    delegate(request: DelegatedSessionRequest, signal?: AbortSignal): Promise<DelegatedSession>;
     listProjects(): readonly AgentProject[];
     listSessions(target: {
         projectId?: string;

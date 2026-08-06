@@ -15,6 +15,7 @@ import {
 import type { SessionSecretContext } from "../../secrets/index.js";
 import { getBundledDocsRoot } from "../../execution/getBundledDocsRoot.js";
 import type { PluginContext } from "./PluginContext.js";
+import { resolve } from "node:path";
 
 export interface CreateNodeAgentContextOptions {
     cwd: string;
@@ -22,6 +23,7 @@ export interface CreateNodeAgentContextOptions {
     processManager: NativeProcessManager;
     permissionMode?: PermissionMode;
     plugins?: PluginContext;
+    protectedPaths?: readonly string[];
     secrets?: SessionSecretContext;
     tasks?: TaskContext;
     userInput?: UserInputContext;
@@ -29,10 +31,14 @@ export interface CreateNodeAgentContextOptions {
 }
 
 export function createNodeAgentContext(options: CreateNodeAgentContextOptions): AgentContext {
-    const permissions = createPermissionContext(options.permissionMode ?? DEFAULT_PERMISSION_MODE);
+    const protectedPaths = (options.protectedPaths ?? []).map((path) => resolve(options.cwd, path));
+    const permissions = createPermissionContext(options.permissionMode ?? DEFAULT_PERMISSION_MODE, {
+        protectedPaths,
+    });
     const context: AgentContext = {
         fs: createNodeFileSystemContext(options.cwd, {
             permissionMode: () => permissions.mode,
+            protectedPaths,
         }),
         bash: createNodeBashContext({
             cwd: options.cwd,

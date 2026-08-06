@@ -37,7 +37,7 @@ describe("runLocalProtocolServer database failures", () => {
         ]);
         await writeFile(
             join(configDirectory, "happy.toml"),
-            "[providers]\ndefault_enable = false\n\n[providers.bedrock]\nenabled = true\n",
+            "[p2p]\nenable_iroh = false\n\n[providers]\ndefault_enable = false\n\n[providers.bedrock]\nenabled = true\n",
         );
         await writeFile(join(serverDirectory, "sessions.sqlite"), "not a SQLite database");
         vi.stubEnv("AWS_BEARER_TOKEN_BEDROCK", "test-token");
@@ -138,7 +138,7 @@ async function prepareServer(): Promise<{
     ]);
     await writeFile(
         join(configDirectory, "happy.toml"),
-        "[providers]\ndefault_enable = false\n\n[providers.bedrock]\nenabled = true\n",
+        "[p2p]\nenable_iroh = false\n\n[providers]\ndefault_enable = false\n\n[providers.bedrock]\nenabled = true\n",
     );
     return {
         configDirectory,

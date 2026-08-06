@@ -63,7 +63,7 @@ async function runOnce(status: number, body: string): Promise<string | undefined
         credential,
         endpoint: `http://127.0.0.1:${address.port}`,
         model: "openai.gpt-5.6-sol",
-        streamMaxRetries: 0,
+        inferenceMaxRetries: 0,
     });
     const session = await provider.session("expired-signature-session", {
         instructions: "Test",

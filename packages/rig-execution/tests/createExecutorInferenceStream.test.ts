@@ -191,17 +191,17 @@ describe("createExecutorInferenceStream", () => {
                 yield { type: "reasoning_delta", delta: "considering" } as const;
                 yield { type: "text_delta", delta: "tentative" } as const;
                 yield {
-                    type: "tool_call_start",
+                    type: "toolcall_start",
                     callId: "tentative-tool",
                     name: "Bash",
                 } as const;
                 yield {
-                    type: "tool_call_delta",
+                    type: "toolcall_delta",
                     callId: "tentative-tool",
                     delta: '{"command":"echo tentative"}',
                 } as const;
                 yield {
-                    type: "tool_call_end",
+                    type: "toolcall_end",
                     callId: "tentative-tool",
                     arguments: '{"command":"echo tentative"}',
                 } as const;
@@ -298,13 +298,13 @@ describe("createExecutorInferenceStream", () => {
         const executor = {
             run: async function* () {
                 yield {
-                    type: "tool_call_start",
+                    type: "toolcall_start",
                     callId: "spawn-call",
                     name: "spawn_agent",
                     namespace: "collaboration",
                 } as const;
                 yield {
-                    type: "tool_call_end",
+                    type: "toolcall_end",
                     callId: "spawn-call",
                     arguments: '{"task_name":"inspect","message":"Inspect it."}',
                 } as const;
@@ -343,15 +343,15 @@ describe("createExecutorInferenceStream", () => {
     it("reports a provider-run search without turning it into a tool call to execute", async () => {
         const executor = {
             run: async function* () {
-                yield { type: "server_tool_call_start", callId: "x-1", name: "x_keyword_search" };
-                yield { type: "server_tool_call_delta", callId: "x-1", delta: '{"query":"Cla' };
+                yield { type: "server_toolcall_start", callId: "x-1", name: "x_keyword_search" };
+                yield { type: "server_toolcall_delta", callId: "x-1", delta: '{"query":"Cla' };
                 yield {
-                    type: "server_tool_call_delta",
+                    type: "server_toolcall_delta",
                     callId: "x-1",
                     delta: 'ude Code","limit":"5"}',
                 };
                 yield {
-                    type: "server_tool_call_end",
+                    type: "server_toolcall_end",
                     callId: "x-1",
                     name: "x_keyword_search",
                     arguments: '{"query":"Claude Code","limit":"5"}',

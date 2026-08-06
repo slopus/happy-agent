@@ -18,7 +18,7 @@ export function dropSchemaAddedAfterIdentityMigrations(database: SessionDatabase
                AND (
                    name LIKE 'happy_cloud_%'
                    OR name LIKE 'scope_share%'
-                   OR name IN ('session_share_capabilities', 'session_share_peer_actions')
+                   OR name IN ('p2p_peer_pairings', 'p2p_peers', 'session_share_capabilities', 'session_share_peer_actions')
                )`,
         ),
     )) {

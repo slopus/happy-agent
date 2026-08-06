@@ -1,7 +1,10 @@
 import { createHmac } from "node:crypto";
 
-import tweetnacl from "tweetnacl";
-
+import {
+    NACL_NONCE_BYTES,
+    NACL_SECRETBOX_OVERHEAD_BYTES,
+    nobleSecretBoxOpen,
+} from "../crypto/nobleNaCl.js";
 import type { HappyEncryptionVariant } from "./types.js";
 
 export function decryptHappyBlob(options: {
@@ -10,16 +13,14 @@ export function decryptHappyBlob(options: {
     encryptionVariant: HappyEncryptionVariant;
 }): Uint8Array | undefined {
     const { bundle, encryptionKey, encryptionVariant } = options;
-    if (bundle.length < tweetnacl.secretbox.nonceLength + tweetnacl.secretbox.overheadLength) {
+    if (bundle.length < NACL_NONCE_BYTES + NACL_SECRETBOX_OVERHEAD_BYTES) {
         return undefined;
     }
     const blobKey = deriveBlobKey(encryptionKey, encryptionVariant);
-    return (
-        tweetnacl.secretbox.open(
-            bundle.slice(tweetnacl.secretbox.nonceLength),
-            bundle.slice(0, tweetnacl.secretbox.nonceLength),
-            blobKey,
-        ) ?? undefined
+    return nobleSecretBoxOpen(
+        bundle.slice(NACL_NONCE_BYTES),
+        bundle.slice(0, NACL_NONCE_BYTES),
+        blobKey,
     );
 }
 

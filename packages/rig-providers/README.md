@@ -194,16 +194,36 @@ gives the typed detail callers act on:
 
 ```ts
 type SessionProviderError =
-    | { type: "authentication" }
-    | { type: "out_of_tokens"; resetAt?: number }
-    | { type: "rate_limit"; resetAt?: number }
-    | { type: "server_overloaded" }
-    | { type: "internal_server_error"; requestId?: string }
-    | { type: "unclassified" };
+    | { type: "authentication"; diagnostics?: SessionProviderErrorDiagnostics }
+    | {
+          type: "out_of_tokens";
+          resetAt?: number;
+          diagnostics?: SessionProviderErrorDiagnostics;
+      }
+    | { type: "rate_limit"; resetAt?: number; diagnostics?: SessionProviderErrorDiagnostics }
+    | { type: "server_overloaded"; diagnostics?: SessionProviderErrorDiagnostics }
+    | { type: "internal_server_error"; diagnostics?: SessionProviderErrorDiagnostics }
+    | { type: "empty_response"; diagnostics?: SessionProviderErrorDiagnostics }
+    | { type: "unclassified"; diagnostics?: SessionProviderErrorDiagnostics };
 ```
+
+Diagnostics retain only bounded, non-secret fields: status, provider code and type, request and
+response IDs, upstream message, total attempts, and the provider's retry directive. Raw response
+bodies and arbitrary headers are never retained.
 
 Retries happen inside the provider and are surfaced as `retrying` events. Callers must not
 re-issue a request themselves.
+
+Every provider uses the same configurable inference retry budget. The default is ten retries
+after the initial request (up to eleven total attempts), and callers may supply a live
+`resolveInferenceMaxRetries` resolver so long-lived sessions follow runtime setting changes.
+Retryability and delay schedules remain provider-owned.
+
+An explicitly reported completion with zero output tokens is retried and, if its retry budget is
+exhausted, surfaces as `empty_response`. The reported usage is authoritative even when the
+attempt streamed content; `block_reset` rolls back those deltas and tool-call events before the
+retry, while the attempt's token usage remains reported for accounting. Missing usage is not
+interpreted as zero.
 
 This makes a surfaced error **terminal**: anything retryable was already retried internally, so an
 error reaching you has either exhausted its retries or was never retryable. Do not retry it —

@@ -6,11 +6,14 @@ import type {
 export function responseStreamError(
     event: ResponseErrorEvent | ResponseFailedEvent,
     failureMessage: string,
-): Error & { code?: string } {
+): Error {
     if (event.type === "error") {
         return Object.assign(
             new Error(event.code === null ? event.message : `${event.code}: ${event.message}`),
-            event.code === null ? {} : { code: event.code },
+            {
+                errorType: event.type,
+                ...(event.code === null ? {} : { code: event.code }),
+            },
         );
     }
     return Object.assign(
@@ -19,8 +22,12 @@ export function responseStreamError(
                 event.response.incomplete_details?.reason ??
                 failureMessage,
         ),
-        event.response.error === null || event.response.error === undefined
-            ? {}
-            : { code: event.response.error.code },
+        {
+            errorType: event.type,
+            responseId: event.response.id,
+            ...(event.response.error === null || event.response.error === undefined
+                ? {}
+                : { code: event.response.error.code }),
+        },
     );
 }

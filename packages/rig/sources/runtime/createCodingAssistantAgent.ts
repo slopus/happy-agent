@@ -26,6 +26,7 @@ import { getGlobalAgentsMdPath } from "../config/getGlobalAgentsMdPath.js";
 import { getGlobalSecurityMdPath } from "../config/getGlobalSecurityMdPath.js";
 import { readGlobalAgentsMd } from "../config/readGlobalAgentsMd.js";
 import { readGlobalSecurityMd } from "../config/readGlobalSecurityMd.js";
+import { readProjectSecurityMd } from "../config/readProjectSecurityMd.js";
 import type { ConfigProviders } from "../config/types.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
 import { NativeProcessManager } from "../processes/index.js";
@@ -33,7 +34,7 @@ import { createExecutor } from "../executor/createExecutor.js";
 import { createGymProviderFromEnvironment } from "../executor/createGymProviderFromEnvironment.js";
 import { getBedrockModelRoute } from "../executor/getBedrockModelRoute.js";
 import { modelOpenaiGpt56Sol } from "@slopus/rig-execution";
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { HostedCapability, ServiceTier } from "@slopus/rig-execution";
 import { routeProviderThroughGym } from "../executor/routeProviderThroughGym.js";
 import { goalTools } from "../tools/goals/index.js";
 import type { WorkflowContext } from "../workflows/index.js";
@@ -88,7 +89,13 @@ export interface CreateCodingAssistantAgentOptions {
     permissionMode?: PermissionMode;
     providers?: ConfigProviders;
     providerUsage?: ProviderUsageContext;
-    resolveCodexStreamMaxRetries?: () => number;
+    resolveInferenceMaxRetries?: () => number;
+    /**
+     * The session's own permission mode. Supplied so a decision made per request reads the live
+     * session rather than the context this runtime happens to have been built with, which a model
+     * switch replaces while keeping the executor.
+     */
+    resolvePermissionMode?: () => PermissionMode | undefined;
     serviceTier?: ServiceTier;
     startDate?: string;
     secrets?: SessionSecretContext;
@@ -97,6 +104,7 @@ export interface CreateCodingAssistantAgentOptions {
     subagents?: SubagentContext;
     systemPrompt?: string;
     plugins?: PluginContext;
+    protectedPaths?: readonly string[];
     tasks?: TaskContext;
     userInput?: UserInputContext;
     workflows?: WorkflowContext;
@@ -116,6 +124,7 @@ export function createCodingAssistantAgent(
         ...(options.goals !== undefined ? { goals: options.goals } : {}),
         ...(options.permissionMode !== undefined ? { permissionMode: options.permissionMode } : {}),
         ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
+        ...(options.protectedPaths === undefined ? {} : { protectedPaths: options.protectedPaths }),
         ...(options.secrets !== undefined ? { secrets: options.secrets } : {}),
         ...(options.tasks !== undefined ? { tasks: options.tasks } : {}),
         ...(options.userInput !== undefined ? { userInput: options.userInput } : {}),
@@ -220,14 +229,17 @@ export function createCodingAssistantAgent(
                 ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
                 env,
                 ...(options.identity === undefined ? {} : { identity: options.identity }),
+                ...(options.resolvePermissionMode === undefined
+                    ? {}
+                    : { resolvePermissionMode: options.resolvePermissionMode }),
                 ...(options.onAccountUsage === undefined
                     ? {}
                     : { onAccountUsage: options.onAccountUsage }),
                 providers: options.providers ?? DEFAULT_RIG_CONFIG.providers,
-                ...(options.resolveCodexStreamMaxRetries === undefined
+                ...(options.resolveInferenceMaxRetries === undefined
                     ? {}
                     : {
-                          resolveCodexStreamMaxRetries: options.resolveCodexStreamMaxRetries,
+                          resolveInferenceMaxRetries: options.resolveInferenceMaxRetries,
                       }),
                 sessionId: agentId,
             });
@@ -247,16 +259,27 @@ export function createCodingAssistantAgent(
     // agent's context would let the agent under review widen the reviewer along with itself.
     const createPermissionReviewContext = () =>
         process.env.RIG_GYM_RUNTIME === "just-bash"
-            ? createGymJustBashAgentContext({ permissionMode: "read_only" })
+            ? createGymJustBashAgentContext({
+                  permissionMode: "read_only",
+                  ...(options.protectedPaths === undefined
+                      ? {}
+                      : { protectedPaths: options.protectedPaths }),
+              })
             : options.docker === undefined
               ? createNodeAgentContext({
                     cwd: options.cwd,
                     permissionMode: "read_only",
                     processManager,
+                    ...(options.protectedPaths === undefined
+                        ? {}
+                        : { protectedPaths: options.protectedPaths }),
                 })
               : createDockerAgentContext({
                     docker: options.docker,
                     permissionMode: "read_only",
+                    ...(options.protectedPaths === undefined
+                        ? {}
+                        : { protectedPaths: options.protectedPaths }),
                     sessionId: `${options.sessionId ?? options.agentId ?? "standalone"}:auto-reviewer`,
                 });
     if (nativeProvider instanceof Executor) nativeProvider.selectProvider(providerId);
@@ -267,7 +290,6 @@ export function createCodingAssistantAgent(
     }
     const geminiApiKey = resolveGeminiApiKey(env);
     const baseTools = selectToolsForModel({
-        ...(geminiApiKey === undefined ? {} : { geminiApiKey }),
         imageGeneration:
             nativeProvider instanceof Executor ? imageGenerationProviders(nativeProvider) : [],
         model,
@@ -307,6 +329,7 @@ export function createCodingAssistantAgent(
     const toolsWithoutGoals = [
         ...baseTools,
         ...selectCommonToolsForModel({
+            ...(geminiApiKey === undefined ? {} : { geminiApiKey }),
             hasWorkspaceContext: options.workspaces !== undefined,
             isSubagent: options.isSubagent === true,
         }),
@@ -335,7 +358,21 @@ export function createCodingAssistantAgent(
                 id: `${agentId}:auto-reviewer`,
                 model: provider.reviewerModel ?? model,
                 provider,
-                readSecurityPolicy: () => readGlobalSecurityMd(getGlobalSecurityMdPath(env)),
+                readSecurityPolicy: async () => {
+                    const [globalPolicy, projectPolicy] = await Promise.all([
+                        readGlobalSecurityMd(getGlobalSecurityMdPath(env)),
+                        readProjectSecurityMd(context.fs),
+                    ]);
+                    const policies = [
+                        ...(globalPolicy === undefined
+                            ? []
+                            : [`## Global SECURITY.md\n\n${globalPolicy}`]),
+                        ...(projectPolicy === undefined
+                            ? []
+                            : [`## Project AGENTS_SECURITY.md\n\n${projectPolicy}`]),
+                    ];
+                    return policies.length === 0 ? undefined : policies.join("\n\n");
+                },
                 ...(options.startDate === undefined ? {} : { startDate: options.startDate }),
                 tools: tools.filter((tool) => tool.availableToPermissionReviewer),
             }),

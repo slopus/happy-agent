@@ -36,6 +36,24 @@ describe("Grok hosted search goldens", () => {
         ]);
     });
 
+    // A hosted search is executed by the provider during the response, so Rig can never intercept
+    // the call. Declining to declare it is the whole enforcement, and it is read per request so a
+    // permission change lands on the next request rather than the next session.
+    it("withholds hosted search from a request that is not allowed to reach the network", async () => {
+        const captured = await captureRequest({ hostedTools: () => [] });
+        expect(captured.tools).toEqual([
+            { type: "function", name: "read_file", description: "Read a file." },
+        ]);
+    });
+
+    it("declares hosted search whenever the request is allowed to reach the network", async () => {
+        const captured = await captureRequest({ hostedTools: () => grok_hosted_tools });
+        expect(captured.tools).toEqual([
+            { type: "function", name: "read_file", description: "Read a file." },
+            { type: "web_search" },
+            { type: "x_search" },
+        ]);
+    });
     it("sends no hosted tools when a session does not ask for them", async () => {
         const captured = await captureRequest({});
         expect(captured.tools).toEqual([
@@ -59,13 +77,11 @@ describe("Grok hosted search goldens", () => {
         const { events, result } = await replay(golden);
 
         expect(
-            events.flatMap((event) =>
-                event.type === "server_tool_call_start" ? [event.name] : [],
-            ),
+            events.flatMap((event) => (event.type === "server_toolcall_start" ? [event.name] : [])),
         ).toEqual(["x_keyword_search", "x_semantic_search"]);
         expect(
             events.flatMap((event) =>
-                event.type === "server_tool_call_end" ? [JSON.parse(event.arguments)] : [],
+                event.type === "server_toolcall_end" ? [JSON.parse(event.arguments)] : [],
             ),
         ).toEqual([
             { query: "Claude Code", limit: "5", mode: "Latest" },
@@ -73,7 +89,7 @@ describe("Grok hosted search goldens", () => {
         ]);
 
         // The client is never asked to run these, so the turn is a finished answer, not a tool loop.
-        expect(events.filter((event) => event.type === "tool_call_start")).toEqual([]);
+        expect(events.filter((event) => event.type === "toolcall_start")).toEqual([]);
         expect(result.toolCalls).toEqual([]);
         expect(result.stopReason).toBe("stop");
         expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
@@ -85,11 +101,26 @@ describe("Grok hosted search goldens", () => {
         const { events, result } = await replay(golden);
 
         expect(
-            events.flatMap((event) =>
-                event.type === "server_tool_call_start" ? [event.name] : [],
-            ),
+            events.flatMap((event) => (event.type === "server_toolcall_start" ? [event.name] : [])),
         ).toEqual(["web_search"]);
-        const ended = events.find((event) => event.type === "server_tool_call_end");
+        const ended = events.find((event) => event.type === "server_toolcall_end");
+        const action = JSON.parse(ended!.arguments as string);
+        expect(action).toMatchObject({
+            type: "search",
+            query: "Node.js current stable version",
+        });
+        // The sources xAI consulted ride along in the same payload. A client renders them, so
+        // losing them here would silently cost every surface its citations.
+        expect(action.sources).toEqual([
+            { type: "url", url: "https://nodejs.org/en/about/previous-releases" },
+            { type: "url", url: "https://nodejs.org/en" },
+            { type: "url", url: "https://en.wikipedia.org/wiki/Node.js" },
+            { type: "url", url: "https://nodejs.org/en/download/current" },
+            {
+                type: "url",
+                url: "https://www.herodevs.com/blog-posts/node-js-end-of-life-dates-you-should-be-aware-of",
+            },
+        ]);
         expect(JSON.parse(ended!.arguments as string)).toMatchObject({
             type: "search",
             query: "Node.js current stable version",
@@ -137,7 +168,7 @@ describe("Grok hosted search goldens", () => {
                     output_index: 0,
                     item: {
                         type: "custom_tool_call",
-                        call_id: "xs-1",
+                        call_id: "xs_1",
                         name: "x_keyword_search",
                         input: "",
                     },
@@ -159,7 +190,6 @@ describe("Grok hosted search goldens", () => {
             {
                 failureMessage: "unused",
                 vendor: "grok",
-                clientToolNames: new Set(["read_file"]),
                 hostedToolNames: new Set(["x_search"]),
             },
         );
@@ -171,8 +201,8 @@ describe("Grok hosted search goldens", () => {
 
         // Its completion is what becomes a history row, so a truncated turn must still emit one.
         expect(events).toContainEqual({
-            type: "server_tool_call_end",
-            callId: "xs-1",
+            type: "server_toolcall_end",
+            callId: "xs_1",
             name: "x_keyword_search",
             arguments: '{"query":"Claude Code"',
         });
@@ -213,7 +243,6 @@ describe("Grok hosted search goldens", () => {
                 },
             ],
             {
-                clientToolNames: new Set(["x_keyword_search"]),
                 hostedToolNames: new Set(["x_search"]),
             },
         );
@@ -221,11 +250,40 @@ describe("Grok hosted search goldens", () => {
         expect(result.toolCalls).toEqual([]);
         expect(result.stopReason).toBe("stop");
         expect(events).toContainEqual({
-            type: "server_tool_call_end",
+            type: "server_toolcall_end",
             callId: "xs_call-1",
             name: "x_keyword_search",
             arguments: '{"query":"Claude Code"}',
         });
+    });
+
+    it("refuses to name a hosted call from an item that does not carry the fields it should", async () => {
+        // The marker says hosted, so only reading the payload as the protocol describes it keeps a
+        // mistyped name out of the session log, where it would sit in a field every reader trusts
+        // to be text. Nothing here can be classified, so the client answers it and stalls visibly.
+        const { events, result } = await replayEvents(
+            [
+                {
+                    type: "response.output_item.done",
+                    output_index: 0,
+                    item: {
+                        type: "custom_tool_call",
+                        call_id: "xs_call-1",
+                        name: 17,
+                        input: '{"query":"anything"}',
+                    },
+                },
+                {
+                    type: "response.completed",
+                    response: { output: [], usage: { total_tokens: 1 } },
+                },
+            ],
+            { hostedToolNames: new Set(["x_search"]) },
+        );
+
+        expect(events.some((event) => event.type.startsWith("server_tool_call"))).toBe(false);
+        expect(result.stopReason).toBe("tool_use");
+        expect(result.toolCalls.map((call) => call.callId)).toEqual(["xs_call-1"]);
     });
 
     it("still runs a client tool the provider did not mark as its own", async () => {
@@ -247,12 +305,40 @@ describe("Grok hosted search goldens", () => {
                 },
             ],
             {
-                clientToolNames: new Set(["format_document"]),
                 hostedToolNames: new Set(["x_search"]),
             },
         );
 
         expect(result.toolCalls.map((call) => call.name)).toEqual(["format_document"]);
+        expect(result.stopReason).toBe("tool_use");
+        expect(events.some((event) => event.type.startsWith("server_tool_call"))).toBe(false);
+    });
+
+    // A name nobody declared is a model mistake, and the model has to hear about it. Reading it
+    // as work the provider already did would report a search that never happened and leave the
+    // model waiting for an answer to a call Rig deliberately never executes.
+    it("hands an invented tool name back to the client rather than calling it the provider's", async () => {
+        const { events, result } = await replayEvents(
+            [
+                {
+                    type: "response.output_item.done",
+                    output_index: 0,
+                    item: {
+                        type: "custom_tool_call",
+                        call_id: "call-1",
+                        name: "search_the_internet",
+                        input: '{"query":"anything"}',
+                    },
+                },
+                {
+                    type: "response.completed",
+                    response: { output: [], usage: { total_tokens: 1 } },
+                },
+            ],
+            { hostedToolNames: new Set(["web_search", "x_search"]) },
+        );
+
+        expect(result.toolCalls.map((call) => call.name)).toEqual(["search_the_internet"]);
         expect(result.stopReason).toBe("tool_use");
         expect(events.some((event) => event.type.startsWith("server_tool_call"))).toBe(false);
     });
@@ -286,7 +372,7 @@ describe("Grok hosted search goldens", () => {
                     response: { output: [], usage: { total_tokens: 1 } },
                 },
             ],
-            { clientToolNames: new Set(["read_file"]) },
+            {},
         );
 
         expect(result.toolCalls.map((call) => call.name)).toEqual(["x_keyword_search"]);
@@ -316,11 +402,11 @@ describe("Grok hosted search goldens", () => {
         );
 
         expect(events).toContainEqual({
-            type: "server_tool_call_start",
+            type: "server_toolcall_start",
             callId: "ws-1",
             name: "web_search",
         });
-        const ended = events.find((event) => event.type === "server_tool_call_end");
+        const ended = events.find((event) => event.type === "server_toolcall_end");
         expect(JSON.parse(ended!.arguments as string)).toMatchObject({ query: "Node.js release" });
         expect(result.toolCalls).toEqual([]);
         expect(result.stopReason).toBe("stop");
@@ -334,7 +420,7 @@ describe("Grok hosted search goldens", () => {
                     output_index: 0,
                     item: {
                         type: "custom_tool_call",
-                        call_id: "xs-1",
+                        call_id: "xs_1",
                         name: "x_keyword_search",
                         input: "",
                     },
@@ -345,7 +431,7 @@ describe("Grok hosted search goldens", () => {
                         output: [
                             {
                                 type: "custom_tool_call",
-                                call_id: "xs-1",
+                                call_id: "xs_1",
                                 name: "x_keyword_search",
                                 input: '{"query":"Claude Code","limit":"5"}',
                             },
@@ -355,17 +441,16 @@ describe("Grok hosted search goldens", () => {
                 },
             ],
             {
-                clientToolNames: new Set(["read_file"]),
                 hostedToolNames: new Set(["x_search"]),
             },
         );
 
         // Exactly one pair, carrying the arguments the terminal payload settled.
-        expect(events.filter((event) => event.type === "server_tool_call_start")).toHaveLength(1);
-        expect(events.filter((event) => event.type === "server_tool_call_end")).toEqual([
+        expect(events.filter((event) => event.type === "server_toolcall_start")).toHaveLength(1);
+        expect(events.filter((event) => event.type === "server_toolcall_end")).toEqual([
             {
-                type: "server_tool_call_end",
-                callId: "xs-1",
+                type: "server_toolcall_end",
+                callId: "xs_1",
                 name: "x_keyword_search",
                 arguments: '{"query":"Claude Code","limit":"5"}',
             },
@@ -409,7 +494,7 @@ describe("Grok hosted search goldens", () => {
             next = await mapped.next();
         }
         expect(next.value.toolCalls.map((call) => call.name)).toEqual(["grammar_tool"]);
-        expect(events.some((event) => event.type === "server_tool_call_start")).toBe(false);
+        expect(events.some((event) => event.type === "server_toolcall_start")).toBe(false);
     });
 });
 
@@ -422,10 +507,7 @@ const readFileTool: SessionTool = {
 /** Maps a hand-built event sequence and returns both the events and the run result. */
 async function replayEvents(
     events: readonly unknown[],
-    options: {
-        clientToolNames?: ReadonlySet<string>;
-        hostedToolNames?: ReadonlySet<string>;
-    },
+    options: { hostedToolNames?: ReadonlySet<string> },
 ) {
     const mapped = mapOpenAIResponseStream(stream(events), {
         failureMessage: "unused",
@@ -443,16 +525,10 @@ async function replayEvents(
 
 async function replay(golden: any) {
     const events: SessionEvent[] = [];
-    const clientToolNames = new Set<string>(
-        golden.request.tools.flatMap((tool: { name?: string }) =>
-            tool.name === undefined ? [] : [tool.name],
-        ),
-    );
     const mapped = mapOpenAIResponseStream(stream(golden.response.events), {
         failureMessage: "Captured Grok response failed.",
         requireTerminalEvent: true,
         vendor: "grok",
-        clientToolNames,
         hostedToolNames: new Set(["web_search", "x_search"]),
     });
     let next = await mapped.next();
@@ -465,9 +541,15 @@ async function replay(golden: any) {
 
 /** Runs one Grok session against a local endpoint and returns the request body it sent. */
 async function captureRequest(options: {
-    hostedTools?: readonly SessionTool[];
+    hostedTools?: readonly SessionTool[] | (() => readonly SessionTool[]);
     compaction?: boolean;
 }) {
+    const hostedTools =
+        typeof options.hostedTools === "function"
+            ? options.hostedTools
+            : options.hostedTools === undefined
+              ? undefined
+              : () => options.hostedTools as readonly SessionTool[];
     let capturedBody: any;
     const summary = `<summary>${"Summarized session state. ".repeat(40)}</summary>`;
     const server = createServer(async (request, response) => {
@@ -502,7 +584,7 @@ async function captureRequest(options: {
             credential,
             endpoint: `http://127.0.0.1:${address.port}/v1`,
             model: "grok-4.5",
-            ...(options.hostedTools === undefined ? {} : { hostedTools: options.hostedTools }),
+            ...(hostedTools === undefined ? {} : { hostedTools }),
         });
         const session = await provider.session("<SESSION_ID>", {
             instructions: "System prompt.",

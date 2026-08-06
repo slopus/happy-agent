@@ -134,6 +134,13 @@ export async function createSystemPrompt(
         parts.push(
             createPermissionInstructions(options.context.permissions.mode, options.tools ?? []),
         );
+        if (options.context.permissions.protectedPaths.length > 0) {
+            parts.push(
+                `These workspace paths require Full access to modify: ${options.context.permissions.protectedPaths
+                    .map((path) => JSON.stringify(path))
+                    .join(", ")}.`,
+            );
+        }
     }
 
     if (options.context.secrets !== undefined) {

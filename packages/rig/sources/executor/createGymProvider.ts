@@ -6,6 +6,7 @@ import {
     defineProvider,
     type AssistantMessage,
     type Context,
+    type HostedCapability,
     type Model,
     type Provider,
     type ProviderAssistantMessageEvent,
@@ -27,6 +28,8 @@ export interface CreateGymProviderOptions {
     endpoint: string;
     extendProfilePromptContext?: Provider["extendProfilePromptContext"];
     fetch?: typeof globalThis.fetch;
+    /** The real provider's answer, forwarded so a gym test reads Rig's decision and not a copy. */
+    hostedCapabilitiesForRequest?: () => readonly HostedCapability[];
     models?: readonly Model[];
     /** Receives account usage a scripted response reports, as a real vendor would. */
     onAccountUsage?: (usage: ProviderUsage) => void;
@@ -135,9 +138,11 @@ export function createGymProvider(options: CreateGymProviderOptions) {
                                   )
                                   .join("\n\n"),
                           });
+                const hostedSearches = options.hostedCapabilitiesForRequest?.() ?? [];
                 const response = await request(options.endpoint, {
                     body: JSON.stringify({
                         context: preparedContext,
+                        hostedSearches,
                         modelId: model.id,
                         options: streamOptions,
                         providerSessionGeneration,
@@ -221,8 +226,10 @@ export function createGymProvider(options: CreateGymProviderOptions) {
                             delta: serverToolCall.arguments,
                         };
                     }
-                    if (reply.serverToolCallDeltaDelayMs !== undefined) {
-                        await delay(reply.serverToolCallDeltaDelayMs, streamOptions);
+                    const beforeEnd =
+                        reply.serverToolCallEndDelayMs ?? reply.serverToolCallDeltaDelayMs;
+                    if (beforeEnd !== undefined) {
+                        await delay(beforeEnd, streamOptions);
                     }
                     yield {
                         type: "server_toolcall_end",

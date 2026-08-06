@@ -244,14 +244,14 @@ async function run(
 function collectToolCalls(events: readonly SessionEvent[]): SessionToolCall[] {
     const calls = new Map<string, SessionToolCall>();
     for (const event of events) {
-        if (event.type === "tool_call_start") {
+        if (event.type === "toolcall_start") {
             calls.set(event.callId, {
                 callId: event.callId,
                 name: event.name,
                 arguments: "",
                 vendor: event.vendor,
             });
-        } else if (event.type === "tool_call_delta") {
+        } else if (event.type === "toolcall_delta") {
             const current = calls.get(event.callId);
             if (current !== undefined) {
                 calls.set(event.callId, {
@@ -259,7 +259,7 @@ function collectToolCalls(events: readonly SessionEvent[]): SessionToolCall[] {
                     arguments: current.arguments + event.delta,
                 });
             }
-        } else if (event.type === "tool_call_end") {
+        } else if (event.type === "toolcall_end") {
             const current = calls.get(event.callId);
             if (current !== undefined) {
                 calls.set(event.callId, { ...current, arguments: event.arguments });

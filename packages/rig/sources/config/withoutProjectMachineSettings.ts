@@ -4,6 +4,7 @@ export function withoutProjectMachineSettings(config: PartialRigConfig): Partial
     const {
         defaults: projectDefaults,
         docker: _docker,
+        p2p: _p2p,
         providerDefaultEnable: _providerDefaultEnable,
         providers: _providers,
         settings: projectSettings,
@@ -11,7 +12,7 @@ export function withoutProjectMachineSettings(config: PartialRigConfig): Partial
     } = config;
     const { permissionMode: _permissionMode, ...defaults } = projectDefaults ?? {};
     const {
-        codexStreamMaxRetries: _codexStreamMaxRetries,
+        inferenceMaxRetries: _inferenceMaxRetries,
         daemonHeapSnapshots: _daemonHeapSnapshots,
         durableGlobalEventQueue: _durableGlobalEventQueue,
         happyIntegration: _happyIntegration,

@@ -63,7 +63,7 @@ describeLive("CodexProvider live", () => {
 
                 expect(
                     events
-                        .filter((event) => event.type === "tool_call_start")
+                        .filter((event) => event.type === "toolcall_start")
                         .map((event) => event.name)
                         .sort(),
                 ).toEqual(["read_alpha", "read_beta"]);

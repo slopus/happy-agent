@@ -2,10 +2,11 @@ import { BaseProvider } from "@/core/BaseProvider.js";
 import type { BaseSession } from "@/core/BaseSession.js";
 import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
+import type { InferenceRetryOptions } from "@/core/inferenceRetrySettings.js";
 import { ResponsesSession } from "@/protocol/responses/ResponsesSession.js";
 import type { ResponsesCapabilities } from "@/protocol/responses/ResponsesCapabilities.js";
 
-export interface ResponsesProviderOptions {
+export interface ResponsesProviderOptions extends InferenceRetryOptions {
     apiKey: string;
     endpoint: string;
     model?: string;

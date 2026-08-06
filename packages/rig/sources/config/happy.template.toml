@@ -11,7 +11,7 @@
 # instructions = "Additional instructions for every Rig session."
 
 # [settings]
-# codex_stream_max_retries = 5
+# inference_max_retries = 10
 # compact_completed_turns = false
 # completion_chime = false
 # daemon_heap_snapshots = false
@@ -43,6 +43,25 @@
 # allowed_ports = [443]
 # allowed_loopback_ports = [3000]
 # allow_local_binding = false
+
+# Existing workspace-relative files and directories that require Full access to modify.
+# Missing paths are ignored until the session is recreated.
+# [permissions]
+# protected_paths = ["master-plans", ".env.production"]
+
+# [p2p]
+# name = "My Mac"
+# enable_direct = false
+# enable_iroh = true
+# enable_ssh = false
+# expose_api = false
+# role = "primary"
+#
+# [p2p.direct]
+# listen = "0.0.0.0:7443"
+#
+# [p2p.iroh]
+# relay_url = "https://relay.example.com"
 
 # [presence]
 # current = "available"

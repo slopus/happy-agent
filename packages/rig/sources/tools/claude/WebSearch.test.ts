@@ -99,9 +99,73 @@ describe("Claude Code WebSearch tool", () => {
         ).resolves.toMatchObject({ query: "current docs 2026" });
     });
 
+    // Claude Code forces the helper to call its search. This transport is the Agent SDK, which
+    // has no way to force a tool choice, so the guarantee is kept at the other end: a helper that
+    // answered from memory produced no search, and saying otherwise would cite pages that were
+    // never consulted.
+    it("refuses to report a search the helper never performed", async () => {
+        const tool = createClaudeWebSearchTool();
+        const harness = createJustBashToolHarness();
+
+        await expect(
+            tool.execute({ query: "current docs 2026" }, harness.context, {
+                model: modelAnthropicFable5,
+                provider: providerWithModels(
+                    [modelAnthropicFable5],
+                    vi.fn().mockResolvedValue({
+                        content: [{ type: "text", text: "I already know this." }],
+                    }),
+                ),
+            }),
+        ).rejects.toThrow(/answered without searching/u);
+    });
+
+    // A search that ran and failed is not a search that never ran. Deciding from the results alone
+    // could not tell those apart — an error carries no pages either — and reporting the wrong one
+    // would send the model looking for a memory answer that never happened, instead of the reason.
+    it("reports a failed search as the failure it was, not as one that never ran", async () => {
+        const tool = createClaudeWebSearchTool();
+        const harness = createJustBashToolHarness();
+
+        await expect(
+            tool.execute({ query: "current docs 2026" }, harness.context, {
+                model: modelAnthropicFable5,
+                provider: providerWithModels(
+                    [modelAnthropicFable5],
+                    vi.fn().mockResolvedValue({
+                        content: [
+                            { type: "server_tool_use", id: "srvtoolu_1", name: "web_search" },
+                            {
+                                type: "web_search_tool_result",
+                                tool_use_id: "srvtoolu_1",
+                                content: {
+                                    type: "web_search_tool_result_error",
+                                    error_code: "max_uses_exceeded",
+                                },
+                            },
+                        ],
+                    }),
+                ),
+            }),
+        ).resolves.toMatchObject({
+            query: "current docs 2026",
+            results: ["Web search error: max_uses_exceeded"],
+        });
+    });
+
     it("uses the selected provider's auxiliary query with the preferred model", async () => {
+        // A real helper response carries the search it performed. Text alone would mean it
+        // answered from memory, which is the one thing this tool must not report as a search.
         const runClaudeAuxiliaryQuery = vi.fn().mockResolvedValue({
-            content: [{ type: "text", text: "Current docs." }],
+            content: [
+                { type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: {} },
+                {
+                    type: "web_search_tool_result",
+                    tool_use_id: "srvtoolu_1",
+                    content: [{ title: "Docs", url: "https://example.com/docs" }],
+                },
+                { type: "text", text: "Current docs." },
+            ],
         });
         const tool = createClaudeWebSearchTool();
         const harness = createJustBashToolHarness();

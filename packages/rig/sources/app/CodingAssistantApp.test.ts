@@ -8688,7 +8688,7 @@ describe("CodingAssistantApp", () => {
             printToConsole: false,
         });
         const settingsChanges: Array<{
-            codexStreamMaxRetries: number;
+            inferenceMaxRetries: number;
             compactCompletedTurns: boolean;
             completionChime: boolean;
             durableGlobalEventQueue: boolean;
@@ -8719,14 +8719,14 @@ describe("CodingAssistantApp", () => {
         expect(menu).toContain("Show token status");
         expect(menu).toContain("Enable completion chime");
         expect(menu).toContain("Enable durable event queue");
-        expect(menu).toContain("Codex retries · 5");
+        expect(menu).toContain("Inference retries · 10");
 
         app.handleInput("\r");
 
         const rendered = stripAnsi(app.render(100).join("\n"));
         expect(settingsChanges).toEqual([
             {
-                codexStreamMaxRetries: 5,
+                inferenceMaxRetries: 10,
                 compactCompletedTurns: false,
                 completionChime: false,
                 durableGlobalEventQueue: false,
@@ -8744,7 +8744,7 @@ describe("CodingAssistantApp", () => {
         app.handleInput("\r");
 
         expect(settingsChanges.at(-1)).toEqual({
-            codexStreamMaxRetries: 5,
+            inferenceMaxRetries: 10,
             compactCompletedTurns: false,
             completionChime: true,
             durableGlobalEventQueue: false,
@@ -8760,7 +8760,7 @@ describe("CodingAssistantApp", () => {
         app.handleInput("\r");
 
         expect(settingsChanges.at(-1)).toEqual({
-            codexStreamMaxRetries: 5,
+            inferenceMaxRetries: 10,
             compactCompletedTurns: false,
             completionChime: true,
             durableGlobalEventQueue: true,
@@ -8780,16 +8780,14 @@ describe("CodingAssistantApp", () => {
         await Promise.resolve();
 
         expect(settingsChanges.at(-1)).toEqual({
-            codexStreamMaxRetries: 8,
+            inferenceMaxRetries: 8,
             compactCompletedTurns: false,
             completionChime: true,
             durableGlobalEventQueue: true,
             showReasoning: true,
             showUsage: false,
         });
-        expect(stripAnsi(app.render(100).join("\n"))).toContain(
-            "Codex reconnect attempts set to 8.",
-        );
+        expect(stripAnsi(app.render(100).join("\n"))).toContain("Inference retries set to 8.");
     });
 
     it("changes the session permission mode from the permissions menu", async () => {
@@ -9541,7 +9539,6 @@ describe("CodingAssistantApp", () => {
         expect(rendered).toContain("Sent from another terminal");
         expect(rendered).not.toContain("Unsent from the last terminal");
     });
-
     it("shows a provider-run search live and keeps it as history when it finishes", () => {
         const model = defineModel({
             id: "xai/grok-test",

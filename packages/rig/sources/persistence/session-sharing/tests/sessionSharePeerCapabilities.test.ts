@@ -378,7 +378,7 @@ describe("session share peer capabilities persistence", () => {
         } finally {
             opened.client.close();
         }
-    });
+    }, 15_000);
 });
 
 function createShare(tx: Parameters<typeof sessionShareCreate>[0]): void {

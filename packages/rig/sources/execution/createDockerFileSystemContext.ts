@@ -34,7 +34,13 @@ export function createDockerFileSystemContext(
     return {
         cwd,
         async chmod(path, mode) {
-            const target = await assertDockerWritePath(cwd, path, permissions.mode, resolvePath);
+            const target = await assertDockerWritePath(
+                cwd,
+                path,
+                permissions.mode,
+                resolvePath,
+                permissions.protectedPaths,
+            );
             await successfulExec(environment, ["chmod", (mode & 0o7777).toString(8), target]);
         },
         async exists(path) {
@@ -80,7 +86,13 @@ export function createDockerFileSystemContext(
             return parseDockerLstatMany(result.stdout, targets);
         },
         async mkdir(path, options) {
-            const target = await assertDockerWritePath(cwd, path, permissions.mode, resolvePath);
+            const target = await assertDockerWritePath(
+                cwd,
+                path,
+                permissions.mode,
+                resolvePath,
+                permissions.protectedPaths,
+            );
             await successfulExec(environment, [
                 "mkdir",
                 ...(options?.recursive === true ? ["-p"] : []),
@@ -94,12 +106,14 @@ export function createDockerFileSystemContext(
                 source,
                 permissions.mode,
                 resolvePath,
+                permissions.protectedPaths,
             );
             const destinationTarget = await assertDockerWritePath(
                 cwd,
                 destination,
                 permissions.mode,
                 resolvePath,
+                permissions.protectedPaths,
             );
             await successfulExec(environment, ["mv", "--", sourceTarget, destinationTarget]);
         },
@@ -184,7 +198,13 @@ export function createDockerFileSystemContext(
             return { entries: entries.slice(0, options.limit), hasMore };
         },
         async rm(path, options) {
-            const target = await assertDockerWritePath(cwd, path, permissions.mode, resolvePath);
+            const target = await assertDockerWritePath(
+                cwd,
+                path,
+                permissions.mode,
+                resolvePath,
+                permissions.protectedPaths,
+            );
             await successfulExec(environment, [
                 "rm",
                 ...(options?.recursive === true ? ["-r"] : []),
@@ -194,7 +214,13 @@ export function createDockerFileSystemContext(
             ]);
         },
         async setModificationTime(path, mtimeMs) {
-            const target = await assertDockerWritePath(cwd, path, permissions.mode, resolvePath);
+            const target = await assertDockerWritePath(
+                cwd,
+                path,
+                permissions.mode,
+                resolvePath,
+                permissions.protectedPaths,
+            );
             await successfulExec(environment, [
                 "env",
                 "TZ=UTC0",
@@ -227,7 +253,13 @@ export function createDockerFileSystemContext(
             }
         },
         async writeFile(path, content) {
-            const target = await assertDockerWritePath(cwd, path, permissions.mode, resolvePath);
+            const target = await assertDockerWritePath(
+                cwd,
+                path,
+                permissions.mode,
+                resolvePath,
+                permissions.protectedPaths,
+            );
             const parent = posix.dirname(target);
             await successfulExec(environment, ["mkdir", "-p", "--", parent]);
             await successfulExec(environment, ["/bin/sh", "-c", 'cat > "$1"', "rig", target], {

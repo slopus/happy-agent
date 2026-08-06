@@ -1,5 +1,5 @@
 import type { Message } from "../types.js";
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { HostedCapability, ServiceTier } from "@slopus/rig-execution";
 
 export type SubagentRunStatus = "aborted" | "completed" | "error" | "running" | "suspended";
 export type SubagentContextMode = "parent" | "task";
@@ -27,6 +27,11 @@ export interface ManagedSubagent {
 
 export interface SpawnSubagentRequest {
     background?: boolean;
+    /**
+     * Provider-executed searches to grant this child. Rig cannot review one of these once the
+     * child holds it, so the spawn is where it is reviewed and the grant lasts the child's life.
+     */
+    capabilities?: readonly HostedCapability[];
     contextMode?: SubagentContextMode;
     contextMessages?: readonly Message[];
     description: string;

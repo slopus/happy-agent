@@ -1,4 +1,13 @@
 import { BaseSession } from "@/core/BaseSession.js";
+import {
+    createInferenceMaxRetriesResolver,
+    type InferenceRetryOptions,
+} from "@/core/inferenceRetrySettings.js";
+import {
+    EmptyResponseError,
+    emptyResponseDoneEvent,
+    isEmptyResponseError,
+} from "@/core/EmptyResponseError.js";
 import type { SessionCacheUsage } from "@/core/SessionCacheUsage.js";
 import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
 import type { SessionContext } from "@/core/SessionContext.js";
@@ -10,9 +19,8 @@ import type { SessionOptions } from "@/core/SessionOptions.js";
 import type { SessionModelConfiguration } from "@/core/SessionModelConfiguration.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import type { GrokCredential } from "@/vendors/VendorCredential.js";
-import { GROK_INFERENCE_MAX_RETRIES } from "@/vendors/grok/impl/grokConstants.js";
 import { GrokConnection } from "@/vendors/grok/impl/GrokConnection.js";
-import { classifyGrokError } from "@/vendors/grok/errors/grokErrors.js";
+import { classifyGrokError, classifyGrokProviderError } from "@/vendors/grok/errors/grokErrors.js";
 import { countGrokUserQueries } from "@/vendors/grok/impl/grokMessages.js";
 import { createGrokCompactionContinuation } from "@/vendors/grok/impl/grokCompaction.js";
 import { createGrokCompactionPrompt } from "@/vendors/grok/impl/grokCompaction.js";
@@ -38,11 +46,14 @@ import { resolveGrokModelId } from "@/vendors/grok/impl/resolveGrokModelId.js";
 import { stripGrokContextImages } from "@/vendors/grok/impl/stripGrokContextImages.js";
 import { GrokSessionCredential } from "@/vendors/grok/GrokSessionCredential.js";
 
-export interface GrokSessionOptions extends SessionOptions {
+export interface GrokSessionOptions extends SessionOptions, InferenceRetryOptions {
     credential: GrokCredential;
     endpoint: string;
-    /** Tools Grok runs on its own backend, sent alongside the tools Rig executes. */
-    hostedTools?: readonly SessionTool[];
+    /**
+     * Tools Grok runs on its own backend, sent alongside the tools Rig executes. Asked for once
+     * per request, so what the caller may declare can narrow without a new session.
+     */
+    hostedTools?: () => readonly SessionTool[];
     model?: string;
     /** Identifies this client upstream instead of reproducing the grok-build user agent. */
     userAgent?: string;
@@ -51,7 +62,7 @@ export interface GrokSessionOptions extends SessionOptions {
 export class GrokSession extends BaseSession {
     readonly credential: GrokCredential;
     readonly endpoint: string;
-    readonly hostedTools: readonly SessionTool[];
+    readonly hostedTools: () => readonly SessionTool[];
     readonly model: string | undefined;
     readonly tools: readonly SessionTool[];
 
@@ -63,6 +74,10 @@ export class GrokSession extends BaseSession {
         | undefined;
     private turnIndex: number;
     private readonly userAgent: string | undefined;
+    private readonly resolveInferenceMaxRetries: () => number;
+    private readonly emptyResponseRetryWait: NonNullable<
+        InferenceRetryOptions["waitForInferenceRetry"]
+    >;
 
     constructor(id: string, options: GrokSessionOptions) {
         super(id);
@@ -70,12 +85,16 @@ export class GrokSession extends BaseSession {
         this.context = { instructions: options.instructions, messages: [] };
         this.turnIndex = 0;
         this.endpoint = options.endpoint;
-        this.hostedTools = options.hostedTools ?? [];
+        this.hostedTools = options.hostedTools ?? (() => []);
         this.model = options.model;
         this.activeModel = options.model;
         this.modelConfigurations = options.modelConfigurations;
         this.tools = options.tools ?? [];
         this.userAgent = options.userAgent;
+        this.resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.emptyResponseRetryWait =
+            options.waitForInferenceRetry ??
+            ((attempt, signal) => delayBeforeGrokRetry(attempt, signal));
 
         this.connection = new GrokConnection({
             baseUrl: this.endpoint,
@@ -267,6 +286,7 @@ export class GrokSession extends BaseSession {
         }
 
         yield { type: "block_start" };
+        let blockOpen = true;
         const inference = this.streamInference({
             context: configured.context,
             model,
@@ -289,16 +309,20 @@ export class GrokSession extends BaseSession {
             if (next.value.type === "done") {
                 terminal = next.value;
             } else {
+                if (next.value.type === "block_start") blockOpen = true;
+                if (next.value.type === "block_reset" || next.value.type === "block_stop") {
+                    blockOpen = false;
+                }
                 yield next.value;
             }
         }
         if (abort?.aborted) {
-            yield { type: "block_reset" };
+            if (blockOpen) yield { type: "block_reset" };
             yield { type: "done", state: "cancelled" };
             return;
         }
         if (terminal?.state === "error") {
-            yield { type: "block_reset" };
+            if (blockOpen) yield { type: "block_reset" };
             yield terminal;
             return;
         }
@@ -330,7 +354,7 @@ export class GrokSession extends BaseSession {
         if (result !== undefined && result.responseItems.length > 0) {
             yield { type: "response_items", items: result.responseItems };
         }
-        yield { type: "block_stop" };
+        if (blockOpen) yield { type: "block_stop" };
         if (terminal !== undefined) yield terminal;
     }
 
@@ -366,9 +390,9 @@ export class GrokSession extends BaseSession {
                 // without hosted tools, and search Grok ran itself would still leave a usable
                 // summary, so it is not grounds for discarding one.
                 if (
-                    event.type === "tool_call_start" ||
-                    event.type === "tool_call_delta" ||
-                    event.type === "tool_call_end"
+                    event.type === "toolcall_start" ||
+                    event.type === "toolcall_delta" ||
+                    event.type === "toolcall_end"
                 ) {
                     emittedToolCall = true;
                 }
@@ -414,12 +438,12 @@ export class GrokSession extends BaseSession {
         await this.refreshCredentialIfExpiring();
         let requestContext = options.context;
         let attempt = 0;
-        let rateLimitRetries = 0;
         let responseContentBegun = false;
         let strippedImages = false;
         let refreshedCredential = false;
 
         for (;;) {
+            const attemptUsage: Extract<SessionEvent, { type: "token_usage" }>[] = [];
             if (abort?.aborted) {
                 return;
             }
@@ -439,18 +463,28 @@ export class GrokSession extends BaseSession {
                 });
                 for (;;) {
                     const next = await mapped.next();
-                    if (next.done) return next.value;
+                    if (next.done) {
+                        if (next.value.outputTokensReported && next.value.usage.output === 0) {
+                            throw new EmptyResponseError("Grok");
+                        }
+                        for (const event of attemptUsage) yield event;
+                        return next.value;
+                    }
                     const event = next.value;
+                    if (event.type === "token_usage") {
+                        attemptUsage.push(event);
+                        continue;
+                    }
                     if (
                         event.type === "text_delta" ||
                         event.type === "reasoning_delta" ||
                         event.type === "encrypted_reasoning" ||
-                        event.type === "tool_call_start" ||
-                        event.type === "tool_call_delta" ||
-                        event.type === "tool_call_end" ||
-                        event.type === "server_tool_call_start" ||
-                        event.type === "server_tool_call_delta" ||
-                        event.type === "server_tool_call_end"
+                        event.type === "toolcall_start" ||
+                        event.type === "toolcall_delta" ||
+                        event.type === "toolcall_end" ||
+                        event.type === "server_toolcall_start" ||
+                        event.type === "server_toolcall_delta" ||
+                        event.type === "server_toolcall_end"
                     ) {
                         responseContentBegun = true;
                     }
@@ -464,6 +498,7 @@ export class GrokSession extends BaseSession {
 
                 const message = error instanceof Error ? error.message : String(error);
                 const status = grokErrorStatus(error);
+                const emptyResponse = isEmptyResponseError(error);
                 const authError = isGrokAuthError({
                     message,
                     ...(status === undefined ? {} : { status }),
@@ -488,33 +523,50 @@ export class GrokSession extends BaseSession {
                         continue;
                     }
                 }
-                const withinRateLimitBudget = status !== 429 || rateLimitRetries + 1 < 2;
+                const resetBlock = emptyResponse && options.compaction !== true;
+                if (resetBlock) {
+                    yield { type: "block_reset" };
+                    responseContentBegun = false;
+                }
+                if (emptyResponse) {
+                    for (const event of attemptUsage) yield event;
+                }
                 if (
-                    (!responseContentBegun || options.retryAfterContent === true) &&
-                    attempt + 1 < GROK_INFERENCE_MAX_RETRIES &&
-                    withinRateLimitBudget &&
+                    (emptyResponse ||
+                        !responseContentBegun ||
+                        options.retryAfterContent === true) &&
+                    attempt < this.resolveInferenceMaxRetries() &&
                     isRetryableGrokError(error)
                 ) {
                     attempt += 1;
-                    if (status === 429) rateLimitRetries += 1;
-                    if (attempt === 1 && status !== 429) {
+                    if (!emptyResponse && attempt === 1 && status !== 429) {
                         await this.connection.rebuild(true);
                     }
                     yield { type: "retrying", attempt, reason: message };
-                    await delayBeforeGrokRetry(attempt, abort, error);
+                    try {
+                        await (emptyResponse
+                            ? this.emptyResponseRetryWait(attempt, abort)
+                            : delayBeforeGrokRetry(attempt, abort, error));
+                    } catch (delayError) {
+                        if (abort?.aborted) return;
+                        throw delayError;
+                    }
                     if (abort?.aborted) {
                         return;
                     }
+                    if (resetBlock) yield { type: "block_start" };
                     continue;
                 }
 
-                yield {
-                    type: "done",
-                    state: "error",
-                    kind: classifyGrokError(message),
-                    message,
-                    ...(authError ? { providerError: { type: "authentication" as const } } : {}),
-                };
+                yield emptyResponse
+                    ? emptyResponseDoneEvent(error, attempt + 1)
+                    : {
+                          type: "done",
+                          state: "error",
+                          kind: classifyGrokError(message),
+                          message,
+                          providerError: classifyGrokProviderError(error, message, attempt + 1),
+                      };
                 return;
             }
         }

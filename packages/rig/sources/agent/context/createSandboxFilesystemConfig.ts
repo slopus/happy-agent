@@ -14,6 +14,7 @@ export async function createSandboxFilesystemConfig(options: {
     environment?: NodeJS.ProcessEnv;
     homeDirectory?: string;
     mode: PermissionMode;
+    protectedPaths?: readonly string[];
     sandboxConfigDirectory?: string;
     temporaryDirectory?: string;
     uid?: number;
@@ -44,6 +45,7 @@ export async function createSandboxFilesystemConfig(options: {
         environment.RIG_SERVER_SOCKET_PATH,
         environment.RIG_SERVER_TOKEN_PATH,
         options.sandboxConfigDirectory,
+        ...(options.protectedPaths ?? []),
     ].filter(
         (path, index, paths): path is string =>
             typeof path === "string" && path.length > 0 && paths.indexOf(path) === index,

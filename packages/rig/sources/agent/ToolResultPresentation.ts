@@ -1,4 +1,4 @@
-import type { ExplorationToolCallPresentation } from "./ToolCallPresentation.js";
+import type { ExplorationToolCallPresentation, SearchSource } from "./ToolCallPresentation.js";
 
 export type FileDiffKind = "add" | "delete" | "update";
 
@@ -47,14 +47,29 @@ export interface ExecCommandPresentation {
 }
 
 /**
+ * A finished search, carrying what it consulted.
+ *
+ * The sources are the reason this exists: a reader judges a search by where it looked, and the
+ * plain text a tool returns to the model is not something an interface can take that from.
+ */
+export interface SearchToolResultPresentation {
+    readonly type: "search";
+    readonly target: "web" | "x";
+    readonly query: string;
+    readonly sources: readonly SearchSource[];
+}
+
+/**
  * A finished tool keeps the shape its call announced.
  *
  * Exploration is a result presentation as well as a call presentation so a
  * command that was shown as exploration while it ran is still exploration when
- * it finishes, instead of turning into a second, unrelated row.
+ * it finishes, instead of turning into a second, unrelated row. A search is the
+ * same, and gains the sources it consulted.
  */
 export type ToolResultPresentation =
     | BackgroundTerminalInteractionPresentation
     | ExecCommandPresentation
     | ExplorationToolCallPresentation
-    | FileDiffToolResultPresentation;
+    | FileDiffToolResultPresentation
+    | SearchToolResultPresentation;

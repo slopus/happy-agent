@@ -4,6 +4,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { APIConnectionError } from "@anthropic-ai/sdk/error";
 
+import { EmptyResponseError } from "@/core/EmptyResponseError.js";
 import type { SessionCacheUsage } from "@/core/SessionCacheUsage.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
 import type { SessionTool } from "@/core/SessionTool.js";
@@ -21,7 +22,11 @@ type AnthropicReplayBlock =
 
 export async function* mapAnthropicStream(
     stream: AsyncIterable<BetaRawMessageStreamEvent>,
-    options: { tools?: readonly SessionTool[] } = {},
+    options: {
+        onOutputStarted?: () => void;
+        signal?: AbortSignal;
+        tools?: readonly SessionTool[];
+    } = {},
 ): AsyncGenerator<SessionEvent> {
     const blocks = new Map<number, AnthropicReplayBlock>();
     const tools = new Map<
@@ -42,7 +47,9 @@ export async function* mapAnthropicStream(
         cacheWrite: 0,
         totalTokens: 0,
     };
+    let outputTokensReported = false;
     let stopReason: BetaStopReason | null = null;
+    let sawCompaction = false;
     let started = false;
     for await (const event of stream) {
         if (!started) {
@@ -51,6 +58,7 @@ export async function* mapAnthropicStream(
         }
         if (event.type === "message_start") {
             usage = toUsage(event.message.usage);
+            outputTokensReported = typeof event.message.usage.output_tokens === "number";
             continue;
         }
         if (event.type === "content_block_start") {
@@ -71,7 +79,7 @@ export async function* mapAnthropicStream(
                 };
                 tools.set(event.index, tool);
                 yield {
-                    type: "tool_call_start",
+                    type: "toolcall_start",
                     callId: tool.callId,
                     name: tool.name,
                     ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }),
@@ -99,6 +107,9 @@ export async function* mapAnthropicStream(
                 if (event.content_block.text.length > 0) {
                     yield { type: "text_delta", delta: event.content_block.text };
                 }
+            } else if (event.content_block.type === "compaction") {
+                sawCompaction = true;
+                options.onOutputStarted?.();
             }
             continue;
         }
@@ -134,11 +145,14 @@ export async function* mapAnthropicStream(
                 if (current !== undefined) {
                     current.arguments += event.delta.partial_json;
                     yield {
-                        type: "tool_call_delta",
+                        type: "toolcall_delta",
                         callId: current.callId,
                         delta: event.delta.partial_json,
                     };
                 }
+            } else if (event.delta.type === "compaction_delta") {
+                sawCompaction = true;
+                options.onOutputStarted?.();
             }
             continue;
         }
@@ -159,7 +173,7 @@ export async function* mapAnthropicStream(
                     input: parseArguments(tool.arguments, tool.input),
                 });
                 yield {
-                    type: "tool_call_end",
+                    type: "toolcall_end",
                     callId: tool.callId,
                     arguments: tool.arguments,
                 };
@@ -168,13 +182,24 @@ export async function* mapAnthropicStream(
         }
         if (event.type === "message_delta") {
             usage = mergeUsage(usage, event.usage);
+            if (typeof event.usage.output_tokens === "number") outputTokensReported = true;
             stopReason = event.delta.stop_reason;
+            if (stopReason === "compaction") options.onOutputStarted?.();
             continue;
         }
         if (event.type === "message_stop") {
             const orderedBlocks = [...blocks.entries()]
                 .sort(([left], [right]) => left - right)
                 .map(([, block]) => block);
+            const terminal = toDoneEvent(stopReason, tools.size > 0, sawCompaction);
+            if (
+                terminal.state !== "error" &&
+                terminal.state !== "cancelled" &&
+                outputTokensReported &&
+                usage.output === 0
+            ) {
+                throw new EmptyResponseError("Anthropic Bedrock", usage);
+            }
             if (orderedBlocks.length > 0) {
                 yield {
                     type: "response_items",
@@ -183,9 +208,16 @@ export async function* mapAnthropicStream(
             }
             yield { type: "token_usage", usage };
             yield { type: "block_stop" };
-            yield toDoneEvent(stopReason, tools.size > 0);
+            yield terminal;
             return;
         }
+    }
+    if (options.signal?.aborted) throw options.signal.reason;
+    if (sawCompaction || stopReason === "compaction") {
+        yield { type: "token_usage", usage };
+        yield { type: "block_stop" };
+        yield toDoneEvent(stopReason, tools.size > 0, sawCompaction);
+        return;
     }
     throw new APIConnectionError({
         message: "Anthropic Bedrock connection closed before returning message_stop.",
@@ -257,7 +289,17 @@ function mergeUsage(
 function toDoneEvent(
     stopReason: BetaStopReason | null,
     sawTool: boolean,
+    sawCompaction: boolean,
 ): Extract<SessionEvent, { type: "done" }> {
+    if (sawCompaction || stopReason === "compaction") {
+        return {
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message: "Anthropic returned an unexpected compaction response during inference.",
+            providerError: { type: "unclassified" },
+        };
+    }
     if (stopReason === "max_tokens" || stopReason === "model_context_window_exceeded") {
         return { type: "done", state: "length" };
     }

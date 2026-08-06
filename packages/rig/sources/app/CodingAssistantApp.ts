@@ -35,9 +35,9 @@ import type { NativeProcessManager } from "../processes/index.js";
 import { humanizeMcpName } from "../mcp/humanizeMcpName.js";
 import type { ServiceTier, Usage } from "@slopus/rig-execution";
 import {
-    DEFAULT_CODEX_STREAM_MAX_RETRIES,
-    MAX_CODEX_STREAM_MAX_RETRIES,
-} from "../config/codexStreamRetrySettings.js";
+    DEFAULT_INFERENCE_MAX_RETRIES,
+    MAX_INFERENCE_MAX_RETRIES,
+} from "../config/inferenceRetrySettings.js";
 import type {
     FileSearchResult,
     EventId,
@@ -72,7 +72,7 @@ import {
     createBackgroundTerminalViewer,
     type BackgroundTerminalViewer,
 } from "./createBackgroundTerminalViewer.js";
-import { createSelectionPanel } from "./createSelectionPanel.js";
+import { createSelectionPanel, fitSelectionPanelToViewport } from "./createSelectionPanel.js";
 import { createSecretInputPanel } from "./createSecretInputPanel.js";
 import { createSubagentMonitor, type SubagentMonitor } from "./createSubagentMonitor.js";
 import { createWorkflowMonitor } from "./createWorkflowMonitor.js";
@@ -251,7 +251,7 @@ export interface CodingAssistantAppOptions {
         options?: ReadClipboardImageOptions,
     ) => Promise<ClipboardImage | undefined>;
     searchFiles?: (query: string) => Promise<readonly FileSearchResult[]>;
-    codexStreamMaxRetries?: number;
+    inferenceMaxRetries?: number;
     compactCompletedTurns?: boolean;
     completionChime?: boolean;
     registerSecret?: (registration: SecretRegistration) => SecretSummary | Promise<SecretSummary>;
@@ -317,7 +317,7 @@ export interface DefaultModelPreference {
 }
 
 export interface AppSettings {
-    codexStreamMaxRetries: number;
+    inferenceMaxRetries: number;
     compactCompletedTurns: boolean;
     completionChime: boolean;
     durableGlobalEventQueue: boolean;
@@ -479,7 +479,7 @@ export class CodingAssistantApp implements Component, Focusable {
     #backgroundProcesses: readonly BashSessionActivity[] = [];
     #observedShellProcesses: readonly BashSessionActivity[] = [];
     #yieldedBackgroundTerminals = new Map<number, string>();
-    #codexStreamMaxRetries: number;
+    #inferenceMaxRetries: number;
     #compactCompletedTurns: boolean;
     #directShellCommandsBySessionId = new Map<number, { command: string; commandId: string }>();
     #backgroundedShellCommandIds = new Set<string>();
@@ -563,8 +563,7 @@ export class CodingAssistantApp implements Component, Focusable {
         this.#sessionShare = options.sessionShare;
         this.#readClipboardImage = options.readClipboardImage ?? readClipboardImage;
         this.#sessionBacked = options.sessionBacked ?? false;
-        this.#codexStreamMaxRetries =
-            options.codexStreamMaxRetries ?? DEFAULT_CODEX_STREAM_MAX_RETRIES;
+        this.#inferenceMaxRetries = options.inferenceMaxRetries ?? DEFAULT_INFERENCE_MAX_RETRIES;
         this.#compactCompletedTurns = options.compactCompletedTurns ?? false;
         this.#completionChime = options.completionChime ?? false;
         this.#durableGlobalEventQueue = options.durableGlobalEventQueue ?? false;
@@ -1130,7 +1129,17 @@ export class CodingAssistantApp implements Component, Focusable {
             const alreadyRendered = this.#hasActiveInferenceFailure(event.data.errorMessage);
             this.#activeTurnEntryStart = undefined;
             if (!alreadyRendered) {
-                this.#appendEntry({ role: "error", text: event.data.errorMessage });
+                this.#appendEntry({
+                    role: "error",
+                    ...(event.data.providerError === undefined
+                        ? {}
+                        : { providerError: event.data.providerError }),
+                    providerErrorFallback: event.data.errorMessage,
+                    ...(event.data.providerId === undefined
+                        ? {}
+                        : { providerErrorProviderId: event.data.providerId }),
+                    text: event.data.errorMessage,
+                });
             }
             this.#startDrainQueue();
             return;
@@ -1726,6 +1735,15 @@ export class CodingAssistantApp implements Component, Focusable {
                 : [];
         const queuedPrompts =
             selectionPanel === undefined ? this.#renderQueuedPrompts(safeWidth) : [];
+        if (selectionPanel !== undefined) {
+            // An inline panel shares the screen with the transcript and footer, so
+            // it may only grow into the rows those do not need.
+            fitSelectionPanelToViewport(
+                selectionPanel,
+                safeWidth,
+                Math.max(8, this.#tui.terminal.rows - 8),
+            );
+        }
         const activityLabel = this.#activityLabel();
         const activity =
             activityLabel !== undefined && this.#shouldRenderActivityAsLastMessage()
@@ -3638,7 +3656,12 @@ export class CodingAssistantApp implements Component, Focusable {
             const active = this.#activeServerToolCalls.get(event.callId);
             if (active !== undefined) active.arguments += event.delta;
         } else if (event.type === "server_toolcall_end") {
-            this.#finishServerToolCall(event.callId, event.name, event.arguments);
+            this.#finishServerToolCall(
+                event.callId,
+                event.name,
+                event.arguments,
+                event.incomplete === true,
+            );
         } else if (event.type === "tool_execution_start") {
             this.#activeToolCallIds.add(event.toolCall.id);
             this.#runningToolCallIds.add(event.toolCall.id);
@@ -3828,6 +3851,13 @@ export class CodingAssistantApp implements Component, Focusable {
             this.#appendEntry({
                 id: message.id,
                 role: "error",
+                ...(message.providerError === undefined
+                    ? {}
+                    : { providerError: message.providerError }),
+                providerErrorFallback: text,
+                ...(message.providerId === undefined
+                    ? {}
+                    : { providerErrorProviderId: message.providerId }),
                 text,
                 title:
                     message.outcome === "retried"
@@ -4087,24 +4117,6 @@ export class CodingAssistantApp implements Component, Focusable {
     }
 
     /**
-     * Turns a finished provider-run call into history in the same render that drops its live row,
-     * so the transcript grows by exactly the height the live tail gives up.
-     */
-    #finishServerToolCall(callId: string, name: string | undefined, args: string): void {
-        const active = this.#activeServerToolCalls.get(callId);
-        this.#activeServerToolCalls.delete(callId);
-        const description = describeServerToolCall(
-            name ?? active?.name,
-            args.trim().length === 0 ? (active?.arguments ?? "") : args,
-        );
-        this.#appendEntry({
-            role: "event",
-            title: description.title,
-            text: description.detail,
-        });
-    }
-
-    /**
      * The above-composer indicator is the one place an owner is guaranteed to see that a
      * capability is active, so its disappearance must never be silent: when the last member
      * loses every capability, the same update that drops the live row also writes the history
@@ -4121,6 +4133,33 @@ export class CodingAssistantApp implements Component, Focusable {
         }
         this.#sessionShare = share;
         this.#requestRender();
+    }
+
+    /**
+     * Turns a closed provider-run call into history in the same render that drops its live row,
+     * so the transcript grows by exactly the height the live tail gives up.
+     *
+     * A call marked incomplete was closed by Rig rather than by the provider, because the turn
+     * ended first. That is not the search being stopped — nothing can stop one — so it says which
+     * of the two actually happened.
+     */
+    #finishServerToolCall(
+        callId: string,
+        name: string | undefined,
+        args: string,
+        incomplete: boolean,
+    ): void {
+        const active = this.#activeServerToolCalls.get(callId);
+        this.#activeServerToolCalls.delete(callId);
+        const description = describeServerToolCall(
+            name ?? active?.name,
+            args.trim().length === 0 ? (active?.arguments ?? "") : args,
+        );
+        this.#appendEntry({
+            role: "event",
+            title: incomplete ? description.interrupted : description.title,
+            text: description.detail,
+        });
     }
 
     /**
@@ -5097,14 +5136,14 @@ export class CodingAssistantApp implements Component, Focusable {
                     description: "Keep turn stats and the final response after completion.",
                 },
                 {
-                    value: "codex-retries",
-                    label: `Codex retries · ${this.#codexStreamMaxRetries}`,
-                    description: "Maximum reconnect attempts for each Codex stream transport.",
+                    value: "inference-retries",
+                    label: `Inference retries · ${this.#inferenceMaxRetries}`,
+                    description: "Maximum retries before any inference provider reports failure.",
                 },
             ],
             onSelect: (item) => {
-                if (item.value === "codex-retries") {
-                    this.#openCodexReconnectAttemptsInput();
+                if (item.value === "inference-retries") {
+                    this.#openInferenceRetriesInput();
                     return;
                 }
                 if (item.value === "compact-turns") {
@@ -5146,7 +5185,7 @@ export class CodingAssistantApp implements Component, Focusable {
         this.#showSelectionPanel(panel);
     }
 
-    #openCodexReconnectAttemptsInput(error?: string): void {
+    #openInferenceRetriesInput(error?: string): void {
         this.#showSelectionPanel(
             createSecretInputPanel({
                 label: "Attempts",
@@ -5158,28 +5197,27 @@ export class CodingAssistantApp implements Component, Focusable {
                     if (
                         !/^\d+$/u.test(normalized) ||
                         !Number.isInteger(attempts) ||
-                        attempts > MAX_CODEX_STREAM_MAX_RETRIES
+                        attempts > MAX_INFERENCE_MAX_RETRIES
                     ) {
-                        this.#openCodexReconnectAttemptsInput(
-                            `Enter a whole number from 0 to ${MAX_CODEX_STREAM_MAX_RETRIES}.`,
+                        this.#openInferenceRetriesInput(
+                            `Enter a whole number from 0 to ${MAX_INFERENCE_MAX_RETRIES}.`,
                         );
                         return;
                     }
-                    this.#codexStreamMaxRetries = attempts;
+                    this.#inferenceMaxRetries = attempts;
                     this.#closeSelectionPanel();
                     this.#persistSettings(() => {
                         this.#appendEntry({
                             role: "event",
                             title: "Settings",
-                            text: `Codex reconnect attempts set to ${attempts}.`,
+                            text: `Inference retries set to ${attempts}.`,
                         });
                         this.#requestRender();
                     });
                 },
-                subtitle:
-                    error ?? `Enter a whole number from 0 to ${MAX_CODEX_STREAM_MAX_RETRIES}.`,
+                subtitle: error ?? `Enter a whole number from 0 to ${MAX_INFERENCE_MAX_RETRIES}.`,
                 theme: this.#theme,
-                title: "Codex reconnect attempts",
+                title: "Inference retries",
             }),
         );
     }
@@ -6376,7 +6414,7 @@ export class CodingAssistantApp implements Component, Focusable {
 
         void Promise.resolve(
             this.#onSettingsChange({
-                codexStreamMaxRetries: this.#codexStreamMaxRetries,
+                inferenceMaxRetries: this.#inferenceMaxRetries,
                 compactCompletedTurns: this.#compactCompletedTurns,
                 completionChime: this.#completionChime,
                 durableGlobalEventQueue: this.#durableGlobalEventQueue,

@@ -1,10 +1,19 @@
+import {
+    extractProviderErrorDiagnostics,
+    extractProviderRetryResetAt,
+} from "@/core/extractProviderErrorDiagnostics.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
+import type { SessionProviderError } from "@/core/SessionProviderError.js";
 
 type ErrorDone = Extract<SessionEvent, { type: "done"; state: "error" }>;
 
 export function classifyResponsesError(error: unknown): ErrorDone {
-    const status = errorStatus(error);
     const message = error instanceof Error ? error.message : "Responses API request failed.";
+    const diagnostics = extractProviderErrorDiagnostics(error, {
+        attempts: 1,
+        upstreamMessage: message,
+    });
+    const status = diagnostics?.status;
     const normalized = message.toLowerCase();
     if (status === 401 || status === 403) {
         return {
@@ -12,7 +21,7 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             state: "error",
             kind: "unknown",
             message: "Authentication with the Responses API failed.",
-            providerError: { type: "authentication" },
+            providerError: withDiagnostics("authentication", diagnostics),
         };
     }
     if (status === 429) {
@@ -21,7 +30,11 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             state: "error",
             kind: "unknown",
             message: "The Responses API rate limit was reached.",
-            providerError: { type: "rate_limit" },
+            providerError: withResetAt(
+                "rate_limit",
+                diagnostics,
+                extractProviderRetryResetAt(error),
+            ),
         };
     }
     if (
@@ -35,7 +48,7 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             state: "error",
             kind: "context_overflow",
             message: "The conversation exceeds the model's context window.",
-            providerError: { type: "unclassified" },
+            providerError: withDiagnostics("unclassified", diagnostics),
         };
     }
     if (status === 402) {
@@ -44,7 +57,11 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             state: "error",
             kind: "billing_error",
             message: "The Responses API rejected the request because billing is unavailable.",
-            providerError: { type: "unclassified" },
+            providerError: withResetAt(
+                "out_of_tokens",
+                diagnostics,
+                extractProviderRetryResetAt(error),
+            ),
         };
     }
     if (status === 503 || normalized.includes("overloaded")) {
@@ -53,7 +70,7 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             state: "error",
             kind: "internal_error",
             message: "The Responses API is temporarily overloaded.",
-            providerError: { type: "server_overloaded" },
+            providerError: withDiagnostics("server_overloaded", diagnostics),
         };
     }
     if (status !== undefined && status >= 500) {
@@ -62,7 +79,7 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             state: "error",
             kind: "internal_error",
             message: "The Responses API returned an internal server error.",
-            providerError: { type: "internal_server_error" },
+            providerError: withDiagnostics("internal_server_error", diagnostics),
         };
     }
     return {
@@ -70,11 +87,28 @@ export function classifyResponsesError(error: unknown): ErrorDone {
         state: "error",
         kind: "unknown",
         message,
-        providerError: { type: "unclassified" },
+        providerError: withDiagnostics("unclassified", diagnostics),
     };
 }
 
-function errorStatus(error: unknown): number | undefined {
-    if (typeof error !== "object" || error === null || !("status" in error)) return undefined;
-    return typeof error.status === "number" ? error.status : undefined;
+function withDiagnostics(
+    type: SessionProviderError["type"],
+    diagnostics: SessionProviderError["diagnostics"],
+): SessionProviderError {
+    return {
+        type,
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+    };
+}
+
+function withResetAt(
+    type: "out_of_tokens" | "rate_limit",
+    diagnostics: SessionProviderError["diagnostics"],
+    resetAt: number | undefined,
+): SessionProviderError {
+    return {
+        type,
+        ...(resetAt === undefined ? {} : { resetAt }),
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+    };
 }

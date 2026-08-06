@@ -1,4 +1,8 @@
-import type { SessionErrorKind } from "@/core/SessionEvent.js";
+import {
+    extractProviderErrorDiagnostics,
+    extractProviderRetryResetAt,
+} from "@/core/extractProviderErrorDiagnostics.js";
+import type { SessionErrorKind, SessionProviderError } from "@/core/SessionEvent.js";
 import { grokErrorStatus } from "@/vendors/grok/impl/grokRetry.js";
 
 const CONTEXT_OVERFLOW_PATTERNS = [
@@ -79,6 +83,46 @@ export function classifyGrokError(message: string): SessionErrorKind {
         return "internal_error";
     }
     return "unknown";
+}
+
+export function classifyGrokProviderError(
+    error: unknown,
+    message: string,
+    attempts: number,
+): SessionProviderError {
+    const diagnostics = extractProviderErrorDiagnostics(error, {
+        attempts,
+        upstreamMessage: message,
+    });
+    const status = diagnostics?.status;
+    const normalized = message.toLowerCase();
+    const kind = classifyGrokError(message);
+    const type: SessionProviderError["type"] = isGrokAuthError({
+        message,
+        ...(status === undefined ? {} : { status }),
+    })
+        ? "authentication"
+        : kind === "billing_error"
+          ? "out_of_tokens"
+          : status === 429
+            ? "rate_limit"
+            : status === 503 || normalized.includes("overloaded")
+              ? "server_overloaded"
+              : (status !== undefined && status >= 500) || kind === "internal_error"
+                ? "internal_server_error"
+                : "unclassified";
+    if (type === "rate_limit" || type === "out_of_tokens") {
+        const resetAt = extractProviderRetryResetAt(error);
+        return {
+            type,
+            ...(resetAt === undefined ? {} : { resetAt }),
+            ...(diagnostics === undefined ? {} : { diagnostics }),
+        };
+    }
+    return {
+        type,
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+    };
 }
 
 /** Recognizes the upstream rejections that mean the stored credential is no longer usable. */

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import { createProtocolHttpServer } from "./createProtocolHttpServer.js";
 import { DaemonLog } from "./DaemonLog.js";
+import { recordProviderFailure } from "./recordProviderFailure.js";
 import { configureSessionRequest } from "../session/configureSessionRequest.js";
 import {
     createDaemonStartupRequestListener,
@@ -23,7 +24,13 @@ import { readLocalServerToken } from "./readLocalServerToken.js";
 import { removeStaleSocket } from "./removeStaleSocket.js";
 import { resolveHappyIntegrationMode } from "./resolveHappyIntegrationMode.js";
 import { CompositeMcpToolProvider, McpClientManager, type McpToolProvider } from "../mcp/index.js";
-import { ensureUserConfigurationFiles, loadConfig, writeDaemonSettings } from "../config/index.js";
+import {
+    ensureUserConfigurationFiles,
+    loadConfig,
+    resolveProtectedPaths,
+    writeDaemonSettings,
+    writeP2pNodeSettings,
+} from "../config/index.js";
 import { createConfiguredPresenceStore } from "../presence/index.js";
 import { createProviderQuotaService } from "../executor/createProviderQuotaService.js";
 import {
@@ -54,7 +61,7 @@ import type { PluginContext } from "../agent/context/PluginContext.js";
 import { PluginManager, PluginMcpRegistry } from "../plugins/index.js";
 import { createGeneratedMediaStore, getGeneratedDirectory } from "../generated-media/index.js";
 import { MurmurService } from "../murmur/index.js";
-import { createEventIdFactory, type GlobalLiveEvent } from "../protocol/index.js";
+import { createEventIdFactory, type GlobalLiveEvent, type P2pStatus } from "../protocol/index.js";
 import { createScopeShareKind } from "../scope-sharing/createScopeShareKind.js";
 import { createSessionShareKind } from "../session-sharing/createSessionShareKind.js";
 import {
@@ -64,6 +71,16 @@ import {
 } from "../session-sharing/peer-access/index.js";
 import { createShareRuntime, type ShareRuntime } from "../sharing/createShareRuntime.js";
 import { SqliteMurmurStore } from "../persistence/murmur/index.js";
+import {
+    loadOrCreateIrohSecretKey,
+    loadOrCreateP2pIdentity,
+    P2pNetwork,
+    P2pPairingService,
+    P2pPeerTrustStore,
+    recoverP2pPairings,
+} from "../p2p/index.js";
+import { createServeP2pHttpRequest } from "./createServeP2pHttpRequest.js";
+import { createServeP2pTunnel } from "./createServeP2pTunnel.js";
 
 export interface RunLocalProtocolServerOptions {
     happyIntegration?: HappyIntegrationMode;
@@ -135,6 +152,8 @@ async function runOwnedLocalProtocolServer(
 
     let startupState: DaemonStartupState = { status: "starting" };
     let mcpToolProvider: McpToolProvider | undefined;
+    let p2pNetwork: P2pNetwork | undefined;
+    let p2pPairingService: P2pPairingService | undefined;
     let murmurService: MurmurService | undefined;
     let shareRuntime: RigShareRuntime | undefined;
     let happySyncService: HappySyncService | undefined;
@@ -336,9 +355,15 @@ async function runOwnedLocalProtocolServer(
             );
         }
         const loadedConfig = await loadConfig({ cwd: process.cwd() });
+        const machineProtectedPaths = [
+            ...new Set([
+                ...(loadedConfig.sources.global.values.permissions?.protectedPaths ?? []),
+                ...(loadedConfig.sources.runtime.values.permissions?.protectedPaths ?? []),
+            ]),
+        ];
         if (stopping) return;
         const runtimeSettings = {
-            codexStreamMaxRetries: loadedConfig.config.settings.codexStreamMaxRetries,
+            inferenceMaxRetries: loadedConfig.config.settings.inferenceMaxRetries,
         };
 
         const providerUsageService = createProviderUsageService({
@@ -488,7 +513,8 @@ async function runOwnedLocalProtocolServer(
                         current: async () => (await providerUsageTracker?.refreshAll()) ?? [],
                     },
                     providers: availableProviders,
-                    resolveCodexStreamMaxRetries: () => runtimeSettings.codexStreamMaxRetries,
+                    protectedPaths: resolveProtectedPaths(options.cwd, machineProtectedPaths),
+                    resolveInferenceMaxRetries: () => runtimeSettings.inferenceMaxRetries,
                 }),
             databasePath: paths.databasePath,
             ...(loadedConfig.config.docker === undefined
@@ -507,6 +533,7 @@ async function runOwnedLocalProtocolServer(
                 ? {}
                 : { onSessionAccess: (session) => happySyncService?.attach(session) }),
             onSessionEvent: (event, session) => {
+                recordProviderFailure(daemonLog, event);
                 if (happyModule !== undefined) happySyncService?.observe(event, session);
                 shareRuntime?.kinds.session.wake(event.sessionId);
                 const shared = session?.projectIdentity();
@@ -543,6 +570,142 @@ async function runOwnedLocalProtocolServer(
             taskDrain,
         });
         const activeStore = store;
+        const p2pPeerTrustStore = new P2pPeerTrustStore(activeStore);
+        const p2pNode: {
+            name: string;
+            primaryId?: string;
+            role: "primary" | "secondary";
+        } = {
+            name: loadedConfig.config.p2p.name,
+            ...(loadedConfig.config.p2p.primaryId === undefined
+                ? {}
+                : { primaryId: loadedConfig.config.p2p.primaryId }),
+            role: loadedConfig.config.p2p.role,
+        };
+        let assignP2pPrimary = Promise.resolve();
+        const canP2pPeerConfigure = (peerId: string): boolean => {
+            if (p2pNode.role !== "secondary" || p2pNode.primaryId !== peerId) return false;
+            try {
+                return p2pPeerTrustStore.peers().some((peer) => peer.instanceId === peerId);
+            } catch {
+                return false;
+            }
+        };
+        const setP2pPrimaryIfUnset = (primaryId: string): Promise<void> => {
+            const assignment = assignP2pPrimary.then(async () => {
+                if (p2pNode.primaryId !== undefined) return;
+                await writeP2pNodeSettings({ primaryId, role: "secondary" });
+                p2pNode.primaryId = primaryId;
+                p2pNode.role = "secondary";
+            });
+            assignP2pPrimary = assignment.catch(() => undefined);
+            return assignment;
+        };
+        try {
+            await recoverP2pPairings(p2pPeerTrustStore, setP2pPrimaryIfUnset);
+        } catch (error) {
+            daemonLog.record(
+                "warning",
+                "p2p_pairing_recovery_failed",
+                "Rig could not finish a confirmed P2P pairing.",
+                { error: errorToMessage(error) },
+            );
+        }
+        const p2pIdentity = await loadOrCreateP2pIdentity(paths.p2pIdentityPath).catch(
+            (error: unknown) => {
+                daemonLog.record(
+                    "warning",
+                    "p2p_identity_unavailable",
+                    "P2P identity and pairing are unavailable.",
+                    { error: errorToMessage(error) },
+                );
+                return undefined;
+            },
+        );
+        if (p2pIdentity !== undefined) {
+            try {
+                const irohSecret = await loadOrCreateIrohSecretKey(paths.irohSecretKeyPath);
+                p2pPairingService = new P2pPairingService({
+                    config: loadedConfig.config.p2p.iroh,
+                    identity: p2pIdentity,
+                    name: () => p2pNode.name,
+                    onPeerTrusted: (peer) => p2pNetwork?.addTrustedPeer(peer),
+                    peerTrustStore: p2pPeerTrustStore,
+                    setPrimaryIfUnset: setP2pPrimaryIfUnset,
+                    stableIrohEndpointId: irohSecret.public().toString(),
+                    stableIrohEndpointTicket: async () => {
+                        const ticket = await p2pNetwork?.irohEndpointTicket();
+                        if (ticket === undefined) {
+                            throw new Error("The stable Iroh P2P endpoint is unavailable.");
+                        }
+                        return ticket;
+                    },
+                });
+            } catch (error) {
+                daemonLog.record(
+                    "warning",
+                    "p2p_pairing_unavailable",
+                    "P2P invitation and join are unavailable.",
+                    { error: errorToMessage(error) },
+                );
+            }
+        }
+        const createP2pStatusEventId = createEventIdFactory();
+        const publishP2pStatus = (status: P2pStatus): void => {
+            const event: GlobalLiveEvent = {
+                createdAt: Date.now(),
+                data: { status },
+                id: createP2pStatusEventId(),
+                type: "p2p_status_changed",
+            };
+            activeStore.globalEventQueue.publishLive(event);
+            activeStore.liveEvents.publish(event);
+        };
+        p2pNetwork = await P2pNetwork.create({
+            config: loadedConfig.config.p2p,
+            ...(p2pIdentity === undefined ? {} : { identity: p2pIdentity }),
+            identityPath: paths.p2pIdentityPath,
+            irohSecretKeyPath: paths.irohSecretKeyPath,
+            onStatusChange: publishP2pStatus,
+            onTransportUnavailable: (transport, error) => {
+                daemonLog.record(
+                    "warning",
+                    "p2p_transport_unavailable",
+                    "A P2P transport is unavailable.",
+                    { error: errorToMessage(error), transport },
+                );
+            },
+            peerTrustStore: p2pPeerTrustStore,
+            serveRequest: createServeP2pHttpRequest({
+                allowRequest: (peerId, request) =>
+                    loadedConfig.config.p2p.exposeApi ||
+                    (canP2pPeerConfigure(peerId) && isP2pConfigurationPath(request.path)),
+                socketPath,
+                token,
+            }),
+            serveTunnel: createServeP2pTunnel({ socketPath, token }),
+        });
+        const irohStatus = p2pNetwork
+            .status()
+            .transports.find(
+                (transport) => transport.transport === "iroh" && transport.state === "ready",
+            );
+        if (irohStatus?.state === "ready") {
+            daemonLog.record("info", "iroh_started", "Rig P2P networking is ready.", {
+                endpointId: irohStatus.localAddress,
+                instanceId: p2pNetwork.status().instanceId,
+                peers: p2pPeerTrustStore
+                    .peers()
+                    .filter((peer) => peer.connections.iroh !== undefined).length,
+                ...(loadedConfig.config.p2p.iroh.relayUrl === undefined
+                    ? {}
+                    : { relayUrl: loadedConfig.config.p2p.iroh.relayUrl }),
+            });
+        }
+        shutdown.register("p2p", async () => {
+            await p2pPairingService?.close();
+            await p2pNetwork?.close();
+        });
         murmurService = new MurmurService({
             publishGlobalEvent: (event) => {
                 const entry = activeStore.globalEventQueue.appendReplaySafe(event);
@@ -785,7 +948,7 @@ async function runOwnedLocalProtocolServer(
 
         createProtocolHttpServer(
             {
-                codexStreamMaxRetries: runtimeSettings.codexStreamMaxRetries,
+                inferenceMaxRetries: runtimeSettings.inferenceMaxRetries,
                 ...(loadedConfig.config.docker === undefined
                     ? {}
                     : { defaultDocker: loadedConfig.config.docker }),
@@ -795,6 +958,11 @@ async function runOwnedLocalProtocolServer(
                 ...(gitStateTracker === undefined ? {} : { gitStateTracker }),
                 modelCatalog,
                 happyCloud: store.happyCloud,
+                p2pNetwork,
+                ...(p2pPairingService === undefined ? {} : { p2pPairing: p2pPairingService }),
+                p2pNode: () => ({ ...p2pNode }),
+                p2pStatus: () => p2pNetwork?.status() ?? { transports: [] },
+                canP2pPeerConfigure,
                 murmur: murmurService,
                 ...(shareRuntime === undefined
                     ? {}
@@ -805,15 +973,18 @@ async function runOwnedLocalProtocolServer(
                 plugins,
                 getProviderQuota: (providerId) => providerQuotaService.get(providerId),
                 listProviderUsage: () => providerUsageTracker?.all() ?? [],
-                onDaemonSettingsChange: async (settings) => {
-                    await writeDaemonSettings(settings);
+                onDaemonConfigChange: async (config) => {
+                    await writeDaemonSettings(config.settings, {}, config.p2p.name);
                     const globalEventQueue = store?.setDurableGlobalEventQueue(
-                        settings.durableGlobalEventQueue,
+                        config.settings.durableGlobalEventQueue,
                     );
                     if (globalEventQueue === undefined) return undefined;
-                    runtimeSettings.codexStreamMaxRetries = settings.codexStreamMaxRetries;
+                    runtimeSettings.inferenceMaxRetries = config.settings.inferenceMaxRetries;
+                    p2pNode.name = config.p2p.name;
+                    p2pNetwork?.setName(config.p2p.name);
+                    if (p2pNetwork !== undefined) publishP2pStatus(p2pNetwork.status());
                     return {
-                        codexStreamMaxRetries: runtimeSettings.codexStreamMaxRetries,
+                        inferenceMaxRetries: runtimeSettings.inferenceMaxRetries,
                         globalEventQueue,
                     };
                 },
@@ -921,6 +1092,15 @@ function requirePluginManager(manager: PluginManager | undefined): PluginManager
     if (manager === undefined)
         throw new Error("Rig is still starting, so plugins are unavailable.");
     return manager;
+}
+
+function isP2pConfigurationPath(path: string): boolean {
+    const pathname = new URL(path, "http://rig.local").pathname;
+    return (
+        pathname === "/config" ||
+        pathname === "/config/instructions" ||
+        pathname === "/config/security"
+    );
 }
 
 async function writeRegistry(path: string, payload: unknown): Promise<void> {

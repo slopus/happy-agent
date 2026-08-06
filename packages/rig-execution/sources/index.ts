@@ -2,6 +2,15 @@ export { Executor } from "@/Executor.js";
 export { DEFAULT_IDENTITY } from "@/Identity.js";
 export type { Identity } from "@/Identity.js";
 export { builtinModelProfiles } from "@/builtinModelProfiles.js";
+export {
+    HOSTED_CAPABILITIES,
+    describeHostedCapability,
+    describeHostedCapabilityGrant,
+    isHostedCapability,
+    modelSupportsHostedCapabilities,
+    parseHostedCapabilities,
+    type HostedCapability,
+} from "@/HostedCapability.js";
 export { createInferenceStream } from "@/createInferenceStream.js";
 export { createExecutorInferenceStream } from "@/createExecutorInferenceStream.js";
 export { createExecutorModelProfiles } from "@/createExecutorModelProfiles.js";

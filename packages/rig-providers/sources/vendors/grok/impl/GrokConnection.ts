@@ -29,7 +29,12 @@ export class GrokConnection {
     constructor(
         private readonly options: {
             baseUrl: string;
-            hostedTools?: readonly SessionTool[];
+            /**
+             * The tools xAI runs on its own backend, asked for at the moment each request is
+             * built rather than when the session was created, so a permission change takes effect
+             * on the next request instead of the next session.
+             */
+            hostedTools?: () => readonly SessionTool[];
             sessionId: string;
             token: () => string;
             tools: readonly SessionTool[];
@@ -53,7 +58,7 @@ export class GrokConnection {
         // Compaction summarizes context that already exists, so it has nothing to search for.
         // Sending no hosted tools also means nothing in its response can be read as hosted, so a
         // compaction sample that calls a tool still counts as one and is resampled.
-        const hostedTools = options.compaction === true ? [] : (this.options.hostedTools ?? []);
+        const hostedTools = options.compaction === true ? [] : (this.options.hostedTools?.() ?? []);
         const tools = [...clientTools, ...hostedTools];
         const responseStream = await client.responses.create(
             createGrokOpenAIRequest({
@@ -84,7 +89,6 @@ export class GrokConnection {
             failureMessage: `${options.model} failed to generate a response.`,
             requireTerminalEvent: true,
             vendor: "grok",
-            clientToolNames: new Set(clientTools.map((tool) => tool.name)),
             hostedToolNames: new Set(hostedTools.map((tool) => tool.name)),
         });
     }

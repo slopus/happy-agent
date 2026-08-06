@@ -8,6 +8,7 @@ export function configuredBedrockExecution(options: {
     config: ConfigBedrockProvider;
     env: NodeJS.ProcessEnv;
     id: string;
+    resolveInferenceMaxRetries?: () => number;
 }): ExecutorProvider | undefined {
     const bearerToken = readConfiguredBedrockBearerToken(options.config, options.env);
     if (bearerToken === undefined) return undefined;
@@ -16,6 +17,9 @@ export function configuredBedrockExecution(options: {
         bearerToken,
         env: options.env,
         id: options.id,
+        ...(options.resolveInferenceMaxRetries === undefined
+            ? {}
+            : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),
         ...(options.config.modelOverrides === undefined
             ? {}
             : { modelOverrides: options.config.modelOverrides }),

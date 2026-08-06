@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 
-import { APIError } from "@anthropic-ai/sdk/error";
+import { APIConnectionError, APIError } from "@anthropic-ai/sdk/error";
 import type { BetaMessageParam } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { describe, expect, it } from "vitest";
 
@@ -13,7 +13,10 @@ import {
     type AnthropicBedrockProviderOptions,
 } from "@/vendors/bedrock/AnthropicBedrockProvider.js";
 import { resolveAnthropicBedrockRetryDelay } from "@/vendors/bedrock/impl/anthropicBedrockRetry.js";
-import { classifyAnthropicBedrockError } from "@/vendors/bedrock/errors/anthropicBedrockErrors.js";
+import {
+    classifyAnthropicBedrockError,
+    classifyAnthropicBedrockProviderError,
+} from "@/vendors/bedrock/errors/anthropicBedrockErrors.js";
 import { createAnthropicRequest } from "@/protocol/anthropic/createAnthropicRequest.js";
 import { mapAnthropicStream } from "@/protocol/anthropic/mapAnthropicStream.js";
 import {
@@ -24,6 +27,15 @@ import { resolveAnthropicBedrockModelId } from "@/vendors/bedrock/impl/resolveAn
 import { claude_tools } from "@/vendors/claude/tools/index.js";
 
 describe("AnthropicBedrockProvider", () => {
+    it("classifies a generic HTTP 500 as an internal server error", () => {
+        const error = Object.assign(new Error("request failed"), { status: 500 });
+
+        expect(classifyAnthropicBedrockProviderError(error, 1)).toMatchObject({
+            type: "internal_server_error",
+            diagnostics: { attempts: 1, status: 500 },
+        });
+    });
+
     it("uses the same regional inference profiles as Rig's Bedrock catalog", () => {
         expect(resolveAnthropicBedrockModelId("anthropic/opus-4-8", "us-east-1")).toBe(
             "us.anthropic.claude-opus-4-8",
@@ -282,6 +294,15 @@ describe("AnthropicBedrockProvider", () => {
                 ],
             },
         ]);
+        expect(capturedRequests[1]?.betas).toEqual(expect.arrayContaining(["compact-2026-01-12"]));
+        expect(capturedRequests[1]?.context_management).toEqual({
+            edits: [
+                {
+                    type: "compact_20260112",
+                    trigger: { type: "input_tokens", value: 2_000_000 },
+                },
+            ],
+        });
 
         await session.compact({
             context: {
@@ -313,6 +334,8 @@ describe("AnthropicBedrockProvider", () => {
                 ],
             },
         ]);
+        expect(capturedRequests[2]?.betas).toEqual(expect.arrayContaining(["compact-2026-01-12"]));
+        expect(capturedRequests[2]).toHaveProperty("context_management");
     });
 
     it("uses native compaction below the server trigger and round-trips null content", async () => {
@@ -522,12 +545,12 @@ describe("AnthropicBedrockProvider", () => {
                         return streamEvents([
                             {
                                 type: "message_start",
-                                message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                                message: { usage: { input_tokens: 1, output_tokens: 1 } },
                             },
                             {
                                 type: "message_delta",
                                 delta: { stop_reason: "end_turn", stop_sequence: null },
-                                usage: { output_tokens: 0 },
+                                usage: { output_tokens: 1 },
                             },
                             { type: "message_stop" },
                         ]);
@@ -766,6 +789,221 @@ describe("AnthropicBedrockProvider", () => {
         }
     });
 
+    it("retries a completed response with zero output tokens", async () => {
+        let attempts = 0;
+        const requests: unknown[] = [];
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-empty-output-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async (request: unknown) => {
+                        requests.push(request);
+                        attempts += 1;
+                        return streamEvents(
+                            attempts === 1
+                                ? [
+                                      {
+                                          type: "message_start",
+                                          message: {
+                                              usage: { input_tokens: 1, output_tokens: 0 },
+                                          },
+                                      },
+                                      {
+                                          type: "content_block_start",
+                                          index: 0,
+                                          content_block: { type: "text", text: "" },
+                                      },
+                                      {
+                                          type: "content_block_delta",
+                                          index: 0,
+                                          delta: {
+                                              type: "text_delta",
+                                              text: "discarded",
+                                          },
+                                      },
+                                      { type: "content_block_stop", index: 0 },
+                                      {
+                                          type: "content_block_start",
+                                          index: 1,
+                                          content_block: {
+                                              type: "tool_use",
+                                              id: "discarded-call",
+                                              name: "discarded_tool",
+                                              input: {},
+                                          },
+                                      },
+                                      {
+                                          type: "content_block_delta",
+                                          index: 1,
+                                          delta: {
+                                              type: "input_json_delta",
+                                              partial_json: "{}",
+                                          },
+                                      },
+                                      { type: "content_block_stop", index: 1 },
+                                      {
+                                          type: "message_delta",
+                                          delta: {
+                                              stop_reason: "tool_use",
+                                              stop_sequence: null,
+                                          },
+                                          usage: { output_tokens: 0 },
+                                      },
+                                      { type: "message_stop" },
+                                  ]
+                                : attempts === 2
+                                  ? [
+                                        {
+                                            type: "message_start",
+                                            message: {
+                                                usage: { input_tokens: 1, output_tokens: 0 },
+                                            },
+                                        },
+                                        {
+                                            type: "content_block_start",
+                                            index: 0,
+                                            content_block: { type: "text", text: "" },
+                                        },
+                                        {
+                                            type: "content_block_delta",
+                                            index: 0,
+                                            delta: {
+                                                type: "text_delta",
+                                                text: "recovered",
+                                            },
+                                        },
+                                        { type: "content_block_stop", index: 0 },
+                                        {
+                                            type: "message_delta",
+                                            delta: {
+                                                stop_reason: "end_turn",
+                                                stop_sequence: null,
+                                            },
+                                            usage: { output_tokens: 1 },
+                                        },
+                                        { type: "message_stop" },
+                                    ]
+                                  : [
+                                        {
+                                            type: "message_start",
+                                            message: {
+                                                usage: {
+                                                    input_tokens: 0,
+                                                    output_tokens: 0,
+                                                },
+                                            },
+                                        },
+                                        {
+                                            type: "content_block_start",
+                                            index: 0,
+                                            content_block: {
+                                                type: "compaction",
+                                                content: null,
+                                                encrypted_content: null,
+                                            },
+                                        },
+                                        {
+                                            type: "content_block_delta",
+                                            index: 0,
+                                            delta: {
+                                                type: "compaction_delta",
+                                                content: "summary",
+                                                encrypted_content: "opaque",
+                                            },
+                                        },
+                                        { type: "content_block_stop", index: 0 },
+                                        {
+                                            type: "message_delta",
+                                            delta: {
+                                                stop_reason: "compaction",
+                                                stop_sequence: null,
+                                            },
+                                            usage: { output_tokens: 1 },
+                                        },
+                                        { type: "message_stop" },
+                                    ],
+                        );
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            model: "anthropic/opus-4-8",
+            waitForInferenceRetry: async () => {},
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run({
+            context: { messages: [{ role: "user", content: "retry zero output" }] },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(2);
+        const resetIndex = events.findIndex((event) => event.type === "block_reset");
+        expect(events.slice(resetIndex, resetIndex + 3)).toEqual([
+            { type: "block_reset" },
+            {
+                type: "token_usage",
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 1,
+                    output: 0,
+                    totalTokens: 1,
+                },
+            },
+            {
+                type: "retrying",
+                attempt: 1,
+                reason: "Anthropic Bedrock returned a response with zero output tokens.",
+            },
+        ]);
+        expect(
+            committedSessionEvents(events).some(
+                (event) =>
+                    (event.type === "text_delta" && event.delta === "discarded") ||
+                    (event.type === "toolcall_start" && event.name === "discarded_tool"),
+            ),
+        ).toBe(false);
+        expect(events.filter((event) => event.type === "token_usage")).toEqual([
+            {
+                type: "token_usage",
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 1,
+                    output: 0,
+                    totalTokens: 1,
+                },
+            },
+            {
+                type: "token_usage",
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 1,
+                    output: 1,
+                    totalTokens: 2,
+                },
+            },
+        ]);
+        expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
+        await expect(session.compact()).resolves.toMatchObject({ status: "completed" });
+        expect(JSON.stringify(requests[2])).toContain("recovered");
+        expect(JSON.stringify(requests[2])).not.toContain("discarded");
+        expect(JSON.stringify(requests[2])).not.toContain("discarded_tool");
+    });
+
     it("frames request failures as a reset block", async () => {
         const credential = await BedrockBearerTokenCredential.tryLoad({
             bearerToken: "bedrock-error-token",
@@ -804,6 +1042,13 @@ describe("AnthropicBedrockProvider", () => {
                 state: "error",
                 kind: "unknown",
                 message: "request rejected",
+                providerError: {
+                    type: "unclassified",
+                    diagnostics: {
+                        attempts: 1,
+                        upstreamMessage: "request rejected",
+                    },
+                },
             },
         ]);
     });
@@ -937,6 +1182,209 @@ describe("AnthropicBedrockProvider", () => {
         expect(events.at(-1)).toEqual({ type: "done", state: "normal" });
     });
 
+    it("does not retry a stream that closes after an unexpected compaction block", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-truncated-compaction-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        return streamEvents([
+                            {
+                                type: "message_start",
+                                message: {
+                                    usage: {
+                                        input_tokens: 0,
+                                        output_tokens: 0,
+                                        cache_read_input_tokens: 50_480,
+                                    },
+                                },
+                            },
+                            {
+                                type: "content_block_start",
+                                index: 0,
+                                content_block: {
+                                    type: "compaction",
+                                    content: null,
+                                    encrypted_content: null,
+                                },
+                            },
+                        ]);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run({
+            context: { messages: [{ role: "user", content: "continue after compaction" }] },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events).not.toContainEqual(expect.objectContaining({ type: "retrying" }));
+        expect(events.at(-1)).toEqual({
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message: "Anthropic returned an unexpected compaction response during inference.",
+            providerError: { type: "unclassified" },
+        });
+    });
+
+    it("does not retry a stream that throws after an unexpected compaction block", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-thrown-compaction-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        return truncatedCompactionStream();
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run({
+            context: { messages: [{ role: "user", content: "continue after compaction" }] },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events).not.toContainEqual(expect.objectContaining({ type: "retrying" }));
+        expect(events.at(-1)).toEqual({
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message: "stream truncated after compaction",
+            providerError: {
+                diagnostics: {
+                    attempts: 1,
+                    upstreamMessage: "stream truncated after compaction",
+                },
+                type: "unclassified",
+            },
+        });
+    });
+
+    it("does not retry a stream that throws after a compaction stop reason", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-thrown-compaction-stop-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        return truncatedCompactionStopStream();
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run({
+            context: { messages: [{ role: "user", content: "continue after compaction" }] },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events).not.toContainEqual(expect.objectContaining({ type: "retrying" }));
+        expect(events.at(-1)).toEqual({
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message: "stream truncated after compaction stop",
+            providerError: {
+                diagnostics: {
+                    attempts: 1,
+                    upstreamMessage: "stream truncated after compaction stop",
+                },
+                type: "unclassified",
+            },
+        });
+    });
+
+    it("reports cancellation when an aborted stream closes after a compaction block", async () => {
+        let attempts = 0;
+        const controller = new AbortController();
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-aborted-compaction-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        return abortedCompactionStream(controller);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run({
+            abort: controller.signal,
+            context: { messages: [{ role: "user", content: "cancel after compaction" }] },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.at(-1)).toEqual({ type: "done", state: "cancelled" });
+    });
+
     it("preserves interleaved response blocks and treats truncated tools as length", async () => {
         const events: SessionEvent[] = [];
         for await (const event of mapAnthropicStream(
@@ -1048,11 +1496,11 @@ describe("AnthropicBedrockProvider", () => {
             type === "encrypted_reasoning" ? [index] : [],
         );
         expect(encryptedReasoningIndexes).toHaveLength(2);
-        expect(encryptedReasoningIndexes[0]).toBeLessThan(eventTypes.indexOf("tool_call_start"));
+        expect(encryptedReasoningIndexes[0]).toBeLessThan(eventTypes.indexOf("toolcall_start"));
         expect(encryptedReasoningIndexes[1]).toBeLessThan(eventTypes.indexOf("text_delta"));
         expect(events).toContainEqual({ type: "text_delta", delta: "after" });
         expect(events).toContainEqual({
-            type: "tool_call_start",
+            type: "toolcall_start",
             callId: "tool-1",
             name: "Read",
             namespace: "files",
@@ -1196,11 +1644,11 @@ describe("AnthropicBedrockProvider", () => {
                 expect.arrayContaining([
                     expect.objectContaining({ type: "reasoning_delta" }),
                     expect.objectContaining({
-                        type: "tool_call_start",
+                        type: "toolcall_start",
                         name: "Read",
                         vendor: { type: "claude_tool_use" },
                     }),
-                    expect.objectContaining({ type: "tool_call_end" }),
+                    expect.objectContaining({ type: "toolcall_end" }),
                     {
                         type: "token_usage",
                         usage: {
@@ -1248,4 +1696,53 @@ function toSse(events: readonly unknown[]): string {
 
 async function* streamEvents(events: readonly unknown[]) {
     for (const event of events) yield event as never;
+}
+
+async function* truncatedCompactionStream() {
+    yield* streamEvents(compactionStartEvents());
+    throw new APIConnectionError({ message: "stream truncated after compaction" });
+}
+
+async function* truncatedCompactionStopStream() {
+    yield* streamEvents([
+        {
+            type: "message_start",
+            message: { usage: { input_tokens: 0, output_tokens: 0 } },
+        },
+        {
+            type: "message_delta",
+            delta: { stop_reason: "compaction", stop_sequence: null },
+            usage: { output_tokens: 0 },
+        },
+    ]);
+    throw new APIConnectionError({ message: "stream truncated after compaction stop" });
+}
+
+async function* abortedCompactionStream(controller: AbortController) {
+    yield* streamEvents(compactionStartEvents());
+    controller.abort();
+}
+
+function compactionStartEvents(): readonly unknown[] {
+    return [
+        {
+            type: "message_start",
+            message: {
+                usage: {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_input_tokens: 50_480,
+                },
+            },
+        },
+        {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+                type: "compaction",
+                content: null,
+                encrypted_content: null,
+            },
+        },
+    ];
 }

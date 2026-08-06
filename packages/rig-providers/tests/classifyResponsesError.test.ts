@@ -6,6 +6,8 @@ import { classifyResponsesError } from "@/protocol/responses/classifyResponsesEr
 describe("classifyResponsesError", () => {
     it.each([
         [401, "authentication"],
+        [402, "out_of_tokens"],
+        [403, "authentication"],
         [429, "rate_limit"],
         [503, "server_overloaded"],
         [500, "internal_server_error"],
@@ -17,7 +19,14 @@ describe("classifyResponsesError", () => {
             new Headers(),
         );
 
-        expect(classifyResponsesError(error).providerError).toMatchObject({ type });
+        expect(classifyResponsesError(error).providerError).toMatchObject({
+            type,
+            diagnostics: {
+                attempts: 1,
+                status,
+                upstreamMessage: expect.stringContaining("failure"),
+            },
+        });
     });
 
     it("recognizes context overflow diagnostics", () => {

@@ -1,7 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
@@ -20,8 +22,96 @@ import type {
 } from "../InMemorySession.js";
 import { PersistentSessionStore } from "../PersistentSessionStore.js";
 import { TrackedTaskDrain } from "../../utils/TrackedTaskDrain.js";
+import type { GitCommandRunner } from "../../git/types.js";
+
+const execFile = promisify(execFileCallback);
 
 describe("PersistentSessionStore", () => {
+    it("reserves sessions and durable runs on an initializing workspace without creating runtimes", async () => {
+        const { cleanup, databasePath } = await createDatabasePath();
+        const root = await mkdtemp(join(tmpdir(), "rig-initializing-workspace-"));
+        const repository = join(root, "project");
+        const materialize = deferred<void>();
+        let runtimes = 0;
+        let store: PersistentSessionStore | undefined;
+        try {
+            await createGitRepository(repository);
+            const projectGit: GitCommandRunner = async (cwd, args) => {
+                if (args[0] === "worktree" && args[1] === "add") {
+                    await materialize.promise;
+                }
+                const result = await execFile("git", ["-C", cwd, ...args], { encoding: "utf8" });
+                return result.stdout.trim();
+            };
+            store = new PersistentSessionStore({
+                createRuntime: () => {
+                    runtimes += 1;
+                    throw new Error("An initializing workspace must not create a runtime.");
+                },
+                databasePath,
+                projectGit,
+                stateDirectory: join(root, "state"),
+                workspacesDirectory: join(root, "workspaces"),
+            });
+            const owner = store.create({ cwd: repository });
+            const workspace = await store.createWorkspace(owner.snapshot().projectId, {
+                baseRef: "HEAD",
+                id: "w6q0tc4rmq9f4a6adczq9eis",
+                name: "Waiting",
+            });
+            if (workspace === undefined) throw new Error("Expected a workspace reservation.");
+
+            expect(workspace.status).toBe("initializing");
+            const first = store.createWithId("d044lyyqklbc850un07gpm9v", {
+                cwd: workspace.path,
+                projectId: workspace.projectId,
+                workspaceId: workspace.id,
+            });
+            const second = store.createWithId("l4c1r61a2hedg6f2zrzfwz4w", {
+                cwd: workspace.path,
+                projectId: workspace.projectId,
+                workspaceId: workspace.id,
+            });
+            const firstRun = first.submit({
+                clientSubmissionId: "m7ymgv1cqfbjd0pxukc8403w",
+                text: "First queued message.",
+            });
+            const repeatedRun = first.submit({
+                clientSubmissionId: "m7ymgv1cqfbjd0pxukc8403w",
+                text: "First queued message.",
+            });
+            const secondRun = second.submit({
+                clientSubmissionId: "n3tfnng0rkcw4mxc3nfq4ntc",
+                debug: true,
+                text: "Second queued message.",
+            });
+
+            expect(
+                store.createWithId(first.id, {
+                    cwd: workspace.path,
+                    projectId: workspace.projectId,
+                    workspaceId: workspace.id,
+                }),
+            ).toBe(first);
+            expect(repeatedRun).toEqual(firstRun);
+            expect(first.snapshot()).toMatchObject({
+                status: "queued",
+            });
+            expect(second.snapshot()).toMatchObject({
+                status: "queued",
+            });
+            expect(first.state().queuedRuns.map((run) => run.runId)).toEqual([firstRun.runId]);
+            expect(second.state().queuedRuns.map((run) => run.runId)).toEqual([secondRun.runId]);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            await expect(stat(workspace.path)).rejects.toMatchObject({ code: "ENOENT" });
+            expect(runtimes).toBe(0);
+        } finally {
+            materialize.resolve();
+            store?.close();
+            await Promise.all([cleanup(), rm(root, { force: true, recursive: true })]);
+        }
+    });
+
     it("restores pending context and rewinds or resets it atomically", async () => {
         const { cleanup, databasePath } = await createDatabasePath();
         try {
@@ -3501,6 +3591,30 @@ async function createDatabasePath(): Promise<{
         cleanup: () => rm(directory, { force: true, recursive: true }),
         databasePath: join(directory, "sessions.sqlite"),
     };
+}
+
+async function createGitRepository(path: string): Promise<void> {
+    await mkdir(path, { recursive: true });
+    await execFile("git", ["-C", path, "init", "--initial-branch=main"]);
+    await execFile("git", ["-C", path, "config", "user.email", "rig@example.test"]);
+    await execFile("git", ["-C", path, "config", "user.name", "Rig Test"]);
+    await writeFile(join(path, "README.md"), "fixture\n");
+    await execFile("git", ["-C", path, "add", "README.md"]);
+    await execFile("git", ["-C", path, "commit", "-m", "Initial"]);
+}
+
+function deferred<T>(): {
+    promise: Promise<T>;
+    resolve(value: T): void;
+    reject(error: unknown): void;
+} {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, reject, resolve };
 }
 
 function testModelCatalog(): ModelCatalog {

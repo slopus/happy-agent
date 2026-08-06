@@ -160,6 +160,7 @@ export function querySessionRestore(tx: TX, sessionId: string): SessionRestore |
         projectId,
         ...(workspaceId === undefined ? {} : { workspaceId }),
         workspaceTransfer,
+        workspaceQueueWaiting: readNumber(row, "workspace_queue_waiting") !== 0,
         secretIds: secretIdsJson === undefined ? [] : (JSON.parse(secretIdsJson) as string[]),
         queuedRuns: queryQueuedRuns(tx, sessionId),
         scheduledMessages: [...queryScheduledMessages(tx, sessionId)],
@@ -238,11 +239,16 @@ function queryContextMessages(tx: TX, sessionId: string): Message[] {
 function queryQueuedRuns(tx: TX, sessionId: string): PersistedQueuedRun[] {
     return tx
         .all<Record<string, unknown>>(sql`
-            SELECT run_id, debug, debug_directory, display_text, kind, text, user_message_json,
-                integration_config_json
+            SELECT queued_runs.run_id, queued_runs.debug, queued_runs.debug_directory,
+                queued_runs.display_text, queued_runs.kind, queued_runs.text,
+                queued_runs.user_message_json, queued_runs.integration_config_json
             FROM queued_runs
-            WHERE session_id = ${sessionId}
-            ORDER BY created_at_ms ASC
+            LEFT JOIN session_turns
+                ON session_turns.session_id = queued_runs.session_id
+                AND session_turns.run_id = queued_runs.run_id
+            WHERE queued_runs.session_id = ${sessionId}
+            ORDER BY session_turns.first_position ASC, queued_runs.created_at_ms ASC,
+                queued_runs.run_id ASC
         `)
         .map((row) => {
             const debugDirectory = readOptionalString(row, "debug_directory");
@@ -259,14 +265,18 @@ function queryQueuedRuns(tx: TX, sessionId: string): PersistedQueuedRun[] {
                           skills?: readonly DurableSkillDefinition[];
                           systemPrompt?: string | null;
                       });
+            const debug = readNumber(row, "debug") !== 0;
+            const userMessage = JSON.parse(
+                readString(row, "user_message_json"),
+            ) as PersistedQueuedRun["userMessage"];
             return {
-                ...(readNumber(row, "debug") === 0 ? {} : { debug: true }),
+                ...(debug ? { debug: true, debugRequestContent: userMessage.blocks } : {}),
                 ...(debugDirectory === undefined ? {} : { debugDirectory }),
                 displayText: readString(row, "display_text"),
                 kind: readString(row, "kind") as PersistedQueuedRun["kind"],
                 runId: readString(row, "run_id"),
                 text: readString(row, "text"),
-                userMessage: JSON.parse(readString(row, "user_message_json")),
+                userMessage,
                 ...config,
             };
         }) as PersistedQueuedRun[];

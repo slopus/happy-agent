@@ -1,11 +1,33 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { promisify } from "node:util";
 
 import { build } from "esbuild";
 
 const execFileAsync = promisify(execFile);
+
+/** The workspace packages Rig bundles from their built output rather than from their sources. */
+const internalPackages = ["rig-execution", "rig-providers"];
+
+/** When a directory tree was last written, or nothing when it does not exist. */
+async function newestModifiedTime(directory: string): Promise<number | undefined> {
+    let entries;
+    try {
+        entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+        return undefined;
+    }
+    let newest: number | undefined;
+    for (const entry of entries) {
+        const path = `${directory}/${entry.name}`;
+        const time = entry.isDirectory()
+            ? await newestModifiedTime(path)
+            : (await stat(path)).mtimeMs;
+        if (time !== undefined && (newest === undefined || time > newest)) newest = time;
+    }
+    return newest;
+}
 // `@mongodb-js/zstd` and `node-liblzma` are just-bash's optional xz and zstd codecs. They stay
 // external so esbuild leaves just-bash's dynamic imports alone, and they are deliberately not
 // installed: just-bash refuses both codecs unless a caller passes `allowNativeCodecs`, which Rig
@@ -21,6 +43,7 @@ const externalPackages = [
     "@mariozechner/clipboard",
     "@modelcontextprotocol/sdk",
     "@mongodb-js/zstd",
+    "@number0/iroh",
     "@pydantic/monty",
     "@slopus/ghostty-wasm",
     "@vscode/ripgrep",
@@ -34,6 +57,28 @@ const externalPackages = [
     "utf-8-validate",
     "zod",
 ];
+
+// Rig bundles the internal packages from their built `dist`, so building Rig alone silently
+// ships whatever they were last built from. That mixes two versions of an interface into one
+// binary: the bundle typechecks, every suite passes, and the mismatch only appears at runtime,
+// where a renamed event stops being recognised and its payload is dropped. Compare the two
+// trees before bundling and say what to run instead.
+for (const internalPackage of internalPackages) {
+    const root = `../${internalPackage}`;
+    const sources = await newestModifiedTime(`${root}/sources`);
+    const built = await newestModifiedTime(`${root}/dist`);
+    if (built === undefined) {
+        throw new Error(
+            `${internalPackage} has not been built. Run 'pnpm build' from the repository root.`,
+        );
+    }
+    if (sources !== undefined && sources > built) {
+        throw new Error(
+            `${internalPackage} has changed since it was last built, so the Rig bundle would ` +
+                `carry a stale copy of it. Run 'pnpm build' from the repository root.`,
+        );
+    }
+}
 
 await rm("dist", { force: true, recursive: true });
 await mkdir("dist", { recursive: true });
@@ -60,7 +105,7 @@ const result = await build({
     target: "node20",
 });
 const bundledInputs = Object.keys(result.metafile.inputs);
-for (const internalPackage of ["rig-execution", "rig-providers"]) {
+for (const internalPackage of internalPackages) {
     if (!bundledInputs.some((input) => input.includes(`/${internalPackage}/dist/`))) {
         throw new Error(`The Rig bundle did not include ${internalPackage}.`);
     }

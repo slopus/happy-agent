@@ -1,5 +1,6 @@
 import { readPackageManifest } from "./release/readPackageManifest.js";
 import { assertHappyRuntimeDependencies } from "./release/assertHappyRuntimeDependencies.js";
+import { assertReleaseBumpAllowed } from "./release/assertReleaseBumpAllowed.js";
 import { assertRegistryLatestMatchesManifest } from "./release/assertRegistryLatestMatchesManifest.js";
 import { resolveReleasePackage } from "./release/resolveReleasePackage.js";
 import { runCommand } from "./release/runCommand.js";
@@ -21,11 +22,14 @@ const USAGE = `Usage:
   pnpm release happy-plugins <version>
 
 Examples:
-  pnpm release 0.1.0
-  pnpm release patch
-  pnpm release minor
+  pnpm release minor            a release with new features in it
+  pnpm release patch            a release that only fixes things
+  pnpm release 0.4.0            that same choice, spelled out
   pnpm release rig-connect patch
-  pnpm release happy-plugins patch`;
+  pnpm release happy-plugins patch
+
+Rig is still on 0.x, so it does not take a major release yet. Until it promises
+compatibility, a minor is how a feature ships and a patch is how a fix does.`;
 
 async function release(): Promise<void> {
     const arguments_ = process.argv.slice(2);
@@ -47,6 +51,9 @@ async function release(): Promise<void> {
         throw new Error(USAGE);
     }
 
+    const initialManifest = readPackageManifest(releasePackage);
+    assertReleaseBumpAllowed({ currentVersion: initialManifest.version, requested: releaseInput });
+
     const worktreeStatus = runCommand("git", ["status", "--porcelain"], {
         captureOutput: true,
     }).stdout;
@@ -54,7 +61,6 @@ async function release(): Promise<void> {
         throw new Error("The working tree must be clean before creating a release.");
     }
 
-    const initialManifest = readPackageManifest(releasePackage);
     if (releasePackage.key === "rig") assertHappyRuntimeDependencies(initialManifest);
     const tagsAtHead = runCommand("git", ["tag", "--points-at", "HEAD"], {
         captureOutput: true,

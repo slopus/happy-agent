@@ -30,7 +30,7 @@ export async function createConfigFile(
                     : {}),
             },
             settings: {
-                codex_stream_max_retries: config.settings.codexStreamMaxRetries,
+                inference_max_retries: config.settings.inferenceMaxRetries,
                 compact_completed_turns: config.settings.compactCompletedTurns,
                 completion_chime: config.settings.completionChime,
                 daemon_heap_snapshots: config.settings.daemonHeapSnapshots,
@@ -44,7 +44,42 @@ export async function createConfigFile(
                 workflows: config.features.workflows,
                 workspaces: config.features.workspaces,
             },
+            ...(!config.p2p.enableDirect &&
+            !config.p2p.enableIroh &&
+            !config.p2p.enableSsh &&
+            !config.p2p.exposeApi &&
+            config.p2p.direct.listen === undefined &&
+            config.p2p.iroh.relayUrl === undefined
+                ? {}
+                : {
+                      p2p: {
+                          enable_direct: config.p2p.enableDirect,
+                          enable_iroh: config.p2p.enableIroh,
+                          enable_ssh: config.p2p.enableSsh,
+                          expose_api: config.p2p.exposeApi,
+                          name: config.p2p.name,
+                          role: config.p2p.role,
+                          ...(config.p2p.primaryId === undefined
+                              ? {}
+                              : { primary_id: config.p2p.primaryId }),
+                          direct:
+                              config.p2p.direct.listen === undefined
+                                  ? {}
+                                  : { listen: config.p2p.direct.listen },
+                          iroh:
+                              config.p2p.iroh.relayUrl === undefined
+                                  ? {}
+                                  : { relay_url: config.p2p.iroh.relayUrl },
+                      },
+                  }),
             providers: serializeProviders(config.providers, config.providerDefaultEnable),
+            ...(config.permissions.protectedPaths.length === 0
+                ? {}
+                : {
+                      permissions: {
+                          protected_paths: config.permissions.protectedPaths,
+                      },
+                  }),
             theme: config.theme,
             ...(config.workspace.setupCommands.length === 0
                 ? {}

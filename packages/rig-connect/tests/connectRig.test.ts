@@ -2364,7 +2364,7 @@ describe("connectRig mutations", () => {
             expect(error).toEqual(
                 expect.objectContaining({
                     message:
-                        "The Rig server protocol is version 999, but this rig-connect build supports at most version 6.",
+                        "The Rig server protocol is version 999, but this rig-connect build supports at most version 10.",
                 }),
             );
         } finally {

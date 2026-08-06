@@ -1,17 +1,14 @@
 import type { SessionCacheUsage } from "@/core/SessionCacheUsage.js";
+import type { SessionProviderError } from "@/core/SessionProviderError.js";
+
+export type {
+    SessionProviderError,
+    SessionProviderErrorDiagnostics,
+} from "@/core/SessionProviderError.js";
 
 export type SessionDoneState = "cancelled" | "normal" | "tool_call" | "length" | "error";
 
 export type SessionErrorKind = "internal_error" | "context_overflow" | "billing_error" | "unknown";
-
-/** Provider failure details that remain meaningful above a native session transport. */
-export type SessionProviderError =
-    | { type: "authentication" }
-    | { type: "out_of_tokens"; resetAt?: number }
-    | { type: "rate_limit"; resetAt?: number }
-    | { type: "server_overloaded" }
-    | { type: "internal_server_error"; requestId?: string }
-    | { type: "unclassified" };
 
 /** Streaming events emitted during a single session run. */
 export type SessionEvent =
@@ -23,22 +20,22 @@ export type SessionEvent =
     | { type: "encrypted_reasoning"; content: string }
     | { type: "response_items"; items: readonly string[] }
     | {
-          type: "tool_call_start";
+          type: "toolcall_start";
           callId: string;
           name: string;
           namespace?: string;
           /** Opaque provider metadata to persist with the tool call and its result. */
           vendor?: any;
       }
-    | { type: "tool_call_delta"; callId: string; delta: string }
-    | { type: "tool_call_end"; callId: string; arguments: string; incomplete?: boolean }
+    | { type: "toolcall_delta"; callId: string; delta: string }
+    | { type: "toolcall_end"; callId: string; arguments: string; incomplete?: boolean }
     /**
      * A tool the provider ran on its own backend while producing this response. The client never
      * executes it and never returns a result, so it never becomes one of the run's tool calls.
      */
-    | { type: "server_tool_call_start"; callId: string; name: string }
-    | { type: "server_tool_call_delta"; callId: string; delta: string }
-    | { type: "server_tool_call_end"; callId: string; name: string; arguments: string }
+    | { type: "server_toolcall_start"; callId: string; name: string }
+    | { type: "server_toolcall_delta"; callId: string; delta: string }
+    | { type: "server_toolcall_end"; callId: string; name: string; arguments: string }
     | { type: "retrying"; attempt: number; reason: string }
     | { type: "token_usage"; usage: SessionCacheUsage }
     | { type: "done"; state: "cancelled" }

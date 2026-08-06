@@ -181,6 +181,7 @@ function liveEventKey(event: GlobalLiveEvent): string {
     if (
         event.type === "presence_changed" ||
         event.type === "happy_cloud_changed" ||
+        event.type === "p2p_status_changed" ||
         event.type === "plugins_changed" ||
         event.type === "slots_changed" ||
         event.type === "webapps_changed"

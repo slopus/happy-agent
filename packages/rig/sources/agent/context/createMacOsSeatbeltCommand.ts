@@ -1,7 +1,7 @@
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { PROJECT_CONFIG_FILE_NAMES } from "../../config/projectConfigFileNames.js";
+import { PROJECT_PROTECTED_FILE_NAMES } from "../../config/projectProtectedFileNames.js";
 import type { PermissionMode } from "../../permissions/index.js";
 import { findGitWritablePaths } from "./findGitWritablePaths.js";
 import { MACOS_SEATBELT_BASE_POLICY } from "./macOsSeatbeltBasePolicy.js";
@@ -9,7 +9,11 @@ import { quoteShellArgument } from "./quoteShellArgument.js";
 import { resolvePotentialPath } from "./resolvePotentialPath.js";
 
 const MACOS_SEATBELT_EXECUTABLE = "/usr/bin/sandbox-exec";
-const PROTECTED_WORKSPACE_NAMES = [".agents", ".codex", ...PROJECT_CONFIG_FILE_NAMES] as const;
+const PROTECTED_WORKSPACE_NAMES = [
+    ".agents",
+    ".codex",
+    ...PROJECT_PROTECTED_FILE_NAMES,
+] as const;
 
 export async function createMacOsSeatbeltCommand(options: {
     /**
@@ -24,6 +28,7 @@ export async function createMacOsSeatbeltCommand(options: {
     networkAllowLocalBinding?: boolean;
     networkAllowedLoopbackPorts?: readonly number[];
     path?: string;
+    protectedPaths?: readonly string[];
     shell: string;
 }): Promise<{ args: readonly string[]; command: string }> {
     const environment = options.environment ?? process.env;
@@ -66,6 +71,7 @@ export async function createMacOsSeatbeltCommand(options: {
         ...new Set([
             ...protectedCandidates,
             ...(await Promise.all(protectedCandidates.map(resolvePotentialPath))),
+            ...(options.protectedPaths ?? []),
         ]),
     ];
     const definitions: string[] = [];

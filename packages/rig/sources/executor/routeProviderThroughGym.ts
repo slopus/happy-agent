@@ -29,6 +29,12 @@ export function routeProviderThroughGym(
         ...(provider.extendProfilePromptContext === undefined
             ? {}
             : { extendProfilePromptContext: provider.extendProfilePromptContext }),
+        // The gym swaps the transport, not the decision. Forwarding the real provider's answer is
+        // what lets a gym test see which searches a request would have carried, rather than a
+        // second copy of the rule that could agree with the test while disagreeing with Rig.
+        ...(provider.hostedCapabilitiesForRequest === undefined
+            ? {}
+            : { hostedCapabilitiesForRequest: () => provider.hostedCapabilitiesForRequest!() }),
         models: provider.models,
         ...(onAccountUsage === undefined ? {} : { onAccountUsage }),
         ...(provider instanceof Executor
@@ -56,6 +62,16 @@ export function routeProviderThroughGym(
                   close: async () => {
                       await Promise.all([gymProvider.close?.(), provider.close?.()]);
                   },
+              }),
+        // Isolating has to happen on the real provider and then be routed, not skipped. Routing
+        // replaces the provider object, so a gym session that isolated the routed one would keep
+        // whatever the conversation itself holds — and a test would see a side channel granted
+        // capabilities that production withholds from it.
+        ...(provider.isolate === undefined
+            ? {}
+            : {
+                  isolate: (label: string) =>
+                      routeProviderThroughGym(provider.isolate!(label), env, onAccountUsage),
               }),
         ...(provider.runClaudeAuxiliaryQuery === undefined
             ? {}

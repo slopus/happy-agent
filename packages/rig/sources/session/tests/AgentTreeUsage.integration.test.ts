@@ -165,6 +165,11 @@ describe("agent tree usage session wiring", () => {
             const workspace = await rootContext.workspaces!.create({
                 name: "Visible review",
             });
+            await waitFor(
+                () => store?.getWorkspace(workspace.projectId, workspace.id),
+                (candidate) => candidate.status !== "initializing",
+            );
+            expect(store.getWorkspace(workspace.projectId, workspace.id)?.status).toBe("ready");
             const delegated = await rootContext.workspaces!.delegate({
                 effort: "off",
                 modelId: fixture.model.id,

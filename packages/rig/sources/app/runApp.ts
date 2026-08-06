@@ -12,7 +12,8 @@ import {
     createProjectConfigSecurityNotice,
     createProjectConfigSecurityNoticeTitle,
     loadConfig,
-    writeRuntimeConfig,
+    resolveProtectedPaths,
+    updateRuntimePreferences,
 } from "../config/index.js";
 import { createProjectMcpSecurityNotice, loadMcpServerConfigEntries } from "../mcp/index.js";
 import { NativeProcessManager } from "../processes/index.js";
@@ -78,6 +79,12 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
         basename(loadedConfig.sources.local.path),
     );
     const projectMcpNotice = createProjectMcpSecurityNotice(mcpConfigEntries);
+    const machineProtectedPaths = [
+        ...new Set([
+            ...(loadedConfig.sources.global.values.permissions?.protectedPaths ?? []),
+            ...(loadedConfig.sources.runtime.values.permissions?.protectedPaths ?? []),
+        ]),
+    ];
     const agentOptions: CreateSessionRequest = {
         trackUnread: true,
         cwd,
@@ -114,7 +121,7 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
     if (options.permissionMode !== undefined) agentOptions.permissionMode = options.permissionMode;
     let compactCompletedTurns =
         options.compactCompletedTurns ?? loadedConfig.config.settings.compactCompletedTurns;
-    let codexStreamMaxRetries = loadedConfig.config.settings.codexStreamMaxRetries;
+    let inferenceMaxRetries = loadedConfig.config.settings.inferenceMaxRetries;
     let completionChime = loadedConfig.config.settings.completionChime;
     const daemonHeapSnapshots = loadedConfig.config.settings.daemonHeapSnapshots;
     let durableGlobalEventQueue = loadedConfig.config.settings.durableGlobalEventQueue;
@@ -257,6 +264,7 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
             cwd: sessionCwd,
             permissionMode: session.session.permissionMode,
             processManager,
+            protectedPaths: resolveProtectedPaths(sessionCwd, machineProtectedPaths),
         });
         const agent = new RemoteAgent({
             client: localServer.client,
@@ -346,7 +354,7 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
             },
             onDefaultModelChange: (preference) =>
                 enqueueRuntimeConfigWrite(() =>
-                    writeRuntimeConfig(loadedConfig.paths.runtime, {
+                    updateRuntimePreferences(loadedConfig.paths.runtime, {
                         defaults: {
                             modelId: preference.modelId,
                             providerId: preference.providerId,
@@ -355,7 +363,7 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
                             serviceTier: preference.serviceTier,
                         },
                         settings: {
-                            codexStreamMaxRetries,
+                            inferenceMaxRetries,
                             compactCompletedTurns,
                             completionChime,
                             daemonHeapSnapshots,
@@ -367,14 +375,14 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
                     }),
                 ),
             onSettingsChange: async (settings) => {
-                codexStreamMaxRetries = settings.codexStreamMaxRetries;
+                inferenceMaxRetries = settings.inferenceMaxRetries;
                 compactCompletedTurns = settings.compactCompletedTurns;
                 completionChime = settings.completionChime;
                 durableGlobalEventQueue = settings.durableGlobalEventQueue;
                 showReasoning = settings.showReasoning;
                 showUsage = settings.showUsage;
                 await enqueueRuntimeConfigWrite(() =>
-                    writeRuntimeConfig(loadedConfig.paths.runtime, {
+                    updateRuntimePreferences(loadedConfig.paths.runtime, {
                         defaults: {
                             modelId: agent.model.id,
                             providerId: agent.provider.id,
@@ -388,7 +396,7 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
                 );
                 await localServer.client.updateDaemonConfig({
                     settings: {
-                        codexStreamMaxRetries,
+                        inferenceMaxRetries,
                         durableGlobalEventQueue,
                     },
                 });
@@ -423,7 +431,7 @@ export async function runApp(options: RunAppOptions = {}): Promise<RunAppResult>
                     )
                     .then((response) => response.files),
             sessionBacked: true,
-            codexStreamMaxRetries,
+            inferenceMaxRetries,
             compactCompletedTurns,
             completionChime,
             durableGlobalEventQueue,

@@ -9,6 +9,7 @@ import type {
     Message as ProviderMessage,
     Model,
     Provider,
+    ProviderError,
     Tool as ExecutorTool,
     Usage,
 } from "@slopus/rig-execution";
@@ -193,6 +194,11 @@ export interface ErrorMessage {
     outcome: "retried" | "continued" | "failed";
     /** Present when the provider identified which retry attempt failed. */
     attempt?: number;
+    /** Durable inference attribution for provider failures. */
+    providerId?: string;
+    requestedModelId?: string;
+    /** Bounded provider-native diagnostics retained for support and debugging. */
+    providerError?: ProviderError;
     /**
      * Display-only failures duplicate information already represented in model context, such as
      * an automatic permission denial that is also the tool result.

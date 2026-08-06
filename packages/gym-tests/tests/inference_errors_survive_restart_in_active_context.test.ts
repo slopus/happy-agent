@@ -7,6 +7,19 @@ const RETRY_ERROR = "DURABLE_RETRY_CONNECTION_LOST";
 const TERMINAL_ERROR = "DURABLE_TERMINAL_PROVIDER_FAILURE";
 const RESUME_MARKER = "DURABLE_INFERENCE_ERRORS_RESUME_BOUNDARY";
 const RECOVERED = "DURABLE_INFERENCE_ERRORS_RECOVERED";
+const PROVIDER_ERROR = {
+    diagnostics: {
+        attempts: 3,
+        code: "model_backend_failure",
+        errorType: "server_error",
+        requestId: "request-durable-1",
+        responseId: "response-durable-1",
+        retryDirective: false,
+        status: 502,
+        upstreamMessage: TERMINAL_ERROR,
+    },
+    type: "internal_server_error",
+} as const;
 
 afterEach(async () => {
     await Promise.all([...running].map((gym) => gym.dispose()));
@@ -42,6 +55,7 @@ describe("durable inference errors", () => {
                                 reason: RETRY_ERROR,
                             },
                         ],
+                        providerError: PROVIDER_ERROR,
                         stopReason: "error",
                     };
                 }
@@ -88,12 +102,20 @@ describe("durable inference errors", () => {
             contextErrors: number;
             durableErrorEvents: number;
             obsoleteRetryEvents: number;
+            terminalEventProviderError: typeof PROVIDER_ERROR;
+            terminalMessageProviderError: typeof PROVIDER_ERROR;
+            terminalProviderId: string;
+            terminalRequestedModelId: string;
             transcriptErrors: number;
         };
         expect(persisted).toEqual({
             contextErrors: 2,
             durableErrorEvents: 2,
             obsoleteRetryEvents: 0,
+            terminalEventProviderError: PROVIDER_ERROR,
+            terminalMessageProviderError: PROVIDER_ERROR,
+            terminalProviderId: "gym",
+            terminalRequestedModelId: "openai/gym",
             transcriptErrors: 2,
         });
 
@@ -135,6 +157,17 @@ const durableErrorEvents = durableEvents.filter((event) => {
     return JSON.parse(event.data_json).message?.role === "error";
 }).length;
 const obsoleteRetryEvents = durableEvents.filter((event) => event.type === "inference_retry").length;
+const terminalMessage = JSON.parse(
+    database
+        .prepare(
+            "SELECT message_json FROM session_messages WHERE session_id = ? AND role = 'error' ORDER BY position DESC LIMIT 1",
+        )
+        .get(sessionId).message_json,
+);
+const terminalEvent = durableEvents
+    .filter((event) => event.type === "run_finished")
+    .map((event) => JSON.parse(event.data_json))
+    .find((data) => data.stopReason === "error");
 const sessionColumns = database
     .prepare("PRAGMA table_info(sessions)")
     .all()
@@ -145,6 +178,15 @@ if (sessionColumns.includes("context_messages_json")) {
 database.close();
 writeFileSync(
     "/workspace/inference-errors-persistence.json",
-    JSON.stringify({ contextErrors, durableErrorEvents, obsoleteRetryEvents, transcriptErrors }),
+    JSON.stringify({
+        contextErrors,
+        durableErrorEvents,
+        obsoleteRetryEvents,
+        terminalEventProviderError: terminalEvent.providerError,
+        terminalMessageProviderError: terminalMessage.providerError,
+        terminalProviderId: terminalMessage.providerId,
+        terminalRequestedModelId: terminalMessage.requestedModelId,
+        transcriptErrors,
+    }),
 );
 `;

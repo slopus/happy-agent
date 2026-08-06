@@ -6,6 +6,7 @@ export function createErrorMessage(
     outcome: ErrorMessage["outcome"],
     attempt?: number,
     context?: ErrorMessage["context"],
+    diagnostics?: Pick<ErrorMessage, "providerError" | "providerId" | "requestedModelId">,
 ): ErrorMessage {
     return {
         blocks: [{ text: reason, type: "text" }],
@@ -14,5 +15,12 @@ export function createErrorMessage(
         outcome,
         role: "error",
         ...(attempt === undefined ? {} : { attempt }),
+        ...(diagnostics?.providerError === undefined
+            ? {}
+            : { providerError: diagnostics.providerError }),
+        ...(diagnostics?.providerId === undefined ? {} : { providerId: diagnostics.providerId }),
+        ...(diagnostics?.requestedModelId === undefined
+            ? {}
+            : { requestedModelId: diagnostics.requestedModelId }),
     };
 }

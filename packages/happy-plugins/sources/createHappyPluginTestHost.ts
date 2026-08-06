@@ -62,6 +62,7 @@ import type {
     HappySystemPromptHookResult,
     HappyTracingEvent,
     HappyWorkspace,
+    HappyWorkspaceEvent,
 } from "./types.js";
 import {
     HAPPY_PLUGIN_MAX_STORAGE_KEYS,
@@ -268,6 +269,8 @@ export async function createHappyPluginTestHost(
     const calls = new Map<string, TestCall<HappyMcpToolResult>>();
     const computeCalls = new Map<string, TestComputeCall>();
     const computeEventResponses = new Set<ServerResponse>();
+    const workspaceEventResponses = new Set<ServerResponse>();
+    const workspaceCompletions = new Set<Promise<void>>();
     const computeInstances = new Map<string, TestComputeInstance>();
     let computeRegistration: TestComputeRegistration | undefined;
     const computeWaiters = new Set<() => void>();
@@ -283,6 +286,18 @@ export async function createHappyPluginTestHost(
         [...registrations.values()]
             .filter((registration) => registration.response !== undefined)
             .reduce((count, registration) => count + registration.server.tools.length, 0);
+
+    const publishWorkspaceEvent = (
+        type: HappyWorkspaceEvent["type"],
+        workspace: HappyWorkspace,
+    ) => {
+        const event: HappyWorkspaceEvent = { type, workspace };
+        for (const response of workspaceEventResponses) {
+            if (!response.destroyed && !response.writableEnded) {
+                response.write(`${JSON.stringify(event)}\n`);
+            }
+        }
+    };
 
     const publishComputeEvent = (
         instance: TestComputeInstance,
@@ -521,6 +536,16 @@ export async function createHappyPluginTestHost(
                                   (workspace) => workspace.projectId === input.projectId,
                               ),
                 });
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/workspaces/events") {
+                response.writeHead(200, {
+                    "cache-control": "no-store",
+                    "content-type": "application/x-ndjson",
+                });
+                response.flushHeaders();
+                workspaceEventResponses.add(response);
+                response.once("close", () => workspaceEventResponses.delete(response));
                 return;
             }
             if (request.method === "GET" && url.pathname === "/sessions") {
@@ -1032,6 +1057,12 @@ export async function createHappyPluginTestHost(
                     send(response, 404, { error: "Workspace not found." });
                     return;
                 }
+                if (workspace.status !== "ready") {
+                    send(response, 409, {
+                        error: "The workspace is still initializing or its directory is unavailable.",
+                    });
+                    return;
+                }
                 if (parts.length === 3 && parts[2] === "exec") {
                     const input = decodeRequest(
                         executeWorkspaceCommandBodySchema,
@@ -1425,17 +1456,64 @@ export async function createHappyPluginTestHost(
                         body,
                         "Workspace settings",
                     );
+                    const existing =
+                        input.id === undefined
+                            ? undefined
+                            : workspaces.find((candidate) => candidate.id === input.id);
+                    if (existing !== undefined) {
+                        if (
+                            existing.projectId !== projectId ||
+                            existing.baseRef !== input.baseRef
+                        ) {
+                            send(response, 409, {
+                                error: "That workspace ID already names a different workspace.",
+                            });
+                            return;
+                        }
+                        send(response, 202, { workspace: existing });
+                        return;
+                    }
                     const workspace: HappyWorkspace = {
-                        id: `test-workspace-${String(nextId++)}`,
+                        id: input.id ?? `test-workspace-${String(nextId++)}`,
                         name: input.name,
                         path: join(pluginDirectory, input.name),
                         projectId,
-                        status: "ready",
+                        status: "initializing",
                         version: 0,
                         ...(input.baseRef === undefined ? {} : { baseRef: input.baseRef }),
                     };
                     workspaces.push(workspace);
-                    send(response, 201, { workspace });
+                    publishWorkspaceEvent("workspace_created", workspace);
+                    send(response, 202, { workspace });
+                    const completion = new Promise<void>((resolveCompletion) => {
+                        setImmediate(() => {
+                            void mkdir(workspace.path, { mode: 0o700, recursive: true })
+                                .then(
+                                    () => {
+                                        Object.assign(workspace, {
+                                            status: "ready",
+                                            version: workspace.version + 1,
+                                        });
+                                    },
+                                    (error: unknown) => {
+                                        Object.assign(workspace, {
+                                            error:
+                                                error instanceof Error
+                                                    ? error.message
+                                                    : String(error),
+                                            status: "failed",
+                                            version: workspace.version + 1,
+                                        });
+                                    },
+                                )
+                                .then(() => {
+                                    publishWorkspaceEvent("workspace_updated", workspace);
+                                })
+                                .finally(resolveCompletion);
+                        });
+                    });
+                    workspaceCompletions.add(completion);
+                    void completion.finally(() => workspaceCompletions.delete(completion));
                     return;
                 }
                 const workspace = workspaces.find(
@@ -1832,8 +1910,11 @@ export async function createHappyPluginTestHost(
             registrations.clear();
             systemPromptHook?.response?.end();
             tracingSubscription?.response?.end();
+            for (const response of workspaceEventResponses) response.end();
+            workspaceEventResponses.clear();
             systemPromptHook = undefined;
             tracingSubscription = undefined;
+            await Promise.allSettled(workspaceCompletions);
             await new Promise<void>((resolve) => {
                 server.close(() => resolve());
                 server.closeAllConnections();
