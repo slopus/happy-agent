@@ -4,23 +4,39 @@ import { join } from "node:path";
 import { type Static, Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
+/*
+ * Codex writes JSON null for whichever half of the file it is not using: a
+ * ChatGPT login stores `OPENAI_API_KEY: null`, and API key mode stores
+ * `tokens: null`. A schema that accepts only a string rejects the whole file,
+ * and a rejected file reads as "no credentials at all", so every field Codex
+ * can null out is accepted here and collapsed onto the absent case below.
+ */
+const nullableString = Type.Optional(Type.Union([Type.String(), Type.Null()]));
+
 const codexAuthFileSchema = Type.Object(
     {
-        auth_mode: Type.Optional(Type.String()),
-        OPENAI_API_KEY: Type.Optional(Type.String()),
+        auth_mode: nullableString,
+        OPENAI_API_KEY: nullableString,
         tokens: Type.Optional(
-            Type.Object(
-                {
-                    access_token: Type.Optional(Type.String()),
-                    account_id: Type.Optional(Type.String()),
-                    id_token: Type.Optional(Type.String()),
-                },
-                { additionalProperties: true },
-            ),
+            Type.Union([
+                Type.Object(
+                    {
+                        access_token: nullableString,
+                        account_id: nullableString,
+                        id_token: nullableString,
+                    },
+                    { additionalProperties: true },
+                ),
+                Type.Null(),
+            ]),
         ),
     },
     { additionalProperties: true },
 );
+
+function present(value: string | null | undefined): string | undefined {
+    return value ?? undefined;
+}
 
 type CodexAuthFile = Static<typeof codexAuthFileSchema>;
 
@@ -48,9 +64,10 @@ export function readCodexAuth(contents: string): CodexStoredAuth | undefined {
         return undefined;
     }
     if (parsed.auth_mode === "apikey") {
+        const apiKey = present(parsed.OPENAI_API_KEY);
         return {
             authMode: "apikey",
-            ...(parsed.OPENAI_API_KEY === undefined ? {} : { apiKey: parsed.OPENAI_API_KEY }),
+            ...(apiKey === undefined ? {} : { apiKey }),
         };
     }
 
@@ -78,17 +95,17 @@ export function readCodexQuotaAuth(contents: string): CodexQuotaAuth | undefined
 }
 
 function readQuotaAuth(parsed: CodexAuthFile): CodexQuotaAuth | undefined {
-    const accessToken = parsed.tokens?.access_token;
+    const accessToken = present(parsed.tokens?.access_token);
     if (accessToken === undefined || accessToken.length === 0) {
         return undefined;
     }
 
-    const storedAccountId = parsed.tokens?.account_id;
+    const storedAccountId = present(parsed.tokens?.account_id);
     if (storedAccountId !== undefined && storedAccountId.length > 0) {
         return { accessToken, accountId: storedAccountId };
     }
 
-    for (const token of [parsed.tokens?.id_token, accessToken]) {
+    for (const token of [present(parsed.tokens?.id_token), accessToken]) {
         if (token === undefined) {
             continue;
         }

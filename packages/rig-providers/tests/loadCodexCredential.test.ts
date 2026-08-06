@@ -92,6 +92,46 @@ describe("loadCodexCredential", () => {
     });
 });
 
+describe("loadCodexCredential with a real Codex auth file", () => {
+    /*
+     * Codex nulls out whichever half of the file it is not using. Every fixture
+     * above writes strings, so a schema that rejects null passes the suite while
+     * failing on every real ChatGPT login.
+     */
+    it("loads the session credential when Codex nulls OPENAI_API_KEY", async () => {
+        const authFile = await writeAuthFile({
+            auth_mode: "chatgpt",
+            last_refresh: "2026-08-05T00:00:00.000Z",
+            OPENAI_API_KEY: null,
+            tokens: {
+                access_token: "session-token",
+                account_id: "account-1",
+                id_token: "id-token",
+                refresh_token: "refresh-token",
+            },
+        });
+
+        const credential = await loadCodexCredential({ authFile, env: {} });
+
+        expect(credential).toMatchObject({ name: "codex-session" });
+    });
+
+    it("loads the API key when Codex nulls tokens", async () => {
+        const authFile = await writeAuthFile({
+            auth_mode: "apikey",
+            OPENAI_API_KEY: "native",
+            tokens: null,
+        });
+
+        const credential = await loadCodexCredential({ authFile, env: {} });
+
+        expect(credential).toMatchObject({
+            credential: { apiKey: "native" },
+            name: "codex-api-key",
+        });
+    });
+});
+
 async function writeAuthFile(contents: Record<string, unknown>): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), "rig-codex-auth-"));
     tempDirectories.push(root);
