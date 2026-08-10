@@ -16,6 +16,7 @@ import { readPackageVersion } from "../readPackageVersion.js";
 import { isPermissionMode } from "../permissions/index.js";
 import { withWorkerContext } from "../observability/index.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
+import { HAPPY_REMOTE_SESSION_WAIT_MS } from "../happySpawnTiming.js";
 import {
     createHappyAgentState,
     rememberHappyResolvedCommunication,
@@ -37,7 +38,7 @@ import type {
 } from "./types.js";
 
 const SYNC_RETRY_DELAY_MS = 2_000;
-const HTTP_TIMEOUT_MS = 15_000;
+const HTTP_TIMEOUT_MS = HAPPY_REMOTE_SESSION_WAIT_MS;
 const PAGE_SIZE = 100;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 

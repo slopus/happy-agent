@@ -2,6 +2,7 @@ import { homedir, hostname, platform } from "node:os";
 
 import type { ModelCatalog } from "../protocol/index.js";
 import { readPackageVersion } from "../readPackageVersion.js";
+import { HAPPY_SPAWN_PENDING_RETRY_AFTER_MS } from "../happySpawnTiming.js";
 import { createHappyCatalogMetadata } from "./createHappyCatalogMetadata.js";
 import { HAPPY_PERMISSION_MODES } from "./happyPermissionModes.js";
 import type { HappyConnectionConfiguration, HappyMachineMetadata } from "./types.js";
@@ -10,6 +11,8 @@ export function createHappyMachineMetadata(options: {
     configuration: HappyConnectionConfiguration;
     modelCatalog: ModelCatalog;
     now?: () => number;
+    /** Advertised only when the daemon can actually create workspaces. */
+    supportsWorktrees?: boolean;
 }): HappyMachineMetadata {
     const { models, providers } = createHappyCatalogMetadata(options.modelCatalog);
     const defaultModel = models.find(
@@ -22,7 +25,11 @@ export function createHappyMachineMetadata(options: {
     const host = hostname();
     const detectedAt = (options.now ?? Date.now)();
     return {
-        capabilities: { newSession: true, resume: false, worktrees: false },
+        capabilities: {
+            newSession: true,
+            resume: false,
+            worktrees: options.supportsWorktrees === true,
+        },
         cliAvailability: {
             agy: false,
             claude: false,
@@ -59,7 +66,7 @@ export function createHappyMachineMetadata(options: {
         },
         sessionCreation: {
             idempotencyKey: "clientRequestId",
-            pendingRetryAfterMs: 2_000,
+            pendingRetryAfterMs: HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
             resultKinds: ["success", "pending", "requestToApproveDirectoryCreation", "error"],
         },
         rigMetadataVersion: 1,

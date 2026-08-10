@@ -2,14 +2,41 @@ import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
+import { Value } from "@sinclair/typebox/value";
+
 import { isPermissionMode } from "../permissions/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
+import {
+    HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
+    type HappyWorkspaceCreationResult,
+} from "../happySpawnTiming.js";
 import type { CreateSessionRequest, ModelCatalog } from "../protocol/index.js";
-import { createHappySpawnSessionId } from "./createHappySpawnSessionId.js";
-import type { HappySpawnSessionRequest, HappySpawnSessionResult } from "./types.js";
+import {
+    createHappySpawnSessionId,
+    createHappySpawnWorkspaceId,
+} from "./createHappySpawnSessionId.js";
+import {
+    happySpawnSessionRequestSchema,
+    type HappySpawnSessionRequest,
+    type HappySpawnSessionResult,
+} from "./types.js";
 
 export async function handleHappySpawnSession(options: {
     createSession: (id: string, request: CreateSessionRequest) => void | Promise<void>;
+    /** Creates the deterministic managed workspace owned by this spawn request. */
+    createWorkspace?: (input: {
+        directory: string;
+        id: string;
+        name: string;
+        signal?: AbortSignal;
+    }) => Promise<HappyWorkspaceCreationResult | undefined>;
+    /** Loads an earlier attempt so a retry reuses its committed workspace. */
+    loadSession?: (
+        id: string,
+    ) =>
+        | { snapshot(): { cwd: string; workspaceId?: string } }
+        | Promise<{ snapshot(): { cwd: string; workspaceId?: string } } | undefined>
+        | undefined;
     machineId: string;
     modelCatalog: ModelCatalog;
     params: unknown;
@@ -52,9 +79,33 @@ export async function handleHappySpawnSession(options: {
             options.machineId,
             request.clientRequestId,
         );
+        const existingSession = (await options.loadSession?.(localSessionId))?.snapshot();
+        // Bind the session to its workspace from birth. Both identities derive
+        // from the RPC idempotency key, while an already-committed session lets
+        // an ordinary pending retry avoid even repeating workspace creation.
+        const workspace =
+            request.worktree === undefined
+                ? undefined
+                : existingSession === undefined
+                  ? await createRequestedWorkspace(
+                        directory,
+                        createHappySpawnWorkspaceId(options.machineId, request.clientRequestId),
+                        request.worktree.name,
+                        options.createWorkspace,
+                        options.signal,
+                    )
+                  : reuseRequestedWorkspace(existingSession);
         options.signal?.throwIfAborted();
+        if (workspace?.type === "pending") {
+            return {
+                clientRequestId: request.clientRequestId,
+                retryAfterMs: workspace.retryAfterMs,
+                type: "pending",
+            };
+        }
         await options.createSession(localSessionId, {
-            cwd: directory,
+            cwd: workspace?.path ?? directory,
+            ...(workspace === undefined ? {} : { workspaceId: workspace.id }),
             effort,
             modelId,
             permissionMode,
@@ -64,7 +115,7 @@ export async function handleHappySpawnSession(options: {
         if (remoteSessionId === undefined) {
             return {
                 clientRequestId: request.clientRequestId,
-                retryAfterMs: 2_000,
+                retryAfterMs: HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
                 type: "pending",
             };
         }
@@ -78,33 +129,51 @@ export async function handleHappySpawnSession(options: {
     }
 }
 
+async function createRequestedWorkspace(
+    directory: string,
+    id: string,
+    name: string,
+    createWorkspace: Parameters<typeof handleHappySpawnSession>[0]["createWorkspace"],
+    signal?: AbortSignal,
+): Promise<HappyWorkspaceCreationResult> {
+    if (createWorkspace === undefined) {
+        throw new Error("This machine cannot create workspaces.");
+    }
+    const workspace = await createWorkspace({
+        directory,
+        id,
+        name,
+        ...(signal === undefined ? {} : { signal }),
+    });
+    if (workspace === undefined) {
+        throw new Error("Open this folder in Rig once before creating a workspace in it.");
+    }
+    return workspace;
+}
+
 function readRequest(value: unknown): HappySpawnSessionRequest {
-    if (!isRecord(value) || value.type !== "spawn-in-directory" || value.agent !== "rig") {
+    if (!Value.Check(happySpawnSessionRequestSchema, value)) {
+        if (
+            [...Value.Errors(happySpawnSessionRequestSchema, value)].some((error) =>
+                error.path.startsWith("/worktree"),
+            )
+        ) {
+            throw new Error("Happy sent an invalid worktree request.");
+        }
         throw new Error("Happy sent an unsupported Rig session request.");
     }
-    if (
-        typeof value.clientRequestId !== "string" ||
-        value.clientRequestId.trim().length === 0 ||
-        value.clientRequestId.length > 256
-    ) {
-        throw new Error("Happy must provide a client request ID.");
+    return value;
+}
+
+function reuseRequestedWorkspace(existing: { cwd: string; workspaceId?: string }): {
+    id: string;
+    path: string;
+    type: "ready";
+} {
+    if (existing.workspaceId === undefined) {
+        throw new Error("This session request was already used without a workspace.");
     }
-    if (
-        typeof value.directory !== "string" ||
-        value.directory.trim().length === 0 ||
-        value.directory.length > 32_768
-    ) {
-        throw new Error("Happy must provide a session directory.");
-    }
-    for (const key of ["effort", "modelId", "permissionMode", "providerId"] as const) {
-        if (
-            value[key] !== undefined &&
-            (typeof value[key] !== "string" || value[key].length > 256)
-        ) {
-            throw new Error(`Happy sent an invalid ${key}.`);
-        }
-    }
-    return value as unknown as HappySpawnSessionRequest;
+    return { id: existing.workspaceId, path: existing.cwd, type: "ready" };
 }
 
 function resolveDirectory(value: string): string {

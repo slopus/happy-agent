@@ -1,14 +1,23 @@
 import { io, type Socket } from "socket.io-client";
 
+import { Value } from "@sinclair/typebox/value";
+
 import type { ModelCatalog } from "../protocol/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { readPackageVersion } from "../readPackageVersion.js";
 import { createHappyMachineMetadata } from "./createHappyMachineMetadata.js";
 import { decryptHappyPayload, encryptHappyPayload, wrapHappyDataKey } from "./happyEncryption.js";
-import type { HappyConnectionConfiguration, HappySpawnSessionResult } from "./types.js";
+import type {
+    HappyConnectionConfiguration,
+    HappyListWorkspacesResult,
+    HappySpawnSessionRequest,
+    HappySpawnSessionResult,
+} from "./types.js";
+import { happySpawnSessionRequestSchema } from "./types.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_INTERVAL_MS = 5_000;
+const MAX_REMEMBERED_SPAWN_REQUESTS = 1_000;
 const KEEP_ALIVE_INTERVAL_MS = 20_000;
 
 interface HappyMachineSocket {
@@ -24,6 +33,13 @@ export interface HappyMachineClientOptions {
     modelCatalog: ModelCatalog;
     socketFactory?: (url: string, options: Parameters<typeof io>[1]) => HappyMachineSocket;
     spawnSession: (params: unknown, signal: AbortSignal) => Promise<HappySpawnSessionResult>;
+    /**
+     * Lists the managed workspaces of the project at a directory. Registered as
+     * its own machine RPC only when supplied — Happy discovers worktrees on a
+     * CLI machine by running git over the `bash` RPC, which Rig does not expose.
+     */
+    listWorkspaces?: (params: unknown) => Promise<HappyListWorkspacesResult>;
+    supportsWorktrees?: boolean;
 }
 
 export class HappyMachineClient {
@@ -33,9 +49,12 @@ export class HappyMachineClient {
     #metadataBase: Record<string, unknown> = {};
     readonly #socketFactory: NonNullable<HappyMachineClientOptions["socketFactory"]>;
     readonly #spawnSession: HappyMachineClientOptions["spawnSession"];
+    readonly #listWorkspaces: HappyMachineClientOptions["listWorkspaces"];
     #closed = false;
     readonly #closeController = new AbortController();
     #keepAliveTimer: NodeJS.Timeout | undefined;
+    readonly #spawnRequestFingerprints = new Map<string, string>();
+    readonly #pendingSpawns = new Map<string, Promise<HappySpawnSessionResult>>();
     #retryTimer: NodeJS.Timeout | undefined;
     #socket: HappyMachineSocket | undefined;
 
@@ -49,6 +68,7 @@ export class HappyMachineClient {
         this.#socketFactory =
             options.socketFactory ?? ((url, socketOptions) => io(url, socketOptions) as Socket);
         this.#spawnSession = options.spawnSession;
+        this.#listWorkspaces = options.listWorkspaces;
     }
 
     close(): void {
@@ -57,6 +77,8 @@ export class HappyMachineClient {
         this.#closeController.abort();
         if (this.#keepAliveTimer !== undefined) clearInterval(this.#keepAliveTimer);
         if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
+        this.#spawnRequestFingerprints.clear();
+        this.#pendingSpawns.clear();
         this.#socket?.disconnect();
         this.#socket = undefined;
     }
@@ -127,6 +149,9 @@ export class HappyMachineClient {
         });
         socket.on("connect", () => {
             socket.emit("rpc-register", { method: `${machineId}:spawn-happy-session` });
+            if (this.#listWorkspaces !== undefined) {
+                socket.emit("rpc-register", { method: `${machineId}:list-happy-workspaces` });
+            }
             this.#syncMetadata(metadataVersion, 0);
             this.#syncDaemonState(daemonStateVersion, 0);
             this.#sendAlive();
@@ -146,12 +171,12 @@ export class HappyMachineClient {
         const machineId = this.#configuration.machineId!;
         const key = encryptionKey(this.#configuration);
         const variant = this.#configuration.credentials.encryption.type;
-        let response: HappySpawnSessionResult;
-        if (
-            !isRecord(request) ||
-            request.method !== `${machineId}:spawn-happy-session` ||
-            typeof request.params !== "string"
-        ) {
+        let response: HappySpawnSessionResult | HappyListWorkspacesResult;
+        const method = isRecord(request) ? request.method : undefined;
+        const isSpawn = method === `${machineId}:spawn-happy-session`;
+        const isList =
+            method === `${machineId}:list-happy-workspaces` && this.#listWorkspaces !== undefined;
+        if (!isRecord(request) || (!isSpawn && !isList) || typeof request.params !== "string") {
             response = { errorMessage: "Happy sent an invalid Rig request.", type: "error" };
         } else {
             const params = decryptHappyPayload(
@@ -163,7 +188,9 @@ export class HappyMachineClient {
                 response = { errorMessage: "Happy sent an unreadable Rig request.", type: "error" };
             } else {
                 try {
-                    response = await this.#spawnSession(params, this.#closeController.signal);
+                    response = isList
+                        ? await this.#listWorkspaces!(params)
+                        : await this.#spawnOnce(params);
                 } catch (error) {
                     if (isDatabaseFailure(error)) throw error;
                     response = {
@@ -177,6 +204,44 @@ export class HappyMachineClient {
             }
         }
         callback(encode(key, variant, response));
+    }
+
+    async #spawnOnce(params: unknown): Promise<HappySpawnSessionResult> {
+        const request = readSpawnRequest(params);
+        if (request === undefined) {
+            return await this.#spawnSession(params, this.#closeController.signal);
+        }
+        const clientRequestId = request.clientRequestId;
+        const fingerprint = spawnRequestFingerprint(request);
+        const rememberedFingerprint = this.#spawnRequestFingerprints.get(clientRequestId);
+        if (rememberedFingerprint !== undefined && rememberedFingerprint !== fingerprint) {
+            return {
+                errorMessage:
+                    "This client request ID was already used for a different session request.",
+                type: "error",
+            };
+        }
+        if (rememberedFingerprint === undefined) {
+            if (this.#spawnRequestFingerprints.size >= MAX_REMEMBERED_SPAWN_REQUESTS) {
+                const oldest = this.#spawnRequestFingerprints.keys().next().value;
+                if (oldest !== undefined) this.#spawnRequestFingerprints.delete(oldest);
+            }
+            this.#spawnRequestFingerprints.set(clientRequestId, fingerprint);
+        }
+        const existing = this.#pendingSpawns.get(clientRequestId);
+        if (existing !== undefined) return await existing;
+
+        const spawn = Promise.resolve().then(() =>
+            this.#spawnSession(params, this.#closeController.signal),
+        );
+        this.#pendingSpawns.set(clientRequestId, spawn);
+        try {
+            return await spawn;
+        } finally {
+            if (this.#pendingSpawns.get(clientRequestId) === spawn) {
+                this.#pendingSpawns.delete(clientRequestId);
+            }
+        }
     }
 
     #scheduleRetry(): void {
@@ -304,4 +369,25 @@ function readMachine(value: unknown): {
 
 function isRecord(value: unknown): value is Record<string, any> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readSpawnRequest(params: unknown): HappySpawnSessionRequest | undefined {
+    if (!Value.Check(happySpawnSessionRequestSchema, params)) return undefined;
+    return params as HappySpawnSessionRequest;
+}
+
+function spawnRequestFingerprint(request: HappySpawnSessionRequest): string {
+    // Directory approval intentionally is not part of the fingerprint: Happy
+    // retries the same request ID after the user approves that one transition.
+    return JSON.stringify([
+        request.agent,
+        request.directory,
+        request.effort ?? null,
+        request.modelId ?? null,
+        request.permissionMode ?? null,
+        request.providerId ?? null,
+        request.type,
+        request.worktree?.type ?? null,
+        request.worktree?.name ?? null,
+    ]);
 }

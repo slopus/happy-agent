@@ -25,7 +25,7 @@ const modelCatalog: ModelCatalog = {
 };
 
 describe("HappyMachineClient", () => {
-    it("registers a Rig-only machine and serves encrypted spawn RPC", async () => {
+    it("registers a Rig-only machine and serves encrypted spawn and workspace RPCs", async () => {
         const machineKey = new Uint8Array(32).fill(4);
         const configuration: HappyConnectionConfiguration = {
             credentials: {
@@ -51,7 +51,7 @@ describe("HappyMachineClient", () => {
                 Buffer.from(body.metadata!, "base64"),
             );
             expect(metadata).toMatchObject({
-                capabilities: { newSession: true, resume: false, worktrees: false },
+                capabilities: { newSession: true, resume: false, worktrees: true },
                 cliAvailability: { claude: false, codex: false, rig: true },
                 defaults: { permissionMode: "auto" },
                 machineKind: "rig",
@@ -77,15 +77,28 @@ describe("HappyMachineClient", () => {
             sessionId: "happy-session-1",
             type: "success" as const,
         }));
+        const listWorkspaces = vi.fn(async () => ({
+            type: "success" as const,
+            workspaces: [
+                {
+                    id: "workspace-1",
+                    name: "Steady River",
+                    path: "/workspace/steady-river",
+                    status: "ready",
+                },
+            ],
+        }));
         const client = new HappyMachineClient({
             configuration,
             fetch: request,
+            listWorkspaces,
             modelCatalog,
             socketFactory: (_url, options) => {
                 socket.options = options;
                 return socket;
             },
             spawnSession,
+            supportsWorktrees: true,
         });
 
         client.start();
@@ -98,6 +111,10 @@ describe("HappyMachineClient", () => {
         expect(socket.emitted).toContainEqual([
             "rpc-register",
             { method: "rig-machine-1:spawn-happy-session" },
+        ]);
+        expect(socket.emitted).toContainEqual([
+            "rpc-register",
+            { method: "rig-machine-1:list-happy-workspaces" },
         ]);
         const params = Buffer.from(
             encryptHappyPayload(machineKey, "dataKey", {
@@ -119,6 +136,112 @@ describe("HappyMachineClient", () => {
         expect(
             decryptHappyPayload(machineKey, "dataKey", Buffer.from(encryptedResponse, "base64")),
         ).toEqual({ sessionId: "happy-session-1", type: "success" });
+
+        const encryptedListResponse = await socket.requestRpc({
+            method: "rig-machine-1:list-happy-workspaces",
+            params: Buffer.from(
+                encryptHappyPayload(machineKey, "dataKey", { directory: "/workspace" }),
+            ).toString("base64"),
+        });
+        expect(listWorkspaces).toHaveBeenCalledWith({ directory: "/workspace" });
+        expect(
+            decryptHappyPayload(
+                machineKey,
+                "dataKey",
+                Buffer.from(encryptedListResponse, "base64"),
+            ),
+        ).toEqual({
+            type: "success",
+            workspaces: [
+                {
+                    id: "workspace-1",
+                    name: "Steady River",
+                    path: "/workspace/steady-river",
+                    status: "ready",
+                },
+            ],
+        });
+        client.close();
+    });
+
+    it("coalesces concurrent identical client requests before invoking the session creator", async () => {
+        const machineKey = new Uint8Array(32).fill(6);
+        const configuration: HappyConnectionConfiguration = {
+            credentials: {
+                encryption: { machineKey, publicKey: new Uint8Array(32).fill(7), type: "dataKey" },
+                token: "token",
+            },
+            credentialsPath: "/tmp/access.key",
+            happyHome: "/tmp/happy",
+            imported: false,
+            machineId: "rig-machine-concurrent",
+            serverUrl: "https://happy.example",
+        };
+        const socket = new FakeMachineSocket();
+        let resolveSpawn: ((result: { sessionId: string; type: "success" }) => void) | undefined;
+        const spawnResult = new Promise<{ sessionId: string; type: "success" }>((resolve) => {
+            resolveSpawn = resolve;
+        });
+        const spawnSession = vi.fn(async () => await spawnResult);
+        const client = new HappyMachineClient({
+            configuration,
+            fetch: async () =>
+                Response.json({ machine: { daemonStateVersion: 0, metadataVersion: 0 } }),
+            modelCatalog,
+            socketFactory: () => socket,
+            spawnSession,
+        });
+
+        client.start();
+        await waitFor(() => socket.connected);
+        const params = Buffer.from(
+            encryptHappyPayload(machineKey, "dataKey", {
+                agent: "rig",
+                clientRequestId: "same-request",
+                directory: "/workspace",
+                type: "spawn-in-directory",
+            }),
+        ).toString("base64");
+        const request = {
+            method: "rig-machine-concurrent:spawn-happy-session",
+            params,
+        };
+
+        const first = socket.requestRpc(request);
+        const second = socket.requestRpc(request);
+        await waitFor(() => spawnSession.mock.calls.length === 1);
+        if (resolveSpawn === undefined) throw new Error("Expected the spawn request to start.");
+        resolveSpawn({ sessionId: "happy-session-concurrent", type: "success" });
+
+        const [firstResponse, secondResponse] = await Promise.all([first, second]);
+        expect(
+            decryptHappyPayload(machineKey, "dataKey", Buffer.from(firstResponse, "base64")),
+        ).toEqual({ sessionId: "happy-session-concurrent", type: "success" });
+        expect(
+            decryptHappyPayload(machineKey, "dataKey", Buffer.from(secondResponse, "base64")),
+        ).toEqual({ sessionId: "happy-session-concurrent", type: "success" });
+        expect(spawnSession).toHaveBeenCalledOnce();
+
+        const changedParams = Buffer.from(
+            encryptHappyPayload(machineKey, "dataKey", {
+                agent: "rig",
+                clientRequestId: "same-request",
+                directory: "/different-workspace",
+                type: "spawn-in-directory",
+            }),
+        ).toString("base64");
+        const changedResponse = await socket.requestRpc({
+            method: "rig-machine-concurrent:spawn-happy-session",
+            params: changedParams,
+        });
+        expect(
+            decryptHappyPayload(machineKey, "dataKey", Buffer.from(changedResponse, "base64")),
+        ).toEqual({
+            errorMessage:
+                "This client request ID was already used for a different session request.",
+            type: "error",
+        });
+        expect(spawnSession).toHaveBeenCalledOnce();
         client.close();
     });
 });

@@ -18,6 +18,10 @@ import { GitStateTracker } from "../git/GitStateTracker.js";
 import { getEnvironmentLocalServerPaths } from "./getEnvironmentLocalServerPaths.js";
 import { installDaemonProcessFailureLogging } from "./installDaemonProcessFailureLogging.js";
 import { loadHappyIntegration, type HappyIntegrationMode } from "./loadHappyIntegration.js";
+import {
+    waitForHappyWorkspaceReady,
+    type HappyWorkspaceCreationResult,
+} from "../happySpawnTiming.js";
 import { markGitStateFromSessionEvent } from "../git/markGitStateFromSessionEvent.js";
 import { publishGitLiveEvent } from "../git/publishGitLiveEvent.js";
 import { prepareLocalServerDirectory } from "./prepareLocalServerDirectory.js";
@@ -1246,6 +1250,12 @@ async function runOwnedLocalProtocolServer(
                                                                 ),
                                                         ),
                                                     ),
+                                                createWorkspace: (ctx, input) =>
+                                                    createReadyWorkspaceForHappy(
+                                                        ctx,
+                                                        store!,
+                                                        input,
+                                                    ),
                                                 databasePath: paths.databasePath,
                                                 getSubagents: async (ctx, sessionId) =>
                                                     (await store?.listSubagents(ctx, sessionId)) ??
@@ -1273,6 +1283,14 @@ async function runOwnedLocalProtocolServer(
                                                             : { workspace }),
                                                     };
                                                 },
+                                                listWorkspaces: (ctx, directory) =>
+                                                    listProjectWorkspacesForHappy(
+                                                        ctx,
+                                                        store!,
+                                                        directory,
+                                                    ),
+                                                loadSession: (ctx, sessionId) =>
+                                                    store!.get(ctx, sessionId),
                                                 modelCatalog,
                                             }),
                                     );
@@ -1468,6 +1486,8 @@ async function runOwnedLocalProtocolServer(
                                                               ),
                                                       ),
                                                   ),
+                                              createWorkspace: (ctx, input) =>
+                                                  createReadyWorkspaceForHappy(ctx, store!, input),
                                               databasePath: paths.databasePath,
                                               getSubagents: async (ctx, sessionId) =>
                                                   (await store?.listSubagents(ctx, sessionId)) ??
@@ -1495,6 +1515,14 @@ async function runOwnedLocalProtocolServer(
                                                           : { workspace }),
                                                   };
                                               },
+                                              listWorkspaces: (ctx, directory) =>
+                                                  listProjectWorkspacesForHappy(
+                                                      ctx,
+                                                      store!,
+                                                      directory,
+                                                  ),
+                                              loadSession: (ctx, sessionId) =>
+                                                  store!.get(ctx, sessionId),
                                               modelCatalog,
                                           });
                                       } catch (error) {
@@ -1559,6 +1587,42 @@ async function runOwnedLocalProtocolServer(
             }
         });
     }
+}
+
+async function createReadyWorkspaceForHappy(
+    ctx: Context,
+    store: PersistentSessionStore,
+    input: { directory: string; id: string; name: string; signal?: AbortSignal },
+): Promise<HappyWorkspaceCreationResult | undefined> {
+    const settings = await store.queryProjectSettings(ctx, input.directory);
+    if (settings === undefined) return undefined;
+    const created = await store.createWorkspace(ctx, settings.projectId, {
+        id: input.id,
+        name: input.name,
+    });
+    if (created === undefined) return undefined;
+
+    return await waitForHappyWorkspaceReady({
+        getWorkspace: () => store.getWorkspace(ctx, settings.projectId, created.id),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+}
+
+async function listProjectWorkspacesForHappy(
+    ctx: Context,
+    store: PersistentSessionStore,
+    directory: string,
+): Promise<{ id: string; name: string; path: string; status: string }[] | undefined> {
+    const settings = await store.queryProjectSettings(ctx, directory);
+    if (settings === undefined) return undefined;
+    return (await store.listWorkspaces(ctx, settings.projectId))
+        .filter((workspace) => workspace.status === "ready")
+        .map((workspace) => ({
+            id: workspace.id,
+            name: workspace.name,
+            path: workspace.path,
+            status: workspace.status,
+        }));
 }
 
 function requirePluginManager(manager: PluginManager | undefined): PluginManager {
