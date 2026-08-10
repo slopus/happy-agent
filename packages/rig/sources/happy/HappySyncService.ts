@@ -17,6 +17,7 @@ import {
 } from "./HappySessionClient.js";
 import { HappySyncOutboxFullError, HappySyncRepository } from "./HappySyncRepository.js";
 import { HappyMessageMapper } from "./mapSessionEventToHappyMessages.js";
+import { handleHappyListWorkspaces } from "./handleHappyListWorkspaces.js";
 import { handleHappySpawnSession } from "./handleHappySpawnSession.js";
 import type { HappyConnectionConfiguration } from "./types.js";
 import type { Context } from "@steve.kite/stdlib";
@@ -42,6 +43,24 @@ export interface HappySyncServiceOptions {
         ctx: Context,
         session: InMemorySession,
     ) => HappyProjectContext | Promise<HappyProjectContext>;
+    /** Creates a managed workspace for a Happy machine-level spawn request. */
+    createWorkspace?: (
+        ctx: Context,
+        input: { directory: string; id: string; name: string; signal?: AbortSignal },
+    ) => Promise<{ id: string; path: string } | undefined>;
+    /** Loads an idempotently-created session so a retried spawn can reuse its workspace. */
+    loadSession?: (
+        ctx: Context,
+        sessionId: string,
+    ) => InMemorySession | Promise<InMemorySession | undefined> | undefined;
+    /** Lists the managed workspaces of the project at a directory for Happy's picker. */
+    listWorkspaces?: (
+        ctx: Context,
+        directory: string,
+    ) =>
+        | readonly { id: string; name: string; path: string; status: string }[]
+        | Promise<readonly { id: string; name: string; path: string; status: string }[] | undefined>
+        | undefined;
     modelCatalog?: ModelCatalog;
     socketFactory?: HappySessionClientOptions["socketFactory"];
 }
@@ -88,6 +107,19 @@ export class HappySyncService {
                     ...(options.socketFactory === undefined
                         ? {}
                         : { socketFactory: options.socketFactory }),
+                    supportsWorktrees: options.createWorkspace !== undefined,
+                    ...(options.listWorkspaces === undefined
+                        ? {}
+                        : {
+                              listWorkspaces: (params) =>
+                                  withWorkerContext("happy-machine-list-workspaces", (ctx) =>
+                                      handleHappyListWorkspaces({
+                                          listWorkspaces: (directory) =>
+                                              options.listWorkspaces!(ctx, directory),
+                                          params,
+                                      }),
+                                  ),
+                          }),
                     spawnSession: (params, signal) =>
                         withWorkerContext("happy-machine-spawn-session", (ctx) =>
                             handleHappySpawnSession({
@@ -95,6 +127,18 @@ export class HappySyncService {
                                     const session = await this.#createSession!(ctx, id, request);
                                     await this.attach(ctx, session);
                                 },
+                                ...(options.createWorkspace === undefined
+                                    ? {}
+                                    : {
+                                          createWorkspace: (input) =>
+                                              options.createWorkspace!(ctx, input),
+                                      }),
+                                ...(options.loadSession === undefined
+                                    ? {}
+                                    : {
+                                          loadSession: (sessionId) =>
+                                              options.loadSession!(ctx, sessionId),
+                                      }),
                                 machineId: options.configuration.machineId!,
                                 modelCatalog: options.modelCatalog!,
                                 params,

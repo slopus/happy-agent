@@ -5,7 +5,11 @@ import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { readPackageVersion } from "../readPackageVersion.js";
 import { createHappyMachineMetadata } from "./createHappyMachineMetadata.js";
 import { decryptHappyPayload, encryptHappyPayload, wrapHappyDataKey } from "./happyEncryption.js";
-import type { HappyConnectionConfiguration, HappySpawnSessionResult } from "./types.js";
+import type {
+    HappyConnectionConfiguration,
+    HappyListWorkspacesResult,
+    HappySpawnSessionResult,
+} from "./types.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_INTERVAL_MS = 5_000;
@@ -24,6 +28,13 @@ export interface HappyMachineClientOptions {
     modelCatalog: ModelCatalog;
     socketFactory?: (url: string, options: Parameters<typeof io>[1]) => HappyMachineSocket;
     spawnSession: (params: unknown, signal: AbortSignal) => Promise<HappySpawnSessionResult>;
+    /**
+     * Lists the managed workspaces of the project at a directory. Registered as
+     * its own machine RPC only when supplied — Happy discovers worktrees on a
+     * CLI machine by running git over the `bash` RPC, which Rig does not expose.
+     */
+    listWorkspaces?: (params: unknown) => Promise<HappyListWorkspacesResult>;
+    supportsWorktrees?: boolean;
 }
 
 export class HappyMachineClient {
@@ -33,6 +44,7 @@ export class HappyMachineClient {
     #metadataBase: Record<string, unknown> = {};
     readonly #socketFactory: NonNullable<HappyMachineClientOptions["socketFactory"]>;
     readonly #spawnSession: HappyMachineClientOptions["spawnSession"];
+    readonly #listWorkspaces: HappyMachineClientOptions["listWorkspaces"];
     #closed = false;
     readonly #closeController = new AbortController();
     #keepAliveTimer: NodeJS.Timeout | undefined;
@@ -49,6 +61,7 @@ export class HappyMachineClient {
         this.#socketFactory =
             options.socketFactory ?? ((url, socketOptions) => io(url, socketOptions) as Socket);
         this.#spawnSession = options.spawnSession;
+        this.#listWorkspaces = options.listWorkspaces;
     }
 
     close(): void {
@@ -127,6 +140,9 @@ export class HappyMachineClient {
         });
         socket.on("connect", () => {
             socket.emit("rpc-register", { method: `${machineId}:spawn-happy-session` });
+            if (this.#listWorkspaces !== undefined) {
+                socket.emit("rpc-register", { method: `${machineId}:list-happy-workspaces` });
+            }
             this.#syncMetadata(metadataVersion, 0);
             this.#syncDaemonState(daemonStateVersion, 0);
             this.#sendAlive();
@@ -146,12 +162,12 @@ export class HappyMachineClient {
         const machineId = this.#configuration.machineId!;
         const key = encryptionKey(this.#configuration);
         const variant = this.#configuration.credentials.encryption.type;
-        let response: HappySpawnSessionResult;
-        if (
-            !isRecord(request) ||
-            request.method !== `${machineId}:spawn-happy-session` ||
-            typeof request.params !== "string"
-        ) {
+        let response: HappySpawnSessionResult | HappyListWorkspacesResult;
+        const method = isRecord(request) ? request.method : undefined;
+        const isSpawn = method === `${machineId}:spawn-happy-session`;
+        const isList =
+            method === `${machineId}:list-happy-workspaces` && this.#listWorkspaces !== undefined;
+        if (!isRecord(request) || (!isSpawn && !isList) || typeof request.params !== "string") {
             response = { errorMessage: "Happy sent an invalid Rig request.", type: "error" };
         } else {
             const params = decryptHappyPayload(
@@ -163,7 +179,9 @@ export class HappyMachineClient {
                 response = { errorMessage: "Happy sent an unreadable Rig request.", type: "error" };
             } else {
                 try {
-                    response = await this.#spawnSession(params, this.#closeController.signal);
+                    response = isList
+                        ? await this.#listWorkspaces!(params)
+                        : await this.#spawnSession(params, this.#closeController.signal);
                 } catch (error) {
                     if (isDatabaseFailure(error)) throw error;
                     response = {

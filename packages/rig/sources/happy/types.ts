@@ -1,3 +1,5 @@
+import { Type, type Static } from "@sinclair/typebox";
+
 import type { ToolCallPresentation } from "../agent/ToolCallPresentation.js";
 import type { SessionActivity } from "../protocol/index.js";
 
@@ -26,7 +28,8 @@ export interface HappyMachineMetadata {
     capabilities: {
         newSession: boolean;
         resume: false;
-        worktrees: false;
+        /** True only when the daemon was given a way to create managed workspaces. */
+        worktrees: boolean;
     };
     cliAvailability: {
         agy: false;
@@ -91,17 +94,61 @@ export interface HappyPublishedModel {
     value: string;
 }
 
-export interface HappySpawnSessionRequest {
-    agent: "rig";
-    approvedNewDirectoryCreation?: boolean;
-    clientRequestId: string;
-    directory: string;
-    effort?: string;
-    modelId?: string;
-    permissionMode?: string;
-    providerId?: string;
-    type: "spawn-in-directory";
+const boundedHappySelectionSchema = Type.String({ maxLength: 256 });
+
+export const happySpawnSessionRequestSchema = Type.Object(
+    {
+        agent: Type.Literal("rig"),
+        approvedNewDirectoryCreation: Type.Optional(Type.Boolean()),
+        clientRequestId: Type.String({ maxLength: 256, minLength: 1, pattern: "\\S" }),
+        directory: Type.String({ maxLength: 32_768, minLength: 1, pattern: "\\S" }),
+        effort: Type.Optional(boundedHappySelectionSchema),
+        modelId: Type.Optional(boundedHappySelectionSchema),
+        permissionMode: Type.Optional(boundedHappySelectionSchema),
+        providerId: Type.Optional(boundedHappySelectionSchema),
+        type: Type.Literal("spawn-in-directory"),
+        /**
+         * Asks for the session to run in a fresh managed workspace of the project at
+         * `directory` rather than in the directory itself. The intentionally narrow
+         * name is one portable branch/path segment and cannot be interpreted as shell.
+         */
+        worktree: Type.Optional(
+            Type.Object(
+                {
+                    name: Type.String({
+                        maxLength: 64,
+                        minLength: 1,
+                        pattern: "^[A-Za-z0-9](?:[A-Za-z0-9_-]|\\.(?=[A-Za-z0-9_-]))*$",
+                    }),
+                    type: Type.Literal("new"),
+                },
+                { additionalProperties: false },
+            ),
+        ),
+    },
+    { additionalProperties: false },
+);
+export type HappySpawnSessionRequest = Static<typeof happySpawnSessionRequestSchema>;
+
+export const happyListWorkspacesRequestSchema = Type.Object(
+    {
+        directory: Type.String({ maxLength: 32_768, minLength: 1, pattern: "\\S" }),
+    },
+    { additionalProperties: false },
+);
+export type HappyListWorkspacesRequest = Static<typeof happyListWorkspacesRequestSchema>;
+
+/** One managed workspace, in the shape Happy's worktree picker needs. */
+export interface HappyWorkspaceSummary {
+    id: string;
+    name: string;
+    path: string;
+    status: string;
 }
+
+export type HappyListWorkspacesResult =
+    | { type: "success"; workspaces: readonly HappyWorkspaceSummary[] }
+    | { errorMessage: string; type: "error" };
 
 export type HappySpawnSessionResult =
     | { sessionId: string; type: "success" }

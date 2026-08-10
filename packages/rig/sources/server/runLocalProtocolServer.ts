@@ -45,7 +45,7 @@ import {
 import { createProviderUsageService } from "../executor/createProviderUsageService.js";
 import { createCredentialBindingUsageRouter } from "../executor/createCredentialBindingUsageRouter.js";
 import { loadConfiguredProviderUsage } from "../executor/loadConfiguredProviderUsage.js";
-import { gracefulShutdown } from "../concurrency/index.js";
+import { delay, gracefulShutdown } from "../concurrency/index.js";
 import { disableUnavailableProviders } from "../executor/disableUnavailableProviders.js";
 import { resolveProviderDisabledReasons } from "../executor/resolveProviderDisabledReasons.js";
 import { createCodingAssistantAgent } from "../runtime/createCodingAssistantAgent.js";
@@ -1246,6 +1246,12 @@ async function runOwnedLocalProtocolServer(
                                                                 ),
                                                         ),
                                                     ),
+                                                createWorkspace: (ctx, input) =>
+                                                    createReadyWorkspaceForHappy(
+                                                        ctx,
+                                                        store!,
+                                                        input,
+                                                    ),
                                                 databasePath: paths.databasePath,
                                                 getSubagents: async (ctx, sessionId) =>
                                                     (await store?.listSubagents(ctx, sessionId)) ??
@@ -1273,6 +1279,14 @@ async function runOwnedLocalProtocolServer(
                                                             : { workspace }),
                                                     };
                                                 },
+                                                listWorkspaces: (ctx, directory) =>
+                                                    listProjectWorkspacesForHappy(
+                                                        ctx,
+                                                        store!,
+                                                        directory,
+                                                    ),
+                                                loadSession: (ctx, sessionId) =>
+                                                    store!.get(ctx, sessionId),
                                                 modelCatalog,
                                             }),
                                     );
@@ -1468,6 +1482,8 @@ async function runOwnedLocalProtocolServer(
                                                               ),
                                                       ),
                                                   ),
+                                              createWorkspace: (ctx, input) =>
+                                                  createReadyWorkspaceForHappy(ctx, store!, input),
                                               databasePath: paths.databasePath,
                                               getSubagents: async (ctx, sessionId) =>
                                                   (await store?.listSubagents(ctx, sessionId)) ??
@@ -1495,6 +1511,14 @@ async function runOwnedLocalProtocolServer(
                                                           : { workspace }),
                                                   };
                                               },
+                                              listWorkspaces: (ctx, directory) =>
+                                                  listProjectWorkspacesForHappy(
+                                                      ctx,
+                                                      store!,
+                                                      directory,
+                                                  ),
+                                              loadSession: (ctx, sessionId) =>
+                                                  store!.get(ctx, sessionId),
                                               modelCatalog,
                                           });
                                       } catch (error) {
@@ -1560,6 +1584,59 @@ async function runOwnedLocalProtocolServer(
         });
     }
 }
+
+async function createReadyWorkspaceForHappy(
+    ctx: Context,
+    store: PersistentSessionStore,
+    input: { directory: string; id: string; name: string; signal?: AbortSignal },
+): Promise<{ id: string; path: string } | undefined> {
+    const settings = await store.queryProjectSettings(ctx, input.directory);
+    if (settings === undefined) return undefined;
+    const created = await store.createWorkspace(ctx, settings.projectId, {
+        id: input.id,
+        name: input.name,
+    });
+    if (created === undefined) return undefined;
+
+    const deadline = Date.now() + WORKSPACE_READY_TIMEOUT_MS;
+    for (;;) {
+        input.signal?.throwIfAborted();
+        const workspace = await store.getWorkspace(ctx, settings.projectId, created.id);
+        if (workspace === undefined) {
+            throw new Error("The workspace disappeared while it was being prepared.");
+        }
+        if (workspace.status === "ready") return { id: workspace.id, path: workspace.path };
+        if (workspace.status !== "initializing") {
+            throw new Error(
+                workspace.error ?? `The workspace is ${workspace.status.replaceAll("_", " ")}.`,
+            );
+        }
+        if (Date.now() > deadline) {
+            throw new Error("The workspace is still being prepared. Try again in a moment.");
+        }
+        await delay(WORKSPACE_POLL_INTERVAL_MS, input.signal);
+    }
+}
+
+async function listProjectWorkspacesForHappy(
+    ctx: Context,
+    store: PersistentSessionStore,
+    directory: string,
+): Promise<{ id: string; name: string; path: string; status: string }[] | undefined> {
+    const settings = await store.queryProjectSettings(ctx, directory);
+    if (settings === undefined) return undefined;
+    return (await store.listWorkspaces(ctx, settings.projectId))
+        .filter((workspace) => workspace.status === "ready")
+        .map((workspace) => ({
+            id: workspace.id,
+            name: workspace.name,
+            path: workspace.path,
+            status: workspace.status,
+        }));
+}
+
+const WORKSPACE_READY_TIMEOUT_MS = 60_000;
+const WORKSPACE_POLL_INTERVAL_MS = 100;
 
 function requirePluginManager(manager: PluginManager | undefined): PluginManager {
     if (manager === undefined)

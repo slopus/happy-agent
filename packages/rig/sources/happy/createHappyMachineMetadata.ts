@@ -10,6 +10,8 @@ export function createHappyMachineMetadata(options: {
     configuration: HappyConnectionConfiguration;
     modelCatalog: ModelCatalog;
     now?: () => number;
+    /** Advertised only when the daemon can actually create workspaces. */
+    supportsWorktrees?: boolean;
 }): HappyMachineMetadata {
     const { models, providers } = createHappyCatalogMetadata(options.modelCatalog);
     const defaultModel = models.find(
@@ -22,7 +24,11 @@ export function createHappyMachineMetadata(options: {
     const host = hostname();
     const detectedAt = (options.now ?? Date.now)();
     return {
-        capabilities: { newSession: true, resume: false, worktrees: false },
+        capabilities: {
+            newSession: true,
+            resume: false,
+            worktrees: options.supportsWorktrees === true,
+        },
         cliAvailability: {
             agy: false,
             claude: false,

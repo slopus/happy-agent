@@ -25,7 +25,7 @@ const modelCatalog: ModelCatalog = {
 };
 
 describe("HappyMachineClient", () => {
-    it("registers a Rig-only machine and serves encrypted spawn RPC", async () => {
+    it("registers a Rig-only machine and serves encrypted spawn and workspace RPCs", async () => {
         const machineKey = new Uint8Array(32).fill(4);
         const configuration: HappyConnectionConfiguration = {
             credentials: {
@@ -51,7 +51,7 @@ describe("HappyMachineClient", () => {
                 Buffer.from(body.metadata!, "base64"),
             );
             expect(metadata).toMatchObject({
-                capabilities: { newSession: true, resume: false, worktrees: false },
+                capabilities: { newSession: true, resume: false, worktrees: true },
                 cliAvailability: { claude: false, codex: false, rig: true },
                 defaults: { permissionMode: "auto" },
                 machineKind: "rig",
@@ -77,15 +77,28 @@ describe("HappyMachineClient", () => {
             sessionId: "happy-session-1",
             type: "success" as const,
         }));
+        const listWorkspaces = vi.fn(async () => ({
+            type: "success" as const,
+            workspaces: [
+                {
+                    id: "workspace-1",
+                    name: "Steady River",
+                    path: "/workspace/steady-river",
+                    status: "ready",
+                },
+            ],
+        }));
         const client = new HappyMachineClient({
             configuration,
             fetch: request,
+            listWorkspaces,
             modelCatalog,
             socketFactory: (_url, options) => {
                 socket.options = options;
                 return socket;
             },
             spawnSession,
+            supportsWorktrees: true,
         });
 
         client.start();
@@ -98,6 +111,10 @@ describe("HappyMachineClient", () => {
         expect(socket.emitted).toContainEqual([
             "rpc-register",
             { method: "rig-machine-1:spawn-happy-session" },
+        ]);
+        expect(socket.emitted).toContainEqual([
+            "rpc-register",
+            { method: "rig-machine-1:list-happy-workspaces" },
         ]);
         const params = Buffer.from(
             encryptHappyPayload(machineKey, "dataKey", {
@@ -119,6 +136,31 @@ describe("HappyMachineClient", () => {
         expect(
             decryptHappyPayload(machineKey, "dataKey", Buffer.from(encryptedResponse, "base64")),
         ).toEqual({ sessionId: "happy-session-1", type: "success" });
+
+        const encryptedListResponse = await socket.requestRpc({
+            method: "rig-machine-1:list-happy-workspaces",
+            params: Buffer.from(
+                encryptHappyPayload(machineKey, "dataKey", { directory: "/workspace" }),
+            ).toString("base64"),
+        });
+        expect(listWorkspaces).toHaveBeenCalledWith({ directory: "/workspace" });
+        expect(
+            decryptHappyPayload(
+                machineKey,
+                "dataKey",
+                Buffer.from(encryptedListResponse, "base64"),
+            ),
+        ).toEqual({
+            type: "success",
+            workspaces: [
+                {
+                    id: "workspace-1",
+                    name: "Steady River",
+                    path: "/workspace/steady-river",
+                    status: "ready",
+                },
+            ],
+        });
         client.close();
     });
 });
