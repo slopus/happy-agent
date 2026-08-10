@@ -2,6 +2,7 @@ import { homedir, hostname, platform } from "node:os";
 
 import type { ModelCatalog } from "../protocol/index.js";
 import { readPackageVersion } from "../readPackageVersion.js";
+import { HAPPY_SPAWN_PENDING_RETRY_AFTER_MS } from "../happySpawnTiming.js";
 import { createHappyCatalogMetadata } from "./createHappyCatalogMetadata.js";
 import { HAPPY_PERMISSION_MODES } from "./happyPermissionModes.js";
 import type { HappyConnectionConfiguration, HappyMachineMetadata } from "./types.js";
@@ -65,7 +66,7 @@ export function createHappyMachineMetadata(options: {
         },
         sessionCreation: {
             idempotencyKey: "clientRequestId",
-            pendingRetryAfterMs: 2_000,
+            pendingRetryAfterMs: HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
             resultKinds: ["success", "pending", "requestToApproveDirectoryCreation", "error"],
         },
         rigMetadataVersion: 1,

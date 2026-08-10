@@ -6,6 +6,7 @@ import { isCuid } from "@paralleldrive/cuid2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ModelCatalog } from "../../protocol/index.js";
+import { HAPPY_SPAWN_PENDING_RETRY_AFTER_MS } from "../../happySpawnTiming.js";
 import { createHappySpawnWorkspaceId } from "../createHappySpawnSessionId.js";
 import { handleHappySpawnSession } from "../handleHappySpawnSession.js";
 
@@ -117,6 +118,39 @@ describe("handleHappySpawnSession", () => {
         });
     });
 
+    it("returns pending without creating a session while a managed workspace is still preparing", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "rig-happy-spawn-workspace-pending-"));
+        directories.push(directory);
+        const createSession = vi.fn();
+        const waitForRemoteSession = vi.fn();
+
+        await expect(
+            handleHappySpawnSession({
+                createSession,
+                createWorkspace: async () => ({
+                    retryAfterMs: HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
+                    type: "pending" as const,
+                }),
+                machineId: "rig-machine",
+                modelCatalog: catalog,
+                params: {
+                    agent: "rig",
+                    clientRequestId: "mobile-request-workspace-pending",
+                    directory,
+                    type: "spawn-in-directory",
+                    worktree: { name: "steady-river", type: "new" },
+                },
+                waitForRemoteSession,
+            }),
+        ).resolves.toEqual({
+            clientRequestId: "mobile-request-workspace-pending",
+            retryAfterMs: HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
+            type: "pending",
+        });
+        expect(createSession).not.toHaveBeenCalled();
+        expect(waitForRemoteSession).not.toHaveBeenCalled();
+    });
+
     it("starts the session inside a workspace it creates for the request", async () => {
         const directory = await mkdtemp(join(tmpdir(), "rig-happy-spawn-worktree-"));
         directories.push(directory);
@@ -124,6 +158,7 @@ describe("handleHappySpawnSession", () => {
         const createWorkspace = vi.fn(async () => ({
             id: "workspace-1",
             path: join(directory, ".rig", "workspaces", "clever-ocean"),
+            type: "ready" as const,
         }));
 
         await expect(
@@ -165,6 +200,7 @@ describe("handleHappySpawnSession", () => {
         const workspace = {
             id: "workspace-retried",
             path: join(directory, ".rig", "workspaces", "steady-river"),
+            type: "ready" as const,
         };
         const sessions = new Map<string, { snapshot(): { cwd: string; workspaceId?: string } }>();
         const createWorkspace = vi.fn(async () => workspace);

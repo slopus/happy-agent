@@ -163,6 +163,87 @@ describe("HappyMachineClient", () => {
         });
         client.close();
     });
+
+    it("coalesces concurrent identical client requests before invoking the session creator", async () => {
+        const machineKey = new Uint8Array(32).fill(6);
+        const configuration: HappyConnectionConfiguration = {
+            credentials: {
+                encryption: { machineKey, publicKey: new Uint8Array(32).fill(7), type: "dataKey" },
+                token: "token",
+            },
+            credentialsPath: "/tmp/access.key",
+            happyHome: "/tmp/happy",
+            imported: false,
+            machineId: "rig-machine-concurrent",
+            serverUrl: "https://happy.example",
+        };
+        const socket = new FakeMachineSocket();
+        let resolveSpawn: ((result: { sessionId: string; type: "success" }) => void) | undefined;
+        const spawnResult = new Promise<{ sessionId: string; type: "success" }>((resolve) => {
+            resolveSpawn = resolve;
+        });
+        const spawnSession = vi.fn(async () => await spawnResult);
+        const client = new HappyMachineClient({
+            configuration,
+            fetch: async () =>
+                Response.json({ machine: { daemonStateVersion: 0, metadataVersion: 0 } }),
+            modelCatalog,
+            socketFactory: () => socket,
+            spawnSession,
+        });
+
+        client.start();
+        await waitFor(() => socket.connected);
+        const params = Buffer.from(
+            encryptHappyPayload(machineKey, "dataKey", {
+                agent: "rig",
+                clientRequestId: "same-request",
+                directory: "/workspace",
+                type: "spawn-in-directory",
+            }),
+        ).toString("base64");
+        const request = {
+            method: "rig-machine-concurrent:spawn-happy-session",
+            params,
+        };
+
+        const first = socket.requestRpc(request);
+        const second = socket.requestRpc(request);
+        await waitFor(() => spawnSession.mock.calls.length === 1);
+        if (resolveSpawn === undefined) throw new Error("Expected the spawn request to start.");
+        resolveSpawn({ sessionId: "happy-session-concurrent", type: "success" });
+
+        const [firstResponse, secondResponse] = await Promise.all([first, second]);
+        expect(
+            decryptHappyPayload(machineKey, "dataKey", Buffer.from(firstResponse, "base64")),
+        ).toEqual({ sessionId: "happy-session-concurrent", type: "success" });
+        expect(
+            decryptHappyPayload(machineKey, "dataKey", Buffer.from(secondResponse, "base64")),
+        ).toEqual({ sessionId: "happy-session-concurrent", type: "success" });
+        expect(spawnSession).toHaveBeenCalledOnce();
+
+        const changedParams = Buffer.from(
+            encryptHappyPayload(machineKey, "dataKey", {
+                agent: "rig",
+                clientRequestId: "same-request",
+                directory: "/different-workspace",
+                type: "spawn-in-directory",
+            }),
+        ).toString("base64");
+        const changedResponse = await socket.requestRpc({
+            method: "rig-machine-concurrent:spawn-happy-session",
+            params: changedParams,
+        });
+        expect(
+            decryptHappyPayload(machineKey, "dataKey", Buffer.from(changedResponse, "base64")),
+        ).toEqual({
+            errorMessage:
+                "This client request ID was already used for a different session request.",
+            type: "error",
+        });
+        expect(spawnSession).toHaveBeenCalledOnce();
+        client.close();
+    });
 });
 
 class FakeMachineSocket {

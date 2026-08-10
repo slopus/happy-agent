@@ -6,6 +6,10 @@ import { Value } from "@sinclair/typebox/value";
 
 import { isPermissionMode } from "../permissions/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
+import {
+    HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
+    type HappyWorkspaceCreationResult,
+} from "../happySpawnTiming.js";
 import type { CreateSessionRequest, ModelCatalog } from "../protocol/index.js";
 import {
     createHappySpawnSessionId,
@@ -25,7 +29,7 @@ export async function handleHappySpawnSession(options: {
         id: string;
         name: string;
         signal?: AbortSignal;
-    }) => Promise<{ id: string; path: string } | undefined>;
+    }) => Promise<HappyWorkspaceCreationResult | undefined>;
     /** Loads an earlier attempt so a retry reuses its committed workspace. */
     loadSession?: (
         id: string,
@@ -92,6 +96,13 @@ export async function handleHappySpawnSession(options: {
                     )
                   : reuseRequestedWorkspace(existingSession);
         options.signal?.throwIfAborted();
+        if (workspace?.type === "pending") {
+            return {
+                clientRequestId: request.clientRequestId,
+                retryAfterMs: workspace.retryAfterMs,
+                type: "pending",
+            };
+        }
         await options.createSession(localSessionId, {
             cwd: workspace?.path ?? directory,
             ...(workspace === undefined ? {} : { workspaceId: workspace.id }),
@@ -104,7 +115,7 @@ export async function handleHappySpawnSession(options: {
         if (remoteSessionId === undefined) {
             return {
                 clientRequestId: request.clientRequestId,
-                retryAfterMs: 2_000,
+                retryAfterMs: HAPPY_SPAWN_PENDING_RETRY_AFTER_MS,
                 type: "pending",
             };
         }
@@ -124,7 +135,7 @@ async function createRequestedWorkspace(
     name: string,
     createWorkspace: Parameters<typeof handleHappySpawnSession>[0]["createWorkspace"],
     signal?: AbortSignal,
-): Promise<{ id: string; path: string }> {
+): Promise<HappyWorkspaceCreationResult> {
     if (createWorkspace === undefined) {
         throw new Error("This machine cannot create workspaces.");
     }
@@ -157,11 +168,12 @@ function readRequest(value: unknown): HappySpawnSessionRequest {
 function reuseRequestedWorkspace(existing: { cwd: string; workspaceId?: string }): {
     id: string;
     path: string;
+    type: "ready";
 } {
     if (existing.workspaceId === undefined) {
         throw new Error("This session request was already used without a workspace.");
     }
-    return { id: existing.workspaceId, path: existing.cwd };
+    return { id: existing.workspaceId, path: existing.cwd, type: "ready" };
 }
 
 function resolveDirectory(value: string): string {

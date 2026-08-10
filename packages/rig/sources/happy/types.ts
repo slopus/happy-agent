@@ -2,6 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import type { ToolCallPresentation } from "../agent/ToolCallPresentation.js";
 import type { SessionActivity } from "../protocol/index.js";
+export type { HappyWorkspaceCreationResult } from "../happySpawnTiming.js";
 
 export type HappyEncryptionVariant = "dataKey" | "legacy";
 

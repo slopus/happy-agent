@@ -18,6 +18,10 @@ import { GitStateTracker } from "../git/GitStateTracker.js";
 import { getEnvironmentLocalServerPaths } from "./getEnvironmentLocalServerPaths.js";
 import { installDaemonProcessFailureLogging } from "./installDaemonProcessFailureLogging.js";
 import { loadHappyIntegration, type HappyIntegrationMode } from "./loadHappyIntegration.js";
+import {
+    waitForHappyWorkspaceReady,
+    type HappyWorkspaceCreationResult,
+} from "../happySpawnTiming.js";
 import { markGitStateFromSessionEvent } from "../git/markGitStateFromSessionEvent.js";
 import { publishGitLiveEvent } from "../git/publishGitLiveEvent.js";
 import { prepareLocalServerDirectory } from "./prepareLocalServerDirectory.js";
@@ -45,7 +49,7 @@ import {
 import { createProviderUsageService } from "../executor/createProviderUsageService.js";
 import { createCredentialBindingUsageRouter } from "../executor/createCredentialBindingUsageRouter.js";
 import { loadConfiguredProviderUsage } from "../executor/loadConfiguredProviderUsage.js";
-import { delay, gracefulShutdown } from "../concurrency/index.js";
+import { gracefulShutdown } from "../concurrency/index.js";
 import { disableUnavailableProviders } from "../executor/disableUnavailableProviders.js";
 import { resolveProviderDisabledReasons } from "../executor/resolveProviderDisabledReasons.js";
 import { createCodingAssistantAgent } from "../runtime/createCodingAssistantAgent.js";
@@ -1589,7 +1593,7 @@ async function createReadyWorkspaceForHappy(
     ctx: Context,
     store: PersistentSessionStore,
     input: { directory: string; id: string; name: string; signal?: AbortSignal },
-): Promise<{ id: string; path: string } | undefined> {
+): Promise<HappyWorkspaceCreationResult | undefined> {
     const settings = await store.queryProjectSettings(ctx, input.directory);
     if (settings === undefined) return undefined;
     const created = await store.createWorkspace(ctx, settings.projectId, {
@@ -1598,24 +1602,10 @@ async function createReadyWorkspaceForHappy(
     });
     if (created === undefined) return undefined;
 
-    const deadline = Date.now() + WORKSPACE_READY_TIMEOUT_MS;
-    for (;;) {
-        input.signal?.throwIfAborted();
-        const workspace = await store.getWorkspace(ctx, settings.projectId, created.id);
-        if (workspace === undefined) {
-            throw new Error("The workspace disappeared while it was being prepared.");
-        }
-        if (workspace.status === "ready") return { id: workspace.id, path: workspace.path };
-        if (workspace.status !== "initializing") {
-            throw new Error(
-                workspace.error ?? `The workspace is ${workspace.status.replaceAll("_", " ")}.`,
-            );
-        }
-        if (Date.now() > deadline) {
-            throw new Error("The workspace is still being prepared. Try again in a moment.");
-        }
-        await delay(WORKSPACE_POLL_INTERVAL_MS, input.signal);
-    }
+    return await waitForHappyWorkspaceReady({
+        getWorkspace: () => store.getWorkspace(ctx, settings.projectId, created.id),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
 }
 
 async function listProjectWorkspacesForHappy(
@@ -1634,9 +1624,6 @@ async function listProjectWorkspacesForHappy(
             status: workspace.status,
         }));
 }
-
-const WORKSPACE_READY_TIMEOUT_MS = 60_000;
-const WORKSPACE_POLL_INTERVAL_MS = 100;
 
 function requirePluginManager(manager: PluginManager | undefined): PluginManager {
     if (manager === undefined)

@@ -8,6 +8,7 @@ import type {
 } from "../protocol/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
+import type { HappyWorkspaceCreationResult } from "../happySpawnTiming.js";
 import type { InMemorySession } from "../session/InMemorySession.js";
 import { HappyMachineClient } from "./HappyMachineClient.js";
 import {
@@ -47,7 +48,7 @@ export interface HappySyncServiceOptions {
     createWorkspace?: (
         ctx: Context,
         input: { directory: string; id: string; name: string; signal?: AbortSignal },
-    ) => Promise<{ id: string; path: string } | undefined>;
+    ) => Promise<HappyWorkspaceCreationResult | undefined>;
     /** Loads an idempotently-created session so a retried spawn can reuse its workspace. */
     loadSession?: (
         ctx: Context,
