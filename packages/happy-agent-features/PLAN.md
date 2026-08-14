@@ -260,7 +260,8 @@ Status: complete, reviewed, committed, and available from the package root.
 
 ### 9. Search
 
-Status: implementation exists; output and runtime-contract hardening remain.
+Status: complete, reviewed, committed, and available from the package root.
+Rig host integration remains.
 
 - Inject a provider-neutral search backend with search and fetch.
 - Provide common `web_search` and `web_fetch` tools.
