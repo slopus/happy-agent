@@ -1,5 +1,11 @@
 import type { SubmitMessageRequest } from "../protocol/index.js";
-import { rigProfileIdentitySchema } from "../protocol/index.js";
+import {
+    rigProfileIdentitySchema,
+    submitContentSchema,
+    submitMessageDisplayTextSchema,
+    submitMessageIdentitySchema,
+    submitMessageTextSchema,
+} from "../protocol/index.js";
 import { Value } from "@sinclair/typebox/value";
 
 export function isSubmitMessageRequest(value: unknown): value is SubmitMessageRequest {
@@ -7,11 +13,20 @@ export function isSubmitMessageRequest(value: unknown): value is SubmitMessageRe
         !(
             value !== null &&
             typeof value === "object" &&
-            typeof (value as { text?: unknown }).text === "string"
+            Value.Check(submitMessageTextSchema, (value as { text?: unknown }).text)
         )
     )
         return false;
     const request = value as Record<string, unknown>;
+    if (
+        request.displayText !== undefined &&
+        !Value.Check(submitMessageDisplayTextSchema, request.displayText)
+    ) {
+        return false;
+    }
+    if (request.content !== undefined && !Value.Check(submitContentSchema, request.content)) {
+        return false;
+    }
     if (
         request.identity !== undefined &&
         !Value.Check(rigProfileIdentitySchema, request.identity)
@@ -20,16 +35,12 @@ export function isSubmitMessageRequest(value: unknown): value is SubmitMessageRe
     }
     if (
         request.clientSubmissionId !== undefined &&
-        (typeof request.clientSubmissionId !== "string" ||
-            request.clientSubmissionId.length === 0 ||
-            request.clientSubmissionId.length > 256)
+        !Value.Check(submitMessageIdentitySchema, request.clientSubmissionId)
     )
         return false;
     if (
         request.mutationId !== undefined &&
-        (typeof request.mutationId !== "string" ||
-            request.mutationId.length === 0 ||
-            request.mutationId.length > 256)
+        !Value.Check(submitMessageIdentitySchema, request.mutationId)
     )
         return false;
     if (
@@ -43,7 +54,7 @@ export function isSubmitMessageRequest(value: unknown): value is SubmitMessageRe
     }
     for (const field of ["effort", "modelId", "providerId"]) {
         const value = request[field];
-        if (value !== undefined && (typeof value !== "string" || value.length === 0)) return false;
+        if (value !== undefined && !Value.Check(submitMessageIdentitySchema, value)) return false;
     }
     // A provider is only meaningful next to the model it disambiguates.
     if (request.providerId !== undefined && request.modelId === undefined) return false;

@@ -117,4 +117,5 @@ export { createNodeAgentContext } from "./context/createNodeAgentContext.js";
 export { createDockerAgentContext } from "./context/createDockerAgentContext.js";
 export { createNodeBashContext } from "./context/createNodeBashContext.js";
 export { createNodeFileSystemContext } from "./context/createNodeFileSystemContext.js";
-export { RigAgentService } from "./RigAgentService.js";
+export { assertAgentSubmissionOptionsSupported, RigAgentService } from "./RigAgentService.js";
+export { RigHistoryStore } from "./RigHistoryStore.js";

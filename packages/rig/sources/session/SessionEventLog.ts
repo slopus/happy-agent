@@ -93,10 +93,25 @@ export class SessionEventLog {
     }
 
     async append(ctx: Context, event: SessionEvent): Promise<SessionEvent> {
+        return await this.#append(ctx, event, true);
+    }
+
+    /**
+     * Add an event whose durable row was written by the caller's transaction already.
+     *
+     * Agent Base's transaction hooks need to write the session event and message rows before the
+     * outer transaction commits, while the in-memory event log must not move ahead of a rollback.
+     * This path performs only the in-memory append and subscriber delivery after that commit.
+     */
+    async appendProjected(ctx: Context, event: SessionEvent): Promise<SessionEvent> {
+        return await this.#append(ctx, event, false);
+    }
+
+    async #append(ctx: Context, event: SessionEvent, persist: boolean): Promise<SessionEvent> {
         const notify = await this.#appendLock.runInLock(ctx, async (lockedCtx) => {
             // The durable hook runs before any in-memory projection changes. A rejected
             // persistence write therefore leaves the log, cursors, and notifications untouched.
-            if (this.#onAppend !== undefined) await this.#onAppend(lockedCtx, event);
+            if (persist && this.#onAppend !== undefined) await this.#onAppend(lockedCtx, event);
             if (!isLiveOnlySessionEvent(event)) {
                 this.#eventIndexes.set(event.id, this.#nextEventIndex);
                 this.#nextEventIndex += 1;

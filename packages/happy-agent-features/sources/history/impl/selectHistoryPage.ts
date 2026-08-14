@@ -1,5 +1,8 @@
+import { Value } from "@sinclair/typebox/value";
+
 import type { HistoryQuery, HistoryPage } from "../HistoryPage.js";
-import type { HistoryRecord } from "../HistoryStore.js";
+import { historyQuerySchema, historyRecordSchema, type HistoryRecord } from "../HistoryPage.js";
+import { MAX_HISTORY_POSITION, MAX_HISTORY_TOTAL_MESSAGES } from "../HistoryMessage.js";
 import { messageMatchesHistoryFilters } from "./messageMatchesHistoryFilters.js";
 import { summarizeHistory } from "./summarizeHistory.js";
 
@@ -18,6 +21,22 @@ export function selectHistoryPage(
     records: readonly HistoryRecord[],
     options: HistoryQuery,
 ): SelectedHistoryPage {
+    if (
+        !Value.Check(historyQuerySchema, options) ||
+        records.length > MAX_HISTORY_TOTAL_MESSAGES ||
+        records.some((record) => !Value.Check(historyRecordSchema, record))
+    ) {
+        throw new Error("History selection received malformed state.");
+    }
+    const recordIds = new Set<string>();
+    let previousPosition = -1;
+    for (const record of records) {
+        if (record.position <= previousPosition || recordIds.has(record.message.recordId)) {
+            throw new Error("History selection received unstable records.");
+        }
+        previousPosition = record.position;
+        recordIds.add(record.message.recordId);
+    }
     if (options.cursor !== undefined && options.from !== undefined) {
         throw new Error("Use either cursor or from, not both.");
     }
@@ -26,8 +45,14 @@ export function selectHistoryPage(
         messageMatchesHistoryFilters(record.message, options),
     );
     const first = records[0]?.position ?? 0;
-    const end = (records.at(-1)?.position ?? first - 1) + 1;
-    const anchor = Math.min(Math.max(options.cursor ?? first, first), end);
+    const lastPosition = records.at(-1)?.position;
+    const end =
+        lastPosition === undefined
+            ? first
+            : lastPosition >= MAX_HISTORY_POSITION
+              ? MAX_HISTORY_POSITION
+              : lastPosition + 1;
+    const anchor = options.cursor === undefined ? first : Math.max(options.cursor, first);
     const start =
         options.from === "end"
             ? Math.max(0, matched.length - limit)
@@ -36,6 +61,7 @@ export function selectHistoryPage(
     const selected = matched.slice(startIndex, startIndex + limit);
     const cursor = selected[0]?.position ?? (options.from === "end" ? end : anchor);
     const next = matched[startIndex + selected.length];
+    const beyondEnd = options.cursor !== undefined && startIndex === matched.length;
     const previous = matched[Math.max(0, startIndex - limit)];
     return {
         cursor,
@@ -43,7 +69,7 @@ export function selectHistoryPage(
         matchedStats: summarizeHistory(matched.map((record) => record.message)),
         messages: selected,
         ...(next === undefined ? {} : { nextCursor: next.position }),
-        ...(startIndex === 0 || previous === undefined
+        ...(previous === undefined || (startIndex === 0 && !beyondEnd)
             ? {}
             : { previousCursor: previous.position }),
         totalMessages: records.length,

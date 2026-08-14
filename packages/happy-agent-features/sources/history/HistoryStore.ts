@@ -1,33 +1,87 @@
+import { Type, type Static } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { HistoryMessage } from "./HistoryMessage.js";
+import {
+    historyAgentIdSchema,
+    historyMessageSchema,
+    MAX_HISTORY_MESSAGES_PER_APPEND,
+} from "./HistoryMessage.js";
+import {
+    historyPageSchema,
+    historyRecordSchema,
+    historyStoreQuerySchema,
+    type HistoryPage,
+    type HistoryRecord,
+    type HistoryQuery,
+    type HistoryStoreQuery,
+} from "./HistoryPage.js";
+import { MAX_HISTORY_PAGE_SIZE } from "./HistoryMessage.js";
+import { historyStatsSchema } from "./impl/summarizeHistory.js";
 
-/** One stored message and where it sits in the agent's whole history. */
-export interface HistoryRecord {
-    /** The message as it was recorded. */
-    readonly message: HistoryMessage;
-    /**
-     * The message's zero-based place in everything the agent has ever recorded. It is what a
-     * cursor names, so it must stay the same for a given message even after older ones are
-     * dropped — a reader continuing from a cursor must not silently skip or repeat.
-     */
-    readonly position: number;
-}
-
-/**
- * Where an agent's history is kept.
- *
- * The feature records and reads; the store decides what durable means. The default store keeps
- * history in the agent's own key-value space, and a host with a real archive — Rig's session
- * transcript, a database, a log service — implements this instead and keeps everything else.
- *
- * A store is written to from inside the transaction that commits the work being recorded, so an
- * implementation that writes elsewhere should expect to be called there and must not assume it
- * can take its time.
+/*
+ * Context is an extension-bearing runtime object whose enumerable string surface is intentionally
+ * empty. Keep its runtime contract closed while preserving the real host-facing Context type.
  */
-export interface HistoryStore {
-    /** Add messages to the end of an agent's history, in the order given. */
-    append(ctx: Context, agentId: string, messages: readonly HistoryMessage[]): Promise<void>;
-    /** Everything the agent's history holds, oldest first. */
-    read(ctx: Context, agentId: string): Promise<readonly HistoryRecord[]>;
-}
+export const historyContextSchema = Type.Unsafe<Context>(
+    Type.Object({}, { additionalProperties: false }),
+);
+
+/** Runtime contract for a host archive. */
+export const historyStoreSchema = Type.Object(
+    {
+        append: Type.Function(
+            [
+                historyContextSchema,
+                historyAgentIdSchema,
+                Type.Array(historyMessageSchema, {
+                    maxItems: MAX_HISTORY_MESSAGES_PER_APPEND,
+                }),
+            ],
+            Type.Promise(Type.Void()),
+        ),
+        read: Type.Function(
+            [historyContextSchema, historyAgentIdSchema, historyStoreQuerySchema],
+            Type.Promise(historyPageSchema),
+        ),
+    },
+    { additionalProperties: false },
+);
+
+/** The structural host archive contract, inferred directly from its runtime schema. */
+export type HistoryStore = Static<typeof historyStoreSchema>;
+
+const historyReaderQuerySchema = Type.Object(
+    {
+        from: Type.Optional(Type.Union([Type.Literal("end"), Type.Literal("start")])),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_HISTORY_PAGE_SIZE })),
+    },
+    { additionalProperties: false },
+);
+
+/** The read-only part of history used by model handoff and other consumers. */
+export const historyReaderSchema = Type.Object(
+    {
+        messages: Type.Function(
+            [historyContextSchema, historyAgentIdSchema, historyReaderQuerySchema],
+            Type.Promise(Type.Array(historyRecordSchema, { maxItems: MAX_HISTORY_PAGE_SIZE })),
+        ),
+        /**
+         * Return exact archive statistics without exposing the archive itself. Hosts should
+         * implement this as a bounded aggregate at their storage boundary.
+         */
+        stats: Type.Optional(
+            Type.Function(
+                [historyContextSchema, historyAgentIdSchema],
+                Type.Promise(historyStatsSchema),
+            ),
+        ),
+    },
+    { additionalProperties: false },
+);
+
+/** The read-only history contract, inferred from its runtime schema. */
+export type HistoryReader = Static<typeof historyReaderSchema>;
+
+/** Re-export the page record types from the store-facing module. */
+export type { HistoryPage, HistoryRecord, HistoryQuery, HistoryStoreQuery };
+export { historyRecordSchema, historyStoreQuerySchema };

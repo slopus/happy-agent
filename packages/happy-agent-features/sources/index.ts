@@ -25,17 +25,79 @@ export {
 export { systemPromptForModel } from "./systemPrompt/impl/systemPromptForModel.js";
 
 // History: the agent's own durable record of what happened, which it can read back.
-export { HistoryFeature, type HistoryFeatureOptions } from "./history/HistoryFeature.js";
 export {
+    HistoryFeature,
+    historyFeatureOptionsSchema,
+    type HistoryFeatureOptions,
+} from "./history/HistoryFeature.js";
+export {
+    historyAgentIdSchema,
     historyBlockSchema,
+    historyImageBlockSchema,
     historyMessageSchema,
+    historyMessageInputSchema,
+    historyModelSchema,
+    historyProviderSchema,
+    historyRecordIdSchema,
     historyRoleSchema,
+    historyTextBlockSchema,
+    historyThinkingBlockSchema,
+    historyTimestampSchema,
+    historyToolArgumentsSchema,
+    historyToolCallBlockSchema,
+    historyToolResultBlockSchema,
+    MAX_HISTORY_AGENT_ID_LENGTH,
+    MAX_HISTORY_ARGUMENT_ARRAY_ITEMS,
+    MAX_HISTORY_ARGUMENT_BYTES,
+    MAX_HISTORY_ARGUMENT_DEPTH,
+    MAX_HISTORY_ARGUMENT_KEY_LENGTH,
+    MAX_HISTORY_ARGUMENT_OBJECT_PROPERTIES,
+    MAX_HISTORY_ARGUMENT_STRING_LENGTH,
+    MAX_HISTORY_BLOCKS_PER_PAGE,
+    MAX_HISTORY_BLOCKS_PER_MESSAGE,
+    MAX_HISTORY_CALL_ID_LENGTH,
+    MAX_HISTORY_MEDIA_TYPE_LENGTH,
+    MAX_HISTORY_MESSAGES_PER_APPEND,
+    MAX_HISTORY_MODEL_LENGTH,
+    MAX_HISTORY_MESSAGE_JSON_BYTES,
+    MAX_HISTORY_PAGE_SIZE,
+    MAX_HISTORY_PENDING_BLOCKS,
+    MAX_HISTORY_POSITION,
+    MAX_HISTORY_PROVIDER_LENGTH,
+    MAX_HISTORY_QUERY_LENGTH,
+    MAX_HISTORY_RECORD_ID_LENGTH,
+    MAX_HISTORY_TEXT_LENGTH,
+    MAX_HISTORY_THINKING_LENGTH,
+    MAX_HISTORY_TOOL_DISPLAY_LENGTH,
+    MAX_HISTORY_TOOL_NAME_LENGTH,
+    MAX_HISTORY_TOOL_OUTPUT_LENGTH,
+    MAX_HISTORY_TOTAL_MESSAGES,
+    MAX_HISTORY_TOTAL_BLOCKS,
+    MAX_HISTORY_TOTAL_TEXT_CHARACTERS,
     type HistoryBlock,
     type HistoryMessage,
+    type HistoryMessageInput,
     type HistoryRole,
+    historyMessageWithinPersistenceBounds,
+    historyToolArgumentsWithinByteLimit,
 } from "./history/HistoryMessage.js";
-export { type HistoryPage, type HistoryQuery } from "./history/HistoryPage.js";
-export { type HistoryRecord, type HistoryStore } from "./history/HistoryStore.js";
+export {
+    historyPageSchema,
+    historyQuerySchema,
+    type HistoryPage,
+    type HistoryQuery,
+} from "./history/HistoryPage.js";
+export {
+    historyContextSchema,
+    historyReaderSchema,
+    historyRecordSchema,
+    historyStoreSchema,
+    historyStoreQuerySchema,
+    type HistoryReader,
+    type HistoryRecord,
+    type HistoryStore,
+    type HistoryStoreQuery,
+} from "./history/HistoryStore.js";
 export { readAgentHistoryTool } from "./history/tools/read_agent_history.js";
 export {
     formatHistoryPage,
@@ -43,7 +105,16 @@ export {
     type FormattedHistoryPage,
 } from "./history/impl/formatHistoryPage.js";
 export { formatHistoryMessage } from "./history/impl/formatHistoryMessage.js";
-export { summarizeHistory, type HistoryStats } from "./history/impl/summarizeHistory.js";
+export {
+    historyStatsSchema,
+    summarizeHistory,
+    type HistoryStats,
+} from "./history/impl/summarizeHistory.js";
+export {
+    foldHistorySearchText,
+    historyMessageSearchParts,
+    messageMatchesHistoryFilters,
+} from "./history/impl/messageMatchesHistoryFilters.js";
 export { selectHistoryPage } from "./history/impl/selectHistoryPage.js";
 
 // Compute: the machine an agent works on, as file and command tools over one compute.
@@ -81,6 +152,7 @@ export { FileReadLog } from "./compute/impl/FileReadLog.js";
 // Model switch: the notice a model gets when it inherits a conversation it cannot see.
 export {
     ModelSwitchFeature,
+    modelSwitchFeatureOptionsSchema,
     type ModelSwitchFeatureOptions,
 } from "./modelSwitch/ModelSwitchFeature.js";
 export {

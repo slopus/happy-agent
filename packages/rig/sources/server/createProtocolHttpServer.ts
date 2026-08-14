@@ -247,7 +247,10 @@ import type {
     ResizeRemoteTerminalRequest,
 } from "../terminal/index.js";
 import type { PluginContext } from "../agent/context/PluginContext.js";
-import type { RigAgentService } from "../agent/RigAgentService.js";
+import {
+    assertAgentSubmissionOptionsSupported,
+    type RigAgentService,
+} from "../agent/RigAgentService.js";
 import {
     PluginAppError,
     PluginCatalogError,
@@ -658,6 +661,27 @@ interface ProtocolServerRuntimeConfig {
 interface AppliedDaemonSettings {
     inferenceMaxRetries: number;
     globalEventQueue: GlobalEventQueue;
+}
+
+function rejectUnsupportedAgentSubmissionOptions(
+    response: ServerResponse,
+    runtimeConfig: ProtocolServerRuntimeConfig,
+    request: SubmitMessageRequest,
+): boolean {
+    if (runtimeConfig.agents === undefined) return false;
+    try {
+        assertAgentSubmissionOptionsSupported(request);
+        return false;
+    } catch (error) {
+        sendJson(response, 400, { error: errorToMessage(error) });
+        return true;
+    }
+}
+
+function sendAgentsModeUnavailable(response: ServerResponse, capability: string): void {
+    sendJson(response, 503, {
+        error: `${capability} is unavailable while this session uses Agent Base agents.`,
+    });
 }
 
 const GLOBAL_SECURITY_POLICY_REQUEST_MAX_BYTES = GLOBAL_SECURITY_MD_MAX_BYTES * 6 + 1024;
@@ -3074,6 +3098,7 @@ async function handleRequest(
             sendJson(response, 400, { error: "Message settings are invalid." });
             return;
         }
+        if (rejectUnsupportedAgentSubmissionOptions(response, runtimeConfig, body)) return;
         if (!(await authorizeMessageProfile(ctx, request, response, runtimeConfig, body))) return;
         const broadcast = body as BroadcastMessageRequest;
         const authenticatedOwnerId = p2pPeerId(request);
@@ -3151,7 +3176,11 @@ async function handleRequest(
         }
         sendJson<BroadcastMessageResponse>(response, 202, {
             submissions: await Promise.all(
-                sessions.map((candidate) => candidate!.submit(ctx, message)),
+                sessions.map((candidate) =>
+                    runtimeConfig.agents === undefined
+                        ? candidate!.submit(ctx, message)
+                        : runtimeConfig.agents.submit(ctx, candidate!, message),
+                ),
             ),
         });
         return;
@@ -4157,8 +4186,9 @@ async function handleRequest(
             sendJson(response, 400, { error: "Message text must be text." });
             return;
         }
+        if (rejectUnsupportedAgentSubmissionOptions(response, runtimeConfig, body)) return;
         if (!(await authorizeMessageProfile(ctx, request, response, runtimeConfig, body))) return;
-        if (body.clientSubmissionId !== undefined) {
+        if (runtimeConfig.agents === undefined && body.clientSubmissionId !== undefined) {
             const submitted = session.events.messageSubmission(body.clientSubmissionId);
             if (submitted !== undefined) {
                 sendJson<SubmitMessageResponse>(response, 202, {
@@ -4214,8 +4244,12 @@ async function handleRequest(
             });
             return;
         }
+        if (runtimeConfig.agents !== undefined) {
+            sendAgentsModeUnavailable(response, "Context messaging");
+            return;
+        }
         if (!(await authorizeMessageProfile(ctx, request, response, runtimeConfig, body))) return;
-        if (body.clientSubmissionId !== undefined) {
+        if (runtimeConfig.agents === undefined && body.clientSubmissionId !== undefined) {
             const submitted = session.events.messageSubmission(body.clientSubmissionId);
             if (submitted?.data.delivery === "context") {
                 sendJson<SubmitContextMessageResponse>(response, 202, {
@@ -4314,8 +4348,9 @@ async function handleRequest(
             sendJson(response, 400, { error: "Message text must be text." });
             return;
         }
+        if (rejectUnsupportedAgentSubmissionOptions(response, runtimeConfig, body)) return;
         if (!(await authorizeMessageProfile(ctx, request, response, runtimeConfig, body))) return;
-        if (body.clientSubmissionId !== undefined) {
+        if (runtimeConfig.agents === undefined && body.clientSubmissionId !== undefined) {
             const submitted = session.events.messageSubmission(body.clientSubmissionId);
             if (submitted !== undefined) {
                 sendJson<SteerMessageResponse>(response, 202, {
@@ -4476,6 +4511,10 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "reset") {
+        if (runtimeConfig.agents !== undefined) {
+            sendAgentsModeUnavailable(response, "Session reset");
+            return;
+        }
         const mutationId = requestMutationId(request);
         if (sessionMutationCompleted(session, mutationId)) {
             sendJson(response, 200, { session: session.snapshot() });
@@ -4489,6 +4528,10 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "rewind") {
+        if (runtimeConfig.agents !== undefined) {
+            sendAgentsModeUnavailable(response, "Session rewind");
+            return;
+        }
         const body = await readJson<RewindSessionRequest>(request);
         if (typeof body.messageId !== "string" || body.messageId.length === 0) {
             sendJson(response, 400, { error: "Choose a user message to rewind to." });
@@ -4523,6 +4566,20 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
+        if (runtimeConfig.agents !== undefined) {
+            try {
+                const result = await runtimeConfig.agents.compact(ctx, session);
+                await session.recordMutationApplied(ctx, mutationId);
+                sendJson<CompactSessionResponse>(response, 200, {
+                    result,
+                    session: session.snapshot(),
+                });
+            } catch (error) {
+                if (isDatabaseFailure(error)) throw error;
+                sendJson(response, 409, { error: errorToMessage(error) });
+            }
+            return;
+        }
         const result = await session.compact(ctx);
         await session.recordMutationApplied(ctx, mutationId);
         sendJson<CompactSessionResponse>(response, 200, {
@@ -4540,6 +4597,20 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
+        if (runtimeConfig.agents !== undefined) {
+            try {
+                sendJson(response, 200, {
+                    session: await runtimeConfig.agents.changeEffort(ctx, session, {
+                        ...body,
+                        ...(mutationId === undefined ? {} : { mutationId }),
+                    }),
+                });
+            } catch (error) {
+                if (isDatabaseFailure(error)) throw error;
+                sendJson(response, 409, { error: errorToMessage(error) });
+            }
+            return;
+        }
         sendJson(response, 200, {
             session: await session.changeEffort(ctx, {
                 ...body,
@@ -4557,6 +4628,20 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
+        if (runtimeConfig.agents !== undefined) {
+            try {
+                sendJson(response, 200, {
+                    session: await runtimeConfig.agents.changeServiceTier(ctx, session, {
+                        ...body,
+                        ...(mutationId === undefined ? {} : { mutationId }),
+                    }),
+                });
+            } catch (error) {
+                if (isDatabaseFailure(error)) throw error;
+                sendJson(response, 409, { error: errorToMessage(error) });
+            }
+            return;
+        }
         sendJson(response, 200, {
             session: await session.changeServiceTier(ctx, {
                 ...body,
@@ -4584,6 +4669,23 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
+        if (runtimeConfig.agents !== undefined) {
+            try {
+                sendJson(response, 200, {
+                    session: await runtimeConfig.agents.changeModel(ctx, session, {
+                        ...body,
+                        ...(mutationId === undefined ? {} : { mutationId }),
+                    }),
+                });
+            } catch (error) {
+                if (isDatabaseFailure(error)) throw error;
+                sendJson(response, 409, {
+                    error: errorToMessage(error),
+                    session: session.snapshot(),
+                });
+            }
+            return;
+        }
         try {
             sendJson(response, 200, {
                 session: await session.changeModel(ctx, {
@@ -4615,6 +4717,20 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
+        if (runtimeConfig.agents !== undefined) {
+            try {
+                sendJson(response, 200, {
+                    session: await runtimeConfig.agents.changePermissionMode(ctx, session, {
+                        ...body,
+                        ...(mutationId === undefined ? {} : { mutationId }),
+                    }),
+                });
+            } catch (error) {
+                if (isDatabaseFailure(error)) throw error;
+                sendJson(response, 409, { error: errorToMessage(error) });
+            }
+            return;
+        }
         sendJson(response, 200, {
             session: await session.changePermissionMode(ctx, {
                 ...body,

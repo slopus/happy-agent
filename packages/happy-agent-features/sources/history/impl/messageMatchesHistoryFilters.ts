@@ -6,15 +6,28 @@ export function messageMatchesHistoryFilters(
     options: { query?: string | undefined; roles?: readonly HistoryRole[] | undefined },
 ): boolean {
     if (options.roles !== undefined && !options.roles.includes(message.role)) return false;
-    const query = options.query?.trim().toLocaleLowerCase();
+    const query =
+        options.query === undefined ? undefined : foldHistorySearchText(options.query.trim());
     if (query === undefined || query.length === 0) return true;
     // Search reads the whole stored message, not the bounded rendering a reader is shown, so a
     // hit inside truncated tool output is still findable.
-    return searchableParts(message).some((part) => part.toLocaleLowerCase().includes(query));
+    return historyMessageSearchParts(message).some((part) =>
+        foldHistorySearchText(part).includes(query),
+    );
+}
+
+/**
+ * The one case-folding rule shared by every history adapter.
+ *
+ * SQLite's built-in case folding is ASCII-only. SQL adapters that cannot execute this Unicode
+ * operation use a bounded host-side filter with this exact function instead.
+ */
+export function foldHistorySearchText(value: string): string {
+    return value.toLocaleLowerCase("en-US");
 }
 
 /** Every piece of a message that counts as text a search may match. */
-function searchableParts(message: HistoryMessage): string[] {
+export function historyMessageSearchParts(message: HistoryMessage): readonly string[] {
     const parts: string[] = [];
     for (const block of message.blocks) {
         if (block.type === "text") parts.push(block.text);

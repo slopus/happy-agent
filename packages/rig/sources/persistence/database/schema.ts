@@ -27,7 +27,64 @@ export const agentValues = sqliteTable(
         key: text("key").notNull(),
         valueJson: text("value_json").notNull(),
     },
-    (table) => [primaryKey({ columns: [table.agentId, table.key] })],
+    (table) => [
+        primaryKey({ columns: [table.agentId, table.key] }),
+        index("agent_values_key_agent").on(table.key, table.agentId),
+    ],
+);
+
+/**
+ * Rig's indexed caller-owned message receipt and immutable retry envelope.
+ *
+ * Settled rows are retained as the durable idempotency archive after the session event log's
+ * in-memory retention expires. A future pruning policy must remove them only with an explicit
+ * session/marker retention decision; queued and consumed rows are live recovery state.
+ */
+export const agentMessageSubmissions = sqliteTable(
+    "agent_message_submissions",
+    {
+        agentId: text("agent_id").notNull(),
+        messageId: text("message_id").notNull(),
+        sessionId: text("session_id").notNull(),
+        runId: text("run_id").notNull(),
+        delivery: text("delivery").notNull(),
+        status: text("status").notNull(),
+        fingerprint: text("fingerprint").notNull(),
+        metadataJson: text("metadata_json").notNull(),
+        messageJson: text("message_json").notNull(),
+        inputJson: text("input_json").notNull(),
+        createdAtMs: integer("created_at_ms").notNull(),
+    },
+    (table) => [
+        primaryKey({ columns: [table.agentId, table.messageId] }),
+        index("agent_message_submissions_agent_status").on(
+            table.agentId,
+            table.status,
+            table.createdAtMs,
+            table.messageId,
+        ),
+        index("agent_message_submissions_agent_run_status").on(
+            table.agentId,
+            table.runId,
+            table.status,
+            table.messageId,
+        ),
+    ],
+);
+
+/** Durable Rig-owned history records supplied to the Agent Base History feature. */
+export const agentHistory = sqliteTable(
+    "agent_history",
+    {
+        agentId: text("agent_id").notNull(),
+        position: integer("position").notNull(),
+        recordId: text("record_id").notNull(),
+        messageJson: text("message_json").notNull(),
+    },
+    (table) => [
+        primaryKey({ columns: [table.agentId, table.position] }),
+        unique().on(table.agentId, table.recordId),
+    ],
 );
 
 export const rigDataIdentityTable = sqliteTable(

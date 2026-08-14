@@ -68,6 +68,18 @@ Returning this from `send` and `steer` would let a host answer retries without
 consulting private queue records or inferring whether an identical message was
 newly inserted.
 
+## Explicit setting clears
+
+Agent Base 0.0.6 treats an omitted `serviceTier` (and the other optional
+selection fields) as “keep the current value.” It has no public message option
+that means “clear the current service tier,” while the provider request type
+accepts only `"priority"` or omission. A first-class nullable/resettable
+selection option would let Rig honor an explicit protocol `serviceTier: null`
+without passing `null` to provider adapters or retaining a previous priority
+tier. Until then Rig rejects an explicit clear before creating a receipt or
+dispatching the Agent Base message. The protocol keeps its nullable toggle
+shape for non-Agent Base paths.
+
 ## Public bounded message lookup
 
 A bounded lookup by caller-supplied message ID could help protocol hosts

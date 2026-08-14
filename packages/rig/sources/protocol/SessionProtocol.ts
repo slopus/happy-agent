@@ -956,6 +956,34 @@ export interface ListExternalToolCallsResponse {
     calls: readonly ExternalToolCall[];
 }
 
+/** Structured user content accepted by the Agent Base protocol bridge. */
+export const submitMessageTextSchema = Type.String({ maxLength: 262_144 });
+export const submitMessageDisplayTextSchema = Type.String({ maxLength: 262_144 });
+export const submitMessageIdentitySchema = Type.String({
+    maxLength: 256,
+    minLength: 1,
+    pattern: "^[^\\u0000\\r\\n]+$",
+});
+export const submitContentBlockSchema = Type.Union([
+    Type.Object(
+        {
+            text: Type.String({ maxLength: 262_144 }),
+            type: Type.Literal("text"),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            data: Type.String({ maxLength: 16 * 1024 * 1024 }),
+            detail: Type.Optional(Type.Union([Type.Literal("high"), Type.Literal("original")])),
+            mediaType: Type.String({ minLength: 1, maxLength: 256 }),
+            type: Type.Literal("image"),
+        },
+        { additionalProperties: false },
+    ),
+]);
+export const submitContentSchema = Type.Array(submitContentBlockSchema, { maxItems: 256 });
+
 export interface SubmitMessageRequest {
     clientSubmissionId?: string;
     content?: readonly ContentBlock[];
@@ -1224,6 +1252,11 @@ export type MessageSubmittedEvent = BaseSessionEvent<
         message: UserMessage;
         mutationId?: string;
         runId: string;
+        /**
+         * Immutable Agent Base submission identity. Legacy session submissions omit this because
+         * they predate the Agent Base protocol bridge.
+         */
+        submissionFingerprint?: string;
         source?: "notification";
     }
 >;

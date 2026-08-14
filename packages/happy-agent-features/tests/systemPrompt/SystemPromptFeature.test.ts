@@ -15,6 +15,7 @@ function scopeOf(
     const agent: AgentFeatureAgent = {
         effort: undefined,
         id: "agent",
+        metadata: undefined,
         model,
         permissionMode: "auto",
         provider: "provider",

@@ -7,6 +7,8 @@ const REFRESH_SCOPE_RUNTIME = Symbol("refresh-scope-runtime");
 import { createId } from "@paralleldrive/cuid2";
 import { Executor } from "@slopus/rig-execution";
 import { areProviderModelsCompatible, type ProviderUsage } from "@slopus/happy-providers";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { withWorkerContext } from "../observability/index.js";
 
@@ -102,6 +104,8 @@ import {
     SESSION_DRAFT_MAX_LENGTH,
     SESSION_STREAM_TURN_LIMIT,
     SESSION_TRANSCRIPT_NOTICE_LIMIT,
+    submitMessageDisplayTextSchema,
+    submissionFingerprintSchema,
 } from "../protocol/index.js";
 
 const RETAINED_SESSION_MESSAGE_LIMIT = 512;
@@ -240,6 +244,8 @@ import { isTransientInferenceSessionEvent } from "./impl/isTransientInferenceSes
 import { affectsSessionUsage } from "./impl/affectsSessionUsage.js";
 import { providerUsageToClaudeQuota } from "../executor/providerUsageToClaudeQuota.js";
 import { asyncLock, isAsyncLockReentryError, type AsyncLock } from "../concurrency/index.js";
+import { getDatabaseScope } from "../persistence/databaseContext.js";
+import { isSessionDatabaseTransaction } from "../persistence/database/SessionDatabase.js";
 import type { AgentSessionManager } from "./AgentSessionManager.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
 import { summarizeDockerExecution } from "../execution/index.js";
@@ -269,6 +275,7 @@ import { createErrorToolResultBlock } from "../agent/impl/createErrorToolResultB
 import { createModelSwitchHistoryMessage } from "../agent/impl/createModelSwitchHistoryMessage.js";
 import { createToolResultBlock } from "../agent/impl/createToolResultBlock.js";
 import type { AgentMessage, ErrorMessage, ToolCallBlock, ToolResultBlock } from "../agent/types.js";
+import type { RigAgentConfiguration } from "../agent/RigProtocolFeature.js";
 import { isCodexV2CollaborationModel } from "../agent/tools/codex/isCodexV2CollaborationModel.js";
 import { createDurableSkillTool, type DurableSkillDefinition } from "../external-skills/index.js";
 import type {
@@ -288,6 +295,22 @@ const SESSION_METADATA_TIMEOUT_MS = 30_000;
 /** How many failed attempts to name a chat are made before leaving it unnamed for good. */
 const SESSION_METADATA_MAX_FAILURES = 3;
 const WORKSPACE_READINESS_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
+const rigAgentConfigurationSchema = Type.Object(
+    {
+        effort: Type.Optional(Type.String({ maxLength: 32, minLength: 1 })),
+        modelId: Type.String({ maxLength: 256, minLength: 1 }),
+        mutationId: Type.Optional(Type.String({ maxLength: 256, minLength: 1 })),
+        permissionMode: Type.Union([
+            Type.Literal("auto"),
+            Type.Literal("full_access"),
+            Type.Literal("read_only"),
+            Type.Literal("workspace_write"),
+        ]),
+        providerId: Type.String({ maxLength: 256, minLength: 1 }),
+        serviceTier: Type.Optional(Type.Literal("fast")),
+    },
+    { additionalProperties: false },
+);
 
 export interface PersistedSessionMessage {
     isPartial: boolean;
@@ -659,6 +682,17 @@ interface PendingSteeringContinuation {
     resolveReady: () => void;
 }
 
+interface StagedProtocolProjectionOperation {
+    readonly event: SessionEvent;
+    readonly message?: PersistedSessionMessage;
+}
+
+interface StagedProtocolProjection {
+    readonly operations: StagedProtocolProjectionOperation[];
+    nextPosition: number;
+    scheduled: boolean;
+}
+
 export interface SessionRunCompletion {
     errorMessage?: string;
     status: "aborted" | "completed" | "error";
@@ -801,6 +835,8 @@ export class InMemorySession {
     #pendingSteeringContinuations = new Map<string, PendingSteeringContinuation>();
     #pendingUserInputs = new Map<string, PendingUserInput>();
     #persistence: InMemorySessionPersistence | undefined;
+    #onAppendEvent: SessionEventAppendHook | undefined;
+    readonly #stagedProtocolProjections = new WeakMap<object, StagedProtocolProjection>();
     #presence: { state(): PresenceState } | undefined;
     #publishLiveEvent: InMemorySessionOptions["publishLiveEvent"];
     #slotStores: SessionSlotStores | undefined;
@@ -891,6 +927,7 @@ export class InMemorySession {
         this.#mcpToolProvider = options.mcpToolProvider;
         this.#modelCatalog = options.modelCatalog;
         this.#persistence = options.persistence;
+        this.#onAppendEvent = options.onAppendEvent;
         this.#presence = options.presence;
         this.#publishLiveEvent = options.publishLiveEvent;
         this.#slotStores = options.slotStores;
@@ -4780,6 +4817,51 @@ export class InMemorySession {
         });
     }
 
+    #protocolSnapshotForAgentConfiguration(input: {
+        effort?: string;
+        modelId: string;
+        models: readonly Model[];
+        permissionMode: PermissionMode;
+        providerId: string;
+        serviceTier?: ServiceTier;
+    }): ProtocolSession {
+        const agentSnapshot = this.#agentSnapshot();
+        const targetAgentSnapshot: AgentSnapshot = {
+            ...agentSnapshot,
+            ...(input.effort === undefined ? {} : { effort: input.effort }),
+            ...(input.serviceTier === undefined ? {} : { serviceTier: input.serviceTier }),
+            modelId: input.modelId,
+            providerId: input.providerId,
+        };
+        const target = this.#protocolSnapshot(targetAgentSnapshot);
+        return {
+            ...target,
+            ...(input.effort === undefined ? {} : { effort: input.effort }),
+            ...(input.serviceTier === undefined ? {} : { serviceTier: input.serviceTier }),
+            modelId: input.modelId,
+            models: input.models,
+            permissionMode: input.permissionMode,
+            providerId: input.providerId,
+            snapshot: targetAgentSnapshot,
+        };
+    }
+
+    #applyProjectedAgentConfiguration(
+        configuration: RigAgentConfiguration,
+        permissionMode: PermissionMode,
+        modelChanged: boolean,
+    ): void {
+        this.#providerId = configuration.providerId;
+        this.#modelId = configuration.modelId;
+        this.#models = this.#modelsForProvider(configuration.providerId);
+        this.#credentialBindingId = this.#providerBindingId(configuration.providerId);
+        this.#effort = configuration.effort;
+        this.#serviceTier = configuration.serviceTier;
+        this.#permissionMode = permissionMode;
+        this.#interruption = undefined;
+        if (modelChanged) this.#totalTokens = 0;
+    }
+
     #protocolSnapshot(snapshot: AgentSnapshot): ProtocolSession {
         const lastEventId = this.events.lastEventId();
         const activeTurn = this.#activeTurn();
@@ -6817,10 +6899,10 @@ export class InMemorySession {
 
     async #afterTransactionCommit(
         ctx: Context,
-        callback: () => void | Promise<void>,
+        callback: (postCommitCtx: Context) => void | Promise<void>,
     ): Promise<void> {
         if (this.#persistence?.afterTransactionCommit === undefined) {
-            await callback();
+            await callback(ctx);
             return;
         }
         await this.#persistence.afterTransactionCommit(ctx, callback);
@@ -6843,12 +6925,13 @@ export class InMemorySession {
         ).catch(rethrowDatabaseFailure);
     }
 
-    async #appendDurableEvent(ctx: Context, event: SessionEvent): Promise<void> {
+    async #appendDurableEvent(ctx: Context, event: SessionEvent, persist = true): Promise<void> {
         const previousSessionTokenCount = this.#sessionTokenCount;
         // Terminal-event subscribers may synchronously read the transcript. Project facts before
         // publishing so waitForRun and transcriptWindow observe one completion boundary.
         this.#recordRunFacts(event);
-        await this.events.append(ctx, event);
+        if (persist) await this.events.append(ctx, event);
+        else await this.events.appendProjected(ctx, event);
         if (!this.isSubagent() && this.#request.trackUnread === true) {
             this.#unread = sessionUnreadStateAfterEvent(this.#unread, event);
         }
@@ -9401,6 +9484,161 @@ export class InMemorySession {
      * Agent Base owns the conversation. This method only keeps Rig's public session protocol and
      * transcript rows synchronized while the old session repository is being split apart.
      */
+    async projectAgentConfiguration(
+        ctx: Context,
+        configuration: RigAgentConfiguration,
+    ): Promise<ProtocolSession> {
+        if (!Value.Check(rigAgentConfigurationSchema, configuration)) {
+            throw new Error("The Agent Base configuration projection is invalid.");
+        }
+        const current = this.snapshot();
+        const provider = this.#modelCatalog.providers.find(
+            (candidate) => candidate.providerId === configuration.providerId,
+        );
+        const model = provider?.models.find((candidate) => candidate.id === configuration.modelId);
+        if (provider === undefined || model === undefined) {
+            throw new Error(
+                `Model '${configuration.modelId}' is not available from provider '${configuration.providerId}'.`,
+            );
+        }
+        if (
+            configuration.effort !== undefined &&
+            !model.thinkingLevels.includes(configuration.effort) &&
+            !(configuration.effort === "max" && model.thinkingLevels.includes("ultra"))
+        ) {
+            throw new Error(
+                `Model '${configuration.modelId}' does not support the '${configuration.effort}' reasoning effort.`,
+            );
+        }
+        if (
+            configuration.serviceTier !== undefined &&
+            !provider.serviceTiers?.includes(configuration.serviceTier)
+        ) {
+            throw new Error(
+                `Provider '${configuration.providerId}' does not support fast inference.`,
+            );
+        }
+        const permissionMode = parsePermissionMode(configuration.permissionMode);
+        const targetModels = this.#modelsForProvider(configuration.providerId);
+        const changed: SessionConfigurationField[] = [];
+        const modelChanged =
+            this.#modelId !== configuration.modelId ||
+            this.#providerId !== configuration.providerId;
+        if (modelChanged) changed.push("model");
+        if (this.#effort !== configuration.effort) changed.push("effort");
+        if (this.#serviceTier !== configuration.serviceTier) changed.push("serviceTier");
+        const permissionChanged = this.#permissionMode !== permissionMode;
+
+        const priorMutation = configuration.mutationId
+            ? (this.events.since(undefined) ?? []).find(
+                  (
+                      event,
+                  ): event is Extract<
+                      SessionEvent,
+                      { type: "session_configuration_changed" | "permission_mode_changed" }
+                  > =>
+                      (event.type === "session_configuration_changed" ||
+                          event.type === "permission_mode_changed") &&
+                      event.data.mutationId === configuration.mutationId,
+              )
+            : undefined;
+        if (priorMutation !== undefined) {
+            const priorConfiguration =
+                priorMutation.type === "session_configuration_changed"
+                    ? {
+                          effort: priorMutation.data.effort,
+                          modelId: priorMutation.data.modelId,
+                          permissionMode: current.permissionMode,
+                          providerId: priorMutation.data.providerId,
+                          serviceTier:
+                              priorMutation.data.serviceTier === null
+                                  ? undefined
+                                  : priorMutation.data.serviceTier,
+                      }
+                    : {
+                          effort: current.effort,
+                          modelId: current.modelId,
+                          permissionMode: priorMutation.data.permissionMode,
+                          providerId: current.providerId,
+                          serviceTier: current.serviceTier,
+                      };
+            if (
+                priorConfiguration.modelId !== configuration.modelId ||
+                priorConfiguration.providerId !== configuration.providerId ||
+                priorConfiguration.effort !== configuration.effort ||
+                priorConfiguration.serviceTier !== configuration.serviceTier ||
+                priorConfiguration.permissionMode !== permissionMode
+            ) {
+                throw new Error(
+                    `Mutation '${configuration.mutationId}' was already used for a different configuration.`,
+                );
+            }
+            return current;
+        }
+
+        const target = this.#protocolSnapshotForAgentConfiguration({
+            ...(configuration.effort === undefined ? {} : { effort: configuration.effort }),
+            modelId: configuration.modelId,
+            permissionMode,
+            providerId: configuration.providerId,
+            ...(configuration.serviceTier === undefined
+                ? {}
+                : { serviceTier: configuration.serviceTier }),
+            models: targetModels,
+        });
+        if (changed.length === 0 && !permissionChanged) return target;
+
+        const events: SessionEvent[] = [];
+        if (changed.length > 0) {
+            events.push(
+                this.#createEvent("session_configuration_changed", {
+                    changed,
+                    ...(configuration.effort === undefined ? {} : { effort: configuration.effort }),
+                    modelId: configuration.modelId,
+                    ...(configuration.mutationId === undefined
+                        ? {}
+                        : { mutationId: configuration.mutationId }),
+                    providerId: configuration.providerId,
+                    serviceTier: configuration.serviceTier ?? null,
+                }),
+            );
+        }
+        if (permissionChanged) {
+            events.push(
+                this.#createEvent("permission_mode_changed", {
+                    ...(configuration.mutationId === undefined
+                        ? {}
+                        : { mutationId: configuration.mutationId }),
+                    permissionMode,
+                }),
+            );
+        }
+        const state = this.state();
+        const { effort: _effort, serviceTier: _serviceTier, ...stateWithoutConfiguration } = state;
+        const targetState: PersistedSessionState = {
+            ...stateWithoutConfiguration,
+            ...(configuration.effort === undefined ? {} : { effort: configuration.effort }),
+            modelId: configuration.modelId,
+            models: targetModels,
+            permissionMode,
+            providerId: configuration.providerId,
+            ...(configuration.serviceTier === undefined
+                ? {}
+                : { serviceTier: configuration.serviceTier }),
+        };
+        return await this.#runSessionMutation(ctx, async (txCtx) => {
+            await this.#persistence?.saveSession(txCtx, targetState);
+            for (const event of events) await this.#onAppendEvent?.(txCtx, event);
+            await this.#afterTransactionCommit(txCtx, async (postCommitCtx) => {
+                this.#applyProjectedAgentConfiguration(configuration, permissionMode, modelChanged);
+                for (const event of events) {
+                    await this.#appendDurableEvent(postCommitCtx, event, false);
+                }
+            });
+            return target;
+        });
+    }
+
     async projectUserMessage(
         ctx: Context,
         input: {
@@ -9409,8 +9647,41 @@ export class InMemorySession {
             message: UserMessage;
             mutationId?: string;
             runId: string;
+            submissionFingerprint?: string;
         },
     ): Promise<Extract<SessionEvent, { type: "message_submitted" }>> {
+        if (
+            input.submissionFingerprint !== undefined &&
+            !Value.Check(submissionFingerprintSchema, input.submissionFingerprint)
+        ) {
+            throw new Error("The message submission fingerprint is invalid.");
+        }
+        if (!Value.Check(submitMessageDisplayTextSchema, input.displayText)) {
+            throw new Error("The submitted display text is invalid or oversized.");
+        }
+        const event = this.#createEvent("message_submitted", {
+            delivery: input.delivery,
+            displayText: input.displayText,
+            message: input.message,
+            ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
+            runId: input.runId,
+            ...(input.submissionFingerprint === undefined
+                ? {}
+                : { submissionFingerprint: input.submissionFingerprint }),
+        });
+        if (
+            await this.#stageProtocolProjection(ctx, {
+                event,
+                message: {
+                    isPartial: false,
+                    message: input.message,
+                    position: this.#nextProjectedMessagePosition(ctx),
+                    runId: input.runId,
+                },
+            })
+        ) {
+            return event;
+        }
         return await this.#runSessionMutation(ctx, async (txCtx) => {
             await this.#storeMessage(
                 txCtx,
@@ -9420,13 +9691,6 @@ export class InMemorySession {
                 input.runId,
             );
             this.#lastMessageAt = this.#now();
-            const event = this.#createEvent("message_submitted", {
-                delivery: input.delivery,
-                displayText: input.displayText,
-                message: input.message,
-                ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
-                runId: input.runId,
-            });
             await this.#appendDurableEvent(txCtx, event);
             return event;
         });
@@ -9440,9 +9704,22 @@ export class InMemorySession {
         runId: string,
         message: AgentMessage | ErrorMessage,
     ): Promise<Extract<SessionEvent, { type: "agent_message" }>> {
+        const event = this.#createEvent("agent_message", { message, runId });
+        if (
+            await this.#stageProtocolProjection(ctx, {
+                event,
+                message: {
+                    isPartial: false,
+                    message,
+                    position: this.#nextProjectedMessagePosition(ctx),
+                    runId,
+                },
+            })
+        ) {
+            return event;
+        }
         return await this.#runSessionMutation(ctx, async (txCtx) => {
             await this.#storeMessage(txCtx, this.#nextMessagePosition(), message, false, runId);
-            const event = this.#createEvent("agent_message", { message, runId });
             await this.#appendDurableEvent(txCtx, event);
             return event;
         });
@@ -9452,14 +9729,88 @@ export class InMemorySession {
      * Commits one non-transient Agent Base lifecycle event through the session projection.
      */
     async afterProtocolCommit(ctx: Context, callback: () => void): Promise<void> {
-        await this.#afterTransactionCommit(ctx, callback);
+        await this.#afterTransactionCommit(ctx, () => callback());
     }
 
     async projectProtocolEvent<TEvent extends SessionEvent>(
         ctx: Context,
         event: TEvent,
     ): Promise<TEvent> {
+        if (await this.#stageProtocolProjection(ctx, { event })) return event;
         return await this.#commitEvent(ctx, event);
+    }
+
+    /**
+     * Keep the database part of an Agent Base transaction separate from this session's heap.
+     *
+     * Agent Base may call the protocol feature while its own transaction is still open. The
+     * session persistence adapter can join that transaction, but the old session object cannot
+     * observe a later rollback. Write the durable rows first and schedule the in-memory append
+     * only for the host's outermost commit.
+     */
+    async #stageProtocolProjection(
+        ctx: Context,
+        operation: StagedProtocolProjectionOperation,
+    ): Promise<boolean> {
+        const scope = getDatabaseScope(ctx);
+        if (
+            !isSessionDatabaseTransaction(scope) ||
+            this.#persistence?.upsertMessage === undefined ||
+            this.#onAppendEvent === undefined
+        ) {
+            return false;
+        }
+        let staged = this.#stagedProtocolProjections.get(scope);
+        if (staged === undefined) {
+            staged = {
+                nextPosition: this.#nextMessagePosition(),
+                operations: [],
+                scheduled: false,
+            };
+            this.#stagedProtocolProjections.set(scope, staged);
+        }
+        if (!staged.scheduled) {
+            staged.scheduled = true;
+            await this.#afterTransactionCommit(ctx, async (postCommitCtx) => {
+                this.#stagedProtocolProjections.delete(scope);
+                for (const stagedOperation of staged!.operations) {
+                    if (stagedOperation.message !== undefined) {
+                        if (stagedOperation.message.message.role === "user") {
+                            this.#lastMessageAt = this.#now();
+                        }
+                        await this.#storeMessage(
+                            postCommitCtx,
+                            stagedOperation.message.position,
+                            stagedOperation.message.message,
+                            stagedOperation.message.isPartial,
+                            stagedOperation.message.runId,
+                            false,
+                        );
+                    }
+                    await this.#appendDurableEvent(postCommitCtx, stagedOperation.event, false);
+                }
+                this.#trimRetainedMessages();
+            });
+        }
+        if (operation.message !== undefined) {
+            const position = operation.message.position;
+            if (position < staged.nextPosition) {
+                throw new Error("The staged protocol message position is already reserved.");
+            }
+            staged.nextPosition = position + 1;
+            await this.#persistence.upsertMessage(ctx, this.id, operation.message);
+        }
+        await this.#onAppendEvent(ctx, operation.event);
+        staged.operations.push(operation);
+        return true;
+    }
+
+    #nextProjectedMessagePosition(ctx: Context): number {
+        const scope = getDatabaseScope(ctx);
+        const staged = isSessionDatabaseTransaction(scope)
+            ? this.#stagedProtocolProjections.get(scope)
+            : undefined;
+        return staged?.nextPosition ?? this.#nextMessagePosition();
     }
 
     /**

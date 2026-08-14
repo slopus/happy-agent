@@ -704,6 +704,8 @@ async function runOwnedLocalProtocolServer(
                 modelCatalog,
                 providers: availableProviders,
                 resolveInferenceMaxRetries: () => runtimeSettings.inferenceMaxRetries,
+                resolveSession: async (ctx, sessionId) =>
+                    await store?.get(ctx, sessionId, { loadAgentTree: false }),
             }),
         );
         const githubSecretSync = new GitHubSecretSync({

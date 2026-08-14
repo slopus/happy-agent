@@ -40,7 +40,7 @@ export function createModelSwitchNotice(notice: ModelSwitchNotice): string {
               ]
             : [
                   `The excerpt${notice.historyTool === undefined ? " exposes" : " and tool expose"} the durable inference-oriented history, not raw provider protocol traffic or hidden reasoning. Exposed thinking and conversation are prioritized; tool calls are summarized and tool outputs are truncated.`,
-                  `History overview: ${excerpt.stats.messages} messages, ${excerpt.stats.userMessages} user messages, ${excerpt.stats.assistantMessages} assistant messages, ${excerpt.stats.thinkingBlocks} thinking blocks, ${excerpt.stats.toolCalls} tool calls, ${excerpt.stats.toolResults} tool results, and ${excerpt.stats.textCharacters} text characters.`,
+                  overview(excerpt),
                   `Beginning history excerpt:\n${excerpt.beginning}`,
                   ...(excerpt.recent.length === 0
                       ? []
@@ -48,6 +48,14 @@ export function createModelSwitchNotice(notice: ModelSwitchNotice): string {
               ]),
         "</model-switch-history-context>",
     ].join("\n");
+}
+
+function overview(excerpt: HistoryExcerpt): string {
+    const prefix =
+        excerpt.statsAreSampled === true
+            ? "History sample overview (counts cover only the bounded excerpt, not the full archive)"
+            : "History overview";
+    return `${prefix}: ${excerpt.stats.messages} messages, ${excerpt.stats.userMessages} user messages, ${excerpt.stats.assistantMessages} assistant messages, ${excerpt.stats.thinkingBlocks} thinking blocks, ${excerpt.stats.toolCalls} tool calls, ${excerpt.stats.toolResults} tool results, and ${excerpt.stats.textCharacters} text characters.`;
 }
 
 /** What the new model is asked to do before it answers, given what it can reach. */

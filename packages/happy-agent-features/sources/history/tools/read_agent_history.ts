@@ -2,32 +2,49 @@ import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { HistoryFeature } from "../HistoryFeature.js";
-import { formatHistoryPage } from "../impl/formatHistoryPage.js";
+import {
+    historyAgentIdSchema,
+    MAX_HISTORY_AGENT_ID_LENGTH,
+    MAX_HISTORY_PAGE_SIZE,
+    MAX_HISTORY_POSITION,
+    MAX_HISTORY_QUERY_LENGTH,
+    MAX_HISTORY_TOTAL_BLOCKS,
+    MAX_HISTORY_TOTAL_MESSAGES,
+    MAX_HISTORY_TOTAL_TEXT_CHARACTERS,
+} from "../HistoryMessage.js";
+import { formatHistoryPage, MAX_HISTORY_CHARACTERS } from "../impl/formatHistoryPage.js";
 import type { HistoryStats } from "../impl/summarizeHistory.js";
 
 /** The counted shape of one stretch of history, as the model reads it. */
-const historyStatsSchema = Type.Object({
-    assistant_messages: Type.Integer(),
-    messages: Type.Integer(),
-    text_characters: Type.Integer(),
-    thinking_blocks: Type.Integer(),
-    tool_calls: Type.Integer(),
-    tool_results: Type.Integer(),
-    user_messages: Type.Integer(),
-});
+const historyStatsSchema = Type.Object(
+    {
+        assistant_messages: Type.Integer({ maximum: MAX_HISTORY_TOTAL_MESSAGES, minimum: 0 }),
+        messages: Type.Integer({ maximum: MAX_HISTORY_TOTAL_MESSAGES, minimum: 0 }),
+        text_characters: Type.Integer({
+            maximum: MAX_HISTORY_TOTAL_TEXT_CHARACTERS,
+            minimum: 0,
+        }),
+        thinking_blocks: Type.Integer({ maximum: MAX_HISTORY_TOTAL_BLOCKS, minimum: 0 }),
+        tool_calls: Type.Integer({ maximum: MAX_HISTORY_TOTAL_BLOCKS, minimum: 0 }),
+        tool_results: Type.Integer({ maximum: MAX_HISTORY_TOTAL_BLOCKS, minimum: 0 }),
+        user_messages: Type.Integer({ maximum: MAX_HISTORY_TOTAL_MESSAGES, minimum: 0 }),
+    },
+    { additionalProperties: false },
+);
 
 /** The tool that reads and searches one agent's durable history. */
 export function readAgentHistoryTool(history: HistoryFeature, agentId: string) {
     return defineAgentTool({
         name: "read_agent_history",
         description:
-            "Read or search the durable low-level history for the current agent or another agent in this session tree. Use it to investigate prior requests, decisions, reasoning, tool activity, and subagent work after a model change or whenever earlier context matters. This is not a user-facing chat export. Search examines full stored messages, but each response is simplified and capped at 80,000 characters: provider-hidden reasoning is unavailable, only exposed thinking is readable, tool calls are summarized, tool outputs are truncated, and images are represented only by metadata. A requested message limit may therefore return fewer messages; continue with next_cursor or previous_cursor.",
+            "Read or search the durable low-level history for this agent. Related-agent history is available only when the host explicitly authorizes and resolves that target. Use it to investigate prior requests, decisions, reasoning, tool activity, and subagent work after a model change or whenever earlier context matters. This is not a user-facing chat export. Search examines stored block content, but each response is simplified and capped at 80,000 characters: provider-hidden reasoning is unavailable, only exposed thinking is readable, tool calls are summarized, tool outputs are truncated, and images are represented only by metadata. A requested message limit may therefore return fewer messages; continue with next_cursor or previous_cursor.",
         parameters: Type.Object({
             cursor: Type.Optional(
                 Type.Integer({
                     description:
                         "Zero-based original history position. Use a returned previous_cursor or next_cursor to navigate. Cannot be combined with from.",
                     minimum: 0,
+                    maximum: MAX_HISTORY_POSITION,
                 }),
             ),
             from: Type.Optional(
@@ -55,7 +72,7 @@ export function readAgentHistoryTool(history: HistoryFeature, agentId: string) {
                 Type.Integer({
                     description:
                         "Maximum matching messages to select before the 80,000-character response cap is applied. Defaults to 100 and cannot exceed 500. Large messages may return fewer; use the returned cursors to continue.",
-                    maximum: 500,
+                    maximum: MAX_HISTORY_PAGE_SIZE,
                     minimum: 1,
                 }),
             ),
@@ -63,6 +80,7 @@ export function readAgentHistoryTool(history: HistoryFeature, agentId: string) {
                 Type.String({
                     description:
                         "Case-insensitive text search across full stored conversation, thinking, tool names, arguments, and outputs.",
+                    maxLength: MAX_HISTORY_QUERY_LENGTH,
                     minLength: 1,
                 }),
             ),
@@ -76,6 +94,7 @@ export function readAgentHistoryTool(history: HistoryFeature, agentId: string) {
                     ]),
                     {
                         description: "Return only messages with one of these roles.",
+                        maxItems: 4,
                         minItems: 1,
                         uniqueItems: true,
                     },
@@ -84,39 +103,54 @@ export function readAgentHistoryTool(history: HistoryFeature, agentId: string) {
             target: Type.Optional(
                 Type.String({
                     description: "Stable Agent ID. Omit for the current agent.",
+                    maxLength: MAX_HISTORY_AGENT_ID_LENGTH,
+                    minLength: 1,
                 }),
             ),
         }),
         returnType: Type.Object({
-            cursor: Type.Integer(),
+            cursor: Type.Integer({ maximum: MAX_HISTORY_POSITION, minimum: 0 }),
             history: Type.String({
                 description:
                     "Simplified chronological history, capped at 80,000 characters. It is not verbatim provider traffic and may omit or truncate tool and image details.",
+                maxLength: MAX_HISTORY_CHARACTERS,
             }),
-            matched_messages: Type.Integer(),
+            matched_messages: Type.Integer({
+                maximum: MAX_HISTORY_TOTAL_MESSAGES,
+                minimum: 0,
+            }),
             next_cursor: Type.Optional(
                 Type.Integer({
                     description:
                         "Stable original-history position for the next matching page. Omitted at the end.",
+                    maximum: MAX_HISTORY_POSITION,
+                    minimum: 0,
                 }),
             ),
             previous_cursor: Type.Optional(
                 Type.Integer({
                     description:
                         "Stable original-history position for the preceding matching page. Omitted at the beginning.",
+                    maximum: MAX_HISTORY_POSITION,
+                    minimum: 0,
                 }),
             ),
             returned_messages: Type.Integer({
                 description:
                     "Messages actually returned after filtering and the character cap; this can be lower than limit.",
+                maximum: MAX_HISTORY_PAGE_SIZE,
+                minimum: 0,
             }),
             stats: Type.Object({
                 matched: historyStatsSchema,
                 returned: historyStatsSchema,
                 total: historyStatsSchema,
             }),
-            target: Type.String(),
-            total_messages: Type.Integer(),
+            target: historyAgentIdSchema,
+            total_messages: Type.Integer({
+                maximum: MAX_HISTORY_TOTAL_MESSAGES,
+                minimum: 0,
+            }),
         }),
         // Reading history changes nothing and reaches nothing outside the agent's own store.
         durable: true,
@@ -131,7 +165,13 @@ export function readAgentHistoryTool(history: HistoryFeature, agentId: string) {
                     : args.from === "last"
                       ? "end"
                       : args.from;
-            const page = await history.read(ctx, args.target ?? agentId, {
+            const target = await history.resolveTarget(ctx, agentId, args.target ?? agentId);
+            if (target === undefined) {
+                throw new Error(
+                    "History access is limited to the current agent unless the host authorizes a related target.",
+                );
+            }
+            const page = await history.read(ctx, target, {
                 ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
                 ...(from === undefined ? {} : { from }),
                 limit: args.limit ?? 100,

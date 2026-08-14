@@ -5,27 +5,59 @@ import type {
     AgentBasePersistedEvent,
     AgentFeature,
     AgentFeatureScope,
+    AgentMessageMetadata,
 } from "@slopus/happy-agent-base";
 import type { SessionEvent as ProviderSessionEvent, SessionUsage } from "@slopus/happy-providers";
 import type { AssistantContent, AssistantMessage, StopReason } from "@slopus/rig-execution";
+import { Type, type Static } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import type { AgentLoopEvent } from "./loop.js";
-import type { AgentBlock, AgentMessage, Message, ToolCallBlock, UserMessage } from "./types.js";
+import type { AgentMessage, Message, ToolCallBlock, UserMessage } from "./types.js";
 import {
     createEventIdFactory,
+    protocolAgentBlockSchema,
+    protocolAgentBlockWithinBounds,
+    protocolErrorMessageSchema,
+    protocolJsonSchema,
+    protocolJsonWithinByteLimit,
+    rigMessageMetadataEnvelopeSchema,
     type ProtocolSession,
     type SessionEvent,
 } from "../protocol/index.js";
 
+/**
+ * The effective host-side selection projected into Rig's protocol session.
+ *
+ * Agent Base applies selection values when a queued message is consumed. The
+ * protocol projection records the host's promised "this and subsequent runs"
+ * selection immediately, without reaching into the legacy runtime.
+ */
+export interface RigAgentConfiguration {
+    readonly effort?: string;
+    readonly modelId: string;
+    readonly mutationId?: string;
+    readonly permissionMode: string;
+    readonly providerId: string;
+    readonly serviceTier?: "fast";
+}
+
 export interface RigAgentProtocolSession {
-    afterProtocolCommit(ctx: Context, callback: () => void): Promise<void>;
+    afterProtocolCommit(ctx: Context, callback: () => void | Promise<void>): Promise<void>;
     readonly events: {
         append(ctx: Context, event: SessionEvent): Promise<SessionEvent>;
+        messageSubmission?(
+            messageId: string,
+        ): Extract<SessionEvent, { type: "message_submitted" }> | undefined;
     };
     readonly id: string;
     projectProtocolEvent(ctx: Context, event: SessionEvent): Promise<SessionEvent>;
     projectAgentMessage(ctx: Context, runId: string, message: Message): Promise<SessionEvent>;
+    projectAgentConfiguration(
+        ctx: Context,
+        configuration: RigAgentConfiguration,
+    ): Promise<ProtocolSession>;
     projectUserMessage(
         ctx: Context,
         input: {
@@ -34,14 +66,14 @@ export interface RigAgentProtocolSession {
             message: UserMessage;
             mutationId?: string;
             runId: string;
+            submissionFingerprint?: string;
         },
-    ): Promise<SessionEvent>;
+    ): Promise<Extract<SessionEvent, { type: "message_submitted" }>>;
     publishAgentLiveEvent(ctx: Context, event: SessionEvent): void;
     snapshot(): ProtocolSession;
 }
 
 interface PendingInference {
-    readonly blocks: AgentBlock[];
     readonly content: AssistantContent[];
     currentIndex?: number;
     iteration: number;
@@ -52,6 +84,14 @@ interface PendingInference {
     readonly toolCalls: Map<string, ToolCallBlock>;
 }
 
+const pendingBlocksSchema = Type.Array(protocolAgentBlockSchema, { maxItems: 2_048 });
+const runIdSchema = Type.String({ maxLength: 256, minLength: 1 });
+type PendingAgentBlock = Static<typeof protocolAgentBlockSchema>;
+const acceptedMetadataSchema = rigMessageMetadataEnvelopeSchema;
+
+const PENDING_BLOCKS_KEY = "pending_blocks";
+const MESSAGE_PROJECTION_KEY_PREFIX = "message_projection.";
+
 interface PendingProtocolRun {
     readonly accepted: Promise<void>;
     cancelled: boolean;
@@ -59,7 +99,9 @@ interface PendingProtocolRun {
     inference?: PendingInference;
     iteration: number;
     readonly messageId: string;
+    readonly metadata?: AgentMessageMetadata;
     messageConsumed: boolean;
+    messageNotified: boolean;
     readonly modelId: string;
     outcome?: {
         errorMessage?: string;
@@ -67,15 +109,24 @@ interface PendingProtocolRun {
     };
     projectionError?: unknown;
     projectedEvent?: SessionEvent;
-    projectionCommitted: boolean;
     readonly projectionInput: {
         delivery: "run" | "steer";
         displayText: string;
         message: UserMessage;
         mutationId?: string;
         runId: string;
+        submissionFingerprint?: string;
     };
+    readonly projection: Promise<SessionEvent>;
+    readonly recordProjection:
+        | ((
+              ctx: Context,
+              event: Extract<SessionEvent, { type: "message_submitted" }>,
+          ) => Promise<void>)
+        | undefined;
     readonly providerId: string;
+    readonly recordAccepted: ((ctx: Context) => Promise<void>) | undefined;
+    readonly recordSettled: ((ctx: Context, runId: string) => Promise<void>) | undefined;
     readonly resolveAccepted: () => void;
     readonly resolveProjected: (event: SessionEvent) => void;
     readonly runId: string;
@@ -111,14 +162,35 @@ export class RigProtocolFeature implements AgentFeature {
             displayText: string;
             messageId: string;
             message: UserMessage;
+            metadata?: AgentMessageMetadata;
             modelId: string;
             mutationId?: string;
+            projectedEvent?: Extract<SessionEvent, { type: "message_submitted" }>;
             providerId: string;
             runId: string;
+            recordProjection?: (
+                ctx: Context,
+                event: Extract<SessionEvent, { type: "message_submitted" }>,
+            ) => Promise<void>;
+            recordAccepted?: (ctx: Context) => Promise<void>;
+            recordSettled?: (ctx: Context, runId: string) => Promise<void>;
             session: RigAgentProtocolSession;
             snapshot: ProtocolSession;
+            submissionFingerprint?: string;
         },
     ): PendingProtocolRunRegistration {
+        const existing = this.#pending
+            .get(agentId)
+            ?.find((candidate) => !candidate.cancelled && candidate.messageId === input.messageId);
+        if (existing !== undefined) {
+            return {
+                cancel: () => {
+                    existing.cancelled = true;
+                    existing.resolveAccepted();
+                },
+                projected: () => existing.projection,
+            };
+        }
         let resolveAccepted!: () => void;
         const accepted = new Promise<void>((resolve) => {
             resolveAccepted = resolve;
@@ -133,20 +205,36 @@ export class RigProtocolFeature implements AgentFeature {
             cancelled: false,
             iteration: 0,
             messageConsumed: false,
-            projectionCommitted: false,
+            messageNotified: false,
             projectionInput: {
                 delivery: input.delivery,
                 displayText: input.displayText,
                 message: input.message,
                 ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
                 runId: input.runId,
+                ...(input.submissionFingerprint === undefined
+                    ? {}
+                    : { submissionFingerprint: input.submissionFingerprint }),
             },
+            ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+            projection: projected,
+            recordProjection: input.recordProjection,
+            recordAccepted: input.recordAccepted,
+            recordSettled: input.recordSettled,
             resolveAccepted,
             resolveProjected,
-            started: false,
+            ...(input.projectedEvent === undefined ? {} : { projectedEvent: input.projectedEvent }),
+            started: input.projectedEvent !== undefined,
             tail: Promise.resolve(),
             terminalProjected: false,
         };
+        if (input.projectedEvent !== undefined) {
+            pending.messageConsumed = true;
+            pending.messageNotified = true;
+            resolveAccepted();
+            resolveProjected(input.projectedEvent);
+            this.#active.set(agentId, pending);
+        }
         const runs = this.#pending.get(agentId);
         if (runs === undefined) this.#pending.set(agentId, [pending]);
         else runs.push(pending);
@@ -159,12 +247,16 @@ export class RigProtocolFeature implements AgentFeature {
         };
     }
 
-    hasPending(agentId: string, runId?: string): boolean {
+    hasPending(agentId: string, runId?: string, messageId?: string): boolean {
         return (
             this.#pending
                 .get(agentId)
-                ?.some((run) => !run.cancelled && (runId === undefined || run.runId === runId)) ??
-            false
+                ?.some(
+                    (run) =>
+                        !run.cancelled &&
+                        (runId === undefined || run.runId === runId) &&
+                        (messageId === undefined || run.messageId === messageId),
+                ) ?? false
         );
     }
 
@@ -195,7 +287,6 @@ export class RigProtocolFeature implements AgentFeature {
             }
         }
         const inference: PendingInference = {
-            blocks: [],
             content: [],
             iteration: ++run.iteration,
             messageId: createId(),
@@ -215,40 +306,55 @@ export class RigProtocolFeature implements AgentFeature {
     readonly messageAcceptedTransact = async (
         ctx: Context,
         scope: AgentFeatureScope,
-        _accepted: AgentBaseAcceptedMessage,
-    ): Promise<void> => {
-        const run = this.#pending
-            .get(scope.agent.id)
-            ?.find((candidate) => !candidate.cancelled && !candidate.messageConsumed);
-        if (run === undefined) return;
-        run.messageConsumed = true;
-        try {
-            run.projectedEvent = await run.session.projectUserMessage(ctx, run.projectionInput);
-        } catch (error) {
-            run.messageConsumed = false;
-            throw error;
-        }
-    };
-
-    readonly messageAccepted = async (
-        ctx: Context,
-        scope: AgentFeatureScope,
-        _accepted: AgentBaseAcceptedMessage,
+        accepted: AgentBaseAcceptedMessage,
     ): Promise<void> => {
         const run = this.#pending
             .get(scope.agent.id)
             ?.find(
                 (candidate) =>
                     !candidate.cancelled &&
+                    candidate.messageId === accepted.id &&
+                    !candidate.messageConsumed,
+            );
+        if (run === undefined) return;
+        validateAcceptedMetadata(run, accepted);
+        const key = messageProjectionKey(run.messageId);
+        const staged = await scope.runKV.read(ctx, key);
+        if (Value.Check(runIdSchema, staged) && staged === run.runId) return;
+        await scope.runKV.write(ctx, key, run.runId);
+        await run.recordAccepted?.(ctx);
+        const event = await run.session.projectUserMessage(ctx, run.projectionInput);
+        await run.recordProjection?.(ctx, event);
+        await run.session.afterProtocolCommit(ctx, () => {
+            if (run.cancelled || run.messageConsumed) {
+                return;
+            }
+            run.messageConsumed = true;
+            run.projectedEvent = event;
+            this.#active.set(scope.agent.id, run);
+            run.resolveProjected(event);
+            run.resolveAccepted();
+        });
+    };
+
+    readonly messageAccepted = async (
+        ctx: Context,
+        scope: AgentFeatureScope,
+        accepted: AgentBaseAcceptedMessage,
+    ): Promise<void> => {
+        const run = this.#pending
+            .get(scope.agent.id)
+            ?.find(
+                (candidate) =>
+                    !candidate.cancelled &&
+                    candidate.messageId === accepted.id &&
                     candidate.messageConsumed &&
-                    !candidate.projectionCommitted &&
+                    !candidate.messageNotified &&
                     candidate.projectedEvent !== undefined,
             );
         if (run?.projectedEvent === undefined) return;
-        run.projectionCommitted = true;
+        run.messageNotified = true;
         this.#active.set(scope.agent.id, run);
-        run.resolveProjected(run.projectedEvent);
-        run.resolveAccepted();
         if (run.cancelled || run.delivery !== "steer") return;
         this.#enqueue(run, () =>
             this.#append(ctx, run, {
@@ -262,11 +368,11 @@ export class RigProtocolFeature implements AgentFeature {
         await this.#drain(run);
     };
 
-    readonly onEvent = (
+    readonly onEvent = async (
         ctx: Context,
         scope: AgentFeatureScope,
         event: ProviderSessionEvent,
-    ): void => {
+    ): Promise<void> => {
         const run = this.#activeRun(scope.agent.id);
         const inference = run?.inference;
         if (run === undefined || inference === undefined || run.cancelled) return;
@@ -277,7 +383,12 @@ export class RigProtocolFeature implements AgentFeature {
         }
         if (event.type === "done") {
             if (event.state === "error") {
-                run.outcome = { errorMessage: event.message, stopReason: "error" };
+                run.outcome = {
+                    errorMessage: Value.Check(protocolErrorMessageSchema, event.message)
+                        ? event.message
+                        : "The model response failed.",
+                    stopReason: "error",
+                };
             } else {
                 run.outcome = {
                     stopReason:
@@ -297,14 +408,23 @@ export class RigProtocolFeature implements AgentFeature {
         if (mapped !== undefined) this.#publishAgentEvent(ctx, run, mapped);
     };
 
-    readonly onEventTransact = (
-        _ctx: Context,
+    readonly onEventTransact = async (
+        ctx: Context,
         scope: AgentFeatureScope,
         event: AgentBasePersistedEvent,
-    ): void => {
+    ): Promise<void> => {
         const inference = this.#activeRun(scope.agent.id)?.inference;
         if (inference === undefined) return;
-        inference.blocks.push(toAgentBlock(event, inference));
+        const blocks = await readPendingBlocks(ctx, scope);
+        const block = toAgentBlock(event, inference);
+        if (!protocolAgentBlockWithinBounds(block)) {
+            throw new Error("Rig protocol received an unbounded persisted agent block.");
+        }
+        const next = [...blocks, block];
+        if (!Value.Check(pendingBlocksSchema, next) || !protocolJsonWithinByteLimit(next)) {
+            throw new Error("Rig protocol pending agent blocks exceed their persistence bound.");
+        }
+        await scope.runKV.write(ctx, PENDING_BLOCKS_KEY, next);
     };
 
     readonly afterInferenceTransact = async (
@@ -315,9 +435,10 @@ export class RigProtocolFeature implements AgentFeature {
         const run = this.#activeRun(scope.agent.id);
         const inference = run?.inference;
         if (run === undefined || inference === undefined || run.cancelled) return;
-        if (inference.blocks.length > 0) {
+        const blocks = await readPendingBlocks(ctx, scope);
+        if (blocks.length > 0) {
             const message: AgentMessage = {
-                blocks: inference.blocks,
+                blocks,
                 ...(result.tokens === undefined
                     ? {}
                     : { contextTokens: result.tokens.input + result.tokens.output }),
@@ -330,15 +451,20 @@ export class RigProtocolFeature implements AgentFeature {
             await run.session.projectAgentMessage(ctx, run.runId, message);
         }
         if (result.errorMessage !== undefined) {
-            await run.session.projectAgentMessage(ctx, run.runId, {
-                blocks: [{ text: result.errorMessage, type: "text" }],
+            const errorText = Value.Check(protocolErrorMessageSchema, result.errorMessage)
+                ? result.errorMessage
+                : "The model response failed.";
+            const errorMessage: Message = {
+                blocks: [{ text: errorText, type: "text" }],
                 id: createId(),
                 outcome: "failed",
                 providerId: run.providerId,
                 requestedModelId: run.modelId,
                 role: "error",
-            });
+            };
+            await run.session.projectAgentMessage(ctx, run.runId, errorMessage);
         }
+        await scope.runKV.delete(ctx, PENDING_BLOCKS_KEY);
     };
 
     readonly afterInference = async (
@@ -358,33 +484,57 @@ export class RigProtocolFeature implements AgentFeature {
     ): Promise<void> => {
         const pending = this.#pending.get(scope.agent.id);
         if (pending === undefined) return;
-        const terminalRuns = new Map<string, PendingProtocolRun>();
+        const terminalRuns = new Map<string, PendingProtocolRun[]>();
         for (const run of pending) {
-            if (!run.cancelled) terminalRuns.set(run.runId, run);
+            if (run.cancelled) continue;
+            const runs = terminalRuns.get(run.runId);
+            if (runs === undefined) terminalRuns.set(run.runId, [run]);
+            else runs.push(run);
         }
-        for (const run of terminalRuns.values()) {
-            run.terminalEvent ??= this.#terminalEvent(run);
-            await this.#append(ctx, run, run.terminalEvent);
+        for (const runs of terminalRuns.values()) {
+            // A steer can be accepted into the original run before settlement. The final accepted
+            // candidate owns the terminal provider/model metadata and snapshot.
+            const run = runs.at(-1);
+            if (run === undefined) continue;
+            const terminalEvent = run.terminalEvent ?? this.#terminalEvent(run);
+            for (const candidate of runs) candidate.terminalEvent = terminalEvent;
+            await run.recordSettled?.(ctx, run.runId);
+            await this.#append(ctx, run, terminalEvent);
             await run.session.afterProtocolCommit(ctx, () => {
-                run.terminalProjected = true;
+                for (const candidate of runs) candidate.terminalProjected = true;
             });
         }
     };
 
-    readonly afterAgentSettled = async (ctx: Context, scope: AgentFeatureScope): Promise<void> => {
+    readonly afterAgentSettled = async (_ctx: Context, scope: AgentFeatureScope): Promise<void> => {
         const pending = this.#pending.get(scope.agent.id) ?? [];
-        const terminalRuns = new Map<string, PendingProtocolRun>();
-        for (const run of pending) {
-            if (!run.cancelled) terminalRuns.set(run.runId, run);
+        const remaining = pending.filter((run) => !run.cancelled && !run.terminalProjected);
+        if (remaining.length === 0) {
+            this.#pending.delete(scope.agent.id);
+            this.#active.delete(scope.agent.id);
+            return;
         }
-        for (const run of terminalRuns.values()) {
-            if (run.terminalProjected) continue;
-            run.terminalEvent ??= this.#terminalEvent(run);
-            await this.#append(ctx, run, run.terminalEvent);
-        }
-        this.#pending.delete(scope.agent.id);
-        this.#active.delete(scope.agent.id);
+        this.#pending.set(scope.agent.id, remaining);
+        this.#active.set(scope.agent.id, remaining[remaining.length - 1]!);
     };
+
+    /** Wait for a submission's projection when a retry races its first request. */
+    async projected(
+        agentId: string,
+        runId: string,
+        messageId?: string,
+    ): Promise<Extract<SessionEvent, { type: "message_submitted" }> | undefined> {
+        const run = this.#pending
+            .get(agentId)
+            ?.find(
+                (candidate) =>
+                    candidate.runId === runId &&
+                    (messageId === undefined || candidate.messageId === messageId),
+            );
+        if (run === undefined || run.cancelled) return undefined;
+        const event = await run.projection;
+        return event.type === "message_submitted" ? event : undefined;
+    }
 
     #activeRun(agentId: string): PendingProtocolRun | undefined {
         return (
@@ -623,6 +773,41 @@ function mapLiveEvent(
     return undefined;
 }
 
+async function readPendingBlocks(
+    ctx: Context,
+    scope: AgentFeatureScope,
+): Promise<readonly PendingAgentBlock[]> {
+    const value = await scope.runKV.read(ctx, PENDING_BLOCKS_KEY);
+    if (value === undefined) return [];
+    if (!Value.Check(pendingBlocksSchema, value) || !protocolJsonWithinByteLimit(value)) {
+        throw new Error("Rig protocol found invalid pending agent blocks.");
+    }
+    return value;
+}
+
+function messageProjectionKey(messageId: string): string {
+    return `${MESSAGE_PROJECTION_KEY_PREFIX}${messageId}`;
+}
+
+function validateAcceptedMetadata(
+    run: PendingProtocolRun,
+    accepted: AgentBaseAcceptedMessage,
+): void {
+    if (accepted.metadata === undefined) return;
+    if (!Value.Check(acceptedMetadataSchema, accepted.metadata)) {
+        throw new Error("Rig protocol received invalid Agent Base message metadata.");
+    }
+    const metadata = accepted.metadata.rig;
+    if (
+        metadata.messageId !== run.messageId ||
+        metadata.runId !== run.runId ||
+        metadata.sessionId !== run.session.id ||
+        metadata.delivery !== run.delivery
+    ) {
+        throw new Error("Rig protocol received metadata for a different message.");
+    }
+}
+
 function partial(inference: PendingInference, run: PendingProtocolRun): AssistantMessage {
     return {
         api: run.providerId,
@@ -636,7 +821,10 @@ function partial(inference: PendingInference, run: PendingProtocolRun): Assistan
     };
 }
 
-function toAgentBlock(event: AgentBasePersistedEvent, inference: PendingInference): AgentBlock {
+function toAgentBlock(
+    event: AgentBasePersistedEvent,
+    inference: PendingInference,
+): PendingAgentBlock {
     if (event.type === "text_end") return { text: event.block.text, type: "text" };
     if (event.type === "reasoning_end") {
         return {
@@ -683,10 +871,15 @@ function toAssistantToolCall(
 
 function parseArguments(value: string): unknown {
     try {
-        return JSON.parse(value);
+        const parsed: unknown = JSON.parse(value);
+        if (Value.Check(protocolJsonSchema, parsed) && protocolJsonWithinByteLimit(parsed)) {
+            return parsed;
+        }
     } catch {
-        return value;
+        // Keep malformed provider JSON as a bounded string so the protocol can still explain it.
     }
+    if (Value.Check(protocolJsonSchema, value) && protocolJsonWithinByteLimit(value)) return value;
+    throw new Error("Rig protocol received tool arguments outside its persistence bound.");
 }
 
 function toRigUsage(usage: SessionUsage | undefined, inference: AgentBaseInference) {

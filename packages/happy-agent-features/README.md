@@ -55,17 +55,22 @@ model can still see it.
 ```ts
 const history = new HistoryFeature({ store });
 const agent = await Agent.create(ctx, { ...options, features: [history] });
-await history.record(ctx, agent.id, { role: "user", blocks: [{ type: "text", text }] });
 ```
 
-The feature records each completed response, each tool result, and each failed inference as the
-agent works, and never lets that recording decide anything — a store that is slow or broken loses
-the record, not the run. User messages belong to whoever sent them, so the host records those with
-`record`. Reading is the `read_agent_history` tool for the model and `read` for everyone else,
-over the same paging, searching, and size bounding.
+The feature records accepted user messages, each completed response, each tool result, and each
+failed inference transactionally as the agent works. Strict archive failure propagation is the
+default: the Agent Base transaction rolls back with the archive. Hosts that intentionally treat
+history as advisory may pass `failureMode: "best-effort"` to contain archive failures. Hosts can
+still use `record` for externally-authored messages. Reading is the `read_agent_history` tool for
+the model and `read` for everyone else, over the same paging, searching, and size bounding.
 
 The store is the host's: implement `HistoryStore` over a database, an archive, or an existing
-transcript, and the feature keeps nothing of its own.
+transcript, and the feature keeps only in-flight assistant blocks in the supplied transactional
+Agent KV. `HistoryStore.read` receives every page/search query, so the host enforces the hard
+record bound before returning anything. Rig's archive additionally applies configurable bounded
+retention while preserving the original positions of surviving records. `HistoryReader` is the
+read-only structural contract used by model handoff and other consumers; it does not require the
+concrete feature.
 
 ## Model switch
 

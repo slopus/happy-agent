@@ -17,6 +17,11 @@ export interface HistoryExcerpt {
     readonly recent: string;
     /** What the whole history amounts to. */
     readonly stats: HistoryStats;
+    /**
+     * True when the reader supplied only the bounded two-ended sample and no exact aggregate.
+     * Callers must label these counts as sampled rather than archive-wide totals.
+     */
+    readonly statsAreSampled: boolean;
 }
 
 /**
@@ -30,6 +35,7 @@ export interface HistoryExcerpt {
 export function createHistoryExcerpt(
     records: readonly HistoryRecord[],
     budget: number,
+    exactStats?: HistoryStats,
 ): HistoryExcerpt {
     const beginningRecords = records.slice(0, BEGINNING_MESSAGES);
     const recentStart = Math.max(BEGINNING_MESSAGES, records.length - RECENT_MESSAGES);
@@ -40,7 +46,8 @@ export function createHistoryExcerpt(
     return {
         beginning,
         recent,
-        stats: summarizeHistory(records.map((record) => record.message)),
+        stats: exactStats ?? summarizeHistory(records.map((record) => record.message)),
+        statsAreSampled: exactStats === undefined,
     };
 }
 

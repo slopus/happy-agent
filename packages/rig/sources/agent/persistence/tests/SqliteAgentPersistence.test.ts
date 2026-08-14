@@ -31,6 +31,7 @@ describe("SqliteAgentPersistence", () => {
         const first = new SqliteAgentPersistence(firstOpened.database, "first");
         const second = new SqliteAgentPersistence(firstOpened.database, "second");
         const record: AgentRecord = {
+            id: "user-record-1",
             type: "user",
             message: { role: "user", content: [{ type: "text", text: "hello" }] },
         };

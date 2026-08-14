@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
 import sharp from "sharp";
 
+import type { RigAgentService } from "../../agent/RigAgentService.js";
 import { ProtocolHttpClient } from "../../client/ProtocolHttpClient.js";
 import {
     createEventIdFactory,
@@ -56,6 +57,267 @@ const removeFixtureOptions = {
 } as const;
 
 describe("createProtocolHttpServer", () => {
+    it("rejects unsupported Agent Base message options before invoking the service", async () => {
+        const store = await InMemorySessionStore.open(ctx);
+        const submit = vi.fn();
+        const { close, socketPath } = await startServer({
+            agents: { submit } as unknown as RigAgentService,
+            store,
+        });
+        const session = await store.create(ctx, { cwd: "/tmp/rig-agent-options" });
+        try {
+            for (const [field, value] of [
+                ["systemPrompt", "custom prompt"],
+                ["externalTools", []],
+                ["skills", []],
+                ["debug", true],
+                ["interactive", true],
+            ] as const) {
+                const result = await requestRawJson(
+                    socketPath,
+                    `/sessions/${session.id}/messages`,
+                    {
+                        body: JSON.stringify({ [field]: value, text: "hello" }),
+                        method: "POST",
+                    },
+                );
+                expect(result.statusCode).toBe(400);
+                expect(result.body).toContain(`'${field}'`);
+            }
+            expect(submit).not.toHaveBeenCalled();
+        } finally {
+            await close();
+            await store.close(ctx);
+        }
+    });
+
+    it("rejects an explicit Agent Base service-tier clear before message, steer, or broadcast dispatch", async () => {
+        const store = await InMemorySessionStore.open(ctx);
+        const submit = vi.fn().mockResolvedValue({
+            eventId: "event-message",
+            runId: "run-message",
+            sessionId: "message-session",
+        });
+        const steer = vi.fn().mockResolvedValue({
+            delivery: "run",
+            eventId: "event-steer",
+            runId: "run-steer",
+            sessionId: "message-session",
+        });
+        const { close, client, socketPath } = await startServer({
+            agents: { steer, submit } as unknown as RigAgentService,
+            store,
+        });
+        const first = await store.create(ctx, { cwd: "/tmp/service-tier-clear-first" });
+        const second = await store.create(ctx, { cwd: "/tmp/service-tier-clear-second" });
+        const firstSubmit = vi.spyOn(first, "submit");
+        const secondSubmit = vi.spyOn(second, "submit");
+        try {
+            for (const candidate of [
+                {
+                    body: {
+                        clientSubmissionId: "clear-message",
+                        identity: "unowned",
+                        serviceTier: null,
+                        text: "clear this",
+                    },
+                    path: `/sessions/${first.id}/messages`,
+                },
+                {
+                    body: {
+                        clientSubmissionId: "clear-steer",
+                        identity: "unowned",
+                        serviceTier: null,
+                        text: "clear this",
+                    },
+                    path: `/sessions/${first.id}/steer`,
+                },
+                {
+                    body: {
+                        identity: "unowned",
+                        serviceTier: null,
+                        sessionIds: [first.id, second.id],
+                        text: "clear this",
+                    },
+                    path: "/messages",
+                },
+            ] as const) {
+                const result = await requestRawJson(socketPath, candidate.path, {
+                    body: JSON.stringify(candidate.body),
+                    method: "POST",
+                });
+                expect(result.statusCode).toBe(400);
+                expect(result.body).toContain("serviceTier: null");
+                expect(result.body).toContain("cannot clear a prior fast mode");
+            }
+            expect(submit).not.toHaveBeenCalled();
+            expect(steer).not.toHaveBeenCalled();
+            expect(firstSubmit).not.toHaveBeenCalled();
+            expect(secondSubmit).not.toHaveBeenCalled();
+            expect(first.events.messageSubmission("clear-message")).toBeUndefined();
+            expect(first.events.messageSubmission("clear-steer")).toBeUndefined();
+
+            await expect(
+                client.submitMessage(first.id, {
+                    clientSubmissionId: "fast-message",
+                    serviceTier: "fast",
+                    text: "keep fast mode",
+                }),
+            ).resolves.toMatchObject({ sessionId: "message-session" });
+            await expect(
+                client.steerMessage(first.id, {
+                    clientSubmissionId: "fast-steer",
+                    serviceTier: "fast",
+                    text: "keep fast mode",
+                }),
+            ).resolves.toMatchObject({ sessionId: "message-session" });
+            expect(submit).toHaveBeenCalledWith(
+                expect.anything(),
+                first,
+                expect.objectContaining({ serviceTier: "fast" }),
+            );
+            expect(steer).toHaveBeenCalledWith(
+                expect.anything(),
+                first,
+                expect.objectContaining({ serviceTier: "fast" }),
+            );
+        } finally {
+            await close();
+            await store.close(ctx);
+        }
+    });
+
+    it("routes Agent Base session operations without invoking legacy session mutations", async () => {
+        const store = await InMemorySessionStore.open(ctx);
+        const session = await store.create(ctx, { cwd: "/tmp/agent-route-gating" });
+        const second = await store.create(ctx, { cwd: "/tmp/agent-route-gating-second" });
+        const snapshot = session.snapshot();
+        const agents = {
+            abort: vi.fn().mockResolvedValue({ aborted: false }),
+            changeEffort: vi.fn().mockResolvedValue(snapshot),
+            changeModel: vi.fn().mockResolvedValue(snapshot),
+            changePermissionMode: vi.fn().mockResolvedValue(snapshot),
+            changeServiceTier: vi.fn().mockResolvedValue(snapshot),
+            compact: vi.fn().mockResolvedValue({
+                compacted: false,
+                compactedMessageCount: 0,
+                estimatedTokensAfter: 0,
+                estimatedTokensBefore: 0,
+                retainedMessageCount: 0,
+            }),
+            steer: vi.fn().mockResolvedValue({
+                delivery: "steer",
+                eventId: "agent-steer-event",
+                runId: "agent-steer-run",
+                sessionId: session.id,
+            }),
+            submit: vi.fn().mockImplementation(async (_ctx, target) => ({
+                eventId: `agent-submit-${target.id}`,
+                runId: `agent-run-${target.id}`,
+                sessionId: target.id,
+            })),
+        } as unknown as RigAgentService;
+        const { close, socketPath } = await startServer({ agents, store });
+        const legacy = [
+            vi.spyOn(session, "abort"),
+            vi.spyOn(session, "changeEffort"),
+            vi.spyOn(session, "changeModel"),
+            vi.spyOn(session, "changePermissionMode"),
+            vi.spyOn(session, "changeServiceTier"),
+            vi.spyOn(session, "compact"),
+            vi.spyOn(session, "rewind"),
+            vi.spyOn(session, "reset"),
+            vi.spyOn(session, "steer"),
+            vi.spyOn(session, "submit"),
+        ];
+        try {
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/messages`, {
+                    body: JSON.stringify({ text: "hello" }),
+                    method: "POST",
+                }),
+            ).resolves.toMatchObject({ statusCode: 202 });
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/steer`, {
+                    body: JSON.stringify({ text: "steer" }),
+                    method: "POST",
+                }),
+            ).resolves.toMatchObject({ statusCode: 202 });
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/abort`, {
+                    body: "",
+                    method: "POST",
+                }),
+            ).resolves.toMatchObject({ statusCode: 200 });
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/compact`, {
+                    body: "",
+                    method: "POST",
+                }),
+            ).resolves.toMatchObject({ statusCode: 200 });
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/effort`, {
+                    body: JSON.stringify({ effort: "high" }),
+                    method: "PATCH",
+                }),
+            ).resolves.toMatchObject({ statusCode: 200 });
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/service-tier`, {
+                    body: JSON.stringify({ serviceTier: "fast" }),
+                    method: "PATCH",
+                }),
+            ).resolves.toMatchObject({ statusCode: 200 });
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/model`, {
+                    body: JSON.stringify({ modelId: snapshot.modelId }),
+                    method: "PATCH",
+                }),
+            ).resolves.toMatchObject({ statusCode: 200 });
+            await expect(
+                requestRawJson(socketPath, `/sessions/${session.id}/permissions`, {
+                    body: JSON.stringify({ permissionMode: "workspace_write" }),
+                    method: "PATCH",
+                }),
+            ).resolves.toMatchObject({ statusCode: 200 });
+
+            for (const path of [
+                `/sessions/${session.id}/context`,
+                `/sessions/${session.id}/reset`,
+                `/sessions/${session.id}/rewind`,
+            ]) {
+                await expect(
+                    requestRawJson(socketPath, path, {
+                        body: JSON.stringify(path.endsWith("/context") ? { text: "context" } : {}),
+                        method: "POST",
+                    }),
+                ).resolves.toMatchObject({ statusCode: 503 });
+            }
+
+            await expect(
+                requestRawJson(socketPath, "/messages", {
+                    body: JSON.stringify({
+                        sessionIds: [session.id, second.id],
+                        text: "broadcast",
+                    }),
+                    method: "POST",
+                }),
+            ).resolves.toMatchObject({ statusCode: 202 });
+
+            expect(agents.submit).toHaveBeenCalledTimes(3);
+            expect(agents.steer).toHaveBeenCalledTimes(1);
+            expect(agents.abort).toHaveBeenCalledTimes(1);
+            expect(agents.compact).toHaveBeenCalledTimes(1);
+            expect(agents.changeEffort).toHaveBeenCalledTimes(1);
+            expect(agents.changeServiceTier).toHaveBeenCalledTimes(1);
+            expect(agents.changeModel).toHaveBeenCalledTimes(1);
+            expect(agents.changePermissionMode).toHaveBeenCalledTimes(1);
+            for (const method of legacy) expect(method).not.toHaveBeenCalled();
+        } finally {
+            await close();
+            await store.close(ctx);
+        }
+    });
+
     it("keeps busy transfers as conflicts and reports target restore failures as server errors", async () => {
         const directory = await mkdtemp(join(tmpdir(), "rig-transfer-http-"));
         const store = await InMemorySessionStore.open(ctx);
@@ -3717,6 +3979,7 @@ describe("createProtocolHttpServer", () => {
 
 async function startServer(
     options: {
+        agents?: RigAgentService;
         defaultDocker?: DockerExecutionConfig;
         fileSearchService?: FileSearchServiceContract;
         globalEventQueue?: GlobalEventQueue;
@@ -3754,6 +4017,7 @@ async function startServer(
                 : { defaultDocker: options.defaultDocker }),
         }));
     const server = await createProtocolHttpServer(createTestRootContext(), {
+        ...(options.agents === undefined ? {} : { agents: options.agents }),
         ...(options.defaultDocker === undefined ? {} : { defaultDocker: options.defaultDocker }),
         ...(options.fileSearchService !== undefined
             ? { fileSearchService: options.fileSearchService }

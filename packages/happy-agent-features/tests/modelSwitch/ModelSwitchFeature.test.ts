@@ -130,6 +130,179 @@ describe("ModelSwitchFeature", () => {
         }
     });
 
+    it("reads the true ends of a long history without loading its middle", async () => {
+        const store = new InMemoryHistoryStore();
+        const history = new HistoryFeature({ store });
+        const reads: Array<{ from?: "end" | "start"; limit?: number }> = [];
+        const reader = {
+            messages: async (
+                readCtx: typeof ctx,
+                agentId: string,
+                query: { from?: "end" | "start"; limit?: number },
+            ) => {
+                reads.push(query);
+                return history.messages(readCtx, agentId, query);
+            },
+        };
+        for (let index = 0; index < 251; index += 1) {
+            await history.record(ctx, "long-agent", {
+                role: "user",
+                blocks: [{ type: "text", text: `M${index}` }],
+            });
+        }
+
+        const notice = await new ModelSwitchFeature({ history: reader }).modelChanged(
+            ctx,
+            scopeOf("long-agent"),
+            {
+                previousModel: "openai/gpt-5.6-sol",
+                model: "anthropic/opus-5",
+                previousProvider: "codex",
+                provider: "claude",
+                providers: new AgentProviders(),
+                wasReset: true,
+            },
+        );
+
+        const text = notice?.content[0]?.text ?? "";
+        expect(reads).toEqual([
+            { from: "start", limit: 100 },
+            { from: "end", limit: 100 },
+        ]);
+        expect(text).toContain("M0");
+        expect(text).toContain("M249");
+        expect(text).toContain("M250");
+        expect(text).not.toContain("M50");
+        expect(text).not.toContain("M100");
+        expect(text).toContain("History sample overview");
+        expect(text).not.toContain("History overview: 251 messages");
+    });
+
+    it("uses exact bounded archive statistics instead of sample counts", async () => {
+        const store = new InMemoryHistoryStore();
+        const history = new HistoryFeature({ store });
+        for (let index = 0; index < 251; index += 1) {
+            await history.record(ctx, "exact-stats-agent", {
+                role: "user",
+                blocks: [{ type: "text", text: `EXACT_${index}` }],
+            });
+        }
+
+        const notice = await new ModelSwitchFeature({ history }).modelChanged(
+            ctx,
+            scopeOf("exact-stats-agent"),
+            {
+                previousModel: "openai/gpt-5.6-sol",
+                model: "anthropic/opus-5",
+                previousProvider: "codex",
+                provider: "claude",
+                providers: new AgentProviders(),
+                wasReset: true,
+            },
+        );
+
+        const text = notice?.content[0]?.text ?? "";
+        expect(text).toContain("History overview: 251 messages");
+        expect(text).not.toContain("History sample overview");
+    });
+
+    it("downgrades under-reporting archive statistics to a sampled overview", async () => {
+        const store = new InMemoryHistoryStore();
+        const history = new HistoryFeature({ store });
+        for (let index = 0; index < 200; index += 1) {
+            await history.record(ctx, "under-reporting-agent", {
+                role: index % 2 === 0 ? "user" : "assistant",
+                blocks: [
+                    { type: "text", text: `UNDER_REPORTED_${index}` },
+                    ...(index === 0
+                        ? [{ type: "thinking" as const, thinking: "one thought" }]
+                        : []),
+                    ...(index === 1
+                        ? [
+                              {
+                                  arguments: {},
+                                  callId: "under-reported-call",
+                                  name: "under-reported-tool",
+                                  type: "tool_call" as const,
+                              },
+                          ]
+                        : []),
+                    ...(index === 2
+                        ? [
+                              {
+                                  callId: "under-reported-call",
+                                  output: "one result",
+                                  toolName: "under-reported-tool",
+                                  type: "tool_result" as const,
+                              },
+                          ]
+                        : []),
+                ],
+            });
+        }
+
+        const reader = {
+            messages: (
+                readCtx: typeof ctx,
+                agentId: string,
+                query: { from?: "end" | "start"; limit?: number },
+            ) => history.messages(readCtx, agentId, query),
+            stats: async () => ({
+                assistantMessages: 0,
+                messages: 1,
+                textCharacters: 1,
+                thinkingBlocks: 0,
+                toolCalls: 0,
+                toolResults: 0,
+                userMessages: 1,
+            }),
+        };
+        const notice = await new ModelSwitchFeature({ history: reader }).modelChanged(
+            ctx,
+            scopeOf("under-reporting-agent"),
+            {
+                previousModel: "openai/gpt-5.6-sol",
+                model: "anthropic/opus-5",
+                previousProvider: "codex",
+                provider: "claude",
+                providers: new AgentProviders(),
+                wasReset: true,
+            },
+        );
+
+        const text = notice?.content[0]?.text ?? "";
+        expect(text).toContain("History sample overview");
+        expect(text).toContain("200 messages, 100 user messages, 100 assistant messages");
+        expect(text).toContain("1 thinking blocks, 1 tool calls, 1 tool results");
+        expect(text).not.toContain("History overview: 1 messages");
+    });
+
+    it("deduplicates the overlap when both bounded reads cover a short history", async () => {
+        const store = new InMemoryHistoryStore();
+        const history = new HistoryFeature({ store });
+        for (let index = 0; index < 5; index += 1) {
+            await history.record(ctx, "short-agent", {
+                role: "user",
+                blocks: [{ type: "text", text: `SHORT_${index}` }],
+            });
+        }
+
+        const notice = await new ModelSwitchFeature({ history }).modelChanged(
+            ctx,
+            scopeOf("short-agent"),
+            {
+                previousModel: "openai/gpt-5.6-sol",
+                model: "anthropic/opus-5",
+                previousProvider: "codex",
+                provider: "claude",
+                providers: new AgentProviders(),
+                wasReset: true,
+            },
+        );
+
+        expect(notice?.content[0]?.text).toContain("History overview: 5 messages");
+    });
+
     it("still switches when the history cannot be read", async () => {
         const store = new InMemoryHistoryStore();
         const history = new HistoryFeature({ store });

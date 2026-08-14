@@ -1,4 +1,8 @@
-import type { AgentPersistence, AgentRecord } from "@slopus/happy-agent-base";
+import {
+    agentMessageMetadataSchema,
+    type AgentPersistence,
+    type AgentRecord,
+} from "@slopus/happy-agent-base";
 import { type Static, Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
@@ -110,6 +114,27 @@ export class SqliteAgentPersistence implements AgentPersistence {
         );
     }
 
+    async writeValueIfAbsent(ctx: Context, key: string, value: unknown): Promise<boolean> {
+        return await inDatabase(
+            withDatabase(ctx, this.#database),
+            "rig.sql.agent.write_value_if_absent",
+            async (ctx) => {
+                const result = await ctx.tx
+                    .insert(agentValues)
+                    .values({
+                        agentId: this.#agentId,
+                        key,
+                        valueJson: encodeJson(value),
+                    })
+                    .onConflictDoNothing({
+                        target: [agentValues.agentId, agentValues.key],
+                    })
+                    .run();
+                return result.rowsAffected > 0;
+            },
+        );
+    }
+
     async deleteValue(ctx: Context, key: string): Promise<void> {
         await inDatabase(
             withDatabase(ctx, this.#database),
@@ -205,10 +230,12 @@ const sessionMessageSchema = Type.Union([
 ]);
 const agentRecordSchema = Type.Union([
     Type.Object({
+        id: Type.String({ minLength: 1 }),
         message: Type.Object({
             content: Type.Array(outputBlockSchema),
             role: Type.Literal("user"),
         }),
+        metadata: Type.Optional(agentMessageMetadataSchema),
         type: Type.Literal("user"),
     }),
     Type.Object({
