@@ -293,7 +293,8 @@ Rig host integration remains.
 
 ### 12. Slots
 
-Status: implementation exists; isolated review and host integration remain.
+Status: complete, reviewed, committed, and available from the package root.
+Rig host integration remains.
 
 - Inject a host-owned slot store and scope resolver.
 - Create, list, update, reorder, and remove slot entries.
