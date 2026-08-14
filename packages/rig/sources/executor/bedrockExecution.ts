@@ -23,6 +23,7 @@ export interface BedrockProviderOptions {
     id?: string;
     modelOverrides?: BedrockModelOverrides;
     region?: string;
+    resolveInferenceFatalRetries?: () => number;
     resolveInferenceMaxRetries?: () => number;
 }
 
@@ -129,6 +130,9 @@ export function bedrockExecution(options: BedrockProviderOptions = {}): Executor
                       credential,
                       endpoint,
                       model: route.model.id,
+                      ...(options.resolveInferenceFatalRetries === undefined
+                          ? {}
+                          : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
                       ...(options.resolveInferenceMaxRetries === undefined
                           ? {}
                           : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),
@@ -140,6 +144,9 @@ export function bedrockExecution(options: BedrockProviderOptions = {}): Executor
                       endpoint,
                       model: route.model.id,
                       region,
+                      ...(options.resolveInferenceFatalRetries === undefined
+                          ? {}
+                          : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
                       ...(options.resolveInferenceMaxRetries === undefined
                           ? {}
                           : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),

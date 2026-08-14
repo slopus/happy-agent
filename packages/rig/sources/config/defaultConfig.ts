@@ -1,6 +1,9 @@
 import type { RigConfig } from "./types.js";
 import { detectP2pNodeName } from "./detectP2pNodeName.js";
-import { DEFAULT_INFERENCE_MAX_RETRIES } from "./inferenceRetrySettings.js";
+import {
+    DEFAULT_INFERENCE_FATAL_RETRIES,
+    DEFAULT_INFERENCE_MAX_RETRIES,
+} from "./inferenceRetrySettings.js";
 import { DEFAULT_TOOL_RESULT_RETENTION_DAYS } from "./toolResultRetentionSettings.js";
 
 export const DEFAULT_RIG_CONFIG: RigConfig = {
@@ -47,6 +50,7 @@ export const DEFAULT_RIG_CONFIG: RigConfig = {
     },
     settings: {
         inferenceMaxRetries: DEFAULT_INFERENCE_MAX_RETRIES,
+        inferenceFatalRetries: DEFAULT_INFERENCE_FATAL_RETRIES,
         compactCompletedTurns: false,
         completionChime: false,
         daemonHeapSnapshots: false,

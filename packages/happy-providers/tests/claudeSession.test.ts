@@ -116,6 +116,249 @@ describe("ClaudeSession", () => {
         ).toEqual(["1", "0"]);
     });
 
+    it("retries a fatal out-of-tokens failure and recovers", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const waitForInferenceRetry = vi.fn(async () => {});
+        let queryCount = 0;
+        const query = vi.fn<ClaudeSdkQuery>(() => {
+            queryCount += 1;
+            return queryCount === 1
+                ? fatalErrorResultQuery(
+                      "Your Anthropic account has run out of credits.",
+                      "billing_error",
+                  )
+                : fakeQuery("RECOVERED");
+        });
+        const session = new ClaudeSession("fatal-retry-session", {
+            instructions: "",
+            credential,
+            inferenceFatalRetries: 1,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry,
+        });
+
+        const events = await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "user", content: [{ type: "text" as const, text: "Try again." }] },
+                    ],
+                },
+            }),
+        );
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(waitForInferenceRetry).toHaveBeenCalledWith(1, undefined);
+        expect(events).toContainEqual(
+            expect.objectContaining({
+                type: "retrying",
+                attempt: 1,
+                reason: expect.stringContaining("Your Anthropic account has run out of credits."),
+            }),
+        );
+        expect(events).toContainEqual(
+            expect.objectContaining({
+                type: "retrying",
+                reason: expect.stringContaining("attempt 1 of 1"),
+            }),
+        );
+        expect(textFromSessionEvents(events)).toBe("RECOVERED");
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
+    it("surfaces a fatal failure after exhausting the fatal retry budget", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() =>
+            fatalErrorResultQuery("Claude failed to process the request."),
+        );
+        const session = new ClaudeSession("fatal-exhausted-session", {
+            instructions: "",
+            credential,
+            inferenceFatalRetries: 1,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry: async () => {},
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Try again." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message: "Claude failed to process the request.",
+            providerError: {
+                type: "unclassified",
+                diagnostics: expect.objectContaining({ attempts: 2 }),
+            },
+        });
+    });
+
+    it("accumulates each fatal attempt's internal requests into exhaustion diagnostics", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() => {
+            async function* messages() {
+                yield {
+                    type: "system",
+                    subtype: "api_retry",
+                    attempt: 2,
+                    max_retries: 10,
+                    retry_delay_ms: 0,
+                    error_status: 529,
+                    error: "overloaded",
+                    uuid: "retry-id",
+                    session_id: "fatal-session",
+                };
+                yield* fatalErrorResultQuery("Claude failed to process the request.");
+            }
+            return Object.assign(messages(), {
+                close: () => {},
+            }) as unknown as ReturnType<ClaudeSdkQuery>;
+        });
+        const session = new ClaudeSession("fatal-nested-attempts-session", {
+            instructions: "",
+            credential,
+            inferenceFatalRetries: 1,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry: async () => {},
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Try again." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        // Each of the two fatal attempts made three requests: the SDK reported reaching its
+        // second internal retry before every terminal failure.
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            providerError: {
+                diagnostics: expect.objectContaining({ attempts: 6 }),
+            },
+        });
+    });
+
+    it("does not spend the fatal budget on a transient-shaped overloaded terminal", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() =>
+            fatalErrorResultQuery("Anthropic is overloaded right now.", "overloaded"),
+        );
+        const session = new ClaudeSession("overloaded-fatal-untouched-session", {
+            instructions: "",
+            credential,
+            inferenceFatalRetries: 5,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry: async () => {},
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Try again." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        // The SDK already retried this failure under the transient budget before surfacing it,
+        // so the fatal budget must not replay it again.
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(0);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "internal_error",
+            providerError: { type: "server_overloaded" },
+        });
+    });
+
+    it("does not spend the fatal budget on an exhausted mid-response server error", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() =>
+            midResponseServerErrorQuery(
+                () => {},
+                "API Error: Connection closed mid-response. The response above may be incomplete.",
+                false,
+            ),
+        );
+        const session = new ClaudeSession("mid-response-fatal-untouched-session", {
+            instructions: "",
+            credential,
+            inferenceMaxRetries: 0,
+            inferenceFatalRetries: 5,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+            waitForInferenceRetry: async () => {},
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text" as const, text: "Retry the incomplete response." },
+                        ],
+                    },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(0);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "internal_error",
+            providerError: {
+                type: "internal_server_error",
+                diagnostics: { attempts: 1 },
+            },
+        });
+    });
+
     it("retries a successful result with zero output tokens", async () => {
         const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
         if (credential === null) throw new Error("Expected test credential.");
@@ -2369,6 +2612,61 @@ function midResponseServerErrorQuery(
         };
     }
     return Object.assign(messages(), { close }) as unknown as ReturnType<ClaudeSdkQuery>;
+}
+
+/** A terminal error result from the start of the turn, never a mid-response interruption. */
+function fatalErrorResultQuery(
+    message: string,
+    assistantError?: "authentication_failed" | "billing_error" | "overloaded" | "unknown",
+): ReturnType<ClaudeSdkQuery> {
+    async function* messages() {
+        if (assistantError !== undefined) {
+            yield {
+                type: "assistant",
+                error: assistantError,
+                message: {
+                    id: "fatal-error-message",
+                    type: "message",
+                    role: "assistant",
+                    model: "claude-sonnet-5",
+                    content: [{ type: "text", text: message }],
+                    stop_reason: "end_turn",
+                    stop_sequence: null,
+                    usage: {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                },
+                parent_tool_use_id: null,
+                uuid: "fatal-error-assistant",
+                session_id: "fatal-session",
+            };
+        }
+        yield {
+            type: "result",
+            subtype: "success",
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: true,
+            num_turns: 1,
+            result: message,
+            stop_reason: null,
+            session_id: "fatal-session",
+            total_cost_usd: 0,
+            usage: {
+                input_tokens: 1,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            modelUsage: {},
+            permission_denials: [],
+            uuid: "fatal-error-result",
+        };
+    }
+    return Object.assign(messages(), { close: () => {} }) as unknown as ReturnType<ClaudeSdkQuery>;
 }
 
 /** Stays open after its tool call, the way a real live query awaits the pending result. */

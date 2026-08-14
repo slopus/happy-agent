@@ -1,6 +1,7 @@
 import { BaseSession } from "@/core/BaseSession.js";
 import { emptyResponseDoneEvent, isEmptyResponseError } from "@/core/EmptyResponseError.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -11,13 +12,13 @@ import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import type { SessionModelConfiguration } from "@/core/SessionModelConfiguration.js";
 import type { SessionReasoningEffort, SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionTool } from "@/core/SessionTool.js";
+import type { SessionUsage } from "@/core/SessionUsage.js";
 import { waitForInferenceRetry } from "@/core/waitForInferenceRetry.js";
 import type { BedrockCredential } from "@/vendors/VendorCredential.js";
 import type { AnthropicBedrockTransport } from "@/vendors/bedrock/AnthropicBedrockTransport.js";
 import {
     describeAnthropicBedrockRetry,
-    isAnthropicBedrockConnectionFailure,
-    isRetryableAnthropicBedrockStreamError,
+    isTransientAnthropicBedrockError,
     resolveAnthropicBedrockRetryDelay,
     shouldRetryAnthropicBedrock,
     waitForAnthropicBedrockRetry,
@@ -27,6 +28,7 @@ import {
     classifyAnthropicBedrockProviderError,
     describeAnthropicBedrockErrorMessage,
 } from "@/vendors/bedrock/errors/anthropicBedrockErrors.js";
+import { isAnthropicRefusalError } from "@/protocol/anthropic/AnthropicRefusalError.js";
 import { AnthropicBedrockConnection } from "@/vendors/bedrock/impl/AnthropicBedrockConnection.js";
 import type { AnthropicBedrockClient as CreatedAnthropicBedrockClient } from "@/vendors/bedrock/impl/createAnthropicBedrockClient.js";
 import { createAnthropicRequest } from "@/protocol/anthropic/createAnthropicRequest.js";
@@ -68,6 +70,7 @@ export class AnthropicBedrockSession extends BaseSession {
         | Readonly<Record<string, SessionModelConfiguration>>
         | undefined;
     private readonly resolveInferenceMaxRetries: () => number;
+    private readonly resolveInferenceFatalRetries: () => number;
     private readonly emptyResponseRetryWait: NonNullable<
         InferenceRetryOptions["waitForInferenceRetry"]
     >;
@@ -84,6 +87,7 @@ export class AnthropicBedrockSession extends BaseSession {
         this.userAgent = options.userAgent;
         this.modelConfigurations = options.modelConfigurations;
         this.resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.emptyResponseRetryWait = options.waitForInferenceRetry ?? waitForInferenceRetry;
         this.connection = new AnthropicBedrockConnection({
             bearerToken: () => this.credential.credential.bearerToken,
@@ -217,12 +221,13 @@ export class AnthropicBedrockSession extends BaseSession {
     }): AsyncGenerator<SessionEvent> {
         let blockStarted = false;
         let attempts = 0;
+        let terminalUsage: SessionUsage | undefined;
         try {
             const tools = this.resolveTools(options.model, options.tools);
             const request = this.createRequest({ ...options, tools });
             let failedAttempts = 0;
+            let fatalFailedAttempts = 0;
             while (true) {
-                let responseContentStarted = false;
                 let compactionOutputStarted = false;
                 try {
                     attempts += 1;
@@ -234,55 +239,67 @@ export class AnthropicBedrockSession extends BaseSession {
                         // mapAnthropicStream reports output through this callback only for
                         // compaction blocks; ordinary content is visible in the events below.
                         onOutputStarted: () => {
-                            responseContentStarted = true;
                             compactionOutputStarted = true;
                         },
                         ...(options.signal === undefined ? {} : { signal: options.signal }),
                         tools,
                     })) {
                         if (event.type === "block_start") blockStarted = true;
-                        if (isAnthropicResponseContentEvent(event)) {
-                            responseContentStarted = true;
-                        }
                         yield event;
                     }
                     return;
                 } catch (error) {
-                    // A connection that drops mid-response, or a retryable error event the
-                    // server sent on the open stream, is replayed through the block_reset
-                    // rollback below, unless compaction output began: compaction is stateful on
-                    // the server and must not be replayed.
-                    const replayableAfterContent =
-                        !compactionOutputStarted &&
-                        (isAnthropicBedrockConnectionFailure(error) ||
-                            isRetryableAnthropicBedrockStreamError(error));
-                    if (
-                        responseContentStarted &&
-                        !isEmptyResponseError(error) &&
-                        !replayableAfterContent
-                    ) {
+                    if (options.signal?.aborted) throw error;
+                    if (compactionOutputStarted) {
+                        // Compaction is stateful on the server and is never replayed. This
+                        // failure ends the run, but a refusal's partial output was billed, so
+                        // its usage is held for the outer catch to emit after its block_reset;
+                        // emitted before that rollback it would be discarded with the pending
+                        // block.
+                        if (isAnthropicRefusalError(error) && error.usage !== undefined) {
+                            terminalUsage = error.usage;
+                        }
                         throw error;
                     }
-                    failedAttempts += 1;
+                    // A failure that interrupts a response already producing content replays
+                    // through the block_reset rollback below, so no output is duplicated.
+                    const transient = isTransientAnthropicBedrockError(error);
+                    if (transient) failedAttempts += 1;
+                    else fatalFailedAttempts += 1;
                     if (blockStarted) {
                         yield { type: "block_reset" };
                         blockStarted = false;
                     }
-                    if (isEmptyResponseError(error) && error.usage !== undefined) {
+                    if (
+                        (isEmptyResponseError(error) || isAnthropicRefusalError(error)) &&
+                        error.usage !== undefined
+                    ) {
                         yield { type: "token_usage", usage: error.usage };
                     }
                     const maxRetries = this.resolveInferenceMaxRetries();
-                    if (!shouldRetryAnthropicBedrock(error, failedAttempts, maxRetries))
-                        throw error;
-                    const delay = resolveAnthropicBedrockRetryDelay(error, failedAttempts);
-                    yield {
-                        type: "retrying",
-                        attempt: failedAttempts,
-                        reason: describeAnthropicBedrockRetry(
+                    const fatalRetries = this.resolveInferenceFatalRetries();
+                    if (
+                        !shouldRetryAnthropicBedrock(
                             error,
                             failedAttempts,
-                            delay,
                             maxRetries,
+                            fatalFailedAttempts,
+                            fatalRetries,
+                        )
+                    ) {
+                        throw error;
+                    }
+                    // Each notice counts its own budget; the retrying attempt stays global.
+                    const describedAttempts = transient ? failedAttempts : fatalFailedAttempts;
+                    const delay = resolveAnthropicBedrockRetryDelay(error, describedAttempts);
+                    yield {
+                        type: "retrying",
+                        attempt: failedAttempts + fatalFailedAttempts,
+                        reason: describeAnthropicBedrockRetry(
+                            error,
+                            describedAttempts,
+                            delay,
+                            transient ? maxRetries : fatalRetries,
                         ),
                     };
                     if (isEmptyResponseError(error)) {
@@ -300,6 +317,9 @@ export class AnthropicBedrockSession extends BaseSession {
                 return;
             }
             yield { type: "block_reset" };
+            if (terminalUsage !== undefined) {
+                yield { type: "token_usage", usage: terminalUsage };
+            }
             yield isEmptyResponseError(error)
                 ? emptyResponseDoneEvent(error, attempts)
                 : {
@@ -364,19 +384,4 @@ export class AnthropicBedrockSession extends BaseSession {
 function emptyStream(): SessionStream {
     async function* stream(): AsyncGenerator<SessionEvent> {}
     return stream();
-}
-
-function isAnthropicResponseContentEvent(event: SessionEvent): boolean {
-    return (
-        event.type === "text_start" ||
-        event.type === "text_delta" ||
-        event.type === "reasoning_start" ||
-        event.type === "reasoning_delta" ||
-        event.type === "toolcall_start" ||
-        event.type === "toolcall_delta" ||
-        event.type === "toolcall_end" ||
-        event.type === "toolcall_result_start" ||
-        event.type === "toolcall_result_delta" ||
-        event.type === "toolcall_result_end"
-    );
 }

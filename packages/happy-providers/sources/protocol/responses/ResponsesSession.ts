@@ -2,6 +2,7 @@ import OpenAI from "openai";
 
 import { BaseSession } from "@/core/BaseSession.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -24,6 +25,11 @@ import {
 import { createOpenAIResponseRequest } from "@/protocol/responses/createOpenAIResponseRequest.js";
 import { classifyResponsesError } from "@/protocol/responses/classifyResponsesError.js";
 import { mapOpenAIResponseStream } from "@/protocol/responses/mapOpenAIResponseStream.js";
+import {
+    isResponsesAbortError,
+    isResponsesContextOverflowError,
+    isTransientResponsesError,
+} from "@/protocol/responses/responsesRetry.js";
 import { toOpenAIResponseInput } from "@/protocol/responses/toOpenAIResponseInput.js";
 import { toSessionUsage } from "@/protocol/responses/toSessionUsage.js";
 import type { Context } from "@steve.kite/stdlib";
@@ -47,6 +53,7 @@ export class ResponsesSession extends BaseSession {
     private readonly tools: readonly SessionTool[];
     private readonly capabilities: ResponsesCapabilities;
     private readonly resolveInferenceMaxRetries: () => number;
+    private readonly resolveInferenceFatalRetries: () => number;
     private readonly retryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
 
     constructor(id: string, options: ResponsesSessionOptions) {
@@ -65,6 +72,7 @@ export class ResponsesSession extends BaseSession {
         this.tools = options.tools ?? [];
         this.capabilities = options.capabilities ?? MINIMAL_RESPONSES_CAPABILITIES;
         this.resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.retryWait = options.waitForInferenceRetry ?? waitForInferenceRetry;
     }
 
@@ -185,6 +193,10 @@ export class ResponsesSession extends BaseSession {
         this.activeModel = model;
 
         let emptyResponseRetries = 0;
+        let transientRetries = 0;
+        let fatalRetries = 0;
+        // Requests actually sent, so the terminal diagnostics report what the run really cost.
+        let requestAttempts = 1;
         for (;;) {
             const attemptUsage: Extract<SessionEvent, { type: "token_usage" }>[] = [];
             yield { type: "block_start" };
@@ -268,15 +280,95 @@ export class ResponsesSession extends BaseSession {
                         }
                         throw delayError;
                     }
+                    requestAttempts += 1;
                     continue;
+                }
+                // Context overflow is never retried by any budget: only a smaller context fixes
+                // it, so it must fail even when the rejection otherwise looks retryable. An
+                // abort-shaped error stays out of the fatal budget too, even when the caller's
+                // signal is not observably aborted.
+                const contextOverflow =
+                    !isEmptyResponseError(error) && isResponsesContextOverflowError(error);
+                if (
+                    !isEmptyResponseError(error) &&
+                    !contextOverflow &&
+                    isTransientResponsesError(error)
+                ) {
+                    transientRetries += 1;
+                    const maxRetries = this.resolveInferenceMaxRetries();
+                    if (transientRetries <= maxRetries) {
+                        yield {
+                            type: "retrying",
+                            attempt: transientRetries,
+                            reason: `The Responses API request failed and will be retried, attempt ${transientRetries} of ${maxRetries}: ${responsesErrorMessage(error)}.`,
+                        };
+                        try {
+                            await this.retryWait(transientRetries, abort);
+                        } catch (delayError) {
+                            if (abort?.aborted) {
+                                yield { type: "done", state: "cancelled" };
+                                return;
+                            }
+                            throw delayError;
+                        }
+                        requestAttempts += 1;
+                        continue;
+                    }
+                } else if (
+                    !isEmptyResponseError(error) &&
+                    !contextOverflow &&
+                    !isResponsesAbortError(error)
+                ) {
+                    fatalRetries += 1;
+                    const fatalBudget = this.resolveInferenceFatalRetries();
+                    if (fatalRetries <= fatalBudget) {
+                        yield {
+                            type: "retrying",
+                            attempt: fatalRetries,
+                            reason: `The Responses API request failed and will be retried, attempt ${fatalRetries} of ${fatalBudget}: ${responsesErrorMessage(error)}.`,
+                        };
+                        try {
+                            await this.retryWait(fatalRetries, abort);
+                        } catch (delayError) {
+                            if (abort?.aborted) {
+                                yield { type: "done", state: "cancelled" };
+                                return;
+                            }
+                            throw delayError;
+                        }
+                        requestAttempts += 1;
+                        continue;
+                    }
                 }
                 yield isEmptyResponseError(error)
                     ? emptyResponseDoneEvent(error, emptyResponseRetries + 1)
-                    : classifyResponsesError(error);
+                    : withResponsesErrorAttempts(classifyResponsesError(error), requestAttempts);
                 return;
             }
         }
     }
+}
+
+function responsesErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+/** Reports how many requests the run actually made once every retry budget is spent. */
+function withResponsesErrorAttempts(
+    event: Extract<SessionEvent, { type: "done"; state: "error" }>,
+    attempts: number,
+): Extract<SessionEvent, { type: "done"; state: "error" }> {
+    if (attempts <= 1 || event.providerError === undefined) return event;
+    return {
+        ...event,
+        providerError: {
+            ...event.providerError,
+            diagnostics: {
+                ...event.providerError.diagnostics,
+                attempts,
+            },
+        },
+    };
 }
 
 function emptySessionStream(): SessionStream {

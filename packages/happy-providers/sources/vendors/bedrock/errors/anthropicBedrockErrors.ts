@@ -5,10 +5,12 @@ import {
     extractProviderRetryResetAt,
 } from "@/core/extractProviderErrorDiagnostics.js";
 import type { SessionErrorKind, SessionProviderError } from "@/core/SessionEvent.js";
+import { isAnthropicRefusalError } from "@/protocol/anthropic/AnthropicRefusalError.js";
 import {
     anthropicBedrockRuntimeExceptionDetails,
     anthropicBedrockStreamErrorDetails,
     isAnthropicBedrockConnectionFailure,
+    isAnthropicBedrockContextOverflow,
     resolveAnthropicBedrockErrorStatus,
 } from "@/vendors/bedrock/impl/anthropicBedrockRetry.js";
 
@@ -18,6 +20,8 @@ import {
  * its JSON body; other SDK API errors already carry one.
  */
 export function describeAnthropicBedrockErrorMessage(error: unknown): string {
+    // A refusal's message already carries the stop_details category and explanation.
+    if (isAnthropicRefusalError(error)) return error.message;
     if (!(error instanceof APIError) && isAnthropicBedrockConnectionFailure(error)) {
         return "The network connection to Anthropic Bedrock was lost before the response finished.";
     }
@@ -34,12 +38,7 @@ export function describeAnthropicBedrockErrorMessage(error: unknown): string {
 
 export function classifyAnthropicBedrockError(error: unknown): SessionErrorKind {
     const message = error instanceof Error ? error.message.toLowerCase() : String(error);
-    if (
-        message.includes("context window") ||
-        message.includes("context limit") ||
-        message.includes("input is too long") ||
-        message.includes("too many input tokens")
-    ) {
+    if (isAnthropicBedrockContextOverflow(error)) {
         return "context_overflow";
     }
     if (

@@ -1,6 +1,8 @@
 import { BaseProvider } from "@/core/BaseProvider.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
+    sessionInferenceFatalRetriesResolver,
     sessionInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -39,6 +41,7 @@ export class AnthropicBedrockProvider extends BaseProvider {
     readonly transport: AnthropicBedrockTransport;
     readonly userAgent: string | undefined;
     readonly #resolveInferenceMaxRetries: () => number;
+    readonly #resolveInferenceFatalRetries: () => number;
     readonly #waitForInferenceRetry: InferenceRetryOptions["waitForInferenceRetry"];
 
     constructor(options: AnthropicBedrockProviderOptions) {
@@ -52,6 +55,7 @@ export class AnthropicBedrockProvider extends BaseProvider {
         this.transport = options.transport ?? "mantle";
         this.userAgent = options.userAgent;
         this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.#resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.#waitForInferenceRetry = options.waitForInferenceRetry;
     }
 
@@ -66,6 +70,10 @@ export class AnthropicBedrockProvider extends BaseProvider {
             resolveInferenceMaxRetries: sessionInferenceMaxRetriesResolver(
                 options,
                 this.#resolveInferenceMaxRetries,
+            ),
+            resolveInferenceFatalRetries: sessionInferenceFatalRetriesResolver(
+                options,
+                this.#resolveInferenceFatalRetries,
             ),
             ...(this.#waitForInferenceRetry === undefined
                 ? {}

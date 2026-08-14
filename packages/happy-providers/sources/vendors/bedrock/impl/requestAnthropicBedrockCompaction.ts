@@ -5,8 +5,8 @@ import {
 } from "@/protocol/anthropic/collectAnthropicCompaction.js";
 import type { AnthropicBedrockClient } from "@/vendors/bedrock/impl/createAnthropicBedrockClient.js";
 import {
+    isTransientAnthropicBedrockError,
     resolveAnthropicBedrockRetryDelay,
-    shouldRetryAnthropicBedrock,
     waitForAnthropicBedrockRetry,
 } from "@/vendors/bedrock/impl/anthropicBedrockRetry.js";
 
@@ -33,7 +33,9 @@ export async function requestAnthropicBedrockCompaction(options: {
         } catch (error) {
             if (responseContentStarted) throw error;
             failedAttempts += 1;
-            if (!shouldRetryAnthropicBedrock(error, failedAttempts, options.maxRetries))
+            // Compaction retries stay transient-only: a fatal rejection of a compaction request
+            // is reported to the caller, which owns the decision to compact differently.
+            if (!isTransientAnthropicBedrockError(error) || failedAttempts > options.maxRetries)
                 throw error;
             const delay = resolveAnthropicBedrockRetryDelay(error, failedAttempts);
             await waitForAnthropicBedrockRetry(delay, options.signal);

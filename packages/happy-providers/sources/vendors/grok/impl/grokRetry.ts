@@ -26,10 +26,31 @@ const TRANSPORT_MESSAGE_PATTERNS = [
     /^stream disconnected before completion(?:: .+)?$/iu,
 ];
 
+const BILLING_PATTERNS = [
+    "subscription:free-usage-exhausted",
+    "free grok build usage limit",
+    "grok build usage balance exhausted",
+    "credit balance is too low",
+    "out of credits",
+    "insufficient credits",
+    "payment required",
+    "purchase more credits",
+] as const;
+
+/** Mirrors grok-build free-usage and credit-exhaustion sniffers. */
+export function isGrokBillingError(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return BILLING_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
 export function isRetryableGrokError(value: unknown): boolean {
     if (isEmptyResponseError(value)) return true;
-    if (isAbortError(value)) return false;
+    if (isGrokAbortError(value)) return false;
     if (errorHeader(value, "x-should-retry")?.toLowerCase() === "false") return false;
+
+    const message = errorMessage(value);
+    // A spent account is a 429 waiting cannot fix; it belongs to the fatal budget instead.
+    if (message !== undefined && isGrokBillingError(message)) return false;
 
     const status = grokErrorStatus(value);
     if ([429, 500, 502, 503, 504, 520].includes(status ?? -1)) {
@@ -38,7 +59,6 @@ export function isRetryableGrokError(value: unknown): boolean {
     const code = errorCode(value);
     if (code !== undefined && RETRYABLE_ERROR_CODES.has(code)) return true;
 
-    const message = errorMessage(value);
     return (
         message !== undefined && TRANSPORT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))
     );
@@ -117,9 +137,19 @@ function errorCode(value: unknown): string | undefined {
     return errorCode(value.cause);
 }
 
-function isAbortError(value: unknown): boolean {
-    if (!isRecord(value)) return false;
-    return value.name === "AbortError" || value.code === "ABORT_ERR";
+/**
+ * Recognizes a cancellation even when the caller's signal is not observably aborted, so neither
+ * retry budget can replay a request somebody stopped on purpose.
+ */
+export function isGrokAbortError(value: unknown): boolean {
+    const seen = new Set<object>();
+    let current = value;
+    while (isRecord(current) && !seen.has(current)) {
+        if (current.name === "AbortError" || current.code === "ABORT_ERR") return true;
+        seen.add(current);
+        current = current.cause;
+    }
+    return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

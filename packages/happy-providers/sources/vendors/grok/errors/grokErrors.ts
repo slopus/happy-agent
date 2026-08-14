@@ -3,7 +3,9 @@ import {
     extractProviderRetryResetAt,
 } from "@/core/extractProviderErrorDiagnostics.js";
 import type { SessionErrorKind, SessionProviderError } from "@/core/SessionEvent.js";
-import { grokErrorStatus } from "@/vendors/grok/impl/grokRetry.js";
+import { grokErrorStatus, isGrokBillingError } from "@/vendors/grok/impl/grokRetry.js";
+
+export { isGrokBillingError } from "@/vendors/grok/impl/grokRetry.js";
 
 const CONTEXT_OVERFLOW_PATTERNS = [
     "too long for this model",
@@ -11,17 +13,6 @@ const CONTEXT_OVERFLOW_PATTERNS = [
     "maximum prompt length",
     "maximum context length",
     "context_length_exceeded",
-] as const;
-
-const BILLING_PATTERNS = [
-    "subscription:free-usage-exhausted",
-    "free grok build usage limit",
-    "grok build usage balance exhausted",
-    "credit balance is too low",
-    "out of credits",
-    "insufficient credits",
-    "payment required",
-    "purchase more credits",
 ] as const;
 
 const INTERNAL_ERROR_PATTERNS = [
@@ -64,12 +55,6 @@ const PERMANENT_COMPACTION_PATTERNS = [
 export function isGrokContextOverflowError(message: string): boolean {
     const normalized = message.toLowerCase();
     return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => normalized.includes(pattern));
-}
-
-/** Mirrors grok-build free-usage and credit-exhaustion sniffers. */
-export function isGrokBillingError(message: string): boolean {
-    const normalized = message.toLowerCase();
-    return BILLING_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
 export function classifyGrokError(message: string): SessionErrorKind {

@@ -17,6 +17,7 @@ export function claudeExecution(options: {
     id: string;
     /** Receives the account usage Claude reports while it is already answering. */
     onAccountUsage?: (usage: ProviderUsage) => void;
+    resolveInferenceFatalRetries?: () => number;
     resolveInferenceMaxRetries?: () => number;
     sessionId?: string;
 }): ExecutorProvider {
@@ -72,6 +73,9 @@ export function claudeExecution(options: {
             return new AnthropicProvider({
                 credential,
                 env: environment,
+                ...(options.resolveInferenceFatalRetries === undefined
+                    ? {}
+                    : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
                 ...(options.resolveInferenceMaxRetries === undefined
                     ? {}
                     : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),

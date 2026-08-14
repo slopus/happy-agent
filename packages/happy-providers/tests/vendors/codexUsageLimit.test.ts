@@ -1,13 +1,16 @@
 import { testContext } from "../testContext.js";
 
-import { readFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { WebSocketError } from "openai/resources/responses/internal-base";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { SessionEvent } from "@/core/SessionEvent.js";
 import { BedrockBearerTokenCredential } from "@/vendors/bedrock/BedrockBearerTokenCredential.js";
+import { CodexProvider } from "@/vendors/codex/CodexProvider.js";
 import { CodexSession } from "@/vendors/codex/CodexSession.js";
 import {
     codexUsageExhaustionMessage,
@@ -103,6 +106,206 @@ describe("Codex usage exhaustion", () => {
         });
     });
 
+    it("retries an exhausted plan once under an explicit fatal budget, then succeeds", async () => {
+        const fixture = await recordedResponse("codex-usage-limit-reached-429.json");
+        let requests = 0;
+        const server = createServer(async (request, response) => {
+            for await (const _chunk of request) {
+                // Drain the request before answering.
+            }
+            requests += 1;
+            if (requests === 1) {
+                response.writeHead(fixture.status, fixture.headers);
+                response.end(JSON.stringify(fixture.body));
+                return;
+            }
+            completeSse(response);
+        });
+        servers.push(server);
+        await new Promise<void>((resolve, reject) => {
+            server.listen(0, "127.0.0.1", resolve);
+            server.once("error", reject);
+        });
+        const address = server.address();
+        if (typeof address !== "object" || address === null) expect.fail("Missing server port.");
+
+        const session = new CodexSession("codex-usage-limit-fatal-retry", {
+            credential: { name: "codex-api-key", credential: { apiKey: "test" } } as never,
+            endpoint: `http://127.0.0.1:${address.port}/v1`,
+            inferenceFatalRetries: 1,
+            installationId: "00000000-0000-4000-8000-000000000002",
+            instructions: "Be brief.",
+            model: "gpt-5.6-sol",
+            transport: "sse",
+            userAgent: "rig-test",
+        });
+        sessions.push(session);
+
+        const events = await runSession(session);
+
+        expect(requests).toBe(2);
+        const retrying = events.filter((event) => event.type === "retrying");
+        expect(retrying).toHaveLength(1);
+        expect(retrying[0]).toMatchObject({ attempt: 1 });
+        expect((retrying[0] as { reason: string }).reason).toMatch(/usage limit/iu);
+        expect((retrying[0] as { reason: string }).reason).toMatch(/attempt 1 of 1/u);
+        expect(events.filter((event) => event.type === "block_reset")).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
+    it("exhausts an explicit fatal budget and reports the usual failure", async () => {
+        const fixture = await recordedResponse("codex-usage-limit-reached-429.json");
+        const { events, requests } = await run(fixture, {
+            credential: { name: "codex-api-key", credential: { apiKey: "test" } } as never,
+            inferenceFatalRetries: 1,
+            model: "gpt-5.6-sol",
+        });
+
+        expect(requests).toBe(2);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            providerError: {
+                type: "out_of_tokens",
+                resetAt: 1_704_067_242_000,
+                diagnostics: { attempts: 2, status: 429 },
+            },
+        });
+        expect(errorMessage(events)).toMatch(
+            /^You've hit your Codex usage limit on the ChatGPT Pro plan\. Try again at .+\.$/u,
+        );
+    });
+
+    it("never retries a context-overflow rejection even with a fatal budget", async () => {
+        const { events, requests } = await run(
+            {
+                status: 400,
+                headers: { "content-type": "application/json" },
+                body: {
+                    error: {
+                        code: "context_length_exceeded",
+                        message: "This model's maximum context length has been exceeded.",
+                    },
+                },
+            },
+            {
+                credential: { name: "codex-api-key", credential: { apiKey: "test" } } as never,
+                inferenceFatalRetries: 3,
+                model: "gpt-5.6-sol",
+            },
+        );
+
+        expect(requests).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "context_overflow",
+        });
+    });
+
+    it("keeps the transient and fatal budgets independent", async () => {
+        const fixture = await recordedResponse("codex-usage-limit-reached-429.json");
+        let requests = 0;
+        const server = createServer(async (request, response) => {
+            for await (const _chunk of request) {
+                // Drain the request before answering.
+            }
+            requests += 1;
+            if (requests === 1) {
+                response.writeHead(fixture.status, fixture.headers);
+                response.end(JSON.stringify(fixture.body));
+                return;
+            }
+            if (requests === 2) {
+                // A dropped connection: transient, and it must not find its budget already
+                // spent by the fatal retry that preceded it.
+                response.destroy();
+                return;
+            }
+            completeSse(response);
+        });
+        servers.push(server);
+        await new Promise<void>((resolve, reject) => {
+            server.listen(0, "127.0.0.1", resolve);
+            server.once("error", reject);
+        });
+        const address = server.address();
+        if (typeof address !== "object" || address === null) expect.fail("Missing server port.");
+
+        const session = new CodexSession("codex-independent-budgets", {
+            credential: { name: "codex-api-key", credential: { apiKey: "test" } } as never,
+            endpoint: `http://127.0.0.1:${address.port}/v1`,
+            inferenceFatalRetries: 1,
+            inferenceMaxRetries: 1,
+            installationId: "00000000-0000-4000-8000-000000000003",
+            instructions: "Be brief.",
+            model: "gpt-5.6-sol",
+            transport: "sse",
+            userAgent: "rig-test",
+        });
+        sessions.push(session);
+
+        const events = await runSession(session);
+
+        expect(requests).toBe(3);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(2);
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
+    it("passes the provider-level fatal budget through to the session", async () => {
+        const fixture = await recordedResponse("codex-usage-limit-reached-429.json");
+        let requests = 0;
+        const server = createServer(async (request, response) => {
+            for await (const _chunk of request) {
+                // Drain the request before answering.
+            }
+            requests += 1;
+            if (requests === 1) {
+                response.writeHead(fixture.status, fixture.headers);
+                response.end(JSON.stringify(fixture.body));
+                return;
+            }
+            completeSse(response);
+        });
+        servers.push(server);
+        await new Promise<void>((resolve, reject) => {
+            server.listen(0, "127.0.0.1", resolve);
+            server.once("error", reject);
+        });
+        const address = server.address();
+        if (typeof address !== "object" || address === null) expect.fail("Missing server port.");
+
+        const codexHome = await mkdtemp(join(tmpdir(), "codex-home-"));
+        const previousCodexHome = process.env.CODEX_HOME;
+        process.env.CODEX_HOME = codexHome;
+        try {
+            const provider = new CodexProvider({
+                credential: { name: "codex-api-key", credential: { apiKey: "test" } } as never,
+                endpoint: `http://127.0.0.1:${address.port}/v1`,
+                inferenceFatalRetries: 1,
+                model: "gpt-5.6-sol",
+                transport: "sse",
+                userAgent: "rig-test",
+            });
+            const session = await provider.session("codex-provider-fatal-budget", {
+                instructions: "",
+            });
+            sessions.push(session);
+
+            const events = await runSession(session);
+
+            expect(requests).toBe(2);
+            expect(events.filter((event) => event.type === "retrying")).toHaveLength(1);
+            expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        } finally {
+            if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+            else process.env.CODEX_HOME = previousCodexHome;
+            await rm(codexHome, { force: true, recursive: true });
+        }
+    });
+
     it("reads the usage body out of the WebSocket wrapper the SDK throws", () => {
         const event = {
             type: "error",
@@ -188,6 +391,7 @@ describe("Codex usage exhaustion", () => {
         options: {
             credential: ConstructorParameters<typeof CodexSession>[1]["credential"];
             endpointPath?: string;
+            inferenceFatalRetries?: number;
             inferenceMaxRetries?: number;
             model: string;
         },
@@ -215,6 +419,9 @@ describe("Codex usage exhaustion", () => {
             installationId: "00000000-0000-4000-8000-000000000001",
             instructions: "Be brief.",
             model: options.model,
+            ...(options.inferenceFatalRetries === undefined
+                ? {}
+                : { inferenceFatalRetries: options.inferenceFatalRetries }),
             ...(options.inferenceMaxRetries === undefined
                 ? {}
                 : { inferenceMaxRetries: options.inferenceMaxRetries }),
@@ -223,25 +430,44 @@ describe("Codex usage exhaustion", () => {
         });
         sessions.push(session);
 
-        const events: SessionEvent[] = [];
         const startedAt = Date.now();
-        for await (const event of session.run(testContext, {
-            context: {
-                instructions: "",
-                messages: [
-                    {
-                        role: "user",
-                        content: [{ type: "text" as const, text: "Reply with OK." }],
-                    },
-                ],
-            },
-            effort: "low",
-        })) {
-            events.push(event);
-        }
+        const events = await runSession(session);
         return { elapsed: Date.now() - startedAt, events, requests };
     }
 });
+
+async function runSession(session: CodexSession): Promise<SessionEvent[]> {
+    const events: SessionEvent[] = [];
+    for await (const event of session.run(testContext, {
+        context: {
+            instructions: "",
+            messages: [{ role: "user", content: [{ type: "text" as const, text: "Reply with OK." }] }],
+        },
+        effort: "low",
+    })) {
+        events.push(event);
+    }
+    return events;
+}
+
+/** The minimal successful Codex SSE response: an empty output with reported usage. */
+function completeSse(response: ServerResponse): void {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(
+        [
+            {
+                type: "response.completed",
+                response: {
+                    id: "response",
+                    output: [],
+                    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                },
+            },
+        ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join("") + "data: [DONE]\n\n",
+    );
+}
 
 function errorMessage(events: readonly SessionEvent[]): string {
     const done = events.at(-1);

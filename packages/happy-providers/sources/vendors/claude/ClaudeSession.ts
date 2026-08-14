@@ -9,6 +9,7 @@ import {
 
 import { BaseSession } from "@/core/BaseSession.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -97,6 +98,7 @@ export class ClaudeSession extends BaseSession {
     private lastQueryToolCalls: Omit<SessionToolCallBlock, "type">[] = [];
     private readonly onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
     private readonly resolveInferenceMaxRetries: () => number;
+    private readonly resolveInferenceFatalRetries: () => number;
     private readonly retryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
 
     constructor(id: string, options: ClaudeSessionOptions) {
@@ -106,6 +108,7 @@ export class ClaudeSession extends BaseSession {
         this.model = options.model;
         this.activeModel = options.model;
         this.resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.retryWait = options.waitForInferenceRetry ?? waitForInferenceRetry;
         this.pathToClaudeCodeExecutable = options.pathToClaudeCodeExecutable;
         this.userAgent = options.userAgent;
@@ -252,6 +255,10 @@ export class ClaudeSession extends BaseSession {
         };
         let emptyResponseRetries = 0;
         let completedMidResponseAttempts = 0;
+        let fatalRetries = 0;
+        // Requests spent across fatal attempts, counting each query's own internal retries, so
+        // exhaustion diagnostics report what the run really cost.
+        let fatalRequestAttempts = 0;
         for (;;) {
             const assistant = new SessionAssistantMessageAccumulator();
             let usage: Extract<SessionEvent, { type: "token_usage" }> | undefined;
@@ -314,6 +321,41 @@ export class ClaudeSession extends BaseSession {
                     }
                     continue;
                 }
+            }
+            // A transient-shaped terminal error — an overloaded or failing server — already
+            // received its transient allowance inside the SDK before surfacing here, so it ends
+            // the run instead of double-dipping into the fatal budget: each failure spends
+            // exactly one budget, like every other provider.
+            if (
+                terminal.state === "error" &&
+                terminal.providerError?.type !== "server_overloaded" &&
+                terminal.providerError?.type !== "internal_server_error" &&
+                terminal.kind !== "context_overflow"
+            ) {
+                fatalRetries += 1;
+                fatalRequestAttempts += terminal.providerError?.diagnostics?.attempts ?? 1;
+                const fatalBudget = this.resolveInferenceFatalRetries();
+                if (fatalRetries <= fatalBudget) {
+                    this.closeActiveQuery();
+                    this.sdkSessionId = randomUUID();
+                    this.lastQueryToolCalls = [];
+                    yield {
+                        type: "retrying",
+                        attempt: fatalRetries,
+                        reason: `${terminal.message} Retrying, attempt ${fatalRetries} of ${fatalBudget}.`,
+                    };
+                    try {
+                        await this.retryWait(fatalRetries, signal);
+                    } catch (delayError) {
+                        if (signal?.aborted) {
+                            yield { type: "done", state: "cancelled" };
+                            return;
+                        }
+                        throw delayError;
+                    }
+                    continue;
+                }
+                terminal = withClaudeErrorAttempts(terminal, fatalRequestAttempts);
             }
             if (
                 terminal.state !== "error" &&

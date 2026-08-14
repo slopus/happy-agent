@@ -20,6 +20,7 @@ export function codexExecution(options: {
     config: ConfigCodexProvider;
     env: NodeJS.ProcessEnv;
     id: string;
+    resolveInferenceFatalRetries?: () => number;
     resolveInferenceMaxRetries?: () => number;
     sessionId?: string;
 }): ExecutorProvider {
@@ -59,6 +60,9 @@ export function codexExecution(options: {
         return new CodexProvider({
             credential,
             parallelToolCalls: true,
+            ...(options.resolveInferenceFatalRetries === undefined
+                ? {}
+                : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
             ...(options.resolveInferenceMaxRetries === undefined
                 ? {}
                 : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),

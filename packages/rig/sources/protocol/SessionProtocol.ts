@@ -302,6 +302,7 @@ export interface DaemonConfig {
     };
     settings: {
         inferenceMaxRetries: number;
+        inferenceFatalRetries: number;
         durableGlobalEventQueue: boolean;
     };
 }
@@ -327,6 +328,10 @@ export const updateDaemonConfigRequestSchema = Type.Object(
         settings: Type.Object(
             {
                 inferenceMaxRetries: Type.Integer({
+                    minimum: 0,
+                    maximum: MAX_INFERENCE_MAX_RETRIES,
+                }),
+                inferenceFatalRetries: Type.Integer({
                     minimum: 0,
                     maximum: MAX_INFERENCE_MAX_RETRIES,
                 }),

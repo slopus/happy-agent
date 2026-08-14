@@ -26,6 +26,7 @@ export interface PartialConfigDefaults {
 
 export interface ConfigSettings {
     inferenceMaxRetries: number;
+    inferenceFatalRetries: number;
     compactCompletedTurns: boolean;
     completionChime: boolean;
     daemonHeapSnapshots: boolean;
@@ -38,6 +39,7 @@ export interface ConfigSettings {
 
 export interface PartialConfigSettings {
     inferenceMaxRetries?: number;
+    inferenceFatalRetries?: number;
     compactCompletedTurns?: boolean;
     completionChime?: boolean;
     daemonHeapSnapshots?: boolean;
@@ -278,6 +280,7 @@ export interface LoadConfigOptions {
 
 export interface DaemonSettings {
     inferenceMaxRetries: number;
+    inferenceFatalRetries: number;
     daemonHeapSnapshots: boolean;
     durableGlobalEventQueue: boolean;
 }

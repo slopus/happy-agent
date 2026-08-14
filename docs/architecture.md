@@ -275,7 +275,11 @@ as a disabled entry with no models and a human-readable reason.
 Retry semantics belong to the provider, never the outer loop. Everything
 retryable is retried inside `happy-providers` and surfaced as `retrying` events; an
 error that reaches the agent loop is terminal by definition and is displayed, not
-replayed. Errors are parsed into a typed `SessionProviderError`
+replayed. Two independent budgets govern those retries: `inference_max_retries`
+(default 10) covers transient failures, and `inference_fatal_retries` (default 0)
+covers otherwise-terminal ones such as model refusals and spent accounts —
+cancellation and context overflow are never retried. Errors are parsed into a
+typed `SessionProviderError`
 (`authentication`, `out_of_tokens`, `rate_limit`, `server_overloaded`,
 `internal_server_error`, `unclassified`), and recorded real failure responses are
 replayed through the real transport to keep the parsers honest.

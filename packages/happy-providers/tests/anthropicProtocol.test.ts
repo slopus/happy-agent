@@ -2,19 +2,15 @@ import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta
 import { describe, expect, it } from "vitest";
 
 import type { SessionEvent } from "@/core/SessionEvent.js";
+import {
+    AnthropicRefusalError,
+    isAnthropicRefusalError,
+} from "@/protocol/anthropic/AnthropicRefusalError.js";
 import { mapAnthropicStream } from "@/protocol/anthropic/mapAnthropicStream.js";
 
 describe("Anthropic protocol stop reasons", () => {
     it.each([
         ["pause_turn", { type: "done", state: "normal" }],
-        [
-            "refusal",
-            {
-                type: "done",
-                state: "error",
-                message: "The model refused to complete the request.",
-            },
-        ],
         [
             "compaction",
             {
@@ -32,17 +28,41 @@ describe("Anthropic protocol stop reasons", () => {
         expect(events.at(-1)).toMatchObject(expected);
     });
 
-    it("keeps a zero-token refusal terminal instead of retrying it as empty", async () => {
-        const events: SessionEvent[] = [];
-        for await (const event of mapAnthropicStream(streamEndingWith("refusal", 0))) {
-            events.push(event);
-        }
+    it("throws a refusal with its stop_details so the session can retry it", async () => {
+        const error = await collectUntilThrow(
+            mapAnthropicStream(
+                streamEndingWith("refusal", 1, {
+                    type: "refusal",
+                    category: "cyber",
+                    explanation: "The response was flagged by a safety classifier.",
+                }),
+            ),
+        );
 
-        expect(events.at(-1)).toMatchObject({
-            type: "done",
-            state: "error",
-            message: "The model refused to complete the request.",
-        });
+        expect(isAnthropicRefusalError(error)).toBe(true);
+        const refusal = error as AnthropicRefusalError;
+        expect(refusal.category).toBe("cyber");
+        expect(refusal.explanation).toBe("The response was flagged by a safety classifier.");
+        expect(refusal.message).toBe(
+            "The model refused to complete the request (category: cyber): " +
+                "The response was flagged by a safety classifier.",
+        );
+        expect(refusal.usage).toMatchObject({ output: 1 });
+    });
+
+    it("throws a readable refusal when stop_details is absent", async () => {
+        const error = await collectUntilThrow(mapAnthropicStream(streamEndingWith("refusal")));
+
+        expect(isAnthropicRefusalError(error)).toBe(true);
+        expect((error as AnthropicRefusalError).message).toBe(
+            "The model refused to complete the request.",
+        );
+    });
+
+    it("keeps a zero-token refusal a refusal instead of an empty response", async () => {
+        const error = await collectUntilThrow(mapAnthropicStream(streamEndingWith("refusal", 0)));
+
+        expect(isAnthropicRefusalError(error)).toBe(true);
     });
 
     it.each(["start", "delta"] as const)(
@@ -65,9 +85,19 @@ describe("Anthropic protocol stop reasons", () => {
     );
 });
 
+async function collectUntilThrow(stream: AsyncGenerator<SessionEvent>): Promise<unknown> {
+    try {
+        for await (const event of stream) void event;
+    } catch (error) {
+        return error;
+    }
+    throw new Error("Expected the stream to throw.");
+}
+
 async function* streamEndingWith(
     stopReason: "pause_turn" | "refusal" | "compaction",
     outputTokens = 1,
+    stopDetails?: { type: "refusal"; category: string | null; explanation: string | null },
 ): AsyncGenerator<BetaRawMessageStreamEvent> {
     yield {
         type: "message_start",
@@ -77,7 +107,11 @@ async function* streamEndingWith(
     } as BetaRawMessageStreamEvent;
     yield {
         type: "message_delta",
-        delta: { stop_reason: stopReason, stop_sequence: null },
+        delta: {
+            stop_reason: stopReason,
+            stop_sequence: null,
+            ...(stopDetails === undefined ? {} : { stop_details: stopDetails }),
+        },
         usage: { output_tokens: outputTokens },
     } as BetaRawMessageStreamEvent;
     yield { type: "message_stop" } as BetaRawMessageStreamEvent;

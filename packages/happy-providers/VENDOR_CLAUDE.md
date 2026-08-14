@@ -171,6 +171,16 @@ back, recreates the private SDK query, and retries against the same caller-owned
 queries receive only the retries left in the shared budget, so this recovery cannot exceed the
 configured limit or commit partial text and tool-call events twice.
 
+Every other terminal result — a spent account, a rejected credential, an unrecognized failure from
+the Claude Code CLI — retries under the separate `inferenceFatalRetries` budget, which defaults to
+zero so each is normally reported the moment it happens. Fatal failures spend their own counter, so
+the mid-response server-error recovery above cannot starve them and the other way around: once that
+recovery's own budget is exhausted, its failure ends the run rather than rolling into the fatal
+budget, because it is transient by nature and already had its dedicated retry. Context overflow is
+never retried, because only a smaller context can fix it and the caller owns compaction. Because the
+CLI's own error paths already emit `block_reset` before the terminal result, a fatal retry replays
+through the same clean rollback boundary as the mid-response case, so no output is committed twice.
+
 ## Native compaction
 
 `ClaudeSession.compact()` appends either `/compact` or `/compact <retention instructions>`

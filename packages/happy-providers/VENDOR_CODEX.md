@@ -359,6 +359,17 @@ ChatGPT credentials have a separate 401 path. Rig first reloads a matching `auth
 the client, and retries. If that credential is also rejected, Rig refreshes the token through the
 Codex OAuth endpoint, atomically persists the result, rebuilds the client, and retries once more.
 
+Every other failure that would end the run — a spent account, a rejected credential the recovery
+path above did not consume, an invalid request — retries under the separate
+`inferenceFatalRetries` budget, which defaults to zero so each is normally reported the moment it
+happens. This is the point for a spent account: `usage_limit_reached` and `usage_not_included` are
+excluded from the transient budget above because waiting cannot fix them, but they still deserve a
+second attempt once the caller has configured one, for example while the account's reset time
+lands mid-run. Fatal failures spend their own counter, so transport noise earlier in the run cannot
+starve them, and each budget still bounds its own class of failure. Context overflow is never
+retried by either budget, because only a smaller context can fix it and the caller owns
+compaction.
+
 ## Native compaction
 
 OpenAI Codex compaction is a provider-native Responses operation. It is client-triggered rather

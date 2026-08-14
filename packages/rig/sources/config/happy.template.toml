@@ -12,6 +12,7 @@
 
 # [settings]
 # inference_max_retries = 10
+# inference_fatal_retries = 0
 # tool_result_retention_days = 7
 # compact_completed_turns = false
 # completion_chime = false

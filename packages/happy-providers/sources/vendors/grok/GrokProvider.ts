@@ -1,7 +1,9 @@
 import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
+    sessionInferenceFatalRetriesResolver,
     sessionInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -30,6 +32,7 @@ export class GrokProvider extends ResponsesProvider {
     readonly model: string | undefined;
     readonly userAgent: string | undefined;
     readonly #resolveInferenceMaxRetries: () => number;
+    readonly #resolveInferenceFatalRetries: () => number;
     readonly #waitForInferenceRetry: InferenceRetryOptions["waitForInferenceRetry"];
 
     constructor(options: GrokProviderOptions) {
@@ -41,6 +44,7 @@ export class GrokProvider extends ResponsesProvider {
         this.model = options.model === undefined ? undefined : resolveGrokModelId(options.model);
         this.userAgent = options.userAgent;
         this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.#resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.#waitForInferenceRetry = options.waitForInferenceRetry;
     }
 
@@ -53,6 +57,10 @@ export class GrokProvider extends ResponsesProvider {
             resolveInferenceMaxRetries: sessionInferenceMaxRetriesResolver(
                 options,
                 this.#resolveInferenceMaxRetries,
+            ),
+            resolveInferenceFatalRetries: sessionInferenceFatalRetriesResolver(
+                options,
+                this.#resolveInferenceFatalRetries,
             ),
             ...(this.#waitForInferenceRetry === undefined
                 ? {}

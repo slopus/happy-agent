@@ -31,6 +31,7 @@ export async function createConfigFile(
             },
             settings: {
                 inference_max_retries: config.settings.inferenceMaxRetries,
+                inference_fatal_retries: config.settings.inferenceFatalRetries,
                 compact_completed_turns: config.settings.compactCompletedTurns,
                 completion_chime: config.settings.completionChime,
                 daemon_heap_snapshots: config.settings.daemonHeapSnapshots,

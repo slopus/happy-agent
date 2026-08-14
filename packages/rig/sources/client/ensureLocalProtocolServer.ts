@@ -378,6 +378,7 @@ async function reconcileDaemonSettings(client: ProtocolHttpClient): Promise<void
     const current = await client.getDaemonConfig();
     if (
         current.config.settings.inferenceMaxRetries === daemonSettings.inferenceMaxRetries &&
+        current.config.settings.inferenceFatalRetries === daemonSettings.inferenceFatalRetries &&
         current.config.settings.durableGlobalEventQueue === daemonSettings.durableGlobalEventQueue
     ) {
         return;
@@ -386,11 +387,13 @@ async function reconcileDaemonSettings(client: ProtocolHttpClient): Promise<void
     const updated = await client.updateDaemonConfig({
         settings: {
             inferenceMaxRetries: daemonSettings.inferenceMaxRetries,
+            inferenceFatalRetries: daemonSettings.inferenceFatalRetries,
             durableGlobalEventQueue: daemonSettings.durableGlobalEventQueue,
         },
     });
     if (
         updated.config.settings.inferenceMaxRetries !== daemonSettings.inferenceMaxRetries ||
+        updated.config.settings.inferenceFatalRetries !== daemonSettings.inferenceFatalRetries ||
         updated.config.settings.durableGlobalEventQueue !== daemonSettings.durableGlobalEventQueue
     ) {
         throw new Error("The local daemon did not apply the requested configuration.");

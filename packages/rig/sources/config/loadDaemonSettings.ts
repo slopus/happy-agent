@@ -5,6 +5,7 @@ export async function loadDaemonSettings(options: LoadConfigOptions = {}): Promi
     const loaded = await loadConfig(options);
     return {
         inferenceMaxRetries: loaded.config.settings.inferenceMaxRetries,
+        inferenceFatalRetries: loaded.config.settings.inferenceFatalRetries,
         daemonHeapSnapshots: loaded.config.settings.daemonHeapSnapshots,
         durableGlobalEventQueue: loaded.config.settings.durableGlobalEventQueue,
     };

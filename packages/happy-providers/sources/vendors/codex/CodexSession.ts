@@ -4,6 +4,7 @@ import type OpenAI from "openai";
 
 import { BaseSession } from "@/core/BaseSession.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -45,6 +46,7 @@ import { createCodexModelSwitchMessage } from "@/vendors/codex/impl/createCodexM
 import { getCodexContextSuffix } from "@/vendors/codex/impl/getCodexContextSuffix.js";
 import { getCodexModelProperties } from "@/vendors/codex/impl/getCodexModelProperties.js";
 import { getCodexTurnKey } from "@/vendors/codex/impl/getCodexTurnKey.js";
+import { isCodexAbortError } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexContextWindowError } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexPreviousResponseNotFoundError } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexUnauthorizedError } from "@/vendors/codex/errors/codexErrors.js";
@@ -103,6 +105,7 @@ export class CodexSession extends BaseSession {
     private readonly installationId: string;
     private readonly modelConfigurations = new Map<string, SessionModelConfiguration>();
     readonly #resolveInferenceMaxRetries: () => number;
+    readonly #resolveInferenceFatalRetries: () => number;
     readonly #emptyResponseRetryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
     private turnId = randomUUID();
     private turnKey: string | undefined;
@@ -120,6 +123,7 @@ export class CodexSession extends BaseSession {
         this.parallelToolCalls = options.parallelToolCalls;
         this.activeModel = options.model;
         this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.#resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.#emptyResponseRetryWait =
             options.waitForInferenceRetry ??
             ((attempt, signal) => waitForCodexRetry(attempt, undefined, signal));
@@ -519,7 +523,11 @@ export class CodexSession extends BaseSession {
 
         let useSse = this.transport === "sse" || (this.transport === "auto" && this.forceSse);
         let transportRetries = 0;
+        let fatalFailedAttempts = 0;
         let reportedAttempt = 0;
+        // Spends the transient budget. reportedAttempt keeps numbering every retry the caller
+        // sees, so fatal retries raise it too and must not count against the transient budget.
+        let transientAttempt = 0;
         let previousResponseRecoveries = 0;
         let unauthorizedRecoveryStep = 0;
 
@@ -667,6 +675,11 @@ export class CodexSession extends BaseSession {
                 }
                 const message = error instanceof Error ? error.message : String(error);
                 const displayMessage = codexErrorMessage(error, message);
+                // Context overflow is never retried by any budget: only a smaller context fixes
+                // it, so it must fail even when the rejection otherwise looks retryable.
+                const contextOverflow =
+                    isCodexContextWindowError(error) ||
+                    classifyCodexError(message) === "context_overflow";
                 if (isCodexUnauthorizedError(error)) {
                     const recovered = await recoverCodexUnauthorizedCredential(
                         this.credential,
@@ -684,6 +697,7 @@ export class CodexSession extends BaseSession {
                     isCodexPreviousResponseNotFoundError(error)
                 ) {
                     previousResponseRecoveries += 1;
+                    transientAttempt += 1;
                     reportedAttempt += 1;
                     yield {
                         type: "retrying",
@@ -693,11 +707,13 @@ export class CodexSession extends BaseSession {
                     continue;
                 }
                 if (
+                    !contextOverflow &&
                     isRetryableCodexStreamError(error) &&
                     (useSse || !isCodexWebSocketUnavailableError(error)) &&
-                    reportedAttempt < this.inferenceMaxRetries
+                    transientAttempt < this.inferenceMaxRetries
                 ) {
                     transportRetries += 1;
+                    transientAttempt += 1;
                     reportedAttempt += 1;
                     yield {
                         type: "retrying",
@@ -724,12 +740,14 @@ export class CodexSession extends BaseSession {
                 if (
                     this.transport === "auto" &&
                     !useSse &&
-                    reportedAttempt < this.inferenceMaxRetries &&
+                    !contextOverflow &&
+                    transientAttempt < this.inferenceMaxRetries &&
                     (isRetryableCodexStreamError(error) || isCodexWebSocketUnavailableError(error))
                 ) {
                     this.forceSse = true;
                     useSse = true;
                     transportRetries = 0;
+                    transientAttempt += 1;
                     reportedAttempt += 1;
                     yield {
                         type: "retrying",
@@ -741,6 +759,33 @@ export class CodexSession extends BaseSession {
                         return;
                     }
                     continue;
+                }
+                if (
+                    !contextOverflow &&
+                    !isCodexAbortError(error) &&
+                    !isEmptyResponseError(error) &&
+                    !isRetryableCodexStreamError(error)
+                ) {
+                    const fatalRetries = this.#resolveInferenceFatalRetries();
+                    fatalFailedAttempts += 1;
+                    if (fatalFailedAttempts <= fatalRetries) {
+                        reportedAttempt += 1;
+                        yield {
+                            type: "retrying",
+                            attempt: reportedAttempt,
+                            reason: `${displayMessage}; retrying, attempt ${fatalFailedAttempts} of ${fatalRetries}.`,
+                        };
+                        try {
+                            await waitForCodexRetry(fatalFailedAttempts, error, signal);
+                        } catch (delayError) {
+                            if (signal?.aborted) {
+                                yield { type: "done", state: "cancelled" };
+                                return;
+                            }
+                            throw delayError;
+                        }
+                        continue;
+                    }
                 }
                 yield isEmptyResponseError(error)
                     ? emptyResponseDoneEvent(error, reportedAttempt + 1)

@@ -222,7 +222,10 @@ import { isGoalStatus } from "../goals/index.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
 import { getGeneratedDirectory, resolveGeneratedMediaLocation } from "../generated-media/index.js";
 import { configureSessionRequest } from "../session/configureSessionRequest.js";
-import { DEFAULT_INFERENCE_MAX_RETRIES } from "../config/inferenceRetrySettings.js";
+import {
+    DEFAULT_INFERENCE_FATAL_RETRIES,
+    DEFAULT_INFERENCE_MAX_RETRIES,
+} from "../config/inferenceRetrySettings.js";
 import { getGlobalAgentsMdPath } from "../config/getGlobalAgentsMdPath.js";
 import { GLOBAL_AGENTS_MD_MAX_BYTES } from "../config/globalAgentsMdMaxBytes.js";
 import { readGlobalAgentsMd } from "../config/readGlobalAgentsMd.js";
@@ -351,6 +354,7 @@ import type { SharingLifecycleServiceContract } from "../sharing/index.js";
 
 export interface ProtocolHttpServerOptions {
     inferenceMaxRetries?: number;
+    inferenceFatalRetries?: number;
     /** Where the user's global AGENTS.md lives. Defaults to the file beside the daemon config. */
     globalInstructionsPath?: string;
     /** Where the user's global SECURITY.md lives. Defaults to the file beside the daemon config. */
@@ -445,6 +449,7 @@ export async function createProtocolHttpServer(
     const appletContextTokens = new AppletContextTokenStore();
     const runtimeConfig: ProtocolServerRuntimeConfig = {
         inferenceMaxRetries: options.inferenceMaxRetries ?? DEFAULT_INFERENCE_MAX_RETRIES,
+        inferenceFatalRetries: options.inferenceFatalRetries ?? DEFAULT_INFERENCE_FATAL_RETRIES,
         gitStateTracker: options.gitStateTracker,
         globalEventQueue: options.globalEventQueue ?? store.globalEventQueue,
         globalInstructionsPath: options.globalInstructionsPath ?? getGlobalAgentsMdPath(),
@@ -609,6 +614,7 @@ interface ProtocolServerRuntimeConfig {
     canP2pPeerProvision: ProtocolHttpServerOptions["canP2pPeerProvision"];
     canP2pPeerUseRemoteWork: ProtocolHttpServerOptions["canP2pPeerUseRemoteWork"];
     inferenceMaxRetries: number;
+    inferenceFatalRetries: number;
     gitStateTracker: GitStateTracker | undefined;
     globalEventQueue: GlobalEventQueue;
     globalInstructionsPath: string;
@@ -653,6 +659,7 @@ interface ProtocolServerRuntimeConfig {
 
 interface AppliedDaemonSettings {
     inferenceMaxRetries: number;
+    inferenceFatalRetries: number;
     globalEventQueue: GlobalEventQueue;
 }
 
@@ -3221,6 +3228,7 @@ async function handleRequest(
                 },
                 settings: {
                     inferenceMaxRetries: runtimeConfig.inferenceMaxRetries,
+                    inferenceFatalRetries: runtimeConfig.inferenceFatalRetries,
                     durableGlobalEventQueue: runtimeConfig.globalEventQueue.durable,
                 },
             },
@@ -3237,6 +3245,7 @@ async function handleRequest(
         }
         const body: UpdateDaemonConfigRequest = rawBody;
         const inferenceMaxRetries = body.settings.inferenceMaxRetries;
+        const inferenceFatalRetries = body.settings.inferenceFatalRetries;
         const enabled = body.settings.durableGlobalEventQueue;
         if (runtimeConfig.onDaemonConfigChange === undefined) {
             sendJson(response, 409, {
@@ -3255,17 +3264,20 @@ async function handleRequest(
             },
             settings: {
                 inferenceMaxRetries,
+                inferenceFatalRetries,
                 durableGlobalEventQueue: enabled,
             },
         });
         if (
             applied === undefined ||
             applied.inferenceMaxRetries !== inferenceMaxRetries ||
+            applied.inferenceFatalRetries !== inferenceFatalRetries ||
             applied.globalEventQueue.durable !== enabled
         ) {
             throw new Error("The daemon could not apply the requested settings.");
         }
         runtimeConfig.inferenceMaxRetries = applied.inferenceMaxRetries;
+        runtimeConfig.inferenceFatalRetries = applied.inferenceFatalRetries;
         runtimeConfig.globalEventQueue = applied.globalEventQueue;
         sendJson<UpdateDaemonConfigResponse>(response, 200, {
             config: {
@@ -3275,6 +3287,7 @@ async function handleRequest(
                 },
                 settings: {
                     inferenceMaxRetries,
+                    inferenceFatalRetries,
                     durableGlobalEventQueue: enabled,
                 },
             },

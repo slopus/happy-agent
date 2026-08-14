@@ -1,5 +1,6 @@
 import { BaseSession } from "@/core/BaseSession.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -27,6 +28,7 @@ import { createGrokCompactionPrompt } from "@/vendors/grok/impl/grokCompaction.j
 import {
     delayBeforeGrokRetry,
     grokErrorStatus,
+    isGrokAbortError,
     isRetryableGrokError,
 } from "@/vendors/grok/impl/grokRetry.js";
 import { extractGrokUserQuery } from "@/vendors/grok/impl/grokMessages.js";
@@ -70,6 +72,7 @@ export class GrokSession extends BaseSession {
     private turnIndex: number;
     private readonly userAgent: string | undefined;
     private readonly resolveInferenceMaxRetries: () => number;
+    private readonly resolveInferenceFatalRetries: () => number;
     private readonly emptyResponseRetryWait: NonNullable<
         InferenceRetryOptions["waitForInferenceRetry"]
     >;
@@ -86,6 +89,7 @@ export class GrokSession extends BaseSession {
         this.tools = options.tools ?? [];
         this.userAgent = options.userAgent;
         this.resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.emptyResponseRetryWait =
             options.waitForInferenceRetry ??
             ((attempt, signal) => delayBeforeGrokRetry(attempt, signal));
@@ -409,6 +413,9 @@ export class GrokSession extends BaseSession {
         await this.refreshCredentialIfExpiring();
         let requestContext = options.context;
         let attempt = 0;
+        let fatalAttempt = 0;
+        // Requests actually sent, so the terminal diagnostics report what the run really cost.
+        let requestAttempts = 1;
         let responseContentBegun = false;
         let strippedImages = false;
         let refreshedCredential = false;
@@ -480,6 +487,7 @@ export class GrokSession extends BaseSession {
                     refreshedCredential = true;
                     if (await this.credential.refreshAfterUnauthorized()) {
                         await this.connection.rebuild(false);
+                        requestAttempts += 1;
                         continue;
                     }
                 }
@@ -488,6 +496,7 @@ export class GrokSession extends BaseSession {
                     if (stripped !== undefined) {
                         strippedImages = true;
                         requestContext = stripped;
+                        requestAttempts += 1;
                         continue;
                     }
                 }
@@ -499,12 +508,17 @@ export class GrokSession extends BaseSession {
                 if (emptyResponse) {
                     for (const event of attemptUsage) yield event;
                 }
+                const transientRetryable = isRetryableGrokError(error);
+                // Context overflow is never retried by any budget: only a smaller context fixes
+                // it, so it must fail even when the rejection otherwise looks retryable.
+                const contextOverflow = classifyGrokError(message) === "context_overflow";
                 if (
+                    !contextOverflow &&
                     (emptyResponse ||
                         !responseContentBegun ||
                         options.retryAfterContent === true) &&
                     attempt < this.resolveInferenceMaxRetries() &&
-                    isRetryableGrokError(error)
+                    transientRetryable
                 ) {
                     attempt += 1;
                     if (!emptyResponse && attempt === 1 && status !== 429) {
@@ -523,17 +537,53 @@ export class GrokSession extends BaseSession {
                         return;
                     }
                     if (resetBlock) yield { type: "block_start" };
+                    requestAttempts += 1;
                     continue;
                 }
 
+                // A failure that is neither transient nor a context overflow only a smaller
+                // context could fix spends the fatal budget instead: a model refusal, a spent
+                // account, or any other rejection that would otherwise end the run immediately.
+                // Compaction stays transient-only, since it is stateful on the server.
+                if (
+                    options.compaction !== true &&
+                    !transientRetryable &&
+                    !contextOverflow &&
+                    !isGrokAbortError(error)
+                ) {
+                    const fatalRetries = this.resolveInferenceFatalRetries();
+                    fatalAttempt += 1;
+                    if (fatalAttempt <= fatalRetries) {
+                        yield { type: "block_reset" };
+                        responseContentBegun = false;
+                        yield {
+                            type: "retrying",
+                            attempt: fatalAttempt,
+                            reason: `${message}, attempt ${fatalAttempt} of ${fatalRetries}.`,
+                        };
+                        try {
+                            await delayBeforeGrokRetry(fatalAttempt, abort, error);
+                        } catch (delayError) {
+                            if (abort?.aborted) return;
+                            throw delayError;
+                        }
+                        if (abort?.aborted) {
+                            return;
+                        }
+                        yield { type: "block_start" };
+                        requestAttempts += 1;
+                        continue;
+                    }
+                }
+
                 yield emptyResponse
-                    ? emptyResponseDoneEvent(error, attempt + 1)
+                    ? emptyResponseDoneEvent(error, requestAttempts)
                     : {
                           type: "done",
                           state: "error",
                           kind: classifyGrokError(message),
                           message,
-                          providerError: classifyGrokProviderError(error, message, attempt + 1),
+                          providerError: classifyGrokProviderError(error, message, requestAttempts),
                       };
                 return;
             }

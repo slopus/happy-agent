@@ -3,7 +3,10 @@ import type { DaemonSettings, LoadConfigOptions, PartialRigConfig } from "./type
 import { updateRuntimeConfig } from "./updateRuntimeConfig.js";
 
 export async function writeDaemonSettings(
-    settings: Pick<DaemonSettings, "inferenceMaxRetries" | "durableGlobalEventQueue">,
+    settings: Pick<
+        DaemonSettings,
+        "inferenceMaxRetries" | "inferenceFatalRetries" | "durableGlobalEventQueue"
+    >,
     options: LoadConfigOptions = {},
     p2pName?: string,
 ): Promise<void> {
@@ -29,6 +32,7 @@ export async function writeDaemonSettings(
             settings: {
                 ...runtime.settings,
                 inferenceMaxRetries: settings.inferenceMaxRetries,
+                inferenceFatalRetries: settings.inferenceFatalRetries,
                 durableGlobalEventQueue: settings.durableGlobalEventQueue,
             },
         } satisfies PartialRigConfig;

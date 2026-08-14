@@ -4,7 +4,9 @@ export function createProjectConfigSecurityNoticeTitle(config: PartialRigConfig)
     const permission = config.defaults?.permissionMode !== undefined;
     const docker = config.docker !== undefined;
     const providers = config.providerDefaultEnable !== undefined || config.providers !== undefined;
-    const inferenceRetries = config.settings?.inferenceMaxRetries !== undefined;
+    const inferenceRetries =
+        config.settings?.inferenceMaxRetries !== undefined ||
+        config.settings?.inferenceFatalRetries !== undefined;
     const daemonHeapSnapshots = config.settings?.daemonHeapSnapshots !== undefined;
     const durableEventQueue = config.settings?.durableGlobalEventQueue !== undefined;
     const happyIntegration = config.settings?.happyIntegration !== undefined;

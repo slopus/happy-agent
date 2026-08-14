@@ -64,6 +64,9 @@ export function mergeConfigValues(
         if (config.settings?.inferenceMaxRetries !== undefined) {
             settings.inferenceMaxRetries = config.settings.inferenceMaxRetries;
         }
+        if (config.settings?.inferenceFatalRetries !== undefined) {
+            settings.inferenceFatalRetries = config.settings.inferenceFatalRetries;
+        }
         if (config.settings?.showReasoning !== undefined) {
             settings.showReasoning = config.settings.showReasoning;
         }

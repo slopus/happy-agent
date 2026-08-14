@@ -2,7 +2,9 @@ import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import { BaseProvider } from "@/core/BaseProvider.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
+    sessionInferenceFatalRetriesResolver,
     sessionInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -36,6 +38,7 @@ export class ClaudeProvider extends BaseProvider {
     readonly query: ClaudeSdkQuery | undefined;
     readonly userAgent: string | undefined;
     readonly #resolveInferenceMaxRetries: () => number;
+    readonly #resolveInferenceFatalRetries: () => number;
     readonly #waitForInferenceRetry: InferenceRetryOptions["waitForInferenceRetry"];
 
     constructor(options: ClaudeProviderOptions) {
@@ -48,6 +51,7 @@ export class ClaudeProvider extends BaseProvider {
         this.query = options.query;
         this.userAgent = options.userAgent;
         this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.#resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.#waitForInferenceRetry = options.waitForInferenceRetry;
     }
 
@@ -65,6 +69,10 @@ export class ClaudeProvider extends BaseProvider {
             resolveInferenceMaxRetries: sessionInferenceMaxRetriesResolver(
                 options,
                 this.#resolveInferenceMaxRetries,
+            ),
+            resolveInferenceFatalRetries: sessionInferenceFatalRetriesResolver(
+                options,
+                this.#resolveInferenceFatalRetries,
             ),
             ...(this.#waitForInferenceRetry === undefined
                 ? {}

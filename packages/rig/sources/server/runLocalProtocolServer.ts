@@ -446,6 +446,7 @@ async function runOwnedLocalProtocolServer(
         ];
         if (stopping) return;
         const runtimeSettings = {
+            inferenceFatalRetries: loadedConfig.config.settings.inferenceFatalRetries,
             inferenceMaxRetries: loadedConfig.config.settings.inferenceMaxRetries,
         };
 
@@ -677,6 +678,7 @@ async function runOwnedLocalProtocolServer(
                         },
                         providers: scopedProviders,
                         protectedPaths: resolveProtectedPaths(options.cwd, machineProtectedPaths),
+                        resolveInferenceFatalRetries: () => runtimeSettings.inferenceFatalRetries,
                         resolveInferenceMaxRetries: () => runtimeSettings.inferenceMaxRetries,
                     });
                 },
@@ -1325,6 +1327,7 @@ async function runOwnedLocalProtocolServer(
                 ctx,
                 {
                     inferenceMaxRetries: runtimeSettings.inferenceMaxRetries,
+                    inferenceFatalRetries: runtimeSettings.inferenceFatalRetries,
                     ...(loadedConfig.config.docker === undefined
                         ? {}
                         : { defaultDocker: loadedConfig.config.docker }),
@@ -1434,11 +1437,13 @@ async function runOwnedLocalProtocolServer(
                         );
                         if (globalEventQueue === undefined) return undefined;
                         runtimeSettings.inferenceMaxRetries = config.settings.inferenceMaxRetries;
+                        runtimeSettings.inferenceFatalRetries = config.settings.inferenceFatalRetries;
                         p2pNode.name = config.p2p.name;
                         p2pNetwork?.setName(config.p2p.name);
                         if (p2pNetwork !== undefined) publishP2pStatus(p2pNetwork.status());
                         return {
                             inferenceMaxRetries: runtimeSettings.inferenceMaxRetries,
+                            inferenceFatalRetries: runtimeSettings.inferenceFatalRetries,
                             globalEventQueue,
                         };
                     },

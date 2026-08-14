@@ -1880,6 +1880,7 @@ describe("createProtocolHttpServer", () => {
                     },
                     settings: {
                         inferenceMaxRetries: 10,
+                        inferenceFatalRetries: 0,
                         durableGlobalEventQueue: false,
                     },
                 },
@@ -1926,6 +1927,7 @@ describe("createProtocolHttpServer", () => {
         const { client, close } = await startServer({
             onDaemonSettingsChange: async (settings) => ({
                 inferenceMaxRetries: settings.inferenceMaxRetries,
+                inferenceFatalRetries: settings.inferenceFatalRetries,
                 globalEventQueue: await store.setDurableGlobalEventQueue(
                     ctx,
                     settings.durableGlobalEventQueue,
@@ -1939,6 +1941,18 @@ describe("createProtocolHttpServer", () => {
                     client.updateDaemonConfig({
                         settings: {
                             inferenceMaxRetries,
+                            inferenceFatalRetries: 0,
+                            durableGlobalEventQueue: false,
+                        },
+                    }),
+                ).rejects.toThrow("Daemon settings must use valid values.");
+            }
+            for (const inferenceFatalRetries of [-1, 1.5, 101]) {
+                await expect(
+                    client.updateDaemonConfig({
+                        settings: {
+                            inferenceMaxRetries: 7,
+                            inferenceFatalRetries,
                             durableGlobalEventQueue: false,
                         },
                     }),
@@ -1948,6 +1962,7 @@ describe("createProtocolHttpServer", () => {
                 client.updateDaemonConfig({
                     settings: {
                         inferenceMaxRetries: 7,
+                        inferenceFatalRetries: 2,
                         durableGlobalEventQueue: true,
                     },
                 }),
@@ -1959,6 +1974,7 @@ describe("createProtocolHttpServer", () => {
                     },
                     settings: {
                         inferenceMaxRetries: 7,
+                        inferenceFatalRetries: 2,
                         durableGlobalEventQueue: true,
                     },
                 },
@@ -1989,6 +2005,7 @@ describe("createProtocolHttpServer", () => {
             await client.updateDaemonConfig({
                 settings: {
                     inferenceMaxRetries: 7,
+                    inferenceFatalRetries: 2,
                     durableGlobalEventQueue: false,
                 },
             });
@@ -2001,6 +2018,7 @@ describe("createProtocolHttpServer", () => {
                     },
                     settings: {
                         inferenceMaxRetries: 7,
+                        inferenceFatalRetries: 2,
                         durableGlobalEventQueue: false,
                     },
                 },
@@ -2009,6 +2027,7 @@ describe("createProtocolHttpServer", () => {
             await client.updateDaemonConfig({
                 settings: {
                     inferenceMaxRetries: 7,
+                    inferenceFatalRetries: 2,
                     durableGlobalEventQueue: true,
                 },
             });
@@ -3723,12 +3742,22 @@ async function startServer(
         getProviderQuota?: ProtocolHttpServerOptions["getProviderQuota"];
         onDaemonSettingsChange?: (settings: {
             inferenceMaxRetries: number;
+            inferenceFatalRetries: number;
             durableGlobalEventQueue: boolean;
         }) =>
-            | { inferenceMaxRetries: number; globalEventQueue: GlobalEventQueue }
+            | {
+                  inferenceMaxRetries: number;
+                  inferenceFatalRetries: number;
+                  globalEventQueue: GlobalEventQueue;
+              }
             | undefined
             | Promise<
-                  { inferenceMaxRetries: number; globalEventQueue: GlobalEventQueue } | undefined
+                  | {
+                        inferenceMaxRetries: number;
+                        inferenceFatalRetries: number;
+                        globalEventQueue: GlobalEventQueue;
+                    }
+                  | undefined
               >;
         onShutdown?: () => void;
         onReloadHappy?: () => boolean | Promise<boolean>;

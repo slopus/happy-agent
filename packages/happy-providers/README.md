@@ -482,14 +482,21 @@ you like, clear that presentation on `block_reset`, and move them into durable h
 `block_stop`. Events outside a block — `retrying`, usage, the terminal `done` — are never part of
 the rewound content.
 
-The default budget is ten retries after the initial request, so at most eleven attempts. You can
-set a provider-wide budget or override it per session; zero disables provider-owned retries for
-that session:
+There are two budgets, and every failure spends exactly one of them. Transient failures —
+dropped connections, retryable statuses, rate limits, empty responses — spend `inferenceMaxRetries`,
+which defaults to ten retries after the initial request, so at most eleven attempts. Every other
+failure that would end the run — a model refusal, a spent account, a rejected credential, an
+invalid request — spends `inferenceFatalRetries`, which defaults to zero so those failures are
+normally reported the moment they happen. Cancellation and context overflow are never retried by
+either budget: the caller owns both. The counters are independent, so transport noise cannot
+starve fatal retries. You can set provider-wide budgets or override either per session; zero
+disables that class of provider-owned retries for the session:
 
 ```ts
 const provider = new CodexProvider({
     credential,
     inferenceMaxRetries: 4,
+    inferenceFatalRetries: 1,
 });
 
 const oneShotSession = await provider.session(createId(), {
@@ -527,9 +534,13 @@ Every option each provider constructor accepts, and how the defaults are chosen.
 - `inferenceMaxRetries` — maximum provider-owned retries. Defaults to `10` (up to eleven total
   attempts), capped at `100`. `0` disables provider-owned retries. A session can override this
   with its own `inferenceMaxRetries` in `provider.session(id, options)`.
-- `resolveInferenceMaxRetries` — a callback that resolves the current retry limit on every run,
-  so long-lived sessions follow runtime configuration changes instead of the value captured at
-  construction.
+- `inferenceFatalRetries` — maximum provider-owned retries of fatal failures: rejections such as
+  a model refusal or a spent account that would otherwise end the run immediately. Defaults to
+  `0`, capped at `100`. Cancellation and context overflow are never retried. A session can
+  override this with its own `inferenceFatalRetries` in `provider.session(id, options)`.
+- `resolveInferenceMaxRetries` / `resolveInferenceFatalRetries` — callbacks that resolve the
+  current limits on every run, so long-lived sessions follow runtime configuration changes
+  instead of the values captured at construction.
 - `waitForInferenceRetry` — a test seam that replaces the provider's retry backoff wait. Leave it
   unset in production.
 
@@ -637,6 +648,8 @@ interface SessionOptions {
     readonly tools?: readonly SessionTool[];
     /** Retry budget for this session alone, overriding the provider's. Zero disables retries. */
     readonly inferenceMaxRetries?: number;
+    /** Fatal-failure retry budget for this session alone. The provider default is zero. */
+    readonly inferenceFatalRetries?: number;
     /** Alternate model-visible configurations for sessions that switch models. */
     readonly modelConfigurations?: Readonly<Record<string, SessionModelConfiguration>>;
 }

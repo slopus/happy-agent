@@ -125,6 +125,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
     let compactCompletedTurns =
         options.compactCompletedTurns ?? loadedConfig.config.settings.compactCompletedTurns;
     let inferenceMaxRetries = loadedConfig.config.settings.inferenceMaxRetries;
+    let inferenceFatalRetries = loadedConfig.config.settings.inferenceFatalRetries;
     let completionChime = loadedConfig.config.settings.completionChime;
     const daemonHeapSnapshots = loadedConfig.config.settings.daemonHeapSnapshots;
     let durableGlobalEventQueue = loadedConfig.config.settings.durableGlobalEventQueue;
@@ -378,6 +379,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
                         },
                         settings: {
                             inferenceMaxRetries,
+                            inferenceFatalRetries,
                             compactCompletedTurns,
                             completionChime,
                             daemonHeapSnapshots,
@@ -390,6 +392,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
                 ),
             onSettingsChange: async (settings) => {
                 inferenceMaxRetries = settings.inferenceMaxRetries;
+                inferenceFatalRetries = settings.inferenceFatalRetries;
                 compactCompletedTurns = settings.compactCompletedTurns;
                 completionChime = settings.completionChime;
                 durableGlobalEventQueue = settings.durableGlobalEventQueue;
@@ -411,6 +414,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
                 await localServer.client.updateDaemonConfig({
                     settings: {
                         inferenceMaxRetries,
+                        inferenceFatalRetries,
                         durableGlobalEventQueue,
                     },
                 });
@@ -451,6 +455,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             },
             sessionBacked: true,
             inferenceMaxRetries,
+            inferenceFatalRetries,
             compactCompletedTurns,
             completionChime,
             durableGlobalEventQueue,

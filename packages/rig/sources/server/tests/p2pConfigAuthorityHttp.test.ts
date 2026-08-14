@@ -21,6 +21,7 @@ describe("P2P primary configuration authority", () => {
                     return {
                         globalEventQueue: store.globalEventQueue,
                         inferenceMaxRetries: config.settings.inferenceMaxRetries,
+                        inferenceFatalRetries: config.settings.inferenceFatalRetries,
                     };
                 },
                 p2pNode: () => ({
@@ -58,7 +59,11 @@ describe("P2P primary configuration authority", () => {
 async function patch(socketPath: string, peerId?: string): Promise<number> {
     const body = JSON.stringify({
         p2p: { name: "Renamed 🛠️" },
-        settings: { durableGlobalEventQueue: false, inferenceMaxRetries: 10 },
+        settings: {
+            durableGlobalEventQueue: false,
+            inferenceMaxRetries: 10,
+            inferenceFatalRetries: 0,
+        },
     });
     return send(socketPath, "PATCH", "/config", body, peerId);
 }

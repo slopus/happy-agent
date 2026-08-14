@@ -103,6 +103,7 @@ export interface CreateCodingAssistantAgentOptions {
     permissionMode?: PermissionMode;
     providers?: ConfigProviders;
     providerUsage?: ProviderUsageContext;
+    resolveInferenceFatalRetries?: () => number;
     resolveInferenceMaxRetries?: () => number;
     serviceTier?: ServiceTier;
     /** Variables injected into every command this session executes. */
@@ -262,6 +263,11 @@ export function createCodingAssistantAgent(
                     ? {}
                     : { onAccountUsage: options.onAccountUsage }),
                 providers: options.providers ?? DEFAULT_RIG_CONFIG.providers,
+                ...(options.resolveInferenceFatalRetries === undefined
+                    ? {}
+                    : {
+                          resolveInferenceFatalRetries: options.resolveInferenceFatalRetries,
+                      }),
                 ...(options.resolveInferenceMaxRetries === undefined
                     ? {}
                     : {

@@ -388,6 +388,7 @@ service_tier = "fast"
 
 [settings]
 inference_max_retries = 9
+inference_fatal_retries = 2
 compact_completed_turns = true
 completion_chime = true
 daemon_heap_snapshots = true
@@ -446,6 +447,7 @@ mounts = [
             },
             settings: {
                 inferenceMaxRetries: 9,
+                inferenceFatalRetries: 2,
                 compactCompletedTurns: true,
                 completionChime: true,
                 daemonHeapSnapshots: true,
@@ -645,6 +647,14 @@ search_model = "openai/gpt-5.6-terra"
             "settings.inference_max_retries must be a whole number from 0 to 100.",
         ],
         [
+            "[settings]\ninference_fatal_retries = 101\n",
+            "settings.inference_fatal_retries must be a whole number from 0 to 100.",
+        ],
+        [
+            "[settings]\ninference_fatal_retries = 1.5\n",
+            "settings.inference_fatal_retries must be a whole number from 0 to 100.",
+        ],
+        [
             "[settings]\ntool_result_retention_days = 36501\n",
             "settings.tool_result_retention_days must be a whole number from 0 to 36500.",
         ],
@@ -724,6 +734,11 @@ search_model = "openai/gpt-5.6-terra"
             }),
         ).toBe("Project daemon setting ignored");
         expect(
+            createProjectConfigSecurityNoticeTitle({
+                settings: { inferenceFatalRetries: 5 },
+            }),
+        ).toBe("Project daemon setting ignored");
+        expect(
             createProjectConfigSecurityNotice({
                 settings: { toolResultRetentionDays: 30 },
             }),
@@ -765,6 +780,7 @@ effort = "low"
 permission_mode = "read_only"
 [settings]
 inference_max_retries = 7
+inference_fatal_retries = 1
 daemon_heap_snapshots = false
 durable_global_event_queue = false
 happy_integration = false
@@ -791,6 +807,7 @@ instructions = "Hide project tool activity."
 permission_mode = "full_access"
 [settings]
 inference_max_retries = 99
+inference_fatal_retries = 4
 daemon_heap_snapshots = true
 durable_global_event_queue = true
 happy_integration = true
@@ -825,6 +842,7 @@ model = "openai/gpt-5.5"
 effort = "minimal"
 [settings]
 inference_max_retries = 8
+inference_fatal_retries = 3
 `,
                 "utf8",
             );
@@ -846,6 +864,7 @@ inference_max_retries = 8
             });
             expect(loaded.config.settings).toEqual({
                 inferenceMaxRetries: 8,
+                inferenceFatalRetries: 3,
                 compactCompletedTurns: false,
                 completionChime: false,
                 daemonHeapSnapshots: false,
@@ -893,6 +912,7 @@ inference_max_retries = 8
             });
             expect(defaultLoaded.config.settings).toEqual({
                 inferenceMaxRetries: 10,
+                inferenceFatalRetries: 0,
                 compactCompletedTurns: false,
                 completionChime: false,
                 daemonHeapSnapshots: false,
@@ -929,6 +949,7 @@ inference_max_retries = 8
                 },
                 settings: {
                     inferenceMaxRetries: 12,
+                    inferenceFatalRetries: 6,
                     compactCompletedTurns: true,
                     completionChime: true,
                     daemonHeapSnapshots: true,
@@ -993,6 +1014,7 @@ inference_max_retries = 8
                     "",
                     "[settings]",
                     "inference_max_retries = 12",
+                    "inference_fatal_retries = 6",
                     "compact_completed_turns = true",
                     "completion_chime = true",
                     "daemon_heap_snapshots = true",
@@ -1183,6 +1205,7 @@ inference_max_retries = 8
             await writeDaemonSettings(
                 {
                     inferenceMaxRetries: 11,
+                    inferenceFatalRetries: 5,
                     durableGlobalEventQueue: true,
                 },
                 {
@@ -1198,6 +1221,7 @@ inference_max_retries = 8
                 defaults: { modelId: "openai/gpt-5.5" },
                 settings: {
                     inferenceMaxRetries: 11,
+                    inferenceFatalRetries: 5,
                     durableGlobalEventQueue: true,
                     showUsage: true,
                 },

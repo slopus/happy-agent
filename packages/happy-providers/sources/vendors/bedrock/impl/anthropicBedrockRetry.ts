@@ -1,6 +1,7 @@
-import { APIConnectionError, APIError } from "@anthropic-ai/sdk/error";
+import { APIConnectionError, APIError, APIUserAbortError } from "@anthropic-ai/sdk/error";
 
 import { isEmptyResponseError } from "@/core/EmptyResponseError.js";
+import { isAnthropicRefusalError } from "@/protocol/anthropic/AnthropicRefusalError.js";
 
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 32_000;
@@ -70,15 +71,45 @@ const BEDROCK_EXCEPTION_STATUS: Record<string, number> = {
     ValidationException: 400,
 };
 
+/**
+ * Every failure spends one of two counters: transient failures — dropped connections, retryable
+ * statuses, empty responses — spend the transport budget, and everything else that would end the
+ * run — a model refusal, a spent account, a rejected credential — spends the fatal budget, which
+ * defaults to zero. Separate counters keep transport noise from starving fatal retries and the
+ * other way around, while each budget still bounds the run. Context overflow is the one terminal
+ * failure no budget retries, because only a smaller context can fix it and the caller owns that.
+ */
 export function shouldRetryAnthropicBedrock(
     error: unknown,
-    failedAttempts: number,
+    transientFailedAttempts: number,
     maxRetries: number,
+    fatalFailedAttempts: number,
+    fatalRetries: number,
 ): boolean {
-    if (failedAttempts > maxRetries) return false;
+    if (isAnthropicBedrockAbortError(error)) return false;
+    if (isAnthropicBedrockContextOverflow(error)) return false;
+    if (isTransientAnthropicBedrockError(error)) return transientFailedAttempts <= maxRetries;
+    return fatalFailedAttempts <= fatalRetries;
+}
+
+/** Recognizes a failure that waiting can fix, which retries under the transport budget. */
+export function isTransientAnthropicBedrockError(error: unknown): boolean {
     if (isEmptyResponseError(error)) return true;
     if (isAnthropicBedrockConnectionFailure(error)) return true;
     return isRetryableAnthropicBedrockStatus(resolveAnthropicBedrockErrorStatus(error));
+}
+
+const CONTEXT_OVERFLOW_MESSAGES = [
+    "context window",
+    "context limit",
+    "input is too long",
+    "too many input tokens",
+] as const;
+
+/** Recognizes the rejection only a smaller context can fix, which no retry budget replays. */
+export function isAnthropicBedrockContextOverflow(error: unknown): boolean {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return CONTEXT_OVERFLOW_MESSAGES.some((pattern) => message.includes(pattern));
 }
 
 function isRetryableAnthropicBedrockStatus(status: number | undefined): boolean {
@@ -101,22 +132,6 @@ export function resolveAnthropicBedrockErrorStatus(error: unknown): number | und
         return details === undefined ? undefined : ERROR_TYPE_STATUS[details.type];
     }
     return anthropicBedrockRuntimeExceptionDetails(error)?.status;
-}
-
-/**
- * Recognizes a retryable error delivered on an already-open response stream: an Anthropic SSE
- * `error` event such as api_error or overloaded_error, or an AWS Bedrock eventstream exception.
- * Unlike HTTP-level failures these can interrupt a response that already produced content, so
- * the session replays them through its block_reset rollback.
- */
-export function isRetryableAnthropicBedrockStreamError(error: unknown): boolean {
-    const details = anthropicBedrockStreamErrorDetails(error);
-    if (details !== undefined) {
-        return isRetryableAnthropicBedrockStatus(ERROR_TYPE_STATUS[details.type]);
-    }
-    return isRetryableAnthropicBedrockStatus(
-        anthropicBedrockRuntimeExceptionDetails(error)?.status,
-    );
 }
 
 /**
@@ -201,7 +216,7 @@ export function anthropicBedrockStreamErrorDetails(
 
 /** Recognizes a dropped or timed-out connection, including undici's raw mid-body stream errors. */
 export function isAnthropicBedrockConnectionFailure(error: unknown): boolean {
-    if (isAbortError(error)) return false;
+    if (isAnthropicBedrockAbortError(error)) return false;
     if (error instanceof APIConnectionError) return true;
     if (hasConnectionFailureCode(error)) return true;
     const message = error instanceof Error ? error.message : undefined;
@@ -225,10 +240,21 @@ function hasConnectionFailureCode(value: unknown): boolean {
     return false;
 }
 
-function isAbortError(value: unknown): boolean {
-    if (typeof value !== "object" || value === null) return false;
-    const record = value as { code?: unknown; name?: unknown };
-    return record.name === "AbortError" || record.code === "ABORT_ERR";
+/**
+ * Recognizes a cancellation even when the caller's signal is not observably aborted, so neither
+ * retry budget can replay a request somebody stopped on purpose.
+ */
+export function isAnthropicBedrockAbortError(value: unknown): boolean {
+    const seen = new Set<object>();
+    let current = value;
+    while (typeof current === "object" && current !== null && !seen.has(current)) {
+        if (current instanceof APIUserAbortError) return true;
+        seen.add(current);
+        const record = current as { cause?: unknown; code?: unknown; name?: unknown };
+        if (record.name === "AbortError" || record.code === "ABORT_ERR") return true;
+        current = record.cause;
+    }
+    return false;
 }
 
 export function resolveAnthropicBedrockRetryDelay(
@@ -273,13 +299,21 @@ export function waitForAnthropicBedrockRetry(
     });
 }
 
+/** Describes the retry using the allowance of whichever budget the failure spends. */
 export function describeAnthropicBedrockRetry(
     error: unknown,
     failedAttempts: number,
     delay: number,
-    maxRetries: number,
+    allowance: number,
 ): string {
     if (isEmptyResponseError(error)) return error.message;
+    if (isAnthropicRefusalError(error)) {
+        const refusal =
+            error.category === undefined
+                ? "model refusal"
+                : `model refusal (category: ${error.category})`;
+        return `Anthropic Bedrock ${refusal}; retrying in ${formatDelay(delay)}, attempt ${failedAttempts} of ${allowance}.`;
+    }
     const status =
         error instanceof APIError && error.status !== undefined
             ? `HTTP ${error.status}`
@@ -287,7 +321,7 @@ export function describeAnthropicBedrockRetry(
                 anthropicBedrockRuntimeExceptionDetails(error) !== undefined
               ? "error during the response stream"
               : "connection failure";
-    return `Anthropic Bedrock ${status}; retrying in ${formatDelay(delay)}, attempt ${failedAttempts} of ${maxRetries}.`;
+    return `Anthropic Bedrock ${status}; retrying in ${formatDelay(delay)}, attempt ${failedAttempts} of ${allowance}.`;
 }
 
 function formatDelay(milliseconds: number): string {

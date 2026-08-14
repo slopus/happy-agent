@@ -1,7 +1,9 @@
 import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
 import {
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
+    sessionInferenceFatalRetriesResolver,
     sessionInferenceMaxRetriesResolver,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";
@@ -55,6 +57,7 @@ export class CodexProvider extends ResponsesProvider {
     readonly transport: CodexTransport;
     readonly userAgent: string | undefined;
     readonly #resolveInferenceMaxRetries: () => number;
+    readonly #resolveInferenceFatalRetries: () => number;
     readonly #waitForInferenceRetry: InferenceRetryOptions["waitForInferenceRetry"];
 
     constructor(options: CodexProviderOptions) {
@@ -80,6 +83,7 @@ export class CodexProvider extends ResponsesProvider {
                 : resolveCodexSessionModelId(options.model, isBedrock);
         this.parallelToolCalls = options.parallelToolCalls;
         this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
+        this.#resolveInferenceFatalRetries = createInferenceFatalRetriesResolver(options);
         this.#waitForInferenceRetry = options.waitForInferenceRetry;
         this.streamIdleTimeoutMs = resolveCodexStreamIdleTimeout(options.streamIdleTimeoutMs);
         this.transport = isBedrock ? "sse" : (options.transport ?? "auto");
@@ -115,6 +119,10 @@ export class CodexProvider extends ResponsesProvider {
             ...(this.parallelToolCalls === undefined
                 ? {}
                 : { parallelToolCalls: this.parallelToolCalls }),
+            resolveInferenceFatalRetries: sessionInferenceFatalRetriesResolver(
+                options,
+                this.#resolveInferenceFatalRetries,
+            ),
             resolveInferenceMaxRetries: sessionInferenceMaxRetriesResolver(
                 options,
                 () => this.inferenceMaxRetries,

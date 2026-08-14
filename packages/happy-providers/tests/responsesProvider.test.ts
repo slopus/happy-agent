@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { ResponsesProvider } from "@/protocol/responses/ResponsesProvider.js";
 import { createOpenAIResponseRequest } from "@/protocol/responses/createOpenAIResponseRequest.js";
+import { isTransientResponsesError } from "@/protocol/responses/responsesRetry.js";
 import { collectSessionEvents, textFromSessionEvents } from "./helpers/collectSessionEvents.js";
 
 describe("ResponsesProvider", () => {
@@ -492,6 +493,558 @@ describe("ResponsesProvider", () => {
         }
 
         expect(events).toEqual([]);
+    });
+
+    it("retries a transient 500 failure and completes", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                if (attempts === 1) {
+                    return Response.json(
+                        { error: { message: "The server had an error." } },
+                        { status: 500 },
+                    );
+                }
+                return sseResponse([
+                    {
+                        type: "response.output_item.added",
+                        output_index: 0,
+                        item: { type: "message", id: "message-1", role: "assistant", content: [] },
+                    },
+                    {
+                        type: "response.output_text.delta",
+                        output_index: 0,
+                        content_index: 0,
+                        delta: "recovered",
+                    },
+                    completedResponse(
+                        [
+                            {
+                                type: "message",
+                                id: "message-1",
+                                role: "assistant",
+                                status: "completed",
+                                content: [
+                                    { type: "output_text", text: "recovered", annotations: [] },
+                                ],
+                            },
+                        ],
+                        1,
+                    ),
+                ]);
+            },
+        });
+        const session = await provider.session("responses-transient-retry", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events = await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "user", content: [{ type: "text" as const, text: "Retry once." }] },
+                    ],
+                },
+            }),
+        );
+
+        expect(attempts).toBe(2);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(1);
+        expect(textFromSessionEvents(events)).toBe("recovered");
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
+    it("honors a zero transient retry budget set on the session", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            fetch: async () => {
+                attempts += 1;
+                return Response.json(
+                    { error: { message: "The server had an error." } },
+                    { status: 500 },
+                );
+            },
+        });
+        const session = await provider.session("responses-transient-budget", {
+            instructions: "",
+            tools: [],
+            inferenceMaxRetries: 0,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Fail once." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            providerError: { type: "internal_server_error" },
+        });
+    });
+
+    it("does not retry a 401 by default", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            fetch: async () => {
+                attempts += 1;
+                return Response.json({ error: { message: "Invalid API key." } }, { status: 401 });
+            },
+        });
+        const session = await provider.session("responses-auth-fatal", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Auth please." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            providerError: { type: "authentication" },
+        });
+    });
+
+    it("retries a 401 once under a fatal retry budget and can succeed", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                if (attempts === 1) {
+                    return Response.json(
+                        { error: { message: "Invalid API key." } },
+                        { status: 401 },
+                    );
+                }
+                return sseResponse([
+                    {
+                        type: "response.output_item.added",
+                        output_index: 0,
+                        item: { type: "message", id: "message-1", role: "assistant", content: [] },
+                    },
+                    {
+                        type: "response.output_text.delta",
+                        output_index: 0,
+                        content_index: 0,
+                        delta: "recovered",
+                    },
+                    completedResponse(
+                        [
+                            {
+                                type: "message",
+                                id: "message-1",
+                                role: "assistant",
+                                status: "completed",
+                                content: [
+                                    { type: "output_text", text: "recovered", annotations: [] },
+                                ],
+                            },
+                        ],
+                        1,
+                    ),
+                ]);
+            },
+        });
+        const session = await provider.session("responses-auth-fatal-retry", {
+            instructions: "",
+            tools: [],
+            inferenceFatalRetries: 1,
+        });
+
+        const events = await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "user", content: [{ type: "text" as const, text: "Auth please." }] },
+                    ],
+                },
+            }),
+        );
+
+        expect(attempts).toBe(2);
+        expect(events).toContainEqual({
+            type: "retrying",
+            attempt: 1,
+            reason: expect.stringContaining("attempt 1 of 1"),
+        });
+        expect(textFromSessionEvents(events)).toBe("recovered");
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
+    it("does not retry a spent-account 429 as transient", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            fetch: async () => {
+                attempts += 1;
+                return Response.json(
+                    { error: { message: "You exceeded your quota.", code: "insufficient_quota" } },
+                    { status: 429 },
+                );
+            },
+        });
+        const session = await provider.session("responses-quota-fatal", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [{ role: "user", content: [{ type: "text" as const, text: "Spend it." }] }],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "billing_error",
+            providerError: { type: "out_of_tokens" },
+        });
+    });
+
+    it("retries a spent-account 429 under a fatal retry budget", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return Response.json(
+                    { error: { message: "You exceeded your quota.", code: "insufficient_quota" } },
+                    { status: 429 },
+                );
+            },
+        });
+        const session = await provider.session("responses-quota-fatal-retry", {
+            instructions: "",
+            tools: [],
+            inferenceFatalRetries: 1,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [{ role: "user", content: [{ type: "text" as const, text: "Spend it." }] }],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(2);
+        expect(events.filter((event) => event.type === "retrying")).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "billing_error",
+            providerError: { type: "out_of_tokens" },
+        });
+    });
+
+    it("never retries a context overflow that arrives as a 429", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return Response.json(
+                    { error: { message: "Your input exceeds the model's context window." } },
+                    { status: 429 },
+                );
+            },
+        });
+        const session = await provider.session("responses-overflow-429", {
+            instructions: "",
+            tools: [],
+            inferenceMaxRetries: 5,
+            inferenceFatalRetries: 5,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Send too much." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "context_overflow",
+        });
+    });
+
+    it("never retries context overflow even with both budgets set", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return Response.json(
+                    { error: { message: "Maximum context_length exceeded." } },
+                    { status: 413 },
+                );
+            },
+        });
+        const session = await provider.session("responses-context-overflow", {
+            instructions: "",
+            tools: [],
+            inferenceMaxRetries: 5,
+            inferenceFatalRetries: 5,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Send too much." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "context_overflow",
+        });
+    });
+
+    it("never retries a context overflow that claims to be retryable", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return Response.json(
+                    { error: { message: "Your input exceeds the model's context window." } },
+                    { status: 400, headers: { "x-should-retry": "true" } },
+                );
+            },
+        });
+        const session = await provider.session("responses-overflow-retry-header", {
+            instructions: "",
+            tools: [],
+            inferenceMaxRetries: 5,
+            inferenceFatalRetries: 5,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    { role: "user", content: [{ type: "text" as const, text: "Send too much." }] },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "context_overflow",
+        });
+    });
+
+    it("never spends the fatal budget on an abort-shaped failure", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                // The transport surfaces this wrapped in an APIConnectionError, which would
+                // otherwise be transient; the abort in its cause chain must win.
+                throw Object.assign(new Error("Request was aborted."), {
+                    name: "APIUserAbortError",
+                });
+            },
+        });
+        const session = await provider.session("responses-abort-shaped", {
+            instructions: "",
+            tools: [],
+            inferenceFatalRetries: 3,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [{ role: "user", content: [{ type: "text" as const, text: "Stop." }] }],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "error" });
+    });
+
+    it("lets a session override outrank the provider's fatal budget", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            inferenceFatalRetries: 1,
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return Response.json({ error: { message: "Invalid API key." } }, { status: 401 });
+            },
+        });
+        const session = await provider.session("responses-session-fatal-override", {
+            instructions: "",
+            tools: [],
+            inferenceFatalRetries: 0,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [{ role: "user", content: [{ type: "text" as const, text: "Auth." }] }],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events.filter((event) => event.type === "retrying")).toEqual([]);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            providerError: { type: "authentication" },
+        });
+    });
+
+    it("reports the total request count once every retry budget is spent", async () => {
+        let attempts = 0;
+        const provider = new ResponsesProvider({
+            apiKey: "test-key",
+            endpoint: "https://responses.example/v1",
+            model: "open-model",
+            waitForInferenceRetry: async () => {},
+            fetch: async () => {
+                attempts += 1;
+                return Response.json(
+                    { error: { message: "The server had an error." } },
+                    { status: 500 },
+                );
+            },
+        });
+        const session = await provider.session("responses-exhausted-attempts", {
+            instructions: "",
+            tools: [],
+            inferenceMaxRetries: 1,
+        });
+
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [{ role: "user", content: [{ type: "text" as const, text: "Fail." }] }],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(2);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            providerError: {
+                type: "internal_server_error",
+                diagnostics: expect.objectContaining({ attempts: 2 }),
+            },
+        });
+    });
+
+    it("classifies transience without looping on a cyclic error cause", () => {
+        const looped = new Error("boom");
+        looped.cause = looped;
+        expect(isTransientResponsesError(looped)).toBe(false);
+
+        const outer = new Error("outer");
+        const inner = Object.assign(new Error("inner"), { status: 503, cause: outer });
+        outer.cause = inner;
+        expect(isTransientResponsesError(outer)).toBe(true);
     });
 });
 

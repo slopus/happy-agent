@@ -13,6 +13,7 @@ export function withoutProjectMachineSettings(config: PartialRigConfig): Partial
     const { permissionMode: _permissionMode, ...defaults } = projectDefaults ?? {};
     const {
         inferenceMaxRetries: _inferenceMaxRetries,
+        inferenceFatalRetries: _inferenceFatalRetries,
         daemonHeapSnapshots: _daemonHeapSnapshots,
         durableGlobalEventQueue: _durableGlobalEventQueue,
         happyIntegration: _happyIntegration,

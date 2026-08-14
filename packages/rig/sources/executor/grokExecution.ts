@@ -8,6 +8,7 @@ export function grokExecution(options: {
     config: ConfigGrokProvider;
     env: NodeJS.ProcessEnv;
     id: string;
+    resolveInferenceFatalRetries?: () => number;
     resolveInferenceMaxRetries?: () => number;
     sessionId?: string;
 }): ExecutorProvider {
@@ -36,6 +37,9 @@ export function grokExecution(options: {
             }
             return new GrokProvider({
                 credential,
+                ...(options.resolveInferenceFatalRetries === undefined
+                    ? {}
+                    : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
                 ...(options.resolveInferenceMaxRetries === undefined
                     ? {}
                     : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),

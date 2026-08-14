@@ -155,9 +155,12 @@ export {
     type CodexTransport,
 } from "@/vendors/codex/impl/codexConstants.js";
 export {
+    DEFAULT_INFERENCE_FATAL_RETRIES,
     DEFAULT_INFERENCE_MAX_RETRIES,
     MAX_INFERENCE_MAX_RETRIES,
+    createInferenceFatalRetriesResolver,
     createInferenceMaxRetriesResolver,
+    resolveInferenceFatalRetries,
     resolveInferenceMaxRetries,
     type InferenceRetryOptions,
 } from "@/core/inferenceRetrySettings.js";

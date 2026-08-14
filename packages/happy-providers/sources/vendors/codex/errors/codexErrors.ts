@@ -357,6 +357,11 @@ export function isRetryableCodexStreamError(error: unknown): boolean {
     return shouldRetry(error, new Set());
 }
 
+/** Cancellation is never retried by any budget; the caller, not the provider, owns it. */
+export function isCodexAbortError(error: unknown): boolean {
+    return hasAbortError(error, new Set());
+}
+
 /** Unknown inference failures are transient unless the provider proves they are fatal. */
 function shouldRetry(error: unknown, seen: Set<object>): boolean {
     if (typeof error === "object" && error !== null) {

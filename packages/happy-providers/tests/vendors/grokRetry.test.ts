@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { delayBeforeGrokRetry, isRetryableGrokError } from "@/vendors/grok/impl/grokRetry.js";
+import {
+    delayBeforeGrokRetry,
+    isGrokAbortError,
+    isRetryableGrokError,
+} from "@/vendors/grok/impl/grokRetry.js";
 import { isRetryableGrokCompactionError } from "@/vendors/grok/errors/grokErrors.js";
 
 describe("Grok retry contract", () => {
@@ -39,6 +43,14 @@ describe("Grok retry contract", () => {
         },
     );
 
+    it.each([
+        "subscription:free-usage-exhausted",
+        "Your credit balance is too low",
+        'Error 402 "Grok Build usage balance exhausted"',
+    ])("does not retry a spent account as an ordinary 429: %s", (message) => {
+        expect(isRetryableGrokError({ status: 429, message })).toBe(false);
+    });
+
     it("retries nested transport failures", () => {
         expect(
             isRetryableGrokError({
@@ -50,6 +62,18 @@ describe("Grok retry contract", () => {
 
     it("never retries aborts", () => {
         expect(isRetryableGrokError({ name: "AbortError", status: 503 })).toBe(false);
+    });
+
+    it("recognizes an abort wrapped inside another failure's cause", () => {
+        const wrapped = { message: "stream failed", cause: { name: "AbortError" } };
+        expect(isGrokAbortError(wrapped)).toBe(true);
+        expect(isRetryableGrokError(wrapped)).toBe(false);
+    });
+
+    it("classifies aborts without looping on a cyclic cause", () => {
+        const looped: { name: string; cause?: unknown } = { name: "SomethingElse" };
+        looped.cause = looped;
+        expect(isGrokAbortError(looped)).toBe(false);
     });
 
     it("honors the proxy's explicit no-retry header", () => {

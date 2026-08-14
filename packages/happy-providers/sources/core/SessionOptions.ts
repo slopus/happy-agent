@@ -14,6 +14,11 @@ export interface SessionOptions extends SessionToolsOptions {
      * reported the moment it happens. Omit it to retry the way the provider normally would.
      */
     readonly inferenceMaxRetries?: number;
+    /**
+     * Fatal-failure retry budget for this session alone, overriding the provider's own. Omit it
+     * to follow the provider, whose own default is zero.
+     */
+    readonly inferenceFatalRetries?: number;
     readonly instructions: string;
     /**
      * Alternate model-visible configurations supplied when a session can switch between

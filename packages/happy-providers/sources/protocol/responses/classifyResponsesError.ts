@@ -4,6 +4,10 @@ import {
 } from "@/core/extractProviderErrorDiagnostics.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
 import type { SessionProviderError } from "@/core/SessionProviderError.js";
+import {
+    isInsufficientQuotaResponsesError,
+    isResponsesContextOverflowError,
+} from "@/protocol/responses/responsesRetry.js";
 
 type ErrorDone = Extract<SessionEvent, { type: "done"; state: "error" }>;
 
@@ -24,25 +28,9 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             providerError: withDiagnostics("authentication", diagnostics),
         };
     }
-    if (status === 429) {
-        return {
-            type: "done",
-            state: "error",
-            kind: "unknown",
-            message: "The Responses API rate limit was reached.",
-            providerError: withResetAt(
-                "rate_limit",
-                diagnostics,
-                extractProviderRetryResetAt(error),
-            ),
-        };
-    }
-    if (
-        status === 413 ||
-        normalized.includes("context_length") ||
-        normalized.includes("context window") ||
-        normalized.includes("too many tokens")
-    ) {
+    // Overflow and a spent account outrank the status-based cases below: both can arrive as a
+    // 429, and neither is something waiting fixes.
+    if (isResponsesContextOverflowError(error)) {
         return {
             type: "done",
             state: "error",
@@ -51,14 +39,27 @@ export function classifyResponsesError(error: unknown): ErrorDone {
             providerError: withDiagnostics("unclassified", diagnostics),
         };
     }
-    if (status === 402) {
+    if (status === 402 || isInsufficientQuotaResponsesError(error)) {
         return {
             type: "done",
             state: "error",
             kind: "billing_error",
-            message: "The Responses API rejected the request because billing is unavailable.",
+            message: "The Responses API rejected the request because the account is out of usage credit.",
             providerError: withResetAt(
                 "out_of_tokens",
+                diagnostics,
+                extractProviderRetryResetAt(error),
+            ),
+        };
+    }
+    if (status === 429) {
+        return {
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message: "The Responses API rate limit was reached.",
+            providerError: withResetAt(
+                "rate_limit",
                 diagnostics,
                 extractProviderRetryResetAt(error),
             ),

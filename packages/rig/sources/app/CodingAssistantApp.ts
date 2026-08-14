@@ -36,6 +36,7 @@ import type { NativeProcessManager } from "../processes/index.js";
 import { humanizeMcpName } from "../mcp/humanizeMcpName.js";
 import type { ServiceTier, Usage } from "@slopus/rig-execution";
 import {
+    DEFAULT_INFERENCE_FATAL_RETRIES,
     DEFAULT_INFERENCE_MAX_RETRIES,
     MAX_INFERENCE_MAX_RETRIES,
 } from "../config/inferenceRetrySettings.js";
@@ -249,6 +250,7 @@ export interface CodingAssistantAppOptions {
     ) => Promise<ClipboardImage | undefined>;
     searchFiles?: (query: string) => Promise<readonly FileSearchResult[]>;
     inferenceMaxRetries?: number;
+    inferenceFatalRetries?: number;
     compactCompletedTurns?: boolean;
     completionChime?: boolean;
     registerSecret?: (
@@ -321,6 +323,7 @@ export interface DefaultModelPreference {
 
 export interface AppSettings {
     inferenceMaxRetries: number;
+    inferenceFatalRetries: number;
     compactCompletedTurns: boolean;
     completionChime: boolean;
     durableGlobalEventQueue: boolean;
@@ -483,6 +486,7 @@ export class CodingAssistantApp implements Component, Focusable {
     #observedShellProcesses: readonly BashSessionActivity[] = [];
     #yieldedBackgroundTerminals = new Map<number, string>();
     #inferenceMaxRetries: number;
+    #inferenceFatalRetries: number;
     #compactCompletedTurns: boolean;
     #directShellCommandsBySessionId = new Map<number, { command: string; commandId: string }>();
     #backgroundedShellCommandIds = new Set<string>();
@@ -565,6 +569,8 @@ export class CodingAssistantApp implements Component, Focusable {
         this.#readClipboardImage = options.readClipboardImage ?? readClipboardImage;
         this.#sessionBacked = options.sessionBacked ?? false;
         this.#inferenceMaxRetries = options.inferenceMaxRetries ?? DEFAULT_INFERENCE_MAX_RETRIES;
+        this.#inferenceFatalRetries =
+            options.inferenceFatalRetries ?? DEFAULT_INFERENCE_FATAL_RETRIES;
         this.#compactCompletedTurns = options.compactCompletedTurns ?? false;
         this.#completionChime = options.completionChime ?? false;
         this.#durableGlobalEventQueue = options.durableGlobalEventQueue ?? false;
@@ -5056,12 +5062,22 @@ export class CodingAssistantApp implements Component, Focusable {
                 {
                     value: "inference-retries",
                     label: `Inference retries · ${this.#inferenceMaxRetries}`,
-                    description: "Maximum retries before any inference provider reports failure.",
+                    description: "Maximum retries of temporary inference failures per request.",
+                },
+                {
+                    value: "fatal-retries",
+                    label: `Fatal retries · ${this.#inferenceFatalRetries}`,
+                    description:
+                        "Maximum retries for otherwise-terminal inference failures, such as model refusals or spent accounts.",
                 },
             ],
             onSelect: (item) => {
                 if (item.value === "inference-retries") {
                     this.#openInferenceRetriesInput();
+                    return;
+                }
+                if (item.value === "fatal-retries") {
+                    this.#openFatalRetriesInput();
                     return;
                 }
                 if (item.value === "compact-turns") {
@@ -5136,6 +5152,43 @@ export class CodingAssistantApp implements Component, Focusable {
                 subtitle: error ?? `Enter a whole number from 0 to ${MAX_INFERENCE_MAX_RETRIES}.`,
                 theme: this.#theme,
                 title: "Inference retries",
+            }),
+        );
+    }
+
+    #openFatalRetriesInput(error?: string): void {
+        this.#showSelectionPanel(
+            createSecretInputPanel({
+                label: "Attempts",
+                masked: false,
+                onCancel: () => this.#openConfigureMenu(),
+                onSubmit: (value) => {
+                    const normalized = value.trim();
+                    const attempts = Number(normalized);
+                    if (
+                        !/^\d+$/u.test(normalized) ||
+                        !Number.isInteger(attempts) ||
+                        attempts > MAX_INFERENCE_MAX_RETRIES
+                    ) {
+                        this.#openFatalRetriesInput(
+                            `Enter a whole number from 0 to ${MAX_INFERENCE_MAX_RETRIES}.`,
+                        );
+                        return;
+                    }
+                    this.#inferenceFatalRetries = attempts;
+                    this.#closeSelectionPanel();
+                    this.#persistSettings(() => {
+                        this.#appendEntry({
+                            role: "event",
+                            title: "Settings",
+                            text: `Fatal retries set to ${attempts}.`,
+                        });
+                        this.#requestRender();
+                    });
+                },
+                subtitle: error ?? `Enter a whole number from 0 to ${MAX_INFERENCE_MAX_RETRIES}.`,
+                theme: this.#theme,
+                title: "Fatal retries",
             }),
         );
     }
@@ -6333,6 +6386,7 @@ export class CodingAssistantApp implements Component, Focusable {
         void Promise.resolve(
             this.#onSettingsChange({
                 inferenceMaxRetries: this.#inferenceMaxRetries,
+                inferenceFatalRetries: this.#inferenceFatalRetries,
                 compactCompletedTurns: this.#compactCompletedTurns,
                 completionChime: this.#completionChime,
                 durableGlobalEventQueue: this.#durableGlobalEventQueue,

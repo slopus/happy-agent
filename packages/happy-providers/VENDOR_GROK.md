@@ -247,6 +247,19 @@ The captured production policy is represented by `impl/grokRetry.ts`:
 Every retry emits a `retrying` event. Once ordinary user-visible content, reasoning, encrypted
 reasoning, or tool-call output begins, a later transport failure is terminal.
 
+Main inference also owns a second, independent fatal budget (`inferenceFatalRetries`, defaulting
+to zero) for rejections waiting cannot fix and that would otherwise end the run immediately: a
+spent account, an authentication failure that credential refresh could not resolve, or any other
+unclassified rejection. A billing rejection such as `subscription:free-usage-exhausted` used to be
+retried as an ordinary 429 under the transient budget; `isRetryableGrokError` now recognizes it
+and refuses to spend the transient budget on it, so it fails immediately as `out_of_tokens` at the
+default budget of zero. Context overflow is excluded from both budgets, because only a smaller context fixes it.
+When the fatal budget is configured above zero, a fatal-eligible failure rolls back through the
+same `block_reset`/`block_start` pair the empty-response path uses, so no partial output is
+duplicated, and replays the request up to the configured number of times before falling through to
+the same terminal `done` error as today. Compaction stays transient-only and never spends the
+fatal budget, because it is stateful on the server.
+
 Compaction is a special read-only inference. It can retry its inference transport after partial
 summary output because no summary is committed until an entire attempt is accepted. When that
 happens, Rig clears all text, reasoning, usage, and tool-call state from the interrupted sample

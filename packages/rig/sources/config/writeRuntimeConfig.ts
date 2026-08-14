@@ -34,6 +34,7 @@ export async function writeRuntimeConfigInsideLock(
         theme?: Record<string, string>;
         settings?: {
             inference_max_retries?: number;
+            inference_fatal_retries?: number;
             compact_completed_turns?: boolean;
             completion_chime?: boolean;
             daemon_heap_snapshots?: boolean;
@@ -88,6 +89,9 @@ export async function writeRuntimeConfigInsideLock(
         document.settings = {};
         if (settings.inferenceMaxRetries !== undefined) {
             document.settings.inference_max_retries = settings.inferenceMaxRetries;
+        }
+        if (settings.inferenceFatalRetries !== undefined) {
+            document.settings.inference_fatal_retries = settings.inferenceFatalRetries;
         }
         if (settings.compactCompletedTurns !== undefined) {
             document.settings.compact_completed_turns = settings.compactCompletedTurns;

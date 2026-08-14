@@ -1,10 +1,12 @@
 import type {
     BetaRawMessageStreamEvent,
+    BetaRefusalStopDetails,
     BetaStopReason,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { APIConnectionError } from "@anthropic-ai/sdk/error";
 
 import { EmptyResponseError } from "@/core/EmptyResponseError.js";
+import { AnthropicRefusalError } from "@/protocol/anthropic/AnthropicRefusalError.js";
 import type { SessionUsage } from "@/core/SessionUsage.js";
 import type { SessionToolCallBlock, SessionToolResultBlock } from "@/core/SessionContext.js";
 import { emitToolCallResult } from "@/core/emitToolCallResult.js";
@@ -49,6 +51,7 @@ export async function* mapAnthropicStream(
     };
     let outputTokensReported = false;
     let stopReason: BetaStopReason | null = null;
+    let stopDetails: BetaRefusalStopDetails | null = null;
     let sawCompaction = false;
     let sawClientTool = false;
     let started = false;
@@ -227,10 +230,12 @@ export async function* mapAnthropicStream(
             usage = mergeUsage(usage, event.usage);
             if (typeof event.usage.output_tokens === "number") outputTokensReported = true;
             stopReason = event.delta.stop_reason;
+            stopDetails = event.delta.stop_details ?? stopDetails;
             if (stopReason === "compaction") options.onOutputStarted?.();
             continue;
         }
         if (event.type === "message_stop") {
+            if (stopReason === "refusal") throw new AnthropicRefusalError(stopDetails, usage);
             const terminal = toDoneEvent(stopReason, sawClientTool, sawCompaction, usage);
             if (
                 terminal.state !== "error" &&
@@ -352,15 +357,6 @@ function toDoneEvent(
             type: "done",
             state: "length",
             tokens: { input: usage.input, output: usage.output },
-        };
-    }
-    if (stopReason === "refusal") {
-        return {
-            type: "done",
-            state: "error",
-            kind: "unknown",
-            message: "The model refused to complete the request.",
-            providerError: { type: "unclassified" },
         };
     }
     if (sawTool || stopReason === "tool_use") {

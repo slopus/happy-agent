@@ -28,6 +28,7 @@ export interface CreateExecutorOptions {
     /** Receives account usage a provider reports while it is already answering. */
     onAccountUsage?: (usage: ProviderUsage) => void;
     providers: ConfigProviders;
+    resolveInferenceFatalRetries?: () => number;
     resolveInferenceMaxRetries?: () => number;
     sessionId?: string;
 }
@@ -149,6 +150,11 @@ function configuredExecutor(
               config,
               env,
               id,
+              ...(options.resolveInferenceFatalRetries === undefined
+                  ? {}
+                  : {
+                        resolveInferenceFatalRetries: options.resolveInferenceFatalRetries,
+                    }),
               ...(options.resolveInferenceMaxRetries === undefined
                   ? {}
                   : {
@@ -164,6 +170,9 @@ function configuredExecutor(
                 ...(options.onAccountUsage === undefined
                     ? {}
                     : { onAccountUsage: options.onAccountUsage }),
+                ...(options.resolveInferenceFatalRetries === undefined
+                    ? {}
+                    : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
                 ...(options.resolveInferenceMaxRetries === undefined
                     ? {}
                     : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),
@@ -175,6 +184,9 @@ function configuredExecutor(
                   config,
                   env,
                   id,
+                  ...(options.resolveInferenceFatalRetries === undefined
+                      ? {}
+                      : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
                   ...(options.resolveInferenceMaxRetries === undefined
                       ? {}
                       : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),
@@ -185,6 +197,9 @@ function configuredExecutor(
                   config,
                   env,
                   id,
+                  ...(options.resolveInferenceFatalRetries === undefined
+                      ? {}
+                      : { resolveInferenceFatalRetries: options.resolveInferenceFatalRetries }),
                   ...(options.resolveInferenceMaxRetries === undefined
                       ? {}
                       : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),

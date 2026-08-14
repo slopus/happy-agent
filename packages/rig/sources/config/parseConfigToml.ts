@@ -163,6 +163,7 @@ function parseKnownConfigToml(source: string): PartialRigConfig {
     if (settingsTable !== undefined) {
         dropUnknownKeys(settingsTable, "settings", [
             "inference_max_retries",
+            "inference_fatal_retries",
             "compact_completed_turns",
             "completion_chime",
             "daemon_heap_snapshots",
@@ -181,6 +182,16 @@ function parseKnownConfigToml(source: string): PartialRigConfig {
         );
         if (inferenceMaxRetries !== undefined) {
             settings.inferenceMaxRetries = inferenceMaxRetries;
+        }
+        const inferenceFatalRetries = readIntegerInRange(
+            settingsTable,
+            "inference_fatal_retries",
+            "settings.inference_fatal_retries",
+            0,
+            MAX_INFERENCE_MAX_RETRIES,
+        );
+        if (inferenceFatalRetries !== undefined) {
+            settings.inferenceFatalRetries = inferenceFatalRetries;
         }
         const compactCompletedTurns = readBoolean(
             settingsTable,

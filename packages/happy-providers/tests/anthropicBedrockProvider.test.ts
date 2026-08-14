@@ -16,10 +16,14 @@ import {
     type AnthropicBedrockProviderOptions,
 } from "@/vendors/bedrock/AnthropicBedrockProvider.js";
 import {
+    describeAnthropicBedrockRetry,
+    isAnthropicBedrockAbortError,
     isAnthropicBedrockConnectionFailure,
-    isRetryableAnthropicBedrockStreamError,
+    isTransientAnthropicBedrockError,
     resolveAnthropicBedrockRetryDelay,
+    shouldRetryAnthropicBedrock,
 } from "@/vendors/bedrock/impl/anthropicBedrockRetry.js";
+import { AnthropicRefusalError } from "@/protocol/anthropic/AnthropicRefusalError.js";
 import {
     classifyAnthropicBedrockError,
     classifyAnthropicBedrockProviderError,
@@ -84,7 +88,7 @@ describe("AnthropicBedrockProvider", () => {
             "serviceUnavailableException",
             "The service is currently unavailable. Try your request again.",
         );
-        expect(isRetryableAnthropicBedrockStreamError(unavailable)).toBe(true);
+        expect(isTransientAnthropicBedrockError(unavailable)).toBe(true);
         expect(classifyAnthropicBedrockProviderError(unavailable, 1)).toMatchObject({
             type: "server_overloaded",
             diagnostics: { errorType: "ServiceUnavailableException" },
@@ -97,29 +101,29 @@ describe("AnthropicBedrockProvider", () => {
             "modelTimeoutException",
             "The request took too long to process.",
         );
-        expect(isRetryableAnthropicBedrockStreamError(timeout)).toBe(true);
+        expect(isTransientAnthropicBedrockError(timeout)).toBe(true);
     });
 
     it("keeps non-retryable AWS Bedrock exceptions out of the retry policy", () => {
         expect(
-            isRetryableAnthropicBedrockStreamError(
+            isTransientAnthropicBedrockError(
                 awsServiceException("ConflictException", "client", "Concurrent update conflict."),
             ),
         ).toBe(false);
         expect(
-            isRetryableAnthropicBedrockStreamError(
+            isTransientAnthropicBedrockError(
                 awsServiceException("ValidationException", "client", "Bad request."),
             ),
         ).toBe(false);
         // An arbitrary error merely carrying a smithy-looking fault is not a Bedrock exception.
         expect(
-            isRetryableAnthropicBedrockStreamError(
+            isTransientAnthropicBedrockError(
                 Object.assign(new Error("wrapped failure"), { $fault: "server" }),
             ),
         ).toBe(false);
         // An unknown modeled exception counts as a server error only with smithy's $metadata.
         expect(
-            isRetryableAnthropicBedrockStreamError(
+            isTransientAnthropicBedrockError(
                 Object.assign(new Error("future failure"), {
                     name: "BrandNewException",
                     $fault: "server",
@@ -135,21 +139,84 @@ describe("AnthropicBedrockProvider", () => {
             $fault: "client",
             originalStatusCode: 502,
         });
-        expect(isRetryableAnthropicBedrockStreamError(relayedServerError)).toBe(true);
+        expect(isTransientAnthropicBedrockError(relayedServerError)).toBe(true);
 
         const relayedClientError = Object.assign(new Error("relayed failure"), {
             name: "ModelStreamErrorException",
             $fault: "client",
             originalStatusCode: 400,
         });
-        expect(isRetryableAnthropicBedrockStreamError(relayedClientError)).toBe(false);
+        expect(isTransientAnthropicBedrockError(relayedClientError)).toBe(false);
 
         // AWS documents the exception as retryable, so no original status means server error.
         const unattributed = Object.assign(new Error("relayed failure"), {
             name: "ModelStreamErrorException",
             $fault: "client",
         });
-        expect(isRetryableAnthropicBedrockStreamError(unattributed)).toBe(true);
+        expect(isTransientAnthropicBedrockError(unattributed)).toBe(true);
+    });
+
+    it("retries a model refusal under the fatal budget", () => {
+        const refusal = new AnthropicRefusalError({
+            category: "cyber",
+            explanation: "The response was flagged by a safety classifier.",
+        });
+        // A refusal is not transient noise, so it spends the fatal budget.
+        expect(isTransientAnthropicBedrockError(refusal)).toBe(false);
+        expect(shouldRetryAnthropicBedrock(refusal, 0, 10, 1, 3)).toBe(true);
+        expect(shouldRetryAnthropicBedrock(refusal, 0, 10, 3, 3)).toBe(true);
+        expect(shouldRetryAnthropicBedrock(refusal, 0, 10, 4, 3)).toBe(false);
+        // The fatal budget defaults to zero, reporting the refusal the moment it happens.
+        expect(shouldRetryAnthropicBedrock(refusal, 0, 10, 1, 0)).toBe(false);
+        // Earlier transport noise spends the transient counter, never the fatal one.
+        expect(shouldRetryAnthropicBedrock(refusal, 9, 10, 1, 3)).toBe(true);
+        expect(describeAnthropicBedrockRetry(refusal, 1, 500, 3)).toBe(
+            "Anthropic Bedrock model refusal (category: cyber); retrying in 500 ms, attempt 1 of 3.",
+        );
+        expect(describeAnthropicBedrockErrorMessage(refusal)).toBe(
+            "The model refused to complete the request (category: cyber): " +
+                "The response was flagged by a safety classifier.",
+        );
+    });
+
+    it("spends the fatal budget on terminal failures but never on context overflow", () => {
+        const invalid = awsServiceException("ValidationException", "client", "Bad request.");
+        expect(isTransientAnthropicBedrockError(invalid)).toBe(false);
+        expect(shouldRetryAnthropicBedrock(invalid, 0, 10, 1, 2)).toBe(true);
+        expect(shouldRetryAnthropicBedrock(invalid, 0, 10, 3, 2)).toBe(false);
+        // Only a smaller context fixes an overflow, so no budget replays it.
+        const overflow = awsServiceException(
+            "ValidationException",
+            "client",
+            "Input is too long for requested model.",
+        );
+        expect(shouldRetryAnthropicBedrock(overflow, 0, 10, 1, 5)).toBe(false);
+        // Even an overflow decorated with a retryable status stays unretried.
+        const throttledOverflow = awsServiceException(
+            "ThrottlingException",
+            "client",
+            "Input is too long for requested model.",
+        );
+        expect(shouldRetryAnthropicBedrock(throttledOverflow, 0, 10, 0, 5)).toBe(false);
+        // Transient failures keep spending the transport budget alone.
+        const throttled = awsServiceException("ThrottlingException", "client", "Slow down.");
+        expect(isTransientAnthropicBedrockError(throttled)).toBe(true);
+        expect(shouldRetryAnthropicBedrock(throttled, 10, 10, 0, 0)).toBe(true);
+        expect(shouldRetryAnthropicBedrock(throttled, 11, 10, 0, 0)).toBe(false);
+    });
+
+    it("never spends any budget on an abort, even wrapped in another failure", () => {
+        const abort = Object.assign(new Error("This operation was aborted."), {
+            name: "AbortError",
+        });
+        expect(isAnthropicBedrockAbortError(abort)).toBe(true);
+        expect(shouldRetryAnthropicBedrock(abort, 0, 10, 0, 5)).toBe(false);
+        const wrapped = new Error("stream failed", { cause: abort });
+        expect(isAnthropicBedrockAbortError(wrapped)).toBe(true);
+        expect(shouldRetryAnthropicBedrock(wrapped, 0, 10, 0, 5)).toBe(false);
+        const looped: { name: string; cause?: unknown } = { name: "SomethingElse" };
+        looped.cause = looped;
+        expect(isAnthropicBedrockAbortError(looped)).toBe(false);
     });
 
     it("uses the same regional inference profiles as Rig's Bedrock catalog", () => {
@@ -2037,6 +2104,573 @@ describe("AnthropicBedrockProvider", () => {
         const assistantMessage = assistantMessageFromEvents(events);
         expect(JSON.stringify(assistantMessage)).toContain("recovered");
         expect(JSON.stringify(assistantMessage)).not.toContain("partial answer");
+    });
+
+    it("retries a model refusal after response content started", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-refusal-retry-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        if (attempts === 1) {
+                            return streamEvents([
+                                {
+                                    type: "message_start",
+                                    message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                                },
+                                {
+                                    type: "content_block_start",
+                                    index: 0,
+                                    content_block: { type: "text", text: "" },
+                                },
+                                {
+                                    type: "content_block_delta",
+                                    index: 0,
+                                    delta: { type: "text_delta", text: "partial answer" },
+                                },
+                                { type: "content_block_stop", index: 0 },
+                                {
+                                    type: "message_delta",
+                                    delta: {
+                                        stop_reason: "refusal",
+                                        stop_sequence: null,
+                                        stop_details: {
+                                            type: "refusal",
+                                            category: "cyber",
+                                            explanation:
+                                                "The response was flagged by a safety classifier.",
+                                        },
+                                    },
+                                    usage: { output_tokens: 3 },
+                                },
+                                { type: "message_stop" },
+                            ]);
+                        }
+                        return streamEvents([
+                            {
+                                type: "message_start",
+                                message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                            },
+                            {
+                                type: "content_block_start",
+                                index: 0,
+                                content_block: { type: "text", text: "" },
+                            },
+                            {
+                                type: "content_block_delta",
+                                index: 0,
+                                delta: { type: "text_delta", text: "recovered" },
+                            },
+                            { type: "content_block_stop", index: 0 },
+                            {
+                                type: "message_delta",
+                                delta: { stop_reason: "end_turn", stop_sequence: null },
+                                usage: { output_tokens: 1 },
+                            },
+                            { type: "message_stop" },
+                        ]);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            inferenceFatalRetries: 3,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "text" as const, text: "survive a refusal" }],
+                    },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(2);
+        const retrying = events.find((event) => event.type === "retrying");
+        expect(retrying).toMatchObject({
+            type: "retrying",
+            attempt: 1,
+            reason: expect.stringContaining("model refusal (category: cyber)"),
+        });
+        expect(events).toContainEqual({ type: "block_reset" });
+        // The refused attempt's partial output was billed; its usage must still be reported.
+        expect(events).toContainEqual({
+            type: "token_usage",
+            usage: expect.objectContaining({ output: 3 }),
+        });
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        const assistantMessage = assistantMessageFromEvents(events);
+        expect(JSON.stringify(assistantMessage)).toContain("recovered");
+        expect(JSON.stringify(assistantMessage)).not.toContain("partial answer");
+    });
+
+    it("retries a refusal that follows transport noise instead of starving it", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-refusal-after-noise-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        if (attempts === 1) {
+                            throw new APIConnectionError({ message: "fetch failed" });
+                        }
+                        if (attempts === 2) {
+                            return streamEvents([
+                                {
+                                    type: "message_start",
+                                    message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                                },
+                                {
+                                    type: "message_delta",
+                                    delta: {
+                                        stop_reason: "refusal",
+                                        stop_sequence: null,
+                                        stop_details: {
+                                            type: "refusal",
+                                            category: "cyber",
+                                            explanation: null,
+                                        },
+                                    },
+                                    usage: { output_tokens: 1 },
+                                },
+                                { type: "message_stop" },
+                            ]);
+                        }
+                        return streamEvents([
+                            {
+                                type: "message_start",
+                                message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                            },
+                            {
+                                type: "content_block_start",
+                                index: 0,
+                                content_block: { type: "text", text: "" },
+                            },
+                            {
+                                type: "content_block_delta",
+                                index: 0,
+                                delta: { type: "text_delta", text: "recovered" },
+                            },
+                            { type: "content_block_stop", index: 0 },
+                            {
+                                type: "message_delta",
+                                delta: { stop_reason: "end_turn", stop_sequence: null },
+                                usage: { output_tokens: 1 },
+                            },
+                            { type: "message_stop" },
+                        ]);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            inferenceFatalRetries: 3,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "text" as const, text: "noise then refusal" }],
+                    },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(3);
+        const notices = events.filter((event) => event.type === "retrying");
+        expect(notices).toHaveLength(2);
+        // The refusal notice counts refusals alone even though it is the second failure.
+        expect(notices[1]).toMatchObject({
+            attempt: 2,
+            reason: expect.stringContaining("model refusal (category: cyber)"),
+        });
+        expect(notices[1]).toMatchObject({
+            reason: expect.stringContaining("attempt 1 of 3"),
+        });
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
+    it("reports the refusal reason once its retry budget is exhausted", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-refusal-exhausted-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        return streamEvents([
+                            {
+                                type: "message_start",
+                                message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                            },
+                            {
+                                type: "message_delta",
+                                delta: {
+                                    stop_reason: "refusal",
+                                    stop_sequence: null,
+                                    stop_details: {
+                                        type: "refusal",
+                                        category: "cyber",
+                                        explanation:
+                                            "The response was flagged by a safety classifier.",
+                                    },
+                                },
+                                usage: { output_tokens: 1 },
+                            },
+                            { type: "message_stop" },
+                        ]);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            inferenceFatalRetries: 1,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "text" as const, text: "refuse every attempt" }],
+                    },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(2);
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message:
+                "The model refused to complete the request (category: cyber): " +
+                "The response was flagged by a safety classifier.",
+            providerError: {
+                type: "unclassified",
+                diagnostics: expect.objectContaining({
+                    attempts: 2,
+                    code: "cyber",
+                    errorType: "refusal",
+                }),
+            },
+        });
+    });
+
+    it("reports a refusal immediately when fatal retries are disabled", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-refusal-default-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        return streamEvents([
+                            {
+                                type: "message_start",
+                                message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                            },
+                            {
+                                type: "message_delta",
+                                delta: {
+                                    stop_reason: "refusal",
+                                    stop_sequence: null,
+                                    stop_details: {
+                                        type: "refusal",
+                                        category: "cyber",
+                                        explanation:
+                                            "The response was flagged by a safety classifier.",
+                                    },
+                                },
+                                usage: { output_tokens: 1 },
+                            },
+                            { type: "message_stop" },
+                        ]);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "text" as const, text: "refuse once" }],
+                    },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events).not.toContainEqual(expect.objectContaining({ type: "retrying" }));
+        expect(events.at(-1)).toMatchObject({
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message:
+                "The model refused to complete the request (category: cyber): " +
+                "The response was flagged by a safety classifier.",
+            providerError: {
+                type: "unclassified",
+                diagnostics: expect.objectContaining({
+                    attempts: 1,
+                    code: "cyber",
+                    errorType: "refusal",
+                }),
+            },
+        });
+    });
+
+    it("retries a terminal request rejection under the fatal budget", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-fatal-retry-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        if (attempts === 1) {
+                            throw APIError.generate(
+                                400,
+                                {
+                                    type: "error",
+                                    error: {
+                                        type: "invalid_request_error",
+                                        message: "Malformed request.",
+                                    },
+                                },
+                                undefined,
+                                new Headers(),
+                            );
+                        }
+                        return streamEvents([
+                            {
+                                type: "message_start",
+                                message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                            },
+                            {
+                                type: "content_block_start",
+                                index: 0,
+                                content_block: { type: "text", text: "" },
+                            },
+                            {
+                                type: "content_block_delta",
+                                index: 0,
+                                delta: { type: "text_delta", text: "recovered" },
+                            },
+                            { type: "content_block_stop", index: 0 },
+                            {
+                                type: "message_delta",
+                                delta: { stop_reason: "end_turn", stop_sequence: null },
+                                usage: { output_tokens: 1 },
+                            },
+                            { type: "message_stop" },
+                        ]);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            inferenceFatalRetries: 1,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "text" as const, text: "survive a rejection" }],
+                    },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(2);
+        expect(events).toContainEqual({
+            type: "retrying",
+            attempt: 1,
+            reason: expect.stringContaining("HTTP 400"),
+        });
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
+    it("does not retry a refusal after compaction output and still reports its usage", async () => {
+        let attempts = 0;
+        const credential = await BedrockBearerTokenCredential.tryLoad({
+            bearerToken: "bedrock-refusal-after-compaction-token",
+        });
+        if (credential === null) throw new Error("Expected a Bedrock test credential.");
+        const client = {
+            beta: {
+                messages: {
+                    create: async () => {
+                        attempts += 1;
+                        return streamEvents([
+                            {
+                                type: "message_start",
+                                message: { usage: { input_tokens: 1, output_tokens: 0 } },
+                            },
+                            {
+                                type: "content_block_start",
+                                index: 0,
+                                content_block: {
+                                    type: "compaction",
+                                    content: null,
+                                    encrypted_content: null,
+                                },
+                            },
+                            {
+                                type: "message_delta",
+                                delta: {
+                                    stop_reason: "refusal",
+                                    stop_sequence: null,
+                                    stop_details: {
+                                        type: "refusal",
+                                        category: "cyber",
+                                        explanation:
+                                            "The response was flagged by a safety classifier.",
+                                    },
+                                },
+                                usage: { output_tokens: 2 },
+                            },
+                            { type: "message_stop" },
+                        ]);
+                    },
+                },
+            },
+        } as unknown as NonNullable<AnthropicBedrockProviderOptions["client"]>;
+        const provider = new AnthropicBedrockProvider({
+            client,
+            credential,
+            model: "anthropic/opus-4-8",
+        });
+        const session = await provider.session("<SESSION_ID>", {
+            instructions: "",
+            tools: [],
+        });
+
+        const events: SessionEvent[] = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "text" as const, text: "refuse after compaction" }],
+                    },
+                ],
+            },
+        })) {
+            events.push(event);
+        }
+
+        expect(attempts).toBe(1);
+        expect(events).not.toContainEqual(expect.objectContaining({ type: "retrying" }));
+        // The billed usage must land after the rollback so the rollback cannot discard it.
+        expect(events.slice(-3)).toMatchObject([
+            { type: "block_reset" },
+            {
+                type: "token_usage",
+                usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3 },
+            },
+            {
+                type: "done",
+                state: "error",
+                kind: "unknown",
+                message:
+                    "The model refused to complete the request (category: cyber): " +
+                    "The response was flagged by a safety classifier.",
+                providerError: {
+                    type: "unclassified",
+                    diagnostics: expect.objectContaining({
+                        attempts: 1,
+                        code: "cyber",
+                        errorType: "refusal",
+                    }),
+                },
+            },
+        ]);
     });
 
     it("reports a readable error when a mid-response connection failure is not retried", async () => {

@@ -8951,6 +8951,7 @@ describe("CodingAssistantApp", () => {
         });
         const settingsChanges: Array<{
             inferenceMaxRetries: number;
+            inferenceFatalRetries: number;
             compactCompletedTurns: boolean;
             completionChime: boolean;
             durableGlobalEventQueue: boolean;
@@ -8983,6 +8984,7 @@ describe("CodingAssistantApp", () => {
         expect(menu).toContain("Enable completion chime");
         expect(menu).toContain("Enable durable event queue");
         expect(menu).toContain("Inference retries · 10");
+        expect(menu).toContain("Fatal retries · 0");
 
         app.handleInput("\r");
 
@@ -8990,6 +8992,7 @@ describe("CodingAssistantApp", () => {
         expect(settingsChanges).toEqual([
             {
                 inferenceMaxRetries: 10,
+                inferenceFatalRetries: 0,
                 compactCompletedTurns: false,
                 completionChime: false,
                 durableGlobalEventQueue: false,
@@ -9008,6 +9011,7 @@ describe("CodingAssistantApp", () => {
 
         expect(settingsChanges.at(-1)).toEqual({
             inferenceMaxRetries: 10,
+            inferenceFatalRetries: 0,
             compactCompletedTurns: false,
             completionChime: true,
             durableGlobalEventQueue: false,
@@ -9024,6 +9028,7 @@ describe("CodingAssistantApp", () => {
 
         expect(settingsChanges.at(-1)).toEqual({
             inferenceMaxRetries: 10,
+            inferenceFatalRetries: 0,
             compactCompletedTurns: false,
             completionChime: true,
             durableGlobalEventQueue: true,
@@ -9044,6 +9049,7 @@ describe("CodingAssistantApp", () => {
 
         expect(settingsChanges.at(-1)).toEqual({
             inferenceMaxRetries: 8,
+            inferenceFatalRetries: 0,
             compactCompletedTurns: false,
             completionChime: true,
             durableGlobalEventQueue: true,
@@ -9051,6 +9057,27 @@ describe("CodingAssistantApp", () => {
             showUsage: false,
         });
         expect(stripAnsi(app.render(100).join("\n"))).toContain("Inference retries set to 8.");
+
+        submit(app, "/configure");
+        for (let index = 0; index < 6; index += 1) app.handleInput("\x1b[B");
+        app.handleInput("\r");
+        expect(stripAnsi(app.render(100).join("\n"))).toContain(
+            "Enter a whole number from 0 to 100.",
+        );
+        app.handleInput("3");
+        app.handleInput("\r");
+        await Promise.resolve();
+
+        expect(settingsChanges.at(-1)).toEqual({
+            inferenceMaxRetries: 8,
+            inferenceFatalRetries: 3,
+            compactCompletedTurns: false,
+            completionChime: true,
+            durableGlobalEventQueue: true,
+            showReasoning: true,
+            showUsage: false,
+        });
+        expect(stripAnsi(app.render(100).join("\n"))).toContain("Fatal retries set to 3.");
     });
 
     it("changes the session permission mode from the permissions menu", async () => {
