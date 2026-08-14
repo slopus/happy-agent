@@ -36,6 +36,10 @@ while building and reviewing the first Rig v2 features.
   handwritten validation.
 - Validate constructor options, public method inputs, injected store results,
   and persisted KV before use.
+- A validated factory function does not validate the object it returns. Define
+  and check a narrow TypeBox contract for every injected persistence, runtime,
+  broker, or catalog result before calling methods on it; do not leave factory
+  returns as `Type.Any()`.
 - Bound strings, collection sizes, page sizes, output sizes, and pending
   in-memory or KV state. A format-time cap does not excuse an unbounded store
   read.
@@ -51,6 +55,10 @@ while building and reviewing the first Rig v2 features.
 - “Post-commit” means after the host's outermost transaction commits, not merely
   after a nested feature transaction callback returns. Require the injected
   store or host boundary to register an outermost-commit callback.
+- Make commit-registration timing explicit. If `afterCommit` may be async, await
+  registration inside the mutation transaction; if registration must be
+  synchronous, encode that in the callable contract and test rejection of an
+  async/malformed adapter.
 - Allocate one stable TypeBox-validated event identity and timestamp per
   mutation. Deliver the same event to transactional and post-commit listeners.
 - Define listener failure behavior. A post-commit listener failure must be
