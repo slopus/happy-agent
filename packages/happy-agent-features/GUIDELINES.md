@@ -64,6 +64,10 @@ while building and reviewing the first Rig v2 features.
   async/malformed adapter.
 - Allocate one stable TypeBox-validated event identity and timestamp per
   mutation. Deliver the same event to transactional and post-commit listeners.
+- Clone and deeply freeze a validated event before either listener receives it.
+  Do not share mutable task, record, array, or result references with callers;
+  a transactional observer must not be able to alter what post-commit
+  observers later receive.
 - Define listener failure behavior. A post-commit listener failure must be
   contained or reported through an explicit callback; it must not make a caller
   observe failure after durable state already committed.
