@@ -51,6 +51,15 @@ while building and reviewing the first Rig v2 features.
   and check a narrow TypeBox contract for every injected persistence, runtime,
   broker, or catalog result before calling methods on it; do not leave factory
   returns as `Type.Any()`.
+- If the feature's public contract requires a host capability, make that
+  callable required in the injected TypeBox schema and always invoke it. Do not
+  mark it optional and silently return an empty value when the host omitted or
+  misspelled the capability.
+- Snapshot and validate the expected mutation result before handing it to an
+  injected transaction callback. Compare the transaction's returned value
+  against that detached snapshot; comparing two aliases of the callback result
+  lets an adapter mutate the object in place and validate the mutation against
+  itself.
 - Bound strings, collection sizes, page sizes, output sizes, and pending
   in-memory or KV state. A format-time cap does not excuse an unbounded store
   read.
