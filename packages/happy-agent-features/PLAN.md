@@ -338,8 +338,8 @@ Status: complete, reviewed, committed, and available from the package root.
 
 ### 16. Usage
 
-Status: implementation exists; aggregate paging and runtime-contract review
-remain.
+Status: complete, reviewed, committed, and available from the package root.
+Rig host integration remains.
 
 - Observe Agent Base inference completion and record provider/model/effort/tier,
   tokens, and time through an injected `UsageStore`.
