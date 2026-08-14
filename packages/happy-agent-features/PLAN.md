@@ -324,8 +324,7 @@ Status: to implement.
 
 ### 15. Workflows
 
-Status: implementation exists; final durable-mutation corrections and review
-remain.
+Status: complete, reviewed, committed, and available from the package root.
 
 - Inject a workflow runner and run store.
 - Launch, list, read status, wait, resume, cancel, and read bounded logs.
