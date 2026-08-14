@@ -87,6 +87,10 @@ while building and reviewing the first Rig v2 features.
 - Give every sent or steered message a stable caller-owned ID. Put immutable
   feature and protocol correlation in message metadata, then route accepted
   messages from `accepted.id` and `accepted.metadata`.
+- Test identity reuse after presentation-event retention and while the first
+  request is still unprojected. An identical retry returns the original durable
+  result; different content or settings under the same identity is rejected;
+  neither path may register a bridge wait that Agent Base will no-op forever.
 - Treat message metadata as persisted correlation, not authorization. Validate
   a feature-owned TypeBox shape before using fields from the open metadata
   record.
@@ -98,12 +102,18 @@ while building and reviewing the first Rig v2 features.
 - Async observational hooks are awaited. Contain optional observer failures
   deliberately; never create an unbounded promise chain to preserve a
   synchronous assumption from an older Agent Base version.
+- An explicit setting clear is a real value transition. Do not translate
+  `null` or an off toggle into omission when omission means “keep the previous
+  value.”
 
 ## Stores, paging, and persistence adapters
 
 - Store contracts perform bounded paging, filtering, and listing at the storage
   boundary. Never require a host to load an entire archive so the feature can
   slice it afterward.
+- Validate that every returned page obeys the requested limit in addition to
+  validating its item schema. A conforming item array can still violate the
+  store's bounded-read contract.
 - Cursors name stable source positions. Test forward, backward, partial previous
   pages, pruned prefixes, filtered pages, empty histories, and cursors beyond
   the final match.
@@ -121,8 +131,34 @@ while building and reviewing the first Rig v2 features.
 
 - Put protocol projection after every configurable feature in the host feature
   array so it is the final transactional observer.
+- Verify the real daemon startup wiring, not only a service constructor test.
+  Recovery callbacks and stores that are optional in a helper signature can
+  silently be absent from the production call site.
 - Never persist terminal or other correctness state from a non-transactional
   fallback after the transactional operation rolled back.
+- A nested persistence transaction is not an outer commit. Tests for protocol
+  projection must use the real session implementation and prove that an outer
+  rollback changes neither SQLite nor the live session heap/events. Fake
+  sessions cannot prove this boundary.
+- Restart tests must include multiple queued messages with distinct run
+  metadata. Restoring only the currently visible run can strand the remaining
+  durable queue.
+- Process-crash recovery must rebuild host routing from persisted Agent Base
+  identities and metadata before the live system resumes. A heap-only bridge
+  registration is not recovery, even when durable agent and message rows still
+  exist.
+- Presentation-event retention must not become identity retention. Validate a
+  caller-supplied message identity and its immutable fingerprint against the
+  durable Agent Base envelope (or a bounded host receipt with a distinct
+  contract) before accepting a retry.
+- Never project into a legacy mutable heap during a nested transaction and
+  assume a later outer rollback can undo it. Stage heap, event, and notification
+  work for the host's outermost post-commit callback, and never write a
+  correctness event from a fallback observer after transactional settlement
+  rolls back.
+- A durable queue may contain several messages for the same run. Recovery and
+  projection must select by persisted message identity and metadata, not by the
+  first or last in-memory registration.
 - Collaboration owns agent creation, listing, directed reply obligations,
   scheduling, and waits through an injected host store. Waiting is an ordinary
   durable tool call.
