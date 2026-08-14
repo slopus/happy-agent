@@ -214,7 +214,8 @@ Status: complete, reviewed, committed, and integrated with Agent Base 0.0.6.
 
 ### 6. Collaboration
 
-Status: implementation exists; isolated review and host integration remain.
+Status: complete, reviewed, committed, and available from the package root;
+Rig host integration remains.
 
 - Create agents with caller-supplied IDs and Agent Base metadata.
 - Keep an injected host roster containing agents, roles, groups, parentage,
