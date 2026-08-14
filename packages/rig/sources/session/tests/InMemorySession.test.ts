@@ -21,6 +21,37 @@ import {
 } from "../SessionTransactionContext.js";
 
 describe("InMemorySession", () => {
+    it("projects Agent Base user and assistant messages into the reconnect transcript", async () => {
+        const session = await (
+            await InMemorySessionStore.open(ctx)
+        ).create(ctx, { cwd: "/tmp/rig-agent-base-projection" });
+        const user = {
+            blocks: [{ text: "Hello from Agent Base.", type: "text" }],
+            id: "agent-base-user",
+            identity: null,
+            role: "user",
+        } as const;
+        const assistant = {
+            blocks: [{ text: "Hello from the projection.", type: "text" }],
+            id: "agent-base-assistant",
+            providerId: "codex",
+            requestedModelId: session.snapshot().modelId,
+            role: "agent",
+        } as const;
+
+        const submitted = await session.projectUserMessage(ctx, {
+            delivery: "run",
+            displayText: "Hello from Agent Base.",
+            message: user,
+            runId: "agent-base-run",
+        });
+        const completed = await session.projectAgentMessage(ctx, "agent-base-run", assistant);
+
+        expect(submitted.type).toBe("message_submitted");
+        expect(completed.type).toBe("agent_message");
+        expect((await session.transcriptWindow(ctx)).messages).toEqual([user, assistant]);
+    });
+
     it("keeps current-state event payloads bounded independently of transcript size", async () => {
         const firstModel = defineModel({
             defaultThinkingLevel: "off",

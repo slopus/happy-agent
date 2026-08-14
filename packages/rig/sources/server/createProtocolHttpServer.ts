@@ -247,6 +247,7 @@ import type {
     ResizeRemoteTerminalRequest,
 } from "../terminal/index.js";
 import type { PluginContext } from "../agent/context/PluginContext.js";
+import type { RigAgentService } from "../agent/RigAgentService.js";
 import {
     PluginAppError,
     PluginCatalogError,
@@ -350,6 +351,7 @@ import { matchP2pPeerRoute } from "./matchP2pPeerRoute.js";
 import type { SharingLifecycleServiceContract } from "../sharing/index.js";
 
 export interface ProtocolHttpServerOptions {
+    agents?: RigAgentService;
     inferenceMaxRetries?: number;
     /** Where the user's global AGENTS.md lives. Defaults to the file beside the daemon config. */
     globalInstructionsPath?: string;
@@ -444,6 +446,7 @@ export async function createProtocolHttpServer(
     const fileSearchService = options.fileSearchService ?? new FileSearchService();
     const appletContextTokens = new AppletContextTokenStore();
     const runtimeConfig: ProtocolServerRuntimeConfig = {
+        agents: options.agents,
         inferenceMaxRetries: options.inferenceMaxRetries ?? DEFAULT_INFERENCE_MAX_RETRIES,
         gitStateTracker: options.gitStateTracker,
         globalEventQueue: options.globalEventQueue ?? store.globalEventQueue,
@@ -605,6 +608,7 @@ function protocolTraceRoute(url: URL): string {
 }
 
 interface ProtocolServerRuntimeConfig {
+    agents: RigAgentService | undefined;
     canP2pPeerConfigure: ProtocolHttpServerOptions["canP2pPeerConfigure"];
     canP2pPeerProvision: ProtocolHttpServerOptions["canP2pPeerProvision"];
     canP2pPeerUseRemoteWork: ProtocolHttpServerOptions["canP2pPeerUseRemoteWork"];
@@ -4184,10 +4188,15 @@ async function handleRequest(
         sendJson<SubmitMessageResponse>(
             response,
             202,
-            await session.submit(ctx, {
-                ...body,
-                ...(mutationId === undefined ? {} : { mutationId }),
-            }),
+            runtimeConfig.agents === undefined
+                ? await session.submit(ctx, {
+                      ...body,
+                      ...(mutationId === undefined ? {} : { mutationId }),
+                  })
+                : await runtimeConfig.agents.submit(ctx, session, {
+                      ...body,
+                      ...(mutationId === undefined ? {} : { mutationId }),
+                  }),
         );
         return;
     }
@@ -4332,7 +4341,13 @@ async function handleRequest(
             return;
         }
         try {
-            sendJson<SteerMessageResponse>(response, 202, await session.steer(ctx, body));
+            sendJson<SteerMessageResponse>(
+                response,
+                202,
+                runtimeConfig.agents === undefined
+                    ? await session.steer(ctx, body)
+                    : await runtimeConfig.agents.steer(ctx, session, body),
+            );
         } catch (error) {
             if (isDatabaseFailure(error)) throw error;
             sendJson(response, 409, {
@@ -4364,6 +4379,22 @@ async function handleRequest(
         }
         if (!sessionMutationCanApply(request, response, session)) return;
         try {
+            if (runtimeConfig.agents !== undefined) {
+                const expectedRunId = url.searchParams.get("expectedRunId") ?? undefined;
+                const steeringMessageIds = url.searchParams.getAll("steeringMessageId");
+                sendJson<AbortRunResponse>(
+                    response,
+                    200,
+                    await runtimeConfig.agents.abort(ctx, session, {
+                        continuePendingSteering:
+                            url.searchParams.get("continuePendingSteering") === "1",
+                        ...(expectedRunId === undefined ? {} : { expectedRunId }),
+                        ...(mutationId === undefined ? {} : { mutationId }),
+                        ...(steeringMessageIds.length === 0 ? {} : { steeringMessageIds }),
+                    }),
+                );
+                return;
+            }
             const expectedRunId = url.searchParams.get("expectedRunId") ?? undefined;
             const steeringMessageIds = url.searchParams.getAll("steeringMessageId");
             sendJson<AbortRunResponse>(

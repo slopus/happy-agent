@@ -1,6 +1,7 @@
 export { startObservability } from "./startObservability.js";
 export { createDaemonLogger } from "./createDaemonLogger.js";
 export {
+    createProcessContext,
     initializeDaemonContext,
     setSpanAttributes,
     spanTraceId,

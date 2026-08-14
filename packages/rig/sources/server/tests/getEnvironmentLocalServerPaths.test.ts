@@ -1,14 +1,14 @@
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { getEnvironmentLocalServerPaths } from "../getEnvironmentLocalServerPaths.js";
 
 describe("getEnvironmentLocalServerPaths", () => {
-    it("uses RIG_HOME for durable state and the temporary directory for daemon files", () => {
+    it("uses the Agent Base home for all durable state and a temporary daemon directory", () => {
         const paths = getEnvironmentLocalServerPaths({ RIG_HOME: "/home/tester/custom-rig" }, 501);
 
-        expect(paths.databasePath).toBe("/home/tester/custom-rig/sessions.sqlite");
+        expect(paths.databasePath).toBe(join(homedir(), ".happy", "agent", "sessions.sqlite"));
         expect(paths.directory).toBe(join(tmpdir(), "rig-501"));
         expect(paths.socketPath).toBe(join(tmpdir(), "rig-501", "server.sock"));
     });
@@ -17,7 +17,7 @@ describe("getEnvironmentLocalServerPaths", () => {
         const directory = resolve("workspace/.rig-dev");
 
         expect(getEnvironmentLocalServerPaths({ RIG_SERVER_DIRECTORY: directory }, 501)).toEqual({
-            databasePath: `${directory}/sessions.sqlite`,
+            databasePath: `${directory}/agent-sessions.sqlite`,
             diagnosticsPath: `${directory}/diagnostics`,
             directory,
             irohSecretKeyPath: `${directory}/iroh-secret-key`,
@@ -41,7 +41,7 @@ describe("getEnvironmentLocalServerPaths", () => {
 
         expect(paths.socketPath).toBe("/tmp/custom.sock");
         expect(paths.tokenPath).toBe("/tmp/custom-token");
-        expect(paths.databasePath).toBe("/workspace/.rig-dev/sessions.sqlite");
+        expect(paths.databasePath).toBe("/workspace/.rig-dev/agent-sessions.sqlite");
     });
 
     it("ignores empty socket and token overrides", () => {

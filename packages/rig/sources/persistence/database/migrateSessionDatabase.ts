@@ -59,6 +59,7 @@ import { folderChildOrderSpace } from "./migrations/51-folder-child-order-space.
 import { folderSharing } from "./migrations/52-folder-sharing.js";
 import { happyHistoryBackfill } from "./migrations/53-happy-history-backfill.js";
 import { happyProjectionProgress } from "./migrations/54-happy-projection-progress.js";
+import { agentBaseStorage } from "./migrations/55-agent-base-storage.js";
 
 interface MigrationContext {
     createDataEpoch: () => string;
@@ -125,6 +126,7 @@ const migrations: readonly SessionDatabaseMigration[] = [
     folderSharing,
     happyHistoryBackfill,
     happyProjectionProgress,
+    agentBaseStorage,
 ];
 export const SESSION_DATABASE_APPLICATION_ID = 0x52494732;
 export const RIG_DATA_IDENTITY_MIGRATION_INDEX = 19;

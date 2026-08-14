@@ -101,7 +101,6 @@
         "@earendil-works/pi-tui": "^0.80.3",
         "@paralleldrive/cuid2": "^3.3.0",
         "@slopus/ghostty-web": "workspace:*",
-        "@slopus/happy-agent-compute": "workspace:*",
         "@slopus/rig-execution": "workspace:*",
         "@types/dockerode": "^4.0.1",
         "@types/proper-lockfile": "^4.1.4",

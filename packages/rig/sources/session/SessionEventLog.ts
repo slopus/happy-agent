@@ -169,6 +169,21 @@ export class SessionEventLog {
         return event;
     }
 
+    /**
+     * Delivers a transient event to attached session streams without entering the durable append
+     * lock. Completed transcript messages supersede these live inference updates.
+     */
+    publishTransient(event: SessionEvent): void {
+        for (const listener of this.#listeners) {
+            try {
+                const pending = listener(event);
+                if (pending !== undefined) void Promise.resolve(pending).catch(() => undefined);
+            } catch {
+                // A disconnected observer must not interrupt the provider stream.
+            }
+        }
+    }
+
     checkpoint(): SessionEventLogCheckpoint {
         return {
             eventIndexes: new Map(this.#eventIndexes),

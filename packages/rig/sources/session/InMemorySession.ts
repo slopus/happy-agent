@@ -538,6 +538,7 @@ export interface InMemorySessionOptions {
         title: string;
         workspaceId: string;
     }) => void | Promise<void>;
+    publishLiveEvent?: (ctx: Context, event: SessionEvent) => void;
     modelCatalog: ModelCatalog;
     /** Stable Rig identity whose credentials and usage this session consumes. */
     ownerInstanceId?: string;
@@ -801,6 +802,7 @@ export class InMemorySession {
     #pendingUserInputs = new Map<string, PendingUserInput>();
     #persistence: InMemorySessionPersistence | undefined;
     #presence: { state(): PresenceState } | undefined;
+    #publishLiveEvent: InMemorySessionOptions["publishLiveEvent"];
     #slotStores: SessionSlotStores | undefined;
     #userInputPresenceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     #providerId: string;
@@ -890,6 +892,7 @@ export class InMemorySession {
         this.#modelCatalog = options.modelCatalog;
         this.#persistence = options.persistence;
         this.#presence = options.presence;
+        this.#publishLiveEvent = options.publishLiveEvent;
         this.#slotStores = options.slotStores;
         this.#folders = options.folders;
         this.#request = {
@@ -9390,6 +9393,82 @@ export class InMemorySession {
                 ...(steeredAt === undefined ? {} : { steeredAt }),
             };
         });
+    }
+
+    /**
+     * Commits one Agent Base submission into the existing app transcript projection.
+     *
+     * Agent Base owns the conversation. This method only keeps Rig's public session protocol and
+     * transcript rows synchronized while the old session repository is being split apart.
+     */
+    async projectUserMessage(
+        ctx: Context,
+        input: {
+            delivery: "run" | "steer";
+            displayText: string;
+            message: UserMessage;
+            mutationId?: string;
+            runId: string;
+        },
+    ): Promise<Extract<SessionEvent, { type: "message_submitted" }>> {
+        return await this.#runSessionMutation(ctx, async (txCtx) => {
+            await this.#storeMessage(
+                txCtx,
+                this.#nextMessagePosition(),
+                input.message,
+                false,
+                input.runId,
+            );
+            this.#lastMessageAt = this.#now();
+            const event = this.#createEvent("message_submitted", {
+                delivery: input.delivery,
+                displayText: input.displayText,
+                message: input.message,
+                ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
+                runId: input.runId,
+            });
+            await this.#appendDurableEvent(txCtx, event);
+            return event;
+        });
+    }
+
+    /**
+     * Commits one completed Agent Base response into Rig's app transcript and event stream.
+     */
+    async projectAgentMessage(
+        ctx: Context,
+        runId: string,
+        message: AgentMessage | ErrorMessage,
+    ): Promise<Extract<SessionEvent, { type: "agent_message" }>> {
+        return await this.#runSessionMutation(ctx, async (txCtx) => {
+            await this.#storeMessage(txCtx, this.#nextMessagePosition(), message, false, runId);
+            const event = this.#createEvent("agent_message", { message, runId });
+            await this.#appendDurableEvent(txCtx, event);
+            return event;
+        });
+    }
+
+    /**
+     * Commits one non-transient Agent Base lifecycle event through the session projection.
+     */
+    async afterProtocolCommit(ctx: Context, callback: () => void): Promise<void> {
+        await this.#afterTransactionCommit(ctx, callback);
+    }
+
+    async projectProtocolEvent<TEvent extends SessionEvent>(
+        ctx: Context,
+        event: TEvent,
+    ): Promise<TEvent> {
+        return await this.#commitEvent(ctx, event);
+    }
+
+    /**
+     * Publishes transient Agent Base inference output without touching SQLite or the durable
+     * session event lock. A completed message supersedes these updates in transcript history.
+     */
+    publishAgentLiveEvent(ctx: Context, event: SessionEvent): void {
+        this.events.publishTransient(event);
+        this.#publishLiveEvent?.(ctx, event);
     }
 
     async #storeMessage(

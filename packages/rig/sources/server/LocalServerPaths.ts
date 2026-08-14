@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { getDefaultSessionDatabasePath } from "./getDefaultSessionDatabasePath.js";
+import { getDefaultAgentDatabasePath } from "./getDefaultAgentDatabasePath.js";
 
 export interface LocalServerPaths {
     databasePath: string;
@@ -25,7 +25,7 @@ export function getLocalServerPaths(
     options: GetLocalServerPathsOptions = {},
 ): LocalServerPaths {
     const directory = options.directory ?? join(tmpdir(), `rig-${uid}`);
-    const databasePath = options.databasePath ?? getDefaultSessionDatabasePath();
+    const databasePath = options.databasePath ?? getDefaultAgentDatabasePath();
     return {
         databasePath,
         diagnosticsPath: join(directory, "diagnostics"),

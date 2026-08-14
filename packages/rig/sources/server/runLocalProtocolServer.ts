@@ -31,7 +31,6 @@ import { CompositeMcpToolProvider, McpClientManager, type McpToolProvider } from
 import {
     ensureUserConfigurationFiles,
     loadConfig,
-    resolveProtectedPaths,
     writeDaemonSettings,
     writeP2pNodeSettings,
 } from "../config/index.js";
@@ -48,7 +47,6 @@ import { loadConfiguredProviderUsage } from "../executor/loadConfiguredProviderU
 import { gracefulShutdown } from "../concurrency/index.js";
 import { disableUnavailableProviders } from "../executor/disableUnavailableProviders.js";
 import { resolveProviderDisabledReasons } from "../executor/resolveProviderDisabledReasons.js";
-import { createCodingAssistantAgent } from "../runtime/createCodingAssistantAgent.js";
 import { getDaemonIdentity } from "../daemon/index.js";
 import { errorToMessage } from "../errorToMessage.js";
 import {
@@ -70,7 +68,7 @@ import { getManagedWorkspacesDirectory } from "../project/getManagedWorkspacesDi
 import type { LocalServerPaths } from "./LocalServerPaths.js";
 import { writeDaemonCrashReport } from "./writeDaemonCrashReport.js";
 import type { PluginContext } from "../agent/context/PluginContext.js";
-import type { WorkletContext } from "../agent/context/WorkletContext.js";
+import { RigAgentService } from "../agent/RigAgentService.js";
 import { PluginManager, PluginMcpRegistry } from "../plugins/index.js";
 import { WorkletManager, WorkletToolRegistry } from "../worklets/index.js";
 import { createGeneratedMediaStore, getGeneratedDirectory } from "../generated-media/index.js";
@@ -101,6 +99,7 @@ import { OnboardingService } from "../onboarding/OnboardingService.js";
 import { prepareRemoteWorkGitSecret } from "./prepareRemoteWorkGitSecret.js";
 import { resetMurmurStore, SharingLifecycleService, SharingService } from "../sharing/index.js";
 import {
+    createProcessContext,
     createDaemonLogger,
     initializeDaemonContext,
     startObservability,
@@ -126,6 +125,7 @@ export async function runLocalProtocolServer(
     initializeDaemonContext(createDaemonLogger(daemonLog), observability.tracer);
     let databaseLock: SqliteProcessLock;
     try {
+        await prepareLocalServerDirectory(dirname(paths.databasePath));
         databaseLock = await withWorkerContext("database-lock", () =>
             acquireSqliteProcessLock(`${paths.databasePath}.lock`),
         );
@@ -199,6 +199,7 @@ async function runOwnedLocalProtocolServer(
     let happyLifecycle = Promise.resolve();
     let gitStateTracker: GitStateTracker | undefined;
     let store: PersistentSessionStore | undefined;
+    let agents: RigAgentService | undefined;
     let taskDrain: TrackedTaskDrain | undefined;
     let providerUsageTracker: ProviderUsageTracker | undefined;
     let stopping = false;
@@ -405,10 +406,14 @@ async function runOwnedLocalProtocolServer(
             if (isDatabaseFailure(error)) fatalDatabaseFailure ??= error;
         }
         try {
+            await withWorkerContext("agent-system-close", async (ctx) => {
+                await agents?.close(ctx);
+                agents = undefined;
+            });
+        } finally {
             if (store !== undefined) {
                 await withWorkerContext("session-store-close", (ctx) => store!.close(ctx));
             }
-        } finally {
             daemonLog.record("info", "daemon_stopped", "Rig daemon stopped.");
             uninstallProcessFailureLogging();
         }
@@ -436,14 +441,6 @@ async function runOwnedLocalProtocolServer(
         const p2pIdentity = await ctx.span("rig.daemon.identity.load", () =>
             loadOrCreateP2pIdentity(paths.p2pIdentityPath),
         );
-        const machineProtectedPaths = [
-            ...new Set([
-                ...(loadedConfig.sources.global.values.permissions?.protectedPaths ?? []),
-                ...(loadedConfig.sources.runtime.values.permissions?.protectedPaths ?? []),
-                ...(loadedConfig.sources.global.values.workspace?.protectedSync ?? []),
-                ...(loadedConfig.sources.runtime.values.workspace?.protectedSync ?? []),
-            ]),
-        ];
         if (stopping) return;
         const runtimeSettings = {
             inferenceMaxRetries: loadedConfig.config.settings.inferenceMaxRetries,
@@ -617,68 +614,12 @@ async function runOwnedLocalProtocolServer(
             uninstall: (ctx, request) =>
                 requirePluginManager(pluginManager).uninstall(ctx, request),
         };
-        // Worklets are reached the same way, except every session gets its own context with its id
-        // baked in, so a tool can never claim another agent's authorship through its arguments.
-        const workletsFor = (authorSessionId: string): WorkletContext => ({
-            install: (ctx, request, sourceFileSystem, expectedPermissions) =>
-                requireWorkletManager(worklets).install(
-                    ctx,
-                    { ...request, authorSessionId },
-                    sourceFileSystem,
-                    expectedPermissions === undefined ? {} : { permissions: expectedPermissions },
-                ),
-            list: (ctx) => requireWorkletManager(worklets).list(ctx),
-            readLog: (ctx, name) => requireWorkletManager(worklets).readLog(ctx, name),
-            toolRevision: () => workletToolRegistry.revision,
-            revert: (ctx, name, request, expectedPermissions) =>
-                requireWorkletManager(worklets).revert(
-                    ctx,
-                    name,
-                    request,
-                    expectedPermissions === undefined ? {} : { permissions: expectedPermissions },
-                ),
-            uninstall: (ctx, name) => requireWorkletManager(worklets).uninstall(ctx, name),
-            update: (ctx, name, request, sourceFileSystem, expectedPermissions) =>
-                requireWorkletManager(worklets).update(
-                    ctx,
-                    name,
-                    request,
-                    sourceFileSystem,
-                    expectedPermissions === undefined ? {} : { permissions: expectedPermissions },
-                ),
-        });
         store = await ctx.span("rig.daemon.session_store.open", () =>
             PersistentSessionStore.open(ctx, {
-                createRuntime: (options) => {
-                    const ownerInstanceId = options.ownerInstanceId ?? p2pIdentity.instanceId;
-                    const scopedProviders =
-                        ownerInstanceId === p2pIdentity.instanceId
-                            ? availableProviders
-                            : (p2pCredentialRuntimeRegistry?.providers(ownerInstanceId) ??
-                              availableProviders);
-                    return createCodingAssistantAgent({
-                        ...options,
-                        // What a provider says about the account while it answers is
-                        // both the daemon's freshest reading and the session's, so
-                        // the session is told the complete merged picture.
-                        onAccountUsage: (usage) => {
-                            const merged = credentialUsageRouter.record(ownerInstanceId, usage);
-                            options.onAccountUsage?.(merged);
-                        },
-                        plugins,
-                        worklets: workletsFor(options.sessionId ?? options.agentId ?? "standalone"),
-                        providerUsage: {
-                            current: () =>
-                                Promise.all(
-                                    Object.keys(scopedProviders).map((providerId) =>
-                                        credentialUsageRouter.entry(ownerInstanceId, providerId),
-                                    ),
-                                ),
-                        },
-                        providers: scopedProviders,
-                        protectedPaths: resolveProtectedPaths(options.cwd, machineProtectedPaths),
-                        resolveInferenceMaxRetries: () => runtimeSettings.inferenceMaxRetries,
-                    });
+                createRuntime: () => {
+                    throw new Error(
+                        "Legacy Rig execution is unavailable; daemon messages are handled by Happy Agent Base.",
+                    );
                 },
                 databasePath: paths.databasePath,
                 ...(loadedConfig.config.docker === undefined
@@ -754,6 +695,15 @@ async function runOwnedLocalProtocolServer(
                     );
                 },
                 taskDrain: taskDrain!,
+            }),
+        );
+        const agentSystemCtx = createProcessContext("agent-system");
+        agents = await agentSystemCtx.span("rig.daemon.agent_system.open", () =>
+            RigAgentService.open(agentSystemCtx, {
+                database: store!.database,
+                modelCatalog,
+                providers: availableProviders,
+                resolveInferenceMaxRetries: () => runtimeSettings.inferenceMaxRetries,
             }),
         );
         const githubSecretSync = new GitHubSecretSync({
@@ -1324,6 +1274,7 @@ async function runOwnedLocalProtocolServer(
             createProtocolHttpServer(
                 ctx,
                 {
+                    ...(agents === undefined ? {} : { agents }),
                     inferenceMaxRetries: runtimeSettings.inferenceMaxRetries,
                     ...(loadedConfig.config.docker === undefined
                         ? {}
@@ -1568,12 +1519,6 @@ async function runOwnedLocalProtocolServer(
 function requirePluginManager(manager: PluginManager | undefined): PluginManager {
     if (manager === undefined)
         throw new Error("Rig is still starting, so plugins are unavailable.");
-    return manager;
-}
-
-function requireWorkletManager(manager: WorkletManager | undefined): WorkletManager {
-    if (manager === undefined)
-        throw new Error("Rig is still starting, so worklets are unavailable.");
     return manager;
 }
 

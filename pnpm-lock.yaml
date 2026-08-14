@@ -426,9 +426,6 @@ importers:
       '@slopus/ghostty-web':
         specifier: workspace:*
         version: link:../ghostty-web
-      '@slopus/happy-agent-compute':
-        specifier: workspace:*
-        version: link:../happy-agent-compute
       '@slopus/rig-execution':
         specifier: workspace:*
         version: link:../rig-execution

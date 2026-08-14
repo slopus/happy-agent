@@ -78,6 +78,16 @@ export function withConnectionContext<Result>(
     return runSemanticContext(`rig.connection.${connection}`, logContext, work);
 }
 
+/** Creates a daemon-owned context for a process whose lifetime outlives its startup call. */
+export function createProcessContext(
+    processName: string,
+    logContext: Readonly<Record<string, unknown>> = {},
+): Context {
+    if (!initialized) throw new Error("Daemon context has not been initialized");
+    const name = `rig.process.${processName}`;
+    return withLogContext(rootContext.named(name), { context: name, ...logContext });
+}
+
 export function withProcessContext<Result>(
     processName: string,
     work: ContextWork<Result>,

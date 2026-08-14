@@ -917,6 +917,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                     ? { mcpToolProvider: this.#mcpToolProvider }
                     : {}),
                 onAppendEvent: (eventCtx, event) => this.#appendEvent(eventCtx, event),
+                publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
                 persistence: this,
                 folders: this.#folders,
                 slotStores: { entries: this.slots, applets: this.applets },
@@ -1160,6 +1161,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                         : {}),
                     id: sessionId,
                     onAppendEvent: (eventCtx, event) => this.#appendEvent(eventCtx, event),
+                    publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
                     orderKey,
                     ownerInstanceId,
                     ...(profileId === undefined ? {} : { profileId }),
@@ -2911,6 +2913,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 ? {}
                 : { mcpToolProvider: this.#mcpToolProvider }),
             onAppendEvent: (eventCtx, event) => this.#appendEvent(eventCtx, event),
+            publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
             persistence: this,
             folders: this.#folders,
             slotStores: { entries: this.slots, applets: this.applets },

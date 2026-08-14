@@ -622,6 +622,7 @@ export class InMemorySessionStore implements SessionStore {
                 : {}),
             request: forkRequest,
             onAppendEvent: (eventCtx, event) => this.#publishGlobalEvent(eventCtx, event),
+            publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
             folders: this.#folders,
             slotStores: { entries: this.slots, applets: this.applets },
             ...(sourceSnapshot.scope.kind === "project" || sourceSnapshot.scope.kind === "workspace"
@@ -835,6 +836,7 @@ export class InMemorySessionStore implements SessionStore {
                     : {}),
                 id: sessionId,
                 onAppendEvent: (eventCtx, event) => this.#publishGlobalEvent(eventCtx, event),
+                publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
                 orderKey: sessionOrderKeyForCreation(metadata?.type, () =>
                     this.#newLastSessionOrderKey(resolved.scope),
                 ),

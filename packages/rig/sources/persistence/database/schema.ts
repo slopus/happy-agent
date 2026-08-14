@@ -10,6 +10,26 @@ import {
     unique,
 } from "drizzle-orm/sqlite-core";
 
+export const agentRecords = sqliteTable(
+    "agent_records",
+    {
+        sequence: integer("sequence").primaryKey({ autoIncrement: true }),
+        agentId: text("agent_id").notNull(),
+        recordJson: text("record_json").notNull(),
+    },
+    (table) => [index("agent_records_agent_sequence").on(table.agentId, table.sequence)],
+);
+
+export const agentValues = sqliteTable(
+    "agent_values",
+    {
+        agentId: text("agent_id").notNull(),
+        key: text("key").notNull(),
+        valueJson: text("value_json").notNull(),
+    },
+    (table) => [primaryKey({ columns: [table.agentId, table.key] })],
+);
+
 export const rigDataIdentityTable = sqliteTable(
     "rig_data_identity",
     {
