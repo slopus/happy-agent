@@ -313,6 +313,9 @@ export { waitWorkflowTool } from "./workflows/tools/wait_workflow.js";
 export { workflowLogsTool } from "./workflows/tools/workflow_logs.js";
 export { workflowStatusTool } from "./workflows/tools/workflow_status.js";
 
+// Usage: advisory provider, model, token, and timing accounting.
+export * from "./usage/index.js";
+
 // Applets: host-managed versioned UI sources and bounded assets.
 export {
     MAX_APPLET_ASSET_BYTES,
