@@ -191,8 +191,8 @@ importers:
         version: 0.0.8
     devDependencies:
       '@slopus/happy-agent-base':
-        specifier: 0.0.5
-        version: 0.0.5(@aws-sdk/credential-provider-node@3.972.71)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.6
+        version: 0.0.6(@aws-sdk/credential-provider-node@3.972.71)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)
       '@types/node':
         specifier: ^24.0.10
         version: 24.13.3
@@ -384,8 +384,11 @@ importers:
         specifier: 1.3.6
         version: 1.3.6
       '@slopus/happy-agent-base':
-        specifier: 0.0.5
-        version: 0.0.5(@aws-sdk/credential-provider-node@3.972.71)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.6
+        version: 0.0.6(@aws-sdk/credential-provider-node@3.972.71)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)
+      '@slopus/happy-agent-features':
+        specifier: workspace:*
+        version: link:../happy-agent-features
       '@slopus/happy-providers':
         specifier: 0.0.7
         version: 0.0.7(@aws-sdk/credential-provider-node@3.972.71)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)
@@ -2239,8 +2242,8 @@ packages:
   '@slopus/ghostty-wasm@1.3.6':
     resolution: {integrity: sha512-S8KS9VyGgv451D8ZrRoS5vAg1Eqk8dZJWzM28HrjXVmD1B8g3Ec1QsjUWAIVqReuZyZqLFxZfjH6rU0N/f7n2Q==}
 
-  '@slopus/happy-agent-base@0.0.5':
-    resolution: {integrity: sha512-dhBnT/iEykMu4xU440w6W078igRdWtI3xEHxDnoC/rnjhQEXQGglqBUUQtnHlzHZJyf+3v7ASwthKFOEW8KtRg==}
+  '@slopus/happy-agent-base@0.0.6':
+    resolution: {integrity: sha512-zUaeDpCTIeigTnhK3UPBEpLYN1ot4Vot2RoEO+atzDgJXPdiHZU/tf0nPfKrNWi4AFxR1DO7TUNvuGo8PYaEpw==}
     engines: {node: '>=22.19.0'}
 
   '@slopus/happy-providers@0.0.7':
@@ -5881,7 +5884,7 @@ snapshots:
 
   '@slopus/ghostty-wasm@1.3.6': {}
 
-  '@slopus/happy-agent-base@0.0.5(@aws-sdk/credential-provider-node@3.972.71)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)':
+  '@slopus/happy-agent-base@0.0.6(@aws-sdk/credential-provider-node@3.972.71)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@paralleldrive/cuid2': 3.3.0
       '@sinclair/typebox': 0.34.49

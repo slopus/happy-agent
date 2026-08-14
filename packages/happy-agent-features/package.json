@@ -34,13 +34,13 @@
         "@steve.kite/stdlib": "0.0.8"
     },
     "devDependencies": {
-        "@slopus/happy-agent-base": "0.0.5",
+        "@slopus/happy-agent-base": "0.0.6",
         "@types/node": "^24.0.10",
         "typescript": "^7.0.2",
         "vitest": "^3.2.4"
     },
     "peerDependencies": {
-        "@slopus/happy-agent-base": "0.0.5"
+        "@slopus/happy-agent-base": "0.0.6"
     },
     "engines": {
         "node": ">=22.19.0"
