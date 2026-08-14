@@ -200,12 +200,18 @@ while building and reviewing the first Rig v2 features.
 - Store contracts perform bounded paging, filtering, and listing at the storage
   boundary. Never require a host to load an entire archive so the feature can
   slice it afterward.
+- Aggregate counts and statistics are storage operations too. Compute them with
+  bounded database aggregation or a host-maintained summary; never materialize
+  the retained archive to answer a bounded page request.
 - Validate that every returned page obeys the requested limit in addition to
   validating its item schema. A conforming item array can still violate the
   store's bounded-read contract.
 - Cursors name stable source positions. Test forward, backward, partial previous
   pages, pruned prefixes, filtered pages, empty histories, and cursors beyond
   the final match.
+- Require the continuation direction the request needs. A truncated end page or
+  an empty page beyond the end must expose a valid previous cursor so older
+  matches remain reachable; forward progress alone is insufficient.
 - Validate complete persisted invariants on every load, including configured
   cardinality, unique identities and ordering, referential integrity, and
   acyclicity where applicable.
@@ -215,6 +221,12 @@ while building and reviewing the first Rig v2 features.
 - When an in-memory test store and a SQL store implement the same filter, add
   parity cases so metadata or serialized JSON keys cannot accidentally change
   search semantics.
+- Define text-search case folding explicitly and use the same Unicode semantics
+  in every adapter. JavaScript Unicode folding and SQLite's default ASCII-only
+  `lower()` are not interchangeable.
+- A bounded sample is not a full archive summary. Label sampled excerpts
+  honestly, or obtain exact aggregate statistics through a bounded store
+  operation before presenting totals to the model.
 - Never keep a store transaction open across a durable wait, broker suspension,
   or other externally resumed operation. Claim and read in a short
   transaction, wait outside it, then re-read and receipt the authoritative
