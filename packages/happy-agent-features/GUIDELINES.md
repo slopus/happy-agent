@@ -123,6 +123,9 @@ while building and reviewing the first Rig v2 features.
 - Do not make the model invent persistence or idempotency IDs. Allocate an ID
   from the configured factory and keep it in the tool call's durable,
   call-scoped `AgentKV`, then reuse it on retry.
+- Define tool-only input schemas when the host mutation schema contains an
+  operation ID, record ID, author, or other feature-owned field. Reusing the
+  host schema can silently expose those persistence identities to the model.
 - Call-scoped KV belongs to one durable tool call, not to a feature-wide public
   mutation. A host-facing mutation outside a tool call must receive a caller
   operation identity or use an injected host receipt boundary; a fixed agent-KV
@@ -212,6 +215,10 @@ while building and reviewing the first Rig v2 features.
 - When an in-memory test store and a SQL store implement the same filter, add
   parity cases so metadata or serialized JSON keys cannot accidentally change
   search semantics.
+- Never keep a store transaction open across a durable wait, broker suspension,
+  or other externally resumed operation. Claim and read in a short
+  transaction, wait outside it, then re-read and receipt the authoritative
+  result in another short transaction.
 
 ## Lifecycle and composition
 
