@@ -137,6 +137,10 @@ while building and reviewing the first Rig v2 features.
   idempotency boundary.
 - Make normalized identical mutations no-ops. When equality is insufficient,
   use a stable repeat key owned by the host store.
+- A mutable replay receipt cannot prove historical before-state by itself. When
+  a result such as `changed`, `removed`, or `detached` depends on what existed
+  before the mutation, persist and read back an independent immutable proof or
+  use an authoritative host receipt that binds that before-state exactly.
 - Provider call IDs are correlation data, not globally unique feature record
   identities. Allocate a feature-owned durable ID.
 - Thin tools call the same public operations used by the host. Tool results and
@@ -150,6 +154,10 @@ while building and reviewing the first Rig v2 features.
   optional prose. When a validated invariant makes a compact representation
   exact—such as a contiguous version range—prefer that representation over
   truncating individual target identities.
+- Every legal maximum-length identity must have a complete actionable
+  representation at the configured minimum output budget. Do not make a valid
+  mutation or one-item page fail merely because the verbose rendering does not
+  fit; use a bounded compact identity or a reachable detail operation.
 - A nonterminal page must also make progress: every returned next cursor must
   be strictly beyond the requested cursor and expose at least one complete
   item or identity. Test the minimum output budget with maximum-length IDs so a
@@ -227,6 +235,9 @@ while building and reviewing the first Rig v2 features.
 - A bounded sample is not a full archive summary. Label sampled excerpts
   honestly, or obtain exact aggregate statistics through a bounded store
   operation before presenting totals to the model.
+- Before labeling supplied aggregate statistics exact, require every count to
+  be at least the corresponding count computed from the validated sample being
+  shown. Internally consistent totals can still contradict their own excerpt.
 - Never keep a store transaction open across a durable wait, broker suspension,
   or other externally resumed operation. Claim and read in a short
   transaction, wait outside it, then re-read and receipt the authoritative
