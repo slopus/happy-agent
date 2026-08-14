@@ -246,8 +246,7 @@ Status: to implement.
 
 ### 8. Presence
 
-Status: implementation and semantic hardening are complete; final isolated
-review remains.
+Status: complete, reviewed, committed, and available from the package root.
 
 - Separate configured presence from effective presence.
 - Support built-in and custom states, temporary values, fallback, and schedules.
