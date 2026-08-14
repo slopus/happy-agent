@@ -264,6 +264,8 @@ Every stateful feature should cover the applicable cases:
 - nested outer rollback emits no post-commit event;
 - concurrent mutations remain correct through the injected transaction;
 - durable tool replay is idempotent;
+- every asynchronous assertion and rejection expectation is explicitly awaited;
+  a passing test run with an unawaited-promise warning is not a clean gate;
 - transactional and post-commit listeners receive the same stable event;
 - listener failure follows the documented containment policy;
 - configured bounds are enforced at the store boundary;
