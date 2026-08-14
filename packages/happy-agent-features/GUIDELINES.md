@@ -84,6 +84,10 @@ while building and reviewing the first Rig v2 features.
 - Thin tools call the same public operations used by the host. Tool results and
   model-facing text must include the bounded detail required to use the feature;
   structured return values alone are not automatically visible to the model.
+- A model-facing page must not advance its cursor past identities hidden by
+  output truncation. Either make every returned identity visible in a compact
+  row or reduce the returned page so its next cursor advances only past visible
+  items; provide a detail tool for the remaining fields.
 
 ## Agent Base identity and metadata
 
