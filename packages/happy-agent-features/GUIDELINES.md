@@ -93,9 +93,16 @@ while building and reviewing the first Rig v2 features.
   Do not share mutable task, record, array, or result references with callers;
   a transactional observer must not be able to alter what post-commit
   observers later receive.
+- Invoke validated service and listener methods through their owning object.
+  Extracting a prototype method into a standalone callback loses `this`, so a
+  class-backed adapter can validate successfully and then fail or silently
+  misbehave at delivery time.
 - Define listener failure behavior. A post-commit listener failure must be
   contained or reported through an explicit callback; it must not make a caller
   observe failure after durable state already committed.
+- Optional observer error reporting must tolerate hostile thrown values.
+  Normalize messages inside a guarded helper with a bounded fallback; even
+  `String(error)` and `error.message` access can throw for arbitrary values.
 - Do not publish heap state, promises, notifications, or events before commit.
   Durable writes happen in the transaction; only the corresponding in-memory
   publication happens after commit.
@@ -113,6 +120,11 @@ while building and reviewing the first Rig v2 features.
 - Do not make the model invent persistence or idempotency IDs. Allocate an ID
   from the configured factory and keep it in the tool call's durable,
   call-scoped `AgentKV`, then reuse it on retry.
+- Call-scoped KV belongs to one durable tool call, not to a feature-wide public
+  mutation. A host-facing mutation outside a tool call must receive a caller
+  operation identity or use an injected host receipt boundary; a fixed agent-KV
+  key that is never rotated turns every later mutation into a replay of the
+  first one.
 - Every durable mutation tool needs that operation identity, not only create.
   Cancel, stop, resume, update, revert, and similar calls can replay after an
   intervening opposite transition, so current-state no-ops alone are not an
@@ -136,6 +148,11 @@ while building and reviewing the first Rig v2 features.
   be strictly beyond the requested cursor and expose at least one complete
   item or identity. Test the minimum output budget with maximum-length IDs so a
   valid page cannot repeat the same empty slice forever.
+- When a cursor is defined as an integer offset, require the next cursor to
+  equal the current cursor plus the number of returned visible records.
+  Merely requiring a larger cursor lets a host skip unseen identities. If the
+  host uses opaque or sparse positions instead, encode those positions in the
+  returned records and validate that explicit contract.
 
 ## Agent Base identity and metadata
 
