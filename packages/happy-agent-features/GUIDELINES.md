@@ -36,6 +36,9 @@ while building and reviewing the first Rig v2 features.
   handwritten validation.
 - Validate constructor options, public method inputs, injected store results,
   and persisted KV before use.
+- Shape validation is not semantic validation. A host result must also match
+  the requested identity, operation ID, target version, scope, and other
+  invariants before the feature stores, projects, or announces it.
 - A validated factory function does not validate the object it returns. Define
   and check a narrow TypeBox contract for every injected persistence, runtime,
   broker, or catalog result before calling methods on it; do not leave factory
@@ -69,6 +72,10 @@ while building and reviewing the first Rig v2 features.
   publication happens after commit.
 - Trusted feature-hook failures do not need elaborate recovery machinery.
   Preserve rollback correctness and focus recovery work on process crashes.
+- A database transaction cannot roll back an external file, process, or
+  network side effect. Inject an explicit host staging/commit/rollback
+  boundary—or a compensating cleanup operation—and test cleanup when a later
+  catalog write or transactional listener fails.
 
 ## Durable tools and idempotency
 
