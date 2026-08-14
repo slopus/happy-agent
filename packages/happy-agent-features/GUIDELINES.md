@@ -99,6 +99,10 @@ while building and reviewing the first Rig v2 features.
   output truncation. Either make every returned identity visible in a compact
   row or reduce the returned page so its next cursor advances only past visible
   items; provide a detail tool for the remaining fields.
+- A nonterminal page must also make progress: every returned next cursor must
+  be strictly beyond the requested cursor and expose at least one complete
+  item or identity. Test the minimum output budget with maximum-length IDs so a
+  valid page cannot repeat the same empty slice forever.
 
 ## Agent Base identity and metadata
 
