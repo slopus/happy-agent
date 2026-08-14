@@ -156,8 +156,8 @@ Status: existing foundation; retain and harden.
 
 ### 2. History
 
-Status: implementation and Rig adapter in progress; highest integration
-priority.
+Status: implementation and Rig adapter are in final contract correction and
+review; highest integration priority.
 
 - Record accepted user messages, completed assistant blocks, tool results, and
   inference errors.
@@ -200,7 +200,7 @@ Status: existing baseline; durability hardening remains.
 
 ### 5. Tasks
 
-Status: implemented; Agent Base 0.0.6 audit and Sol review pending.
+Status: complete, reviewed, committed, and integrated with Agent Base 0.0.6.
 
 - Durable generic task list, not a dedicated Plan mode.
 - Task fields include stable ID, title, detail, status, priority,
@@ -214,7 +214,7 @@ Status: implemented; Agent Base 0.0.6 audit and Sol review pending.
 
 ### 6. Collaboration
 
-Status: to implement; owns all multi-agent coordination.
+Status: implementation exists; isolated review and host integration remain.
 
 - Create agents with caller-supplied IDs and Agent Base metadata.
 - Keep an injected host roster containing agents, roles, groups, parentage,
@@ -246,7 +246,8 @@ Status: to implement.
 
 ### 8. Presence
 
-Status: implemented; final semantic validation and Sol review pending.
+Status: implementation and semantic hardening are complete; final isolated
+review remains.
 
 - Separate configured presence from effective presence.
 - Support built-in and custom states, temporary values, fallback, and schedules.
@@ -259,7 +260,7 @@ Status: implemented; final semantic validation and Sol review pending.
 
 ### 9. Search
 
-Status: to implement.
+Status: implementation exists; output and runtime-contract hardening remain.
 
 - Inject a provider-neutral search backend with search and fetch.
 - Provide common `web_search` and `web_fetch` tools.
@@ -271,7 +272,7 @@ Status: to implement.
 
 ### 10. Image generation
 
-Status: to implement.
+Status: implementation exists; isolated review and host integration remain.
 
 - Inject an image generator and asset store.
 - Provide a common `generate_image` tool and host API.
@@ -281,7 +282,7 @@ Status: to implement.
 
 ### 11. Secrets
 
-Status: to implement.
+Status: implementation exists; isolated review and host integration remain.
 
 - Inject a secret registry/resolver.
 - List safe metadata, register, update, remove, attach, and detach references.
@@ -291,7 +292,7 @@ Status: to implement.
 
 ### 12. Slots
 
-Status: to implement.
+Status: implementation exists; isolated review and host integration remain.
 
 - Inject a host-owned slot store and scope resolver.
 - Create, list, update, reorder, and remove slot entries.
@@ -301,7 +302,8 @@ Status: to implement.
 
 ### 13. Applets
 
-Status: to implement.
+Status: implementation exists; Luna findings require another correction pass
+before final review.
 
 - Inject an applet catalog, source importer, and asset reader.
 - Import/create, list, read, update/version, revert, remove, and read assets.
@@ -323,7 +325,8 @@ Status: to implement.
 
 ### 15. Workflows
 
-Status: to implement with deliberately shallow integration.
+Status: implementation exists; final durable-mutation corrections and review
+remain.
 
 - Inject a workflow runner and run store.
 - Launch, list, read status, wait, resume, cancel, and read bounded logs.
@@ -336,7 +339,8 @@ Status: to implement with deliberately shallow integration.
 
 ### 16. Usage
 
-Status: to implement.
+Status: implementation exists; aggregate paging and runtime-contract review
+remain.
 
 - Observe Agent Base inference completion and record provider/model/effort/tier,
   tokens, and time through an injected `UsageStore`.
@@ -356,7 +360,8 @@ Status: to implement as an agent-facing facade over Rig-owned operations.
 
 ### 18. Workspaces
 
-Status: to implement separately from Projects.
+Status: implementation exists; output paging and runtime-contract review
+remain.
 
 - Inject a workspace store/operations service.
 - Create, list, get, transfer, archive, and read branch metadata.
