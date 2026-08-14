@@ -231,6 +231,9 @@ export { listTasksTool } from "./tasks/tools/list_tasks.js";
 export { updateTaskTool } from "./tasks/tools/update_task.js";
 export { completeTaskTool } from "./tasks/tools/complete_task.js";
 
+// Collaboration: durable agent rosters, directed messages, reply obligations, waits, and schedules.
+export * from "./collaboration/index.js";
+
 // Workflows: host-managed durable workflow runs, scoped to the calling agent.
 export {
     MAX_WORKFLOW_AGENT_ID_LENGTH,
