@@ -156,8 +156,8 @@ Status: existing foundation; retain and harden.
 
 ### 2. History
 
-Status: implementation and Rig adapter are in final contract correction and
-review; highest integration priority.
+Status: complete, reviewed, committed, and integrated into Rig's Agent Base
+protocol path.
 
 - Record accepted user messages, completed assistant blocks, tool results, and
   inference errors.
@@ -178,7 +178,7 @@ store, Rig session projection, and the TUI all work together.
 
 ### 3. Model handoff
 
-Status: existing implementation being decoupled from concrete History.
+Status: complete, reviewed, committed, and wired into Rig after History.
 
 - Use Agent Base model-change hooks.
 - Emit no notice for a compatible switch.
