@@ -640,6 +640,48 @@ export { detachSecretTool } from "./secrets/tools/detach_secret.js";
 export { listSecretsTool } from "./secrets/tools/list_secrets.js";
 export { referenceSecretTool } from "./secrets/tools/reference_secret.js";
 
+// Search: provider-neutral web search and fetch over a host-supplied backend.
+export {
+    MAX_FETCH_CONTENT_CHARACTERS,
+    MAX_FETCH_CONTENT_TYPE_LENGTH,
+    MAX_FETCH_TITLE_LENGTH,
+    MAX_FETCH_URL_LENGTH,
+    MAX_SEARCH_AGENT_ID_LENGTH,
+    MAX_SEARCH_CURSOR,
+    MAX_SEARCH_QUERY_LENGTH,
+    MAX_SEARCH_RESULT_ID_LENGTH,
+    MAX_SEARCH_RESULT_PUBLISHED_AT_LENGTH,
+    MAX_SEARCH_RESULT_SNIPPET_LENGTH,
+    MAX_SEARCH_RESULT_SOURCE_LENGTH,
+    MAX_SEARCH_RESULT_TITLE_LENGTH,
+    MAX_SEARCH_RESULT_URL_LENGTH,
+    MAX_SEARCH_RESULTS_PER_PAGE,
+    fetchInputSchema,
+    fetchResultSchema,
+    searchAgentIdSchema,
+    searchCursorSchema,
+    searchQuerySchema,
+    searchPageSchema,
+    searchResultSchema,
+    type FetchInput,
+    type FetchResult,
+    type SearchPage,
+    type SearchQuery,
+    type SearchResult,
+} from "./search/Search.js";
+export {
+    searchBackendSchema,
+    searchContextSchema,
+    type SearchBackend,
+} from "./search/SearchBackend.js";
+export {
+    SearchFeature,
+    searchFeatureOptionsSchema,
+    type SearchFeatureOptions,
+} from "./search/SearchFeature.js";
+export { webFetchTool } from "./search/tools/web_fetch.js";
+export { webSearchTool } from "./search/tools/web_search.js";
+
 // Slots: host-owned UI slot entries and opaque applet actions.
 export {
     allowedSlotScopes,
