@@ -217,6 +217,10 @@ Every stateful feature should cover the applicable cases:
   the package plan, public contracts, transaction semantics, persisted
   invariants, bounds, replay, and model-facing behavior. It does not edit until
   findings are handed back.
+- Give each delegated implementation or review a self-contained narrow brief
+  with only the context it needs. Do not fork unrelated later lane assignments
+  into a reviewer; ambient feature chatter can be mistaken for a replacement
+  task and silently change the reviewed scope.
 - The implementation pass fixes concrete Luna findings and reruns focused
   validation.
 - A distinct Sol High review is the final release gate. Sol reviews only after
