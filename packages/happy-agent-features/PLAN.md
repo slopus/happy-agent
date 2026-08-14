@@ -282,7 +282,8 @@ Status: implementation exists; isolated review and host integration remain.
 
 ### 11. Secrets
 
-Status: implementation exists; isolated review and host integration remain.
+Status: complete, reviewed, committed, and available from the package root.
+Rig host integration remains.
 
 - Inject a secret registry/resolver.
 - List safe metadata, register, update, remove, attach, and detach references.
