@@ -8,6 +8,10 @@ while building and reviewing the first Rig v2 features.
 - Build one shared feature instance for an `AgentSystem`. Put per-agent durable
   state in the supplied feature `AgentKV`, collection state in `sharedKV`, and
   in-progress state in `runKV`.
+- Agent Base scopes Agent KV, `sharedKV`, and `runKV` by feature name. Keys
+  must be unique within one feature, but two different features may safely use
+  the same literal key; do not add a second cross-feature namespace or infer a
+  collision without tracing `Agent.scopeOf`.
 - Avoid mutable in-memory state. It cannot survive restart or coordinate across
   processes, so it must never be authoritative. Keep it only for genuinely
   ephemeral, non-persistable observations.
