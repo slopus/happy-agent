@@ -197,6 +197,11 @@ while building and reviewing the first Rig v2 features.
 
 - Put protocol projection after every configurable feature in the host feature
   array so it is the final transactional observer.
+- In an Agent Base-enabled server, every agentic route must either call the
+  Agent Base host facade or return a clear unavailable response. Audit related
+  broadcast, context, compact, reset, rewind, and configuration routes
+  together; a single unconditional legacy-session call silently revives the
+  runtime being replaced.
 - Verify the real daemon startup wiring, not only a service constructor test.
   Recovery callbacks and stores that are optional in a helper signature can
   silently be absent from the production call site.
