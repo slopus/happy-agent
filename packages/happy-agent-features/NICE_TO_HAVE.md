@@ -9,6 +9,21 @@ Do not use this list to add a compatibility layer inside a feature. Implement
 the feature cleanly with current public primitives, then keep the possible Base
 improvement here for a separate task.
 
+## Already covered by Agent Base 0.0.6
+
+The following items were previously treated as host workarounds and are now
+available in the published Base API:
+
+- caller-supplied agent IDs and parentage during creation;
+- caller-supplied message IDs and immutable message metadata on `send` and
+  `steer`;
+- awaited asynchronous `onEvent` and feature observation hooks;
+- agent metadata exposed to feature scopes and transactional metadata-change
+  hooks.
+
+Features should use these APIs directly. Do not add a second identity ledger or
+heap-only agent/session link to recreate them.
+
 ## Host-level outer commit callbacks
 
 Features with application projections currently inject a store-specific
