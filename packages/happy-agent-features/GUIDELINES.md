@@ -121,6 +121,10 @@ while building and reviewing the first Rig v2 features.
 - Treat message metadata as persisted correlation, not authorization. Validate
   a feature-owned TypeBox shape before using fields from the open metadata
   record.
+- Preserve the complete validated protocol content when bridging into Agent
+  Base, history, and retry fingerprints. Do not replace structured text/image
+  blocks with display text or silently drop an unsupported block; carry it
+  through or return an explicit unavailable error.
 - Pass the shared transaction context into agent creation, send, and steer when
   feature or host projection must commit with the Agent Base operation.
 - Prefer Agent Base's idempotent persisted identity boundary over a duplicate
