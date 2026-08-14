@@ -302,8 +302,8 @@ Status: implementation exists; isolated review and host integration remain.
 
 ### 13. Applets
 
-Status: implementation exists; Luna findings require another correction pass
-before final review.
+Status: complete, reviewed, committed, and available from the package root;
+Rig host integration remains.
 
 - Inject an applet catalog, source importer, and asset reader.
 - Import/create, list, read, update/version, revert, remove, and read assets.
