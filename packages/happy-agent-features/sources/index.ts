@@ -107,6 +107,67 @@ export {
     permissionModeGuidance,
 } from "./permissions/impl/permissionModeGuidance.js";
 
+// Presence: host-owned current status, temporary fallbacks, and optional recurring windows.
+export {
+    PresenceFeature,
+    presenceFeatureOptionsSchema,
+    presenceMutationOptionsSchema,
+    type PresenceFeatureOptions,
+    type PresenceMutationOptions,
+} from "./presence/PresenceFeature.js";
+export {
+    presenceEventSchema,
+    presenceFeatureListenerSchema,
+    presenceContextSchema,
+    type PresenceEvent,
+    type PresenceFeatureListener,
+} from "./presence/PresenceEvent.js";
+export {
+    presenceScheduleInputSchema,
+    presenceScheduleSchema,
+    assertPresenceSchedule,
+    assertPresenceScheduleInput,
+    type PresenceSchedule,
+    type PresenceScheduleInput,
+} from "./presence/PresenceSchedule.js";
+export {
+    assertPresenceState,
+    assertPresenceToolInput,
+    assertTemporaryPresenceInput,
+    presenceFallbackSchema,
+    presenceStateSchema,
+    presenceStatusSchema,
+    presenceToolInputSchema,
+    temporaryPresenceInputSchema,
+    type PresenceFallback,
+    type PresenceState,
+    type PresenceStatus,
+    type PresenceToolInput,
+    type TemporaryPresenceInput,
+} from "./presence/PresenceState.js";
+export {
+    assertPresenceContext,
+    assertPresenceMutationReceipt,
+    assertPresenceScheduleResult,
+    assertPresenceStateResult,
+    assertPresenceTransactionChange,
+    assertPresenceVoidResult,
+    presenceFingerprintSchema,
+    presenceMutationReceiptSchema,
+    presenceOperationIdSchema,
+    presenceReaderSchema,
+    presenceScheduleStoreSchema,
+    presenceStoreSchema,
+    presenceTransactionChangeSchema,
+    type PresenceReader,
+    type PresenceScheduleStore,
+    type PresenceMutationReceipt,
+    type PresenceStore,
+    type PresenceTransactionChange,
+} from "./presence/PresenceStore.js";
+export { getPresenceTool } from "./presence/tools/get_presence.js";
+export { setPresenceTool } from "./presence/tools/set_presence.js";
+
 // Tasks: a bounded persistent todo list stored in each agent's supplied feature KV.
 export {
     TasksFeature,
