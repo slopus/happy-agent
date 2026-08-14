@@ -129,7 +129,9 @@ while building and reviewing the first Rig v2 features.
   feature or host projection must commit with the Agent Base operation.
 - Prefer Agent Base's idempotent persisted identity boundary over a duplicate
   feature receipt table. Add a host repeat-key table only when it carries a
-  distinct contract Agent Base cannot represent.
+  distinct contract Agent Base cannot represent. Such a table needs exact
+  indexed lookups, bounded startup queries, and an explicit terminal/session
+  retention or pruning path; never recover by scanning all Agent Base records.
 - Async observational hooks are awaited. Contain optional observer failures
   deliberately; never create an unbounded promise chain to preserve a
   synchronous assumption from an older Agent Base version.
