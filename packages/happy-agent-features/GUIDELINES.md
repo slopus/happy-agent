@@ -39,6 +39,10 @@ while building and reviewing the first Rig v2 features.
 - Shape validation is not semantic validation. A host result must also match
   the requested identity, operation ID, target version, scope, and other
   invariants before the feature stores, projects, or announces it.
+- Revalidate a mutation result after the injected transaction returns. A
+  malformed transaction adapter can substitute another schema-valid callback
+  result; the outer feature boundary must still enforce the requested identity,
+  normalized input, operation ID, and terminal state.
 - A validated factory function does not validate the object it returns. Define
   and check a narrow TypeBox contract for every injected persistence, runtime,
   broker, or catalog result before calling methods on it; do not leave factory
@@ -88,6 +92,10 @@ while building and reviewing the first Rig v2 features.
 - Do not make the model invent persistence or idempotency IDs. Allocate an ID
   from the configured factory and keep it in the tool call's durable,
   call-scoped `AgentKV`, then reuse it on retry.
+- Every durable mutation tool needs that operation identity, not only create.
+  Cancel, stop, resume, update, revert, and similar calls can replay after an
+  intervening opposite transition, so current-state no-ops alone are not an
+  idempotency boundary.
 - Make normalized identical mutations no-ops. When equality is insufficient,
   use a stable repeat key owned by the host store.
 - Provider call IDs are correlation data, not globally unique feature record
