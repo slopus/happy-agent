@@ -106,3 +106,66 @@ export {
     permissionModeChangeNotice,
     permissionModeGuidance,
 } from "./permissions/impl/permissionModeGuidance.js";
+
+// Tasks: a bounded persistent todo list stored in each agent's supplied feature KV.
+export {
+    TasksFeature,
+    DEFAULT_MAX_TASKS,
+    DEFAULT_TASK_PRIORITY,
+    MAX_TASKS,
+    assertTasksFeatureOptions,
+    tasksFeatureOptionsSchema,
+    type TasksFeatureOptions,
+} from "./tasks/TasksFeature.js";
+export {
+    assertTaskPersistence,
+    taskPersistenceSchema,
+    taskStorageSchema,
+    type TaskPersistence,
+    type TaskStorage,
+} from "./tasks/TaskStore.js";
+export {
+    taskCreateInputSchema,
+    taskDetailSchema,
+    taskIdSchema,
+    taskPrioritySchema,
+    taskSchema,
+    taskStatusSchema,
+    taskTimestampSchema,
+    taskTitleSchema,
+    taskUpdateInputSchema,
+    type Task,
+    type TaskCreateInput,
+    type TaskId,
+    type TaskPriority,
+    type TaskStatus,
+    type TaskUpdateInput,
+} from "./tasks/Task.js";
+export {
+    taskEventIdSchema,
+    taskEventPayloadSchema,
+    taskEventSchema,
+    taskFeatureListenerSchema,
+    type TaskEvent,
+    type TaskFeatureListener,
+    type TaskEventPayload,
+} from "./tasks/TaskEvent.js";
+export {
+    MAX_TASK_DEPENDENCY_PAGE_SIZE,
+    MAX_TASK_DETAIL_PAGE_SIZE,
+    taskDetailPageSchema,
+    taskDetailQuerySchema,
+    type TaskDetailPage,
+    type TaskDetailQuery,
+} from "./tasks/TaskDetailPage.js";
+export {
+    taskPageQuerySchema,
+    taskPageSchema,
+    type TaskPage,
+    type TaskPageQuery,
+} from "./tasks/TaskPage.js";
+export { createTaskTool } from "./tasks/tools/create_task.js";
+export { getTaskTool } from "./tasks/tools/get_task.js";
+export { listTasksTool } from "./tasks/tools/list_tasks.js";
+export { updateTaskTool } from "./tasks/tools/update_task.js";
+export { completeTaskTool } from "./tasks/tools/complete_task.js";
