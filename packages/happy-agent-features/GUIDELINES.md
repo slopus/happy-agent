@@ -50,6 +50,10 @@ while building and reviewing the first Rig v2 features.
 - Bound strings, collection sizes, page sizes, output sizes, and pending
   in-memory or KV state. A format-time cap does not excuse an unbounded store
   read.
+- Recursive JSON needs an explicit maximum depth as well as per-level string,
+  item, and property limits. Enforce a final encoded-byte limit at the
+  persistence boundary too: bounded leaves do not bound an arbitrarily deep
+  tree or its serialized payload.
 
 ## Transactions and events
 
