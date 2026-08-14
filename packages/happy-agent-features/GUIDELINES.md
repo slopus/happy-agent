@@ -47,6 +47,9 @@ while building and reviewing the first Rig v2 features.
   state. Validate its identity and fingerprint, then reconcile its returned
   record or archive with the authoritative host catalog before returning it;
   a schema-valid but corrupted receipt must not override the catalog.
+- Do not trust a host mutation envelope's `changed` flag. Derive the transition
+  from validated authoritative before/after state, require the host flag to
+  agree, and use the derived value for receipts and event publication.
 - Revalidate a mutation result after the injected transaction returns. A
   malformed transaction adapter can substitute another schema-valid callback
   result; the outer feature boundary must still enforce the requested identity,
