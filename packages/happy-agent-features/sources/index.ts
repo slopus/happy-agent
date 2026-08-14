@@ -230,3 +230,82 @@ export { getTaskTool } from "./tasks/tools/get_task.js";
 export { listTasksTool } from "./tasks/tools/list_tasks.js";
 export { updateTaskTool } from "./tasks/tools/update_task.js";
 export { completeTaskTool } from "./tasks/tools/complete_task.js";
+
+// Workflows: host-managed durable workflow runs, scoped to the calling agent.
+export {
+    MAX_WORKFLOW_AGENT_ID_LENGTH,
+    MAX_WORKFLOW_ERROR_LENGTH,
+    MAX_WORKFLOW_ID_LENGTH,
+    MAX_WORKFLOW_INPUT_LENGTH,
+    MAX_WORKFLOW_LOG_LINE_LENGTH,
+    MAX_WORKFLOW_LOG_LINES,
+    MAX_WORKFLOW_NAME_LENGTH,
+    MAX_WORKFLOW_OPERATION_FINGERPRINT_LENGTH,
+    MAX_WORKFLOW_OUTPUT_CHARACTERS,
+    MAX_WORKFLOW_PAGE_SIZE,
+    workflowAgentIdSchema,
+    workflowIdSchema,
+    workflowInputSchema,
+    workflowLaunchInputSchema,
+    workflowLaunchToolInputSchema,
+    workflowLogPageSchema,
+    workflowLogQuerySchema,
+    workflowMutationInputSchema,
+    workflowMutationResultSchema,
+    workflowMutationToolInputSchema,
+    workflowNameSchema,
+    workflowOperationFingerprintSchema,
+    workflowOperationReceiptSchema,
+    workflowPageQuerySchema,
+    workflowPageSchema,
+    workflowRunSchema,
+    workflowStatusSchema,
+    workflowTimestampSchema,
+    type WorkflowAgentId,
+    type WorkflowId,
+    type WorkflowInput,
+    type WorkflowLaunchInput,
+    type WorkflowLaunchToolInput,
+    type WorkflowLogPage,
+    type WorkflowLogQuery,
+    type WorkflowName,
+    type WorkflowMutationInput,
+    type WorkflowMutationResult,
+    type WorkflowMutationToolInput,
+    type WorkflowPage,
+    type WorkflowPageQuery,
+    type WorkflowOperationFingerprint,
+    type WorkflowOperationReceipt,
+    type WorkflowRun,
+    type WorkflowStatus,
+} from "./workflows/Workflow.js";
+export {
+    workflowEventIdSchema,
+    workflowEventSchema,
+    workflowFeatureListenerSchema,
+    type WorkflowEvent,
+    type WorkflowFeatureListener,
+} from "./workflows/WorkflowEvent.js";
+export {
+    assertWorkflowLogPage,
+    assertWorkflowMutationResult,
+    assertWorkflowPage,
+    assertWorkflowRun,
+    assertWorkflowTransactionChange,
+    workflowStoreSchema,
+    workflowTransactionChangeSchema,
+    type WorkflowStore,
+    type WorkflowTransactionChange,
+} from "./workflows/WorkflowStore.js";
+export {
+    WorkflowsFeature,
+    workflowFeatureOptionsSchema,
+    type WorkflowFeatureOptions,
+} from "./workflows/WorkflowsFeature.js";
+export { listWorkflowsTool } from "./workflows/tools/list_workflows.js";
+export { runWorkflowTool } from "./workflows/tools/run_workflow.js";
+export { stopWorkflowTool } from "./workflows/tools/stop_workflow.js";
+export { resumeWorkflowTool } from "./workflows/tools/resume_workflow.js";
+export { waitWorkflowTool } from "./workflows/tools/wait_workflow.js";
+export { workflowLogsTool } from "./workflows/tools/workflow_logs.js";
+export { workflowStatusTool } from "./workflows/tools/workflow_status.js";
