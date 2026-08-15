@@ -146,7 +146,8 @@ transaction rolls back.
 
 ### 1. System prompt
 
-Status: existing foundation; retain and harden.
+Status: complete, reviewed, committed, and available from the package root.
+Rig host integration remains.
 
 - Select provider/model-appropriate instructions on every inference.
 - Accept configurable identity.
