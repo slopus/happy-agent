@@ -16,12 +16,24 @@ export {
 // System prompt: the instructions each model is written for, chosen by the model in force.
 export {
     SystemPromptFeature,
+    MAX_SYSTEM_PROMPT_OUTPUT_BYTES,
+    systemPromptFeatureOptionsSchema,
+    systemPromptIdentitySchema,
+    systemPromptSelectionSchema,
     type SystemPromptFeatureOptions,
+    type SystemPromptSelection,
 } from "./systemPrompt/SystemPromptFeature.js";
 export {
     DEFAULT_SYSTEM_PROMPT_IDENTITY,
+    MAX_SYSTEM_PROMPT_IDENTITY_NAME_LENGTH,
+    MAX_SYSTEM_PROMPT_IDENTITY_PROMPT_LENGTH,
     type SystemPromptIdentity,
 } from "./systemPrompt/SystemPromptIdentity.js";
+export {
+    MAX_SYSTEM_PROMPT_MODEL_LENGTH,
+    systemPromptProviderKindSchema,
+    type SystemPromptProviderKind,
+} from "./systemPrompt/SystemPromptSelection.js";
 export { systemPromptForModel } from "./systemPrompt/impl/systemPromptForModel.js";
 
 // History: the agent's own durable record of what happened, which it can read back.

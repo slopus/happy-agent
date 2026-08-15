@@ -1,21 +1,39 @@
 import type { AgentFeature, AgentFeatureScope } from "@slopus/happy-agent-base";
-import type { ProviderModelCompatibilityType } from "@slopus/happy-providers";
+import { Type, type Static } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { systemPromptForModel } from "./impl/systemPromptForModel.js";
 import {
     DEFAULT_SYSTEM_PROMPT_IDENTITY,
+    systemPromptIdentitySchema,
     type SystemPromptIdentity,
 } from "./SystemPromptIdentity.js";
+import {
+    systemPromptSelectionSchema,
+    type SystemPromptSelection,
+} from "./SystemPromptSelection.js";
 
 const IDENTITY_MARKER = "{{identity}}";
 const NAME_MARKER = "{{name}}";
 
+/** The largest prompt output accepted after identity substitution. */
+export const MAX_SYSTEM_PROMPT_OUTPUT_BYTES = 1_000_000;
+
 /** What a system-prompt feature is built with. */
-export interface SystemPromptFeatureOptions {
-    /** Who the agent says it is. Defaults to Rig's own identity. */
-    readonly identity?: SystemPromptIdentity;
-}
+export const systemPromptFeatureOptionsSchema = Type.Object(
+    {
+        /** Who the agent says it is. Defaults to Rig's own identity. */
+        identity: Type.Optional(systemPromptIdentitySchema),
+    },
+    { additionalProperties: false },
+);
+
+/** The TypeScript type inferred from {@link systemPromptFeatureOptionsSchema}. */
+export type SystemPromptFeatureOptions = Static<typeof systemPromptFeatureOptionsSchema>;
+
+export { systemPromptIdentitySchema, systemPromptSelectionSchema };
+export type { SystemPromptSelection };
 
 /**
  * The instructions a model is written for.
@@ -36,22 +54,35 @@ export class SystemPromptFeature implements AgentFeature {
     readonly #identity: SystemPromptIdentity;
 
     constructor(options: SystemPromptFeatureOptions = {}) {
-        this.#identity = options.identity ?? DEFAULT_SYSTEM_PROMPT_IDENTITY;
+        if (!Value.Check(systemPromptFeatureOptionsSchema, options)) {
+            throw new Error("System prompt feature options are invalid.");
+        }
+        const snapshot = structuredClone(options.identity ?? DEFAULT_SYSTEM_PROMPT_IDENTITY);
+        if (!Value.Check(systemPromptIdentitySchema, snapshot)) {
+            throw new Error("System prompt feature options are invalid.");
+        }
+        this.#identity = Object.freeze(snapshot);
     }
 
     /** The prompt this model is written for, ready to use. */
-    promptFor(selection: {
-        model: string | undefined;
-        providerKind?: ProviderModelCompatibilityType | undefined;
-    }): string {
-        return systemPromptForModel(selection)
-            .replaceAll(NAME_MARKER, this.#identity.name.trim())
-            .replace(IDENTITY_MARKER, this.#identity.prompt.trim());
+    promptFor(selection: SystemPromptSelection): string {
+        if (!Value.Check(systemPromptSelectionSchema, selection)) {
+            throw new Error("System prompt model selection is invalid.");
+        }
+        const prompt = systemPromptForModel(selection)
+            .replaceAll(NAME_MARKER, () => this.#identity.name.trim())
+            .replace(IDENTITY_MARKER, () => this.#identity.prompt.trim());
+        if (new TextEncoder().encode(prompt).byteLength > MAX_SYSTEM_PROMPT_OUTPUT_BYTES) {
+            throw new Error("The system prompt exceeds the configured output bound.");
+        }
+        return prompt;
     }
 
     readonly instructions = (_ctx: Context, scope: AgentFeatureScope): string =>
         this.promptFor({
             model: scope.agent.model,
-            providerKind: scope.agent.providerKind,
+            ...(scope.agent.providerKind === undefined
+                ? {}
+                : { providerKind: scope.agent.providerKind }),
         });
 }

@@ -1,9 +1,16 @@
 import type { AgentFeatureAgent, AgentFeatureScope } from "@slopus/happy-agent-base";
 import type { ProviderModelCompatibilityType } from "@slopus/happy-providers";
+import { Value } from "@sinclair/typebox/value";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
-import { SystemPromptFeature } from "../../sources/systemPrompt/SystemPromptFeature.js";
+import {
+    SystemPromptFeature,
+    systemPromptFeatureOptionsSchema,
+    systemPromptSelectionSchema,
+} from "../../sources/systemPrompt/SystemPromptFeature.js";
+import { systemPromptIdentitySchema } from "../../sources/systemPrompt/SystemPromptIdentity.js";
+import { systemPromptForModel } from "../../sources/systemPrompt/impl/systemPromptForModel.js";
 
 const ctx: Context = createRootContext();
 
@@ -77,19 +84,108 @@ describe("SystemPromptFeature", () => {
             identity: { name: "Scout", prompt: "You are Scout, built by Happy" },
         });
 
-        const prompt = named.instructions(ctx, scopeOf("anthropic/opus-5", "claude"));
+        const claudePrompt = named.instructions(ctx, scopeOf("anthropic/opus-5", "claude"));
+        const codexPrompt = named.instructions(ctx, scopeOf("openai/gpt-5.6-sol", "codex"));
 
-        expect(prompt.startsWith("You are Scout, built by Happy")).toBe(true);
-        expect(prompt).not.toContain("{{identity}}");
-        expect(prompt).not.toContain("{{name}}");
+        for (const prompt of [claudePrompt, codexPrompt]) {
+            expect(prompt.startsWith("You are Scout, built by Happy")).toBe(true);
+            expect(prompt).not.toContain("{{identity}}");
+            expect(prompt).not.toContain("{{name}}");
+        }
+        expect(codexPrompt).toContain("As Scout,");
+    });
+
+    it("substitutes replacement-string metacharacters literally", () => {
+        for (const value of ["$&", "$`", "$'"]) {
+            const prompt = new SystemPromptFeature({
+                identity: { name: value, prompt: value },
+            }).instructions(ctx, scopeOf("anthropic/opus-5", "claude"));
+
+            expect(prompt.startsWith(value)).toBe(true);
+            expect(prompt).toContain(value);
+            expect(prompt).not.toContain("{{identity}}");
+            expect(prompt).not.toContain("{{name}}");
+        }
     });
 
     it("names Rig when the host names nobody", () => {
-        const prompt = new SystemPromptFeature().instructions(
-            ctx,
-            scopeOf("anthropic/opus-5", "claude"),
-        );
+        const feature = new SystemPromptFeature();
+        const claudePrompt = feature.instructions(ctx, scopeOf("anthropic/opus-5", "claude"));
+        const codexPrompt = feature.instructions(ctx, scopeOf("openai/gpt-5.6-sol", "codex"));
 
-        expect(prompt.startsWith("You are Rig, built by Happy")).toBe(true);
+        expect(claudePrompt.startsWith("You are Rig, built by Happy")).toBe(true);
+        expect(codexPrompt.startsWith("You are Rig, built by Happy")).toBe(true);
+        expect(codexPrompt).toContain("As Rig,");
+    });
+
+    it("validates closed options and detaches the configured identity", () => {
+        const identity = { name: "Scout", prompt: "You are Scout, built by Happy" };
+        const feature = new SystemPromptFeature({ identity });
+
+        identity.name = "Mutated";
+        identity.prompt = "A hostile replacement";
+
+        expect(
+            feature
+                .instructions(ctx, scopeOf("anthropic/opus-5", "claude"))
+                .startsWith("You are Scout, built by Happy"),
+        ).toBe(true);
+        expect(
+            Value.Check(systemPromptFeatureOptionsSchema, {
+                identity,
+                unexpected: true,
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(systemPromptIdentitySchema, {
+                name: "Scout",
+                prompt: "{{identity}}",
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(systemPromptIdentitySchema, {
+                name: "Scout\u0000",
+                prompt: "You are Scout",
+            }),
+        ).toBe(false);
+        expect(() => new SystemPromptFeature({ unexpected: true } as never)).toThrow(
+            "System prompt feature options are invalid",
+        );
+        const inheritedIdentity = Object.create({
+            name: "Inherited",
+            prompt: "You are inherited",
+        }) as { name: string; prompt: string };
+        expect(() => new SystemPromptFeature({ identity: inheritedIdentity })).toThrow(
+            "System prompt feature options are invalid",
+        );
+    });
+
+    it("validates public model selection and keeps the selector provider-neutral", () => {
+        expect(
+            Value.Check(systemPromptSelectionSchema, {
+                model: undefined,
+                providerKind: "codex",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(systemPromptSelectionSchema, {
+                model: "x".repeat(257),
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(systemPromptSelectionSchema, {
+                model: "openai/gpt-5.6-sol",
+                extra: "not accepted",
+            }),
+        ).toBe(false);
+        expect(() => systemPromptForModel({ providerKind: "not-a-provider" } as never)).toThrow(
+            "System prompt model selection is invalid",
+        );
+        expect(() => systemPromptForModel({ model: "\u0000" } as never)).toThrow(
+            "System prompt model selection is invalid",
+        );
+        expect(systemPromptForModel({ model: "__proto__" })).toContain(
+            "You are an expert coding assistant.",
+        );
     });
 });
