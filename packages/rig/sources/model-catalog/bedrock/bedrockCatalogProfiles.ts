@@ -1,5 +1,4 @@
 import type { ConfigBedrockProvider } from "../../config/types.js";
-import { curatedModelProfiles } from "../curatedModelProfiles.js";
 import type { ModelCatalogProfile } from "../ModelCatalogProfile.js";
 import { BEDROCK_MODEL_ROUTES } from "./bedrock-model-routes.js";
 import { readConfiguredBedrockBearerToken } from "./readConfiguredBedrockBearerToken.js";
@@ -29,21 +28,10 @@ export function bedrockCatalogProfiles(
             undefined
         );
     });
-    const builtins = new Map(
-        [
-            ...curatedModelProfiles(providerId, "claude"),
-            ...curatedModelProfiles(providerId, "codex"),
-        ].map((profile) => [profile.id, profile]),
-    );
-    return routes.map((route) => {
-        const profile = builtins.get(route.model.id);
-        if (profile === undefined) {
-            throw new Error(`The curated Bedrock catalog has no model '${route.model.id}'.`);
-        }
-        return {
-            ...profile,
-            model: route.model,
-            providerType: "bedrock",
-        };
-    });
+    return routes.map((route) => ({
+        id: route.model.id,
+        model: route.model,
+        providerId,
+        providerType: "bedrock",
+    }));
 }
