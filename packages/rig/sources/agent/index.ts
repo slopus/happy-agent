@@ -11,14 +11,9 @@ export { formatSkillInvocation } from "./skills/formatSkillInvocation.js";
 export { loadSkillInstructions } from "./skills/loadSkillInstructions.js";
 export { loadSkills } from "./skills/loadSkills.js";
 export type { Skill } from "./skills/Skill.js";
-export { printAgentMessageToConsole } from "./impl/printAgentMessageToConsole.js";
-export type { AgentConsole } from "./impl/printAgentMessageToConsole.js";
-export { agentMessageToText } from "./impl/agentMessageToText.js";
 export { findLastAgentResponseText } from "./impl/findLastAgentResponseText.js";
 export { findFirstUserRequestText } from "./impl/findFirstUserRequestText.js";
-export { contentBlockToText } from "./impl/contentBlockToText.js";
 export { createErrorMessage } from "./impl/createErrorMessage.js";
-export { selectChatHistoryPage } from "./impl/selectChatHistoryPage.js";
 export type {
     AgentBlock,
     AgentMessage,
