@@ -14,7 +14,7 @@ import {
     type SessionEvent,
 } from "../../protocol/index.js";
 import { createInferenceStream } from "@slopus/rig-execution";
-import { toLocalDate } from "../../executor/toLocalDate.js";
+import { toLocalDate } from "../toLocalDate.js";
 import {
     defineModel,
     defineProvider,

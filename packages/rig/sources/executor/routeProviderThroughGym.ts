@@ -1,7 +1,7 @@
 import type { ProviderUsage } from "@slopus/happy-providers";
 
 import { createGymProvider } from "./createGymProvider.js";
-import { readGymContextWindow } from "./readGymContextWindow.js";
+import { readGymContextWindow } from "../model-catalog/readGymContextWindow.js";
 import type { Provider } from "@slopus/rig-execution";
 import { Executor } from "@slopus/rig-execution";
 

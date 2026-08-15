@@ -5,14 +5,14 @@ import {
 } from "@slopus/happy-providers";
 import { createExecutorModelProfiles, type ExecutorProvider } from "@slopus/rig-execution";
 
-import { BEDROCK_MODEL_ROUTES } from "./bedrock-model-routes.js";
-import type { BedrockModelOverrides } from "./bedrock-model-overrides.js";
+import { BEDROCK_MODEL_ROUTES } from "../model-catalog/bedrock/bedrock-model-routes.js";
+import type { BedrockModelOverrides } from "../config/bedrock-model-overrides.js";
 import { getBedrockModelRoute } from "./getBedrockModelRoute.js";
-import { readBedrockBearerToken } from "./readBedrockBearerToken.js";
+import { readBedrockBearerToken } from "../model-catalog/bedrock/readBedrockBearerToken.js";
 import { resolveBedrockModelEndpoint } from "./resolveBedrockModelEndpoint.js";
-import { resolveBedrockModelRegion } from "./resolveBedrockModelRegion.js";
-import { resolveBedrockModelTransport } from "./resolveBedrockModelTransport.js";
-import { resolveBedrockRegion } from "./resolveBedrockRegion.js";
+import { resolveBedrockModelRegion } from "../model-catalog/bedrock/resolveBedrockModelRegion.js";
+import { resolveBedrockModelTransport } from "../model-catalog/bedrock/resolveBedrockModelTransport.js";
+import { resolveBedrockRegion } from "../model-catalog/bedrock/resolveBedrockRegion.js";
 
 export const BEDROCK_PROVIDER_ID = "bedrock";
 

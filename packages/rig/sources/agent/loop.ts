@@ -58,7 +58,7 @@ import type {
     Usage,
     UserContent as ProviderUserContent,
 } from "@slopus/rig-execution";
-import { toLocalDate } from "../executor/toLocalDate.js";
+import { toLocalDate } from "../session/toLocalDate.js";
 import {
     AutoPermissionDenialCircuitBreaker,
     describeAutoPermissionDenial,

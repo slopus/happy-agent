@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defineModel } from "@slopus/rig-execution";
 
-import type { GymInferenceRequest } from "../../executor/gym-types.js";
+import type { GymInferenceRequest } from "../../agent/gym-types.js";
 import { PresenceStore, resolvePresences } from "../../presence/index.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
 

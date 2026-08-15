@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defineModel } from "@slopus/rig-execution";
 
-import type { GymInferenceRequest } from "../../executor/gym-types.js";
+import type { GymInferenceRequest } from "../../agent/gym-types.js";
 import type { ModelCatalog } from "../../protocol/index.js";
 import { TrackedTaskDrain } from "../../utils/TrackedTaskDrain.js";
 import { PersistentSessionStore } from "../PersistentSessionStore.js";

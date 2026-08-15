@@ -1,4 +1,4 @@
-import type { ConfigBedrockProvider } from "../config/types.js";
+import type { ConfigBedrockProvider } from "../../config/types.js";
 import { readBedrockBearerToken } from "./readBedrockBearerToken.js";
 
 /**

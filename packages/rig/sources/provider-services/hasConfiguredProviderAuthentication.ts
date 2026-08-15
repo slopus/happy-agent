@@ -9,7 +9,7 @@ import {
 } from "@slopus/happy-providers";
 
 import type { ConfigProvider } from "../config/types.js";
-import { readConfiguredBedrockBearerToken } from "./readConfiguredBedrockBearerToken.js";
+import { readConfiguredBedrockBearerToken } from "../model-catalog/bedrock/readConfiguredBedrockBearerToken.js";
 import {
     loadNativeCodexProviderConfig,
     resolveNativeCodexCredentialAccess,

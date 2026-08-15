@@ -14,7 +14,7 @@ import { claudeExecution } from "./claudeExecution.js";
 import { codexExecution } from "./codexExecution.js";
 import { grokExecution } from "./grokExecution.js";
 import { filterConfiguredProviderModels } from "./filterConfiguredProviderModels.js";
-import { providerCredentialEnvironment } from "./providerCredentialEnvironment.js";
+import { providerCredentialEnvironment } from "../provider-services/providerCredentialEnvironment.js";
 
 export interface CreateExecutorOptions {
     agentContext: AgentContext;

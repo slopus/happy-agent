@@ -16,7 +16,7 @@ import {
     type ModelCatalog,
     type SessionEvent,
 } from "../../protocol/index.js";
-import type { GymInferenceRequest } from "../../executor/gym-types.js";
+import type { GymInferenceRequest } from "../../agent/gym-types.js";
 import { defineModel } from "@slopus/rig-execution";
 import type {
     InMemorySession,

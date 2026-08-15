@@ -4,8 +4,8 @@ import { modelAnthropicSonnet5, modelOpenaiGpt56Sol } from "@slopus/rig-executio
 import { Executor } from "@slopus/rig-execution";
 import { bedrockExecution } from "./bedrockExecution.js";
 import { createTestRootContext } from "../testing/createTestRootContext.js";
-import { readBedrockBearerToken } from "./readBedrockBearerToken.js";
-import { resolveBedrockRegion } from "./resolveBedrockRegion.js";
+import { readBedrockBearerToken } from "../model-catalog/bedrock/readBedrockBearerToken.js";
+import { resolveBedrockRegion } from "../model-catalog/bedrock/resolveBedrockRegion.js";
 import type { AssistantMessage, Model, TextContent } from "@slopus/rig-execution";
 
 const LIVE = process.env.RIG_LIVE_TEST === "1";

@@ -1,15 +1,16 @@
-import { createNodeAgentContext } from "../agent/index.js";
-import { DEFAULT_RIG_CONFIG } from "../config/defaultConfig.js";
-import type { ConfigProviders } from "../config/types.js";
-import { NativeProcessManager } from "../processes/index.js";
-import type { ModelCatalog } from "../protocol/index.js";
-import { createExecutor } from "../executor/createExecutor.js";
-import { createGymProviderFromEnvironment } from "../executor/createGymProviderFromEnvironment.js";
 import {
+    builtinModelProfiles,
     modelOpenaiGpt56Luna,
     modelOpenaiGpt56Sol,
     modelOpenaiGpt56Terra,
+    type ExecutorModelProfile,
 } from "@slopus/rig-execution";
+
+import { DEFAULT_RIG_CONFIG } from "../config/defaultConfig.js";
+import type { ConfigProvider, ConfigProviders } from "../config/types.js";
+import type { ModelCatalog } from "../protocol/index.js";
+import { bedrockCatalogProfiles } from "./bedrock/bedrockCatalogProfiles.js";
+import { gymCatalogProvider } from "./gymCatalogProvider.js";
 import { uniqueModelsById } from "./uniqueModelsById.js";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -23,47 +24,28 @@ export interface CreateModelCatalogOptions {
     providers?: ConfigProviders;
 }
 
+/**
+ * The curated catalog of providers and models a configuration can select. It is derived entirely
+ * from Rig's hardcoded model definitions rather than by interrogating any provider: each configured
+ * provider contributes its built-in model profiles, filtered by that provider's include/exclude
+ * lists and by whatever region and credentials it can actually reach. The daemon never lists models
+ * from a provider API.
+ */
 export function createModelCatalog(
-    ctx: Context,
+    _ctx: Context,
     options: CreateModelCatalogOptions = {},
 ): ModelCatalog {
-    const cwd = options.cwd ?? process.cwd();
     const env = options.env ?? process.env;
     const providerSettings = options.providers ?? DEFAULT_RIG_CONFIG.providers;
-    const context = createNodeAgentContext(ctx, {
-        cwd,
-        processManager: new NativeProcessManager(),
-    });
     const providerCatalogs: ModelCatalog["providers"][number][] = [];
-    const gymProvider = createGymProviderFromEnvironment(env);
+
+    const gymProvider = gymCatalogProvider(env);
     const gymEnabled = gymProvider !== undefined;
     if (gymProvider !== undefined) {
-        providerCatalogs.unshift({
-            models: gymProvider.models,
-            providerId: gymProvider.id,
-            providerType: "gym",
-            ...(gymProvider.serviceTiers === undefined
-                ? {}
-                : { serviceTiers: gymProvider.serviceTiers }),
-        });
+        providerCatalogs.unshift(gymProvider);
     }
-    const executorProviders = Object.fromEntries(
-        Object.entries(providerSettings).map(([id, config]) => [
-            id,
-            options.disabledProviderReasons?.has(id) ? { ...config, enabled: false } : config,
-        ]),
-    );
-    const executorResult = createExecutor({
-        agentContext: context,
-        allowEmptyModels: true,
-        env,
-        providers: executorProviders,
-    });
-    const definitionsById = new Map(
-        (executorResult.executor?.providers ?? []).map((provider) => [provider.id, provider]),
-    );
-    for (const [configuredId, config] of Object.entries(providerSettings)) {
-        const id = configuredId;
+
+    for (const [id, config] of Object.entries(providerSettings)) {
         if (providerCatalogs.some((provider) => provider.providerId === id)) {
             throw new Error(`Inference provider '${id}' is configured more than once.`);
         }
@@ -83,8 +65,8 @@ export function createModelCatalog(
             continue;
         }
 
-        const definition = definitionsById.get(id);
-        if (definition === undefined) {
+        const profiles = providerCatalogProfiles(id, config, env);
+        if (profiles === undefined) {
             providerCatalogs.push({
                 disabledReason: "not_authenticated",
                 models: [],
@@ -93,7 +75,7 @@ export function createModelCatalog(
             });
             continue;
         }
-        const models = definition.profiles
+        const models = filterProviderProfiles(profiles, config)
             .filter((profile) => profile.hidden !== true)
             .map((profile) => profile.model);
         if (models.length === 0) {
@@ -107,11 +89,9 @@ export function createModelCatalog(
         }
         providerCatalogs.push({
             models,
-            providerId: definition.id,
+            providerId: id,
             providerType: config.type,
-            ...(definition.serviceTiers === undefined
-                ? {}
-                : { serviceTiers: definition.serviceTiers }),
+            ...(config.type === "codex" ? { serviceTiers: ["fast"] as const } : {}),
         });
     }
 
@@ -144,4 +124,30 @@ export function createModelCatalog(
         models: uniqueModelsById(availableProviders.flatMap((provider) => provider.models)),
         providers: providerCatalogs,
     };
+}
+
+/**
+ * The built-in model profiles a configured provider exposes, before its include/exclude filters are
+ * applied. Bedrock alone can be unauthenticated at this point (its bearer token is absent); the
+ * other providers report authentication separately through `disabledProviderReasons`.
+ */
+function providerCatalogProfiles(
+    providerId: string,
+    config: ConfigProvider,
+    env: NodeJS.ProcessEnv,
+): readonly ExecutorModelProfile[] | undefined {
+    if (config.type === "bedrock") return bedrockCatalogProfiles(providerId, config, env);
+    return builtinModelProfiles(providerId, config.type);
+}
+
+function filterProviderProfiles(
+    profiles: readonly ExecutorModelProfile[],
+    config: ConfigProvider,
+): readonly ExecutorModelProfile[] {
+    const included = config.includeModels === undefined ? undefined : new Set(config.includeModels);
+    const excluded = new Set(config.excludeModels ?? []);
+    return profiles.filter(
+        (profile) =>
+            (included === undefined || included.has(profile.id)) && !excluded.has(profile.id),
+    );
 }

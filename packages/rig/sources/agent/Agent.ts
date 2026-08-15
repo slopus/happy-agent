@@ -29,7 +29,7 @@ import type {
     UserMessage,
 } from "./types.js";
 import type { Context, Model, Provider, ServiceTier } from "@slopus/rig-execution";
-import { toLocalDate } from "../executor/toLocalDate.js";
+import { toLocalDate } from "../session/toLocalDate.js";
 import type { PermissionMode, PermissionReviewAgent } from "../permissions/index.js";
 import { isPermissionReduction } from "../permissions/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";

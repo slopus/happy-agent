@@ -1,7 +1,7 @@
 import type { ProviderUsage } from "@slopus/happy-providers";
 import { createInferenceStream } from "@slopus/rig-execution";
 import { withLifetime } from "@steve.kite/stdlib";
-import type { GymInferenceRequest, GymInferenceResponse } from "./gym-types.js";
+import type { GymInferenceRequest, GymInferenceResponse } from "../agent/gym-types.js";
 import {
     defineModel,
     defineProvider,

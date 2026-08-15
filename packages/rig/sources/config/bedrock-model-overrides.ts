@@ -1,4 +1,4 @@
-import type { BedrockModelTransport } from "./bedrock-model-routes.js";
+export type BedrockModelTransport = "mantle" | "runtime";
 
 export interface BedrockModelOverride {
     endpoint?: string;

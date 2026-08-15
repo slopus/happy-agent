@@ -10,6 +10,10 @@ import {
 } from "@slopus/rig-execution";
 import type { Model } from "@slopus/rig-execution";
 
+import type { BedrockModelTransport } from "../../config/bedrock-model-overrides.js";
+
+export type { BedrockModelTransport };
+
 export interface BedrockModelRoute {
     model: Model;
     provider: "anthropic" | "openai";
@@ -20,8 +24,6 @@ export interface BedrockModelTransportRoute {
     regions: readonly string[];
     transport: BedrockModelTransport;
 }
-
-export type BedrockModelTransport = "mantle" | "runtime";
 
 const BEDROCK_RUNTIME_COMMERCIAL_REGIONS = [
     "af-south-1",

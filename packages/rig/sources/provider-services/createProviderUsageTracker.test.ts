@@ -1,8 +1,8 @@
 import type { ProviderUsage } from "@slopus/happy-providers";
 import { describe, expect, it, vi } from "vitest";
 
-import { delay, gracefulShutdown } from "../../concurrency/index.js";
-import { createProviderUsageTracker } from "../createProviderUsageTracker.js";
+import { delay, gracefulShutdown } from "../concurrency/index.js";
+import { createProviderUsageTracker } from "./createProviderUsageTracker.js";
 
 function usage(providerId: string, usedPercent: number): ProviderUsage {
     return {

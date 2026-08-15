@@ -13,7 +13,7 @@ import type { ConfigCodexProvider } from "../config/types.js";
 import {
     loadNativeCodexProviderConfig,
     resolveNativeCodexCredentialAccess,
-} from "./loadNativeCodexProviderConfig.js";
+} from "../provider-services/loadNativeCodexProviderConfig.js";
 
 export function codexExecution(options: {
     apiKey?: string;

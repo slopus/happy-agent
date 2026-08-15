@@ -1,11 +1,11 @@
 import { ProviderUsageRequestError, type ProviderUsage } from "@slopus/happy-providers";
 import { describe, expect, it, vi } from "vitest";
 
-import { gracefulShutdown } from "../../concurrency/index.js";
-import { createProviderQuotaService } from "../createProviderQuotaService.js";
-import { PROVIDER_USAGE_POLL_INTERVAL_MS } from "../createProviderUsageTracker.js";
-import { createProviderUsageTracker } from "../createProviderUsageTracker.js";
-import { createProviderUsageService } from "../createProviderUsageService.js";
+import { gracefulShutdown } from "../concurrency/index.js";
+import { createProviderQuotaService } from "./createProviderQuotaService.js";
+import { PROVIDER_USAGE_POLL_INTERVAL_MS } from "./createProviderUsageTracker.js";
+import { createProviderUsageTracker } from "./createProviderUsageTracker.js";
+import { createProviderUsageService } from "./createProviderUsageService.js";
 
 describe("createProviderUsageService", () => {
     it("shares one in-flight read between account usage and quota display", async () => {

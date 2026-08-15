@@ -12,7 +12,7 @@ import {
 } from "@slopus/rig-execution";
 import { bedrockExecution } from "./bedrockExecution.js";
 import { getBedrockModelRoute } from "./getBedrockModelRoute.js";
-import { resolveBedrockModelTransport } from "./resolveBedrockModelTransport.js";
+import { resolveBedrockModelTransport } from "../model-catalog/bedrock/resolveBedrockModelTransport.js";
 import { createTestRootContext } from "../testing/createTestRootContext.js";
 
 const ctx = createTestRootContext().named("bedrock-provider-test");

@@ -1,7 +1,7 @@
 import type { ConfigBedrockProvider } from "../config/types.js";
 import type { ExecutorProvider } from "@slopus/rig-execution";
 import { bedrockExecution } from "./bedrockExecution.js";
-import { readConfiguredBedrockBearerToken } from "./readConfiguredBedrockBearerToken.js";
+import { readConfiguredBedrockBearerToken } from "../model-catalog/bedrock/readConfiguredBedrockBearerToken.js";
 
 export function configuredBedrockExecution(options: {
     agentId?: string;

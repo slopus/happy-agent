@@ -6,7 +6,7 @@ import { AgentSystemLocal, type Agent } from "@slopus/happy-agent-base";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfigProviders } from "../../config/types.js";
-import type { GymInferenceRequest } from "../../executor/gym-types.js";
+import type { GymInferenceRequest } from "../../agent/gym-types.js";
 import type { ModelCatalog, ProtocolSession } from "../../protocol/index.js";
 import { PersistentSessionStore } from "../../session/PersistentSessionStore.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";

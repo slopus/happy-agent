@@ -19,7 +19,7 @@ import { isPermissionMode, type PermissionMode } from "../permissions/index.js";
 import type {
     BedrockModelOverride,
     BedrockModelOverrides,
-} from "../executor/bedrock-model-overrides.js";
+} from "./bedrock-model-overrides.js";
 import type { DockerExecutionConfig, DockerMountConfig } from "../execution/index.js";
 import { p2pPeerNameSchema } from "../p2p/P2pPeer.js";
 import { p2pInstanceIdSchema } from "../protocol/P2pIdentityProtocol.js";

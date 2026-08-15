@@ -4,8 +4,8 @@ import {
     bedrockRuntimeEndpoint,
 } from "@slopus/happy-providers";
 
-import type { BedrockModelOverride } from "./bedrock-model-overrides.js";
-import type { BedrockModelRoute, BedrockModelTransport } from "./bedrock-model-routes.js";
+import type { BedrockModelOverride } from "../config/bedrock-model-overrides.js";
+import type { BedrockModelRoute, BedrockModelTransport } from "../model-catalog/bedrock/bedrock-model-routes.js";
 
 export function resolveBedrockModelEndpoint(
     route: BedrockModelRoute,

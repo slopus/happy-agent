@@ -13,7 +13,7 @@ import {
 } from "@slopus/happy-providers";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { GymInferenceRequest, GymInferenceResponse } from "../executor/gym-types.js";
+import type { GymInferenceRequest, GymInferenceResponse } from "./gym-types.js";
 
 export interface GymAgentProviderOptions {
     endpoint: string;

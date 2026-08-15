@@ -1,4 +1,4 @@
-import type { BedrockModelOverride } from "./bedrock-model-overrides.js";
+import type { BedrockModelOverride } from "../../config/bedrock-model-overrides.js";
 import type { BedrockModelRoute, BedrockModelTransport } from "./bedrock-model-routes.js";
 
 export function resolveBedrockModelTransport(

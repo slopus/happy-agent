@@ -35,17 +35,17 @@ import {
 } from "../config/index.js";
 import { MILLISECONDS_PER_DAY } from "../config/toolResultRetentionSettings.js";
 import { createConfiguredPresenceStore } from "../presence/index.js";
-import { createProviderQuotaService } from "../executor/createProviderQuotaService.js";
+import { createProviderQuotaService } from "../provider-services/createProviderQuotaService.js";
 import {
     createProviderUsageTracker,
     type ProviderUsageTracker,
-} from "../executor/createProviderUsageTracker.js";
-import { createProviderUsageService } from "../executor/createProviderUsageService.js";
-import { createCredentialBindingUsageRouter } from "../executor/createCredentialBindingUsageRouter.js";
-import { loadConfiguredProviderUsage } from "../executor/loadConfiguredProviderUsage.js";
+} from "../provider-services/createProviderUsageTracker.js";
+import { createProviderUsageService } from "../provider-services/createProviderUsageService.js";
+import { createCredentialBindingUsageRouter } from "../provider-services/createCredentialBindingUsageRouter.js";
+import { loadConfiguredProviderUsage } from "../provider-services/loadConfiguredProviderUsage.js";
 import { gracefulShutdown } from "../concurrency/index.js";
-import { disableUnavailableProviders } from "../executor/disableUnavailableProviders.js";
-import { resolveProviderDisabledReasons } from "../executor/resolveProviderDisabledReasons.js";
+import { disableUnavailableProviders } from "../provider-services/disableUnavailableProviders.js";
+import { resolveProviderDisabledReasons } from "../provider-services/resolveProviderDisabledReasons.js";
 import { getDaemonIdentity } from "../daemon/index.js";
 import { errorToMessage } from "../errorToMessage.js";
 import {

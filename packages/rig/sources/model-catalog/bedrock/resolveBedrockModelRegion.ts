@@ -1,4 +1,4 @@
-import type { BedrockModelOverrides } from "./bedrock-model-overrides.js";
+import type { BedrockModelOverrides } from "../../config/bedrock-model-overrides.js";
 
 export function resolveBedrockModelRegion(
     modelId: string,

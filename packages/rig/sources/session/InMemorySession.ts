@@ -13,7 +13,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { withWorkerContext } from "../observability/index.js";
 
 import { errorToMessage } from "../errorToMessage.js";
-import { toLocalDate } from "../executor/toLocalDate.js";
+import { toLocalDate } from "./toLocalDate.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
 import { assistantMessageToAgentMessage } from "../agent/impl/assistantMessageToAgentMessage.js";
@@ -234,7 +234,7 @@ import {
 import { isSessionTransactionPostCommitError } from "./SessionTransactionContext.js";
 import { isTransientInferenceSessionEvent } from "./impl/isTransientInferenceSessionEvent.js";
 import { affectsSessionUsage } from "./impl/affectsSessionUsage.js";
-import { providerUsageToClaudeQuota } from "../executor/providerUsageToClaudeQuota.js";
+import { providerUsageToClaudeQuota } from "../provider-services/providerUsageToClaudeQuota.js";
 import { asyncLock, isAsyncLockReentryError, type AsyncLock } from "../concurrency/index.js";
 import { getDatabaseScope } from "../persistence/databaseContext.js";
 import { isSessionDatabaseTransaction } from "../persistence/database/SessionDatabase.js";

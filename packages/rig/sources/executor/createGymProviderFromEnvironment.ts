@@ -1,5 +1,5 @@
 import { createGymProvider } from "./createGymProvider.js";
-import { readGymContextWindow } from "./readGymContextWindow.js";
+import { readGymContextWindow } from "../model-catalog/readGymContextWindow.js";
 import type { Provider } from "@slopus/rig-execution";
 
 export function createGymProviderFromEnvironment(env: NodeJS.ProcessEnv): Provider | undefined {
