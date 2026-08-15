@@ -1,15 +1,38 @@
-import { AgentKV, type AgentStorage } from "@slopus/happy-agent-base";
+import { AgentKV, agentKV, withAgentKV } from "@slopus/happy-agent-base";
+import { createContextNamespace, type Context } from "@steve.kite/stdlib";
+
+import { assertGoalPersistence, validatedGoalPersistence, type GoalStorage } from "./goalStore.js";
+
+const goalToolKVNamespace = createContextNamespace<AgentKV | undefined>(
+    "goalToolCallKV",
+    undefined,
+);
+
+/** The feature-owned per-agent scope used by public operations and hooks. */
+export function goalKV(storage: GoalStorage, agentId: string): AgentKV {
+    const persistence = storage.persistence.call(storage, agentId);
+    assertGoalPersistence(persistence);
+    return new AgentKV(validatedGoalPersistence(persistence), `kv.${agentId}.`).scoped(
+        "feature",
+        "goal",
+    );
+}
 
 /**
- * The goal feature's own store for one agent, addressed from the collection's storage rather
- * than from a running hook.
- *
- * A feature is also called from outside the agent system — by an API setting a goal on an agent
- * that is not running, and may never have run — so it cannot wait to be handed a scope. It
- * addresses the same store the agent lends its features: the agent's key-value space, narrowed
- * to this feature's name. The two must stay identical, and the test that sets a goal through
- * the tools and reads it back through the feature is what keeps them so.
+ * Scope a tool execution exactly as Agent Base scopes this feature's tool hooks. The private
+ * namespace distinguishes a real durable call from an ordinary host context that happens to
+ * carry an agent KV.
  */
-export function goalKV(storage: AgentStorage, agentId: string): AgentKV {
-    return new AgentKV(storage.persistence(agentId), `kv.${agentId}.`).scoped("feature", "goal");
+export function withGoalToolContext(ctx: Context): Context {
+    const callKV = agentKV(ctx);
+    if (callKV === undefined) {
+        throw new Error("Goal tools require an Agent Base call-scoped store.");
+    }
+    const scoped = callKV.scoped("feature", "goal");
+    return goalToolKVNamespace.set(withAgentKV(ctx, scoped), scoped);
+}
+
+/** The Goal-owned store for this durable tool call, when the context came from a Goal tool. */
+export function goalToolKV(ctx: Context): AgentKV | undefined {
+    return goalToolKVNamespace.get(ctx);
 }

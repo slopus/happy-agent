@@ -1,17 +1,93 @@
 /** Public surface of `@slopus/happy-agent-features`, re-exported by feature. */
 
 // Goal: long-running work the agent keeps pursuing until it is complete or blocked.
-export { GoalFeature, type GoalFeatureOptions } from "./goal/GoalFeature.js";
-export { type GoalEvent, type GoalFeatureListener } from "./goal/GoalEvent.js";
+export {
+    GoalFeature,
+    assertGoalFeatureOptions,
+    goalFeatureOptionsSchema,
+    FAILED_TURNS_BEFORE_BLOCKED,
+    type GoalFeatureOptions,
+} from "./goal/GoalFeature.js";
+export {
+    goalEventSchema,
+    goalContextSchema,
+    goalFeatureListenerSchema,
+    type GoalEvent,
+    type GoalFeatureListener,
+} from "./goal/GoalEvent.js";
 export { createGoalTool } from "./goal/tools/create_goal.js";
+export { clearGoalTool } from "./goal/tools/clear_goal.js";
 export { getGoalTool } from "./goal/tools/get_goal.js";
 export { updateGoalTool } from "./goal/tools/update_goal.js";
 export {
+    goalAgentIdSchema,
+    goalMutationOptionsSchema,
+    goalMutationProofSchema,
+    goalMutationResultSchema,
+    goalObjectiveSchema,
+    goalOperationFingerprintSchema,
+    goalOperationIdSchema,
+    goalOperationIdentitySchema,
+    goalOperationRequestSchema,
+    goalOperationReceiptSchema,
+    goalOperationSchema,
     goalStatusSchema,
+    goalSetInputSchema,
+    goalStatusInputSchema,
+    goalClearInputSchema,
+    goalTimestampSchema,
+    MAX_GOAL_AGENT_ID_LENGTH,
+    MAX_GOAL_EVIDENCE_BYTES,
+    MAX_GOAL_LEDGER_BYTES,
+    MAX_GOAL_OBJECTIVE_CHARS,
+    MAX_GOAL_OPERATION_ID_LENGTH,
+    MAX_GOAL_OUTPUT_CHARACTERS,
+    MAX_GOAL_RECEIPTS,
     sessionGoalSchema,
+    type GoalAgentId,
+    type GoalMutationOptions,
+    type GoalMutationProof,
+    type GoalMutationResult,
+    type GoalOperationFingerprint,
+    type GoalOperationId,
+    type GoalOperationIdentity,
+    type GoalOperation,
+    type GoalOperationRequest,
+    type GoalOperationReceipt,
     type GoalStatus,
     type SessionGoal,
 } from "./goal/SessionGoal.js";
+export {
+    goalWakeMessageIdSchema,
+    goalWakeReadResultSchema,
+    goalWakeSchedulerSchema,
+    goalWakeStateSchema,
+    MAX_GOAL_WAKE_STATE_BYTES,
+    type GoalWakeReadResult,
+    type GoalWakeScheduler,
+    type GoalWakeState,
+} from "./goal/GoalWakeScheduler.js";
+export {
+    assertGoalPersistence,
+    goalCallOperationEvidenceSchema,
+    goalLifecycleStateSchema,
+    goalOperationEvidenceSchema,
+    goalPersistenceSchema,
+    goalStorageSchema,
+    MAX_GOAL_CALL_EVIDENCE_BYTES,
+    type GoalCallOperationEvidence,
+    type GoalLifecycleState,
+    type GoalOperationEvidence,
+    type GoalPersistence,
+    type GoalStorage,
+} from "./goal/impl/goalStore.js";
+export {
+    createGoalContinuationPrompt,
+    goalContinuationPromptSchema,
+    MAX_GOAL_CONTINUATION_PROMPT_CHARS,
+    type GoalContinuationPrompt,
+} from "./goal/impl/createGoalContinuationPrompt.js";
+export { formatGoalForModel } from "./goal/impl/formatGoalForModel.js";
 
 // System prompt: the instructions each model is written for, chosen by the model in force.
 export {

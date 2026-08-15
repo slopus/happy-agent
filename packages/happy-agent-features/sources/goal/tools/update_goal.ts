@@ -2,10 +2,12 @@ import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { GoalFeature } from "../GoalFeature.js";
+import { formatGoalForModel } from "../impl/formatGoalForModel.js";
+import { withGoalToolContext } from "../impl/goalKV.js";
 import { sessionGoalSchema } from "../SessionGoal.js";
 
-/** The tool that ends one agent's goal. */
-export function updateGoalTool(goals: GoalFeature, agentId: string) {
+/** The durable model tool that marks a goal complete or blocked. */
+export function updateGoalTool(goals: GoalFeature, agentId: string, maxOutputCharacters: number) {
     return defineAgentTool({
         name: "update_goal",
         description: `Mark the persistent goal complete or blocked.
@@ -21,20 +23,16 @@ Pausing, resuming, and clearing a goal are controlled by the user.`,
             { additionalProperties: false },
         ),
         returnType: Type.Object({ goal: sessionGoalSchema }),
-        // Reporting the status the goal already has changes nothing, so a call interrupted by a
-        // restart can simply be made again.
         durable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx, { status }) => ({
-            goal: await goals.changeGoalStatus(ctx, agentId, status),
-        }),
+        execute: async (ctx, { status }) => {
+            const toolCtx = withGoalToolContext(ctx);
+            return { goal: await goals.changeGoalStatus(toolCtx, agentId, status) };
+        },
         toLLM: ({ goal }) => [
             {
                 type: "text",
-                text:
-                    goal.status === "complete"
-                        ? "Goal marked complete."
-                        : "Goal marked blocked. Explain the blocker and what the user needs to provide or change.",
+                text: formatGoalForModel(goal, maxOutputCharacters),
             },
         ],
     });
