@@ -363,8 +363,8 @@ Status: to implement as an agent-facing facade over Rig-owned operations.
 
 ### 18. Workspaces
 
-Status: implementation exists; output paging and runtime-contract review
-remain.
+Status: complete, reviewed, committed, and available from the package root.
+Rig host integration remains.
 
 - Inject a workspace store/operations service.
 - Create, list, get, transfer, archive, and read branch metadata.
