@@ -1,7 +1,7 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { describe, expect, it } from "vitest";
 
-import { createJustBashToolHarness } from "../tools/testing/createJustBashToolHarness.js";
+import { createJustBashToolHarness } from "../testing/createAgentTestHarness.js";
 import { createMcpTool } from "./createMcpTool.js";
 
 describe("createMcpTool", () => {

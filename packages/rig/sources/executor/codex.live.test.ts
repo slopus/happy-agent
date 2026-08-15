@@ -30,50 +30,7 @@ const describeLive = LIVE && hasLocalCodexAuth() ? describe : describe.skip;
 const ctx = createTestRootContext();
 
 describeLive("configured Codex provider live", () => {
-    it("accepts Rig's provider-neutral agent namespace", async () => {
-        let spawnCount = 0;
-        const managed = {
-            agentId: "live-rig-agent",
-            description: "Live Rig probe",
-            path: "/root/live_rig_probe",
-            sessionId: "live-rig-subagent",
-            status: "completed" as const,
-            taskName: "live_rig_probe",
-        };
-        const runtime = createCodingAssistantAgent({
-            ctx: createTestRootContext().named("agent"),
-            cwd: process.cwd(),
-            modelId: modelOpenaiGpt56Sol.id,
-            subagents: {
-                canSpawn: true,
-                depth: 0,
-                followUp: async () => managed,
-                interrupt: async () => managed,
-                list: () => [managed],
-                maxDepth: 3,
-                spawn: async () => {
-                    spawnCount += 1;
-                    return { ...managed, output: "ok" };
-                },
-                wait: async () => ({ agents: [managed], timedOut: false }),
-            },
-        });
-
-        try {
-            runtime.agent.enqueueUserMessage(
-                "Call rig.spawn_agent exactly once, then reply exactly: live rig ok",
-            );
-            const result = await runtime.agent.run(ctx);
-            if (result.stopReason === "error") {
-                throw new Error(result.errorMessage ?? "Codex inference failed.");
-            }
-            expect(spawnCount).toBe(1);
-        } finally {
-            await runtime.agent.close();
-        }
-    }, 120_000);
-
-    it("sends priority inference with the exact reserved collaboration schema", async () => {
+    it("sends priority inference without legacy model tools", async () => {
         const managed = {
             agentId: "live-agent",
             description: "Live probe",

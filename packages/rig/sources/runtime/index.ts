@@ -4,5 +4,3 @@ export {
     type CreateCodingAssistantAgentOptions,
 } from "./createCodingAssistantAgent.js";
 export { createDefaultInstructions } from "./createDefaultInstructions.js";
-export { selectToolsForModel } from "./selectToolsForModel.js";
-export type { SelectToolsForModelOptions } from "./selectToolsForModel.js";

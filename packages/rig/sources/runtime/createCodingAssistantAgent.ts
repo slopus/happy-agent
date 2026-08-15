@@ -19,7 +19,7 @@ import {
     type TaskContext,
     type UserInputContext,
 } from "../agent/index.js";
-import { deferToolLoading, type AnyDefinedTool, type Message } from "../agent/types.js";
+import type { Message } from "../agent/types.js";
 import { DEFAULT_RIG_CONFIG } from "../config/defaultConfig.js";
 import { findConfiguredProvider } from "../config/findConfiguredProvider.js";
 import { getGlobalAgentsMdPath } from "../config/getGlobalAgentsMdPath.js";
@@ -36,37 +36,21 @@ import { getBedrockModelRoute } from "../executor/getBedrockModelRoute.js";
 import { modelOpenaiGpt56Sol } from "@slopus/rig-execution";
 import type { ServiceTier } from "@slopus/rig-execution";
 import { routeProviderThroughGym } from "../executor/routeProviderThroughGym.js";
-import { goalTools } from "../tools/goals/index.js";
 import type { WorkflowContext } from "../workflows/index.js";
 import type { CodingAssistantRuntime } from "./CodingAssistantRuntime.js";
 import { createDefaultInstructions } from "./createDefaultInstructions.js";
 import { createGymJustBashAgentContext } from "./createGymJustBashAgentContext.js";
-import { modelToolSurface } from "./modelToolSurface.js";
-import { resolveGeminiApiKey } from "../tools/search/resolveGeminiApiKey.js";
-import { readAgentHistoryTool } from "../tools/read_agent_history.js";
-import { agentCommunicationTools } from "../tools/agents/index.js";
 import { agentFolderLabel } from "../agent/impl/agentFolderLabel.js";
 import type { PluginContext } from "../agent/context/PluginContext.js";
 import type { SlotContext } from "../agent/context/SlotContext.js";
 import type { FolderContext } from "../agent/context/FolderContext.js";
 import type { WorkletContext } from "../agent/context/WorkletContext.js";
 import type { WorkspaceContext } from "../agent/context/WorkspaceContext.js";
-import { crossWorkspaceTools, workspaceTools } from "../tools/workspaces/workspaceTools.js";
 import type { SchedulingContext } from "../scheduling/index.js";
 import type { ProviderUsageContext } from "../agent/context/ProviderUsageContext.js";
-import { selectCommonToolsForModel } from "./selectCommonToolsForModel.js";
-import {
-    createImageGenerationTool,
-    type ImageGenerationProvider,
-} from "../tools/imageGeneration/createImageGenerationTool.js";
 import { createGeneratedMediaStore, getGeneratedDirectory } from "../generated-media/index.js";
 import { CONTAINER_GENERATED_PATH } from "../execution/index.js";
 import { AttachmentContext, type AttachmentScope } from "../tools/attachments/AttachmentContext.js";
-import {
-    assembleSearchTools,
-    type OneOffInferenceRoute,
-    type SearchInferenceRoutes,
-} from "../tools/search/index.js";
 import type { Context } from "@steve.kite/stdlib";
 
 export interface CreateCodingAssistantAgentOptions {
@@ -233,12 +217,6 @@ export function createCodingAssistantAgent(
     if (providerId !== "gym" && (providerConfig === undefined || !providerConfig.enabled)) {
         throw new Error(`Unknown or disabled inference provider '${providerId}'.`);
     }
-    let searchRoutes: SearchInferenceRoutes = {
-        bedrockRoutes: [],
-        claudeRoutes: [],
-        codexRoutes: [],
-        grokRoutes: [],
-    };
     const nativeProvider =
         options.executor ??
         (() => {
@@ -267,7 +245,6 @@ export function createCodingAssistantAgent(
                       }),
                 sessionId: agentId,
             });
-            searchRoutes = result.searchRoutes;
             const executor = result.executor;
             if (executor === undefined) {
                 const variable = result.missingCredentials.get(providerId);
@@ -317,66 +294,8 @@ export function createCodingAssistantAgent(
     if (model === undefined) {
         throw new Error(`Unknown model '${modelId}' for provider '${provider.id}'`);
     }
-    const geminiApiKey = resolveGeminiApiKey(env);
-    const surface = modelToolSurface({ model, provider });
-    const imageGeneration =
-        nativeProvider instanceof Executor ? imageGenerationProviders(nativeProvider) : [];
-    const vendorTools = [
-        ...surface.baseTools,
-        ...(imageGeneration.length === 0
-            ? []
-            : [
-                  deferToolLoading(
-                      createImageGenerationTool(imageGeneration, surface.imageGenerationSurface),
-                  ),
-              ]),
-    ];
-    const currentRoute =
-        nativeProvider instanceof Executor
-            ? selectedOneOffRoute(nativeProvider, providerId, model.id)
-            : undefined;
-    const searchTools = assembleSearchTools({
-        ...searchRoutes,
-        ...(currentRoute === undefined ? {} : { currentRoute }),
-        ...(geminiApiKey === undefined ? {} : { geminiApiKey }),
-    });
-    const availableCollaborationTools =
-        options.subagents === undefined
-            ? []
-            : options.subagents.canSpawn
-              ? workflowsEnabled
-                  ? surface.collaborationTools
-                  : surface.collaborationToolsWithoutWorkflows
-              : surface.limitedCollaborationTools;
-    const toolsWithoutGoals = [
-        ...vendorTools,
-        ...deferToolArray(
-            selectCommonToolsForModel({
-                ...(geminiApiKey === undefined ? {} : { geminiApiKey }),
-                hasFolderContext: options.folders !== undefined,
-                hasWorkspaceContext: options.workspaces !== undefined,
-                isSubagent: options.isSubagent === true,
-                searchTools,
-            }),
-        ),
-        ...deferToolArray(
-            options.workspaces === undefined
-                ? []
-                : options.workspaces.crossWorkspace
-                  ? [...workspaceTools, ...crossWorkspaceTools]
-                  : workspaceTools,
-        ),
-        ...deferToolArray(agentCommunicationTools),
-        ...deferToolArray(options.chatHistory === undefined ? [] : [readAgentHistoryTool]),
-        ...availableCollaborationTools,
-    ];
-    const selectedTools =
-        options.goals === undefined
-            ? toolsWithoutGoals
-            : [...toolsWithoutGoals, ...deferToolArray(goalTools)];
     const usesOfficialCodexBedrockPrompt =
         provider.type === "bedrock" && model.id.startsWith("openai/");
-    const tools = selectedTools;
     const agentOptions: AgentOptions = {
         ...(options.appendSystemPrompt !== undefined
             ? { appendSystemPrompt: options.appendSystemPrompt }
@@ -404,7 +323,7 @@ export function createCodingAssistantAgent(
                     return policies.length === 0 ? undefined : policies.join("\n\n");
                 },
                 ...(options.startDate === undefined ? {} : { startDate: options.startDate }),
-                tools: tools.filter((tool) => tool.availableToPermissionReviewer),
+                tools: [],
             }),
         modelId,
         context,
@@ -422,7 +341,7 @@ export function createCodingAssistantAgent(
             : {}),
         ...(options.startDate !== undefined ? { startDate: options.startDate } : {}),
         traceSessionId: options.sessionId ?? agentId,
-        tools,
+        tools: [],
         printToConsole: false,
     };
     if (options.effort !== undefined) {
@@ -439,28 +358,4 @@ export function createCodingAssistantAgent(
         processManager,
         executor: provider,
     };
-}
-
-function deferToolArray(tools: readonly AnyDefinedTool[]): readonly AnyDefinedTool[] {
-    return tools.map(deferToolLoading);
-}
-
-function imageGenerationProviders(executor: Executor): readonly ImageGenerationProvider[] {
-    return executor.providers.flatMap((provider) =>
-        provider.imageGeneration === undefined
-            ? []
-            : [{ id: provider.id, imageGeneration: provider.imageGeneration }],
-    );
-}
-
-function selectedOneOffRoute(
-    executor: Executor,
-    providerId: string,
-    modelId: string,
-): OneOffInferenceRoute | undefined {
-    const provider = executor.providers.find((candidate) => candidate.id === providerId);
-    const profile = provider?.profiles.find(
-        (candidate) => candidate.id === modelId && candidate.hidden !== true,
-    );
-    return provider === undefined || profile === undefined ? undefined : { profile, provider };
 }

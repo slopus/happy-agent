@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
-import { createJustBashToolHarness } from "../tools/testing/createJustBashToolHarness.js";
+import { createJustBashToolHarness } from "../testing/createAgentTestHarness.js";
 import { createTestRootContext } from "../testing/createTestRootContext.js";
 import { McpClientManager } from "./McpClientManager.js";
 

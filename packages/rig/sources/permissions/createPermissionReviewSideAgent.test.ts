@@ -10,7 +10,7 @@ import {
 } from "@slopus/rig-execution";
 import { Agent } from "../agent/Agent.js";
 import type { Message } from "../agent/types.js";
-import { createJustBashToolHarness } from "../tools/testing/createJustBashToolHarness.js";
+import { createJustBashToolHarness } from "../testing/createAgentTestHarness.js";
 import { createPermissionContext } from "./createPermissionContext.js";
 import { createPermissionReviewSideAgent } from "./createPermissionReviewSideAgent.js";
 import { createTestRootContext } from "../testing/createTestRootContext.js";

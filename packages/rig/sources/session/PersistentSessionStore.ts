@@ -80,7 +80,6 @@ import { PersistentGlobalEventQueue } from "../global-event/PersistentGlobalEven
 import { retriedSession } from "./retriedSession.js";
 import type { SessionCreationOptions, SessionStore } from "./SessionStore.js";
 import { p2pInstanceIdSchema } from "../protocol/P2pIdentityProtocol.js";
-import type { McpToolProvider } from "../mcp/index.js";
 import type { TaskDrain } from "../utils/TrackedTaskDrain.js";
 import { isLiveOnlySessionEvent } from "./isLiveOnlySessionEvent.js";
 import {
@@ -240,7 +239,6 @@ export interface PersistentSessionStoreOptions {
     defaultDocker?: DockerExecutionConfig;
     localInstanceId?: string;
     durableGlobalEventQueue?: boolean;
-    mcpToolProvider?: McpToolProvider;
     modelCatalog?: ModelCatalog;
     resolveModelCatalog?: (ownerInstanceId: string) => ModelCatalog;
     now?: () => number;
@@ -279,7 +277,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
     #modelCatalog: ModelCatalog;
     readonly localInstanceId: string;
     readonly #resolveModelCatalog: (ownerInstanceId: string) => ModelCatalog;
-    #mcpToolProvider: McpToolProvider | undefined;
     #now: () => number;
     #onSessionAccess: ((session: InMemorySession) => void) | undefined;
     #onSessionEvent:
@@ -394,7 +391,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         this.#modelCatalog = this.#resolveModelCatalog(this.localInstanceId);
         this.#createRuntime = options.createRuntime;
         this.#defaultDocker = options.defaultDocker;
-        this.#mcpToolProvider = options.mcpToolProvider;
         this.#now = options.now ?? Date.now;
         this.#onSessionAccess = options.onSessionAccess;
         this.#onSessionEvent = options.onSessionEvent;
@@ -908,9 +904,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 modelCatalog: this.#modelCatalogFor(state.ownerInstanceId),
                 now: this.#now,
                 onInitialTitle: (metadata) => this.#inheritWorkspaceNameInWorker(metadata),
-                ...(this.#mcpToolProvider !== undefined
-                    ? { mcpToolProvider: this.#mcpToolProvider }
-                    : {}),
                 onAppendEvent: (eventCtx, event) => this.#appendEvent(eventCtx, event),
                 publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
                 persistence: this,
@@ -1147,9 +1140,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                     modelCatalog: this.#modelCatalogFor(ownerInstanceId),
                     now: this.#now,
                     onInitialTitle: (metadata) => this.#inheritWorkspaceNameInWorker(metadata),
-                    ...(this.#mcpToolProvider !== undefined
-                        ? { mcpToolProvider: this.#mcpToolProvider }
-                        : {}),
                     ...(metadata !== undefined ? { metadata } : {}),
                     ...(contextMessages !== undefined
                         ? { initialContextMessages: contextMessages }
@@ -2877,9 +2867,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             modelCatalog: this.#modelCatalogFor(ownerInstanceId),
             now: this.#now,
             onInitialTitle: (metadata) => this.#inheritWorkspaceNameInWorker(metadata),
-            ...(this.#mcpToolProvider === undefined
-                ? {}
-                : { mcpToolProvider: this.#mcpToolProvider }),
             onAppendEvent: (eventCtx, event) => this.#appendEvent(eventCtx, event),
             publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
             persistence: this,

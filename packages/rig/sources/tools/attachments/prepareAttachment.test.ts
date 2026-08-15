@@ -5,11 +5,11 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createJustBashToolHarness } from "../testing/createJustBashToolHarness.js";
+import { createJustBashToolHarness } from "../../testing/createAgentTestHarness.js";
 import { createNodeAgentContext } from "../../agent/context/createNodeAgentContext.js";
 import { createGeneratedMediaStore } from "../../generated-media/index.js";
 import { NativeProcessManager } from "../../processes/index.js";
-import { validPng32Base64 } from "../testing/validImageFixtures.js";
+import { validPng32Base64 } from "../../testing/validImageFixtures.js";
 import {
     parseUrlMetadata,
     prepareAttachment,

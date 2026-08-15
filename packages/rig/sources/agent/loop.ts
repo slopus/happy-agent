@@ -71,7 +71,7 @@ import {
 } from "../permissions/index.js";
 import type { DebugLog } from "../debug/index.js";
 import { resolveModelImageProfile } from "./impl/resolveModelImageProfile.js";
-import { toExecutorTool } from "./tools/toExecutorTool.js";
+import { toExecutorTool } from "./impl/toExecutorTool.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 
 export interface RunAgentLoopOptions {

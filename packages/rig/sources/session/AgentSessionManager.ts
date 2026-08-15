@@ -17,7 +17,7 @@ import {
     type AgentTreeUsage,
 } from "../agent/index.js";
 import { DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS } from "../agent/context/subagentWaitTimeouts.js";
-import { isCodexEncryptedAgentTransportModel } from "../agent/tools/codex/isCodexEncryptedAgentTransportModel.js";
+import { isCodexEncryptedAgentTransportModel } from "../executor/isCodexEncryptedAgentTransportModel.js";
 import type {
     CreateProjectWorkspaceRequest,
     CreateSessionRequest,
@@ -46,7 +46,6 @@ import type { InMemorySession } from "./InMemorySession.js";
 
 export const DEFAULT_MAX_SUBAGENT_DEPTH = 3;
 export const DEFAULT_MAX_ACTIVE_SUBAGENTS = 8;
-export const DEFAULT_MAX_ACTIVE_CODEX_V2_SUBAGENTS = 3;
 
 export interface AgentSessionRepository {
     archiveOwnedWorkspace?(
@@ -156,10 +155,8 @@ export class AgentSessionManager {
     }
 
     maxActiveFor(rootSessionId: string): number {
-        const root = this.#repository.get(rootSessionId);
-        return root?.isCodexV2Collaboration?.() === true
-            ? Math.min(this.maxActive, DEFAULT_MAX_ACTIVE_CODEX_V2_SUBAGENTS)
-            : this.maxActive;
+        void rootSessionId;
+        return this.maxActive;
     }
 
     queryAgentTreeUsage(sessionId: string): AgentTreeUsage {
@@ -550,17 +547,13 @@ export class AgentSessionManager {
             me: () => this.#current(sessionId).agentIdentity(),
             send: (agentId, message) => {
                 if (!inspectedAgentIds.has(agentId)) {
-                    throw new Error(
-                        "Call agent_info with this agent ID before sending it a message.",
-                    );
+                    throw new Error("Inspect this agent before sending it a message.");
                 }
                 return this.#sendToAgent(ctx, sessionId, agentId, message);
             },
             setReadOnly: async (agentId, readOnly) => {
                 if (!inspectedAgentIds.has(agentId)) {
-                    throw new Error(
-                        "Call agent_info with this agent ID before changing its permission mode.",
-                    );
+                    throw new Error("Inspect this agent before changing its permission mode.");
                 }
                 await this.#setAgentReadOnly(ctx, sessionId, agentId, readOnly);
             },
@@ -637,7 +630,7 @@ export class AgentSessionManager {
                 parentTransportScope !== child.encryptedAgentTransportScope()
             ) {
                 throw new Error(
-                    "Native encrypted collaboration only works within the same compatible provider and region. Retry with `rig.followup_task` and provide the task normally.",
+                    "Native encrypted collaboration only works within the same compatible provider and region.",
                 );
             }
         }
@@ -967,10 +960,10 @@ export class AgentSessionManager {
             // A scope is the provider that issued it — `createEncryptedAgentTransportScope`
             // returns that provider's own id — so equal ids mean the same provider and therefore
             // the same type. That leaves only the model's transport compatibility to check. This
-            // deliberately differs from the tool generation it speaks as a parent: Luna exposes
-            // v1 tools but can receive an encrypted v2 agent message as a child. If the scope ever
-            // regains structure this comparison silently refuses every native spawn, which is what
-            // the two-account test beside this one is for.
+            // Luna cannot initiate encrypted collaboration but can receive an encrypted agent
+            // message as a child. If the scope ever regains structure this comparison silently
+            // refuses every native spawn, which is what the two-account test beside this one is
+            // for.
             const parentScope = parent.encryptedAgentTransportScope();
             if (
                 parentScope === undefined ||
@@ -979,7 +972,7 @@ export class AgentSessionManager {
                 !isCodexEncryptedAgentTransportModel(effectiveModelId)
             ) {
                 throw new Error(
-                    "Native encrypted collaboration only works within the current compatible provider and region. Use `rig.spawn_agent` and provide the task normally when selecting or crossing a model, provider, or region.",
+                    "Native encrypted collaboration only works within the current compatible provider and region.",
                 );
             }
         }
@@ -1325,7 +1318,6 @@ export class AgentSessionManager {
                         message,
                         "",
                         "Treat this as a steering message from a collaborating agent, not as a user message.",
-                        `To reply, first call agent_info with agent_id ${JSON.stringify(identity.agentId)}, then call agent_send with the same agent_id and your message.`,
                     ].join("\n"),
                 },
             ],

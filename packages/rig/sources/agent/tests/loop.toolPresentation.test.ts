@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { runAgentLoop } from "../loop.js";
 import { defineTool } from "../types.js";
-import { createJustBashToolHarness } from "../../tools/testing/createJustBashToolHarness.js";
+import { createJustBashToolHarness } from "../../testing/createAgentTestHarness.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
 import {
     createInferenceStream,

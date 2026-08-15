@@ -53,7 +53,6 @@ import { createModelCatalog } from "../model-catalog/createModelCatalog.js";
 import { retriedSession } from "./retriedSession.js";
 import type { SessionCreationOptions, SessionStore } from "./SessionStore.js";
 import { p2pInstanceIdSchema } from "../protocol/P2pIdentityProtocol.js";
-import type { McpToolProvider } from "../mcp/index.js";
 import {
     SecretRegistry,
     type EnvironmentSecretRegistration,
@@ -125,7 +124,6 @@ export interface InMemorySessionStoreOptions {
     createRuntime?: InMemorySessionOptions["createRuntime"];
     defaultDocker?: DockerExecutionConfig;
     localInstanceId?: string;
-    mcpToolProvider?: McpToolProvider;
     modelCatalog?: ModelCatalog;
     resolveModelCatalog?: (ownerInstanceId: string) => ModelCatalog;
     onWorkspaceBranchError?: (error: unknown, projectId: string, workspaceId: string) => void;
@@ -147,7 +145,6 @@ export class InMemorySessionStore implements SessionStore {
     #modelCatalog: ModelCatalog;
     readonly localInstanceId: string;
     readonly #resolveModelCatalog: (ownerInstanceId: string) => ModelCatalog;
-    #mcpToolProvider: McpToolProvider | undefined;
     #onWorkspaceCleanupError:
         | ((error: unknown, projectId: string, workspaceId: string) => void)
         | undefined;
@@ -328,7 +325,6 @@ export class InMemorySessionStore implements SessionStore {
         this.#onWorkspaceCleanupError = options.onWorkspaceCleanupError;
         this.#createRuntime = options.createRuntime;
         this.#defaultDocker = options.defaultDocker;
-        this.#mcpToolProvider = options.mcpToolProvider;
         this.#agentManager = new AgentSessionManager({
             localInstanceId: this.localInstanceId,
             repository: {
@@ -616,9 +612,6 @@ export class InMemorySessionStore implements SessionStore {
             ...(this.#createRuntime === undefined ? {} : { createRuntime: this.#createRuntime }),
             modelCatalog: this.#modelCatalogFor(state.ownerInstanceId),
             onInitialTitle: (metadata) => this.#inheritWorkspaceName(ctx, metadata),
-            ...(this.#mcpToolProvider !== undefined
-                ? { mcpToolProvider: this.#mcpToolProvider }
-                : {}),
             request: forkRequest,
             onAppendEvent: (eventCtx, event) => this.#publishGlobalEvent(eventCtx, event),
             publishLiveEvent: (_eventCtx, event) => this.liveEvents.publish(event),
@@ -826,9 +819,6 @@ export class InMemorySessionStore implements SessionStore {
                     : { createRuntime: this.#createRuntime }),
                 modelCatalog: this.#modelCatalogFor(ownerInstanceId),
                 onInitialTitle: (metadata) => this.#inheritWorkspaceName(ctx, metadata),
-                ...(this.#mcpToolProvider !== undefined
-                    ? { mcpToolProvider: this.#mcpToolProvider }
-                    : {}),
                 ...(metadata !== undefined ? { metadata } : {}),
                 ...(contextMessages !== undefined
                     ? { initialContextMessages: contextMessages }

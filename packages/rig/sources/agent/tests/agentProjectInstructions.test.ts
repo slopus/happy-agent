@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { Agent } from "../Agent.js";
 import { AGENTS_MD_REPLACEMENT_NOTICE } from "../impl/agentsMdNotices.js";
-import { createJustBashToolHarness } from "../../tools/testing/createJustBashToolHarness.js";
+import { createJustBashToolHarness } from "../../testing/createAgentTestHarness.js";
 import { isInternalMessage } from "../impl/isInternalMessage.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
 import {

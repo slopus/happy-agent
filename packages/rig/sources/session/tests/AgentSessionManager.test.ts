@@ -185,7 +185,7 @@ describe("AgentSessionManager", () => {
             title: "Fix authentication",
         });
         expect(() => communication.send("target-agent-id", "Please check my patch.")).toThrow(
-            "Call agent_info with this agent ID before sending it a message.",
+            "Inspect this agent before sending it a message.",
         );
         expect(communication.info("target-agent-id")).toEqual({
             agentId: "target-agent-id",
@@ -244,7 +244,6 @@ describe("AgentSessionManager", () => {
                         "Please check my patch.",
                         "",
                         "Treat this as a steering message from a collaborating agent, not as a user message.",
-                        'To reply, first call agent_info with agent_id "sender-agent-id", then call agent_send with the same agent_id and your message.',
                     ].join("\n"),
                 },
             ],
@@ -428,7 +427,7 @@ describe("AgentSessionManager", () => {
         await expect(
             manager.followUp(ctx, parent.id, "/root/audit", "", undefined, "opaque-task"),
         ).rejects.toThrow(
-            "Native encrypted collaboration only works within the same compatible provider and region. Retry with `rig.followup_task` and provide the task normally.",
+            "Native encrypted collaboration only works within the same compatible provider and region.",
         );
         expect(() =>
             manager.sendMessage(ctx, parent.id, "/root/audit", "", "opaque-message"),
@@ -464,7 +463,7 @@ describe("AgentSessionManager", () => {
                 taskName: "idle",
             }),
         } as unknown as InMemorySession;
-        const running = Array.from({ length: 3 }, (_, index) => ({
+        const running = Array.from({ length: 8 }, (_, index) => ({
             agentMetadata: () => ({
                 depth: 1,
                 parentSessionId: "root-1",
@@ -484,7 +483,6 @@ describe("AgentSessionManager", () => {
             agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
             encryptedAgentTransportScope: () => '["codex",null]',
             id: "root-1",
-            isCodexV2Collaboration: () => true,
             isSubagent: () => false,
         } as unknown as InMemorySession;
         const sessions = [idle, ...running];
@@ -498,39 +496,23 @@ describe("AgentSessionManager", () => {
         });
 
         await expect(manager.followUp(ctx, root.id, "/root/idle", "Continue.")).rejects.toThrow(
-            "No more than 3 subagents can run at once.",
+            "No more than 8 subagents can run at once.",
         );
     });
 
-    it("keeps the existing generic limit and narrows Codex V2 trees", async () => {
-        const codexRoot = {
-            encryptedAgentTransportScope: () => '["codex",null]',
-            id: "codex-root",
-            isCodexV2Collaboration: () => true,
-        } as unknown as InMemorySession;
-        const bedrockRoot = {
-            id: "bedrock-root",
-            isCodexV2Collaboration: () => false,
-        } as unknown as InMemorySession;
+    it("uses one provider-neutral active-agent limit", async () => {
         const manager = new AgentSessionManager({
             repository: {
                 createSubagent: async () => {
                     throw new Error("Not used by this test.");
                 },
-                get: (sessionId) =>
-                    sessionId === codexRoot.id
-                        ? codexRoot
-                        : sessionId === bedrockRoot.id
-                          ? bedrockRoot
-                          : undefined,
+                get: () => undefined,
                 listByRoot: () => [],
             },
         });
 
         expect(manager.maxActive).toBe(8);
         expect(manager.maxActiveFor("generic-root")).toBe(8);
-        expect(manager.maxActiveFor(codexRoot.id)).toBe(3);
-        expect(manager.maxActiveFor(bedrockRoot.id)).toBe(8);
     });
 
     it("reads paginated history from the root and nested subagents by task path", async () => {
@@ -914,7 +896,7 @@ describe("AgentSessionManager", () => {
                 taskName: "unsafe_crossing",
             }),
         ).rejects.toThrow(
-            "Native encrypted collaboration only works within the current compatible provider and region. Use `rig.spawn_agent` and provide the task normally when selecting or crossing a model, provider, or region.",
+            "Native encrypted collaboration only works within the current compatible provider and region.",
         );
         expect(createSubagent).not.toHaveBeenCalled();
         expect(child.submit).not.toHaveBeenCalled();
@@ -2231,9 +2213,8 @@ describe("AgentSessionManager", () => {
             agentMetadata: () => ({ depth: 0, rootSessionId: "root-1", type: "primary" }),
             encryptedAgentTransportScope: () => '["codex",null]',
             id: "root-1",
-            isCodexV2Collaboration: () => true,
         } as unknown as InMemorySession;
-        const active = Array.from({ length: 3 }, (_, index) => {
+        const active = Array.from({ length: 8 }, (_, index) => {
             const id = `child-${index + 1}`;
             return {
                 subagentSummary: () => ({
@@ -2263,7 +2244,7 @@ describe("AgentSessionManager", () => {
                 description: "One task too many",
                 prompt: "Do more work.",
             }),
-        ).rejects.toThrow("No more than 3 subagents can run at once");
+        ).rejects.toThrow("No more than 8 subagents can run at once");
         expect(createSubagent).not.toHaveBeenCalled();
     });
 

@@ -194,29 +194,10 @@ afterEach(async () => {
     running.clear();
 });
 
-describe("agent updates task progress", () => {
-    it("runs a surviving model tool through the terminal boundary", async () => {
+describe("agent answers through the terminal", () => {
+    it("streams a model response through the terminal boundary", async () => {
         const gym = await createGym({
-            inference: [
-                {
-                    content: [
-                        {
-                            arguments: {
-                                plan: [
-                                    {
-                                        status: "in_progress",
-                                        step: "Inspect the request",
-                                    },
-                                ],
-                            },
-                            id: "call-1",
-                            name: "update_plan",
-                            type: "toolCall",
-                        },
-                    ],
-                },
-                { content: [{ text: "Done.", type: "text" }] },
-            ],
+            inference: [{ content: [{ text: "Done.", type: "text" }] }],
         });
         running.add(gym);
 
@@ -322,10 +303,10 @@ A fixture may be:
 - A `Uint8Array` for binary content.
 - `{ content, mode }` when permissions matter.
 
-Absolute paths and paths that escape `/workspace` are rejected. JustBash mounts the fixture through a root-confined filesystem; Docker bind-mounts the same fixture. Tool changes are visible through `gym.readFile` in either mode:
+Absolute paths and paths that escape `/workspace` are rejected. JustBash mounts the fixture through a root-confined filesystem; Docker bind-mounts the same fixture. Workspace changes are visible through `gym.readFile` in either mode:
 
 ```ts
-await expect(gym.readFile("src/result.txt")).resolves.toBe("created by the tool\n");
+await expect(gym.readFile("src/result.txt")).resolves.toBe("fixture contents\n");
 ```
 
 `gym.workspacePath` exposes the temporary host path for advanced diagnostics. Prefer `gym.readFile` in assertions so tests remain clear and path-safe.
@@ -349,20 +330,8 @@ Use an array when the conversation is fixed:
 
 ```ts
 const inference = [
-    { content: [{ text: "I will track the work.", type: "text" }] },
-    {
-        content: [
-            {
-                arguments: {
-                    plan: [{ status: "in_progress", step: "Inspect the request" }],
-                },
-                id: "call-1",
-                name: "update_plan",
-                type: "toolCall",
-            },
-        ],
-    },
-    { content: [{ text: "The work is tracked.", type: "text" }] },
+    { content: [{ text: "I will inspect the request.", type: "text" }] },
+    { content: [{ text: "The follow-up is complete.", type: "text" }] },
 ];
 ```
 
@@ -372,7 +341,7 @@ Session-metadata requests are answered automatically with a `Gym session` title 
 
 ### Request handler
 
-Use a handler when the response depends on the prompt, tool result, previous turn, or call number:
+Use a handler when the response depends on the prompt, previous turn, or call number:
 
 ```ts
 inference(request, callIndex) {
@@ -380,25 +349,10 @@ inference(request, callIndex) {
 
     if (callIndex === 0) {
         expect(lastMessage).toMatchObject({ role: "user" });
-        return {
-            content: [
-                {
-                    arguments: {
-                        plan: [{ status: "completed", step: "Inspect the request" }],
-                    },
-                    id: "finish-plan",
-                    name: "update_plan",
-                    type: "toolCall",
-                },
-            ],
-        };
+        return { content: [{ text: "First response.", type: "text" }] };
     }
 
-    expect(lastMessage).toMatchObject({
-        isError: false,
-        role: "toolResult",
-        toolName: "update_plan",
-    });
+    expect(lastMessage).toMatchObject({ role: "user" });
     return { content: [{ text: "Finished.", type: "text" }] };
 }
 ```
@@ -479,14 +433,10 @@ const agentRequests = gym.inference.requests.filter(
     (request) => !request.options.sessionId?.endsWith(":title"),
 );
 
-expect(agentRequests[1]?.context.messages.at(-1)).toMatchObject({
-    isError: false,
-    role: "toolResult",
-    toolName: "update_plan",
-});
+expect(agentRequests[1]?.context.messages.at(-1)).toMatchObject({ role: "user" });
 ```
 
-Use request assertions to verify exact user text, normalized paste content, tool results, conversation ordering, stream options, or selected model behavior.
+Use request assertions to verify exact user text, normalized paste content, conversation ordering, stream options, or selected model behavior.
 
 ## Intercepting provider HTTP
 
@@ -857,8 +807,8 @@ Use scripted HTTP status responses, delayed inference, malformed content, or exa
 
 The current tests provide focused references:
 
-- [`agent_edits_fixture_with_real_shell.test.ts`](tests/agent_edits_fixture_with_real_shell.test.ts) demonstrates fixtures, real shell tools, filesystem assertions, and inference history.
-- [`user_answers_agent_question_in_terminal.test.ts`](tests/user_answers_agent_question_in_terminal.test.ts) demonstrates interactive user input and tool-result verification.
+- [`bang_prefix_runs_shell_without_inference.test.ts`](tests/bang_prefix_runs_shell_without_inference.test.ts) demonstrates the client-facing shell path without model tools.
+- [`agent_base_streams_messages_into_terminal_history.test.ts`](tests/agent_base_streams_messages_into_terminal_history.test.ts) demonstrates inference history projection.
 - [`inference_http_error_is_visible.test.ts`](tests/inference_http_error_is_visible.test.ts) demonstrates provider HTTP failure injection.
 - [`parallel_gym_instances_are_isolated.test.ts`](tests/parallel_gym_instances_are_isolated.test.ts) demonstrates concurrent isolated Gym filesystems.
 - [`large_multiline_unicode_message_renders_without_corruption.test.ts`](tests/large_multiline_unicode_message_renders_without_corruption.test.ts) demonstrates deterministic fuzz input, exact request validation, terminal-health assertions, scroll-transition checks, and a follow-up turn.

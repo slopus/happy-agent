@@ -2,7 +2,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ElicitRequest } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 
-import { createJustBashToolHarness } from "../tools/testing/createJustBashToolHarness.js";
+import { createJustBashToolHarness } from "../testing/createAgentTestHarness.js";
 import { handleMcpElicitation } from "./handleMcpElicitation.js";
 import { runMcpClientCall } from "./runMcpClientCall.js";
 

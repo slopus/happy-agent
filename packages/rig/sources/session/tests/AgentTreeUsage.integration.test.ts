@@ -18,9 +18,9 @@ import { NativeProcessManager } from "../../processes/index.js";
 import type { ModelCatalog } from "../../protocol/index.js";
 import type { CodingAssistantRuntime } from "../../runtime/CodingAssistantRuntime.js";
 import type { CreateCodingAssistantAgentOptions } from "../../runtime/createCodingAssistantAgent.js";
-import { getAgentTreeUsageTool } from "../../tools/get_agent_tree_usage.js";
 import type { InMemorySession } from "../InMemorySession.js";
 import { InMemorySessionStore } from "../InMemorySessionStore.js";
+import { readAgentTreeUsage } from "../readAgentTreeUsage.js";
 import {
     PersistentSessionStore,
     type PersistentSessionStoreOptions,
@@ -63,7 +63,7 @@ describe("agent tree usage session wiring", () => {
             const nestedSession = await requiredAgent(store, nested.agentId);
             sessions.push(nestedSession);
 
-            const usage = await getAgentTreeUsageTool.execute({}, rootContext, { ctx });
+            const usage = readAgentTreeUsage(rootContext.agentTreeUsage!.read());
             const rootAgentId = root.agentIdentity().agentId;
             expect(usage.totalTokens).toBe(22);
             expect(usage.sessions).toEqual([
@@ -200,7 +200,7 @@ describe("agent tree usage session wiring", () => {
                 (totalTokens) => totalTokens === 33,
             );
 
-            const usage = await getAgentTreeUsageTool.execute({}, rootContext, { ctx });
+            const usage = readAgentTreeUsage(rootContext.agentTreeUsage!.read());
             const rootAgentId = root.agentIdentity().agentId;
             expect(usage.totalTokens).toBe(66);
             expect(usage.sessions.map((session) => session.agentId)).toEqual(
@@ -255,9 +255,7 @@ describe("agent tree usage session wiring", () => {
                 totalTokens: usage.totalTokens,
             });
             const restoredRootContext = await runtimeContext(restoredRoot);
-            const restoredUsage = await getAgentTreeUsageTool.execute({}, restoredRootContext, {
-                ctx,
-            });
+            const restoredUsage = readAgentTreeUsage(restoredRootContext.agentTreeUsage!.read());
             expect(restoredUsage.totalTokens).toBe(usage.totalTokens);
             expect(withoutStatuses(restoredUsage.sessions)).toEqual(
                 withoutStatuses(usage.sessions),

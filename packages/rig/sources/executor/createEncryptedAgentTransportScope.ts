@@ -1,5 +1,5 @@
 import type { Model, Provider } from "@slopus/rig-execution";
-import { isCodexEncryptedAgentTransportModel } from "../agent/tools/codex/isCodexEncryptedAgentTransportModel.js";
+import { isCodexEncryptedAgentTransportModel } from "./isCodexEncryptedAgentTransportModel.js";
 
 export function createEncryptedAgentTransportScope(
     provider: Provider,

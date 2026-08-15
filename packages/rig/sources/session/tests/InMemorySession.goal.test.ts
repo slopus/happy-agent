@@ -1,7 +1,7 @@
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
 
 const ctx = createTestRootContext();
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { Agent, createNodeAgentContext } from "../../agent/index.js";
 import type { CreateCodingAssistantAgentOptions } from "../../runtime/createCodingAssistantAgent.js";
@@ -15,69 +15,10 @@ import {
     type InferenceStream,
     type Usage,
 } from "@slopus/rig-execution";
-import { goalTools } from "../../tools/goals/index.js";
 import type { CodingAssistantRuntime } from "../../runtime/CodingAssistantRuntime.js";
 import { InMemorySession } from "../InMemorySession.js";
 
 describe("InMemorySession goals", () => {
-    it("continues an active goal invisibly until the model completes it", async () => {
-        const model = defineModel({
-            defaultThinkingLevel: "medium",
-            id: "test/goal-model",
-            name: "Goal model",
-            thinkingLevels: ["medium"],
-        });
-        const responses = [
-            assistantMessage(
-                [
-                    {
-                        type: "toolCall",
-                        id: "goal-complete",
-                        name: "update_goal",
-                        arguments: { status: "complete" },
-                    },
-                ],
-                "toolUse",
-            ),
-            assistantMessage([{ type: "text", text: "The goal is complete." }], "stop"),
-        ];
-        const stream = vi.fn(() => streamFor(responses.shift() as AssistantMessage));
-        const provider = defineProvider({ id: "test", models: [model], stream });
-        const catalog: ModelCatalog = {
-            defaultModelId: model.id,
-            defaultProviderId: provider.id,
-            models: [model],
-            providers: [{ providerId: provider.id, models: [model] }],
-        };
-        const session = new InMemorySession(ctx, {
-            createEventId: createEventIdFactory(),
-            createRuntime: (options) => createTestRuntime(options, provider),
-            modelCatalog: catalog,
-            request: { cwd: "/tmp/rig-goal-test", modelId: model.id, providerId: provider.id },
-        });
-
-        await session.setGoal(ctx, { objective: "Finish the feature" });
-        const started = session.events
-            .since(undefined)
-            ?.find((event) => event.type === "run_started");
-        if (started?.type !== "run_started") throw new Error("Goal continuation did not start.");
-
-        await expect(session.waitForRun(ctx, started.data.runId)).resolves.toMatchObject({
-            status: "completed",
-        });
-        expect(session.goal()).toMatchObject({
-            objective: "Finish the feature",
-            status: "complete",
-        });
-        expect(stream).toHaveBeenCalledTimes(2);
-        expect(
-            session.events.since(undefined)?.filter((event) => event.type === "run_started"),
-        ).toHaveLength(1);
-        expect(session.snapshot().snapshot.messages).not.toContainEqual(
-            expect.objectContaining({ role: "user" }),
-        );
-    });
-
     it("keeps review commands visible while sending expanded instructions to the model", async () => {
         const model = defineModel({
             defaultThinkingLevel: "medium",
@@ -183,7 +124,7 @@ function createTestRuntime(
             modelId: options.modelId ?? provider.models[0]?.id ?? "",
             printToConsole: false,
             provider,
-            tools: goalTools,
+            tools: [],
         }),
         context,
         cwd: options.cwd,

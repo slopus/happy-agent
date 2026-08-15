@@ -391,43 +391,6 @@ describe("InMemorySession queued configuration", () => {
         await session.beginShutdown(ctx);
     });
 
-    it("stops running processes before a fallible MCP projection after permission reduction", async () => {
-        const processManager = new NativeProcessManager();
-        const killAll = vi.spyOn(processManager, "killAll").mockResolvedValue();
-        vi.spyOn(processManager, "activeCount").mockReturnValue(1);
-        let reductionDurable = false;
-        let rejectMcpProjection = true;
-        const { session, started, release } = runningSession({
-            onAppendEvent(_ctx, event) {
-                if (
-                    event.type === "permission_mode_changed" &&
-                    event.data.permissionMode === "read_only"
-                ) {
-                    reductionDurable = true;
-                } else if (
-                    reductionDurable &&
-                    rejectMcpProjection &&
-                    event.type === "mcp_servers_changed"
-                ) {
-                    rejectMcpProjection = false;
-                    throw new Error("could not persist MCP projection");
-                }
-            },
-            processManager,
-        });
-        await session.submit(ctx, { text: "Start a long run." });
-        await started.promise;
-
-        await expect(
-            session.changePermissionMode(ctx, { permissionMode: "read_only" }),
-        ).rejects.toThrow("could not persist MCP projection");
-
-        expect(killAll).toHaveBeenCalledOnce();
-        expect(session.snapshot().permissionMode).toBe("read_only");
-        release.resolve();
-        await session.beginShutdown(ctx);
-    });
-
     it("fails closed when a permission reduction cannot be made durable", async () => {
         let runtime: CodingAssistantRuntime | undefined;
         const processManager = new NativeProcessManager();

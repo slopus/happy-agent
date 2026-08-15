@@ -1,6 +1,5 @@
 export type { SchedulingContext } from "./SchedulingContext.js";
 export { parseDateMs, parseDurationMs, parseWaitUntilMs } from "./parseScheduleTime.js";
-export { scheduleMessageTool, schedulingTools, waitTool, waitUntilTool } from "./tools.js";
 export type {
     DurableWait,
     DurableWaitRequest,

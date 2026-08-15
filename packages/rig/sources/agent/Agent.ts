@@ -11,7 +11,7 @@ import { runCompactionWithEvents } from "./compaction/runCompactionWithEvents.js
 import type { AgentContext } from "./context/AgentContext.js";
 import { runAgentLoop, type AgentLoopEvent, type AgentLoopResult } from "./loop.js";
 import { toProviderMessages } from "./loop.js";
-import { toExecutorTool } from "./tools/toExecutorTool.js";
+import { toExecutorTool } from "./impl/toExecutorTool.js";
 import { createProviderPrompt } from "./prompt/createSystemPrompt.js";
 import { prepareProviderMessageImages } from "./impl/prepareProviderMessageImages.js";
 import { reconcileAgentsMdMessages } from "./impl/reconcileAgentsMdMessages.js";

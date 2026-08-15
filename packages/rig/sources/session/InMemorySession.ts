@@ -198,14 +198,7 @@ import {
     type WorkflowRunUpdate,
 } from "../workflows/index.js";
 import { createCodeReviewPrompt } from "../review/index.js";
-import {
-    createMcpTrustUserInputRequest,
-    MCP_TRUST_ANSWER,
-    mergeMcpTools,
-    type McpServerSummary,
-    type McpServerTrustRequest,
-    type McpToolProvider,
-} from "../mcp/index.js";
+import type { McpServerSummary } from "../mcp/index.js";
 import type {
     CreateTaskRequest,
     SessionTask,
@@ -265,7 +258,6 @@ import { createModelSwitchHistoryMessage } from "../agent/impl/createModelSwitch
 import { createToolResultBlock } from "../agent/impl/createToolResultBlock.js";
 import type { AgentMessage, ErrorMessage, ToolCallBlock, ToolResultBlock } from "../agent/types.js";
 import type { RigAgentConfiguration } from "../agent/RigProtocolFeature.js";
-import { isCodexV2CollaborationModel } from "../agent/tools/codex/isCodexV2CollaborationModel.js";
 import type {
     DurableWait,
     DurableWaitRequest,
@@ -549,7 +541,6 @@ export interface InMemorySessionOptions {
         profileId: string,
     ) => RigProfile | undefined | Promise<RigProfile | undefined>;
     metadata?: SessionAgentMetadata;
-    mcpToolProvider?: McpToolProvider;
     onAppendEvent?: SessionEventAppendHook;
     orderKey?: string;
     persistence?: InMemorySessionPersistence;
@@ -778,12 +769,7 @@ export class InMemorySession {
     #reportedStatus: SessionStatus | undefined;
     #reportingStatus = false;
     #submittedUserMessages = new Map<string, PersistedSessionMessage>();
-    #mcpLoaded = false;
     #mcpServers: readonly McpServerSummary[] = [];
-    #mcpToolNames = new Set<string>();
-    #mcpToolProvider: McpToolProvider | undefined;
-    #mcpToolRelease: (() => Promise<void>) | undefined;
-    #workletToolRevision: number | undefined;
     #modelCatalog: ModelCatalog;
     #modelId: string;
     #models: readonly Model[];
@@ -886,7 +872,6 @@ export class InMemorySession {
         this.#createRuntime = options.createRuntime ?? createCodingAssistantAgent;
         this.#now = options.now ?? Date.now;
         this.#onInitialTitle = options.onInitialTitle;
-        this.#mcpToolProvider = options.mcpToolProvider;
         this.#modelCatalog = options.modelCatalog;
         this.#persistence = options.persistence;
         this.#onAppendEvent = options.onAppendEvent;
@@ -1846,13 +1831,6 @@ export class InMemorySession {
         return createEncryptedAgentTransportScope(runtime.executor, runtime.agent.model);
     }
 
-    isCodexV2Collaboration(): boolean {
-        const providerType = this.#modelCatalog.providers.find(
-            (provider) => provider.providerId === this.#providerId,
-        )?.providerType;
-        return isCodexV2CollaborationModel(this.#modelId, providerType);
-    }
-
     hasModel(modelId: string, providerId?: string): boolean {
         return getProviderIdForModel(this.#modelCatalog, modelId, providerId) !== undefined;
     }
@@ -2276,7 +2254,6 @@ export class InMemorySession {
             runtime!.agent.setModel(model.id, undefined);
         } else {
             void this.#killRuntimeProcesses(ctx, { includeBackground: true });
-            this.#releaseMcpToolLease();
             if (reusableExecutor === undefined) {
                 void runtime?.agent.close();
                 this.#executor = undefined;
@@ -2285,9 +2262,7 @@ export class InMemorySession {
                 void reusableExecutor.reset({ modelId: model.id, providerId });
             }
             this.#runtime = undefined;
-            this.#mcpLoaded = false;
             this.#mcpServers = [];
-            this.#mcpToolNames.clear();
             this.#tools = [];
         }
         this.#modelId = model.id;
@@ -2321,12 +2296,9 @@ export class InMemorySession {
         const credentialBindingId = this.#credentialBindingId;
         const runtime = this.#runtime;
         const stopProcesses = this.#killRuntimeProcesses(ctx, { includeBackground: true });
-        this.#releaseMcpToolLease();
         this.#runtime = undefined;
         this.#executor = undefined;
-        this.#mcpLoaded = false;
         this.#mcpServers = [];
-        this.#mcpToolNames.clear();
         this.#tools = [];
         this.#modelCatalog = modelCatalog;
 
@@ -2730,7 +2702,6 @@ export class InMemorySession {
         const permissionMode = parsePermissionMode(request.permissionMode);
         const runtime = this.#runtime;
         const previousPermissionMode = this.#permissionMode;
-        const permissionChanged = previousPermissionMode !== permissionMode;
         this.#permissionMode = permissionMode;
         runtime?.context.permissions?.setMode(permissionMode);
         try {
@@ -2783,13 +2754,6 @@ export class InMemorySession {
         const transitionErrors = transitionResults.flatMap((result) =>
             result.status === "rejected" ? [result.reason] : [],
         );
-        if (permissionChanged) {
-            try {
-                await this.#removeMcpTools(ctx, runtime);
-            } catch (error) {
-                transitionErrors.push(error);
-            }
-        }
         if (transitionErrors.length === 1) {
             throw transitionErrors[0];
         }
@@ -2798,14 +2762,6 @@ export class InMemorySession {
                 transitionErrors,
                 "Could not fully apply the permission mode change.",
             );
-        }
-        if (
-            permissionChanged &&
-            runtime !== undefined &&
-            permissionMode !== "auto" &&
-            permissionMode !== "full_access"
-        ) {
-            await this.#ensureMcpTools(ctx, runtime);
         }
         return this.snapshot();
     }
@@ -3888,7 +3844,6 @@ export class InMemorySession {
         this.#durableWaitTimers.clear();
         for (const timer of this.#userInputPresenceTimers.values()) clearTimeout(timer);
         this.#userInputPresenceTimers.clear();
-        this.#releaseMcpToolLease();
         const metadataCleanup = this.#clearMetadataSettlement(ctx);
         for (const workflow of this.#workflowRuns.values()) {
             if (workflow.state.status === "running") this.stopWorkflow(ctx, workflow.state.runId);
@@ -4232,13 +4187,9 @@ export class InMemorySession {
         // the chat as a naming failure.
         await this.#clearMetadataSettlement(ctx);
         void this.#killRuntimeProcesses(ctx, { includeBackground: true });
-        this.#releaseMcpToolLease();
         void this.#runtime?.agent.close();
         this.#runtime = undefined;
-        this.#mcpLoaded = false;
         this.#mcpServers = [];
-        this.#mcpToolNames.clear();
-        this.#workletToolRevision = undefined;
         this.#tools = [];
         this.#messages = this.#messages.filter((entry) => entry.position < target.position);
         this.#pendingContextMessages = new Map(
@@ -6251,113 +6202,6 @@ export class InMemorySession {
         );
     }
 
-    async #ensureMcpTools(
-        ctx: Context,
-        runtime: CodingAssistantRuntime,
-        signal?: AbortSignal,
-        interactive = true,
-    ): Promise<void> {
-        if (
-            this.#mcpLoaded &&
-            this.#permissionMode !== "auto" &&
-            this.#permissionMode !== "full_access"
-        ) {
-            return;
-        }
-        if (this.#mcpToolProvider === undefined) {
-            this.#mcpLoaded = true;
-            return;
-        }
-
-        const permissionMode = this.#permissionMode;
-        const mcpLoadOptions =
-            !this.isSubagent() &&
-            interactive &&
-            (permissionMode === "auto" || permissionMode === "full_access")
-                ? {
-                      requestTrust: (request: McpServerTrustRequest) =>
-                          this.#requestMcpTrust(ctx, request, signal),
-                  }
-                : {};
-        const loaded = await this.#mcpToolProvider.load(
-            this.#request.cwd,
-            permissionMode,
-            mcpLoadOptions,
-        );
-        if (this.#permissionMode !== permissionMode) {
-            await loaded.release?.().catch(() => undefined);
-            return;
-        }
-        const previousRelease = this.#mcpToolRelease;
-        try {
-            const baseTools = runtime.agent.tools.filter(
-                (tool) => !this.#mcpToolNames.has(tool.name),
-            );
-            const baseToolNames = new Set(baseTools.map((tool) => tool.name));
-            const merged = mergeMcpTools(baseTools, loaded);
-            runtime.agent.setTools(merged.tools);
-            this.#mcpToolNames = new Set(
-                merged.tools
-                    .filter((tool) => !baseToolNames.has(tool.name))
-                    .map((tool) => tool.name),
-            );
-            this.#tools = runtime.agent.tools.map((tool) => tool.name);
-            const serversChanged =
-                JSON.stringify(this.#mcpServers) !== JSON.stringify(merged.servers);
-            this.#mcpServers = merged.servers;
-            this.#mcpLoaded = true;
-            this.#workletToolRevision = runtime.agent.context.worklets?.toolRevision?.();
-            this.#mcpToolRelease = loaded.release;
-            if (serversChanged && merged.servers.length > 0) {
-                await this.#append(ctx, "mcp_servers_changed", { servers: merged.servers });
-            }
-        } catch (error) {
-            await loaded.release?.().catch(() => undefined);
-            throw error;
-        }
-        await previousRelease?.().catch(() => undefined);
-    }
-
-    async #requestMcpTrust(
-        ctx: Context,
-        request: McpServerTrustRequest,
-        signal?: AbortSignal,
-    ): Promise<boolean> {
-        const outcome = await this.requestUserInput(
-            ctx,
-            createMcpTrustUserInputRequest(request),
-            signal === undefined ? {} : { signal },
-        );
-        return (
-            outcome.status === "answered" &&
-            outcome.answers.mcp_trust?.includes(MCP_TRUST_ANSWER) === true
-        );
-    }
-
-    async #removeMcpTools(
-        ctx: Context,
-        runtime: CodingAssistantRuntime | undefined,
-    ): Promise<void> {
-        if (runtime !== undefined && this.#mcpToolNames.size > 0) {
-            runtime.agent.setTools(
-                runtime.agent.tools.filter((tool) => !this.#mcpToolNames.has(tool.name)),
-            );
-            this.#tools = runtime.agent.tools.map((tool) => tool.name);
-        }
-        this.#mcpLoaded = false;
-        this.#mcpServers = [];
-        this.#mcpToolNames.clear();
-        this.#workletToolRevision = undefined;
-        this.#releaseMcpToolLease();
-        await this.#append(ctx, "mcp_servers_changed", { servers: [] });
-    }
-
-    #releaseMcpToolLease(): void {
-        const release = this.#mcpToolRelease;
-        this.#mcpToolRelease = undefined;
-        void release?.().catch(() => undefined);
-    }
-
     async #append<TType extends SessionEvent["type"]>(
         ctx: Context,
         type: TType,
@@ -8326,12 +8170,6 @@ export class InMemorySession {
             await this.#settleInferenceScopeRefresh();
             await this.#settleScopeRuntimeRefresh();
             runtime = await this.#ensureRuntime(ctx);
-            await this.#ensureMcpTools(
-                ctx,
-                runtime,
-                controller.signal,
-                queued.interactive !== false,
-            );
             const runtimeSnapshot = runtime.agent.snapshot();
             const runtimeMessageIds = new Set(
                 [
@@ -8358,16 +8196,6 @@ export class InMemorySession {
                             if (this.#scopeRuntimeRefreshPending) {
                                 throw REFRESH_SCOPE_RUNTIME;
                             }
-                            const revision = runtime!.agent.context.worklets?.toolRevision?.();
-                            if (revision === undefined || revision === this.#workletToolRevision) {
-                                return;
-                            }
-                            await this.#ensureMcpTools(
-                                ctx,
-                                runtime!,
-                                controller.signal,
-                                queued.interactive !== false,
-                            );
                         },
                         signal: controller.signal,
                         onEvent: async (event) => {
@@ -8387,12 +8215,6 @@ export class InMemorySession {
                     this.#syncContextMessages();
                     await this.#settleScopeRuntimeRefresh();
                     runtime = await this.#ensureRuntime(ctx);
-                    await this.#ensureMcpTools(
-                        ctx,
-                        runtime,
-                        controller.signal,
-                        queued.interactive !== false,
-                    );
                     continue;
                 }
                 if (this.#activeRun?.runId !== queued.runId) {
@@ -8748,14 +8570,9 @@ export class InMemorySession {
     async #teardownRuntimeForWorkspaceTransfer(ctx: Context): Promise<void> {
         const runtime = this.#runtime;
         await this.#killRuntimeProcesses(ctx, { includeBackground: true });
-        const release = this.#mcpToolRelease;
-        this.#mcpToolRelease = undefined;
-        this.#mcpLoaded = false;
         this.#mcpServers = [];
-        this.#mcpToolNames.clear();
         this.#tools = [];
         try {
-            await release?.().catch(() => undefined);
             await runtime?.agent.close();
         } finally {
             if (this.#runtime === runtime) this.#runtime = undefined;

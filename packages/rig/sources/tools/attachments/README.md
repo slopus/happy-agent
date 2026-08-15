@@ -1,8 +1,8 @@
 # Attachments
 
-The `attach` tool prepares a model's pending final-message attachments. The
-session owns `AttachmentContext`: it calls `takePending()` after a normal
-terminal response and `discard()` after an abort or error. Completed
+This module prepares pending final-message attachments for the attachment
+feature. The session owns `AttachmentContext`: it calls `takePending()` after a
+normal terminal response and `discard()` after an abort or error. Completed
 attachments survive steering because steering continues the same overall run.
 
 Images are decoded with Sharp and receive dimensions plus a ThumbHash. Rig ships
@@ -17,6 +17,6 @@ container paths. Clients fetch attachment bytes through `downloadUrl` and video
 frames through `preview.downloadUrl`; locators are not endpoint-relative URLs.
 URL metadata comes from bounded HTML fetches and Open Graph tags.
 
-The separate `request_secret` tool uses the same pending lifecycle for a
-metadata-only attachment that clients open as a masked secret form. It carries
-requested environment variable names and setup guidance, never secret values.
+Secret requests can use the same pending lifecycle for metadata-only
+attachments that clients open as masked secret forms. They carry requested
+environment variable names and setup guidance, never secret values.

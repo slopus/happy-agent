@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validJpeg32Base64, validPng32Base64 } from "../tools/testing/validImageFixtures.js";
+import { validJpeg32Base64, validPng32Base64 } from "../testing/validImageFixtures.js";
 import { getImageProcessor } from "./getImageProcessor.js";
 import {
     CLAUDE_IMAGE_MAX_DIMENSION,

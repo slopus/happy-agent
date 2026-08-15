@@ -2,9 +2,8 @@ import { Type } from "@sinclair/typebox";
 import type { HappyTracingEvent } from "happy-plugins";
 import { describe, expect, it, vi } from "vitest";
 
-import { codexTools } from "../tools/codex/assembleCodexTools.js";
-import { createJustBashToolHarness } from "../../tools/testing/createJustBashToolHarness.js";
-import { validPng32Base64 } from "../../tools/testing/validImageFixtures.js";
+import { createJustBashToolHarness } from "../../testing/createAgentTestHarness.js";
+import { validPng32Base64 } from "../../testing/validImageFixtures.js";
 import { getImageProcessor } from "../../images/getImageProcessor.js";
 import { Agent } from "../Agent.js";
 import { AGENTS_MD_SPEC } from "../prompt/agentsMdSpec.js";
@@ -764,13 +763,10 @@ describe("Agent", () => {
             provider,
             modelId: "openai/gpt-test",
             context: harness.context,
-            toolSelector: () => codexTools,
+            toolSelector: () => [],
             printToConsole: false,
         });
-        expect(defaultAgent.tools.map((tool) => tool.name)).toEqual([
-            "update_plan",
-            "request_user_input",
-        ]);
+        expect(defaultAgent.tools.map((tool) => tool.name)).toEqual([]);
 
         const noopTool = defineTool({
             name: "noop",
@@ -789,7 +785,7 @@ describe("Agent", () => {
             modelId: "openai/gpt-test",
             context: harness.context,
             tools: [noopTool],
-            toolSelector: () => codexTools,
+            toolSelector: () => [],
             printToConsole: false,
         });
 

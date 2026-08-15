@@ -11,10 +11,9 @@ import type { Skill } from "../agent/skills/Skill.js";
 import { MAXIMUM_SKILL_FILE_BYTES } from "../agent/skills/loadSkillFromFile.js";
 import type { ProtocolHttpClient } from "../client/ProtocolHttpClient.js";
 import { RemoteAgent } from "../client/RemoteAgent.js";
-import { createJustBashToolHarness } from "../tools/testing/createJustBashToolHarness.js";
-import { validJpeg32Base64, validPng32Base64 } from "../tools/testing/validImageFixtures.js";
+import { createJustBashToolHarness } from "../testing/createAgentTestHarness.js";
+import { validJpeg32Base64, validPng32Base64 } from "../testing/validImageFixtures.js";
 import { NativeProcessManager } from "../processes/index.js";
-import { codexTools } from "../agent/tools/codex/assembleCodexTools.js";
 import { createPermissionContext } from "../permissions/index.js";
 import type {
     GetSessionUsageResponse,
@@ -57,7 +56,7 @@ const testCommandTool = defineTool({
     locks: [],
 });
 
-const selectTestTools = () => [...codexTools, testCommandTool];
+const selectTestTools = () => [testCommandTool];
 
 describe("CodingAssistantApp", () => {
     it("uses a leading trimmed bang as the shell prompt and exits on backspace at column zero", async () => {

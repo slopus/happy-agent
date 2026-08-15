@@ -27,7 +27,6 @@ import { TrackedTaskDrain } from "../utils/TrackedTaskDrain.js";
 import { readLocalServerToken } from "./readLocalServerToken.js";
 import { removeStaleSocket } from "./removeStaleSocket.js";
 import { resolveHappyIntegrationMode } from "./resolveHappyIntegrationMode.js";
-import { CompositeMcpToolProvider, McpClientManager, type McpToolProvider } from "../mcp/index.js";
 import {
     ensureUserConfigurationFiles,
     loadConfig,
@@ -184,7 +183,6 @@ async function runOwnedLocalProtocolServer(
     }
 
     let startupState: DaemonStartupState = { status: "starting" };
-    let mcpToolProvider: McpToolProvider | undefined;
     let worklets: WorkletManager | undefined;
     let p2pNetwork: P2pNetwork | undefined;
     let p2pPairingService: P2pPairingService | undefined;
@@ -377,19 +375,6 @@ async function runOwnedLocalProtocolServer(
         await initialization;
         // Idempotent: a daemon that failed before stopServer ran still releases its watches here.
         gitStateTracker?.dispose();
-        if (mcpToolProvider !== undefined) {
-            try {
-                await mcpToolProvider.close();
-            } catch (error) {
-                if (isDatabaseFailure(error)) fatalDatabaseFailure ??= error;
-                daemonLog.record(
-                    "error",
-                    "daemon_mcp_shutdown_failed",
-                    "Rig daemon could not close every MCP connection.",
-                    { error: errorToMessage(error) },
-                );
-            }
-        }
         try {
             await runHappyLifecycle(async () => {
                 const service = happySyncService;
@@ -494,11 +479,6 @@ async function runOwnedLocalProtocolServer(
         });
         const pluginMcpRegistry = new PluginMcpRegistry();
         const workletToolRegistry = new WorkletToolRegistry();
-        mcpToolProvider = new CompositeMcpToolProvider([
-            new McpClientManager(),
-            pluginMcpRegistry,
-            workletToolRegistry,
-        ]);
         taskDrain = new TrackedTaskDrain();
         gitStateTracker = new GitStateTracker({
             // Snapshots ride the live channel, so they reach subscribers without ever entering the
@@ -629,7 +609,6 @@ async function runOwnedLocalProtocolServer(
                 toolResultRetentionMs:
                     loadedConfig.config.settings.toolResultRetentionDays * MILLISECONDS_PER_DAY,
                 presence: createConfiguredPresenceStore(loadedConfig.config.presence),
-                ...(mcpToolProvider === undefined ? {} : { mcpToolProvider }),
                 localInstanceId: p2pIdentity.instanceId,
                 modelCatalog,
                 resolveModelCatalog: (ownerInstanceId) =>
