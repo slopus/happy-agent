@@ -3,9 +3,18 @@ import type { Context } from "@steve.kite/stdlib";
 
 import { workflowAgentIdSchema, workflowRunSchema, workflowTimestampSchema } from "./Workflow.js";
 
+export const MAX_WORKFLOW_POST_COMMIT_ERROR_LENGTH = 500;
+
 export const workflowEventIdSchema = Type.String({
     minLength: 1,
     maxLength: 256,
+});
+
+/** Bounded, value-free diagnostic passed to the advisory post-commit reporter. */
+export const workflowPostCommitErrorSchema = Type.String({
+    minLength: 1,
+    maxLength: MAX_WORKFLOW_POST_COMMIT_ERROR_LENGTH,
+    pattern: "^[^\\u0000]*$",
 });
 
 export const workflowEventSchema = Type.Union([
@@ -42,6 +51,7 @@ export const workflowEventSchema = Type.Union([
 ]);
 
 export type WorkflowEvent = Static<typeof workflowEventSchema>;
+export type WorkflowPostCommitError = Static<typeof workflowPostCommitErrorSchema>;
 
 export const workflowFeatureListenerSchema = Type.Object(
     {

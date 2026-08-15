@@ -1,6 +1,6 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
-import { workflowIdSchema, workflowRunSchema, type WorkflowId } from "../Workflow.js";
+import { workflowIdSchema, workflowRunSchema } from "../Workflow.js";
 import type { WorkflowsFeature } from "../WorkflowsFeature.js";
 import { Type, type Static } from "@sinclair/typebox";
 
@@ -15,8 +15,7 @@ export function workflowStatusTool(feature: WorkflowsFeature, agentId: string) {
         returnType: Type.Union([workflowRunSchema, Type.Undefined()]),
         durable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx, input: Input) =>
-            await feature.status(ctx, agentId, input.id as WorkflowId),
+        execute: async (ctx, input: Input) => await feature.status(ctx, agentId, input.id),
         toLLM: (run) => [
             {
                 type: "text",

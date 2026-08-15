@@ -1,16 +1,17 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import {
-    workflowMutationToolInputSchema,
     workflowMutationResultSchema,
+    workflowMutationToolInputSchema,
     type WorkflowMutationToolInput,
 } from "../Workflow.js";
 import type { WorkflowsFeature } from "../WorkflowsFeature.js";
 
-export function stopWorkflowTool(feature: WorkflowsFeature, agentId: string) {
+export function cancelWorkflowTool(feature: WorkflowsFeature, agentId: string) {
     return defineAgentTool({
-        name: "stop_workflow",
-        description: "Request cancellation of one workflow run.",
+        name: "cancel_workflow",
+        description:
+            "Cancel one queued, running, or paused host-managed workflow. Terminal runs remain unchanged.",
         parameters: workflowMutationToolInputSchema,
         returnType: workflowMutationResultSchema,
         durable: true,

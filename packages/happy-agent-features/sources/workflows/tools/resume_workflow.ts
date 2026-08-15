@@ -10,7 +10,8 @@ import type { WorkflowsFeature } from "../WorkflowsFeature.js";
 export function resumeWorkflowTool(feature: WorkflowsFeature, agentId: string) {
     return defineAgentTool({
         name: "resume_workflow",
-        description: "Resume one paused or cancelled host-managed workflow run.",
+        description:
+            "Resume one paused host-managed workflow run. A running run is an unchanged no-op.",
         parameters: workflowMutationToolInputSchema,
         returnType: workflowMutationResultSchema,
         durable: true,
