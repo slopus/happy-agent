@@ -87,7 +87,6 @@ import type {
     ReorderRequest,
     RewindSessionRequest,
     RewindSessionResponse,
-    RecordSessionActivityResponse,
     ReadBackgroundProcessResponse,
     ReadProjectFileResponse,
     ReadProjectFileRevisionResponse,
@@ -100,7 +99,6 @@ import type {
     SessionEvent,
     SessionActivity,
     SessionArchiveResponse,
-    SessionPartialMessage,
     SessionReadResponse,
     SessionStreamHello,
     SessionTranscriptWindow,
@@ -4207,8 +4205,7 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "activity") {
-        session.recordUserActivity();
-        sendJson<RecordSessionActivityResponse>(response, 200, { recorded: true });
+        sendAgentsModeUnavailable(response, "Session activity recording");
         return;
     }
 
@@ -6446,7 +6443,6 @@ async function streamEvents(
 interface SessionEventSource {
     readonly events: SessionEventLog;
     activity: () => SessionActivity;
-    partialMessage: () => SessionPartialMessage | undefined;
     clientSnapshot: () => ProtocolSession;
     snapshot: () => ProtocolSession;
     transcriptWindow: (ctx: Context, turnLimit?: number) => Promise<SessionTranscriptWindow>;
@@ -6560,7 +6556,6 @@ async function sessionStreamHello(
     subagents: readonly SubagentSummary[],
 ): Promise<SessionStreamHello> {
     const lastEventId = session.events.lastEventId();
-    const partial = session.partialMessage();
     // A resuming client already holds the transcript, so it is sent only to a
     // client attaching fresh. The window is cut on turn boundaries so a tool
     // result never arrives without the call it belongs to.
@@ -6637,7 +6632,6 @@ async function sessionStreamHello(
         ...(snapshot === undefined || transcript === undefined
             ? {}
             : { session: snapshot, transcript }),
-        ...(partial === undefined ? {} : { partial }),
         ...(lastEventId === undefined ? {} : { lastEventId }),
     };
     return hello;

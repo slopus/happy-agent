@@ -36,8 +36,8 @@ export async function querySessionSummaries(
                 unread_reason, unread_since_ms, cwd, draft, draft_updated_at_ms,
                 docker_json, secret_ids_json, provider_id, model_id, permission_mode,
                 effort, service_tier, status, title, title_status, title_error, recap,
-                session_token_count_json, metadata_updated_at_ms, metadata_run_id,
-                interruption_json, created_at_ms, updated_at_ms, last_message_at_ms,
+                session_token_count_json, interruption_json,
+                created_at_ms, updated_at_ms, last_message_at_ms,
                 last_event_id
             FROM sessions
             WHERE parent_session_id IS NULL
@@ -61,8 +61,6 @@ export async function querySessionSummaries(
             const titleError = readOptionalString(row, "title_error");
             const recap = readOptionalString(row, "recap");
             const sessionTokenCountJson = readOptionalString(row, "session_token_count_json");
-            const metadataUpdatedAt = readOptionalNumber(row, "metadata_updated_at_ms");
-            const metadataRunId = readOptionalString(row, "metadata_run_id");
             const lastMessageAt = readOptionalNumber(row, "last_message_at_ms");
             const lastEventId = readOptionalString(row, "last_event_id");
             const profileId = readOptionalString(row, "profile_id");
@@ -124,8 +122,6 @@ export async function querySessionSummaries(
                     : {
                           sessionTokenCount: JSON.parse(sessionTokenCountJson) as SessionTokenCount,
                       }),
-                ...(metadataUpdatedAt !== undefined ? { metadataUpdatedAt } : {}),
-                ...(metadataRunId !== undefined ? { metadataRunId } : {}),
                 ...(interruptionJson === undefined
                     ? {}
                     : { interruption: JSON.parse(interruptionJson) as SessionInterruption }),

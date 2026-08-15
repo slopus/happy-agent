@@ -516,7 +516,6 @@ describe("P2P human profiles", () => {
                 JSON.stringify({ identity: PROFILE_ID, text: "Local impersonation" }),
             ),
         ).toMatchObject({ body: { code: "profile_not_owned" }, status: 403 });
-        await session.abort(ctx);
     });
 
     it("creates named profiles only on a local primary", async () => {

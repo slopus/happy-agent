@@ -21,8 +21,6 @@ export async function sessionSave(
         const tx = ctx.tx;
         const values = {
             ...sessionScopeValues(state.scope),
-            activeRunId: state.activeRunId ?? null,
-            activeSinceMs: state.activeSince ?? null,
             agentId: state.agentId,
             appendSystemPrompt: state.appendSystemPrompt ?? null,
             archived: state.archived === true,
@@ -34,7 +32,7 @@ export async function sessionSave(
             draft: state.draft ?? null,
             draftUpdatedAtMs: state.draftUpdatedAt ?? null,
             effort: state.effort ?? null,
-            elapsedMs: state.elapsedMs ?? 0,
+            elapsedMs: 0,
             goalJson: state.goal === undefined ? null : JSON.stringify(state.goal),
             id: state.id,
             instructions: state.instructions ?? null,
@@ -42,8 +40,6 @@ export async function sessionSave(
             interruptionJson:
                 state.interruption === undefined ? null : JSON.stringify(state.interruption),
             lastMessageAtMs: state.lastMessageAt ?? null,
-            metadataRunId: state.metadataRunId ?? null,
-            metadataUpdatedAtMs: state.metadataUpdatedAt ?? null,
             modelId: state.modelId,
             modelsJson: JSON.stringify(state.models),
             ownerInstanceId: state.ownerInstanceId,

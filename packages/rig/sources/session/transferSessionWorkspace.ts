@@ -1,5 +1,4 @@
 import type { Context } from "@steve.kite/stdlib";
-import type { AgentSessionTransferSchedule } from "../agent/context/WorkspaceContext.js";
 import type { ProjectRepository } from "../project/ProjectRepository.js";
 import type { TransferSessionResponse } from "../protocol/index.js";
 import type { InMemorySession } from "./InMemorySession.js";
@@ -12,38 +11,6 @@ interface SessionTransferDependencies {
     reserveTarget(workspaceId: string, sessionId: string): void;
     session: InMemorySession;
     targetWorkspaceId: string;
-}
-
-export async function scheduleSessionWorkspaceTransfer(
-    ctx: Context,
-    dependencies: SessionTransferDependencies,
-): Promise<AgentSessionTransferSchedule> {
-    const source = await dependencies.session.scheduleWorkspaceTransfer(
-        ctx,
-        dependencies.targetWorkspaceId,
-    );
-    try {
-        await dependencies.projects.validateSessionTransfer(
-            ctx,
-            source.projectId,
-            source.sourceWorkspaceId,
-            dependencies.targetWorkspaceId,
-        );
-        await assertTargetHasNoSessions(ctx, dependencies);
-        dependencies.reserveTarget(dependencies.targetWorkspaceId, dependencies.session.id);
-        return {
-            state: "scheduled",
-            targetWorkspaceId: dependencies.targetWorkspaceId,
-        };
-    } catch (error) {
-        await dependencies.session.failWorkspaceTransfer(
-            ctx,
-            dependencies.targetWorkspaceId,
-            error,
-        );
-        dependencies.releaseTarget(dependencies.targetWorkspaceId, dependencies.session.id);
-        throw error;
-    }
 }
 
 export async function executeSessionWorkspaceTransfer(

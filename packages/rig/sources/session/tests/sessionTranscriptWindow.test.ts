@@ -187,7 +187,7 @@ describe("sessionTranscriptWindow", () => {
         expect(window.complete).toBe(true);
     });
 
-    it("keeps queued runs whole when their messages interleave", async () => {
+    it("keeps runs whole when their messages interleave", async () => {
         const entries: TranscriptEntry[] = [
             { message: userMessage("run-1-u"), runId: "run-1" },
             { message: userMessage("run-2-u"), runId: "run-2" },

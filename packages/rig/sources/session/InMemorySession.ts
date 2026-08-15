@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { isDeepStrictEqual } from "node:util";
 
 import { createId } from "@paralleldrive/cuid2";
-import { areProviderModelsCompatible, type ProviderUsage } from "@slopus/happy-providers";
+import type { ProviderUsage } from "@slopus/happy-providers";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
@@ -20,7 +20,6 @@ import type {
     AgentContext,
     AgentCommunicationIdentity,
     AgentSnapshot,
-    ContentBlock,
 } from "../agent/index.js";
 import { createDockerAgentContext, createNodeAgentContext } from "../agent/index.js";
 import {
@@ -38,19 +37,14 @@ import type { SessionScopeMove } from "../persistence/session/sessionMoveScope.j
 import type { SlotEntryStore } from "../slots/index.js";
 import type { AppletStore } from "../applets/index.js";
 import {
-    createGoalContinuationPrompt,
     normalizeGoalObjective,
     type ChangeGoalStatusRequest,
     type CreateGoalRequest,
     type SessionGoal,
 } from "../goals/index.js";
 import type {
-    ChangeEffortRequest,
-    AbortRunResponse,
     Attachment,
-    ChangeModelRequest,
     ChangePermissionModeRequest,
-    ChangeServiceTierRequest,
     SessionConfigurationField,
     CreateSessionRequest,
     EventId,
@@ -66,9 +60,7 @@ import type {
     GitChangeSnapshot,
     SessionEvent,
     SessionActivity,
-    SessionActiveTurn,
     SessionAgentMetadata,
-    SessionPartialMessage,
     SessionPermissionReview,
     SessionInterruption,
     SessionStatus,
@@ -82,12 +74,6 @@ import type {
     SubagentSummary,
     SessionTitleStatus,
     SetSessionDraftRequest,
-    SubmitMessageRequest,
-    SubmitMessageResponse,
-    SubmitContextMessageRequest,
-    SubmitContextMessageResponse,
-    SteerMessageRequest,
-    SteerMessageResponse,
     UpdateSessionRequest,
     SessionTranscriptWindow,
 } from "../protocol/index.js";
@@ -101,12 +87,8 @@ import {
 
 const RETAINED_SESSION_MESSAGE_LIMIT = 512;
 const sessionCommitStorage = new AsyncLocalStorage<object>();
-const REMOVED_RUNTIME_REFRESH = Symbol("removed-runtime-refresh");
 
 export interface SessionEventCommitCheckpoint {
-    readonly activePartial: PartialMessageState | undefined;
-    readonly activeRun: ActiveRun | undefined;
-    readonly activeSince: number | undefined;
     readonly appendSystemPrompt: string | undefined;
     readonly activity: SessionActivity;
     readonly archived: boolean;
@@ -115,31 +97,18 @@ export interface SessionEventCommitCheckpoint {
     readonly eventLog: SessionEventLogCheckpoint;
     readonly draft: string | undefined;
     readonly draftUpdatedAt: number | undefined;
-    readonly elapsedMs: number;
     readonly goal: SessionGoal | undefined;
     readonly interruption: SessionInterruption | undefined;
     readonly lastMessageAt: number | undefined;
-    readonly metadataFailures: number;
-    readonly metadataInitialAttempted: boolean;
-    readonly metadataNamed: boolean;
-    readonly metadataNamingAttempted: boolean;
-    readonly metadataRefinementAttempted: boolean;
-    readonly metadataRunId: string | undefined;
-    readonly metadataUpdatedAt: number | undefined;
     readonly ownedUsageEventRevision: number;
     readonly orderKey: string;
-    readonly pendingSteeringContinuations: ReadonlyMap<string, PendingSteeringContinuation>;
-    readonly pendingSteeringMessages: ReadonlyMap<string, PendingSteeringMessage>;
     readonly permissionReviews: ReadonlyMap<string, SessionPermissionReview>;
-    readonly restoredActiveRunId: string | undefined;
     readonly reportedStatus: SessionStatus | undefined;
     readonly reportingActivity: boolean;
     readonly reportingStatus: boolean;
     readonly runFacts: ReadonlyMap<string, TranscriptRunFacts>;
     readonly sessionTokenCount: SessionTokenCount;
     readonly status: SessionStatus;
-    readonly suspendedRunIds: ReadonlySet<string>;
-    readonly suspendOnAbort: boolean;
     readonly recap: string | undefined;
     readonly title: string | undefined;
     readonly titleError: string | undefined;
@@ -165,7 +134,7 @@ import { PROJECT_GIT_SECRET_ID, projectGitCommandSecret } from "../git/projectGi
 import { IDLE_SESSION_ACTIVITY, sessionActivityAfterEvent } from "./sessionActivityAfterEvent.js";
 import { aggregateSessionTokenCount } from "./usage/aggregateSessionTokenCount.js";
 import { sessionTokenCountAfterEvent } from "./usage/sessionTokenCountAfterEvent.js";
-import type { Model, ServiceTier, StopReason, Usage } from "../protocol/index.js";
+import type { Model, ServiceTier, Usage } from "../protocol/index.js";
 import type { PresenceState } from "../presence/index.js";
 import {
     humanizeWorkflowName,
@@ -191,8 +160,6 @@ import {
     parsePermissionMode,
     type PermissionMode,
 } from "../permissions/index.js";
-import { createSessionMetadataTranscript } from "./impl/createSessionMetadataTranscript.js";
-import { createAbortRequestKey } from "./impl/createAbortRequestKey.js";
 import { createGoalTitle } from "./impl/createGoalTitle.js";
 import { formatBackgroundProcessExit } from "./formatBackgroundProcessExit.js";
 import { formatShellCommandContext } from "./impl/formatShellCommandContext.js";
@@ -202,7 +169,6 @@ import type { SessionWorkspaceTransferState } from "./sessionWorkspaceTransferSt
 import { getProviderIdForModel } from "../model-catalog/getProviderIdForModel.js";
 import { getProviderIdsForModel } from "../model-catalog/getProviderIdsForModel.js";
 import { resolveInitialModelSelection } from "./impl/resolveInitialModelSelection.js";
-import { resolveSteeringContinuationMessageIds } from "./impl/resolveSteeringContinuationMessageIds.js";
 import {
     SessionEventLog,
     type SessionEventAppendHook,
@@ -213,7 +179,7 @@ import { isSessionTransactionPostCommitError } from "./SessionTransactionContext
 import { isTransientInferenceSessionEvent } from "./impl/isTransientInferenceSessionEvent.js";
 import { affectsSessionUsage } from "./impl/affectsSessionUsage.js";
 import { providerUsageToClaudeQuota } from "../provider-services/providerUsageToClaudeQuota.js";
-import { asyncLock, isAsyncLockReentryError, type AsyncLock } from "../concurrency/index.js";
+import { asyncLock, type AsyncLock } from "../concurrency/index.js";
 import { getDatabaseScope } from "../persistence/databaseContext.js";
 import { isSessionDatabaseTransaction } from "../persistence/database/SessionDatabase.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
@@ -227,18 +193,13 @@ import {
     type SessionUsageSummary,
     zeroUsage,
 } from "./usage/index.js";
-import { createRequestDebugDirectory, DebugLog } from "../debug/index.js";
 import { SecretRegistry, SessionSecretContext } from "../secrets/index.js";
 import type { SecretAttachmentScope } from "../secrets/index.js";
-import { createErrorMessage } from "../agent/impl/createErrorMessage.js";
-import type { AgentMessage, ErrorMessage, ToolCallBlock, ToolResultBlock } from "../agent/types.js";
+import type { AgentMessage, ErrorMessage } from "../agent/types.js";
 import type { RigAgentConfiguration } from "../agent/RigProtocolFeature.js";
 import type { ScheduledMessage, ScheduleMessageRequest } from "../scheduling/index.js";
 
 const MAX_RETAINED_SETTLED_SCHEDULED_MESSAGES = 1_000;
-const SESSION_METADATA_TIMEOUT_MS = 30_000;
-/** How many failed attempts to name a chat are made before leaving it unnamed for good. */
-const SESSION_METADATA_MAX_FAILURES = 3;
 const WORKSPACE_READINESS_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const rigAgentConfigurationSchema = Type.Object(
     {
@@ -258,27 +219,12 @@ const rigAgentConfigurationSchema = Type.Object(
 );
 
 export interface PersistedSessionMessage {
-    isPartial: boolean;
     message: Message;
     position: number;
     runId?: string;
 }
 
-interface SessionSubmitMessageRequest extends SubmitMessageRequest {
-    agentSource?: UserMessage["agentSource"];
-    agentMessageTriggerTurn?: boolean;
-    encryptedAgentMessage?: {
-        author: string;
-        recipient: string;
-        header: string;
-        encryptedContent: string;
-    };
-    provenance?: "agent";
-}
-
 export interface PersistedSessionState {
-    activeSince?: number;
-    activeRunId?: string;
     agent: SessionAgentMetadata;
     agentId: string;
     /** Stable Rig identity whose credentials and usage this session consumes. */
@@ -294,7 +240,6 @@ export interface PersistedSessionState {
     docker?: DockerExecutionConfig;
     draft?: string;
     draftUpdatedAt?: number;
-    elapsedMs?: number;
     contextMessages?: readonly Message[];
     createdAt?: number;
     effort?: string;
@@ -304,8 +249,6 @@ export interface PersistedSessionState {
     goal?: SessionGoal;
     interruption?: SessionInterruption;
     lastMessageAt?: number;
-    metadataRunId?: string;
-    metadataUpdatedAt?: number;
     messages: readonly PersistedSessionMessage[];
     modelId: string;
     models: readonly Model[];
@@ -446,7 +389,7 @@ export interface InMemorySessionOptions {
     slotStores?: SessionSlotStores;
     taskDrain?: TaskDrain;
     workspaceFeatures?: WorkspaceFeatures;
-    /** Durable server decision that gates every runtime and queued run for a managed workspace. */
+    /** Durable server decision that gates terminal execution in a managed workspace. */
     workspaceRunReadiness?: (target: {
         cwd: string;
         projectId: string;
@@ -475,18 +418,6 @@ export const DEFAULT_WORKSPACE_FEATURES: WorkspaceFeatures = {
     workspaces: true,
 };
 
-interface ActiveRun {
-    controller: AbortController;
-    debug: boolean;
-    kind: "goal" | "user";
-    runId: string;
-}
-
-interface MetadataGenerationTarget {
-    kind: "initial" | "refined";
-    runId: string;
-}
-
 interface InternalWorkflowRun {
     agentCalls: (WorkflowAgentCacheEntry | undefined)[];
     checkpoint?: WorkflowCheckpoint;
@@ -499,26 +430,6 @@ interface InternalWorkflowRun {
 const MAX_WORKFLOW_LOG_CHARS = 4_000;
 const MAX_SUBAGENT_INSPECTION_TEXT_CHARS = 32_000;
 
-interface PartialMessageState {
-    messageId: string;
-    position: number | undefined;
-    runId: string;
-}
-
-interface PendingSteeringMessage {
-    createdAt: number;
-    message: UserMessage;
-    runId: string;
-}
-
-interface PendingSteeringContinuation {
-    cancelled: boolean;
-    contextMessageIds: string[];
-    messageIds: string[];
-    ready: Promise<void>;
-    resolveReady: () => void;
-}
-
 interface StagedProtocolProjectionOperation {
     readonly event: SessionEvent;
     readonly message?: PersistedSessionMessage;
@@ -530,30 +441,7 @@ interface StagedProtocolProjection {
     scheduled: boolean;
 }
 
-export interface SessionRunCompletion {
-    errorMessage?: string;
-    status: "aborted" | "completed" | "error";
-}
-
-function completionFromRunFinished(
-    event: Extract<SessionEvent, { type: "run_finished" }>,
-): SessionRunCompletion {
-    if (event.data.stopReason === "error") {
-        return {
-            errorMessage: event.data.errorMessage ?? "The model response failed.",
-            status: "error",
-        };
-    }
-    return {
-        status: event.data.stopReason === "aborted" ? "aborted" : "completed",
-    };
-}
-
-const SUBAGENT_TOKEN_EXHAUSTED_ERROR =
-    "The subagent ran out of tokens before returning a response.";
-
 export class InMemorySession {
-    #activeSince: number | undefined;
     readonly events: SessionEventLog;
     readonly id: string;
 
@@ -563,16 +451,6 @@ export class InMemorySession {
 
     #appendSystemPrompt: string | undefined;
     #archived = false;
-    #activePartial: PartialMessageState | undefined;
-    #activeRun: ActiveRun | undefined;
-    #abortInFlight:
-        | {
-              continuePendingSteering: boolean;
-              key: string;
-              promise: Promise<AbortRunResponse>;
-              runId: string | undefined;
-          }
-        | undefined;
     #agentMetadata: SessionAgentMetadata;
     #agentId: string;
     readonly #ownerInstanceId: string;
@@ -588,36 +466,19 @@ export class InMemorySession {
         | undefined;
     #createEventId: () => EventId;
     #createdAt: number;
-    #compactionRunId: string | undefined;
     #contextMessages: Message[] | undefined;
     #credentialBindingId: string;
     #closing = false;
-    #compactionActive = false;
-    #debugLogs = new Map<string, DebugLog>();
     #draft: string | undefined;
     #draftUpdatedAt: number | undefined;
-    #draining: Promise<void> | undefined;
-    #elapsedMs = 0;
     #effort: string | undefined;
     #serviceTier: ServiceTier | undefined;
     #goal: SessionGoal | undefined;
-    #resumingDurableToolRun = false;
     #folders: FolderRepository | undefined;
     #instructions: string | undefined;
     #interruption: SessionInterruption | undefined;
     #lastMessageAt: number | undefined;
     #lifetimeTotalTokens = 0;
-    #lastSessionRunId: string | undefined;
-    #metadataController: AbortController | undefined;
-    #metadataFailures = 0;
-    #metadataInitialAttempted = false;
-    #metadataNamed = false;
-    #metadataNamingAttempted = false;
-    #metadataRefinementAttempted = false;
-    #metadataRevision = 0;
-    #metadataRunId: string | undefined;
-    #metadataSettlement: Promise<void> | undefined;
-    #metadataUpdatedAt: number | undefined;
     #messages: PersistedSessionMessage[] = [];
     #messageIndexByPosition = new Map<number, number>();
     #transcriptRuns = new Map<string, PersistedSessionMessage[]>();
@@ -636,7 +497,6 @@ export class InMemorySession {
     /** The status a client has already been told about. */
     #reportedStatus: SessionStatus | undefined;
     #reportingStatus = false;
-    #submittedUserMessages = new Map<string, PersistedSessionMessage>();
     #mcpServers: readonly McpServerSummary[] = [];
     #modelCatalog: ModelCatalog;
     #modelId: string;
@@ -644,25 +504,20 @@ export class InMemorySession {
     #now: () => number;
     #onInitialTitle: InMemorySessionOptions["onInitialTitle"];
     #orderKey: string;
-    #partialPositions = new Set<number>();
-    #pendingSteeringMessages = new Map<string, PendingSteeringMessage>();
-    #pendingSteeringContinuations = new Map<string, PendingSteeringContinuation>();
     #persistence: InMemorySessionPersistence | undefined;
     #onAppendEvent: SessionEventAppendHook | undefined;
     readonly #stagedProtocolProjections = new WeakMap<object, StagedProtocolProjection>();
     #presence: { state(): PresenceState } | undefined;
     #publishLiveEvent: InMemorySessionOptions["publishLiveEvent"];
     #slotStores: SessionSlotStores | undefined;
-    #userInputPresenceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     #providerId: string;
     #scope: SessionScope;
     #unsortedSince: number | undefined;
-    #scopeRuntimeRefreshPending = false;
-    #scopeRuntimeRefresh: Promise<void> | undefined;
+    #scopeExecutionContextRefreshPending = false;
+    #scopeExecutionContextRefresh: Promise<void> | undefined;
     #permissionMode: PermissionMode;
     #recap: string | undefined;
     #request: CreateSessionRequest;
-    #restoredActiveRunId: string | undefined;
     #executionContext: AgentContext | undefined;
     #processManager: NativeProcessManager | undefined;
     #secrets: SessionSecretContext;
@@ -672,9 +527,7 @@ export class InMemorySession {
     #reportingActivity = false;
     #git: GitChangeSnapshot | undefined;
     #unread: SessionUnreadState | undefined;
-    #suspendedRunIds = new Set<string>();
     #systemPrompt: string | undefined;
-    #suspendOnAbort = false;
     #shutdownCleanup: Promise<void> | undefined;
     #ready: Promise<void> = Promise.resolve();
     readonly #commitEventLock: AsyncLock = asyncLock({ reentry: "block" });
@@ -867,24 +720,13 @@ export class InMemorySession {
         this.#workspaceArchived = this.#status === "archived";
         this.#unread =
             options.restore?.unread === undefined ? undefined : { ...options.restore.unread };
-        this.#activeSince = options.restore?.activeSince;
-        this.#elapsedMs = options.restore?.elapsedMs ?? 0;
         this.#lastMessageAt = options.restore?.lastMessageAt;
-        this.#metadataRunId = options.restore?.metadataRunId;
-        this.#metadataUpdatedAt = options.restore?.metadataUpdatedAt;
         this.#recap = options.restore?.recap;
-        this.#restoredActiveRunId = options.restore?.activeRunId;
-        this.#lastSessionRunId = options.restore?.activeRunId;
         this.#title = options.restore?.title ?? this.#agentMetadata.description;
         this.#titleError = options.restore?.titleError;
         this.#titleStatus =
             options.restore?.titleStatus ??
             (this.#agentMetadata.description !== undefined ? "ready" : "idle");
-        this.#metadataInitialAttempted = this.#metadataUpdatedAt !== undefined;
-        this.#metadataNamed = this.#metadataUpdatedAt !== undefined;
-        this.#metadataNamingAttempted = this.#metadataUpdatedAt !== undefined;
-        this.#metadataRefinementAttempted = this.#metadataRunId !== undefined;
-        if (this.#titleStatus === "error") this.#metadataFailures = SESSION_METADATA_MAX_FAILURES;
         this.#totalTokens = options.restore?.totalTokens ?? 0;
         this.#taskList = new SessionTaskList(options.restore?.tasks, options.restore?.nextTaskId);
         this.#tools = options.restore?.tools ?? [];
@@ -931,14 +773,6 @@ export class InMemorySession {
             };
             internal.resolveCompletion(cloneWorkflowRun(state));
             this.#workflowRuns.set(state.runId, internal);
-        }
-        for (const message of this.#messages) {
-            if (message.isPartial) {
-                this.#partialPositions.add(message.position);
-            }
-            if (message.message.role === "user" && message.runId !== undefined) {
-                this.#submittedUserMessages.set(message.message.id, message);
-            }
         }
         const eventLogOptions: ConstructorParameters<typeof SessionEventLog>[0] = {};
         if (options.deferEventNotification !== undefined) {
@@ -1012,24 +846,8 @@ export class InMemorySession {
                 if (options.emitCreatedEvent !== false) {
                     await this.emitCreatedEvent(ctx);
                 }
-            } else {
-                await this.#continueGoalIfIdle(ctx);
-                if (!this.isSubagent()) await this.#restartMetadataSettlement();
             }
         })();
-    }
-
-    abort(
-        _ctx: Context,
-        _options: {
-            continuePendingSteering?: boolean;
-            expectedRunId?: string;
-            mutationId?: string;
-            stopDescendants?: boolean;
-            steeringMessageIds?: readonly string[];
-        } = {},
-    ): Promise<AbortRunResponse> {
-        return Promise.reject(new Error("Agent abort is owned by Agent Base."));
     }
 
     async stopBackgroundProcesses(ctx: Context): Promise<number> {
@@ -1205,7 +1023,6 @@ export class InMemorySession {
             ctx,
             this.#nextMessagePosition(),
             contextMessage,
-            false,
             `shell:${result.commandId}`,
         );
         this.#lastMessageAt = this.#now();
@@ -1236,59 +1053,8 @@ export class InMemorySession {
                 status: exit.status,
                 type: "background_process_exited",
             },
-            runId: this.#activeRun?.runId ?? this.#lastSessionRunId ?? "background",
+            runId: "background",
         });
-    }
-
-    async suspendByParent(ctx: Context): Promise<void> {
-        if (!this.isSubagent()) return;
-        if (this.#activeRun !== undefined) this.#suspendedRunIds.add(this.#activeRun.runId);
-        this.#suspendOnAbort = true;
-        await this.abort(ctx, { stopDescendants: false });
-        this.#status = "suspended";
-        if (this.#activeRun === undefined) this.#suspendOnAbort = false;
-        await this.#saveSession(ctx);
-    }
-
-    async clearSuspension(ctx: Context): Promise<void> {
-        this.#suspendOnAbort = false;
-        if (this.#status !== "suspended") return;
-        this.#status = "aborted";
-        await this.#saveSession(ctx);
-    }
-
-    consumeSuspendedRun(runId: string): boolean {
-        return this.#suspendedRunIds.delete(runId);
-    }
-
-    async recordSubagentsSuspended(
-        ctx: Context,
-        subagents: readonly { description: string; path: string }[],
-    ): Promise<void> {
-        if (subagents.length === 0) return;
-        const count = subagents.length;
-        const names = subagents.map((subagent) => subagent.description).join(", ");
-        const displayText = `${count} ${count === 1 ? "subagent was" : "subagents were"} suspended: ${names}. They will remain suspended until explicitly resumed or redirected.`;
-        this.#separateModelContextFromVisibleTranscript();
-        this.#contextMessages?.push({
-            blocks: [
-                {
-                    type: "text",
-                    text: [
-                        "<subagent-suspension>",
-                        "The parent turn was interrupted. These delegated agents were suspended:",
-                        ...subagents.map(
-                            (subagent) => `- ${subagent.path}: ${subagent.description}`,
-                        ),
-                        "They will not resume automatically. Use followup_task to continue retained work, or interrupt_agent to leave work stopped.",
-                        "</subagent-suspension>",
-                    ].join("\n"),
-                },
-            ],
-            id: createId(),
-            role: "user",
-        });
-        await this.#append(ctx, "subagents_suspended", { displayText });
     }
 
     /**
@@ -1313,7 +1079,7 @@ export class InMemorySession {
             ...(payload.structured === undefined ? {} : { structured: payload.structured }),
         };
         const commit = async (ctx: Context) => {
-            await this.#storeMessage(ctx, this.#nextMessagePosition(), message, false);
+            await this.#storeMessage(ctx, this.#nextMessagePosition(), message);
             await this.#append(ctx, "system_notice", { message });
         };
         return this.#persistence?.transaction === undefined
@@ -1460,35 +1226,9 @@ export class InMemorySession {
 
     hasLocalSettlementWork(): boolean {
         return (
-            this.#activeRun !== undefined ||
-            this.#compactionActive ||
             [...this.#workflowRuns.values()].some((run) => run.state.status === "running") ||
             (this.#executionContext?.bash.activeSessionCount?.() ?? 0) > 0
         );
-    }
-
-    async scheduleWorkspaceTransfer(
-        ctx: Context,
-        targetWorkspaceId: string,
-    ): Promise<{
-        projectId: string;
-        sourceWorkspaceId: string;
-    }> {
-        this.#assertAcceptingWork();
-        const sourceWorkspaceId = this.#workspaceTransferSource(targetWorkspaceId);
-        if (this.#activeRun === undefined && this.#restoredActiveRunId === undefined) {
-            throw new Error("A session transfer can only be scheduled during an active response.");
-        }
-        if (
-            this.#compactionActive ||
-            [...this.#workflowRuns.values()].some((run) => run.state.status === "running")
-        ) {
-            throw new Error(
-                "Wait for compaction and workflow runs to finish before transferring this session.",
-            );
-        }
-        await this.#setWorkspaceTransferState(ctx, { status: "scheduled", targetWorkspaceId });
-        return { projectId: this.#projectScope().projectId, sourceWorkspaceId };
     }
 
     async beginWorkspaceTransfer(
@@ -1504,7 +1244,6 @@ export class InMemorySession {
         if (sourceWorkspaceId === undefined) {
             throw new Error("Only a session in a managed workspace can be transferred.");
         }
-        const active = this.#activeRun !== undefined || this.#restoredActiveRunId !== undefined;
         if (options.scheduled === true) {
             if (
                 this.#workspaceTransfer.status !== "scheduled" ||
@@ -1512,12 +1251,7 @@ export class InMemorySession {
             ) {
                 throw new Error("The scheduled session transfer is no longer pending.");
             }
-            if (active) {
-                throw new Error("The session transfer cannot start until this response finishes.");
-            }
         } else if (
-            active ||
-            this.#compactionActive ||
             [...this.#workflowRuns.values()].some((run) => run.state.status === "running")
         ) {
             throw new Error(
@@ -1566,7 +1300,7 @@ export class InMemorySession {
             role: "system",
         };
         const nextContextMessages = [...contextMessages, notice];
-        await this.#teardownRuntimeForWorkspaceTransfer(ctx);
+        await this.#teardownExecutionContextForWorkspaceTransfer(ctx);
         const succeeded: SessionWorkspaceTransferState = {
             status: "succeeded",
             targetWorkspaceId: input.targetWorkspaceId,
@@ -1620,7 +1354,7 @@ export class InMemorySession {
             if (runId !== undefined) {
                 await this.#append(ctx, "run_error", {
                     errorMessage: `Session transfer failed: ${this.#workspaceTransfer.errorMessage}`,
-                    modelLocked: this.#modelLocked(),
+                    modelLocked: false,
                     runId,
                 });
             }
@@ -1660,7 +1394,7 @@ export class InMemorySession {
             if (runId !== undefined) {
                 await this.#append(ctx, "run_error", {
                     errorMessage: `Session transfer failed: ${errorMessage}`,
-                    modelLocked: this.#modelLocked(),
+                    modelLocked: false,
                     runId,
                 });
             } else {
@@ -1673,251 +1407,10 @@ export class InMemorySession {
         return this.#workspaceTransfer;
     }
 
-    async changeModel(ctx: Context, request: ChangeModelRequest): Promise<ProtocolSession> {
-        // Resolving the provider before the idle guard keeps an unknown model reported as an
-        // unknown model rather than as a busy session.
-        this.#resolveProviderForModel(request.modelId, request.providerId);
-        if (this.#activeRun !== undefined) {
-            throw new Error("Wait for the active response to finish before changing models.");
-        }
-        return await this.#applyConfiguration(
-            ctx,
-            {
-                ...(request.effort === undefined ? {} : { effort: request.effort }),
-                modelId: request.modelId,
-                ...(request.providerId === undefined ? {} : { providerId: request.providerId }),
-            },
-            request.mutationId === undefined ? {} : { mutationId: request.mutationId },
-        );
-    }
-
-    async changeEffort(ctx: Context, request: ChangeEffortRequest): Promise<ProtocolSession> {
-        return await this.#applyConfiguration(
-            ctx,
-            {
-                effort: request.effort ?? this.#selectedModel().defaultThinkingLevel,
-            },
-            request.mutationId === undefined ? {} : { mutationId: request.mutationId },
-        );
-    }
-
-    async changeServiceTier(
-        ctx: Context,
-        request: ChangeServiceTierRequest,
-    ): Promise<ProtocolSession> {
-        return await this.#applyConfiguration(
-            ctx,
-            { serviceTier: request.serviceTier ?? null },
-            request.mutationId === undefined ? {} : { mutationId: request.mutationId },
-        );
-    }
-
-    /**
-     * Applies a model, reasoning effort, or fast mode change and reports it as one event.
-     *
-     * Every path that changes the agent's configuration goes through here, so a change that moves
-     * several fields at once is a single event rather than a burst that readers would have to
-     * reassemble. `changed` names only the fields whose values actually moved.
-     *
-     * `excludeRunId` omits one run's already-stored message from the summarized history an
-     * incompatible model switch builds. A message that is about to be sent to the new model must
-     * not also be folded into the summary of what the old model saw.
-     */
-    async #applyConfiguration(
-        ctx: Context,
-        change: {
-            effort?: string;
-            modelId?: string;
-            providerId?: string;
-            serviceTier?: ServiceTier | null;
-        },
-        options: { excludeRunId?: string; mutationId?: string } = {},
-    ): Promise<ProtocolSession> {
-        const changed: SessionConfigurationField[] = [];
-        const previousEffort = this.#effort;
-        const previousServiceTier = this.#serviceTier;
-
-        // Everything this change asks for is checked against the configuration it would produce
-        // before any of it is applied, so a rejected change leaves the session as it was rather
-        // than half switched.
-        const targetProviderId =
-            change.modelId === undefined
-                ? this.#providerId
-                : this.#resolveProviderForModel(change.modelId, change.providerId);
-        const targetModel =
-            change.modelId === undefined
-                ? this.#selectedModel()
-                : this.#ensureKnownModel(change.modelId, targetProviderId);
-        if (change.effort !== undefined) {
-            this.#assertSupportedEffortForModel(change.effort, targetModel);
-        }
-        if (
-            change.serviceTier !== undefined &&
-            change.serviceTier !== null &&
-            !this.#providerSupportsServiceTier(targetProviderId, change.serviceTier)
-        ) {
-            throw new Error(`Provider '${targetProviderId}' does not support fast inference.`);
-        }
-
-        if (
-            change.modelId !== undefined &&
-            (targetModel.id !== this.#modelId || targetProviderId !== this.#providerId)
-        ) {
-            await this.#switchModel(ctx, targetModel, targetProviderId, options);
-            changed.push("model");
-        }
-
-        // An explicit effort always applies. A model switch otherwise resets effort to whatever
-        // the new model considers normal, because the old level may not exist on it.
-        const effort =
-            change.effort ??
-            (changed.includes("model") ? this.#selectedModel().defaultThinkingLevel : undefined);
-        if (effort !== undefined) {
-            this.#assertSupportedEffort(effort);
-            this.#effort = effort;
-        }
-
-        if (change.serviceTier !== undefined) {
-            this.#serviceTier = change.serviceTier ?? undefined;
-        } else if (
-            this.#serviceTier !== undefined &&
-            !this.#providerSupportsServiceTier(this.#providerId, this.#serviceTier)
-        ) {
-            // Switching to a provider without fast inference silently turns it off, which readers
-            // still have to be told about so their view of the session stays true.
-            this.#serviceTier = undefined;
-        }
-
-        if (this.#effort !== previousEffort) changed.push("effort");
-        if (this.#serviceTier !== previousServiceTier) changed.push("serviceTier");
-        if (changed.includes("model")) this.#totalTokens = 0;
-
-        this.#interruption = undefined;
-        await this.#append(ctx, "session_configuration_changed", {
-            changed,
-            ...(this.#effort === undefined ? {} : { effort: this.#effort }),
-            modelId: this.#modelId,
-            providerId: this.#providerId,
-            serviceTier: this.#serviceTier ?? null,
-            ...(options.mutationId === undefined ? {} : { mutationId: options.mutationId }),
-        });
-        return this.snapshot();
-    }
-
-    #resolveProviderForModel(modelId: string, providerId?: string): string {
-        const resolved =
-            (providerId !== undefined
-                ? getProviderIdForModel(this.#modelCatalog, modelId, providerId)
-                : getProviderIdForModel(this.#modelCatalog, modelId, this.#providerId)) ??
-            (providerId === undefined
-                ? getProviderIdForModel(this.#modelCatalog, modelId)
-                : undefined);
-        if (resolved === undefined) {
-            const providerDescription =
-                providerId !== undefined ? ` for provider '${providerId}'` : "";
-            throw new Error(`Unknown model '${modelId}'${providerDescription}.`);
-        }
-        return resolved;
-    }
-
-    async #switchModel(
-        ctx: Context,
-        model: Model,
-        providerId: string,
-        options: { excludeRunId?: string },
-    ): Promise<void> {
-        const compatible = this.#modelsAreCompatible(model, providerId);
-        if (compatible) {
-            this.#contextMessages ??= this.#committedMessages();
-        } else {
-            // A message already stored for a run that has not reached the model yet belongs to
-            // the new model, not to the summary of what the old one saw.
-            const visibleMessages = this.#committedMessagesExcludingRun(options.excludeRunId);
-            this.#contextMessages =
-                visibleMessages.length === 0
-                    ? // Undefined means "the context is the visible transcript", which would put
-                      // the excluded message back and send it to the model twice. When a message
-                      // was excluded, an empty context is what is actually true.
-                      options.excludeRunId === undefined
-                        ? undefined
-                        : []
-                    : visibleMessages;
-        }
-        if (!compatible) {
-            this.#mcpServers = [];
-            this.#tools = [];
-        }
-        this.#modelId = model.id;
-        this.#providerId = providerId;
-        this.#credentialBindingId = this.#providerBindingId(providerId);
-        this.#models = this.#modelsForProvider(providerId);
-    }
-
-    /**
-     * Replaces the inference scope after its credential registry changes.
-     *
-     * Credential revisions are an authorization boundary. A runtime or executor created from an
-     * older revision must never survive a rotation, visibility change, or revocation.
-     */
-    async refreshInferenceScope(ctx: Context, modelCatalog: ModelCatalog): Promise<void> {
-        await this.#applyInferenceScopeRefresh(ctx, modelCatalog);
-    }
-
-    async #applyInferenceScopeRefresh(ctx: Context, modelCatalog: ModelCatalog): Promise<void> {
-        const catalogChanged = JSON.stringify(this.#modelCatalog) !== JSON.stringify(modelCatalog);
-        const credentialBindingId = this.#credentialBindingId;
-        this.#mcpServers = [];
-        this.#tools = [];
-        this.#modelCatalog = modelCatalog;
-
-        const reboundProvider = modelCatalog.providers.find(
-            (provider) =>
-                this.#providerBindingId(provider.providerId) === credentialBindingId &&
-                provider.models.some((model) => model.id === this.#modelId),
-        );
-        if (reboundProvider === undefined) {
-            await this.#applyConfiguration(ctx, {
-                modelId: modelCatalog.defaultModelId,
-                providerId: modelCatalog.defaultProviderId,
-            });
-        } else if (reboundProvider.providerId !== this.#providerId) {
-            await this.#applyConfiguration(ctx, {
-                modelId: this.#modelId,
-                providerId: reboundProvider.providerId,
-            });
-        } else {
-            this.#models = this.#modelsForProvider(this.#providerId);
-            if (catalogChanged) {
-                await this.#append(ctx, "session_updated", { session: this.clientSnapshot() });
-            }
-        }
-    }
-
     #providerBindingId(providerId: string): string {
         return (
             this.#modelCatalog.providers.find((provider) => provider.providerId === providerId)
                 ?.credential?.bindingId ?? `${this.#ownerInstanceId}:${providerId}`
-        );
-    }
-
-    #modelsAreCompatible(model: Model, providerId: string): boolean {
-        return areProviderModelsCompatible(
-            {
-                modelId: this.#modelId,
-                providerId: this.#providerId,
-                providerType:
-                    this.#modelCatalog.providers.find(
-                        (provider) => provider.providerId === this.#providerId,
-                    )?.providerType ?? "gym",
-            },
-            {
-                modelId: model.id,
-                providerId,
-                providerType:
-                    this.#modelCatalog.providers.find(
-                        (provider) => provider.providerId === providerId,
-                    )?.providerType ?? "gym",
-            },
         );
     }
 
@@ -1926,22 +1419,15 @@ export class InMemorySession {
         if (this.isSubagent()) {
             throw new Error("Subagent histories cannot be forked.");
         }
-        if (this.#activeRun !== undefined) {
-            throw new Error("Wait for the active response to finish before forking this session.");
-        }
-
         this.#contextMessages ??= this.#committedMessages();
         const state = this.state();
         const id = createId();
         const {
-            activeRunId: _activeRunId,
             archived: _archived,
             goal: _goal,
             interruption: _interruption,
             title: _title,
             titleError: _titleError,
-            metadataRunId: _metadataRunId,
-            metadataUpdatedAt: _metadataUpdatedAt,
             recap: _recap,
             scheduledMessages: _scheduledMessages,
             workflows: _workflows,
@@ -2126,19 +1612,19 @@ export class InMemorySession {
             for (const secretId of this.#secrets.projectIds()) {
                 this.#secrets.detach(secretId, "project");
             }
-            this.#scopeRuntimeRefreshPending = this.#executionContext !== undefined;
-            if (this.#scopeRuntimeRefreshPending && this.#activeRun === undefined) {
-                this.#startScopeRuntimeRefresh();
+            this.#scopeExecutionContextRefreshPending = this.#executionContext !== undefined;
+            if (this.#scopeExecutionContextRefreshPending) {
+                this.#startScopeExecutionContextRefresh();
             }
         }
         await this.#append(ctx, "session_updated", { session: this.clientSnapshot() });
     }
 
-    /** Retires a runtime whose trusted folder metadata or virtual ancestry changed. */
+    /** Retires a terminal execution context whose trusted folder metadata changed. */
     folderContextChanged(): void {
         if (this.#scope.kind !== "folder" || this.#executionContext === undefined) return;
-        this.#scopeRuntimeRefreshPending = true;
-        if (this.#activeRun === undefined) this.#startScopeRuntimeRefresh();
+        this.#scopeExecutionContextRefreshPending = true;
+        this.#startScopeExecutionContextRefresh();
     }
 
     /** Whether this session currently executes inside one of the supplied virtual folders. */
@@ -2160,21 +1646,11 @@ export class InMemorySession {
      */
     async retireForContextChange(ctx: Context): Promise<void> {
         if (this.#workspaceArchived) return this.beginShutdown(ctx);
-        const activeRun = this.#activeRun;
-        this.#finishElapsedInterval();
-        this.#activeRun = undefined;
-        this.#restoredActiveRunId = undefined;
-        this.#activePartial = undefined;
-        this.#pendingSteeringMessages.clear();
-        this.#pendingSteeringContinuations.clear();
-        this.#suspendedRunIds.clear();
-        this.#suspendOnAbort = false;
         await this.#pauseActiveGoal(ctx);
         this.#status = "archived";
         this.#archived = true;
         await this.#append(ctx, "session_archived", { archived: true });
         this.#workspaceArchived = true;
-        activeRun?.controller.abort();
         await this.beginShutdown(ctx);
     }
 
@@ -2193,12 +1669,11 @@ export class InMemorySession {
                 archived,
                 ...(mutationId === undefined ? {} : { mutationId }),
             });
-            // The durable archive event and session snapshot have committed before runtime
+            // The durable archive event and session snapshot have committed before terminal
             // processes are stopped. A rejected persistence write therefore leaves execution
             // untouched, while a successful archive cannot keep running work alive.
             if (archived) {
                 const teardown = async () => {
-                    this.#activeRun?.controller.abort();
                     await this.#killExecutionProcesses(ctx, { includeBackground: true });
                 };
                 if (this.#persistence?.afterTransactionCommit === undefined) {
@@ -2249,10 +1724,9 @@ export class InMemorySession {
                 return;
             }
             await this.#killExecutionProcesses(ctx, { includeBackground: true });
-            const runId = this.#activeRun?.runId ?? this.#lastSessionRunId ?? "background";
             await this.#append(ctx, "agent_event", {
                 event: { type: "background_processes_stopped", count: running },
-                runId,
+                runId: "background",
             });
         })();
         const transitionResults = await Promise.allSettled([
@@ -2336,7 +1810,6 @@ export class InMemorySession {
                     title: this.#title,
                 });
             }
-            await this.#continueGoalIfIdle(ctx);
             return { ...this.#goal };
         });
         return goal;
@@ -2362,15 +1835,6 @@ export class InMemorySession {
             goal: { ...this.#goal },
             ...(options.mutationId === undefined ? {} : { mutationId: options.mutationId }),
         });
-        if (request.status === "active") {
-            await this.#continueGoalIfIdle(ctx);
-        } else if (options.stopActiveGoalRun !== false) {
-            await this.#discardQueuedGoalRuns(ctx);
-            if (this.#activeRun?.kind === "goal") {
-                this.#activeRun.controller.abort();
-                void this.#killExecutionProcesses(ctx);
-            }
-        }
         return { ...this.#goal };
     }
 
@@ -2381,11 +1845,6 @@ export class InMemorySession {
         if (this.#goal === undefined) return false;
 
         this.#goal = undefined;
-        await this.#discardQueuedGoalRuns(ctx);
-        if (this.#activeRun?.kind === "goal") {
-            this.#activeRun.controller.abort();
-            void this.#killExecutionProcesses(ctx);
-        }
         await this.#append(ctx, "goal_changed", {
             goal: null,
             ...(mutationId === undefined ? {} : { mutationId }),
@@ -2691,19 +2150,15 @@ export class InMemorySession {
                                 state.status === "completed"
                                     ? serializeWorkflowValue(state.output)
                                     : (state.error ?? "The workflow did not return a result.");
-                            await this.deliverNotification(workflowCtx, {
-                                displayText: `Workflow ${humanizeWorkflowName(state.name)} ${statusText}.`,
+                            await this.recordSystemNotice(workflowCtx, {
                                 text: [
-                                    "<workflow-notification>",
-                                    `Workflow: ${state.name}`,
-                                    `Run ID: ${state.runId}`,
-                                    `Status: ${state.status}`,
-                                    `Agents: ${state.agentCount}`,
-                                    `Result: ${resultText}`,
+                                    `Workflow ${humanizeWorkflowName(state.name)} ${statusText}.`,
+                                    resultText,
                                     ...(state.logs.length === 0
                                         ? []
-                                        : ["Progress:", ...state.logs.map((log) => `- ${log}`)]),
-                                    "</workflow-notification>",
+                                        : ["", "Progress:", ...state.logs.map((log) => `- ${log}`)]),
+                                    "",
+                                    "The workflow result was not sent back to the agent because Agent Base owns agent continuation.",
                                 ].join("\n"),
                             });
                         }),
@@ -2739,18 +2194,13 @@ export class InMemorySession {
     beginShutdown(ctx: Context): Promise<void> {
         if (this.#shutdownCleanup !== undefined) return this.#shutdownCleanup;
         this.#closing = true;
-        for (const timer of this.#userInputPresenceTimers.values()) clearTimeout(timer);
-        this.#userInputPresenceTimers.clear();
-        const metadataCleanup = this.#clearMetadataSettlement(ctx);
         for (const workflow of this.#workflowRuns.values()) {
             if (workflow.state.status === "running") this.stopWorkflow(ctx, workflow.state.runId);
         }
-        const activeRun = this.#activeRun;
-        activeRun?.controller.abort();
-        this.#shutdownCleanup = Promise.all([
-            metadataCleanup,
-            this.#killExecutionProcesses(ctx, { forceAfterMs: 5_000, includeBackground: true }),
-        ]).then(() => undefined);
+        this.#shutdownCleanup = this.#killExecutionProcesses(ctx, {
+            forceAfterMs: 5_000,
+            includeBackground: true,
+        });
         return this.#shutdownCleanup;
     }
 
@@ -2775,15 +2225,6 @@ export class InMemorySession {
         if (this.#workspaceArchived) {
             return (_cleanupCtx) => this.#shutdownCleanup ?? Promise.resolve();
         }
-        const activeRun = this.#activeRun;
-        this.#finishElapsedInterval();
-        this.#activeRun = undefined;
-        this.#restoredActiveRunId = undefined;
-        this.#activePartial = undefined;
-        this.#pendingSteeringMessages.clear();
-        this.#pendingSteeringContinuations.clear();
-        this.#suspendedRunIds.clear();
-        this.#suspendOnAbort = false;
         await this.#pauseActiveGoal(ctx);
         this.#status = "archived";
         this.#archived = true;
@@ -2792,139 +2233,16 @@ export class InMemorySession {
             workspaceId,
         });
         this.#workspaceArchived = true;
-        return (cleanupCtx) => {
-            activeRun?.controller.abort();
-            return this.beginShutdown(cleanupCtx);
-        };
+        return (cleanupCtx) => this.beginShutdown(cleanupCtx);
     }
 
     isClosing(): boolean {
         return this.#closing;
     }
 
-    async markInterrupted(ctx: Context, interruption: SessionInterruption): Promise<void> {
-        this.#finishElapsedInterval();
-        this.#interruption = interruption;
-        this.#status = "error";
-        this.#activeRun?.controller.abort();
-        if (!this.#closing) void this.#killExecutionProcesses(ctx);
-        this.#activeRun = undefined;
-        this.#restoredActiveRunId = undefined;
-        this.#pendingSteeringMessages.clear();
-        this.#suspendedRunIds.clear();
-        await this.#pauseActiveGoal(ctx);
-        const interruptedRunIds =
-            interruption.runId === undefined ? [] : [interruption.runId];
-        const persistInterruption = async (ctx: Context) => {
-            const uniqueRunIds = new Set(interruptedRunIds);
-            for (const runId of uniqueRunIds) {
-                await this.#commitStoppedPartialMessages(ctx, runId);
-                await this.#append(ctx, "run_error", {
-                    errorMessage: interruption.message,
-                    modelLocked: this.#modelLocked(),
-                    runId,
-                    startupInterruption: true,
-                });
-            }
-            if (uniqueRunIds.size > 0) this.#restartMetadataSettlement();
-            await this.#saveSession(ctx);
-        };
-        if (this.#persistence?.transaction === undefined) await persistInterruption(ctx);
-        else await this.#persistence.transaction(ctx, persistInterruption);
-        // Keep the overlay attachable until the same visible row has become
-        // immutable history. Clearing it before the durable handoff leaves a
-        // fresh client with neither representation while interruption commits.
-        this.#activePartial = undefined;
-    }
-
-    /**
-     * Makes output the user already saw part of the immutable transcript before
-     * a stopped run is closed. Partial rows normally belong only to the live
-     * overlay, but an abort or daemon interruption may never receive a provider
-     * final message to replace them.
-     */
-    async #commitStoppedPartialMessages(ctx: Context, runId: string): Promise<void> {
-        const partials = this.#messages.filter(
-            (entry) =>
-                entry.isPartial &&
-                entry.runId === runId &&
-                entry.message.role === "agent" &&
-                entry.message.blocks.length > 0,
-        );
-        for (const entry of partials) {
-            await this.#storeMessage(ctx, entry.position, entry.message, false, runId);
-            await this.#append(ctx, "agent_message", { message: entry.message, runId });
-        }
-    }
-
-    async markSuspendedAfterRestart(ctx: Context, message: string, runId?: string): Promise<void> {
-        if (!this.isSubagent() || this.#status !== "suspended") {
-            throw new Error("Only a suspended subagent can be repaired as resumable.");
-        }
-        this.#finishElapsedInterval();
-        this.#activeRun?.controller.abort();
-        this.#activeRun = undefined;
-        this.#restoredActiveRunId = undefined;
-        this.#activePartial = undefined;
-        this.#suspendOnAbort = false;
-        if (runId !== undefined) {
-            await this.#append(ctx, "run_error", {
-                errorMessage: message,
-                modelLocked: this.#modelLocked(),
-                runId,
-                startupInterruption: true,
-            });
-        }
-        this.#status = "suspended";
-        await this.#saveSession(ctx);
-    }
-
-    async recordSubagentStoppedAfterRestart(
-        ctx: Context,
-        subagent: SubagentSummary,
-        path: string,
-    ): Promise<void> {
-        const runId = `restart:${subagent.id}`;
-        const displayText = `Background work "${subagent.description}" stopped when the local server restarted.`;
-        const message: UserMessage = {
-            blocks: [
-                {
-                    type: "text",
-                    text: [
-                        "<subagent-notification>",
-                        `Agent ID: ${subagent.agentId}`,
-                        `Path: ${path}`,
-                        "Status: suspended",
-                        "Result: The subagent stopped working when the local server restarted. It remains suspended and will not resume automatically.",
-                        `Use followup_task with target ${JSON.stringify(subagent.agentId)} to continue it, or interrupt_agent to leave it stopped.`,
-                        "</subagent-notification>",
-                    ].join("\n"),
-                },
-            ],
-            id: createId(),
-            role: "user",
-        };
-        this.#separateModelContextFromVisibleTranscript();
-        await this.#storeMessage(ctx, this.#nextMessagePosition(), message, false, runId);
-        this.#contextMessages?.push(message);
-        this.#lastMessageAt = this.#now();
-        await this.#append(ctx, "message_submitted", {
-            displayText,
-            message,
-            runId,
-            source: "notification",
-        });
-        await this.#saveSession(ctx);
-    }
-
     async reset(ctx: Context): Promise<ProtocolSession> {
         this.#shellHistoryRevision += 1;
-        await this.#clearMetadataSettlement(ctx);
-        const activeRunId = this.#activeRun?.runId;
-        await this.abort(ctx, { stopDescendants: false });
         await Promise.allSettled(this.#shellCommandCompletions.values());
-        if (activeRunId !== undefined) await this.waitForRun(ctx, activeRunId);
-        await this.#draining?.catch(rethrowDatabaseFailure);
         const workflowRuns = [...this.#workflowRuns.values()];
         for (const run of workflowRuns) {
             if (run.state.status === "running") this.stopWorkflow(ctx, run.state.runId);
@@ -2938,19 +2256,12 @@ export class InMemorySession {
         this.#processManager = undefined;
         this.#status = "idle";
         this.#interruption = undefined;
-        this.#restoredActiveRunId = undefined;
-        this.#lastSessionRunId = undefined;
         this.#messages = [];
         this.#rebuildMessagePositionIndex();
         this.#rebuildTranscriptIndex();
         this.#totalTokens = 0;
         this.#usage = zeroUsage();
-        this.#submittedUserMessages.clear();
         this.#contextMessages = undefined;
-        this.#partialPositions.clear();
-        this.#activePartial = undefined;
-        this.#pendingSteeringMessages.clear();
-        this.#suspendedRunIds.clear();
         const hadTasks = this.#taskList.reset();
         const hadGoal = this.#goal !== undefined;
         this.#goal = undefined;
@@ -2972,24 +2283,15 @@ export class InMemorySession {
         if (this.isSubagent()) {
             throw new Error("Subagent histories cannot be rewound.");
         }
-        if (this.#activeRun !== undefined) {
-            throw new Error(
-                "Wait for the active response to finish before rewinding this session.",
-            );
-        }
 
         const target = this.#messages.find(
-            (entry) => !entry.isPartial && entry.message.id === messageId,
+            (entry) => entry.message.id === messageId,
         );
         if (target === undefined || target.message.role !== "user") {
             throw new Error("The selected user message is no longer available.");
         }
 
         this.#shellHistoryRevision += 1;
-        // Naming in flight is reading a transcript that is about to lose turns, and closing the
-        // runtime below would fail its request. Cancelling first keeps that from counting against
-        // the chat as a naming failure.
-        await this.#clearMetadataSettlement(ctx);
         void this.#killExecutionProcesses(ctx, { includeBackground: true });
         this.#executionContext = undefined;
         this.#processManager = undefined;
@@ -2999,21 +2301,8 @@ export class InMemorySession {
         this.#rebuildMessagePositionIndex();
         this.#rebuildTranscriptIndex();
         this.#retainPermissionReviewsForMessages(this.#messages.map((entry) => entry.message));
-        this.#submittedUserMessages = new Map(
-            this.#messages.flatMap((entry) =>
-                entry.message.role === "user" && entry.runId !== undefined
-                    ? [[entry.message.id, entry] as const]
-                    : [],
-            ),
-        );
         this.#contextMessages = undefined;
-        this.#partialPositions = new Set(
-            [...this.#partialPositions].filter((position) => position < target.position),
-        );
-        this.#activePartial = undefined;
         this.#interruption = undefined;
-        this.#lastSessionRunId = undefined;
-        this.#restoredActiveRunId = undefined;
         this.#status = "idle";
         this.#totalTokens = 0;
         this.#lastMessageAt = this.#now();
@@ -3027,7 +2316,6 @@ export class InMemorySession {
         };
         if (this.#persistence?.transaction === undefined) await commitRewind(ctx);
         else await this.#persistence.transaction(ctx, commitRewind);
-        this.#restartMetadataSettlement();
         return { message: target.message, session: this.snapshot() };
     }
 
@@ -3043,26 +2331,6 @@ export class InMemorySession {
             await this.#append(ctx, "session_updated", { session: this.clientSnapshot() });
             return true;
         });
-    }
-
-    recordSubagentChanged(subagent: SubagentSummary): void {
-        void withWorkerContext(
-            "subagent-changed",
-            (workerCtx) =>
-                this.#afterTransactionCommit(workerCtx, async () => {
-                    await this.#append(workerCtx, "subagent_changed", { subagent });
-                    this.#restartMetadataSettlement();
-                }),
-            { sessionId: this.id },
-        ).catch(rethrowDatabaseFailure);
-    }
-
-    recordDescendantActivity(): void {
-        this.#restartMetadataSettlement();
-    }
-
-    recordUserActivity(): void {
-        this.#restartMetadataSettlement();
     }
 
     async recordMutationApplied(ctx: Context, mutationId: string | undefined): Promise<void> {
@@ -3089,24 +2357,6 @@ export class InMemorySession {
         };
     }
 
-    /** Preserves native checkpoints only when the child can replay the parent's provider format. */
-    contextMessagesForSubagent(
-        contextMessages: readonly Message[],
-        target: { modelId: string; parentToolCallId?: string; providerId: string },
-    ): readonly Message[] {
-        const targetModel = this.#ensureKnownModel(target.modelId, target.providerId);
-        if (this.#modelsAreCompatible(targetModel, target.providerId)) return contextMessages;
-        const selectedMessages = messagesBeforeToolCall(contextMessages, target.parentToolCallId);
-        const sourceMessages = selectedMessages.some((message) => message.role === "compaction")
-            ? messagesBeforeToolCall(this.#committedMessages(), target.parentToolCallId)
-            : selectedMessages;
-        return sourceMessages;
-    }
-
-    activeRunDebug(): boolean {
-        return this.#activeRun?.debug === true;
-    }
-
     agentIdentity(): AgentCommunicationIdentity {
         const folderPath = this.#request.docker?.workingDirectory ?? this.#request.cwd;
         return {
@@ -3131,7 +2381,6 @@ export class InMemorySession {
     attachment(id: string): Attachment | undefined {
         const message = this.#messages.findLast(
             (entry) =>
-                !entry.isPartial &&
                 entry.message.role === "agent" &&
                 entry.message.internal !== true &&
                 entry.message.attachments?.some((attachment) => attachment.id === id) === true,
@@ -3382,38 +2631,6 @@ export class InMemorySession {
         await this.#append(ctx, "session_git_changed", { git });
     }
 
-    /**
-     * The assistant message currently being generated, if any.
-     *
-     * Committed transcripts exclude partial messages, so this is the only way a
-     * client attaching mid-turn can render the text already produced.
-     */
-    partialMessage(): SessionPartialMessage | undefined {
-        const active = this.#activePartial;
-        if (active?.position === undefined) return undefined;
-        const entry = this.#messages.find(
-            (candidate) => candidate.isPartial && candidate.position === active.position,
-        );
-        if (entry === undefined || entry.message.role !== "agent") return undefined;
-        return { message: structuredClone(entry.message), runId: active.runId };
-    }
-
-    #activeTurn(): SessionActiveTurn | undefined {
-        const runId =
-            this.#activeRun?.runId ??
-            this.#restoredActiveRunId ??
-            this.#compactionRunId;
-        if (runId === undefined) return undefined;
-        const facts = this.#runFacts.get(runId);
-        return facts === undefined
-            ? undefined
-            : {
-                  runId,
-                  startedAt: facts.startedAt,
-                  ...(facts.kind === undefined ? {} : { kind: facts.kind }),
-              };
-    }
-
     async refreshGitCommandSecret(ctx: Context): Promise<void> {
         await this.#syncGitCommandSecret();
     }
@@ -3434,7 +2651,7 @@ export class InMemorySession {
             id: this.#agentId,
             providerId: this.#providerId,
             modelId: this.#modelId,
-            status: this.#agentStatus(),
+            status: "idle",
             messages: [],
             queue: [],
             tools: options.includeTools === true ? this.#tools : [],
@@ -3490,11 +2707,9 @@ export class InMemorySession {
 
     #protocolSnapshot(snapshot: AgentSnapshot): ProtocolSession {
         const lastEventId = this.events.lastEventId();
-        const activeTurn = this.#activeTurn();
         return {
             id: this.id,
             activity: this.activity(),
-            ...(activeTurn === undefined ? {} : { activeTurn }),
             agentId: this.#agentId,
             ownerInstanceId: this.#ownerInstanceId,
             ...(this.#profileId === undefined ? {} : { profileId: this.#profileId }),
@@ -3515,7 +2730,7 @@ export class InMemorySession {
             permissionMode: this.#permissionMode,
             modelId: this.#modelId,
             ...(this.#orderKey === "" ? {} : { orderKey: this.#orderKey }),
-            modelLocked: this.#modelLocked(),
+            modelLocked: false,
             modelCatalog: this.#modelCatalog,
             models: this.#models,
             projectSecretIds: this.#secrets.projectIds(),
@@ -3525,18 +2740,9 @@ export class InMemorySession {
             snapshot,
             titleStatus: this.#titleStatus,
             ...(this.#recap !== undefined ? { recap: this.#recap } : {}),
-            ...(this.#metadataUpdatedAt !== undefined
-                ? { metadataUpdatedAt: this.#metadataUpdatedAt }
-                : {}),
-            ...(this.#metadataRunId !== undefined ? { metadataRunId: this.#metadataRunId } : {}),
             agent: this.agentMetadata(),
             pendingUserInputs: [],
             permissionReviews: [...this.#permissionReviews.values()],
-            pendingSteeringMessages: [...this.#pendingSteeringMessages.values()].map((pending) => ({
-                createdAt: pending.createdAt,
-                message: structuredClone(pending.message),
-                runId: pending.runId,
-            })),
             mcpServers: this.#mcpServers,
             tasks: this.listTasks(),
             workflowsEnabled: this.#workflowsEnabled,
@@ -3583,10 +2789,6 @@ export class InMemorySession {
             titleStatus: this.#titleStatus,
             ...(this.#recap !== undefined ? { recap: this.#recap } : {}),
             sessionTokenCount: { ...this.#sessionTokenCount },
-            ...(this.#metadataUpdatedAt !== undefined
-                ? { metadataUpdatedAt: this.#metadataUpdatedAt }
-                : {}),
-            ...(this.#metadataRunId !== undefined ? { metadataRunId: this.#metadataRunId } : {}),
             createdAt: this.#createdAt,
             updatedAt: this.events.lastCreatedAt() ?? this.#now(),
             ...(this.#lastMessageAt !== undefined ? { lastMessageAt: this.#lastMessageAt } : {}),
@@ -3600,13 +2802,11 @@ export class InMemorySession {
     }
 
     state(): PersistedSessionState {
-        const activeRunId = this.#activeRun?.runId ?? this.#restoredActiveRunId;
         const contextMessages = (this.#contextMessages ?? this.#committedMessages())
             .filter((message) => !isExcludedFromModelContext(message));
         const usageSummary = structuredClone(this.usage());
         const usageSummaryEventId = this.events.lastEventId();
         const state: PersistedSessionState = {
-            ...(this.#activeSince === undefined ? {} : { activeSince: this.#activeSince }),
             agent: this.agentMetadata(),
             agentId: this.#agentId,
             credentialBindingId: this.#credentialBindingId,
@@ -3621,7 +2821,6 @@ export class InMemorySession {
             cwd: this.#request.cwd,
             ...(this.#draft === undefined ? {} : { draft: this.#draft }),
             ...(this.#draftUpdatedAt === undefined ? {} : { draftUpdatedAt: this.#draftUpdatedAt }),
-            elapsedMs: this.#elapsedMs,
             ...(this.#request.docker === undefined ? {} : { docker: this.#request.docker }),
             contextMessages: [...contextMessages],
             ...(this.#effort !== undefined ? { effort: this.#effort } : {}),
@@ -3631,10 +2830,6 @@ export class InMemorySession {
             ...(this.#goal !== undefined ? { goal: { ...this.#goal } } : {}),
             ...(this.#interruption !== undefined ? { interruption: this.#interruption } : {}),
             ...(this.#lastMessageAt !== undefined ? { lastMessageAt: this.#lastMessageAt } : {}),
-            ...(this.#metadataRunId !== undefined ? { metadataRunId: this.#metadataRunId } : {}),
-            ...(this.#metadataUpdatedAt !== undefined
-                ? { metadataUpdatedAt: this.#metadataUpdatedAt }
-                : {}),
             messages: [...this.#messages],
             modelId: this.#modelId,
             models: this.#models,
@@ -3679,36 +2874,7 @@ export class InMemorySession {
                 state: cloneWorkflowRun(run.state),
             })),
         };
-        if (activeRunId !== undefined) {
-            state.activeRunId = activeRunId;
-        }
         return state;
-    }
-
-    async submit(
-        _ctx: Context,
-        _request: SessionSubmitMessageRequest,
-        _options: { source?: "notification" } = {},
-    ): Promise<SubmitMessageResponse> {
-        throw new Error("Agent messages are owned by Agent Base.");
-    }
-
-    async steer(
-        _ctx: Context,
-        _request: SteerMessageRequest,
-    ): Promise<SteerMessageResponse> {
-        throw new Error("Agent steering is owned by Agent Base.");
-    }
-
-    async deliverNotification(
-        _ctx: Context,
-        _request: SubmitMessageRequest,
-    ): Promise<SubmitMessageResponse | SteerMessageResponse> {
-        throw new Error("Agent notifications are owned by Agent Base.");
-    }
-
-    async deliverAgentMessage(_ctx: Context, _message: UserMessage): Promise<void> {
-        throw new Error("Agent messages are owned by Agent Base.");
     }
 
     subagentSummary(): SubagentSummary {
@@ -3723,12 +2889,10 @@ export class InMemorySession {
         const latestText = limitInspectionText(findLastAgentResponseText(messages));
         const prompt = limitInspectionText(findFirstUserRequestText(messages));
         return {
-            ...(this.#activeSince === undefined ? {} : { activeSince: this.#activeSince }),
             agentId: this.#agentId,
             createdAt: this.#createdAt,
             depth: this.#agentMetadata.depth,
             description: this.#agentMetadata.description ?? "Delegated task",
-            elapsedMs: this.#elapsedMs,
             id: this.id,
             ...(latestText === undefined ? {} : { latestText }),
             modelId: this.#modelId,
@@ -3755,43 +2919,6 @@ export class InMemorySession {
             if (event?.type === "run_error") return event.data.errorMessage;
         }
         return undefined;
-    }
-
-    async waitForRun(ctx: Context, runId: string): Promise<SessionRunCompletion> {
-        const completed = this.#completionForRun(runId);
-        const completion =
-            completed ??
-            (await new Promise<SessionRunCompletion>((resolve) => {
-                const unsubscribe = this.events.subscribe((event) => {
-                    if (
-                        (event.type !== "run_finished" && event.type !== "run_error") ||
-                        event.data.runId !== runId
-                    ) {
-                        return;
-                    }
-                    unsubscribe();
-                    resolve(
-                        event.type === "run_error"
-                            ? { errorMessage: event.data.errorMessage, status: "error" }
-                            : completionFromRunFinished(event),
-                    );
-                });
-            }));
-        let ownsCommitLock = false;
-        try {
-            await ctx.span("rig.session.wait_for_run_commit", (waitCtx) =>
-                this.#commitEventLock.runInLock(waitCtx, async () => {}),
-            );
-        } catch (error) {
-            if (!isAsyncLockReentryError(error)) throw error;
-            ownsCommitLock = true;
-        }
-        // A waiter called from the commit callback is already at the terminal boundary. Waiting
-        // for its own queue drain would recurse through the same work and stall permanently.
-        if (ownsCommitLock) return completion;
-        const draining = this.#draining;
-        if (draining !== undefined) await draining;
-        return completion;
     }
 
     async #pruneScheduledMessages(ctx: Context): Promise<void> {
@@ -3840,7 +2967,7 @@ export class InMemorySession {
                 : {}),
             providerId: this.#providerId,
             modelId: this.#modelId,
-            status: this.#agentStatus(),
+            status: "idle",
             messages: this.#committedMessages(),
             queue: [],
             tools: this.#tools,
@@ -3854,18 +2981,7 @@ export class InMemorySession {
                   }
                 : {}),
             ...(this.#instructions !== undefined ? { instructions: this.#instructions } : {}),
-            ...(this.#lastSessionRunId === undefined ? {} : { lastRunId: this.#lastSessionRunId }),
         };
-    }
-
-    #agentStatus(): AgentSnapshot["status"] {
-        if (this.#status === "running") {
-            return "running";
-        }
-        if (this.#status === "aborted") {
-            return "aborted";
-        }
-        return "idle";
     }
 
     #recordTasksChanged(ctx: Context): void {
@@ -3936,12 +3052,6 @@ export class InMemorySession {
 
     #captureEventCommitCheckpoint(): SessionEventCommitCheckpoint {
         return {
-            activePartial:
-                this.#activePartial === undefined
-                    ? undefined
-                    : structuredClone(this.#activePartial),
-            activeRun: this.#activeRun,
-            activeSince: this.#activeSince,
             appendSystemPrompt: this.#appendSystemPrompt,
             activity: structuredClone(this.#activity),
             archived: this.#archived,
@@ -3950,7 +3060,6 @@ export class InMemorySession {
             eventLog: this.events.checkpoint(),
             draft: this.#draft,
             draftUpdatedAt: this.#draftUpdatedAt,
-            elapsedMs: this.#elapsedMs,
             goal: this.#goal === undefined ? undefined : { ...this.#goal },
             interruption:
                 this.#interruption === undefined ? undefined : structuredClone(this.#interruption),
@@ -3959,37 +3068,15 @@ export class InMemorySession {
             permissionReviews: new Map(
                 [...this.#permissionReviews].map(([id, review]) => [id, structuredClone(review)]),
             ),
-            restoredActiveRunId: this.#restoredActiveRunId,
             reportedStatus: this.#reportedStatus,
             reportingActivity: this.#reportingActivity,
             reportingStatus: this.#reportingStatus,
             runFacts: new Map(
                 [...this.#runFacts].map(([id, facts]) => [id, structuredClone(facts)]),
             ),
-            metadataFailures: this.#metadataFailures,
-            metadataInitialAttempted: this.#metadataInitialAttempted,
-            metadataNamed: this.#metadataNamed,
-            metadataNamingAttempted: this.#metadataNamingAttempted,
-            metadataRefinementAttempted: this.#metadataRefinementAttempted,
-            metadataRunId: this.#metadataRunId,
-            metadataUpdatedAt: this.#metadataUpdatedAt,
             orderKey: this.#orderKey,
-            pendingSteeringContinuations: new Map(
-                [...this.#pendingSteeringContinuations].map(([id, continuation]) => [
-                    id,
-                    continuation,
-                ]),
-            ),
-            pendingSteeringMessages: new Map(
-                [...this.#pendingSteeringMessages].map(([id, message]) => [
-                    id,
-                    structuredClone(message),
-                ]),
-            ),
             sessionTokenCount: structuredClone(this.#sessionTokenCount),
             status: this.#status,
-            suspendedRunIds: new Set(this.#suspendedRunIds),
-            suspendOnAbort: this.#suspendOnAbort,
             recap: this.#recap,
             title: this.#title,
             titleError: this.#titleError,
@@ -4015,12 +3102,6 @@ export class InMemorySession {
 
     #restoreEventCommitCheckpoint(checkpoint: SessionEventCommitCheckpoint): void {
         this.events.restore(checkpoint.eventLog);
-        this.#activePartial =
-            checkpoint.activePartial === undefined
-                ? undefined
-                : structuredClone(checkpoint.activePartial);
-        this.#activeRun = checkpoint.activeRun;
-        this.#activeSince = checkpoint.activeSince;
         this.#appendSystemPrompt = checkpoint.appendSystemPrompt;
         this.#activity = structuredClone(checkpoint.activity);
         this.#archived = checkpoint.archived;
@@ -4029,7 +3110,6 @@ export class InMemorySession {
         this.#ownedUsageEventRevision = checkpoint.ownedUsageEventRevision;
         this.#draft = checkpoint.draft;
         this.#draftUpdatedAt = checkpoint.draftUpdatedAt;
-        this.#elapsedMs = checkpoint.elapsedMs;
         this.#goal = checkpoint.goal === undefined ? undefined : { ...checkpoint.goal };
         this.#interruption =
             checkpoint.interruption === undefined
@@ -4039,32 +3119,15 @@ export class InMemorySession {
         this.#permissionReviews = new Map(
             [...checkpoint.permissionReviews].map(([id, review]) => [id, structuredClone(review)]),
         );
-        this.#restoredActiveRunId = checkpoint.restoredActiveRunId;
         this.#reportedStatus = checkpoint.reportedStatus;
         this.#reportingActivity = checkpoint.reportingActivity;
         this.#reportingStatus = checkpoint.reportingStatus;
         this.#runFacts = new Map(
             [...checkpoint.runFacts].map(([id, facts]) => [id, structuredClone(facts)]),
         );
-        this.#metadataFailures = checkpoint.metadataFailures;
-        this.#metadataInitialAttempted = checkpoint.metadataInitialAttempted;
-        this.#metadataNamed = checkpoint.metadataNamed;
-        this.#metadataNamingAttempted = checkpoint.metadataNamingAttempted;
-        this.#metadataRefinementAttempted = checkpoint.metadataRefinementAttempted;
-        this.#metadataRunId = checkpoint.metadataRunId;
-        this.#metadataUpdatedAt = checkpoint.metadataUpdatedAt;
         this.#orderKey = checkpoint.orderKey;
-        this.#pendingSteeringContinuations = new Map(checkpoint.pendingSteeringContinuations);
-        this.#pendingSteeringMessages = new Map(
-            [...checkpoint.pendingSteeringMessages].map(([id, message]) => [
-                id,
-                structuredClone(message),
-            ]),
-        );
         this.#sessionTokenCount = structuredClone(checkpoint.sessionTokenCount);
         this.#status = checkpoint.status;
-        this.#suspendedRunIds = new Set(checkpoint.suspendedRunIds);
-        this.#suspendOnAbort = checkpoint.suspendOnAbort;
         this.#recap = checkpoint.recap;
         this.#title = checkpoint.title;
         this.#titleError = checkpoint.titleError;
@@ -4110,7 +3173,7 @@ export class InMemorySession {
     async #appendDurableEvent(ctx: Context, event: SessionEvent, persist = true): Promise<void> {
         const previousSessionTokenCount = this.#sessionTokenCount;
         // Terminal-event subscribers may synchronously read the transcript. Project facts before
-        // publishing so waitForRun and transcriptWindow observe one completion boundary.
+        // publishing so transcript readers observe one completion boundary.
         this.#recordRunFacts(event);
         if (persist) await this.events.append(ctx, event);
         else await this.events.appendProjected(ctx, event);
@@ -4416,7 +3479,6 @@ export class InMemorySession {
             "workflow-update",
             async (workerCtx) => {
                 await this.#append(workerCtx, "workflow_changed", { update });
-                this.#restartMetadataSettlement();
             },
             { sessionId: this.id },
         ).catch(rethrowDatabaseFailure);
@@ -4437,7 +3499,6 @@ export class InMemorySession {
     #sumCommittedUsage(): Usage {
         const messageUsage = this.#messages.reduce(
             (total, persisted) =>
-                !persisted.isPartial &&
                 (persisted.message.role === "agent" || persisted.message.role === "compaction") &&
                 persisted.message.usage !== undefined
                     ? addUsage(total, persisted.message.usage)
@@ -4548,23 +3609,10 @@ export class InMemorySession {
         };
     }
 
-    #finishElapsedInterval(): void {
-        if (this.#activeSince === undefined) return;
-        this.#elapsedMs += Math.max(0, this.#now() - this.#activeSince);
-        this.#activeSince = undefined;
-    }
-
     #committedMessages(): Message[] {
         return this.#messages
-            .filter((message) => !message.isPartial)
             .sort((left, right) => left.position - right.position)
             .map((message) => message.message);
-    }
-
-    #discardPendingSteeringMessages(runId: string): void {
-        for (const [messageId, pending] of this.#pendingSteeringMessages) {
-            if (pending.runId === runId) this.#pendingSteeringMessages.delete(messageId);
-        }
     }
 
     #ensureKnownModel(modelId: string, providerId: string): Model {
@@ -4578,6 +3626,7 @@ export class InMemorySession {
     }
 
     async #ensureExecutionContext(ctx: Context): Promise<AgentContext> {
+        await this.#scopeExecutionContextRefresh;
         if (this.#executionContext !== undefined) return this.#executionContext;
         const readiness = await this.#currentWorkspaceRunReadiness();
         if (readiness.state !== "ready") {
@@ -4615,10 +3664,9 @@ export class InMemorySession {
                       permissionMode: this.#permissionMode,
                       secrets: this.#secrets,
                       sessionId: this.#agentMetadata.rootSessionId,
-                  });
+        });
         let previousBackgroundCount = executionContext.bash.activeSessionCount?.() ?? 0;
         executionContext.bash.setActiveSessionCountListener?.((running) => {
-            const runId = this.#activeRun?.runId ?? this.#lastSessionRunId ?? "background";
             void withWorkerContext(
                 "background-process-count-change",
                 (workerCtx) =>
@@ -4628,7 +3676,7 @@ export class InMemorySession {
                             processes: executionContext.bash.activeSessions?.() ?? [],
                             running,
                         },
-                        runId,
+                        runId: "background",
                     }),
                 { sessionId: this.id },
             ).catch(rethrowDatabaseFailure);
@@ -4721,13 +3769,7 @@ export class InMemorySession {
     }
 
     /**
-     * Announces a change to the durable lifecycle status.
-     *
-     * The status is assigned from many places and was only ever persisted, so a
-     * client could not tell that a session had gone idle, been suspended, or
-     * failed without asking for the whole session again. Reporting it from the
-     * one point every change passes through keeps the stream self-describing
-     * without threading an event through each assignment.
+     * Announces a change to the durable product lifecycle status.
      */
     async #reportStatus(ctx: Context): Promise<void> {
         if (this.#reportingStatus || this.#status === this.#reportedStatus) return;
@@ -4749,37 +3791,6 @@ export class InMemorySession {
         );
     }
 
-    #completionForRun(runId: string): SessionRunCompletion | undefined {
-        const events = this.events.since(undefined) ?? [];
-        for (let index = events.length - 1; index >= 0; index -= 1) {
-            const event = events[index];
-            if (
-                event === undefined ||
-                (event.type !== "run_finished" && event.type !== "run_error") ||
-                event.data.runId !== runId
-            ) {
-                continue;
-            }
-            if (event.type === "run_error") {
-                return { errorMessage: event.data.errorMessage, status: "error" };
-            }
-            return completionFromRunFinished(event);
-        }
-        return undefined;
-    }
-
-    #modelLocked(): boolean {
-        return this.#activeRun !== undefined;
-    }
-
-    #selectedModel(): Model {
-        const model = this.#models.find((candidate) => candidate.id === this.#modelId);
-        if (model === undefined) {
-            throw new Error(`Unknown model '${this.#modelId}' for provider '${this.#providerId}'.`);
-        }
-        return model;
-    }
-
     #modelsForProvider(providerId: string): readonly Model[] {
         return (
             this.#modelCatalog.providers.find((provider) => provider.providerId === providerId)
@@ -4793,23 +3804,6 @@ export class InMemorySession {
                 .find((provider) => provider.providerId === providerId)
                 ?.serviceTiers?.includes(serviceTier) === true
         );
-    }
-
-    async #clearMetadataSettlement(ctx: Context): Promise<void> {
-        this.#metadataRevision += 1;
-        this.#metadataController?.abort();
-        this.#metadataController = undefined;
-        if (this.#titleStatus === "generating") {
-            await this.#runSessionMutation(ctx, async (ctx) => {
-                this.#titleStatus = this.#title === undefined ? "idle" : "ready";
-                this.#titleError = undefined;
-                await this.#saveSession(ctx);
-            });
-        }
-    }
-
-    #restartMetadataSettlement(): Promise<void> | undefined {
-        return undefined;
     }
 
     async #currentWorkspaceRunReadiness(): Promise<WorkspaceRunReadiness> {
@@ -4833,25 +3827,21 @@ export class InMemorySession {
         return this.#scope.kind === "workspace" ? this.#scope : undefined;
     }
 
-    #startScopeRuntimeRefresh(): void {
-        if (!this.#scopeRuntimeRefreshPending || this.#scopeRuntimeRefresh !== undefined) return;
-        this.#scopeRuntimeRefreshPending = false;
-        this.#scopeRuntimeRefresh = withWorkerContext(
-            "scope-runtime-refresh",
-            (workerCtx) => this.#teardownRuntimeForWorkspaceTransfer(workerCtx),
+    #startScopeExecutionContextRefresh(): void {
+        if (
+            !this.#scopeExecutionContextRefreshPending ||
+            this.#scopeExecutionContextRefresh !== undefined
+        ) {
+            return;
+        }
+        this.#scopeExecutionContextRefreshPending = false;
+        this.#scopeExecutionContextRefresh = withWorkerContext(
+            "scope-execution-context-refresh",
+            (workerCtx) => this.#teardownExecutionContextForWorkspaceTransfer(workerCtx),
             { sessionId: this.id },
         ).finally(() => {
-            this.#scopeRuntimeRefresh = undefined;
+            this.#scopeExecutionContextRefresh = undefined;
         });
-    }
-
-    async #settleScopeRuntimeRefresh(): Promise<void> {
-        this.#startScopeRuntimeRefresh();
-        await this.#scopeRuntimeRefresh;
-    }
-
-    async #settleInferenceScopeRefresh(): Promise<void> {
-        return;
     }
 
     #assertAcceptingWork(): void {
@@ -4886,23 +3876,12 @@ export class InMemorySession {
         );
     }
 
-    async #teardownRuntimeForWorkspaceTransfer(ctx: Context): Promise<void> {
+    async #teardownExecutionContextForWorkspaceTransfer(ctx: Context): Promise<void> {
         await this.#killExecutionProcesses(ctx, { includeBackground: true });
         this.#executionContext = undefined;
         this.#processManager = undefined;
         this.#mcpServers = [];
         this.#tools = [];
-    }
-
-    async #completePendingWorkspaceTransfer(ctx: Context, runId: string): Promise<void> {
-        if (this.#workspaceTransfer.status !== "scheduled") return;
-        const targetWorkspaceId = this.#workspaceTransfer.targetWorkspaceId;
-        try {
-            throw new Error("Session transfers are owned by Agent Base.");
-        } catch (error) {
-            await this.failWorkspaceTransfer(ctx, targetWorkspaceId, error, "not_touched", runId);
-            if (isDatabaseFailure(error)) throw error;
-        }
     }
 
     #workspaceTransferSource(targetWorkspaceId: string): string {
@@ -4924,34 +3903,6 @@ export class InMemorySession {
         }
         return sourceWorkspaceId;
     }
-
-    #assertSupportedEffort(effort: string): void {
-        this.#assertSupportedEffortForModel(effort, this.#selectedModel());
-    }
-
-    #assertSupportedEffortForModel(effort: string, model: Model): void {
-        if (!model.thinkingLevels.includes(effort)) {
-            throw new Error(`Model '${model.id}' does not support '${effort}' reasoning.`);
-        }
-    }
-
-    /**
-     * The committed transcript, optionally without one run's messages. A run that has been queued
-     * but not yet sent has already stored its message, and that message belongs to whatever model
-     * is about to receive it rather than to the history of the model being replaced.
-     */
-    #committedMessagesExcludingRun(runId: string | undefined): Message[] {
-        return this.#messages
-            .filter(
-                (message) => !message.isPartial && (runId === undefined || message.runId !== runId),
-            )
-            .sort((left, right) => left.position - right.position)
-            .map((message) => message.message);
-    }
-
-    async #continueGoalIfIdle(_ctx: Context): Promise<void> {}
-
-    async #discardQueuedGoalRuns(_ctx: Context): Promise<void> {}
 
     async #pauseActiveGoal(ctx: Context): Promise<void> {
         if (this.#goal?.status !== "active") return;
@@ -5001,9 +3952,6 @@ export class InMemorySession {
             return retainedRuns.has(runId);
         });
         for (const entry of removed) {
-            if (entry.message.role === "user") {
-                this.#submittedUserMessages.delete(entry.message.id);
-            }
             for (const block of entry.message.blocks) {
                 if (block.type === "tool_call") this.#permissionReviews.delete(block.id);
             }
@@ -5033,7 +3981,7 @@ export class InMemorySession {
             }
             this.#transcriptPositionRun.delete(entry.position);
         }
-        if (entry.isPartial || entry.message.internal === true) {
+        if (entry.message.internal === true) {
             if (!rebuilding && orderChanged) this.#reindexTranscriptRuns();
             return;
         }
@@ -5314,7 +4262,6 @@ export class InMemorySession {
             await this.#stageProtocolProjection(ctx, {
                 event,
                 message: {
-                    isPartial: false,
                     message: input.message,
                     position: this.#nextProjectedMessagePosition(ctx),
                     runId: input.runId,
@@ -5328,7 +4275,6 @@ export class InMemorySession {
                 txCtx,
                 this.#nextMessagePosition(),
                 input.message,
-                false,
                 input.runId,
             );
             this.#lastMessageAt = this.#now();
@@ -5350,7 +4296,6 @@ export class InMemorySession {
             await this.#stageProtocolProjection(ctx, {
                 event,
                 message: {
-                    isPartial: false,
                     message,
                     position: this.#nextProjectedMessagePosition(ctx),
                     runId,
@@ -5360,7 +4305,7 @@ export class InMemorySession {
             return event;
         }
         return await this.#runSessionMutation(ctx, async (txCtx) => {
-            await this.#storeMessage(txCtx, this.#nextMessagePosition(), message, false, runId);
+            await this.#storeMessage(txCtx, this.#nextMessagePosition(), message, runId);
             await this.#appendDurableEvent(txCtx, event);
             return event;
         });
@@ -5423,7 +4368,6 @@ export class InMemorySession {
                             postCommitCtx,
                             stagedOperation.message.position,
                             stagedOperation.message.message,
-                            stagedOperation.message.isPartial,
                             stagedOperation.message.runId,
                             false,
                         );
@@ -5467,23 +4411,18 @@ export class InMemorySession {
         ctx: Context,
         position: number,
         message: Message,
-        isPartial: boolean,
         runId?: string,
         persist = true,
     ): Promise<void> {
         const replacedIndex = this.#messageIndexByPosition.get(position);
         const replaced = replacedIndex === undefined ? undefined : this.#messages[replacedIndex];
         const entry: PersistedSessionMessage = {
-            isPartial,
             message,
             position,
             ...(runId === undefined ? {} : { runId }),
         };
         if (persist && this.#persistence !== undefined) {
             await this.#persistence.upsertMessage(ctx, this.id, entry);
-        }
-        if (replaced?.message.role === "user") {
-            this.#submittedUserMessages.delete(replaced.message.id);
         }
         if (replacedIndex !== undefined) {
             this.#messages[replacedIndex] = entry;
@@ -5505,27 +4444,8 @@ export class InMemorySession {
             }
         }
         this.#indexTranscriptMessage(entry);
-        if (isPartial) {
-            this.#partialPositions.add(position);
-        } else {
-            this.#partialPositions.delete(position);
-        }
-        if (message.role === "user") this.#submittedUserMessages.set(message.id, entry);
     }
 
-}
-
-function messagesBeforeToolCall(
-    messages: readonly Message[],
-    toolCallId: string | undefined,
-): readonly Message[] {
-    if (toolCallId === undefined) return messages;
-    const currentToolCallIndex = messages.findLastIndex(
-        (message) =>
-            message.role === "agent" &&
-            message.blocks.some((block) => block.type === "tool_call" && block.id === toolCallId),
-    );
-    return currentToolCallIndex === -1 ? messages : messages.slice(0, currentToolCallIndex);
 }
 
 function cloneWorkflowRun(run: WorkflowRun): WorkflowRun {

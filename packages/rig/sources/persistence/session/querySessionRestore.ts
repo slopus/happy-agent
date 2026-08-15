@@ -31,7 +31,6 @@ import {
     readString,
 } from "./impl/sqliteRow.js";
 import { querySessionHasEarlierStoredMessage } from "./querySessionHasEarlierStoredMessage.js";
-import { querySessionPartialMessages } from "./querySessionPartialMessages.js";
 import { querySessionTranscriptPage } from "./querySessionTranscriptPage.js";
 import { queryScheduledMessages } from "../scheduling/queryScheduledMessages.js";
 import { sessionScopeFromRow } from "./impl/sessionScope.js";
@@ -71,10 +70,9 @@ export async function querySessionRestore(
         const persistedUsage = parsePersistedUsage(readOptionalString(row, "usage_json"));
         const transcriptMessages =
             (await querySessionTranscriptPage(ctx, sessionId, 80))?.messages ?? [];
-        const messages = [
-            ...transcriptMessages,
-            ...(await querySessionPartialMessages(ctx, sessionId)),
-        ].sort((left, right) => left.position - right.position);
+        const messages = [...transcriptMessages].sort(
+            (left, right) => left.position - right.position,
+        );
         const hasEarlierTranscript = await querySessionHasEarlierStoredMessage(
             ctx,
             sessionId,
@@ -85,10 +83,6 @@ export async function querySessionRestore(
         const title = readOptionalString(row, "title");
         const titleError = readOptionalString(row, "title_error");
         const recap = readOptionalString(row, "recap");
-        const metadataUpdatedAt = readOptionalNumber(row, "metadata_updated_at_ms");
-        const metadataRunId = readOptionalString(row, "metadata_run_id");
-        const activeRunId = readOptionalString(row, "active_run_id");
-        const activeSince = readOptionalNumber(row, "active_since_ms");
         const profileId = readOptionalString(row, "profile_id");
         const permissionMode = parsePermissionMode(readString(row, "permission_mode"));
         const parentSessionId = readOptionalString(row, "parent_session_id");
@@ -115,7 +109,6 @@ export async function querySessionRestore(
             ...(taskName !== undefined ? { taskName } : {}),
         };
         const restore: PersistedSessionState = {
-            ...(activeSince !== undefined ? { activeSince } : {}),
             agent,
             agentId: readString(row, "agent_id"),
             ownerInstanceId: readString(row, "owner_instance_id"),
@@ -132,7 +125,6 @@ export async function querySessionRestore(
             cwd: readString(row, "cwd"),
             ...(draft === undefined ? {} : { draft }),
             ...(draftUpdatedAt === undefined ? {} : { draftUpdatedAt }),
-            elapsedMs: readNumber(row, "elapsed_ms"),
             scope,
             ...(unsortedSince === undefined ? {} : { unsortedSince }),
             ...(dockerJson === undefined
@@ -165,8 +157,6 @@ export async function querySessionRestore(
             ...(title !== undefined ? { title } : {}),
             ...(titleError !== undefined ? { titleError } : {}),
             ...(recap !== undefined ? { recap } : {}),
-            ...(metadataUpdatedAt !== undefined ? { metadataUpdatedAt } : {}),
-            ...(metadataRunId !== undefined ? { metadataRunId } : {}),
             titleStatus: readString(row, "title_status") as SessionTitleStatus,
             transcriptHasEarlier: hasEarlierTranscript,
             totalTokens: readNumber(row, "total_tokens"),
@@ -186,8 +176,6 @@ export async function querySessionRestore(
                 : { permissionReviews: persistedUsage.permissionReviews }),
             tools: JSON.parse(readString(row, "tools_json")) as string[],
         };
-        if (activeRunId !== undefined) restore.activeRunId = activeRunId;
-
         const request: CreateSessionRequest = {
             ...(restore.appendSystemPrompt === undefined
                 ? {}

@@ -11,7 +11,7 @@ export interface WorkspaceRunTarget {
     workspaceId: string;
 }
 
-/** The one durable gate every session store applies before a managed-workspace runtime exists. */
+/** The durable gate before a session executes inside a managed workspace. */
 export async function workspaceRunReadiness(
     ctx: Context,
     projects: Pick<ProjectRepository, "getWorkspace">,
@@ -21,22 +21,21 @@ export async function workspaceRunReadiness(
     const workspace = await projects.getWorkspace(ctx, target.projectId, target.workspaceId);
     if (workspace === undefined) {
         return {
-            message:
-                "The queued run could not start because its managed workspace no longer exists.",
+            message: "The session cannot execute because its managed workspace no longer exists.",
             state: "failed",
         };
     }
     if (normalizeProjectCwd(workspace.path) !== normalizeProjectCwd(target.cwd)) {
         return {
             message:
-                "The queued run could not start because its session directory no longer matches its managed workspace.",
+                "The session cannot execute because its directory no longer matches its managed workspace.",
             state: "failed",
         };
     }
     if (workspace.status === "initializing") return { state: "waiting" };
     if (workspace.status === "failed") {
         return {
-            message: `The queued run could not start because workspace initialization failed${
+            message: `The session cannot execute because workspace initialization failed${
                 workspace.error === undefined ? "." : `: ${workspace.error}`
             }`,
             state: "failed",
@@ -44,14 +43,14 @@ export async function workspaceRunReadiness(
     }
     if (workspace.status === "archiving" || workspace.status === "archived") {
         return {
-            message: "The queued run could not start because its managed workspace was archived.",
+            message: "The session cannot execute because its managed workspace was archived.",
             state: "failed",
         };
     }
     if (workspace.presence !== "present") {
         return {
             message:
-                "The queued run could not start because its managed workspace directory is unavailable.",
+                "The session cannot execute because its managed workspace directory is unavailable.",
             state: "failed",
         };
     }
@@ -59,7 +58,7 @@ export async function workspaceRunReadiness(
         if (stat(workspace.path).isDirectory()) return { state: "ready" };
         return {
             message:
-                "The queued run could not start because its managed workspace path is not a directory.",
+                "The session cannot execute because its managed workspace path is not a directory.",
             state: "failed",
         };
     } catch (error) {
@@ -71,8 +70,7 @@ export async function workspaceRunReadiness(
         }
     }
     return {
-        message:
-            "The queued run could not start because its managed workspace directory is unavailable.",
+        message: "The session cannot execute because its managed workspace directory is unavailable.",
         state: "failed",
     };
 }

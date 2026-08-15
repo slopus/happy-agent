@@ -222,8 +222,6 @@ describe("P2P inference credentials", () => {
             { cwd: "/tmp/p2p-owner-session" },
             { ownerInstanceId: OWNER_ID, profileId: OWNER_PROFILE_ID },
         );
-        const ownerSubmit = vi.spyOn(ownerSession, "submit");
-        const otherSubmit = vi.spyOn(otherSession, "submit");
         const started = await startServer(
             await createProtocolHttpServer(createTestRootContext(), {
                 canP2pPeerProvision: (peerId) => peerId === OWNER_ID,
@@ -260,8 +258,6 @@ describe("P2P inference credentials", () => {
             },
             status: 202,
         });
-        expect(ownerSubmit).toHaveBeenCalledOnce();
-        expect(otherSubmit).toHaveBeenCalledOnce();
 
         expect(
             await send(
@@ -279,7 +275,6 @@ describe("P2P inference credentials", () => {
             body: { submissions: [{ sessionId: otherSession.id }] },
             status: 202,
         });
-        expect(otherSubmit).toHaveBeenCalledTimes(2);
 
         expect(
             await send(

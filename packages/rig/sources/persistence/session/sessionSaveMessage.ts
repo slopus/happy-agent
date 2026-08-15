@@ -17,7 +17,7 @@ export async function sessionSaveMessage(
         await tx
             .insert(sessionMessages)
             .values({
-                isPartial: message.isPartial,
+                isPartial: false,
                 messageId: message.message.id,
                 messageJson: JSON.stringify(message.message),
                 position: message.position,
@@ -38,7 +38,7 @@ export async function sessionSaveMessage(
                 target: [sessionMessages.sessionId, sessionMessages.position],
             })
             .run();
-        if (message.isPartial || message.runId === undefined) return;
+        if (message.runId === undefined) return;
         await tx
             .insert(sessionTurns)
             .values({

@@ -2,9 +2,6 @@ import type { Context } from "@steve.kite/stdlib";
 
 import type {
     Attachment,
-    ChangeEffortRequest,
-    ChangeModelRequest,
-    ChangeServiceTierRequest,
     CreateDocumentRequest,
     CreateFolderItemRequest,
     CreateFolderRequest,
@@ -90,21 +87,6 @@ export interface SessionStore {
         sessionId: string,
         attachmentId: string,
     ): Promise<Attachment | undefined>;
-    changeEffort(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeEffortRequest,
-    ): Promise<InMemorySession | undefined>;
-    changeModel(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeModelRequest,
-    ): Promise<InMemorySession | undefined>;
-    changeServiceTier(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeServiceTierRequest,
-    ): Promise<InMemorySession | undefined>;
     create(
         ctx: Context,
         request: CreateSessionRequest,

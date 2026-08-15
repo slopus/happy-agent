@@ -5,7 +5,6 @@ export type {
     PersistedSessionMessage,
     PersistedSessionState,
     PersistedWorkflowRun,
-    SessionRunCompletion,
 } from "./InMemorySession.js";
 export { InMemorySessionStore, type InMemorySessionStoreOptions } from "./InMemorySessionStore.js";
 export {

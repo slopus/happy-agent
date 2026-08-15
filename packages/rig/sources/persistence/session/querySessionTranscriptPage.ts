@@ -50,7 +50,7 @@ export async function querySessionTranscriptPage(
                 ? []
                 : (
                       await tx.all<Record<string, unknown>>(sql`
-                      SELECT position, is_partial, run_id, message_json
+                      SELECT position, run_id, message_json
                       FROM session_messages
                       WHERE session_id = ${sessionId}
                           AND is_partial = 0
@@ -61,7 +61,6 @@ export async function querySessionTranscriptPage(
                       ORDER BY position ASC
                   `)
                   ).map((row) => ({
-                      isPartial: readNumber(row, "is_partial") !== 0,
                       message: JSON.parse(readString(row, "message_json")) as Message,
                       position: readNumber(row, "position"),
                       runId: readString(row, "run_id"),

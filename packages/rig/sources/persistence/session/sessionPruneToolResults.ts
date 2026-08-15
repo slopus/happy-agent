@@ -46,8 +46,6 @@ export async function sessionPruneToolResults(
                 SELECT 1
                 FROM sessions AS session
                 WHERE session.id = message.session_id
-                    AND session.active_run_id IS NULL
-                    AND session.status NOT IN ('queued', 'running')
                     AND MAX(
                         COALESCE(session.last_message_at_ms, session.created_at_ms),
                         session.updated_at_ms

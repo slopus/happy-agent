@@ -332,7 +332,10 @@ describe("Folders over HTTP", () => {
         );
         expect(archived.status).toBe(200);
         await expect(
-            chat.submit(createTestRootContext(), { text: "Continue after archival." }),
+            chat.runShellCommand(createTestRootContext(), {
+                command: "echo archived",
+                commandId: "archived-command",
+            }),
         ).rejects.toThrow("archived");
 
         const restored = await fixture.send("POST", `/sessions/${chat.id}/unarchive`);

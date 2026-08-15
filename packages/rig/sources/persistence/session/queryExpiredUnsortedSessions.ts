@@ -32,8 +32,6 @@ export async function queryExpiredUnsortedSessions(
                     AND unsorted_since_ms <= ${unsortedBefore}
                     AND folder_id IS NULL
                     AND archived = 0
-                    AND active_run_id IS NULL
-                    AND status NOT IN ('queued', 'running')
                     AND session_kind = 'primary'
                     AND parent_session_id IS NULL
                     AND delegated_by_session_id IS NULL

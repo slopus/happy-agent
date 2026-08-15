@@ -13,9 +13,6 @@ import {
     UNSORTED_SESSION_ARCHIVE_AFTER_MS,
 } from "../protocol/index.js";
 import type {
-    ChangeEffortRequest,
-    ChangeModelRequest,
-    ChangeServiceTierRequest,
     CreateDocumentRequest,
     CreateFolderItemRequest,
     CreateFolderRequest,
@@ -48,7 +45,6 @@ import type {
     SessionEvent,
     SessionAgentMetadata,
     SessionActivityWait,
-    SessionInterruption,
     SessionSummary,
     SharedFolderState,
     SessionScope,
@@ -132,8 +128,6 @@ import { secretUnregister } from "../persistence/session/secretUnregister.js";
 import { sessionAdvanceEventCursor } from "../persistence/session/sessionAdvanceEventCursor.js";
 import { sessionAppendEvent } from "../persistence/session/sessionAppendEvent.js";
 import { sessionClearMessages } from "../persistence/session/sessionClearMessages.js";
-import { sessionReconcileTerminalRun } from "../persistence/session/sessionReconcileTerminalRun.js";
-import { sessionRepairInterruptedTitles } from "../persistence/session/sessionRepairInterruptedTitles.js";
 import { sessionRewind } from "../persistence/session/sessionRewind.js";
 import { sessionSave } from "../persistence/session/sessionSave.js";
 import { sessionSaveMessage } from "../persistence/session/sessionSaveMessage.js";
@@ -148,7 +142,6 @@ import { scheduledMessageSave } from "../persistence/scheduling/scheduledMessage
 import { scheduledMessagePrune } from "../persistence/scheduling/scheduledMessagePrune.js";
 import { queryNextPendingScheduledMessage } from "../persistence/scheduling/queryScheduledMessages.js";
 import { queryFirstRootSessionIdForWorkspace } from "../persistence/session/queryFirstRootSessionIdForWorkspace.js";
-import { queryInterruptedSessionCandidates } from "../persistence/session/queryInterruptedSessionCandidates.js";
 import { queryProjectSecretIds } from "../persistence/session/queryProjectSecretIds.js";
 import { queryRootSessionIdsForProject } from "../persistence/session/queryRootSessionIdsForProject.js";
 import { queryWorkspaceSessions } from "../persistence/session/queryWorkspaceSessions.js";
@@ -173,7 +166,6 @@ import { queryAgentTreeUsage as queryPersistedAgentTreeUsage } from "../persiste
 import { queryAgentTreeSessionIds } from "../persistence/session/queryAgentTreeSessionIds.js";
 import { queryLiveAgentTreeUsage } from "./queryLiveAgentTreeUsage.js";
 import { buildTimeline } from "../timeline/index.js";
-import { queryTerminalRunEvent } from "../persistence/session/queryTerminalRunEvent.js";
 import { inTx } from "../persistence/inTx.js";
 import { PresenceStore, resolvePresences } from "../presence/index.js";
 import { SlotEntryStore } from "../slots/index.js";
@@ -183,10 +175,7 @@ import { querySlotScopeTargetExists } from "../persistence/slots/querySlotScopeT
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
 import { configureSessionRequest } from "./configureSessionRequest.js";
-import {
-    executeSessionWorkspaceTransfer,
-    scheduleSessionWorkspaceTransfer,
-} from "./transferSessionWorkspace.js";
+import { executeSessionWorkspaceTransfer } from "./transferSessionWorkspace.js";
 import { HappyCloudService } from "../happy-cloud/index.js";
 import { workspaceRunReadiness } from "./workspaceRunReadiness.js";
 import { queryRigProfile } from "../persistence/profile/queryRigProfiles.js";
@@ -494,8 +483,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         if (options.durableGlobalEventQueue === true) {
             this.#globalEventQueue = await PersistentGlobalEventQueue.open(ctx, this.#database);
         }
-        await this.#repairInterruptedTitleGenerations(ctx);
-        await this.repairInterruptedSessions(ctx, "crash");
         await this.#armScheduledMessageTimer(ctx);
         this.#armUnsortedSweepTimer();
         if (this.#toolResultRetentionMs !== undefined) this.#armToolResultSweepTimer();
@@ -508,21 +495,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             if (this.#database.closed) return;
             if (isDatabaseFailure(error)) throw error;
         });
-    }
-
-    async changeModel(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeModelRequest,
-    ): Promise<InMemorySession | undefined> {
-        ctx = withDatabase(ctx, this.#database);
-        const session = await this.get(ctx, sessionId);
-        if (session === undefined) {
-            return undefined;
-        }
-
-        await session.changeModel(ctx, request);
-        return session;
     }
 
     async attachSecret(
@@ -559,33 +531,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
                 scope,
             });
         }
-        return session;
-    }
-
-    async changeEffort(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeEffortRequest,
-    ): Promise<InMemorySession | undefined> {
-        ctx = withDatabase(ctx, this.#database);
-        const session = await this.get(ctx, sessionId);
-        if (session === undefined) {
-            return undefined;
-        }
-
-        await session.changeEffort(ctx, request);
-        return session;
-    }
-
-    async changeServiceTier(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeServiceTierRequest,
-    ): Promise<InMemorySession | undefined> {
-        ctx = withDatabase(ctx, this.#database);
-        const session = await this.get(ctx, sessionId);
-        if (session === undefined) return undefined;
-        await session.changeServiceTier(ctx, request);
         return session;
     }
 
@@ -1936,74 +1881,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         return this.#secrets.reference(secretId);
     }
 
-    async repairInterruptedSessions(
-        ctx: Context,
-        reason: SessionInterruption["reason"],
-    ): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        for (const { activeRunId, sessionId } of await queryInterruptedSessionCandidates(ctx)) {
-            if (
-                activeRunId !== undefined &&
-                (await this.#reconcileTerminalRunState(ctx, sessionId, activeRunId))
-            ) {
-                continue;
-            }
-            const session = await this.get(ctx, sessionId);
-            if (session === undefined) {
-                continue;
-            }
-
-            const state = session.state();
-            const runId = state.activeRunId;
-            if (session.isSubagent() && state.status === "suspended") {
-                const message =
-                    "The subagent stopped working because the local server restarted before its suspended run finished.";
-                await session.markSuspendedAfterRestart(ctx, message, runId);
-                const parentSessionId = session.agentMetadata().parentSessionId;
-                const parent =
-                    parentSessionId === undefined
-                        ? undefined
-                        : await this.get(ctx, parentSessionId);
-                if (parent !== undefined) {
-                    const subagent = session.subagentSummary();
-                    await parent.recordSubagentStoppedAfterRestart(
-                        ctx,
-                        subagent,
-                        subagent.taskName ?? subagent.agentId,
-                    );
-                }
-                continue;
-            }
-            await session.markInterrupted(ctx, {
-                interruptedAt: this.#now(),
-                message:
-                    reason === "crash"
-                        ? "The session was interrupted because the local server stopped before the run completed."
-                        : "The session was interrupted because the local server shut down before the run completed.",
-                reason,
-                ...(runId !== undefined ? { runId } : {}),
-            });
-        }
-    }
-
-    async #reconcileTerminalRunState(
-        ctx: Context,
-        sessionId: string,
-        runId: string,
-    ): Promise<boolean> {
-        const event = await queryTerminalRunEvent(ctx, sessionId, runId);
-        if (event === undefined) return false;
-        await sessionReconcileTerminalRun(ctx, {
-            lastEventId: event.lastEventId,
-            runId,
-            sessionId,
-            status: event.status,
-            updatedAt: this.#now(),
-        });
-        return true;
-    }
-
-    async prepareForShutdown(ctx: Context, reason: SessionInterruption["reason"]): Promise<void> {
+    async prepareForShutdown(ctx: Context, _reason: "crash" | "shutdown"): Promise<void> {
         ctx = withDatabase(ctx, this.#database);
         this.#taskDrain?.beginClose();
         if (this.#scheduledMessageTimer !== undefined) {
@@ -2024,12 +1902,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             ...[...closingSessions].map((session) => session.beginShutdown(ctx)),
             this.remoteTerminals.close(ctx),
         ];
-        let repairError: unknown;
-        try {
-            await this.repairInterruptedSessions(ctx, reason);
-        } catch (error) {
-            repairError = error;
-        }
         for (const session of this.#cachedSessions()) {
             if (closingSessions.has(session)) continue;
             cleanup.push(session.beginShutdown(ctx));
@@ -2039,9 +1911,9 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         const cleanupErrors = cleanupResults
             .filter((result): result is PromiseRejectedResult => result.status === "rejected")
             .map((result) => result.reason);
-        if (repairError !== undefined || cleanupErrors.length > 0) {
+        if (cleanupErrors.length > 0) {
             throw new AggregateError(
-                [...(repairError === undefined ? [] : [repairError]), ...cleanupErrors],
+                cleanupErrors,
                 "The local daemon could not finish session cleanup.",
             );
         }
@@ -2054,8 +1926,7 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         validOwnerInstanceId(state.ownerInstanceId);
         const contextMessages =
             state.contextMessages ??
-            state.messages
-                .filter((message) => !message.isPartial)
+            [...state.messages]
                 .sort((left, right) => left.position - right.position)
                 .map((message) => message.message);
         await sessionSave(ctx, state, {
@@ -2718,20 +2589,18 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
             events,
             retentionLimit: Number.MAX_SAFE_INTEGER,
         });
-        const entries = messages
-            .filter((entry) => !entry.isPartial)
-            .map((entry): TranscriptEntry => {
-                const createdAt = eventLog.messageCreatedAt(entry.message.id);
-                const eventId = eventLog.messageEventId(entry.message.id);
-                const steeredAt = eventLog.messageSteeredAt(entry.message.id);
-                return {
-                    ...(createdAt === undefined ? {} : { createdAt }),
-                    ...(eventId === undefined ? {} : { eventId }),
-                    message: entry.message,
-                    ...(entry.runId === undefined ? {} : { runId: entry.runId }),
-                    ...(steeredAt === undefined ? {} : { steeredAt }),
-                };
-            });
+        const entries = messages.map((entry): TranscriptEntry => {
+            const createdAt = eventLog.messageCreatedAt(entry.message.id);
+            const eventId = eventLog.messageEventId(entry.message.id);
+            const steeredAt = eventLog.messageSteeredAt(entry.message.id);
+            return {
+                ...(createdAt === undefined ? {} : { createdAt }),
+                ...(eventId === undefined ? {} : { eventId }),
+                message: entry.message,
+                ...(entry.runId === undefined ? {} : { runId: entry.runId }),
+                ...(steeredAt === undefined ? {} : { steeredAt }),
+            };
+        });
         const window = sessionTranscriptWindow(
             entries,
             transcriptRunFacts(events),
@@ -2839,10 +2708,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         // Presence and Git facts are enrichment, so they run only after archival recovery, which is
         // user-visible correctness.
         await this.#projects.reconcileGitFacts(ctx);
-    }
-
-    async #repairInterruptedTitleGenerations(ctx: Context): Promise<void> {
-        await sessionRepairInterruptedTitles(ctx, this.#now());
     }
 
     /**

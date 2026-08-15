@@ -5,9 +5,6 @@ import { createEventIdFactory, isLiveGlobalEvent } from "../protocol/index.js";
 import { Value } from "@sinclair/typebox/value";
 import type { Message } from "../agent/types.js";
 import type {
-    ChangeEffortRequest,
-    ChangeModelRequest,
-    ChangeServiceTierRequest,
     CreateDocumentRequest,
     CreateFolderItemRequest,
     CreateFolderRequest,
@@ -105,7 +102,6 @@ import type { DockerExecutionConfig } from "../execution/index.js";
 import { configureSessionRequest } from "./configureSessionRequest.js";
 import {
     executeSessionWorkspaceTransfer,
-    scheduleSessionWorkspaceTransfer,
 } from "./transferSessionWorkspace.js";
 import { workspaceRunReadiness } from "./workspaceRunReadiness.js";
 import { queryRigProfile } from "../persistence/profile/queryRigProfiles.js";
@@ -320,20 +316,6 @@ export class InMemorySessionStore implements SessionStore {
         this.#defaultDocker = options.defaultDocker;
     }
 
-    async changeEffort(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeEffortRequest,
-    ): Promise<InMemorySession | undefined> {
-        const session = await this.get(ctx, sessionId);
-        if (session === undefined) {
-            return undefined;
-        }
-
-        await session.changeEffort(ctx, request);
-        return session;
-    }
-
     async #configureWorkspaceRequest(
         ctx: Context,
         request: CreateSessionRequest,
@@ -375,17 +357,6 @@ export class InMemorySessionStore implements SessionStore {
                 scope,
             });
         }
-        return session;
-    }
-
-    async changeServiceTier(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeServiceTierRequest,
-    ): Promise<InMemorySession | undefined> {
-        const session = await this.get(ctx, sessionId);
-        if (session === undefined) return undefined;
-        await session.changeServiceTier(ctx, request);
         return session;
     }
 
@@ -1683,20 +1654,6 @@ export class InMemorySessionStore implements SessionStore {
 
     getProjectAvatar(ctx: Context, hash: string): Promise<ProjectAvatarAsset | undefined> {
         return this.#projects.avatarAsset(ctx, hash);
-    }
-
-    async changeModel(
-        ctx: Context,
-        sessionId: string,
-        request: ChangeModelRequest,
-    ): Promise<InMemorySession | undefined> {
-        const session = await this.get(ctx, sessionId);
-        if (session === undefined) {
-            return undefined;
-        }
-
-        await session.changeModel(ctx, request);
-        return session;
     }
 
     #projectSecrets(projectId: string): readonly string[] {
