@@ -1,5 +1,5 @@
-import type { SessionSummary } from "../protocol/index.js";
-import type { SessionTerminalTracker } from "./SessionTerminalTracker.js";
+import type { SessionSummary } from "../index.js";
+import type { SessionTerminalTracker } from "../../terminal/SessionTerminalTracker.js";
 
 export function sessionSummaryWithTerminalPresence(
     summary: SessionSummary,

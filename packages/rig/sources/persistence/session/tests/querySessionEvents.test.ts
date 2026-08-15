@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createEventIdFactory } from "../../../protocol/index.js";
-import { SessionEventLog } from "../../../session/SessionEventLog.js";
+import { SessionEventLog } from "../../../protocol/projection/SessionEventLog.js";
 import { createTestRootContext } from "../../../testing/createTestRootContext.js";
 import { createSessionDatabaseFixture } from "../../database/tests/createSessionDatabaseFixture.js";
 import { openSessionDatabase } from "../../database/openSessionDatabase.js";

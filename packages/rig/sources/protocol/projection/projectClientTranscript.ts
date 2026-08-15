@@ -1,5 +1,5 @@
-import type { AgentBlock, Message, SystemMessage } from "../agent/index.js";
-import type { SessionTranscriptWindow } from "../protocol/index.js";
+import type { AgentBlock, Message, SystemMessage } from "../../agent/index.js";
+import type { SessionTranscriptWindow } from "../index.js";
 
 const CLIENT_BLOCK_MAXIMUM_TEXT_BYTES = 32 * 1_024;
 const CLIENT_IMAGE_MAXIMUM_BASE64_BYTES = 512 * 1_024;

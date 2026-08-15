@@ -2,7 +2,7 @@ import type { Usage } from "../../../protocol/index.js";
 
 import type { EventId } from "../../../protocol/index.js";
 import type { PersistedSessionState } from "../../../session/InMemorySession.js";
-import type { SessionUsageSummary } from "../../../session/usage/index.js";
+import type { SessionUsageSummary } from "../../../protocol/usage/index.js";
 
 export interface PersistedUsageEnvelope {
     committed: Usage;

@@ -1,4 +1,4 @@
-import type { SessionEvent } from "../protocol/index.js";
+import type { SessionEvent } from "../index.js";
 
 function isTranscriptMessage(event: SessionEvent): boolean {
     return event.type === "message_submitted" || event.type === "agent_message";

@@ -186,15 +186,15 @@ import type {
 } from "../protocol/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { InMemorySessionStore } from "../session/InMemorySessionStore.js";
-import type { SessionUsageSummary } from "../session/usage/index.js";
-import { projectClientTranscript } from "../session/projectClientTranscript.js";
+import type { SessionUsageSummary } from "../protocol/usage/index.js";
+import { projectClientTranscript } from "../protocol/projection/projectClientTranscript.js";
 import { createModelCatalog } from "../model-catalog/createModelCatalog.js";
 import {
     FileSearchService,
     type FileSearchServiceContract,
 } from "../file-search/FileSearchService.js";
-import type { SessionEventLog } from "../session/SessionEventLog.js";
-import { isLiveOnlySessionEvent } from "../session/isLiveOnlySessionEvent.js";
+import type { SessionEventLog } from "../protocol/projection/SessionEventLog.js";
+import { isLiveOnlySessionEvent } from "../protocol/projection/isLiveOnlySessionEvent.js";
 import { isSubmitMessageRequest } from "./isSubmitMessageRequest.js";
 import { limitProtocolSessionMessages } from "./limitProtocolSessionMessages.js";
 import type { GlobalStreamHello } from "../protocol/index.js";
@@ -203,7 +203,7 @@ import type { SessionStore } from "../session/SessionStore.js";
 import { isGlobalEventRoute } from "./isGlobalEventRoute.js";
 import { parseGlobalEventCursor } from "../global-event/parseGlobalEventCursor.js";
 import { parseGlobalEventLimit } from "./parseGlobalEventLimit.js";
-import { selectRecentSessionEvents } from "../session/selectRecentSessionEvents.js";
+import { selectRecentSessionEvents } from "../protocol/projection/selectRecentSessionEvents.js";
 import { SESSION_STREAM_TURN_LIMIT } from "../protocol/index.js";
 import { parseTimelineRequest } from "./parseTimelineRequest.js";
 import { sendJson } from "./sendJson.js";
@@ -299,8 +299,8 @@ import type {
 import { isAuthorizedProtocolRequest } from "./isAuthorizedProtocolRequest.js";
 import { attachRemoteTerminalWebSocketServer } from "./attachRemoteTerminalWebSocketServer.js";
 import { attachP2pPeerTunnels } from "./attachP2pPeerTunnels.js";
-import { SessionTerminalTracker } from "../session/SessionTerminalTracker.js";
-import { sessionSummaryWithTerminalPresence } from "../session/sessionSummaryWithTerminalPresence.js";
+import { SessionTerminalTracker } from "../terminal/SessionTerminalTracker.js";
+import { sessionSummaryWithTerminalPresence } from "../protocol/projection/sessionSummaryWithTerminalPresence.js";
 import { attachHttpConnectProxy } from "./attachHttpConnectProxy.js";
 import { attachP2pSshBridge } from "./attachP2pSshBridge.js";
 import {

@@ -9,7 +9,7 @@ import type {
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
 import type { InMemorySession } from "../session/InMemorySession.js";
-import { isLiveOnlySessionEvent } from "../session/isLiveOnlySessionEvent.js";
+import { isLiveOnlySessionEvent } from "../protocol/projection/isLiveOnlySessionEvent.js";
 import { HappyMachineClient } from "./HappyMachineClient.js";
 import {
     HappySessionClient,

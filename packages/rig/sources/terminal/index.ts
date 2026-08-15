@@ -1,5 +1,6 @@
 export { RemoteTerminal } from "./RemoteTerminal.js";
 export { RemoteTerminalManager } from "./RemoteTerminalManager.js";
+export { SessionTerminalTracker } from "./SessionTerminalTracker.js";
 export { createRemoteTerminalManager } from "./createRemoteTerminalManager.js";
 export {
     ProjectRemoteTerminalStore,
