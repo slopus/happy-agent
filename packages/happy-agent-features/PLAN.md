@@ -273,7 +273,8 @@ Rig host integration remains.
 
 ### 10. Image generation
 
-Status: implementation exists; isolated review and host integration remain.
+Status: complete, reviewed, committed, and available from the package root.
+Rig host integration remains.
 
 - Inject an image generator and asset store.
 - Provide a common `generate_image` tool and host API.
