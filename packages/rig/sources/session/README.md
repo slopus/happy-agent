@@ -10,7 +10,7 @@ this module never reaches back into request handling. Database work belongs to
 `persistence/session`, so no SQL of any kind appears here.
 
 ```
-   server (HTTP + daemon)          happy sync           tools / permissions
+   server (HTTP + daemon)          happy sync          product modules
             |                          |                        |
             v                          v                        v
    +-------------------------------------------------------------------+
@@ -24,7 +24,7 @@ this module never reaches back into request handling. Database work belongs to
    |        |                                 |                        |
    |        +--------------+------------------+                        |
    |                       v                                           |
-   |                 InMemorySession        the running conversation   |
+   |                 InMemorySession        product/session facade     |
    |                       |                                           |
    |                       v                                           |
    |                 SessionEventLog        append-only, in memory     |
@@ -41,11 +41,15 @@ this module never reaches back into request handling. Database work belongs to
 
 ## Ownership
 
-`InMemorySession` is the model. It holds the conversation in memory and drives a
-run: submitting messages, streaming agent output, permissions, aborts, resets,
-rewinds, goals, subagents and metadata. Every change it makes follows the rule in
-master plan 8 - the database write happens first, through the persistence
-callbacks in `InMemorySessionPersistence`, and only then does memory change.
+`InMemorySession` is the product/session facade. It owns protocol projections and
+the non-agent state used by terminals, folders, workspaces, secrets, applets and
+other host modules. `RigAgentService` routes agent operations through Agent Base;
+`RigProtocolFeature` projects their results into this facade. The facade does not
+own inference, compaction, tool execution or an agent run queue.
+
+Every product-state change follows the persistence contract: the database write
+happens first through `InMemorySessionPersistence`, and only then does memory
+change.
 
 `PersistentSessionStore` implements both `SessionStore` and
 `InMemorySessionPersistence`. It is the daemon's store: it restores sessions from
@@ -70,8 +74,7 @@ unread marks for a session someone is watching.
 ```
 session/
     index.ts                        the module's public shape
-    AgentSessionManager.ts          subagent lifecycle and communication
-    InMemorySession.ts              the session model
+    InMemorySession.ts              product state and protocol projection facade
     InMemorySessionStore.ts         volatile store
     PersistentSessionStore.ts       durable store
     SessionStore.ts                 the interface both stores implement
@@ -79,7 +82,6 @@ session/
     SessionTerminalTracker.ts       attached and focused terminals
     SessionConfigurationError.ts    rejected session configuration
     configureSessionRequest.ts      validates and resolves a create request
-    generateSessionMetadata.ts      titles and summaries for a session
     isLiveOnlySessionEvent.ts       events that are never persisted
     retriedSession.ts               answers a create whose identity already exists
     selectRecentSessionEvents.ts    trims an event list to recent messages

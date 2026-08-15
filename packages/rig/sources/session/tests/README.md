@@ -18,7 +18,6 @@ InMemorySession.runError.test.ts    failed runs and their reporting
 InMemorySession.status.test.ts      status and activity transitions
 InMemorySession.subagentUsage.test.ts   usage attributed to subagents
 InMemorySession.transcriptWindow.test.ts  the window the session exposes
-AgentSessionManager.test.ts          subagent lifecycle and communication
 
 PersistentSessionStore.test.ts      durable store: persistence and restore
 SessionEventLog.test.ts             appends, indexes and retention

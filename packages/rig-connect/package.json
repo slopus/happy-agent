@@ -33,7 +33,6 @@
     },
     "devDependencies": {
         "@slopus/rig": "workspace:*",
-        "@slopus/rig-execution": "workspace:*",
         "@types/node": "^24.0.10",
         "esbuild": "^0.28.1",
         "tsc-alias": "^1.8.16",

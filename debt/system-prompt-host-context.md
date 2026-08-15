@@ -2,7 +2,7 @@
 
 `SystemPromptFeature` now gives the Agent Base path the provider- and model-specific base prompt,
 but that is only the model identity and behavioral contract. The new path still omits the
-per-agent host context that the legacy runtime assembles around that prompt.
+per-agent host context that Rig must compose around that prompt.
 
 ## What is missing
 
@@ -16,32 +16,6 @@ per-agent host context that the legacy runtime assembles around that prompt.
   permission guidance.
 
 None of these reaches inference through `RigAgentService` today.
-
-## Legacy sources
-
-The current legacy path spreads this work across the following files. Line counts are the source
-line counts at the time this debt was recorded:
-
-- `packages/rig/sources/agent/prompt/createSystemPrompt.ts` (166 lines) is the host-context
-  assembler. It adds the `AGENTS.md` contract, skill instructions, plugin and workspace context,
-  permission guidance, protected paths, and the remaining Rig-owned prompt contributions.
-- `packages/rig/sources/agent/prompt/instructions.ts` (170 lines) renders the permission modes,
-  sandbox limits, workspace rules, available models, and bundled documentation guidance.
-- `packages/rig/sources/agent/prompt/codexInstructions.ts` (149 lines) renders the Codex Bedrock
-  environment and permission forms.
-- `packages/rig-execution/sources/prompts/assembleSystemPrompt.ts` (27 lines) joins the selected
-  model prompt, environment, and Rig context; `assembleEnvironmentPrompt.ts` (25 lines) renders
-  the working directory, platform, shell, OS version, models, and workspace/worktree guidance.
-- `packages/rig/sources/agent/Agent.ts` (965 lines) refreshes global and project instructions
-  before inference. `impl/loadAgentsMdInstructions.ts` (55 lines),
-  `impl/findAgentsMdPaths.ts` (24 lines), and `impl/reconcileAgentsMdMessages.ts` (69 lines)
-  discover, bound, and deliver those files without rewriting prior conversation history.
-- `packages/rig/sources/agent/skills/loadAgentSkillCatalog.ts` (27 lines) and
-  `skills/loadSkillInstructions.ts` (11 lines) discover skills and render their prompt
-  instructions.
-- `packages/happy-providers/sources/vendors/claude/impl/renderClaudeSystemPrompt.ts` (19 lines)
-  fills Claude's working-directory, repository, platform, shell, and OS placeholders at the
-  provider boundary.
 
 ## Why this is host debt
 

@@ -49,11 +49,11 @@ Rig's shared `AgentContext` and permission boundary.
 
 ## System prompt and skills
 
-The complete model-specific runtime prompts live in `rig-execution`. The provider receives
-the already assembled instructions through `SessionContext`; prompt files in this package
-are test assets, not runtime prompt sources.
+The complete model-specific runtime prompts are assembled by Agent Base and its configured
+features. The provider receives the already assembled instructions through `SessionContext`;
+prompt files in this package are test assets, not runtime prompt sources.
 
-`impl/toClaudeSdkOptions.ts` supplies the session instructions assembled by the executor, and
+`impl/toClaudeSdkOptions.ts` supplies the session instructions assembled by the agent host, and
 nothing else. Skill metadata is ordinary caller-supplied prompt content that arrives that way,
 so the provider composes nothing of its own.
 

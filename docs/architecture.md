@@ -47,7 +47,7 @@ Rig runs as two processes on the local machine: a **terminal UI** (or a headless
             v
    rig --server    (the daemon: sessions, agents, tools, SQLite)
             |
-            +-- provider inference  (rig-execution -> happy-providers -> vendor APIs)
+            +-- provider inference  (happy-agent-base -> happy-providers -> vendor APIs)
             +-- sandboxed shell, filesystem, Docker, MCP, background terminals
             +-- sessions.sqlite
 ```
@@ -150,9 +150,9 @@ parent.
 ### The layers
 
 ```text
-agent loop               the turn: inference, tool execution, compaction
+happy-agent-base          the durable turn: inference, tools, compaction
         |
-rig-execution (Executor) model profiles, system prompt assembly, session lifecycle
+happy-agent-features      reusable tools, hooks, and product capabilities
         |
 happy-providers            the network: transports, framing, retries, errors, credentials
         |
@@ -409,9 +409,10 @@ transaction, advancing `PRAGMA user_version` after each one and stamping
 
 | Package                       | What it is                                                                                                                                                                                     |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/rig`                | The published `@slopus/rig` CLI: terminal UI, headless `exec`, agent loop, tools, permissions, sandboxing, MCP, persistence, and the local daemon. Entry point `sources/main.ts`.              |
+| `packages/rig`                | The published `@slopus/rig` CLI: terminal UI, headless `exec`, host services, protocols, persistence adapters, and the local daemon. Entry point `sources/main.ts`.                              |
+| `packages/happy-agent-base`   | `@slopus/happy-agent-base` — the minimal durable agent loop, provider routing, persistence, and feature hooks.                                                                                 |
+| `packages/happy-agent-features` | `@slopus/happy-agent-features` — reusable agent tools, hooks, and product capabilities composed by Rig.                                                                                      |
 | `packages/happy-providers`    | `@slopus/happy-providers` — the separately published, Node-only vendor library: stateful sessions, transports, retries, error parsing, credentials, and native compaction.                     |
-| `packages/rig-execution`      | `@slopus/rig-execution` — the stable execution core: the `Executor`, curated model catalog and profiles, system-prompt assembly, and the provider-session lifecycle above `happy-providers`.   |
 | `packages/rig-connect`        | `@slopus/rig-connect` — the client library any UI embeds to get live session, group, and plugin state from one subscription, with optimistic mutations. Web APIs only; no dependency on `rig`. |
 | `packages/ghostty-wasm`       | `@slopus/ghostty-wasm` — the Ghostty terminal emulator compiled to WebAssembly, usable from Node and the browser.                                                                              |
 | `packages/ghostty-web`        | `@slopus/ghostty-web` — the client/server protocol for remoting a Ghostty-backed terminal: snapshot, VT replay, semantic-grid recovery, flow control, paged scrollback.                        |

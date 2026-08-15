@@ -19,7 +19,7 @@ COPY packages/rig-codemode-codex/package.json packages/rig-codemode-codex/packag
 COPY packages/happy-plugins/package.json packages/happy-plugins/package.json
 COPY packages/happy-worklets/package.json packages/happy-worklets/package.json
 COPY packages/happy-providers/package.json packages/happy-providers/package.json
-COPY packages/rig-execution/package.json packages/rig-execution/package.json
+COPY packages/happy-agent-features/package.json packages/happy-agent-features/package.json
 COPY packages/rig/package.json packages/rig/package.json
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store \
@@ -30,14 +30,14 @@ COPY packages/rig-codemode-codex packages/rig-codemode-codex
 COPY packages/happy-plugins packages/happy-plugins
 COPY packages/happy-worklets packages/happy-worklets
 COPY packages/happy-providers packages/happy-providers
-COPY packages/rig-execution packages/rig-execution
+COPY packages/happy-agent-features packages/happy-agent-features
 COPY packages/rig packages/rig
 RUN pnpm --filter @slopus/ghostty-web build
 RUN pnpm --filter @slopus/rig-codemode-codex build
 RUN pnpm --filter happy-plugins build
 RUN pnpm --filter happy-worklets build
 RUN pnpm --filter @slopus/happy-providers build
-RUN pnpm --filter @slopus/rig-execution build
+RUN pnpm --filter @slopus/happy-agent-features build
 RUN pnpm --filter @slopus/rig build
 # The gym runs Rig from the TypeScript sources it mounts over this image, so the deployment keeps
 # development dependencies: the published bundle compiles them in, but the sources still import

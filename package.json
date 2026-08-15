@@ -3,9 +3,9 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-features build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/rig-execution build && pnpm --filter @slopus/rig-codemode-codex build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm --filter @slopus/rig build",
+        "build": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-features build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/rig-codemode-codex build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm --filter @slopus/rig build",
         "build:gym": "pnpm --filter @slopus/rig-gym run build:image",
-        "check": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-features build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/rig-execution build && pnpm --filter @slopus/rig-codemode-codex build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm run check:root && pnpm --recursive --filter './packages/**' run check",
+        "check": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-features build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/rig-codemode-codex build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm run check:root && pnpm --recursive --filter './packages/**' run check",
         "check:root": "tsc --noEmit -p tsconfig.json",
         "database:inspect": "TMPDIR=\"$PWD/.local\" tsx scripts/database/inspectRigDatabaseCli.ts",
         "dev": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-features build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter happy-worklets build && pnpm --filter @slopus/rig-dev dev",
