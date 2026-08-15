@@ -1,4 +1,4 @@
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { ServiceTier } from "../../protocol/index.js";
 
 import type { Message } from "../types.js";
 import type { SpawnSubagentResult, SubagentContextMode } from "./SubagentContext.js";

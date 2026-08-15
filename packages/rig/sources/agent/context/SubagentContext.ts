@@ -1,5 +1,5 @@
 import type { Message } from "../types.js";
-import type { ServiceTier } from "@slopus/rig-execution";
+import type { ServiceTier } from "../../protocol/index.js";
 
 export type SubagentRunStatus = "aborted" | "completed" | "error" | "running" | "suspended";
 export type SubagentContextMode = "parent" | "task";
