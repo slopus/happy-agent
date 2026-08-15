@@ -191,7 +191,8 @@ Status: complete, reviewed, committed, and wired into Rig after History.
 
 ### 4. Goals
 
-Status: existing baseline; durability hardening remains.
+Status: complete, reviewed, committed, and available from the package root.
+Rig wake-scheduler integration remains.
 
 - Create, read, update, complete, block, pause, resume, and clear a goal.
 - Continue work after settlement while a goal remains active.
