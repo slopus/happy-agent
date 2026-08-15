@@ -1,11 +1,11 @@
 import { createId } from "@paralleldrive/cuid2";
+import type { AppletFeature } from "@slopus/happy-agent-features";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { inTx } from "../persistence/inTx.js";
 import type { SessionDatabase } from "../persistence/database/openSessionDatabase.js";
 import { withDatabase } from "../persistence/databaseContext.js";
-import { queryApplet } from "../persistence/applets/queryApplet.js";
 import { querySlotEntries } from "../persistence/slots/querySlotEntries.js";
 import { querySlotEntry } from "../persistence/slots/querySlotEntry.js";
 import { querySlotScopeTargetExists } from "../persistence/slots/querySlotScopeTargetExists.js";
@@ -29,6 +29,7 @@ import { SlotEntryInvalidError } from "./SlotEntryInvalidError.js";
 import { SlotEntryNotFoundError } from "./SlotEntryNotFoundError.js";
 
 export interface SlotEntryStoreOptions {
+    applets: Pick<AppletFeature, "get">;
     database: SessionDatabase;
     now?: () => number;
     /** Delivers a change to the live global stream after the database write committed. */
@@ -49,6 +50,7 @@ export interface SlotEntryStoreOptions {
  * without polling.
  */
 export class SlotEntryStore {
+    readonly #applets: Pick<AppletFeature, "get">;
     readonly #createEventId = createEventIdFactory();
     readonly #database: SessionDatabase;
     readonly #now: () => number;
@@ -56,6 +58,7 @@ export class SlotEntryStore {
     readonly #sessionExists: (ctx: Context, sessionId: string) => boolean | Promise<boolean>;
 
     constructor(options: SlotEntryStoreOptions) {
+        this.#applets = options.applets;
         this.#database = options.database;
         this.#now = options.now ?? Date.now;
         this.#publish = options.publish;
@@ -191,7 +194,7 @@ export class SlotEntryStore {
         scope: SlotEntry["scope"],
     ): Promise<void> {
         if (content.type !== "button" || content.action.type !== "open-applet") return;
-        const applet = await queryApplet(ctx, content.action.applet);
+        const applet = await this.#applets.get(ctx, content.action.applet);
         if (applet === undefined || applet.allowedScopes.includes(scope)) return;
         throw new SlotEntryInvalidError(describeAppletScopeNotAllowed(applet, scope));
     }

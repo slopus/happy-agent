@@ -10,6 +10,7 @@ import {
     type AgentPermissionMode,
 } from "@slopus/happy-agent-base";
 import {
+    AppletFeature,
     HistoryFeature,
     ModelSwitchFeature,
     SystemPromptFeature,
@@ -68,6 +69,8 @@ import { RigHistoryStore } from "./RigHistoryStore.js";
 import { RigProtocolFeature, type RigAgentConfiguration } from "./RigProtocolFeature.js";
 import type { RigProtocolProjection } from "./RigProtocolProjection.js";
 import { SqliteAgentPersistence } from "./persistence/SqliteAgentPersistence.js";
+import { RigAppletCatalog } from "../persistence/applets/RigAppletCatalog.js";
+import { resolveAppletRootDirectory } from "../config/resolveAppletRootDirectory.js";
 import type { ContentBlock, UserMessage } from "./types.js";
 
 const SYSTEM_AGENT_ID = "$system";
@@ -86,6 +89,7 @@ const submitMessageCoreSchema = Type.Object(
 );
 
 export class RigAgentService {
+    readonly applets: AppletFeature;
     readonly #bridge: RigProtocolFeature;
     readonly #models: readonly AgentModel[];
     readonly #system: AgentSystemLocal;
@@ -142,6 +146,10 @@ export class RigAgentService {
             });
             const modelSwitch = new ModelSwitchFeature({ history });
             const systemPrompt = new SystemPromptFeature();
+            const applets = new AppletFeature({
+                catalog: new RigAppletCatalog(options.database),
+                rootDirectory: resolveAppletRootDirectory(options.env),
+            });
             // The bridge is deliberately last: every configurable feature must finish its
             // transactional projection before the protocol event and terminal callbacks can be
             // staged.
@@ -149,7 +157,7 @@ export class RigAgentService {
                 withDatabase(ctx, options.database),
                 storage,
                 {
-                    features: [systemPrompt, history, modelSwitch, bridge],
+                    features: [systemPrompt, history, modelSwitch, applets, bridge],
                     models: runtime.models,
                     provider: runtime.defaultProvider,
                     providers: runtime.providers,
@@ -161,6 +169,7 @@ export class RigAgentService {
                 system,
                 options.database,
                 options.projection,
+                applets,
             );
         } catch (error) {
             throw error;
@@ -173,12 +182,14 @@ export class RigAgentService {
         system: AgentSystemLocal,
         database: SessionDatabase,
         projection: RigProtocolProjection,
+        applets: AppletFeature,
     ) {
         this.#bridge = bridge;
         this.#models = models;
         this.#system = system;
         this.#database = database;
         this.#projection = projection;
+        this.applets = applets;
     }
 
     async submit(

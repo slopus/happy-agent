@@ -4,7 +4,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import type { Applet } from "@slopus/happy-agent-features";
 import type { DatabaseScope } from "../Transaction.js";
-import { readAppletRow, readAppletVersionRow } from "./queryApplets.js";
+import { readAppletRow, readAppletVersionRow } from "./readAppletRows.js";
 
 export async function queryApplet(ctx: Context, name: string): Promise<Applet | undefined> {
     return await inDatabase(ctx, "rig.sql.applets.query_one", async (ctx) => {

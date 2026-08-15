@@ -253,13 +253,11 @@ import {
 } from "../plugins/index.js";
 import { SlotEntryInvalidError, SlotEntryNotFoundError } from "../slots/index.js";
 import {
-    describeAppletScopeNotAllowed,
-    readAppletFile,
-    resolveAppletOpenUrl,
     AppletContextTokenStore,
-    AppletInvalidError,
-    AppletNotFoundError,
-} from "../applets/index.js";
+    resolveAppletOpenUrl,
+} from "./AppletContextCapability.js";
+import { readHostedAppletIcon } from "./readHostedAppletIcon.js";
+import { describeAppletScopeNotAllowed } from "../slots/describeAppletScopeNotAllowed.js";
 import {
     WorkletInvalidError,
     WorkletNotFoundError,
@@ -276,8 +274,11 @@ import {
 } from "../protocol/WorkletProtocol.js";
 import {
     createAppletRequestSchema,
+    defaultAppletAllowedScopes,
+    revertAppletRequestSchema,
     resolveAppletOpenRequestSchema,
     slotNameSchema,
+    updateAppletRequestSchema,
 } from "../protocol/index.js";
 import type {
     CreateSlotEntryRequest,
@@ -1791,9 +1792,14 @@ async function handleRequest(
         return;
     }
     if (route.name === "applets") {
+        const applets = runtimeConfig.agents?.applets;
+        if (applets === undefined) {
+            sendJson(response, 503, { error: "Applets are unavailable." });
+            return;
+        }
         if (request.method === "GET") {
             sendJson<ListAppletsResponse>(response, 200, {
-                applets: await store.applets.list(ctx),
+                applets: await applets.list(ctx),
             });
             return;
         }
@@ -1816,10 +1822,13 @@ async function handleRequest(
             }
             try {
                 sendJson<AppletResponse>(response, 201, {
-                    applet: await store.applets.create(ctx, body),
+                    applet: await applets.create(ctx, {
+                        ...body,
+                        allowedScopes: body.allowedScopes ?? [...defaultAppletAllowedScopes],
+                    }),
                 });
             } catch (error) {
-                if (error instanceof AppletInvalidError) {
+                if (error instanceof Error) {
                     sendAppletManagementError(response, 400, "invalid_applet", error.message);
                     return;
                 }
@@ -1831,6 +1840,11 @@ async function handleRequest(
         return;
     }
     if (route.name === "applet-versions" || route.name === "applet-revert") {
+        const applets = runtimeConfig.agents?.applets;
+        if (applets === undefined) {
+            sendJson(response, 503, { error: "Applets are unavailable." });
+            return;
+        }
         if (request.method !== "POST") {
             sendJson(response, 405, { error: "Method not allowed" });
             return;
@@ -1842,23 +1856,39 @@ async function handleRequest(
             sendInvalidAppletBody(response, error);
             return;
         }
+        const expectedSchema =
+            route.name === "applet-versions"
+                ? updateAppletRequestSchema
+                : revertAppletRequestSchema;
+        if (!Value.Check(expectedSchema, body)) {
+            sendAppletManagementError(
+                response,
+                400,
+                "invalid_request",
+                route.name === "applet-versions"
+                    ? "An applet update needs a source folder path and a description of the change."
+                    : "An applet revert needs an existing version number.",
+            );
+            return;
+        }
+        if ((await applets.get(ctx, route.appletName)) === undefined) {
+            sendAppletManagementError(
+                response,
+                404,
+                "applet_not_found",
+                `No applet named ${JSON.stringify(route.appletName)} exists.`,
+            );
+            return;
+        }
         try {
             const applet =
                 route.name === "applet-versions"
-                    ? await store.applets.update(ctx, route.appletName, body as UpdateAppletRequest)
-                    : await store.applets.revert(
-                          ctx,
-                          route.appletName,
-                          body as RevertAppletRequest,
-                      );
+                    ? await applets.update(ctx, route.appletName, body as UpdateAppletRequest)
+                    : await applets.revert(ctx, route.appletName, body as RevertAppletRequest);
             sendJson<AppletResponse>(response, 200, { applet });
         } catch (error) {
-            if (error instanceof AppletInvalidError) {
+            if (error instanceof Error) {
                 sendAppletManagementError(response, 400, "invalid_applet", error.message);
-                return;
-            }
-            if (error instanceof AppletNotFoundError) {
-                sendAppletManagementError(response, 404, "applet_not_found", error.message);
                 return;
             }
             throw error;
@@ -1866,6 +1896,11 @@ async function handleRequest(
         return;
     }
     if (route.name === "applet-open") {
+        const applets = runtimeConfig.agents?.applets;
+        if (applets === undefined) {
+            sendJson(response, 503, { error: "Applets are unavailable." });
+            return;
+        }
         if (request.method !== "POST") {
             sendJson(response, 405, { error: "Method not allowed" });
             return;
@@ -1886,7 +1921,7 @@ async function handleRequest(
             );
             return;
         }
-        const applet = await store.applets.get(ctx, route.appletName);
+        const applet = await applets.get(ctx, route.appletName);
         if (applet === undefined) {
             sendAppletManagementError(
                 response,
@@ -1907,11 +1942,16 @@ async function handleRequest(
         return;
     }
     if (route.name === "applet-icon") {
+        const applets = runtimeConfig.agents?.applets;
+        if (applets === undefined) {
+            sendJson(response, 503, { error: "Applets are unavailable." });
+            return;
+        }
         if (request.method !== "GET") {
             sendJson(response, 405, { error: "Method not allowed" });
             return;
         }
-        if ((await store.applets.get(ctx, route.appletName)) === undefined) {
+        if ((await applets.get(ctx, route.appletName)) === undefined) {
             sendAppletManagementError(
                 response,
                 404,
@@ -1920,7 +1960,7 @@ async function handleRequest(
             );
             return;
         }
-        const icon = await store.applets.readIcon(ctx, route.appletName, route.format);
+        const icon = await readHostedAppletIcon(route.appletName, route.format);
         if (icon.type !== "file") {
             sendAppletManagementError(response, 404, "applet_not_found", "Applet icon not found.");
             return;
@@ -1935,11 +1975,16 @@ async function handleRequest(
         return;
     }
     if (route.name === "applet-file") {
+        const applets = runtimeConfig.agents?.applets;
+        if (applets === undefined) {
+            sendJson(response, 503, { error: "Applets are unavailable." });
+            return;
+        }
         if (request.method !== "GET") {
             sendJson(response, 405, { error: "Method not allowed" });
             return;
         }
-        const applet = await store.applets.get(ctx, route.appletName);
+        const applet = await applets.get(ctx, route.appletName);
         if (applet === undefined) {
             sendAppletManagementError(
                 response,
@@ -1949,12 +1994,14 @@ async function handleRequest(
             );
             return;
         }
-        const file = await readAppletFile(
-            route.appletName,
-            applet.currentVersion,
-            route.appletFilePath,
-        );
-        if (file.type === "invalid_path") {
+        let file;
+        try {
+            file = await applets.readAsset(ctx, {
+                name: route.appletName,
+                path: route.appletFilePath === "" ? "index.html" : route.appletFilePath,
+                version: applet.currentVersion,
+            });
+        } catch {
             sendAppletManagementError(
                 response,
                 400,
@@ -1963,16 +2010,17 @@ async function handleRequest(
             );
             return;
         }
-        if (file.type === "not_found") {
+        if (file === undefined) {
             sendAppletManagementError(response, 404, "applet_not_found", "Applet file not found.");
             return;
         }
+        const data = Buffer.from(file.content, file.encoding);
         response.writeHead(200, {
-            "content-length": file.data.byteLength,
+            "content-length": data.byteLength,
             "content-type": file.contentType,
             "x-content-type-options": "nosniff",
         });
-        response.end(file.data);
+        response.end(data);
         return;
     }
     if (route.name === "worklets") {

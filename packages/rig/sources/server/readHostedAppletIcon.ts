@@ -1,7 +1,7 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 
-import { defaultAppletsRootDirectory } from "@slopus/happy-agent-features";
+import { resolveAppletRootDirectory } from "../config/resolveAppletRootDirectory.js";
 
 export type HostedAppletIconResult =
     | { contentType: string; data: Buffer; type: "file" }
@@ -12,7 +12,7 @@ export async function readHostedAppletIcon(
     name: string,
     format: "ico" | "png",
 ): Promise<HostedAppletIconResult> {
-    const root = join(defaultAppletsRootDirectory(), name);
+    const root = join(resolveAppletRootDirectory(), name);
     const target = join(root, format === "png" ? "favicon.png" : "favicon.ico");
     try {
         const [realRoot, realTarget] = await Promise.all([realpath(root), realpath(target)]);
