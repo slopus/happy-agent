@@ -1,4 +1,4 @@
-import type { Usage } from "@slopus/rig-execution";
+import type { Usage } from "../../../protocol/index.js";
 
 import type { EventId } from "../../../protocol/index.js";
 import type { PersistedSessionState } from "../../../session/InMemorySession.js";

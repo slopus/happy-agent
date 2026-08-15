@@ -34,7 +34,7 @@ import { errorToMessage } from "../errorToMessage.js";
 import { ONLINE_PRESENCE_ID } from "../presence/index.js";
 import type { NativeProcessManager } from "../processes/index.js";
 import { humanizeMcpName } from "../mcp/humanizeMcpName.js";
-import type { ServiceTier, Usage } from "@slopus/rig-execution";
+import type { ServiceTier, Usage } from "../protocol/index.js";
 import {
     DEFAULT_INFERENCE_MAX_RETRIES,
     MAX_INFERENCE_MAX_RETRIES,

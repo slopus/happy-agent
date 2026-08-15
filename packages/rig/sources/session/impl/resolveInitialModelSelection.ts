@@ -1,5 +1,5 @@
 import type { ModelCatalog } from "../../protocol/index.js";
-import type { Model } from "@slopus/rig-execution";
+import type { Model } from "../../protocol/index.js";
 
 export interface InitialModelSelection {
     model: Model;

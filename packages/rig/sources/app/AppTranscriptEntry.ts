@@ -1,4 +1,4 @@
-import type { ProviderError, Usage } from "@slopus/rig-execution";
+import type { ProviderError, Usage } from "../protocol/index.js";
 
 import type {
     BackgroundTerminalInteractionPresentation,

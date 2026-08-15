@@ -15,23 +15,20 @@ import type {
 } from "../app/CodingAssistantAgentBackend.js";
 import type {
     AbortRunOptions,
+    Model,
     ModelCatalog,
+    ProviderError,
     ProtocolSession,
     SessionEvent,
     RunShellCommandResponse,
     ReadBackgroundProcessResponse,
     StopBackgroundProcessResponse,
     SteerMessageResponse,
+    ServiceTier,
+    StopReason,
     SubmitContextMessageResponse,
 } from "../protocol/index.js";
-import {
-    defineProvider,
-    type Model,
-    type Provider,
-    type ProviderError,
-    type ServiceTier,
-    type StopReason,
-} from "@slopus/rig-execution";
+import type { CodingAssistantProviderInfo } from "../app/CodingAssistantAgentBackend.js";
 import type { PermissionMode } from "../permissions/index.js";
 import type { SecretAttachmentScope } from "../secrets/index.js";
 import type { GoalStatus, SessionGoal } from "../goals/index.js";
@@ -140,18 +137,15 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
         return this.#confirmedServiceTier;
     }
 
-    get provider(): Provider {
+    get provider(): CodingAssistantProviderInfo {
         const serviceTiers = this.#modelCatalog?.providers.find(
             (provider) => provider.providerId === this.#providerId,
         )?.serviceTiers;
-        return defineProvider({
+        return {
             id: this.#providerId,
             models: this.#models,
             ...(serviceTiers === undefined ? {} : { serviceTiers }),
-            stream() {
-                throw new Error("RemoteAgent does not expose provider streaming locally.");
-            },
-        });
+        };
     }
 
     get model(): Model {

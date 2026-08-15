@@ -1,6 +1,4 @@
-import type { Usage } from "@slopus/rig-execution";
-
-import type { SessionTokenCount } from "../../protocol/index.js";
+import type { SessionTokenCount, Usage } from "../../protocol/index.js";
 
 type SessionTokenCountUpdate =
     | { type: "compaction"; contextTokens: number }

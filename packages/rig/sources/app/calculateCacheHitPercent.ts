@@ -1,4 +1,4 @@
-import type { Usage } from "@slopus/rig-execution";
+import type { Usage } from "../protocol/index.js";
 
 export function calculateCacheHitPercent(usage: Usage): number {
     // Cache writes and uncached input are misses; output tokens are not cache-eligible input.

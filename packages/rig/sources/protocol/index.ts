@@ -1,4 +1,11 @@
 export type { EventId } from "./EventId.js";
+export type {
+    Model,
+    ProviderError,
+    ServiceTier,
+    StopReason,
+    Usage,
+} from "./InferenceProtocol.js";
 export {
     CURRENT_ONBOARDING_VERSION,
     onboardMurmurRequestSchema,

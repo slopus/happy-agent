@@ -1,7 +1,7 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import { sql } from "drizzle-orm";
-import type { Model, ServiceTier } from "@slopus/rig-execution";
+import type { Model, ServiceTier } from "../../protocol/index.js";
 import { Value } from "@sinclair/typebox/value";
 
 import type { Message } from "../../agent/types.js";

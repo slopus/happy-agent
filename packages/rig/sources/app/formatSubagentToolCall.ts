@@ -1,4 +1,4 @@
-import type { Model } from "@slopus/rig-execution";
+import type { Model } from "../protocol/index.js";
 import type { CodingAssistantModelChoice } from "./CodingAssistantAgentBackend.js";
 
 export function formatSubagentToolCall(options: {

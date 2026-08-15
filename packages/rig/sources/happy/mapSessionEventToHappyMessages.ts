@@ -1,6 +1,6 @@
 import type { AgentMessage, ToolCallBlock } from "../agent/types.js";
 import type { SessionEvent } from "../protocol/index.js";
-import type { Usage } from "@slopus/rig-execution";
+import type { Usage } from "../protocol/index.js";
 import type { HappySessionEnvelope, HappySessionProtocolMessage, HappyUsage } from "./types.js";
 
 interface ActiveHappyGroup {

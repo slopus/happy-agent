@@ -1,4 +1,4 @@
-import type { Usage } from "@slopus/rig-execution";
+import type { Usage } from "../../protocol/index.js";
 
 export function zeroUsage(): Usage {
     return {
