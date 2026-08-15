@@ -11,6 +11,7 @@ export interface AppletCreateRecord {
     description: string;
     iconThumbhash: string;
     name: string;
+    operationId?: string;
     purpose: string;
     sourceDescription?: string;
 }
@@ -39,6 +40,7 @@ export async function appletCreate(ctx: Context, record: AppletCreateRecord): Pr
             .values({
                 changeDescription: record.changeDescription,
                 createdAtMs: record.createdAt,
+                operationId: record.operationId ?? `legacy:${record.name}:1`,
                 version: 1,
                 appletName: record.name,
             })

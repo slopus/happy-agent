@@ -1,4 +1,16 @@
 import { Type, type Static } from "@sinclair/typebox";
+import {
+    appletChangeDescriptionSchema,
+    appletDescriptionSchema,
+    appletNameSchema,
+    appletPurposeSchema,
+    appletRevertInputSchema,
+    appletSchema as featureAppletSchema,
+    appletSourcePathSchema,
+    appletVersionSchema as featureAppletVersionSchema,
+    type Applet,
+    type AppletVersion,
+} from "@slopus/happy-agent-features";
 
 import type { EventId } from "./EventId.js";
 import { slotScopeSchema } from "./SlotProtocol.js";
@@ -19,65 +31,26 @@ export const appletAllowedScopesSchema = Type.Array(slotScopeSchema, {
 
 export type AppletAllowedScopes = Static<typeof appletAllowedScopesSchema>;
 
-export const appletVersionSchema = Type.Object(
-    {
-        version: Type.Integer({ minimum: 1 }),
-        changeDescription: Type.String({ description: "What changed in this import." }),
-        createdAt: Type.Number(),
-    },
-    { additionalProperties: false },
-);
-
-export type AppletVersion = Static<typeof appletVersionSchema>;
+export const appletVersionSchema = featureAppletVersionSchema;
+export type { AppletVersion };
 
 /**
  * An applet is created by importing a source folder; no agent writes into the applet data folder
  * directly. Each import lands in its own version directory (`v1`, `v2`, ...), one version is
  * current, and rig serves the current version's static files with `index.html` as the entry point.
  */
-export const appletSchema = Type.Object(
-    {
-        name: Type.String({ description: "Human-readable kebab-case applet name." }),
-        description: Type.String({ description: "What the applet is." }),
-        purpose: Type.String({ description: "Why the applet exists." }),
-        allowedScopes: appletAllowedScopesSchema,
-        iconThumbhash: Type.String({
-            description: "ThumbHash for the applet's persisted 512 by 512 icon.",
-            minLength: 1,
-        }),
-        iconUrl: Type.String({
-            description: "Rig HTTP path that serves the applet's persisted icon.",
-            minLength: 1,
-        }),
-        authorSessionId: Type.String({
-            description: "The session of the agent that created the applet.",
-        }),
-        sourceDescription: Type.Optional(
-            Type.String({
-                description: "Where the sources live, such as the project and folder.",
-            }),
-        ),
-        currentVersion: Type.Integer({ minimum: 1 }),
-        versions: Type.Array(appletVersionSchema),
-        createdAt: Type.Number(),
-        updatedAt: Type.Number(),
-    },
-    { additionalProperties: false },
-);
-
-export type Applet = Static<typeof appletSchema>;
+export const appletSchema = featureAppletSchema;
+export type { Applet };
 
 export const createAppletRequestSchema = Type.Object(
     {
-        name: Type.String({ description: "Human-readable kebab-case applet name." }),
-        description: Type.String({ description: "What the applet is." }),
-        purpose: Type.String({ description: "Why the applet exists." }),
+        name: appletNameSchema,
+        description: appletDescriptionSchema,
+        purpose: appletPurposeSchema,
         allowedScopes: Type.Optional(appletAllowedScopesSchema),
         authorSessionId: Type.String(),
-        path: Type.String({ description: "Absolute path of the source folder to import." }),
-        iconPath: Type.String({
-            description: "Absolute path of the required 512 by 512 PNG applet icon.",
-        }),
+        path: appletSourcePathSchema,
+        iconPath: appletSourcePathSchema,
         sourceDescription: Type.Optional(
             Type.String({
                 description: "Where the sources live, such as the project and folder.",
@@ -91,8 +64,8 @@ export type CreateAppletRequest = Static<typeof createAppletRequestSchema>;
 
 export const updateAppletRequestSchema = Type.Object(
     {
-        path: Type.String({ description: "Absolute path of the source folder to import." }),
-        changeDescription: Type.String({ description: "What changed in this import." }),
+        path: appletSourcePathSchema,
+        changeDescription: appletChangeDescriptionSchema,
         allowedScopes: Type.Optional(appletAllowedScopesSchema),
     },
     { additionalProperties: false },
@@ -139,12 +112,7 @@ export const appletContextSchema = Type.Object(
 
 export type AppletContext = Static<typeof appletContextSchema>;
 
-export const revertAppletRequestSchema = Type.Object(
-    {
-        version: Type.Integer({ minimum: 1, description: "The existing version to make current." }),
-    },
-    { additionalProperties: false },
-);
+export const revertAppletRequestSchema = appletRevertInputSchema;
 
 export type RevertAppletRequest = Static<typeof revertAppletRequestSchema>;
 

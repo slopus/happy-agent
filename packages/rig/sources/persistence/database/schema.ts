@@ -852,9 +852,20 @@ export const appletVersions = sqliteTable(
         version: integer("version").notNull(),
         changeDescription: text("change_description").notNull(),
         createdAtMs: integer("created_at_ms").notNull(),
+        operationId: text("operation_id").notNull(),
     },
     (table) => [primaryKey({ columns: [table.appletName, table.version] })],
 );
+
+export const appletMutationReceipts = sqliteTable("applet_mutation_receipts", {
+    operationId: text("operation_id").primaryKey(),
+    receiptJson: text("receipt_json").notNull(),
+});
+
+export const appletMutationProofs = sqliteTable("applet_mutation_proofs", {
+    operationId: text("operation_id").primaryKey(),
+    proofJson: text("proof_json").notNull(),
+});
 
 export const worklets = sqliteTable("worklets", {
     name: text("name").primaryKey(),

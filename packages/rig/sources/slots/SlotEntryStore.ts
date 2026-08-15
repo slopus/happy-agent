@@ -24,7 +24,7 @@ import {
     type UpdateSlotEntryRequest,
 } from "../protocol/SlotProtocol.js";
 import { allowedSlotScopes, describeAllowedScopesForSlot } from "../protocol/SlotScopeRules.js";
-import { describeAppletScopeNotAllowed } from "../applets/describeAppletScopeNotAllowed.js";
+import { describeAppletScopeNotAllowed } from "./describeAppletScopeNotAllowed.js";
 import { SlotEntryInvalidError } from "./SlotEntryInvalidError.js";
 import { SlotEntryNotFoundError } from "./SlotEntryNotFoundError.js";
 

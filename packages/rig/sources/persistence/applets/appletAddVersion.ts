@@ -14,6 +14,7 @@ export async function appletAddVersion(
     changeDescription: string,
     now: number,
     allowedScopes?: AppletAllowedScopes,
+    operationId = `legacy:${name}:${String(version)}`,
 ): Promise<void> {
     await inTx(ctx, "rig.sql.applets.add_version", async (ctx) => {
         const transaction = ctx.tx;
@@ -22,6 +23,7 @@ export async function appletAddVersion(
             .values({
                 changeDescription,
                 createdAtMs: now,
+                operationId,
                 version,
                 appletName: name,
             })

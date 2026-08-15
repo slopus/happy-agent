@@ -2,7 +2,7 @@ import { inDatabase } from "../database/inDatabase.js";
 import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { Applet } from "../../protocol/AppletProtocol.js";
+import type { Applet } from "@slopus/happy-agent-features";
 import type { DatabaseScope } from "../Transaction.js";
 import { readAppletRow, readAppletVersionRow } from "./queryApplets.js";
 

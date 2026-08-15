@@ -4,13 +4,13 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import {
-    appletAllowedScopesSchema,
+    appletIconUrl,
+    appletSchema,
     type Applet,
     type AppletVersion,
-} from "../../protocol/AppletProtocol.js";
+} from "@slopus/happy-agent-features";
 import type { DatabaseScope } from "../Transaction.js";
 import { readNumber, readOptionalString, readString } from "../session/impl/sqliteRow.js";
-import { appletIconUrl } from "../../applets/readAppletIcon.js";
 
 /** Lists every applet with its complete version history, alphabetically by name. */
 export async function queryApplets(ctx: Context): Promise<readonly Applet[]> {
@@ -42,7 +42,7 @@ export function readAppletRow(
     const sourceDescription = readOptionalString(row, "source_description");
     return {
         allowedScopes: Value.Decode(
-            appletAllowedScopesSchema,
+            appletSchema.properties.allowedScopes,
             JSON.parse(readString(row, "allowed_scopes_json")),
         ),
         name: readString(row, "name"),
@@ -64,5 +64,6 @@ export function readAppletVersionRow(row: Record<string, unknown>): AppletVersio
         version: readNumber(row, "version"),
         changeDescription: readString(row, "change_description"),
         createdAt: readNumber(row, "created_at_ms"),
+        operationId: readString(row, "operation_id"),
     };
 }
