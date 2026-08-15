@@ -46,7 +46,6 @@ import {
 } from "../goals/index.js";
 import type {
     ChangeEffortRequest,
-    AnswerUserInputRequest,
     AbortRunResponse,
     Attachment,
     ChangeModelRequest,
@@ -117,8 +116,6 @@ export interface SessionEventCommitCheckpoint {
     readonly draft: string | undefined;
     readonly draftUpdatedAt: number | undefined;
     readonly elapsedMs: number;
-    readonly durableUserInputs: ReadonlyMap<string, DurableUserInputCall>;
-    readonly durableWaits: ReadonlyMap<string, DurableWait>;
     readonly goal: SessionGoal | undefined;
     readonly interruption: SessionInterruption | undefined;
     readonly lastMessageAt: number | undefined;
@@ -169,14 +166,6 @@ import { IDLE_SESSION_ACTIVITY, sessionActivityAfterEvent } from "./sessionActiv
 import { aggregateSessionTokenCount } from "./usage/aggregateSessionTokenCount.js";
 import { sessionTokenCountAfterEvent } from "./usage/sessionTokenCountAfterEvent.js";
 import type { Model, ServiceTier, StopReason, Usage } from "../protocol/index.js";
-import type {
-    DurableUserInputCall,
-    DurableUserInputOptions,
-    UserInputOutcome,
-    UserInputRequest,
-} from "../user-input/index.js";
-import type { CancelAskResult } from "../agent/context/UserInputContext.js";
-import { isOpenQuestion } from "../user-input/isOpenQuestion.js";
 import type { PresenceState } from "../presence/index.js";
 import {
     humanizeWorkflowName,
@@ -244,18 +233,9 @@ import type { SecretAttachmentScope } from "../secrets/index.js";
 import { createErrorMessage } from "../agent/impl/createErrorMessage.js";
 import type { AgentMessage, ErrorMessage, ToolCallBlock, ToolResultBlock } from "../agent/types.js";
 import type { RigAgentConfiguration } from "../agent/RigProtocolFeature.js";
-import type {
-    DurableWait,
-    DurableWaitRequest,
-    ScheduledMessage,
-    ScheduleMessageRequest,
-    WaitResult,
-} from "../scheduling/index.js";
+import type { ScheduledMessage, ScheduleMessageRequest } from "../scheduling/index.js";
 
-const MAX_RETAINED_DURABLE_USER_INPUTS = 1_000;
-const MAX_RETAINED_DURABLE_WAITS = 1_000;
 const MAX_RETAINED_SETTLED_SCHEDULED_MESSAGES = 1_000;
-const MAX_TIMER_DELAY_MS = 2_147_000_000;
 const SESSION_METADATA_TIMEOUT_MS = 30_000;
 /** How many failed attempts to name a chat are made before leaving it unnamed for good. */
 const SESSION_METADATA_MAX_FAILURES = 3;
@@ -282,13 +262,6 @@ export interface PersistedSessionMessage {
     message: Message;
     position: number;
     runId?: string;
-}
-
-export interface PersistedPendingContextMessage {
-    anchorRunId: string;
-    createdAt: number;
-    message: UserMessage;
-    position: number;
 }
 
 interface SessionSubmitMessageRequest extends SubmitMessageRequest {
@@ -340,7 +313,6 @@ export interface PersistedSessionState {
     providerId: string;
     permissionMode: PermissionMode;
     permissionReviews?: readonly SessionPermissionReview[];
-    pendingContextMessages?: readonly PersistedPendingContextMessage[];
     scope: SessionScope;
     unsortedSince?: number;
     secretIds?: readonly string[];
@@ -360,8 +332,6 @@ export interface PersistedSessionState {
     /** The newest session event included in `usageSummary`. */
     usageSummaryEventId?: EventId;
     tools: readonly string[];
-    durableUserInputs?: readonly DurableUserInputCall[];
-    durableWaits?: readonly DurableWait[];
     scheduledMessages?: readonly ScheduledMessage[];
     systemPrompt?: string;
     workflows?: readonly PersistedWorkflowRun[];
@@ -390,16 +360,6 @@ export interface InMemorySessionPersistence {
     ): Promise<void>;
     clearMessages(ctx: Context, sessionId: string): Promise<void>;
     deleteMessagesFrom(ctx: Context, sessionId: string, position: number): Promise<void>;
-    insertPendingContextMessage?(
-        ctx: Context,
-        sessionId: string,
-        pending: PersistedPendingContextMessage,
-    ): Promise<void>;
-    drainPendingContextMessages?(
-        ctx: Context,
-        sessionId: string,
-        messageIds?: readonly string[],
-    ): Promise<readonly PersistedPendingContextMessage[]>;
     loadTranscriptPage?(
         ctx: Context,
         sessionId: string,
@@ -412,8 +372,6 @@ export interface InMemorySessionPersistence {
         turnLimit: number,
         after: EventId,
     ): Promise<SessionTranscriptWindow | undefined>;
-    pruneDurableUserInputs?(ctx: Context, sessionId: string, retain: number): Promise<void>;
-    pruneDurableWaits?(ctx: Context, sessionId: string, retain: number): Promise<void>;
     pruneScheduledMessages?(
         ctx: Context,
         sessionId: string,
@@ -441,8 +399,6 @@ export interface InMemorySessionPersistence {
         },
     ): Promise<string>;
     upsertMessage(ctx: Context, sessionId: string, message: PersistedSessionMessage): Promise<void>;
-    upsertDurableUserInput?(ctx: Context, call: DurableUserInputCall): Promise<void>;
-    upsertDurableWait?(ctx: Context, wait: DurableWait): Promise<void>;
     upsertScheduledMessage?(ctx: Context, message: ScheduledMessage): Promise<void>;
     scheduledMessageChanged?(ctx: Context): Promise<void>;
 }
@@ -531,11 +487,6 @@ interface MetadataGenerationTarget {
     runId: string;
 }
 
-interface DurableWaitWaiter {
-    reject: (error: Error) => void;
-    resolve: (result: WaitResult) => void;
-}
-
 interface InternalWorkflowRun {
     agentCalls: (WorkflowAgentCacheEntry | undefined)[];
     checkpoint?: WorkflowCheckpoint;
@@ -547,17 +498,6 @@ interface InternalWorkflowRun {
 
 const MAX_WORKFLOW_LOG_CHARS = 4_000;
 const MAX_SUBAGENT_INSPECTION_TEXT_CHARS = 32_000;
-
-interface PendingUserInput {
-    durable?: DurableUserInputCall;
-    onAbort?: () => void;
-    /** When presence started counting down the wait for this question. */
-    requestedAt: number;
-    request: UserInputRequest;
-    reject: (error: Error) => void;
-    resolve: (outcome: UserInputOutcome) => void;
-    signal?: AbortSignal;
-}
 
 interface PartialMessageState {
     messageId: string;
@@ -661,10 +601,6 @@ export class InMemorySession {
     #effort: string | undefined;
     #serviceTier: ServiceTier | undefined;
     #goal: SessionGoal | undefined;
-    #durableUserInputs = new Map<string, DurableUserInputCall>();
-    #durableWaits = new Map<string, DurableWait>();
-    #durableWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    #durableWaitWaiters = new Map<string, DurableWaitWaiter>();
     #resumingDurableToolRun = false;
     #folders: FolderRepository | undefined;
     #instructions: string | undefined;
@@ -709,11 +645,8 @@ export class InMemorySession {
     #onInitialTitle: InMemorySessionOptions["onInitialTitle"];
     #orderKey: string;
     #partialPositions = new Set<number>();
-    #pendingContextMessages = new Map<string, PersistedPendingContextMessage>();
-    #pendingContextSteering = new Map<string, Set<string>>();
     #pendingSteeringMessages = new Map<string, PendingSteeringMessage>();
     #pendingSteeringContinuations = new Map<string, PendingSteeringContinuation>();
-    #pendingUserInputs = new Map<string, PendingUserInput>();
     #persistence: InMemorySessionPersistence | undefined;
     #onAppendEvent: SessionEventAppendHook | undefined;
     readonly #stagedProtocolProjections = new WeakMap<object, StagedProtocolProjection>();
@@ -904,12 +837,6 @@ export class InMemorySession {
         this.#appendSystemPrompt =
             options.restore?.appendSystemPrompt ?? options.request.appendSystemPrompt;
         this.#systemPrompt = options.restore?.systemPrompt;
-        for (const call of options.restore?.durableUserInputs ?? []) {
-            this.#durableUserInputs.set(call.request.requestId, structuredClone(call));
-        }
-        for (const wait of options.restore?.durableWaits ?? []) {
-            this.#durableWaits.set(wait.id, structuredClone(wait));
-        }
         for (const message of options.restore?.scheduledMessages ?? []) {
             this.#scheduledMessages.set(message.id, structuredClone(message));
         }
@@ -920,14 +847,11 @@ export class InMemorySession {
                 ? requestedEffort
                 : selection.model.defaultThinkingLevel;
         const requestedServiceTier = options.restore?.serviceTier ?? options.request.serviceTier;
-        if (
+        this.#serviceTier =
             requestedServiceTier !== undefined &&
             !this.#providerSupportsServiceTier(selection.providerId, requestedServiceTier)
-        ) {
-            this.#serviceTier = undefined;
-        } else {
-            this.#serviceTier = requestedServiceTier;
-        }
+                ? undefined
+                : requestedServiceTier;
         this.#instructions = options.restore?.instructions ?? options.request.instructions;
         this.#goal = options.restore?.goal === undefined ? undefined : { ...options.restore.goal };
         this.#contextMessages =
@@ -939,9 +863,6 @@ export class InMemorySession {
         this.#workspaceTransfer = options.restore?.workspaceTransfer ?? { status: "idle" };
         this.#models = this.#modelsForProvider(this.#providerId);
         this.#status = options.restore?.status ?? "idle";
-        // The status a session opens in is already on the snapshot every client
-        // reads, so it is recorded as reported and only later changes are
-        // announced.
         this.#reportedStatus = this.#status;
         this.#workspaceArchived = this.#status === "archived";
         this.#unread =
@@ -963,20 +884,11 @@ export class InMemorySession {
         this.#metadataNamed = this.#metadataUpdatedAt !== undefined;
         this.#metadataNamingAttempted = this.#metadataUpdatedAt !== undefined;
         this.#metadataRefinementAttempted = this.#metadataRunId !== undefined;
-        // The attempts a chat gets belong to the session that spends them. A restored chat whose
-        // naming already failed keeps that outcome instead of asking the provider again every time
-        // it is loaded.
         if (this.#titleStatus === "error") this.#metadataFailures = SESSION_METADATA_MAX_FAILURES;
         this.#totalTokens = options.restore?.totalTokens ?? 0;
         this.#taskList = new SessionTaskList(options.restore?.tasks, options.restore?.nextTaskId);
         this.#tools = options.restore?.tools ?? [];
         this.#interruption = options.restore?.interruption;
-        for (const pending of options.restore?.pendingContextMessages ?? []) {
-            this.#pendingContextMessages.set(pending.message.id, {
-                ...pending,
-                message: structuredClone(pending.message),
-            });
-        }
         this.#messages = [...(options.restore?.messages ?? [])].sort(
             (left, right) => left.position - right.position,
         );
@@ -1040,8 +952,6 @@ export class InMemorySession {
         for (const review of options.restore?.permissionReviews ?? []) {
             this.#permissionReviews.set(review.toolCallId, { ...review });
         }
-        this.#restoreDurableWaitTimers();
-        void this.#refreshWaitActivity(ctx, false).catch(rethrowDatabaseFailure);
         for (const event of this.events.all()) {
             this.#recordRunFacts(event);
             this.#recordPermissionReview(event);
@@ -1083,7 +993,6 @@ export class InMemorySession {
 
         this.#ensureKnownModel(this.#modelId, this.#providerId);
         this.#ready = (async () => {
-            await this.#restoreUserInputPresenceTimers(ctx);
             if (
                 this.#workspaceTransfer.status === "scheduled" ||
                 this.#workspaceTransfer.status === "transferring"
@@ -2034,7 +1943,6 @@ export class InMemorySession {
             metadataRunId: _metadataRunId,
             metadataUpdatedAt: _metadataUpdatedAt,
             recap: _recap,
-            durableWaits: _durableWaits,
             scheduledMessages: _scheduledMessages,
             workflows: _workflows,
             ...rest
@@ -2253,14 +2161,6 @@ export class InMemorySession {
     async retireForContextChange(ctx: Context): Promise<void> {
         if (this.#workspaceArchived) return this.beginShutdown(ctx);
         const activeRun = this.#activeRun;
-        const runIds = new Set([
-            ...(activeRun === undefined ? [] : [activeRun.runId]),
-            ...(this.#restoredActiveRunId === undefined ? [] : [this.#restoredActiveRunId]),
-        ]);
-        for (const runId of runIds) {
-            await this.#cancelDurableUserInputs(ctx, runId);
-            await this.#cancelDurableWaits(ctx, runId);
-        }
         this.#finishElapsedInterval();
         this.#activeRun = undefined;
         this.#restoredActiveRunId = undefined;
@@ -2591,561 +2491,6 @@ export class InMemorySession {
         return structuredClone(next);
     }
 
-    async requestUserInput(
-        ctx: Context,
-        request: UserInputRequest,
-        options: { durable?: DurableUserInputOptions; signal?: AbortSignal } = {},
-    ): Promise<UserInputOutcome> {
-        if (this.isSubagent()) {
-            throw new Error("Only the primary session can ask the user a question.");
-        }
-        if (this.#pendingUserInputs.has(request.requestId)) {
-            throw new Error("A user input request with this identifier is already pending.");
-        }
-        if (isSignalAborted(options.signal)) {
-            return Promise.reject(new Error("The user input request was cancelled."));
-        }
-
-        let durable: DurableUserInputCall | undefined;
-        let createdDurable = false;
-        if (options.durable !== undefined) {
-            const runId = this.#activeRun?.runId;
-            if (runId === undefined) {
-                throw new Error("Durable interactive user input requires an active run.");
-            }
-            const existing = this.#durableUserInputs.get(request.requestId);
-            if (existing !== undefined) {
-                if (
-                    existing.runId !== runId ||
-                    existing.batchId !== options.durable.batchId ||
-                    existing.toolCallId !== options.durable.toolCallId
-                ) {
-                    throw new Error(
-                        "The durable user input identity does not match its pending request.",
-                    );
-                }
-                if (existing.response !== undefined) {
-                    return Promise.resolve({
-                        status: "answered" as const,
-                        ...structuredClone(existing.response),
-                    });
-                }
-                durable = existing;
-            } else {
-                durable = {
-                    batchId: options.durable.batchId,
-                    consumed: false,
-                    createdAt: this.#now(),
-                    kind: options.durable.kind,
-                    ...(options.durable.permission === undefined
-                        ? {}
-                        : { permission: { ...options.durable.permission } }),
-                    ...(options.durable.providerToolCallId === undefined
-                        ? {}
-                        : { providerToolCallId: options.durable.providerToolCallId }),
-                    request: structuredClone(request),
-                    runId,
-                    sessionId: this.id,
-                    status: "pending",
-                    toolArguments: structuredClone(options.durable.toolArguments),
-                    toolCallId: options.durable.toolCallId,
-                    toolCallIndex: options.durable.toolCallIndex,
-                    toolName: options.durable.toolName,
-                };
-                await this.#persistence?.upsertDurableUserInput?.(ctx, durable);
-                createdDurable = true;
-            }
-        }
-
-        const requestedAt = this.#now();
-        let pendingInput!: PendingUserInput;
-        const response = new Promise<UserInputOutcome>((resolve, reject) => {
-            pendingInput = {
-                request,
-                requestedAt,
-                reject,
-                resolve,
-                ...(durable === undefined ? {} : { durable }),
-            };
-            if (options.signal !== undefined) pendingInput.signal = options.signal;
-            const onAbort = () => {
-                void withWorkerContext(
-                    "user-input-abort",
-                    (workerCtx) => this.#abortPendingUserInput(workerCtx, pendingInput),
-                    { sessionId: this.id },
-                ).catch((error: unknown) => {
-                    pendingInput.reject(
-                        error instanceof Error ? error : new Error(errorToMessage(error)),
-                    );
-                });
-            };
-            pendingInput.onAbort = onAbort;
-            options.signal?.addEventListener("abort", onAbort, { once: true });
-        });
-        try {
-            if (durable === undefined || createdDurable) {
-                await this.#append(ctx, "user_input_requested", request);
-            }
-        } catch (error) {
-            options.signal?.removeEventListener("abort", pendingInput.onAbort!);
-            throw error;
-        }
-        if (durable !== undefined && createdDurable) {
-            this.#durableUserInputs.set(request.requestId, durable);
-        }
-        this.#pendingUserInputs.set(request.requestId, pendingInput);
-        if (isSignalAborted(options.signal)) {
-            await this.#abortPendingUserInput(ctx, pendingInput).catch((error: unknown) => {
-                pendingInput.reject(
-                    error instanceof Error ? error : new Error(errorToMessage(error)),
-                );
-            });
-        }
-        void this.#applyPresenceToUserInput(ctx, request.requestId, options.durable?.kind).catch(
-            rethrowDatabaseFailure,
-        );
-        return response;
-    }
-
-    async #abortPendingUserInput(ctx: Context, pendingInput: PendingUserInput): Promise<void> {
-        const requestId = pendingInput.request.requestId;
-        if (this.#pendingUserInputs.get(requestId) !== pendingInput) return;
-        if (pendingInput.durable === undefined) {
-            await this.#append(ctx, "user_input_resolved", {
-                requestId,
-                status: "cancelled",
-            });
-        } else if (!this.#closing && pendingInput.durable.status === "pending") {
-            await this.#cancelDurableUserInput(ctx, pendingInput.durable);
-        }
-        if (this.#pendingUserInputs.get(requestId) !== pendingInput) return;
-        this.#pendingUserInputs.delete(requestId);
-        this.#clearUserInputPresenceTimer(requestId);
-        pendingInput.signal?.removeEventListener("abort", pendingInput.onAbort!);
-        pendingInput.reject(new Error("The user input request was cancelled."));
-    }
-
-    /** Applies a daemon-wide presence change to this agent and anything awaiting the user. */
-    presenceChanged(state: PresenceState): void {
-        for (const pending of [...this.#pendingUserInputs.values()]) {
-            void withWorkerContext(
-                "user-input-presence",
-                (workerCtx) =>
-                    this.#applyPresenceToUserInput(
-                        workerCtx,
-                        pending.request.requestId,
-                        pending.durable?.kind,
-                        state,
-                    ),
-                { sessionId: this.id },
-            ).catch(rethrowDatabaseFailure);
-        }
-        for (const call of this.#durableUserInputs.values()) {
-            if (
-                this.#pendingUserInputs.has(call.request.requestId) ||
-                call.kind !== "question" ||
-                call.consumed ||
-                call.status !== "pending"
-            ) {
-                continue;
-            }
-            void withWorkerContext(
-                "user-input-presence",
-                (workerCtx) => this.#applyPresenceToRestoredUserInput(workerCtx, call, state),
-                { sessionId: this.id },
-            ).catch(rethrowDatabaseFailure);
-        }
-    }
-
-    /**
-     * Questions follow the user's presence: Online waits indefinitely, Away never waits, and a
-     * custom state waits for however long it allows. When presence ends the wait the question
-     * keeps its place in the Inbox and only stops blocking the agent.
-     */
-    async #applyPresenceToUserInput(
-        ctx: Context,
-        requestId: string,
-        kind: DurableUserInputCall["kind"] | undefined,
-        currentState?: PresenceState,
-    ): Promise<void> {
-        if (kind !== "question") return;
-        if (!this.#pendingUserInputs.has(requestId)) return;
-        this.#clearUserInputPresenceTimer(requestId);
-        const state = currentState ?? this.#presence?.state();
-        if (state === undefined) return;
-        const answerWaitMs = state.presence.answerWaitMs;
-        const durable = this.#pendingUserInputs.get(requestId)?.durable;
-        if (answerWaitMs === null) {
-            if (durable?.answerDueAt !== undefined || durable?.answerWaitStartedAt !== undefined) {
-                const nextDurable = { ...durable };
-                delete nextDurable.answerDueAt;
-                delete nextDurable.answerWaitStartedAt;
-                await this.#persistence?.upsertDurableUserInput?.(ctx, nextDurable);
-                Object.assign(durable, nextDurable);
-            }
-            return;
-        }
-        const startedAt = this.#now();
-        const dueAt = startedAt + Math.max(0, answerWaitMs);
-        if (durable !== undefined) {
-            const nextDurable = {
-                ...durable,
-                answerDueAt: dueAt,
-                answerWaitStartedAt: startedAt,
-            };
-            await this.#persistence?.upsertDurableUserInput?.(ctx, nextDurable);
-            Object.assign(durable, nextDurable);
-        }
-        if (answerWaitMs <= 0) {
-            await this.#detachUserInput(ctx, requestId, "away", state);
-            return;
-        }
-        this.#armUserInputPresenceTimer(requestId, dueAt, state);
-    }
-
-    #armUserInputPresenceTimer(
-        requestId: string,
-        dueAt: number,
-        state: PresenceState,
-        reason: "away" | "timeout" = "timeout",
-    ): void {
-        const timer = setTimeout(
-            () => {
-                if (this.#userInputPresenceTimers.get(requestId) !== timer) return;
-                this.#userInputPresenceTimers.delete(requestId);
-                if (dueAt > this.#now()) {
-                    this.#armUserInputPresenceTimer(requestId, dueAt, state, reason);
-                    return;
-                }
-                const currentState = this.#presence?.state() ?? state;
-                if (this.#pendingUserInputs.has(requestId)) {
-                    void withWorkerContext(
-                        "user-input-presence-timeout",
-                        (workerCtx) =>
-                            this.#detachUserInput(workerCtx, requestId, reason, currentState),
-                        { sessionId: this.id },
-                    ).catch(rethrowDatabaseFailure);
-                } else {
-                    void withWorkerContext(
-                        "user-input-presence-timeout",
-                        (workerCtx) =>
-                            this.#detachRestoredUserInput(
-                                workerCtx,
-                                requestId,
-                                reason,
-                                currentState,
-                            ),
-                        { sessionId: this.id },
-                    ).catch(rethrowDatabaseFailure);
-                }
-            },
-            Math.min(MAX_TIMER_DELAY_MS, Math.max(0, dueAt - this.#now())),
-        );
-        timer.unref?.();
-        this.#userInputPresenceTimers.set(requestId, timer);
-    }
-
-    async #restoreUserInputPresenceTimers(ctx: Context): Promise<void> {
-        const state = this.#presence?.state();
-        if (state === undefined || state.presence.answerWaitMs === null) return;
-        for (const call of this.#durableUserInputs.values()) {
-            if (
-                call.kind !== "question" ||
-                call.consumed ||
-                call.status !== "pending" ||
-                call.detachedAt !== undefined
-            ) {
-                continue;
-            }
-            const startedAt = call.answerWaitStartedAt ?? this.#now();
-            const dueAt = call.answerDueAt ?? startedAt + Math.max(0, state.presence.answerWaitMs);
-            if (call.answerDueAt === undefined || call.answerWaitStartedAt === undefined) {
-                const nextCall = {
-                    ...call,
-                    answerDueAt: dueAt,
-                    answerWaitStartedAt: startedAt,
-                };
-                await this.#persistence?.upsertDurableUserInput?.(ctx, nextCall);
-                Object.assign(call, nextCall);
-            }
-            this.#armUserInputPresenceTimer(
-                call.request.requestId,
-                dueAt,
-                state,
-                state.presence.answerWaitMs <= 0 ? "away" : "timeout",
-            );
-        }
-    }
-
-    async #applyPresenceToRestoredUserInput(
-        ctx: Context,
-        call: DurableUserInputCall,
-        state: PresenceState,
-    ): Promise<void> {
-        this.#clearUserInputPresenceTimer(call.request.requestId);
-        const answerWaitMs = state.presence.answerWaitMs;
-        if (answerWaitMs === null) {
-            const nextCall = { ...call };
-            delete nextCall.answerDueAt;
-            delete nextCall.answerWaitStartedAt;
-            await this.#persistence?.upsertDurableUserInput?.(ctx, nextCall);
-            Object.assign(call, nextCall);
-            return;
-        }
-        const startedAt = this.#now();
-        const dueAt = startedAt + Math.max(0, answerWaitMs);
-        const nextCall = {
-            ...call,
-            answerDueAt: dueAt,
-            answerWaitStartedAt: startedAt,
-        };
-        await this.#persistence?.upsertDurableUserInput?.(ctx, nextCall);
-        Object.assign(call, nextCall);
-        this.#armUserInputPresenceTimer(
-            call.request.requestId,
-            dueAt,
-            state,
-            answerWaitMs <= 0 ? "away" : "timeout",
-        );
-    }
-
-    async #detachRestoredUserInput(
-        ctx: Context,
-        requestId: string,
-        reason: "away" | "timeout",
-        state: PresenceState,
-    ): Promise<void> {
-        const call = this.#durableUserInputs.get(requestId);
-        if (
-            call === undefined ||
-            call.kind !== "question" ||
-            call.consumed ||
-            call.status !== "pending"
-        ) {
-            return;
-        }
-        const outcome = {
-            askId: requestId,
-            ...(state.changesAt === undefined ? {} : { changesAt: state.changesAt }),
-            presence: state.presence,
-            reason,
-            status: "unanswered" as const,
-            waitedMs: Math.max(0, this.#now() - (call.answerWaitStartedAt ?? call.createdAt)),
-        };
-        const message = `Tool '${call.toolName}' is now owned by Agent Base.`;
-        const result: ToolResultBlock = {
-            display: message,
-            failure: { kind: "execution_failed", message },
-            isError: true,
-            ...(call.providerToolCallId === undefined
-                ? {}
-                : { providerToolCallId: call.providerToolCallId }),
-            rendered: [{ text: message, type: "text" }],
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            type: "tool_result",
-        };
-        const nextCall = {
-            ...call,
-            detachedAt: this.#now(),
-            result,
-            status: "completed" as const,
-        };
-        await this.#persistence?.upsertDurableUserInput?.(ctx, nextCall);
-        Object.assign(call, nextCall);
-        await this.#append(ctx, "user_input_detached", {
-            presenceId: state.presence.id,
-            reason,
-            requestId,
-        });
-    }
-
-    async #detachUserInput(
-        ctx: Context,
-        requestId: string,
-        reason: "away" | "timeout",
-        state: PresenceState,
-    ): Promise<void> {
-        const pending = this.#pendingUserInputs.get(requestId);
-        if (pending === undefined) return;
-        this.#clearUserInputPresenceTimer(requestId);
-        const durable = pending.durable;
-        if (durable !== undefined && durable.status === "pending") {
-            // The run no longer waits for this answer, so a restart must not replay it.
-            const nextDurable = {
-                ...durable,
-                consumed: true,
-                detachedAt: this.#now(),
-            };
-            await this.#persistence?.upsertDurableUserInput?.(ctx, nextDurable);
-            Object.assign(durable, nextDurable);
-        }
-        await this.#append(ctx, "user_input_detached", {
-            presenceId: state.presence.id,
-            reason,
-            requestId,
-        });
-        this.#pendingUserInputs.delete(requestId);
-        if (pending.onAbort !== undefined) {
-            pending.signal?.removeEventListener("abort", pending.onAbort);
-        }
-        pending.resolve({
-            askId: requestId,
-            ...(state.changesAt === undefined ? {} : { changesAt: state.changesAt }),
-            presence: state.presence,
-            reason,
-            status: "unanswered",
-            waitedMs: Math.max(0, this.#now() - pending.requestedAt),
-        });
-    }
-
-    #clearUserInputPresenceTimer(requestId: string): void {
-        const timer = this.#userInputPresenceTimers.get(requestId);
-        if (timer === undefined) return;
-        clearTimeout(timer);
-        this.#userInputPresenceTimers.delete(requestId);
-    }
-
-    /** Withdraws a question the agent no longer needs an answer to. */
-    async cancelUserInput(ctx: Context, requestId: string): Promise<CancelAskResult> {
-        const durable = this.#durableUserInputs.get(requestId);
-        if (durable === undefined) {
-            return { cancelled: false, reason: "There is no question with that id." };
-        }
-        if (!isOpenQuestion(durable)) {
-            return {
-                cancelled: false,
-                reason:
-                    durable.status === "cancelled"
-                        ? "That question was already withdrawn."
-                        : "The user already answered that question.",
-            };
-        }
-        this.#clearUserInputPresenceTimer(requestId);
-        await this.#cancelDurableUserInput(ctx, durable);
-        await this.#pruneDurableUserInputs(ctx);
-        return { cancelled: true };
-    }
-
-    async answerUserInput(
-        ctx: Context,
-        requestId: string,
-        response: AnswerUserInputRequest,
-    ): Promise<ProtocolSession | undefined> {
-        const pending = this.#pendingUserInputs.get(requestId);
-        const durable = this.#durableUserInputs.get(requestId);
-        if (pending === undefined && durable === undefined) return undefined;
-
-        if (durable?.response !== undefined) {
-            if (!isDeepStrictEqual(durable.response, response)) {
-                throw new Error("This question already has a different answer.");
-            }
-            return this.snapshot();
-        }
-
-        const request = pending?.request ?? durable?.request;
-        if (request === undefined) return undefined;
-
-        const responseAnswers = (response as { answers?: unknown } | null)?.answers;
-        if (
-            responseAnswers === null ||
-            typeof responseAnswers !== "object" ||
-            Array.isArray(responseAnswers)
-        ) {
-            throw new Error("Choose an answer for every question before continuing.");
-        }
-
-        const answers: Record<string, readonly string[]> = {};
-        for (const question of request.questions) {
-            const selected = (responseAnswers as Record<string, unknown>)[question.id];
-            if (
-                question.required === false &&
-                (selected === undefined || (Array.isArray(selected) && selected.length === 0))
-            ) {
-                continue;
-            }
-            if (
-                !Array.isArray(selected) ||
-                selected.length === 0 ||
-                selected.some((answer) => typeof answer !== "string" || answer.trim() === "")
-            ) {
-                throw new Error(`Answer the ${question.header} question before continuing.`);
-            }
-            if (!question.multiSelect && selected.length > 1) {
-                throw new Error(`Choose one answer for the ${question.header} question.`);
-            }
-            answers[question.id] = [...selected];
-        }
-
-        this.#clearUserInputPresenceTimer(requestId);
-        const normalizedResponse = { answers };
-        const detached = durable?.detachedAt !== undefined;
-        if (durable !== undefined) {
-            const nextDurable = {
-                ...durable,
-                response: structuredClone(normalizedResponse),
-                resolvedAt: this.#now(),
-                status: "answered" as const,
-            };
-            await this.#persistence?.upsertDurableUserInput?.(ctx, nextDurable);
-            Object.assign(durable, nextDurable);
-        }
-        await this.#append(ctx, "user_input_resolved", {
-            answers,
-            ...(response.mutationId === undefined ? {} : { mutationId: response.mutationId }),
-            requestId,
-            status: "answered",
-        });
-        if (pending !== undefined) {
-            this.#pendingUserInputs.delete(requestId);
-            if (pending.onAbort !== undefined) {
-                pending.signal?.removeEventListener("abort", pending.onAbort);
-            }
-            pending.resolve({ status: "answered", ...normalizedResponse });
-        } else if (detached && durable !== undefined) {
-            // Nothing is waiting for this answer any more, so it arrives as a late notice instead.
-            await this.#deliverDetachedAnswer(durable, answers);
-        }
-        return this.snapshot();
-    }
-
-    /**
-     * Tells the agent about an answer that arrived after presence had already released the run.
-     * The agent asked the question, so the late answer belongs in the conversation.
-     */
-    async #deliverDetachedAnswer(
-        call: DurableUserInputCall,
-        answers: Readonly<Record<string, readonly string[]>>,
-    ): Promise<void> {
-        const lines = call.request.questions.map((question) => {
-            const answer = answers[question.id];
-            return answer === undefined || answer.length === 0
-                ? `${question.question} — no answer.`
-                : `${question.question} — ${answer.join(", ")}`;
-        });
-        const message: SystemMessage = {
-            blocks: [
-                {
-                    type: "text",
-                    text: `The user has now answered the question you asked earlier.\n${lines.join("\n")}`,
-                },
-            ],
-            id: createId(),
-            internal: true,
-            role: "system",
-        };
-        this.#separateModelContextFromVisibleTranscript();
-        this.#contextMessages?.push(message);
-    }
-
-    async markUserInputExecuting(ctx: Context, requestId: string): Promise<void> {
-        const durable = this.#durableUserInputs.get(requestId);
-        if (durable === undefined || durable.status !== "answered") return;
-        const nextDurable = { ...durable, status: "executing" as const };
-        await this.#persistence?.upsertDurableUserInput?.(ctx, nextDurable);
-        Object.assign(durable, nextDurable);
-    }
-
     createTask(ctx: Context, request: CreateTaskRequest): SessionTask {
         const task = this.#taskList.create(request);
         this.#recordTasksChanged(ctx);
@@ -3394,8 +2739,6 @@ export class InMemorySession {
     beginShutdown(ctx: Context): Promise<void> {
         if (this.#shutdownCleanup !== undefined) return this.#shutdownCleanup;
         this.#closing = true;
-        for (const timer of this.#durableWaitTimers.values()) clearTimeout(timer);
-        this.#durableWaitTimers.clear();
         for (const timer of this.#userInputPresenceTimers.values()) clearTimeout(timer);
         this.#userInputPresenceTimers.clear();
         const metadataCleanup = this.#clearMetadataSettlement(ctx);
@@ -3433,16 +2776,6 @@ export class InMemorySession {
             return (_cleanupCtx) => this.#shutdownCleanup ?? Promise.resolve();
         }
         const activeRun = this.#activeRun;
-        const runIds = new Set([
-            ...(activeRun === undefined ? [] : [activeRun.runId]),
-            ...(this.#restoredActiveRunId === undefined ? [] : [this.#restoredActiveRunId]),
-        ]);
-        for (const runId of runIds) {
-            await Promise.all([
-                this.#cancelDurableUserInputs(ctx, runId),
-                this.#cancelDurableWaits(ctx, runId),
-            ]);
-        }
         this.#finishElapsedInterval();
         this.#activeRun = undefined;
         this.#restoredActiveRunId = undefined;
@@ -3616,8 +2949,6 @@ export class InMemorySession {
         this.#contextMessages = undefined;
         this.#partialPositions.clear();
         this.#activePartial = undefined;
-        this.#pendingContextMessages.clear();
-        this.#pendingContextSteering.clear();
         this.#pendingSteeringMessages.clear();
         this.#suspendedRunIds.clear();
         const hadTasks = this.#taskList.reset();
@@ -3665,12 +2996,6 @@ export class InMemorySession {
         this.#mcpServers = [];
         this.#tools = [];
         this.#messages = this.#messages.filter((entry) => entry.position < target.position);
-        this.#pendingContextMessages = new Map(
-            [...this.#pendingContextMessages].filter(
-                ([, pending]) => pending.position < target.position,
-            ),
-        );
-        this.#pendingContextSteering.clear();
         this.#rebuildMessagePositionIndex();
         this.#rebuildTranscriptIndex();
         this.#retainPermissionReviewsForMessages(this.#messages.map((entry) => entry.message));
@@ -4205,16 +3530,7 @@ export class InMemorySession {
                 : {}),
             ...(this.#metadataRunId !== undefined ? { metadataRunId: this.#metadataRunId } : {}),
             agent: this.agentMetadata(),
-            pendingUserInputs: [
-                ...new Map(
-                    [
-                        ...[...this.#pendingUserInputs.values()].map((pending) => pending.request),
-                        ...[...this.#durableUserInputs.values()]
-                            .filter((call) => call.status === "pending")
-                            .map((call) => call.request),
-                    ].map((request) => [request.requestId, request]),
-                ).values(),
-            ],
+            pendingUserInputs: [],
             permissionReviews: [...this.#permissionReviews.values()],
             pendingSteeringMessages: [...this.#pendingSteeringMessages.values()].map((pending) => ({
                 createdAt: pending.createdAt,
@@ -4279,26 +3595,14 @@ export class InMemorySession {
             ...(this.#title !== undefined ? { title: this.#title } : {}),
             ...(this.#titleError !== undefined ? { titleError: this.#titleError } : {}),
             ...(this.#interruption !== undefined ? { interruption: this.#interruption } : {}),
-            inboxItems: [...this.#durableUserInputs.values()]
-                .filter((call) => isOpenQuestion(call) || call.response !== undefined)
-                .map((call) => ({
-                    ...(call.response === undefined ? {} : { answers: call.response.answers }),
-                    createdAt: call.createdAt,
-                    questions: call.request.questions,
-                    requestId: call.request.requestId,
-                    ...(call.resolvedAt === undefined ? {} : { resolvedAt: call.resolvedAt }),
-                    status:
-                        call.response === undefined ? ("pending" as const) : ("answered" as const),
-                })),
+            inboxItems: [],
         };
     }
 
     state(): PersistedSessionState {
         const activeRunId = this.#activeRun?.runId ?? this.#restoredActiveRunId;
-        const pendingContextIds = new Set(this.#pendingContextMessages.keys());
         const contextMessages = (this.#contextMessages ?? this.#committedMessages())
-            .filter((message) => !isExcludedFromModelContext(message))
-            .filter((message) => !pendingContextIds.has(message.id));
+            .filter((message) => !isExcludedFromModelContext(message));
         const usageSummary = structuredClone(this.usage());
         const usageSummaryEventId = this.events.lastEventId();
         const state: PersistedSessionState = {
@@ -4342,10 +3646,6 @@ export class InMemorySession {
             ...(this.#unsortedSince === undefined ? {} : { unsortedSince: this.#unsortedSince }),
             workspaceTransfer: structuredClone(this.#workspaceTransfer),
             secretIds: this.#secrets.sessionIds(),
-            pendingContextMessages: [...this.#pendingContextMessages.values()].map((pending) => ({
-                ...pending,
-                message: structuredClone(pending.message),
-            })),
             ...(this.#recap !== undefined ? { recap: this.#recap } : {}),
             nextTaskId: this.#taskList.nextId,
             status: this.#status,
@@ -4360,10 +3660,6 @@ export class InMemorySession {
             usageSummary,
             ...(usageSummaryEventId === undefined ? {} : { usageSummaryEventId }),
             tools: this.#tools,
-            durableUserInputs: [...this.#durableUserInputs.values()].map((call) =>
-                structuredClone(call),
-            ),
-            durableWaits: [...this.#durableWaits.values()].map((wait) => structuredClone(wait)),
             scheduledMessages: this.scheduledMessages(),
             ...(this.#systemPrompt !== undefined ? { systemPrompt: this.#systemPrompt } : {}),
             workflowsEnabled: this.#workflowsEnabled,
@@ -4387,66 +3683,6 @@ export class InMemorySession {
             state.activeRunId = activeRunId;
         }
         return state;
-    }
-
-    async submitContext(
-        ctx: Context,
-        request: SubmitContextMessageRequest,
-    ): Promise<SubmitContextMessageResponse> {
-        this.#assertAcceptingWork();
-        if (request.clientSubmissionId !== undefined) {
-            const existing = this.events.messageSubmission(request.clientSubmissionId);
-            if (existing?.data.delivery === "context") {
-                return {
-                    delivery: "context",
-                    eventId: existing.id,
-                    messageId: existing.data.message.id,
-                    sessionId: this.id,
-                };
-            }
-        }
-
-        const apply = async (ctx: Context): Promise<SubmitContextMessageResponse> => {
-            await this.setArchived(ctx, false);
-            const messageId = request.clientSubmissionId ?? createId();
-            const anchorRunId = `context:${messageId}`;
-            const createdAt = this.#now();
-            const position = this.#nextMessagePosition();
-            const message: UserMessage = {
-                blocks: [{ text: request.text, type: "text" }],
-                contextOnly: true,
-                id: messageId,
-                identity: request.identity ?? null,
-                role: "user",
-            };
-            const pending: PersistedPendingContextMessage = {
-                anchorRunId,
-                createdAt,
-                message,
-                position,
-            };
-            this.#separateModelContextFromVisibleTranscript();
-            await this.#storeMessage(ctx, position, message, false, anchorRunId);
-            await this.#persistence?.insertPendingContextMessage?.(ctx, this.id, pending);
-            this.#pendingContextMessages.set(messageId, pending);
-            this.#lastMessageAt = createdAt;
-            const event = await this.#append(ctx, "message_submitted", {
-                delivery: "context",
-                displayText: request.text,
-                message,
-                ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
-                runId: anchorRunId,
-            });
-            return {
-                delivery: "context",
-                eventId: event.id,
-                messageId,
-                sessionId: this.id,
-            };
-        };
-        return this.#persistence?.transaction === undefined
-            ? await apply(ctx)
-            : await this.#persistence.transaction(ctx, apply);
     }
 
     async submit(
@@ -4556,276 +3792,6 @@ export class InMemorySession {
         const draining = this.#draining;
         if (draining !== undefined) await draining;
         return completion;
-    }
-
-    async waitDurably(
-        ctx: Context,
-        request: DurableWaitRequest,
-        signal?: AbortSignal,
-    ): Promise<WaitResult> {
-        const runId = this.#activeRun?.runId;
-        if (runId === undefined) throw new Error("The durable wait has no active run.");
-        const existing = [...this.#durableWaits.values()].find(
-            (wait) =>
-                wait.runId === runId &&
-                wait.batchId === request.batchId &&
-                wait.toolCallId === request.toolCallId,
-        );
-        if (existing?.result !== undefined) return structuredClone(existing.result);
-        const wait: DurableWait = existing ?? {
-            arguments: structuredClone(request.arguments),
-            batchId: request.batchId,
-            consumed: false,
-            createdAt: this.#now(),
-            dueAt: request.dueAt,
-            id: createId(),
-            kind: request.kind,
-            ...(request.providerToolCallId === undefined
-                ? {}
-                : { providerToolCallId: request.providerToolCallId }),
-            runId,
-            sessionId: this.id,
-            status: "waiting",
-            toolCallId: request.toolCallId,
-            toolCallIndex: request.toolCallIndex,
-            toolName: request.toolName,
-        };
-        if (existing === undefined) {
-            await this.#persistence?.upsertDurableWait?.(ctx, wait);
-            this.#durableWaits.set(wait.id, wait);
-            this.#armDurableWait(wait);
-            await this.#refreshWaitActivity(ctx);
-        }
-        if (wait.dueAt <= this.#now()) {
-            const settled = await this.#settleDurableWait(ctx, wait, false);
-            if (settled !== undefined) return settled;
-        }
-        return new Promise<WaitResult>((resolve, reject) => {
-            let waiter: DurableWaitWaiter;
-            const abort = () => {
-                if (this.#durableWaitWaiters.get(wait.id) !== waiter) return;
-                this.#durableWaitWaiters.delete(wait.id);
-                reject(new Error("The durable wait was interrupted."));
-            };
-            waiter = {
-                reject: (error) => {
-                    signal?.removeEventListener("abort", abort);
-                    reject(error);
-                },
-                resolve: (result) => {
-                    signal?.removeEventListener("abort", abort);
-                    resolve(structuredClone(result));
-                },
-            };
-            this.#durableWaitWaiters.set(wait.id, waiter);
-            signal?.addEventListener("abort", abort, { once: true });
-            if (signal?.aborted === true) abort();
-        });
-    }
-
-    async #cancelDurableUserInput(ctx: Context, call: DurableUserInputCall): Promise<void> {
-        // A detached question is consumed by its run but still open to the user, so it can be
-        // withdrawn.
-        if (call.status === "cancelled" || (call.consumed && !isOpenQuestion(call))) return;
-        const nextCall = { ...call, resolvedAt: this.#now(), status: "cancelled" as const };
-        await this.#persistence?.upsertDurableUserInput?.(ctx, nextCall);
-        Object.assign(call, nextCall);
-        await this.#append(ctx, "user_input_resolved", {
-            requestId: call.request.requestId,
-            status: "cancelled",
-        });
-    }
-
-    async #cancelDurableUserInputs(ctx: Context, runId: string): Promise<void> {
-        for (const call of this.#durableUserInputs.values()) {
-            if (call.runId === runId && !call.consumed)
-                await this.#cancelDurableUserInput(ctx, call);
-        }
-        await this.#pruneDurableUserInputs(ctx);
-    }
-
-    #restoreDurableWaitTimers(): void {
-        for (const wait of this.#durableWaits.values()) {
-            if (wait.status === "waiting") this.#armDurableWait(wait);
-        }
-    }
-
-    #armDurableWait(wait: DurableWait): void {
-        const previous = this.#durableWaitTimers.get(wait.id);
-        if (previous !== undefined) clearTimeout(previous);
-        const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, wait.dueAt - this.#now()));
-        const timer = setTimeout(() => {
-            if (this.#durableWaitTimers.get(wait.id) !== timer) return;
-            this.#durableWaitTimers.delete(wait.id);
-            const current = this.#durableWaits.get(wait.id);
-            if (current === undefined || current.status !== "waiting") return;
-            if (current.dueAt > this.#now()) {
-                this.#armDurableWait(current);
-                return;
-            }
-            void withWorkerContext(
-                "durable-wait-timer",
-                (workerCtx) => this.#settleDurableWait(workerCtx, current, false),
-                { sessionId: this.id },
-            ).catch(rethrowDatabaseFailure);
-        }, delay);
-        this.#durableWaitTimers.set(wait.id, timer);
-    }
-
-    async #settleDurableWait(
-        ctx: Context,
-        wait: DurableWait,
-        interrupted: boolean,
-    ): Promise<WaitResult | undefined> {
-        const current = this.#durableWaits.get(wait.id);
-        if (current === undefined || current.status !== "waiting") return current?.result;
-        const endedAt = this.#now();
-        const result: WaitResult = {
-            dueAt: current.dueAt,
-            elapsedSeconds: Math.max(0, endedAt - current.createdAt) / 1_000,
-            endedAt,
-            interrupted,
-            reason: interrupted ? "message_received" : "completed",
-            startedAt: current.createdAt,
-        };
-        const next: DurableWait = {
-            ...current,
-            result,
-            resultBlock: durableWaitResultBlock(current, result),
-            status: interrupted ? "interrupted" : "completed",
-        };
-        await this.#persistence?.upsertDurableWait?.(ctx, next);
-        this.#durableWaits.set(next.id, next);
-        const timer = this.#durableWaitTimers.get(next.id);
-        if (timer !== undefined) clearTimeout(timer);
-        this.#durableWaitTimers.delete(next.id);
-        await this.#refreshWaitActivity(ctx);
-        const waiter = this.#durableWaitWaiters.get(next.id);
-        if (waiter !== undefined) {
-            this.#durableWaitWaiters.delete(next.id);
-            waiter.resolve(result);
-        }
-        return result;
-    }
-
-    async #interruptDurableWaits(ctx: Context): Promise<void> {
-        const runId = this.#activeRun?.runId ?? this.#restoredActiveRunId;
-        if (runId === undefined) return;
-        for (const wait of this.#durableWaits.values()) {
-            if (wait.runId === runId && wait.status === "waiting") {
-                await this.#settleDurableWait(ctx, wait, true);
-            }
-        }
-    }
-
-    async #cancelDurableWaits(ctx: Context, runId: string): Promise<void> {
-        for (const current of this.#durableWaits.values()) {
-            if (current.runId !== runId || current.status !== "waiting") continue;
-            const next: DurableWait = { ...current, status: "cancelled" };
-            await this.#persistence?.upsertDurableWait?.(ctx, next);
-            this.#durableWaits.set(next.id, next);
-            const timer = this.#durableWaitTimers.get(next.id);
-            if (timer !== undefined) clearTimeout(timer);
-            this.#durableWaitTimers.delete(next.id);
-            const waiter = this.#durableWaitWaiters.get(next.id);
-            if (waiter !== undefined) {
-                await this.#afterTransactionCommit(ctx, () => {
-                    if (this.#durableWaitWaiters.get(next.id) !== waiter) return;
-                    this.#durableWaitWaiters.delete(next.id);
-                    waiter.reject(new Error("The durable wait was cancelled."));
-                });
-            }
-        }
-        await this.#refreshWaitActivity(ctx);
-        await this.#pruneDurableWaits(ctx);
-    }
-
-    async #refreshWaitActivity(ctx: Context, publish = true): Promise<void> {
-        const runId = this.#activeRun?.runId ?? this.#restoredActiveRunId;
-        const waiting = [...this.#durableWaits.values()]
-            .filter((wait) => wait.runId === runId && wait.status === "waiting")
-            .sort((left, right) => left.dueAt - right.dueAt)[0];
-        if (waiting === undefined && this.#activity.wait === undefined) return;
-        const { wait: _previousWait, ...base } = this.#activity;
-        const next: SessionActivity =
-            waiting === undefined
-                ? (base.reviewingToolCalls?.length ?? 0) > 0
-                    ? {
-                          ...base,
-                          kind: "reviewing_tool_call",
-                          label:
-                              base.reviewingToolCalls?.length === 1
-                                  ? `Reviewing ${base.reviewingToolCalls[0]?.toolName ?? "tool"}`
-                                  : `Reviewing ${String(base.reviewingToolCalls?.length ?? 0)} tools`,
-                          since: this.#now(),
-                      }
-                    : (base.toolCalls?.length ?? 0) > 0
-                      ? {
-                            ...base,
-                            kind: "executing_tool_call",
-                            label:
-                                base.toolCalls?.length === 1
-                                    ? `Running ${base.toolCalls[0]?.toolName ?? "tool"}`
-                                    : `Running ${String(base.toolCalls?.length ?? 0)} tools`,
-                            since: this.#now(),
-                        }
-                      : { ...base, kind: "thinking", label: "Thinking", since: this.#now() }
-                : {
-                      ...base,
-                      kind: "waiting",
-                      label: `Waiting until ${new Date(waiting.dueAt).toLocaleString()}`,
-                      runId: waiting.runId,
-                      since: waiting.createdAt,
-                      wait: {
-                          dueAt: waiting.dueAt,
-                          startedAt: waiting.createdAt,
-                          toolCallId: waiting.toolCallId,
-                      },
-                  };
-        this.#activity = next;
-        if (!publish) return;
-        this.#reportingActivity = true;
-        try {
-            await this.#append(ctx, "session_activity_changed", { activity: next });
-        } finally {
-            this.#reportingActivity = false;
-        }
-    }
-
-    async #pruneDurableUserInputs(ctx: Context): Promise<void> {
-        const eligible = [...this.#durableUserInputs.values()]
-            // A question presence detached is consumed but still open, so it must survive pruning.
-            .filter(
-                (call) => call.status === "cancelled" || (call.consumed && !isOpenQuestion(call)),
-            )
-            .sort(
-                (left, right) =>
-                    (right.resolvedAt ?? right.createdAt) - (left.resolvedAt ?? left.createdAt) ||
-                    right.toolCallIndex - left.toolCallIndex,
-            );
-        await this.#persistence?.pruneDurableUserInputs?.(
-            ctx,
-            this.id,
-            MAX_RETAINED_DURABLE_USER_INPUTS,
-        );
-        for (const call of eligible.slice(MAX_RETAINED_DURABLE_USER_INPUTS)) {
-            this.#durableUserInputs.delete(call.request.requestId);
-        }
-    }
-
-    async #pruneDurableWaits(ctx: Context): Promise<void> {
-        const eligible = [...this.#durableWaits.values()]
-            .filter((wait) => wait.status === "cancelled" || wait.consumed)
-            .sort(
-                (left, right) =>
-                    (right.result?.endedAt ?? right.createdAt) -
-                        (left.result?.endedAt ?? left.createdAt) ||
-                    right.toolCallIndex - left.toolCallIndex,
-            );
-        await this.#persistence?.pruneDurableWaits?.(ctx, this.id, MAX_RETAINED_DURABLE_WAITS);
-        for (const wait of eligible.slice(MAX_RETAINED_DURABLE_WAITS)) {
-            this.#durableWaits.delete(wait.id);
-        }
     }
 
     async #pruneScheduledMessages(ctx: Context): Promise<void> {
@@ -4985,12 +3951,6 @@ export class InMemorySession {
             draft: this.#draft,
             draftUpdatedAt: this.#draftUpdatedAt,
             elapsedMs: this.#elapsedMs,
-            durableUserInputs: new Map(
-                [...this.#durableUserInputs].map(([id, call]) => [id, structuredClone(call)]),
-            ),
-            durableWaits: new Map(
-                [...this.#durableWaits].map(([id, wait]) => [id, structuredClone(wait)]),
-            ),
             goal: this.#goal === undefined ? undefined : { ...this.#goal },
             interruption:
                 this.#interruption === undefined ? undefined : structuredClone(this.#interruption),
@@ -5070,12 +4030,6 @@ export class InMemorySession {
         this.#draft = checkpoint.draft;
         this.#draftUpdatedAt = checkpoint.draftUpdatedAt;
         this.#elapsedMs = checkpoint.elapsedMs;
-        this.#durableUserInputs = new Map(
-            [...checkpoint.durableUserInputs].map(([id, call]) => [id, structuredClone(call)]),
-        );
-        this.#durableWaits = new Map(
-            [...checkpoint.durableWaits].map(([id, wait]) => [id, structuredClone(wait)]),
-        );
         this.#goal = checkpoint.goal === undefined ? undefined : { ...checkpoint.goal };
         this.#interruption =
             checkpoint.interruption === undefined
@@ -5123,9 +4077,6 @@ export class InMemorySession {
                 : structuredClone(checkpoint.usageSummaryCache);
         this.#usageSummaryRevision = checkpoint.usageSummaryRevision;
         this.#workspaceArchived = checkpoint.workspaceArchived;
-        for (const timer of this.#durableWaitTimers.values()) clearTimeout(timer);
-        this.#durableWaitTimers.clear();
-        this.#restoreDurableWaitTimers();
     }
 
     async #afterTransactionCommit(
@@ -5761,44 +4712,6 @@ export class InMemorySession {
         ]);
     }
 
-    async #drainPendingContextMessages(
-        ctx: Context,
-        messageIds?: readonly string[],
-    ): Promise<readonly PersistedPendingContextMessage[]> {
-        const persist = (ctx: Context) => this.#persistPendingContextDrain(ctx, messageIds);
-        const selected = await (this.#persistence?.transaction === undefined
-            ? persist(ctx)
-            : this.#persistence.transaction(ctx, persist));
-        this.#applyPendingContextDrain(selected);
-        return selected;
-    }
-
-    async #persistPendingContextDrain(
-        ctx: Context,
-        messageIds?: readonly string[],
-    ): Promise<readonly PersistedPendingContextMessage[]> {
-        const selectedIds =
-            messageIds ??
-            [...this.#pendingContextMessages.values()].map((pending) => pending.message.id);
-        return await (this.#persistence?.drainPendingContextMessages?.(ctx, this.id, selectedIds) ??
-            [...this.#pendingContextMessages.values()].filter((pending) =>
-                selectedIds.includes(pending.message.id),
-            ));
-    }
-
-    #applyPendingContextDrain(selected: readonly PersistedPendingContextMessage[]): void {
-        if (selected.length === 0) return;
-        this.#separateModelContextFromVisibleTranscript();
-        const known = new Set(this.#contextMessages?.map((message) => message.id) ?? []);
-        for (const pending of selected) {
-            this.#pendingContextMessages.delete(pending.message.id);
-            if (!known.has(pending.message.id)) {
-                this.#contextMessages?.push(pending.message);
-                known.add(pending.message.id);
-            }
-        }
-    }
-
     async #saveSession(ctx: Context): Promise<void> {
         if (this.#workspaceArchived) this.#status = "archived";
         if (this.#persistence !== undefined) {
@@ -5831,9 +4744,8 @@ export class InMemorySession {
     #separateModelContextFromVisibleTranscript(): void {
         if (this.#contextMessages !== undefined) return;
 
-        const pendingContextIds = new Set(this.#pendingContextMessages.keys());
         this.#contextMessages = this.#committedMessages().filter(
-            (message) => !isExcludedFromModelContext(message) && !pendingContextIds.has(message.id),
+            (message) => !isExcludedFromModelContext(message),
         );
     }
 
@@ -5898,25 +4810,6 @@ export class InMemorySession {
 
     #restartMetadataSettlement(): Promise<void> | undefined {
         return undefined;
-    }
-
-    #reservePendingContextForSteering(runId: string): readonly PersistedPendingContextMessage[] {
-        const reserved = this.#pendingContextSteering.get(runId) ?? new Set<string>();
-        this.#pendingContextSteering.set(runId, reserved);
-        const selected = [...this.#pendingContextMessages.values()].filter(
-            (pending) => !reserved.has(pending.message.id),
-        );
-        for (const pending of selected) reserved.add(pending.message.id);
-        return selected;
-    }
-
-    #rememberSteeringContinuationMessage(
-        continuation: PendingSteeringContinuation,
-        messageId: string,
-    ): void {
-        if (!continuation.messageIds.includes(messageId)) {
-            continuation.messageIds.push(messageId);
-        }
     }
 
     async #currentWorkspaceRunReadiness(): Promise<WorkspaceRunReadiness> {
@@ -6694,31 +5587,6 @@ function replaceUsage(total: Usage, previous: Usage | undefined, next: Usage | u
                         }),
               };
     return next === undefined ? withoutPrevious : addUsage(withoutPrevious, next);
-}
-
-function durableWaitResultBlock(wait: DurableWait, result: WaitResult): ToolResultBlock {
-    const elapsed = Number.isInteger(result.elapsedSeconds)
-        ? String(result.elapsedSeconds)
-        : result.elapsedSeconds.toFixed(3).replace(/0+$/u, "");
-    return {
-        display: result.interrupted
-            ? `Wait interrupted after ${elapsed} seconds`
-            : `Waited ${elapsed} seconds`,
-        rendered: [
-            {
-                type: "text",
-                text: result.interrupted
-                    ? `The wait ended early because a new message arrived after ${elapsed} seconds.`
-                    : `The wait completed after ${elapsed} seconds.`,
-            },
-        ],
-        ...(wait.providerToolCallId === undefined
-            ? {}
-            : { providerToolCallId: wait.providerToolCallId }),
-        toolCallId: wait.toolCallId,
-        toolName: wait.toolName,
-        type: "tool_result",
-    };
 }
 
 function limitInspectionText(text: string | undefined): string | undefined {

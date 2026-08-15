@@ -2,6 +2,7 @@ import { io, type Socket } from "socket.io-client";
 import type { Context } from "@steve.kite/stdlib";
 
 import type { ImageBlock } from "../agent/types.js";
+import type { RigAgentService } from "../agent/RigAgentService.js";
 import type {
     AbortRunResponse,
     ModelCatalog,
@@ -18,12 +19,11 @@ import { withWorkerContext } from "../observability/index.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
 import {
     createHappyAgentState,
+    type HappyResolvedCommunication,
     rememberHappyResolvedCommunication,
     toHappyCommunication,
-    type HappyResolvedCommunication,
 } from "./createHappyAgentState.js";
 import { createHappySessionMetadata } from "./createHappySessionMetadata.js";
-import { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js";
 import { decryptHappyBlob } from "./decryptHappyBlob.js";
 import { HAPPY_SESSION_RPC_METHODS, handleHappySessionRpc } from "./handleHappySessionRpc.js";
 import { decryptHappyPayload, encryptHappyPayload, wrapHappyDataKey } from "./happyEncryption.js";
@@ -54,6 +54,7 @@ interface HappySocket {
 }
 
 export interface HappySessionClientOptions {
+    agents?: RigAgentService;
     configuration: HappyConnectionConfiguration;
     fetch?: Fetch;
     getSubagents?: (
@@ -68,6 +69,7 @@ export interface HappySessionClientOptions {
 }
 
 export class HappySessionClient {
+    readonly #agents: RigAgentService | undefined;
     readonly #configuration: HappyConnectionConfiguration;
     readonly #fetch: Fetch;
     readonly #getSubagents: NonNullable<HappySessionClientOptions["getSubagents"]>;
@@ -102,6 +104,7 @@ export class HappySessionClient {
     #retryTimer: NodeJS.Timeout | undefined;
 
     constructor(options: HappySessionClientOptions) {
+        this.#agents = options.agents;
         this.#configuration = options.configuration;
         this.#fetch = options.fetch ?? fetch;
         this.#getSubagents = options.getSubagents ?? (() => []);
@@ -435,16 +438,7 @@ export class HappySessionClient {
             displayText: incoming.text,
             text: incoming.text,
         };
-        if (this.#session.clientSnapshot().status === "running") {
-            try {
-                await this.#session.steer(ctx, request);
-                return true;
-            } catch (error) {
-                if (isDatabaseFailure(error)) throw error;
-                // The run may have completed between the snapshot and delivery.
-            }
-        }
-        await this.#session.submit(ctx, request);
+        await this.#requireAgents().deliverMessage(ctx, this.#session, request);
         return true;
     }
 
@@ -459,7 +453,7 @@ export class HappySessionClient {
     ): Promise<void> {
         if (isPermissionMode(selection.permissionMode)) {
             try {
-                await this.#session.changePermissionMode(ctx, {
+                await this.#requireAgents().changePermissionMode(ctx, this.#session, {
                     permissionMode: selection.permissionMode,
                 });
             } catch (error) {
@@ -467,10 +461,9 @@ export class HappySessionClient {
                 // A stale or unknown mobile mode must not prevent message delivery.
             }
         }
-        if (this.#session.clientSnapshot().status === "running") return;
         try {
             if (selection.modelId !== undefined && selection.modelId !== "default") {
-                await this.#session.changeModel(ctx, {
+                await this.#requireAgents().changeModel(ctx, this.#session, {
                     ...(selection.effort === undefined ? {} : { effort: selection.effort }),
                     modelId: selection.modelId,
                     ...(selection.providerId === undefined
@@ -478,7 +471,9 @@ export class HappySessionClient {
                         : { providerId: selection.providerId }),
                 });
             } else if (selection.effort !== undefined) {
-                await this.#session.changeEffort(ctx, { effort: selection.effort });
+                await this.#requireAgents().changeEffort(ctx, this.#session, {
+                    effort: selection.effort,
+                });
             }
         } catch (error) {
             if (isDatabaseFailure(error)) throw error;
@@ -581,23 +576,7 @@ export class HappySessionClient {
     }
 
     #abortFromHappy(ctx: Context): Promise<AbortRunResponse> {
-        const snapshot = this.#session.clientSnapshot();
-        const runId = snapshot.activeTurn?.runId;
-        const steeringMessageIds =
-            runId === undefined
-                ? []
-                : (snapshot.pendingSteeringMessages ?? []).flatMap((pending) =>
-                      pending.runId === runId && pending.message.provenance !== "agent"
-                          ? [pending.message.id]
-                          : [],
-                  );
-        return runId !== undefined && steeringMessageIds.length > 0
-            ? this.#session.abort(ctx, {
-                  continuePendingSteering: true,
-                  expectedRunId: runId,
-                  steeringMessageIds,
-              })
-            : this.#session.abort(ctx);
+        return this.#requireAgents().abort(ctx, this.#session);
     }
 
     async #syncMetadata(ctx: Context, state: HappySessionState): Promise<void> {
@@ -704,70 +683,20 @@ export class HappySessionClient {
         return now;
     }
 
-    #pendingQuestion(requestId: string): UserInputRequest | undefined {
-        return (this.#session.clientSnapshot().pendingUserInputs ?? []).find(
-            (pending) => pending.requestId === requestId,
+    async #answerQuestion(
+        _ctx: Context,
+        _requestId: string,
+        _answers: Record<string, unknown>,
+    ): Promise<void> {
+        throw new Error(
+            "Answering agent questions from Happy is unavailable until the user-input feature is connected.",
         );
     }
 
-    /**
-     * Applies an answer that arrived from Happy. `answerUserInput` validates the
-     * selection and throws on a malformed one, so the question is only recorded
-     * as completed once it has actually been accepted; otherwise the error goes
-     * back to Happy and the prompt stays on screen.
-     */
-    async #answerQuestion(
-        ctx: Context,
-        requestId: string,
-        answers: Record<string, unknown>,
-    ): Promise<void> {
-        const request = this.#pendingQuestion(requestId);
-        if (request === undefined) return;
-        const createdAt = this.#firstSeen(requestId);
-        const response = resolveHappyUserInputAnswers(request, answers);
-        await this.#session.answerUserInput(ctx, requestId, response);
-        rememberHappyResolvedCommunication(this.#resolvedQuestions, requestId, {
-            // Echoed back so every client shows the same answer, including the
-            // one that is only now catching up with it.
-            answers: Object.fromEntries(
-                Object.entries(response.answers).map(([id, labels]) => [id, { options: labels }]),
-            ),
-            communication: toHappyCommunication(request, createdAt),
-            completedAt: Date.now(),
-            status: "answered",
-        });
-        this.#questionFirstSeen.delete(requestId);
-        this.kick(ctx);
-    }
-
-    /**
-     * Rig cannot decline a single question: a question is cancelled by aborting
-     * the run that asked it, which is what makes the waiting tool throw. So a
-     * dismissal from Happy aborts rather than inventing an empty answer, which
-     * `answerUserInput` would reject anyway.
-     */
-    async #cancelQuestion(ctx: Context, requestId: string): Promise<void> {
-        const request = this.#pendingQuestion(requestId);
-        if (request === undefined) return;
-        const createdAt = this.#firstSeen(requestId);
-        const cancellation = this.#session.abort(ctx);
-        rememberHappyResolvedCommunication(this.#resolvedQuestions, requestId, {
-            communication: toHappyCommunication(request, createdAt),
-            completedAt: Date.now(),
-            status: "cancelled",
-        });
-        try {
-            await cancellation;
-            if (this.#pendingQuestion(requestId) !== undefined) {
-                throw new Error("The pending question could not be cancelled.");
-            }
-        } catch (error) {
-            this.#resolvedQuestions.delete(requestId);
-            this.kick(ctx);
-            throw error;
-        }
-        this.#questionFirstSeen.delete(requestId);
-        this.kick(ctx);
+    async #cancelQuestion(_ctx: Context, _requestId: string): Promise<void> {
+        throw new Error(
+            "Cancelling agent questions from Happy is unavailable until the user-input feature is connected.",
+        );
     }
 
     #emitWithAck(event: string, value: unknown): Promise<unknown> {
@@ -906,6 +835,11 @@ export class HappySessionClient {
     #clearRetry(): void {
         if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
         this.#retryTimer = undefined;
+    }
+
+    #requireAgents(): RigAgentService {
+        if (this.#agents !== undefined) return this.#agents;
+        throw new Error("Agent control is unavailable for this Happy session.");
     }
 }
 

@@ -181,7 +181,6 @@ import { getDaemonIdentity } from "../daemon/index.js";
 import { WorkspaceTransferTargetRestoreError } from "../git/prepareWorkspaceTransfer.js";
 import { ProjectRegistrationError } from "../project/ProjectRepository.js";
 import { errorToMessage } from "../errorToMessage.js";
-import { isOpenQuestion } from "../user-input/index.js";
 import type {
     GetPresenceResponse,
     SetPresenceRequestBody,
@@ -4188,58 +4187,7 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "context") {
-        const transport = decodeTemporaryGitCredential(await readJson<unknown>(request));
-        if (transport === undefined) {
-            sendJson(response, 400, { error: "Temporary Git credentials are invalid." });
-            return;
-        }
-        const body = transport.body;
-        if (!Value.Check(submitContextMessageRequestSchema, body)) {
-            sendJson(response, 400, {
-                error: "A context note accepts only message text and optional submission identities; run settings are not allowed.",
-            });
-            return;
-        }
-        if (runtimeConfig.agents !== undefined) {
-            sendAgentsModeUnavailable(response, "Context messaging");
-            return;
-        }
-        if (!(await authorizeMessageProfile(ctx, request, response, runtimeConfig, body))) return;
-        if (runtimeConfig.agents === undefined && body.clientSubmissionId !== undefined) {
-            const submitted = session.events.messageSubmission(body.clientSubmissionId);
-            if (submitted?.data.delivery === "context") {
-                sendJson<SubmitContextMessageResponse>(response, 202, {
-                    delivery: "context",
-                    eventId: submitted.id,
-                    messageId: submitted.data.message.id,
-                    sessionId: session.id,
-                });
-                return;
-            }
-        }
-        if (
-            !(await prepareSessionGitCredential(
-                ctx,
-                request,
-                response,
-                store,
-                session.id,
-                body.identity,
-                transport.githubToken,
-            ))
-        ) {
-            return;
-        }
-        if (!sessionMutationCanApply(request, response, session)) return;
-        const mutationId = body.mutationId ?? requestMutationId(request);
-        sendJson<SubmitContextMessageResponse>(
-            response,
-            202,
-            await session.submitContext(ctx, {
-                ...body,
-                ...(mutationId === undefined ? {} : { mutationId }),
-            }),
-        );
+        sendAgentsModeUnavailable(response, "Context messaging");
         return;
     }
 
@@ -4770,31 +4718,7 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "user-input") {
-        const body = await readJson<AnswerUserInputRequest>(request);
-        const mutationId = body.mutationId ?? requestMutationId(request);
-        if (sessionMutationCompleted(session, mutationId)) {
-            sendJson(response, 200, { session: session.snapshot() });
-            return;
-        }
-        if (!sessionMutationCanApply(request, response, session)) return;
-        try {
-            const snapshot = await session.answerUserInput(ctx, route.requestId, {
-                ...body,
-                ...(mutationId === undefined ? {} : { mutationId }),
-            });
-            if (snapshot === undefined) {
-                sendJson(response, 409, {
-                    error: "This question is no longer waiting for an answer.",
-                });
-                return;
-            }
-            sendJson(response, 200, { session: snapshot });
-        } catch (error) {
-            if (isDatabaseFailure(error)) throw error;
-            sendJson(response, 400, {
-                error: error instanceof Error ? error.message : "The answer is invalid.",
-            });
-        }
+        sendAgentsModeUnavailable(response, "Answering questions");
         return;
     }
 
@@ -6574,26 +6498,8 @@ async function buildGroupCatalog(
     identity: DaemonIdentity,
     sessionTerminals: SessionTerminalTracker,
 ): Promise<Omit<GlobalStreamHello, "cursor">> {
-    const inboxItems = new Map<
-        string,
-        Awaited<ReturnType<SessionStore["listDurableUserInputs"]>>
-    >();
-    for (const call of await store.listDurableUserInputs(ctx)) {
-        if (!isOpenQuestion(call) && call.response === undefined) continue;
-        inboxItems.set(call.sessionId, [...(inboxItems.get(call.sessionId) ?? []), call]);
-    }
     const sessions = (await store.listActive(ctx))
-        .map((summary) => ({
-            ...summary,
-            inboxItems: (inboxItems.get(summary.id) ?? []).map((call) => ({
-                ...(call.response === undefined ? {} : { answers: call.response.answers }),
-                createdAt: call.createdAt,
-                questions: call.request.questions,
-                requestId: call.request.requestId,
-                ...(call.resolvedAt === undefined ? {} : { resolvedAt: call.resolvedAt }),
-                status: call.response === undefined ? ("pending" as const) : ("answered" as const),
-            })),
-        }))
+        .map((summary) => ({ ...summary, inboxItems: [] }))
         .map((summary) => sessionSummaryWithTerminalPresence(summary, sessionTerminals))
         .filter((summary) => !summary.archived);
     const projects = (await store.listProjects(ctx)).filter(

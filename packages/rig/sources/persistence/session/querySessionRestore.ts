@@ -30,12 +30,9 @@ import {
     readOptionalString,
     readString,
 } from "./impl/sqliteRow.js";
-import { queryDurableUserInputs } from "./queryDurableUserInputs.js";
 import { querySessionHasEarlierStoredMessage } from "./querySessionHasEarlierStoredMessage.js";
 import { querySessionPartialMessages } from "./querySessionPartialMessages.js";
-import { queryPendingContextMessages } from "./queryPendingContextMessages.js";
 import { querySessionTranscriptPage } from "./querySessionTranscriptPage.js";
-import { queryDurableWaits } from "../scheduling/queryDurableWaits.js";
 import { queryScheduledMessages } from "../scheduling/queryScheduledMessages.js";
 import { sessionScopeFromRow } from "./impl/sessionScope.js";
 
@@ -152,14 +149,11 @@ export async function querySessionRestore(
                 : { interruption: JSON.parse(interruptionJson) as SessionInterruption }),
             ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
             messages,
-            durableUserInputs: [...(await queryDurableUserInputs(ctx, sessionId))],
-            durableWaits: [...(await queryDurableWaits(ctx, sessionId))],
             modelId,
             models: JSON.parse(readString(row, "models_json")) as Model[],
             orderKey: readString(row, "order_key"),
             providerId: readString(row, "provider_id"),
             permissionMode,
-            pendingContextMessages: await queryPendingContextMessages(ctx, sessionId),
             workspaceTransfer,
             secretIds: secretIdsJson === undefined ? [] : (JSON.parse(secretIdsJson) as string[]),
             scheduledMessages: [...(await queryScheduledMessages(ctx, sessionId))],

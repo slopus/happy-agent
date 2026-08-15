@@ -48,7 +48,6 @@ import type { GlobalEventQueue } from "../global-event/GlobalEventQueue.js";
 import type { LiveGlobalEventQueue } from "../global-event/LiveGlobalEventQueue.js";
 import type { ProjectAvatarAsset, ProjectSessionSettings } from "../project/ProjectRepository.js";
 import type { ProjectRemoteTerminalStore } from "../terminal/index.js";
-import type { DurableUserInputCall } from "../user-input/index.js";
 import type { PresenceStore } from "../presence/index.js";
 import type { SlotEntryStore } from "../slots/index.js";
 import type { AppletStore } from "../applets/index.js";
@@ -158,7 +157,6 @@ export interface SessionStore {
     listActive(ctx: Context, options?: { limit?: number }): Promise<readonly SessionSummary[]>;
     /** Sessions already resident in memory; implementations must not hydrate storage to answer. */
     loadedSessions(): readonly InMemorySession[];
-    listDurableUserInputs(ctx: Context): Promise<readonly DurableUserInputCall[]>;
     listSubagents(ctx: Context, parentSessionId: string): Promise<readonly SubagentSummary[]>;
     queryAgentTreeUsage(ctx: Context, sessionId: string): Promise<AgentTreeUsage | undefined>;
     listSecrets(ctx: Context): Promise<readonly SecretSummary[]>;

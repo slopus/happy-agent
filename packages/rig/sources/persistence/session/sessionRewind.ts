@@ -2,7 +2,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import { and, eq, gte, sql } from "drizzle-orm";
 
-import { pendingContextMessages, sessionMessages, sessionTurns } from "../database/schema.js";
+import { sessionMessages, sessionTurns } from "../database/schema.js";
 import { inTx } from "../inTx.js";
 
 export async function sessionRewind(
@@ -12,15 +12,6 @@ export async function sessionRewind(
 ): Promise<void> {
     await inTx(ctx, "rig.sql.session.session_rewind", async (ctx) => {
         const tx = ctx.tx;
-        await tx
-            .delete(pendingContextMessages)
-            .where(
-                and(
-                    eq(pendingContextMessages.sessionId, sessionId),
-                    gte(pendingContextMessages.position, position),
-                ),
-            )
-            .run();
         await tx
             .delete(sessionMessages)
             .where(

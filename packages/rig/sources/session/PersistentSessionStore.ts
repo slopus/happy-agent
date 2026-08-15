@@ -67,7 +67,6 @@ import {
     InMemorySession,
     type InMemorySessionOptions,
     type InMemorySessionPersistence,
-    type PersistedPendingContextMessage,
     type PersistedSessionMessage,
     type PersistedSessionState,
     type WorkspaceFeatures,
@@ -87,8 +86,7 @@ import {
     type SpecialSecretRegistration,
 } from "../secrets/index.js";
 import type { SecretAttachmentScope } from "../secrets/index.js";
-import type { DurableUserInputCall } from "../user-input/index.js";
-import type { DurableWait, ScheduledMessage } from "../scheduling/index.js";
+import type { ScheduledMessage } from "../scheduling/index.js";
 import type { GitCommandRunner } from "../git/types.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
 import { sharingStateReset } from "../persistence/sharing/index.js";
@@ -127,9 +125,6 @@ import {
 } from "../persistence/database/migrateSessionDatabase.js";
 import { queryRigDataEpoch } from "../persistence/database/queryRigDataEpoch.js";
 import { querySessionDatabaseVersion } from "../persistence/database/querySessionDatabaseVersion.js";
-import { durableUserInputPrune } from "../persistence/session/durableUserInputPrune.js";
-import { durableUserInputSave } from "../persistence/session/durableUserInputSave.js";
-import { queryDurableUserInputs } from "../persistence/session/queryDurableUserInputs.js";
 import { projectSecretAttach } from "../persistence/session/projectSecretAttach.js";
 import { projectSecretDetach } from "../persistence/session/projectSecretDetach.js";
 import { secretRegister } from "../persistence/session/secretRegister.js";
@@ -142,8 +137,6 @@ import { sessionRepairInterruptedTitles } from "../persistence/session/sessionRe
 import { sessionRewind } from "../persistence/session/sessionRewind.js";
 import { sessionSave } from "../persistence/session/sessionSave.js";
 import { sessionSaveMessage } from "../persistence/session/sessionSaveMessage.js";
-import { sessionSavePendingContextMessage } from "../persistence/session/sessionSavePendingContextMessage.js";
-import { sessionDrainPendingContextMessages } from "../persistence/session/sessionDrainPendingContextMessages.js";
 import {
     sessionPruneToolResults,
     type SessionToolResultPruneCursor,
@@ -151,8 +144,6 @@ import {
 import { sessionTransferWorkspace } from "../persistence/session/sessionTransferWorkspace.js";
 import { sessionSetWorkspaceTransferState } from "../persistence/session/sessionSetWorkspaceTransferState.js";
 import { queryWorkspaceHasAttachedSessions } from "../persistence/session/queryWorkspaceHasAttachedSessions.js";
-import { durableWaitSave } from "../persistence/scheduling/durableWaitSave.js";
-import { durableWaitPrune } from "../persistence/scheduling/durableWaitPrune.js";
 import { scheduledMessageSave } from "../persistence/scheduling/scheduledMessageSave.js";
 import { scheduledMessagePrune } from "../persistence/scheduling/scheduledMessagePrune.js";
 import { queryNextPendingScheduledMessage } from "../persistence/scheduling/queryScheduledMessages.js";
@@ -366,7 +357,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         this.dataSchemaVersion = dataSchemaVersion;
         this.presence = options.presence ?? new PresenceStore({ presences: resolvePresences() });
         this.presence.onChange((state) => {
-            for (const session of this.#cachedSessions()) session.presenceChanged(state);
             const event = {
                 createdAt: this.#now(),
                 data: { presence: state },
@@ -1119,24 +1109,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         return this.#globalEventQueue;
     }
 
-    async insertPendingContextMessage(
-        ctx: Context,
-        sessionId: string,
-        pending: PersistedPendingContextMessage,
-    ): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await sessionSavePendingContextMessage(ctx, sessionId, pending, this.#now());
-    }
-
-    async drainPendingContextMessages(
-        ctx: Context,
-        sessionId: string,
-        messageIds?: readonly string[],
-    ): Promise<readonly PersistedPendingContextMessage[]> {
-        ctx = withDatabase(ctx, this.#database);
-        return await sessionDrainPendingContextMessages(ctx, sessionId, messageIds);
-    }
-
     async list(ctx: Context, options: { limit?: number } = {}): Promise<readonly SessionSummary[]> {
         ctx = withDatabase(ctx, this.#database);
         return await this.#listSessions(ctx, false, options);
@@ -1173,11 +1145,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
 
     loadedSessions(): readonly InMemorySession[] {
         return this.#cachedSessions();
-    }
-
-    async listDurableUserInputs(ctx: Context): Promise<readonly DurableUserInputCall[]> {
-        ctx = withDatabase(ctx, this.#database);
-        return await queryDurableUserInputs(ctx);
     }
 
     async listSubagents(
@@ -2234,16 +2201,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         );
     }
 
-    async upsertDurableUserInput(ctx: Context, call: DurableUserInputCall): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await durableUserInputSave(ctx, call);
-    }
-
-    async upsertDurableWait(ctx: Context, wait: DurableWait): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await durableWaitSave(ctx, wait);
-    }
-
     async upsertScheduledMessage(ctx: Context, message: ScheduledMessage): Promise<void> {
         ctx = withDatabase(ctx, this.#database);
         await scheduledMessageSave(ctx, message);
@@ -2252,16 +2209,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
     async scheduledMessageChanged(ctx: Context): Promise<void> {
         ctx = withDatabase(ctx, this.#database);
         await this.#afterTransactionCommit(ctx, (ctx) => this.#armScheduledMessageTimer(ctx));
-    }
-
-    async pruneDurableUserInputs(ctx: Context, sessionId: string, retain: number): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await durableUserInputPrune(ctx, sessionId, retain);
-    }
-
-    async pruneDurableWaits(ctx: Context, sessionId: string, retain: number): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await durableWaitPrune(ctx, sessionId, retain);
     }
 
     async pruneScheduledMessages(

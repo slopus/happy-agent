@@ -88,7 +88,6 @@ import {
     type ProjectRemoteTerminalContext,
     type RemoteTerminalScope,
 } from "../terminal/index.js";
-import type { DurableUserInputCall } from "../user-input/index.js";
 import { PresenceStore, resolvePresences } from "../presence/index.js";
 import {
     openSessionDatabase,
@@ -306,7 +305,6 @@ export class InMemorySessionStore implements SessionStore {
         });
         this.presence = options.presence ?? new PresenceStore({ presences: resolvePresences() });
         this.presence.onChange((state) => {
-            for (const session of this.#sessions.values()) session.presenceChanged(state);
             const event = {
                 createdAt: Date.now(),
                 data: { presence: state },
@@ -828,12 +826,6 @@ export class InMemorySessionStore implements SessionStore {
 
     loadedSessions(): readonly InMemorySession[] {
         return [...this.#sessions.values()];
-    }
-
-    async listDurableUserInputs(ctx: Context): Promise<readonly DurableUserInputCall[]> {
-        return [...this.#sessions.values()].flatMap(
-            (session) => session.state().durableUserInputs ?? [],
-        );
     }
 
     async listSubagents(

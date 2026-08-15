@@ -2,7 +2,6 @@ export { InMemorySession } from "./InMemorySession.js";
 export type { InMemorySessionPersistence } from "./InMemorySessionPersistence.js";
 export type {
     InMemorySessionOptions,
-    PersistedPendingContextMessage,
     PersistedSessionMessage,
     PersistedSessionState,
     PersistedWorkflowRun,
