@@ -116,9 +116,7 @@ describe("createCodingAssistantAgent", () => {
         const reviewerTools = runtime.agent.tools.filter(
             (tool) => tool.availableToPermissionReviewer,
         );
-        expect(reviewerTools.map((tool) => tool.name)).toEqual(["exec_command", "write_stdin"]);
-        // The reviewer must never receive a tool that can change the workspace.
-        expect(reviewerTools.map((tool) => tool.name)).not.toContain("apply_patch");
+        expect(reviewerTools.map((tool) => tool.name)).toEqual([]);
 
         await runtime.agent.close();
     });
@@ -145,12 +143,6 @@ describe("createCodingAssistantAgent", () => {
         );
         expect(runtime.agent.tools.map((tool) => tool.name)).toEqual([
             "TaskOutput",
-            "Bash",
-            "Read",
-            "Edit",
-            "Write",
-            "Glob",
-            "Grep",
             "TaskCreate",
             "TaskGet",
             "TaskUpdate",
@@ -336,14 +328,8 @@ describe("createCodingAssistantAgent", () => {
         expect(runtime.executor.id).toBe("grok");
         expect(runtime.agent.model).toEqual(modelXaiGrokBuild);
         expect(runtime.agent.tools.map((tool) => tool.name)).toEqual([
-            "run_terminal_command",
-            "read_file",
-            "search_replace",
-            "list_dir",
-            "grep",
-            "get_command_or_subagent_output",
-            "kill_command_or_subagent",
-            "send_command_input",
+            "get_subagent_output",
+            "kill_subagent",
             "imagegen",
             "web_fetch",
             "claude_web_search",
@@ -393,7 +379,7 @@ describe("createCodingAssistantAgent", () => {
 
         expect(runtime.executor.id).toBe("grok");
         expect(runtime.agent.model).toEqual(modelXaiGrok45);
-        expect(runtime.agent.tools.map((tool) => tool.name)).toContain("run_terminal_command");
+        expect(runtime.agent.tools.map((tool) => tool.name)).toContain("get_subagent_output");
     });
 
     it("creates agents for named provider instances and applies their model filters", () => {
@@ -621,7 +607,7 @@ describe("createCodingAssistantAgent", () => {
         ).toEqual(["spawn_agent", "followup_task"]);
     });
 
-    it("defers long-tail tools while keeping the coding core eager", () => {
+    it("defers long-tail tools and keeps surviving native tools eager", () => {
         const codex = createCodingAssistantAgent({
             ctx: createTestRootContext().named("agent"),
             cwd: "/tmp/rig-app-test",
@@ -635,15 +621,16 @@ describe("createCodingAssistantAgent", () => {
         const byName = (runtime: typeof codex, name: string) =>
             runtime.agent.tools.find((tool) => tool.name === name);
 
-        expect(byName(codex, "exec_command")?.deferLoading).toBeUndefined();
-        expect(byName(codex, "apply_patch")?.deferLoading).toBeUndefined();
+        expect(byName(codex, "update_plan")?.deferLoading).toBeUndefined();
+        expect(byName(codex, "exec_command")).toBeUndefined();
+        expect(byName(codex, "apply_patch")).toBeUndefined();
         expect(byName(codex, "attach")?.deferLoading).toBe(true);
         expect(byName(codex, "plugin_discover")?.deferLoading).toBe(true);
         expect(byName(codex, "agent_me")?.deferLoading).toBe(true);
         expect(byName(codex, "codex_imagegen")?.deferLoading).toBe(true);
 
-        expect(byName(claude, "Bash")?.deferLoading).toBeUndefined();
-        expect(byName(claude, "Read")?.deferLoading).toBeUndefined();
+        expect(byName(claude, "Bash")).toBeUndefined();
+        expect(byName(claude, "Read")).toBeUndefined();
         expect(byName(claude, "TaskList")?.deferLoading).toBe(true);
         expect(byName(claude, "attach")?.deferLoading).toBe(true);
     });
@@ -692,12 +679,8 @@ describe("createCodingAssistantAgent", () => {
 
         expect(parent.agent.tools.map((tool) => tool.name)).toEqual(
             expect.arrayContaining([
-                "exec_command",
-                "write_stdin",
                 "update_plan",
                 "request_user_input",
-                "apply_patch",
-                "view_image",
                 "workflow",
                 "spawn_agent",
             ]),
@@ -1039,7 +1022,8 @@ describe("createCodingAssistantAgent", () => {
 
         expect(runtime.executor.id).toBe("bedrock");
         expect(runtime.agent.model.id).toBe(modelAnthropicFable5.id);
-        expect(runtime.agent.tools.map((tool) => tool.name)).toContain("Bash");
+        expect(runtime.agent.tools.map((tool) => tool.name)).toContain("TaskOutput");
+        expect(runtime.agent.tools.map((tool) => tool.name)).not.toContain("Bash");
         // Bedrock's hosted search is an ordinary tool, so an Anthropic model reaches it too even
         // though its own transport has no search of its own.
         expect(runtime.agent.tools.map((tool) => tool.name)).toContain("bedrock_web_search");
@@ -1083,13 +1067,8 @@ describe("createCodingAssistantAgent", () => {
                 .map((tool) => tool.name),
         ).toEqual(["close_agent", "resume_agent", "send_input", "spawn_agent", "wait_agent"]);
         expect(runtime.agent.tools.map((tool) => tool.name)).toEqual([
-            "exec_command",
-            "write_stdin",
-            "kill_session",
             "update_plan",
             "request_user_input",
-            "apply_patch",
-            "view_image",
             "codex_imagegen",
             "web_fetch",
             "claude_web_search",

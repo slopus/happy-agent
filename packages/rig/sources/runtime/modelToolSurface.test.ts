@@ -76,6 +76,10 @@ describe("modelToolSurface", () => {
         expect(grok.limitedCollaborationTools.map((tool) => tool.name)).toEqual([
             "followup_subagent",
         ]);
+        expect(grok.baseTools.map((tool) => tool.name)).toEqual([
+            "get_subagent_output",
+            "kill_subagent",
+        ]);
     });
 
     it("maps the actual standalone Gym route explicitly", () => {

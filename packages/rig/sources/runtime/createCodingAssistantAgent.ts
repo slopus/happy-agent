@@ -321,7 +321,7 @@ export function createCodingAssistantAgent(
     const surface = modelToolSurface({ model, provider });
     const imageGeneration =
         nativeProvider instanceof Executor ? imageGenerationProviders(nativeProvider) : [];
-    const baseTools = [
+    const vendorTools = [
         ...surface.baseTools,
         ...(imageGeneration.length === 0
             ? []
@@ -349,7 +349,7 @@ export function createCodingAssistantAgent(
                   : surface.collaborationToolsWithoutWorkflows
               : surface.limitedCollaborationTools;
     const toolsWithoutGoals = [
-        ...baseTools,
+        ...vendorTools,
         ...deferToolArray(
             selectCommonToolsForModel({
                 ...(geminiApiKey === undefined ? {} : { geminiApiKey }),

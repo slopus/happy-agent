@@ -1,41 +1,20 @@
-export { grokGetCommandOrSubagentOutputTool } from "./get_command_or_subagent_output.js";
-export { grokGrepTool } from "../../agent/tools/grok/grep.js";
-export { grokKillCommandOrSubagentTool } from "./kill_command_or_subagent.js";
-export { grokListDirTool } from "../../agent/tools/grok/list_dir.js";
-export { grokReadFileTool } from "../../agent/tools/grok/read_file.js";
-export { grokRunTerminalCommandTool } from "./run_terminal_command.js";
-export { grokSendCommandInputTool } from "./send_command_input.js";
-export { grokSearchReplaceTool } from "../../agent/tools/grok/search_replace.js";
+export { grokGetSubagentOutputTool } from "./get_subagent_output.js";
+export { grokKillSubagentTool } from "./kill_subagent.js";
 export { grokSpawnSubagentTool } from "./spawn_subagent.js";
 export { grokFollowupSubagentTool } from "./followup_subagent.js";
-export { grokWaitCommandsOrSubagentsTool } from "./wait_commands_or_subagents.js";
-import { grokGetCommandOrSubagentOutputTool } from "./get_command_or_subagent_output.js";
-import { grokGrepTool } from "../../agent/tools/grok/grep.js";
-import { grokKillCommandOrSubagentTool } from "./kill_command_or_subagent.js";
-import { grokListDirTool } from "../../agent/tools/grok/list_dir.js";
-import { grokReadFileTool } from "../../agent/tools/grok/read_file.js";
-import { grokRunTerminalCommandTool } from "./run_terminal_command.js";
-import { grokSendCommandInputTool } from "./send_command_input.js";
-import { grokSearchReplaceTool } from "../../agent/tools/grok/search_replace.js";
+export { grokWaitSubagentsTool } from "./wait_subagents.js";
+import { grokGetSubagentOutputTool } from "./get_subagent_output.js";
+import { grokKillSubagentTool } from "./kill_subagent.js";
 import { grokSpawnSubagentTool } from "./spawn_subagent.js";
 import { grokFollowupSubagentTool } from "./followup_subagent.js";
-import { grokWaitCommandsOrSubagentsTool } from "./wait_commands_or_subagents.js";
+import { grokWaitSubagentsTool } from "./wait_subagents.js";
 
-export const grokBuildTools = [
-    grokRunTerminalCommandTool,
-    grokReadFileTool,
-    grokSearchReplaceTool,
-    grokListDirTool,
-    grokGrepTool,
-    grokGetCommandOrSubagentOutputTool,
-    grokKillCommandOrSubagentTool,
-    grokSendCommandInputTool,
-] as const;
+export const grokTools = [grokGetSubagentOutputTool, grokKillSubagentTool] as const;
 
 export const grokCollaborationTools = [
     grokSpawnSubagentTool,
     grokFollowupSubagentTool,
-    grokWaitCommandsOrSubagentsTool,
+    grokWaitSubagentsTool,
 ] as const;
 
 export const grokLimitedCollaborationTools = [grokFollowupSubagentTool] as const;

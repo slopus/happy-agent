@@ -207,7 +207,7 @@ describe("createImageGenerationTool", () => {
         expect(tool.name).toBe("codex_imagegen");
         expect(tool.namespace).toBeUndefined();
         expect(tool.description).toContain("referenced_image_paths");
-        expect(tool.description).toContain("view_image");
+        expect(tool.description).not.toContain("view_image");
     });
 
     it("treats a null selector as an unused selector", async () => {

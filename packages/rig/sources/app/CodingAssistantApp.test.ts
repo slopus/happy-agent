@@ -1,10 +1,12 @@
 import { createTestRootContext } from "../testing/createTestRootContext.js";
 import { visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { Type } from "@sinclair/typebox";
 import { describe, expect, it, vi } from "vitest";
 
 import { Agent } from "../agent/Agent.js";
 import type { PluginContext } from "../agent/context/PluginContext.js";
 import type { AgentLoopEvent } from "../agent/loop.js";
+import { defineTool } from "../agent/types.js";
 import type { Skill } from "../agent/skills/Skill.js";
 import { MAXIMUM_SKILL_FILE_BYTES } from "../agent/skills/loadSkillFromFile.js";
 import type { ProtocolHttpClient } from "../client/ProtocolHttpClient.js";
@@ -33,7 +35,29 @@ import { createSerialTaskQueue } from "./createSerialTaskQueue.js";
 import { DEFAULT_TERMINAL_THEME } from "./defaultTerminalTheme.js";
 import { stripAnsi } from "./testing/stripAnsi.js";
 
-const selectTestTools = () => codexTools;
+const testCommandTool = defineTool({
+    name: "test_command",
+    label: "Test command",
+    description: "Runs a command for transcript presentation tests.",
+    arguments: Type.Object({ cmd: Type.String() }),
+    returnType: Type.Object({ command: Type.String(), output: Type.String() }),
+    shouldReviewInAutoMode: () => false,
+    execute: async ({ cmd }, context, execution) => {
+        const sessionId = await context.bash.startSession({ command: cmd });
+        const snapshot = await context.bash.readSession(sessionId, { waitMs: 30_000 });
+        if (snapshot === undefined) throw new Error("The test command was not found.");
+        const output = [snapshot.stdout, snapshot.stderr].filter(Boolean).join("\n");
+        execution.onProgress?.(output);
+        return { command: cmd, output };
+    },
+    toCallPresentation: ({ cmd }) => ({ command: cmd, type: "exec_command" }),
+    toPresentation: ({ command, output }) => ({ command, output, type: "exec_command" }),
+    toLLM: ({ output }) => [{ type: "text", text: output }],
+    toUI: ({ output }) => output,
+    locks: [],
+});
+
+const selectTestTools = () => [...codexTools, testCommandTool];
 
 describe("CodingAssistantApp", () => {
     it("uses a leading trimmed bang as the shell prompt and exits on backspace at column zero", async () => {
@@ -6723,7 +6747,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-call-1",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: {
                                     cmd: "printf 'line one\\nline two\\n'",
                                     shell: "/bin/zsh",
@@ -6776,7 +6800,7 @@ describe("CodingAssistantApp", () => {
             role: "toolResult",
             providerToolCallId: "tool-call-1",
             toolCallId: expect.any(String),
-            toolName: "exec_command",
+            toolName: "test_command",
             content: [
                 {
                     type: "text",
@@ -6808,7 +6832,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-call-giant-output",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: {
                                     cmd: "printf 'MODEL_%s_HEAD_' OUTPUT; printf '%05000d' 0; printf '_MODEL_%s_SENTINEL_' MIDDLE; printf '%05000d' 0; printf '_MODEL_%s_TAIL' OUTPUT",
                                 },
@@ -8035,7 +8059,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-call-ansi",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: { cmd: "printf '\\033[2Junsafe'" },
                             },
                         ],
@@ -8095,7 +8119,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: `tool-call-${String(streamCalls)}`,
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: { cmd: `printf tool-${String(streamCalls)}` },
                             },
                         ],
@@ -8161,7 +8185,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-call-no-final-text",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: { cmd: "printf tool-only" },
                             },
                         ],
@@ -8233,7 +8257,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-before-queued-turn",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: { cmd: "printf queued-tool" },
                             },
                         ],
@@ -8307,7 +8331,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-before-error",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: { cmd: "printf before-error" },
                             },
                         ],
@@ -8379,7 +8403,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-before-interruption",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: { cmd: "printf before-interruption" },
                             },
                         ],
@@ -8441,7 +8465,7 @@ describe("CodingAssistantApp", () => {
                             {
                                 type: "toolCall",
                                 id: "tool-call-1",
-                                name: "exec_command",
+                                name: "test_command",
                                 arguments: { cmd: "printf ok" },
                             },
                         ],
@@ -8725,7 +8749,7 @@ describe("CodingAssistantApp", () => {
                         {
                             arguments: { cmd: "printf done" },
                             id: "tool-call-1",
-                            name: "exec_command",
+                            name: "test_command",
                             type: "tool_call",
                         },
                         {
@@ -8733,7 +8757,7 @@ describe("CodingAssistantApp", () => {
                             presentation: { type: "file_diff", files: [] },
                             rendered: [{ text: "done", type: "text" }],
                             toolCallId: "tool-call-1",
-                            toolName: "exec_command",
+                            toolName: "test_command",
                             type: "tool_result",
                         },
                     ],
@@ -10179,7 +10203,7 @@ function streamTextThenToolCall(
     const toolCall = {
         type: "toolCall" as const,
         id: "tool-call-1",
-        name: "exec_command",
+        name: "test_command",
         arguments: { cmd: "printf ok" },
     };
     const message: AssistantMessage = {

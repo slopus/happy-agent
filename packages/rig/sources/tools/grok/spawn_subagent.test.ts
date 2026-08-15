@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Value } from "@sinclair/typebox/value";
 
 import { createJustBashToolHarness } from "../testing/createJustBashToolHarness.js";
-import { grokKillCommandOrSubagentTool } from "./kill_command_or_subagent.js";
+import { grokKillSubagentTool } from "./kill_subagent.js";
 import { grokSpawnSubagentTool } from "./spawn_subagent.js";
 import { grokFollowupSubagentTool } from "./followup_subagent.js";
 
@@ -218,11 +218,9 @@ describe("grokSpawnSubagentTool", () => {
         };
 
         await expect(
-            grokKillCommandOrSubagentTool.execute(
-                { task_id: "unguessable-agent-1" },
-                harness.context,
-                { ctx: harness.ctx },
-            ),
+            grokKillSubagentTool.execute({ target: "unguessable-agent-1" }, harness.context, {
+                ctx: harness.ctx,
+            }),
         ).rejects.toBe(databaseError);
     });
 
@@ -248,11 +246,9 @@ describe("grokSpawnSubagentTool", () => {
         };
 
         await expect(
-            grokKillCommandOrSubagentTool.execute(
-                { task_id: "unguessable-agent-1" },
-                harness.context,
-                { ctx: harness.ctx },
-            ),
+            grokKillSubagentTool.execute({ target: "unguessable-agent-1" }, harness.context, {
+                ctx: harness.ctx,
+            }),
         ).resolves.toMatchObject({
             agent_id: "unguessable-agent-1",
             path: "/root/inspect_code",

@@ -33,14 +33,18 @@ describe("selectToolsForModel", () => {
         }
     });
 
-    it("uses the explicit Claude array for Anthropic models on Bedrock", () => {
+    it("omits compute tools from the explicit Claude array on Bedrock", () => {
         const names = selectToolsForModel({
             model: modelAnthropicSonnet5,
             provider: provider("bedrock", modelAnthropicSonnet5),
         }).map((tool) => tool.name);
 
-        expect(names).toContain("Bash");
-        expect(names).toContain("Read");
+        expect(names).toEqual(
+            expect.arrayContaining(["TaskOutput", "TaskCreate", "AskUserQuestion"]),
+        );
+        expect(names).not.toEqual(
+            expect.arrayContaining(["Bash", "Read", "Write", "Edit", "Glob", "Grep"]),
+        );
     });
 
     it("merges an explicit search array through the common seam", () => {

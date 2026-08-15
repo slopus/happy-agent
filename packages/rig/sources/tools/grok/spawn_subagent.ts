@@ -49,7 +49,7 @@ export const grokSpawnSubagentTool = defineTool({
         background: Type.Optional(
             Type.Boolean({
                 description:
-                    "Return immediately with the Agent ID and canonical path. Defaults to true; use the output tool to inspect status.",
+                    "Return immediately with the Agent ID and canonical path. Defaults to true; use get_subagent_output to inspect status.",
             }),
         ),
         service_tier: Type.Optional(

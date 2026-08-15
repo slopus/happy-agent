@@ -1,7 +1,8 @@
+import { Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 
 import { runAgentLoop } from "../loop.js";
-import { claudeBashTool } from "../tools/claude/Bash.js";
+import { defineTool } from "../types.js";
 import { createJustBashToolHarness } from "../../tools/testing/createJustBashToolHarness.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
 import {
@@ -64,7 +65,7 @@ describe("agent loop tool presentations", () => {
         }
     });
 
-    it("publishes the Bash command presentation before execution starts", async () => {
+    it("publishes a command presentation before execution starts", async () => {
         const model = defineModel({
             id: "mock/model",
             name: "Mock Model",
@@ -83,8 +84,8 @@ describe("agent loop tool presentations", () => {
                               [
                                   {
                                       type: "toolCall",
-                                      id: "provider-call-bash",
-                                      name: "Bash",
+                                      id: "provider-call-command",
+                                      name: "presentation_probe",
                                       arguments: { command: "printf ok" },
                                   },
                               ],
@@ -106,11 +107,27 @@ describe("agent loop tool presentations", () => {
             presentationAtExecution = publishedPresentation;
             return startSession(options);
         };
+        const presentationProbe = defineTool({
+            name: "presentation_probe",
+            label: "Presentation probe",
+            description: "Exercises durable command presentation ordering.",
+            arguments: Type.Object({ command: Type.String() }),
+            returnType: Type.Object({ ok: Type.Boolean() }),
+            shouldReviewInAutoMode: () => false,
+            execute: async ({ command }, context) => {
+                await context.bash.startSession({ command });
+                return { ok: true };
+            },
+            toCallPresentation: ({ command }) => ({ command, type: "exec_command" }),
+            toLLM: () => [{ type: "text", text: "Done." }],
+            toUI: () => "Done",
+            locks: [],
+        });
 
         await runAgentLoop(ctx, {
             provider,
             modelId: model.id,
-            tools: [claudeBashTool],
+            tools: [presentationProbe],
             messages: [
                 {
                     role: "user",

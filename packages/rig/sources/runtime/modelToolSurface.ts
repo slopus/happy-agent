@@ -17,7 +17,7 @@ import {
     codexV2LimitedCollaborationTools,
 } from "../agent/tools/codex/assembleCodexTools.js";
 import {
-    grokBuildTools,
+    grokTools,
     grokCollaborationTools,
     grokLimitedCollaborationTools,
 } from "../tools/grok/index.js";
@@ -60,7 +60,7 @@ const codexV1ModelToolSurface: ModelToolSurface = {
 };
 
 const grokModelToolSurface: ModelToolSurface = {
-    baseTools: grokBuildTools,
+    baseTools: grokTools,
     collaborationTools: grokCollaborationTools,
     collaborationToolsWithoutWorkflows: grokCollaborationTools,
     imageGenerationSurface,

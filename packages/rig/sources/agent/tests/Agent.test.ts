@@ -2,7 +2,6 @@ import { Type } from "@sinclair/typebox";
 import type { HappyTracingEvent } from "happy-plugins";
 import { describe, expect, it, vi } from "vitest";
 
-import { codexViewImageTool } from "../tools/codex/view_image.js";
 import { codexTools } from "../tools/codex/assembleCodexTools.js";
 import { createJustBashToolHarness } from "../../tools/testing/createJustBashToolHarness.js";
 import { validPng32Base64 } from "../../tools/testing/validImageFixtures.js";
@@ -769,13 +768,8 @@ describe("Agent", () => {
             printToConsole: false,
         });
         expect(defaultAgent.tools.map((tool) => tool.name)).toEqual([
-            "exec_command",
-            "write_stdin",
-            "kill_session",
             "update_plan",
             "request_user_input",
-            "apply_patch",
-            "view_image",
         ]);
 
         const noopTool = defineTool({
@@ -1741,8 +1735,8 @@ describe("Agent", () => {
                             {
                                 type: "toolCall",
                                 id: "call-image",
-                                name: "view_image",
-                                arguments: { path: "/workspace/valid-image.png" },
+                                name: "image_probe",
+                                arguments: {},
                             },
                         ],
                         api: "test",
@@ -1783,15 +1777,23 @@ describe("Agent", () => {
         const observedEventTypes: string[] = [];
         const observedToolResults: Message[] = [];
         const harness = createJustBashToolHarness();
-        await harness.context.fs.writeFile(
-            "/workspace/valid-image.png",
-            Buffer.from(validPng32Base64, "base64"),
-        );
+        const imageProbe = defineTool({
+            name: "image_probe",
+            label: "Image probe",
+            description: "Returns an image to exercise provider validation recovery.",
+            arguments: Type.Object({}),
+            returnType: Type.Object({ data: Type.String() }),
+            shouldReviewInAutoMode: () => false,
+            execute: () => ({ data: validPng32Base64 }),
+            toLLM: ({ data }) => [{ type: "image", mediaType: "image/png", data }],
+            toUI: () => "Returned image",
+            locks: [],
+        });
         const agent = new Agent({
             provider,
             modelId: model.id,
             context: harness.context,
-            tools: [codexViewImageTool],
+            tools: [imageProbe],
             printToConsole: false,
             onEvent: (event) => {
                 observedEventTypes.push(event.type);

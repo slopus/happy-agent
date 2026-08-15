@@ -16,8 +16,9 @@ export function selectToolsForModel(
     options: SelectToolsForModelOptions,
 ): readonly AnyDefinedTool[] {
     const surface = modelToolSurface(options);
+    const vendorTools = surface.baseTools;
     return [
-        ...surface.baseTools,
+        ...vendorTools,
         ...imageGenerationTools(options.imageGeneration ?? [], surface.imageGenerationSurface),
     ] as readonly AnyDefinedTool[];
 }

@@ -19,9 +19,6 @@ import {
 } from "@slopus/rig-execution";
 import { createJustBashToolHarness } from "../../tools/testing/createJustBashToolHarness.js";
 import { claudeAskUserQuestionTool } from "../tools/claude/AskUserQuestion.js";
-import { claudeBashTool } from "../tools/claude/Bash.js";
-import { codexExecCommandTool } from "../tools/codex/exec_command.js";
-import { grokRunTerminalCommandTool } from "../../tools/grok/run_terminal_command.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
 
 const ctx = createTestRootContext();
@@ -856,81 +853,6 @@ describe("Auto permissions", () => {
             ],
         });
     });
-
-    it.each([
-        {
-            args: {
-                cmd: "printf codex",
-                justification: "The sandbox blocked necessary work.",
-                sandbox_permissions: "require_escalated",
-            },
-            tool: codexExecCommandTool,
-        },
-        {
-            args: { command: "printf claude", dangerouslyDisableSandbox: true },
-            tool: claudeBashTool,
-        },
-        {
-            args: {
-                background: false,
-                command: "printf grok",
-                description: "Run a command that the sandbox blocked.",
-                sandbox_permissions: "require_escalated",
-            },
-            tool: grokRunTerminalCommandTool,
-        },
-    ] as const)(
-        "runs reviewer-approved $tool.name through the shared full-access override",
-        async ({ args, tool }) => {
-            const harness = createJustBashToolHarness();
-            harness.context.permissions = createPermissionContext("auto");
-            const observedModes: string[] = [];
-            const originalRun = harness.context.bash.run.bind(harness.context.bash);
-            const originalStartSession = harness.context.bash.startSession.bind(
-                harness.context.bash,
-            );
-            harness.context.bash.run = async (options) => {
-                observedModes.push(harness.context.permissions?.mode ?? "missing");
-                return originalRun(options);
-            };
-            harness.context.bash.startSession = async (options) => {
-                observedModes.push(harness.context.permissions?.mode ?? "missing");
-                return originalStartSession(options);
-            };
-            const provider = autoReviewProvider("allow", {
-                arguments: args,
-                name: tool.name,
-            });
-            const agent = new Agent({
-                context: harness.context,
-                createPermissionReviewAgent: () => reviewAgentFor(provider),
-                modelId: provider.models[0]?.id ?? "",
-                printToConsole: false,
-                provider,
-                tools: [tool as AnyDefinedTool],
-            });
-            const actions: string[] = [];
-            const fullAccessGrants: boolean[] = [];
-
-            await agent.send(ctx, "Run the command even if the workspace sandbox blocks it.", {
-                onEvent: (event) => {
-                    if (event.type === "permission_review") {
-                        actions.push(event.action);
-                    } else if (event.type === "temporary_full_access_started") {
-                        fullAccessGrants.push(true);
-                    }
-                },
-            });
-
-            expect(observedModes.length).toBeGreaterThan(0);
-            expect(new Set(observedModes)).toEqual(new Set(["full_access"]));
-            expect(actions).toEqual([
-                expect.stringContaining("Access: unrestricted filesystem and network access"),
-            ]);
-            expect(fullAccessGrants).toEqual([true]);
-            expect(harness.context.permissions.mode).toBe("auto");
-        },
-    );
 });
 
 function permissionProbeTool(observedModes: string[]) {

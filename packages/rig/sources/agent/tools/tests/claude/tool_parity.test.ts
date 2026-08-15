@@ -10,12 +10,6 @@ describe("Claude tool parity", () => {
     it("assembles the complete curated Claude coding and collaboration surface", () => {
         expect(claudeTools.map((tool) => tool.name)).toEqual([
             "TaskOutput",
-            "Bash",
-            "Read",
-            "Edit",
-            "Write",
-            "Glob",
-            "Grep",
             "TaskCreate",
             "TaskGet",
             "TaskUpdate",

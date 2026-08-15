@@ -7,9 +7,9 @@ import { toExecutorTool } from "../toExecutorTool.js";
 describe("toExecutorTool", () => {
     it("converts the Rig schema without dropping execution metadata from the Rig definition", () => {
         const tool = defineTool({
-            name: "read_file",
-            label: "Read file",
-            description: "Read one file.",
+            name: "example_lookup",
+            label: "Example lookup",
+            description: "Look up one value.",
             deferLoading: true,
             arguments: Type.Object(
                 { path: Type.String({ description: "Path to read." }) },
@@ -24,8 +24,8 @@ describe("toExecutorTool", () => {
         });
 
         expect(toExecutorTool(tool)).toEqual({
-            name: "read_file",
-            description: "Read one file.",
+            name: "example_lookup",
+            description: "Look up one value.",
             parameters: tool.arguments,
             deferLoading: true,
         });
@@ -36,8 +36,8 @@ describe("toExecutorTool", () => {
     it("passes an exact provider-facing definition through unchanged", () => {
         const executorTool = {
             kind: "custom" as const,
-            name: "apply_patch",
-            description: "Apply a patch.",
+            name: "custom_payload",
+            description: "Accept a custom payload.",
             format: {
                 type: "grammar" as const,
                 syntax: "lark" as const,
@@ -45,9 +45,9 @@ describe("toExecutorTool", () => {
             },
         };
         const tool = defineTool({
-            name: "apply_patch",
-            label: "Apply patch",
-            description: "Apply a patch.",
+            name: "custom_payload",
+            label: "Custom payload",
+            description: "Accept a custom payload.",
             executorTool,
             arguments: Type.Object({ patch: Type.String() }),
             returnType: Type.Object({ text: Type.String() }),

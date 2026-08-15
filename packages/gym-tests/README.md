@@ -194,33 +194,37 @@ afterEach(async () => {
     running.clear();
 });
 
-describe("agent edits a fixture with the real shell", () => {
-    it("writes the result inside its Docker workspace", async () => {
+describe("agent updates task progress", () => {
+    it("runs a surviving model tool through the terminal boundary", async () => {
         const gym = await createGym({
-            files: { "input.txt": "hello\n" },
             inference: [
                 {
                     content: [
                         {
-                            arguments: { cmd: "cp input.txt output.txt" },
+                            arguments: {
+                                plan: [
+                                    {
+                                        status: "in_progress",
+                                        step: "Inspect the request",
+                                    },
+                                ],
+                            },
                             id: "call-1",
-                            name: "exec_command",
+                            name: "update_plan",
                             type: "toolCall",
                         },
                     ],
                 },
                 { content: [{ text: "Done.", type: "text" }] },
             ],
-            mode: "docker",
         });
         running.add(gym);
 
-        gym.terminal.type("Copy the input file.");
+        gym.terminal.type("Track this request.");
         gym.terminal.press("enter");
 
         const screen = await gym.terminal.waitForText("Done.");
         expect(screen.text).toContain("Done.");
-        await expect(gym.readFile("output.txt")).resolves.toBe("hello\n");
     });
 });
 ```
@@ -345,18 +349,20 @@ Use an array when the conversation is fixed:
 
 ```ts
 const inference = [
-    { content: [{ text: "I will inspect the file.", type: "text" }] },
+    { content: [{ text: "I will track the work.", type: "text" }] },
     {
         content: [
             {
-                arguments: { cmd: "cat input.txt" },
+                arguments: {
+                    plan: [{ status: "in_progress", step: "Inspect the request" }],
+                },
                 id: "call-1",
-                name: "exec_command",
+                name: "update_plan",
                 type: "toolCall",
             },
         ],
     },
-    { content: [{ text: "The file contains hello.", type: "text" }] },
+    { content: [{ text: "The work is tracked.", type: "text" }] },
 ];
 ```
 
@@ -377,9 +383,11 @@ inference(request, callIndex) {
         return {
             content: [
                 {
-                    arguments: { cmd: "printf 'done\\n' > result.txt" },
-                    id: "write-result",
-                    name: "exec_command",
+                    arguments: {
+                        plan: [{ status: "completed", step: "Inspect the request" }],
+                    },
+                    id: "finish-plan",
+                    name: "update_plan",
                     type: "toolCall",
                 },
             ],
@@ -389,7 +397,7 @@ inference(request, callIndex) {
     expect(lastMessage).toMatchObject({
         isError: false,
         role: "toolResult",
-        toolName: "exec_command",
+        toolName: "update_plan",
     });
     return { content: [{ text: "Finished.", type: "text" }] };
 }
@@ -474,7 +482,7 @@ const agentRequests = gym.inference.requests.filter(
 expect(agentRequests[1]?.context.messages.at(-1)).toMatchObject({
     isError: false,
     role: "toolResult",
-    toolName: "exec_command",
+    toolName: "update_plan",
 });
 ```
 

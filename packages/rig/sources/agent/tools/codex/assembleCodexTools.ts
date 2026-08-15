@@ -2,13 +2,8 @@ import { codexStopWorkflowTool } from "../../../tools/workflows/stop_workflow.js
 import { codexWaitForWorkflowTool } from "../../../tools/workflows/waitForWorkflowTools.js";
 import { codexWorkflowTool } from "../../../tools/workflows/workflowTools.js";
 import { codexWorkflowStatusTool } from "../../../tools/workflows/workflow_status.js";
-import { codexApplyPatchTool } from "./apply_patch.js";
-import { codexExecCommandTool } from "./exec_command.js";
-import { codexKillSessionTool } from "./kill_session.js";
 import { codexRequestUserInputTool } from "./request_user_input.js";
 import { codexUpdatePlanTool } from "./update_plan.js";
-import { codexViewImageTool } from "./view_image.js";
-import { codexWriteStdinTool } from "./write_stdin.js";
 import { codexV1CloseAgentTool } from "./v1/close_agent.js";
 import { codexV1ResumeAgentTool } from "./v1/resume_agent.js";
 import { codexV1SendInputTool } from "./v1/send_input.js";
@@ -24,15 +19,7 @@ import { codexExtendedSpawnAgentTool } from "./v2/collaboration_ext/spawn_agent.
 import { codexWaitAgentTool } from "./v2/wait_agent.js";
 import { deferToolLoading } from "../../types.js";
 
-export const codexTools = [
-    codexExecCommandTool,
-    codexWriteStdinTool,
-    codexKillSessionTool,
-    codexUpdatePlanTool,
-    codexRequestUserInputTool,
-    codexApplyPatchTool,
-    codexViewImageTool,
-] as const;
+export const codexTools = [codexUpdatePlanTool, codexRequestUserInputTool] as const;
 
 export const codexWorkflowTools = [
     deferToolLoading(codexWorkflowTool),

@@ -1,22 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Value } from "@sinclair/typebox/value";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AgentContext } from "../agent/context/AgentContext.js";
-import { claudeBashTool } from "../agent/tools/claude/Bash.js";
-import { claudeReadTool } from "../agent/tools/claude/Read.js";
 import { claudeTaskInputTool } from "../agent/tools/claude/TaskInput.js";
-import { claudeWriteTool } from "../agent/tools/claude/Write.js";
-import { codexApplyPatchTool } from "../agent/tools/codex/apply_patch.js";
-import { codexExecCommandTool } from "../agent/tools/codex/exec_command.js";
-import { codexViewImageTool } from "../agent/tools/codex/view_image.js";
-import { codexWriteStdinTool } from "../agent/tools/codex/write_stdin.js";
-import { grokReadFileTool } from "../agent/tools/grok/read_file.js";
-import { grokRunTerminalCommandTool } from "../tools/grok/run_terminal_command.js";
-import { grokSendCommandInputTool } from "../tools/grok/send_command_input.js";
-import { grokSearchReplaceTool } from "../agent/tools/grok/search_replace.js";
 import { codexWorkflowTool } from "../tools/workflows/workflowTools.js";
 
 describe("tool-owned Auto permission policies", () => {
@@ -30,120 +19,14 @@ describe("tool-owned Auto permission policies", () => {
         );
     });
 
-    it("keeps ordinary shells sandboxed and reviews explicit escalation or secret use", async () => {
+    it("elevates input only when a background task uses secrets", async () => {
         const context = await makeContext(temporaryDirectories);
-        const secretSessions = new Set<number>();
         Object.assign(context, {
             bash: {
-                sessionUsesSecrets: (sessionId: number) => secretSessions.has(sessionId),
+                sessionUsesSecrets: (sessionId: number) => sessionId === 1,
             },
         });
 
-        expect(
-            await codexExecCommandTool.shouldReviewInAutoMode({ cmd: "pnpm test" }, context),
-        ).toBe(false);
-        expect(
-            await codexExecCommandTool.shouldReviewInAutoMode(
-                { cmd: "git fetch", secrets: ["project-git"] },
-                context,
-            ),
-        ).toBe(true);
-        expect(
-            await codexExecCommandTool.shouldRunInFullAccessInAutoMode(
-                { cmd: "git fetch", secrets: ["project-git"] },
-                context,
-            ),
-        ).toBe(true);
-        expect(
-            await codexExecCommandTool.shouldRunInFullAccessInAutoMode(
-                { cmd: "pnpm test", sandbox_permissions: "require_escalated" },
-                context,
-            ),
-        ).toBe(true);
-        expect(await claudeBashTool.shouldReviewInAutoMode({ command: "pnpm test" }, context)).toBe(
-            false,
-        );
-        expect(
-            await claudeBashTool.shouldReviewInAutoMode(
-                { command: "git fetch", secrets: ["project-git"] },
-                context,
-            ),
-        ).toBe(true);
-        expect(
-            await claudeBashTool.shouldRunInFullAccessInAutoMode(
-                { command: "git fetch", secrets: ["project-git"] },
-                context,
-            ),
-        ).toBe(true);
-        expect(
-            await claudeBashTool.shouldRunInFullAccessInAutoMode(
-                { command: "pnpm test", dangerouslyDisableSandbox: true },
-                context,
-            ),
-        ).toBe(true);
-        expect(
-            await grokRunTerminalCommandTool.shouldReviewInAutoMode(
-                {
-                    background: false,
-                    command: "pnpm test",
-                    description: "Run tests.",
-                },
-                context,
-            ),
-        ).toBe(false);
-        const grokSecret = {
-            background: false,
-            command: "git fetch",
-            description: "Fetch the project origin.",
-            secrets: ["project-git"],
-        };
-        expect(await grokRunTerminalCommandTool.shouldReviewInAutoMode(grokSecret, context)).toBe(
-            true,
-        );
-        expect(
-            await grokRunTerminalCommandTool.shouldRunInFullAccessInAutoMode(grokSecret, context),
-        ).toBe(true);
-        const grokEscalation = {
-            background: false,
-            command: "pnpm test",
-            description: "Run tests after the sandbox blocked the package manager cache.",
-            sandbox_permissions: "require_escalated",
-        };
-        expect(Value.Check(grokRunTerminalCommandTool.arguments, grokEscalation)).toBe(true);
-        expect(
-            await grokRunTerminalCommandTool.shouldReviewInAutoMode(
-                grokEscalation as never,
-                context,
-            ),
-        ).toBe(true);
-        expect(
-            await grokRunTerminalCommandTool.shouldRunInFullAccessInAutoMode(
-                grokEscalation as never,
-                context,
-            ),
-        ).toBe(true);
-        expect(await codexWriteStdinTool.shouldReviewInAutoMode({ session_id: 1 }, context)).toBe(
-            false,
-        );
-        expect(
-            await codexWriteStdinTool.shouldReviewInAutoMode(
-                { chars: "deploy\n", session_id: 1 },
-                context,
-            ),
-        ).toBe(true);
-        expect(
-            await codexWriteStdinTool.shouldRunInFullAccessInAutoMode(
-                { chars: "deploy\n", session_id: 1 },
-                context,
-            ),
-        ).toBe(false);
-        secretSessions.add(1);
-        expect(
-            await codexWriteStdinTool.shouldRunInFullAccessInAutoMode(
-                { chars: "git push\n", session_id: 1 },
-                context,
-            ),
-        ).toBe(true);
         expect(
             await claudeTaskInputTool.shouldRunInFullAccessInAutoMode(
                 { input: "git push\n", task_id: "1" },
@@ -151,87 +34,21 @@ describe("tool-owned Auto permission policies", () => {
             ),
         ).toBe(true);
         expect(
-            await grokSendCommandInputTool.shouldRunInFullAccessInAutoMode(
-                { input: "git push\n", task_id: "1" },
+            await claudeTaskInputTool.shouldRunInFullAccessInAutoMode(
+                { input: "continue\n", task_id: "2" },
                 context,
             ),
-        ).toBe(true);
-        expect(
-            codexWriteStdinTool.describeAutoPermissionAction?.(
-                { chars: "deploy\n", session_id: 1 },
-                context,
-            ),
-        ).toBe('sending "deploy\\n" to shell session 1');
+        ).toBe(false);
     });
 
-    it("lets each file tool expose its own path while sharing boundary checks", async () => {
+    it("keeps workflow script path boundary checks", async () => {
         const context = await makeContext(temporaryDirectories);
-        const outside = join(context.fs.cwd, "..", "outside.txt");
-        await writeFile(outside, "outside");
-        const link = join(context.fs.cwd, "outside-link");
-        await symlink(outside, link);
-        const inside = join(context.fs.cwd, "inside.txt");
-        const insideWorkflow = join(context.fs.cwd, "workflow.py");
-        await writeFile(insideWorkflow, "'done'");
-        const hook = join(context.fs.cwd, ".git", "hooks", "pre-commit");
-        await mkdir(join(context.fs.cwd, ".git", "hooks"), { recursive: true });
-        const userSkill = join(context.fs.home ?? "", ".codex", "skills", "review", "SKILL.md");
-        await mkdir(join(context.fs.home ?? "", ".codex", "skills", "review"), {
-            recursive: true,
-        });
-        await writeFile(userSkill, "# Review");
+        const inside = join(context.fs.cwd, "workflow.py");
+        const outside = join(context.fs.cwd, "..", "workflow.py");
+        await writeFile(inside, "'done'");
 
-        await expect(
-            claudeReadTool.shouldReviewInAutoMode({ file_path: outside }, context),
-        ).resolves.toBe(true);
-        await expect(
-            claudeReadTool.shouldReviewInAutoMode({ file_path: userSkill }, context),
-        ).resolves.toBe(false);
-        await expect(
-            claudeReadTool.shouldRunInFullAccessInAutoMode({ file_path: outside }, context),
-        ).resolves.toBe(true);
-        await expect(
-            claudeWriteTool.shouldReviewInAutoMode(
-                { content: "inside", file_path: inside },
-                context,
-            ),
-        ).resolves.toBe(false);
-        await expect(
-            claudeWriteTool.shouldReviewInAutoMode({ content: "hook", file_path: hook }, context),
-        ).resolves.toBe(true);
-        await expect(
-            grokReadFileTool.shouldReviewInAutoMode({ target_file: outside }, context),
-        ).resolves.toBe(true);
-        await expect(
-            grokSearchReplaceTool.shouldReviewInAutoMode(
-                { file_path: outside, new_string: "new", old_string: "old" },
-                context,
-            ),
-        ).resolves.toBe(true);
-        await expect(
-            codexViewImageTool.shouldReviewInAutoMode({ path: outside }, context),
-        ).resolves.toBe(true);
-        await expect(
-            codexApplyPatchTool.shouldReviewInAutoMode(
-                {
-                    patch: "*** Begin Patch\n*** Update File: inside.txt\n*** End Patch",
-                },
-                context,
-            ),
-        ).resolves.toBe(false);
-        await expect(
-            codexApplyPatchTool.shouldReviewInAutoMode(
-                {
-                    patch: `*** Begin Patch\n*** Update File: ${outside}\n*** End Patch`,
-                },
-                context,
-            ),
-        ).resolves.toBe(true);
-        expect(await codexWorkflowTool.shouldReviewInAutoMode({ script: "'done'" }, context)).toBe(
-            false,
-        );
         expect(
-            await codexWorkflowTool.shouldReviewInAutoMode({ scriptPath: insideWorkflow }, context),
+            await codexWorkflowTool.shouldReviewInAutoMode({ scriptPath: inside }, context),
         ).toBe(false);
         expect(
             await codexWorkflowTool.shouldReviewInAutoMode({ scriptPath: outside }, context),
@@ -246,45 +63,6 @@ describe("tool-owned Auto permission policies", () => {
             codexWorkflowTool.describeAutoPermissionAction?.({ scriptPath: outside }, context),
         ).toBe(
             `reading workflow script ${JSON.stringify(outside)}. Access: unrestricted filesystem access outside the workspace sandbox`,
-        );
-        expect(claudeReadTool.describeAutoPermissionAction?.({ file_path: outside }, context)).toBe(
-            `reading ${JSON.stringify(outside)}. Access: unrestricted filesystem access outside the workspace sandbox`,
-        );
-        expect(
-            claudeWriteTool.describeAutoPermissionAction?.(
-                { content: "hook", file_path: hook },
-                context,
-            ),
-        ).toBe(
-            `writing ${JSON.stringify(hook)}. Access: protected Git control path inside the workspace`,
-        );
-    });
-
-    it("lets apply_patch disclose every affected path and its full-access boundary", async () => {
-        const context = await makeContext(temporaryDirectories);
-        const outside = join(context.fs.cwd, "..", "outside.txt");
-        const renamed = join(context.fs.cwd, "..", "renamed.txt");
-        const describe = codexApplyPatchTool.describeAutoPermissionAction;
-
-        expect(describe).toBeDefined();
-        if (describe === undefined) return;
-
-        const action = describe(
-            {
-                patch: [
-                    "*** Begin Patch",
-                    "*** Update File: ../outside.txt",
-                    "*** Move to: ../renamed.txt",
-                    "*** End Patch",
-                ].join("\n"),
-            },
-            context,
-        );
-
-        expect(action).toContain(`Affected paths: "${outside}", "${renamed}"`);
-        expect(action).toContain(`Working directory: "${context.fs.cwd}"`);
-        expect(action).toContain(
-            "Access: unrestricted filesystem access outside the workspace sandbox",
         );
     });
 });
