@@ -958,3 +958,6 @@ export { updateSlotTool } from "./slots/tools/update_slot.js";
 // Workspaces: host-owned worktree/Git references, bounded catalogs, and
 // cursor-addressable detail.
 export * from "./workspaces/index.js";
+
+// Projects: repositories registered on demand, with their own bounded settings.
+export * from "./projects/index.js";

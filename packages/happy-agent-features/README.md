@@ -44,6 +44,8 @@ an agent.
   elevation, refusal, and mode changes.
 - [Presence](sources/presence/README.md) — durable agent presence, availability, and status
   events.
+- [Projects](sources/projects/README.md) — repositories registered on demand, with bounded
+  settings and durable rename and archival.
 - [Search](sources/search/README.md) — bounded common web fetch plus explicit vendor search
   wrappers.
 - [Secrets](sources/secrets/README.md) — safe secret metadata, keyed replay fingerprints,
