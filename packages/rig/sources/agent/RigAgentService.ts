@@ -21,7 +21,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import type { SessionDatabase } from "../persistence/database/SessionDatabase.js";
 import { withDatabase } from "../persistence/databaseContext.js";
-import { runSessionTransaction } from "../session/SessionTransactionContext.js";
+import { runSessionTransaction } from "../persistence/database/SessionTransactionContext.js";
 import {
     markAgentMessageSubmissionConsumed,
     markAgentMessageSubmissionsSettled,
@@ -33,7 +33,6 @@ import {
     recordAgentMessageSubmission,
     type AgentMessageSubmission,
 } from "../persistence/agent/agentMessageSubmission.js";
-import { querySessionMessageSubmission } from "../persistence/session/querySessionMessageSubmission.js";
 import {
     createEventIdFactory,
     agentAcceptedContentSchema,
@@ -66,11 +65,8 @@ import type { ConfigProviders } from "../config/types.js";
 import type { ModelCatalog } from "../protocol/index.js";
 import { createAgentRuntimeConfig } from "./createAgentRuntimeConfig.js";
 import { RigHistoryStore } from "./RigHistoryStore.js";
-import {
-    RigProtocolFeature,
-    type RigAgentConfiguration,
-    type RigAgentProtocolSession,
-} from "./RigProtocolFeature.js";
+import { RigProtocolFeature, type RigAgentConfiguration } from "./RigProtocolFeature.js";
+import type { RigProtocolProjection } from "./RigProtocolProjection.js";
 import { SqliteAgentPersistence } from "./persistence/SqliteAgentPersistence.js";
 import type { ContentBlock, UserMessage } from "./types.js";
 
@@ -95,6 +91,7 @@ export class RigAgentService {
     readonly #system: AgentSystemLocal;
     readonly #database: SessionDatabase;
     readonly #nextEventId = createEventIdFactory();
+    readonly #projection: RigProtocolProjection;
 
     static async open(
         ctx: Context,
@@ -102,12 +99,9 @@ export class RigAgentService {
             database: SessionDatabase;
             env?: NodeJS.ProcessEnv;
             modelCatalog: ModelCatalog;
+            projection: RigProtocolProjection;
             providers: ConfigProviders;
             resolveInferenceMaxRetries?: () => number;
-            resolveSession?: (
-                ctx: Context,
-                sessionId: string,
-            ) => Promise<RigAgentProtocolSession | undefined>;
         },
     ): Promise<RigAgentService> {
         let lockHandedToSystem = false;
@@ -136,15 +130,13 @@ export class RigAgentService {
                     ? {}
                     : { resolveInferenceMaxRetries: options.resolveInferenceMaxRetries }),
             });
-            const bridge = new RigProtocolFeature();
-            if (options.resolveSession !== undefined) {
-                await restoreProtocolRuns(
-                    withDatabase(ctx, options.database),
-                    bridge,
-                    options.resolveSession,
-                    options.database,
-                );
-            }
+            const bridge = new RigProtocolFeature(options.projection);
+            await restoreProtocolRuns(
+                withDatabase(ctx, options.database),
+                bridge,
+                options.projection,
+                options.database,
+            );
             const history = new HistoryFeature({
                 store: new RigHistoryStore(options.database),
             });
@@ -163,7 +155,13 @@ export class RigAgentService {
                     providers: runtime.providers,
                 },
             );
-            return new RigAgentService(bridge, runtime.models, system, options.database);
+            return new RigAgentService(
+                bridge,
+                runtime.models,
+                system,
+                options.database,
+                options.projection,
+            );
         } catch (error) {
             throw error;
         }
@@ -174,27 +172,30 @@ export class RigAgentService {
         models: readonly AgentModel[],
         system: AgentSystemLocal,
         database: SessionDatabase,
+        projection: RigProtocolProjection,
     ) {
         this.#bridge = bridge;
         this.#models = models;
         this.#system = system;
         this.#database = database;
+        this.#projection = projection;
     }
 
     async submit(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: SubmitMessageRequest,
     ): Promise<SubmitMessageResponse> {
-        return await this.#dispatch(ctx, session, request, "run");
+        return await this.#dispatch(ctx, conversationId, request, "run");
     }
 
     async steer(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: SteerMessageRequest,
     ): Promise<SteerMessageResponse> {
-        const agentId = stableAgentId(session.id);
+        const snapshot = await this.#snapshot(ctx, conversationId);
+        const agentId = snapshot.agentId;
         if (
             request.expectedRunId !== undefined &&
             !this.#bridge.hasPending(agentId, request.expectedRunId)
@@ -204,7 +205,7 @@ export class RigAgentService {
             );
         }
         const delivery = request.expectedRunId === undefined ? "run" : "steer";
-        const result = await this.#dispatch(ctx, session, request, delivery);
+        const result = await this.#dispatch(ctx, conversationId, request, delivery, snapshot);
         return {
             ...result,
             delivery,
@@ -213,15 +214,17 @@ export class RigAgentService {
 
     async deliverMessage(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: SubmitMessageRequest,
     ): Promise<SubmitMessageResponse | SteerMessageResponse> {
-        const delivery = this.#bridge.hasPending(stableAgentId(session.id)) ? "steer" : "run";
-        return await this.#dispatch(ctx, session, request, delivery);
+        const snapshot = await this.#snapshot(ctx, conversationId);
+        const delivery = this.#bridge.hasPending(snapshot.agentId) ? "steer" : "run";
+        return await this.#dispatch(ctx, conversationId, request, delivery, snapshot);
     }
 
-    async compact(ctx: Context, session: RigAgentProtocolSession): Promise<AgentCompactionResult> {
-        const agent = await this.#agent(ctx, session.id);
+    async compact(ctx: Context, conversationId: string): Promise<AgentCompactionResult> {
+        const snapshot = await this.#snapshot(ctx, conversationId);
+        const agent = await this.#agent(ctx, snapshot);
         await this.#system.compact(ctx, agent.id, { await: true });
         // Agent Base deliberately exposes no provider-specific compaction statistics. Keep the
         // established protocol shape while reporting only what this host can prove.
@@ -236,10 +239,10 @@ export class RigAgentService {
 
     async changeModel(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: ChangeModelRequest,
     ): Promise<ProtocolSession> {
-        const current = session.snapshot();
+        const current = await this.#snapshot(ctx, conversationId);
         const model = request.modelId;
         const provider = this.#resolveProvider(model, request.providerId, current.providerId);
         const selected = this.#selectedModel(provider, model);
@@ -250,7 +253,7 @@ export class RigAgentService {
         if (normalizedEffort !== undefined) this.#assertSupportedEffort(selected, normalizedEffort);
         const serviceTier = current.serviceTier;
         this.#assertSupportedServiceTier(selected, serviceTier);
-        return await this.#projectConfiguration(ctx, session, {
+        return await this.#projectConfiguration(ctx, conversationId, {
             ...(normalizedEffort === undefined ? {} : { effort: normalizedEffort }),
             modelId: model,
             ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
@@ -262,14 +265,14 @@ export class RigAgentService {
 
     async changeEffort(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: ChangeEffortRequest,
     ): Promise<ProtocolSession> {
-        const current = session.snapshot();
+        const current = await this.#snapshot(ctx, conversationId);
         const selected = this.#selectedModel(current.providerId, current.modelId);
         const normalizedEffort = normalizeRequestedEffort(request.effort ?? selected.defaultEffort);
         this.#assertSupportedEffort(selected, normalizedEffort);
-        return await this.#projectConfiguration(ctx, session, {
+        return await this.#projectConfiguration(ctx, conversationId, {
             effort: normalizedEffort,
             modelId: current.modelId,
             ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
@@ -281,10 +284,10 @@ export class RigAgentService {
 
     async changeServiceTier(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: ChangeServiceTierRequest,
     ): Promise<ProtocolSession> {
-        const current = session.snapshot();
+        const current = await this.#snapshot(ctx, conversationId);
         const selected = this.#selectedModel(current.providerId, current.modelId);
         if (request.serviceTier === undefined) {
             throw new Error(
@@ -292,7 +295,7 @@ export class RigAgentService {
             );
         }
         this.#assertSupportedServiceTier(selected, request.serviceTier);
-        return await this.#projectConfiguration(ctx, session, {
+        return await this.#projectConfiguration(ctx, conversationId, {
             ...(current.effort === undefined ? {} : { effort: current.effort }),
             modelId: current.modelId,
             ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
@@ -304,11 +307,11 @@ export class RigAgentService {
 
     async changePermissionMode(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: ChangePermissionModeRequest,
     ): Promise<ProtocolSession> {
-        const current = session.snapshot();
-        return await this.#projectConfiguration(ctx, session, {
+        const current = await this.#snapshot(ctx, conversationId);
+        return await this.#projectConfiguration(ctx, conversationId, {
             ...(current.effort === undefined ? {} : { effort: current.effort }),
             modelId: current.modelId,
             ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
@@ -320,12 +323,17 @@ export class RigAgentService {
 
     async #projectConfiguration(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         configuration: RigAgentConfiguration,
     ): Promise<ProtocolSession> {
         return await runSessionTransaction(
             withDatabase(ctx, this.#database),
-            async (txCtx) => await session.projectAgentConfiguration(txCtx, configuration),
+            async (txCtx) =>
+                await this.#projection.projectAgentConfiguration(
+                    txCtx,
+                    conversationId,
+                    configuration,
+                ),
         );
     }
 
@@ -370,12 +378,13 @@ export class RigAgentService {
 
     async #dispatch(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         request: SubmitMessageRequest,
         delivery: "run" | "steer",
+        knownSnapshot?: ProtocolSession,
     ): Promise<SubmitMessageResponse | SteerMessageResponse> {
         const databaseCtx = withDatabase(ctx, this.#database);
-        const snapshot = session.snapshot();
+        const snapshot = knownSnapshot ?? (await this.#snapshot(databaseCtx, conversationId));
         if (!Value.Check(submitMessageCoreSchema, request)) {
             throw new Error(
                 "The message submission contains invalid or oversized text or identity.",
@@ -422,18 +431,26 @@ export class RigAgentService {
         let metadata!: RigMessageMetadataEnvelope;
         let fingerprint!: string;
         const result = await runSessionTransaction(databaseCtx, async (txCtx) => {
-            const agent = await this.#agent(txCtx, session.id);
+            const agent = await this.#agent(txCtx, snapshot);
             if (hasSelectionOverride) {
-                dispatchSnapshot = await session.projectAgentConfiguration(txCtx, {
-                    ...(agentOptions.effort === undefined ? {} : { effort: agentOptions.effort }),
-                    modelId: agentOptions.model,
-                    ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
-                    permissionMode: snapshot.permissionMode,
-                    providerId: agentOptions.provider,
-                    ...(protocolServiceTier === undefined
-                        ? {}
-                        : { serviceTier: protocolServiceTier }),
-                });
+                dispatchSnapshot = await this.#projection.projectAgentConfiguration(
+                    txCtx,
+                    conversationId,
+                    {
+                        ...(agentOptions.effort === undefined
+                            ? {}
+                            : { effort: agentOptions.effort }),
+                        modelId: agentOptions.model,
+                        ...(request.mutationId === undefined
+                            ? {}
+                            : { mutationId: request.mutationId }),
+                        permissionMode: snapshot.permissionMode,
+                        providerId: agentOptions.provider,
+                        ...(protocolServiceTier === undefined
+                            ? {}
+                            : { serviceTier: protocolServiceTier }),
+                    },
+                );
             }
             metadata = rigMessageMetadata({
                 ...(request.clientSubmissionId === undefined
@@ -451,7 +468,7 @@ export class RigAgentService {
                 permissionMode: dispatchSnapshot.permissionMode,
                 providerId: dispatchSnapshot.providerId,
                 runId,
-                sessionId: session.id,
+                sessionId: conversationId,
                 ...(dispatchSnapshot.serviceTier === undefined
                     ? {}
                     : { serviceTier: dispatchSnapshot.serviceTier }),
@@ -466,9 +483,11 @@ export class RigAgentService {
             const persisted = await queryAgentMessageSubmission(txCtx, agent.id, messageId);
             if (persisted !== undefined) {
                 assertPersistedSubmissionMatches(persisted, expectedMetadata);
-                const durableEvent =
-                    session.events.messageSubmission?.(messageId) ??
-                    (await querySessionMessageSubmission(txCtx, session.id, messageId));
+                const durableEvent = await this.#projection.messageSubmission(
+                    txCtx,
+                    conversationId,
+                    messageId,
+                );
                 if (durableEvent !== undefined) {
                     assertSubmissionMatches(durableEvent, {
                         content,
@@ -477,23 +496,27 @@ export class RigAgentService {
                         identity: request.identity ?? null,
                         messageId,
                         runId,
-                        sessionId: session.id,
+                        sessionId: conversationId,
                         submissionFingerprint: fingerprint,
                     });
                     return { submitted: durableEvent };
                 }
                 if (persisted.status !== "queued") {
                     return {
-                        submitted: await session.projectUserMessage(txCtx, {
-                            delivery,
-                            displayText,
-                            message,
-                            ...(request.mutationId === undefined
-                                ? {}
-                                : { mutationId: request.mutationId }),
-                            runId,
-                            submissionFingerprint: fingerprint,
-                        }),
+                        submitted: await this.#projection.projectUserMessage(
+                            txCtx,
+                            conversationId,
+                            {
+                                delivery,
+                                displayText,
+                                message,
+                                ...(request.mutationId === undefined
+                                    ? {}
+                                    : { mutationId: request.mutationId }),
+                                runId,
+                                submissionFingerprint: fingerprint,
+                            },
+                        ),
                     };
                 }
             } else {
@@ -502,9 +525,11 @@ export class RigAgentService {
                         `Message identity '${messageId}' was already accepted, but its immutable Rig submission receipt is unavailable.`,
                     );
                 }
-                const retainedEvent =
-                    session.events.messageSubmission?.(messageId) ??
-                    (await querySessionMessageSubmission(txCtx, session.id, messageId));
+                const retainedEvent = await this.#projection.messageSubmission(
+                    txCtx,
+                    conversationId,
+                    messageId,
+                );
                 if (retainedEvent !== undefined) {
                     assertSubmissionMatches(retainedEvent, {
                         content,
@@ -513,7 +538,7 @@ export class RigAgentService {
                         identity: request.identity ?? null,
                         messageId,
                         runId,
-                        sessionId: session.id,
+                        sessionId: conversationId,
                         submissionFingerprint: fingerprint,
                         requireFingerprint: true,
                     });
@@ -523,6 +548,7 @@ export class RigAgentService {
             const persistedPending =
                 persisted !== undefined && this.#bridge.hasPending(agent.id, runId, messageId);
             const protocolRun = this.#bridge.register(agent.id, {
+                conversationId,
                 delivery,
                 displayText,
                 messageId,
@@ -538,7 +564,6 @@ export class RigAgentService {
                         () => pruneAgentMessageSubmissions(settledCtx, agent.id),
                     ),
                 runId,
-                session,
                 snapshot: dispatchSnapshot,
                 submissionFingerprint: fingerprint,
             });
@@ -557,7 +582,7 @@ export class RigAgentService {
                     messageId,
                     metadata,
                     runId,
-                    sessionId: session.id,
+                    sessionId: conversationId,
                 });
                 if (delivery === "steer") {
                     await this.#system.steer(txCtx, agent.id, agentMessage, {
@@ -585,7 +610,7 @@ export class RigAgentService {
                 ...(delivery === "steer" ? { delivery } : {}),
                 eventId: result.submitted.id,
                 runId: result.submitted.data.runId,
-                sessionId: session.id,
+                sessionId: conversationId,
             } as SubmitMessageResponse | SteerMessageResponse;
         }
         const submitted = await result.protocolRun.projected();
@@ -593,16 +618,17 @@ export class RigAgentService {
             ...(delivery === "steer" ? { delivery } : {}),
             eventId: submitted.id,
             runId,
-            sessionId: session.id,
+            sessionId: conversationId,
         };
     }
 
     async abort(
         ctx: Context,
-        session: RigAgentProtocolSession,
+        conversationId: string,
         options: AbortRunOptions = {},
     ): Promise<AbortRunResponse> {
-        const agentId = stableAgentId(session.id);
+        const snapshot = await this.#snapshot(ctx, conversationId);
+        const agentId = snapshot.agentId;
         if ((await this.#system.config(ctx, agentId)) === undefined) {
             return { aborted: false };
         }
@@ -610,7 +636,7 @@ export class RigAgentService {
             return { aborted: false };
         }
         await this.#system.abort(ctx, agentId);
-        const event = await session.events.append(ctx, {
+        const event = await this.#projection.projectProtocolEvent(ctx, conversationId, {
             createdAt: Date.now(),
             data: {
                 ...(options.continuePendingSteering === true
@@ -620,7 +646,7 @@ export class RigAgentService {
                 ...(options.expectedRunId === undefined ? {} : { runId: options.expectedRunId }),
             },
             id: this.#nextEventId(),
-            sessionId: session.id,
+            sessionId: conversationId,
             type: "abort_requested",
         });
         return {
@@ -634,15 +660,23 @@ export class RigAgentService {
         await this.#system.close(ctx);
     }
 
-    async #agent(ctx: Context, sessionId: string): Promise<Agent> {
-        const agentId = stableAgentId(sessionId);
+    async #agent(ctx: Context, snapshot: ProtocolSession): Promise<Agent> {
+        const agentId = snapshot.agentId;
         const existing = await this.#system.config(ctx, agentId);
         if (existing !== undefined) return await this.#system.resolve(ctx, agentId);
         return await this.#system.create(
             ctx,
-            { metadata: { rigSessionId: sessionId } },
+            { metadata: { rigSessionId: snapshot.id } },
             { id: agentId },
         );
+    }
+
+    async #snapshot(ctx: Context, conversationId: string): Promise<ProtocolSession> {
+        const snapshot = await this.#projection.readSnapshot(ctx, conversationId);
+        if (snapshot === undefined) {
+            throw new Error(`The conversation '${conversationId}' does not exist.`);
+        }
+        return snapshot;
     }
 }
 
@@ -793,12 +827,6 @@ function stableMessageId(identity: string): string {
     return `c${createHash("sha256").update(identity).digest("hex").slice(0, 31)}`;
 }
 
-function stableAgentId(sessionId: string): string {
-    return /^[a-z][a-z0-9]{1,31}$/.test(sessionId)
-        ? sessionId
-        : stableMessageId(`agent:${sessionId}`);
-}
-
 function normalizeRequestContent(request: SubmitMessageRequest): readonly ContentBlock[] {
     const content = request.content ?? [{ text: request.text, type: "text" as const }];
     if (!Value.Check(submitContentSchema, content)) {
@@ -890,10 +918,7 @@ function assertPersistedSubmissionMatches(
 async function restoreProtocolRuns(
     ctx: Context,
     bridge: RigProtocolFeature,
-    resolveSession: (
-        ctx: Context,
-        sessionId: string,
-    ) => Promise<RigAgentProtocolSession | undefined>,
+    projection: RigProtocolProjection,
     database: SessionDatabase,
 ): Promise<void> {
     let afterAgentId: string | undefined;
@@ -930,15 +955,22 @@ async function restoreProtocolRuns(
                     const message = readStoredUserMessage(candidate.message, candidate.messageId);
                     const agentMessage = readStoredSessionUserMessage(candidate.input);
                     assertRestoreEnvelope(candidate, metadata, message, agentMessage);
-                    const session = await resolveSession(ctx, metadata.sessionId);
-                    if (session === undefined) {
+                    const snapshot = await projection.readSnapshot(ctx, metadata.sessionId);
+                    if (snapshot === undefined) {
                         throw new Error(
-                            `The session '${metadata.sessionId}' for owed Agent message '${candidate.messageId}' could not be restored.`,
+                            `The conversation '${metadata.sessionId}' for owed Agent message '${candidate.messageId}' could not be restored.`,
                         );
                     }
-                    let projectedEvent =
-                        session.events.messageSubmission?.(candidate.messageId) ??
-                        (await querySessionMessageSubmission(ctx, session.id, candidate.messageId));
+                    if (snapshot.agentId !== agentId) {
+                        throw new Error(
+                            `The conversation '${metadata.sessionId}' maps to Agent '${snapshot.agentId}', not the owed Agent '${agentId}'.`,
+                        );
+                    }
+                    let projectedEvent = await projection.messageSubmission(
+                        ctx,
+                        metadata.sessionId,
+                        candidate.messageId,
+                    );
                     if (projectedEvent !== undefined) {
                         assertSubmissionMatches(projectedEvent, {
                             content: metadata.content,
@@ -947,14 +979,14 @@ async function restoreProtocolRuns(
                             identity: metadata.identity,
                             messageId: candidate.messageId,
                             runId: metadata.runId,
-                            sessionId: session.id,
+                            sessionId: metadata.sessionId,
                             submissionFingerprint: submissionFingerprint(metadata),
                         });
                     } else if (candidate.status !== "queued") {
                         projectedEvent = await runSessionTransaction(
                             withDatabase(ctx, database),
                             async (txCtx) =>
-                                await session.projectUserMessage(txCtx, {
+                                await projection.projectUserMessage(txCtx, metadata.sessionId, {
                                     delivery: metadata.delivery,
                                     displayText: metadata.displayText,
                                     message,
@@ -966,8 +998,8 @@ async function restoreProtocolRuns(
                                 }),
                         );
                     }
-                    const snapshot = session.snapshot();
                     bridge.register(agentId, {
+                        conversationId: metadata.sessionId,
                         delivery: metadata.delivery,
                         displayText: metadata.displayText,
                         messageId: candidate.messageId,
@@ -990,7 +1022,6 @@ async function restoreProtocolRuns(
                                 () => pruneAgentMessageSubmissions(settledCtx, agentId),
                             ),
                         runId: metadata.runId,
-                        session,
                         snapshot,
                         submissionFingerprint: submissionFingerprint(metadata),
                     });

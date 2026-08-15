@@ -17,6 +17,10 @@ import type {
     AgentEventAssistantMessage,
     AgentLoopEvent,
 } from "./AgentLoopEvent.js";
+import type {
+    RigProtocolProjection,
+    RigProtocolUserMessageInput,
+} from "./RigProtocolProjection.js";
 import type { AgentMessage, Message, ToolCallBlock, UserMessage } from "./types.js";
 import type { StopReason } from "../protocol/InferenceProtocol.js";
 import {
@@ -47,36 +51,6 @@ export interface RigAgentConfiguration {
     readonly serviceTier?: "fast";
 }
 
-export interface RigAgentProtocolSession {
-    afterProtocolCommit(ctx: Context, callback: () => void | Promise<void>): Promise<void>;
-    readonly events: {
-        append(ctx: Context, event: SessionEvent): Promise<SessionEvent>;
-        messageSubmission?(
-            messageId: string,
-        ): Extract<SessionEvent, { type: "message_submitted" }> | undefined;
-    };
-    readonly id: string;
-    projectProtocolEvent(ctx: Context, event: SessionEvent): Promise<SessionEvent>;
-    projectAgentMessage(ctx: Context, runId: string, message: Message): Promise<SessionEvent>;
-    projectAgentConfiguration(
-        ctx: Context,
-        configuration: RigAgentConfiguration,
-    ): Promise<ProtocolSession>;
-    projectUserMessage(
-        ctx: Context,
-        input: {
-            delivery: "run" | "steer";
-            displayText: string;
-            message: UserMessage;
-            mutationId?: string;
-            runId: string;
-            submissionFingerprint?: string;
-        },
-    ): Promise<Extract<SessionEvent, { type: "message_submitted" }>>;
-    publishAgentLiveEvent(ctx: Context, event: SessionEvent): void;
-    snapshot(): ProtocolSession;
-}
-
 interface PendingInference {
     readonly content: AgentEventAssistantContent[];
     currentIndex?: number;
@@ -99,6 +73,7 @@ const MESSAGE_PROJECTION_KEY_PREFIX = "message_projection.";
 interface PendingProtocolRun {
     readonly accepted: Promise<void>;
     cancelled: boolean;
+    readonly conversationId: string;
     readonly delivery: "run" | "steer";
     inference?: PendingInference;
     iteration: number;
@@ -113,14 +88,7 @@ interface PendingProtocolRun {
     };
     projectionError?: unknown;
     projectedEvent?: SessionEvent;
-    readonly projectionInput: {
-        delivery: "run" | "steer";
-        displayText: string;
-        message: UserMessage;
-        mutationId?: string;
-        runId: string;
-        submissionFingerprint?: string;
-    };
+    readonly projectionInput: RigProtocolUserMessageInput;
     readonly projection: Promise<SessionEvent>;
     readonly recordProjection:
         | ((
@@ -134,7 +102,6 @@ interface PendingProtocolRun {
     readonly resolveAccepted: () => void;
     readonly resolveProjected: (event: SessionEvent) => void;
     readonly runId: string;
-    readonly session: RigAgentProtocolSession;
     readonly snapshot: ProtocolSession;
     started: boolean;
     tail: Promise<void>;
@@ -158,10 +125,16 @@ export class RigProtocolFeature implements AgentFeature {
     readonly #nextEventId = createEventIdFactory();
     readonly #active = new Map<string, PendingProtocolRun>();
     readonly #pending = new Map<string, PendingProtocolRun[]>();
+    readonly #projection: RigProtocolProjection;
+
+    constructor(projection: RigProtocolProjection) {
+        this.#projection = projection;
+    }
 
     register(
         agentId: string,
         input: {
+            conversationId: string;
             delivery: "run" | "steer";
             displayText: string;
             messageId: string;
@@ -178,7 +151,6 @@ export class RigProtocolFeature implements AgentFeature {
             ) => Promise<void>;
             recordAccepted?: (ctx: Context) => Promise<void>;
             recordSettled?: (ctx: Context, runId: string) => Promise<void>;
-            session: RigAgentProtocolSession;
             snapshot: ProtocolSession;
             submissionFingerprint?: string;
         },
@@ -284,7 +256,7 @@ export class RigProtocolFeature implements AgentFeature {
                         createdAt: Date.now(),
                         data: { runId: run.runId },
                         id: this.#nextEventId(),
-                        sessionId: run.session.id,
+                        sessionId: run.conversationId,
                         type: "run_started",
                     }),
                 );
@@ -327,9 +299,13 @@ export class RigProtocolFeature implements AgentFeature {
         if (Value.Check(runIdSchema, staged) && staged === run.runId) return;
         await scope.runKV.write(ctx, key, run.runId);
         await run.recordAccepted?.(ctx);
-        const event = await run.session.projectUserMessage(ctx, run.projectionInput);
+        const event = await this.#projection.projectUserMessage(
+            ctx,
+            run.conversationId,
+            run.projectionInput,
+        );
         await run.recordProjection?.(ctx, event);
-        await run.session.afterProtocolCommit(ctx, () => {
+        await this.#projection.afterCommit(ctx, () => {
             if (run.cancelled || run.messageConsumed) {
                 return;
             }
@@ -365,7 +341,7 @@ export class RigProtocolFeature implements AgentFeature {
                 createdAt: Date.now(),
                 data: { messageIds: [run.messageId], runId: run.runId },
                 id: this.#nextEventId(),
-                sessionId: run.session.id,
+                sessionId: run.conversationId,
                 type: "steering_applied",
             }),
         );
@@ -452,7 +428,7 @@ export class RigProtocolFeature implements AgentFeature {
                 role: "agent",
                 usage: toRigUsage(inference.usage, result),
             };
-            await run.session.projectAgentMessage(ctx, run.runId, message);
+            await this.#projection.projectAgentMessage(ctx, run.conversationId, run.runId, message);
         }
         if (result.errorMessage !== undefined) {
             const errorText = Value.Check(protocolErrorMessageSchema, result.errorMessage)
@@ -466,7 +442,12 @@ export class RigProtocolFeature implements AgentFeature {
                 requestedModelId: run.modelId,
                 role: "error",
             };
-            await run.session.projectAgentMessage(ctx, run.runId, errorMessage);
+            await this.#projection.projectAgentMessage(
+                ctx,
+                run.conversationId,
+                run.runId,
+                errorMessage,
+            );
         }
         await scope.runKV.delete(ctx, PENDING_BLOCKS_KEY);
     };
@@ -504,7 +485,7 @@ export class RigProtocolFeature implements AgentFeature {
             for (const candidate of runs) candidate.terminalEvent = terminalEvent;
             await run.recordSettled?.(ctx, run.runId);
             await this.#append(ctx, run, terminalEvent);
-            await run.session.afterProtocolCommit(ctx, () => {
+            await this.#projection.afterCommit(ctx, () => {
                 for (const candidate of runs) candidate.terminalProjected = true;
             });
         }
@@ -552,7 +533,7 @@ export class RigProtocolFeature implements AgentFeature {
                 createdAt: Date.now(),
                 data: { event, runId: run.runId },
                 id: this.#nextEventId(),
-                sessionId: run.session.id,
+                sessionId: run.conversationId,
                 type: "agent_event",
             }),
         );
@@ -573,15 +554,15 @@ export class RigProtocolFeature implements AgentFeature {
     }
 
     async #append(ctx: Context, run: PendingProtocolRun, event: SessionEvent): Promise<void> {
-        await run.session.projectProtocolEvent(ctx, event);
+        await this.#projection.projectProtocolEvent(ctx, run.conversationId, event);
     }
 
     #publishAgentEvent(ctx: Context, run: PendingProtocolRun, event: AgentLoopEvent): void {
-        run.session.publishAgentLiveEvent(ctx, {
+        this.#projection.publishLive(ctx, {
             createdAt: Date.now(),
             data: { event, runId: run.runId },
             id: this.#nextEventId(),
-            sessionId: run.session.id,
+            sessionId: run.conversationId,
             type: "agent_event",
         });
     }
@@ -601,7 +582,7 @@ export class RigProtocolFeature implements AgentFeature {
                     runId: run.runId,
                 },
                 id: this.#nextEventId(),
-                sessionId: run.session.id,
+                sessionId: run.conversationId,
                 type: "run_error",
             };
         }
@@ -615,7 +596,7 @@ export class RigProtocolFeature implements AgentFeature {
                 stopReason: outcome.stopReason,
             },
             id: this.#nextEventId(),
-            sessionId: run.session.id,
+            sessionId: run.conversationId,
             type: "run_finished",
         };
     }
@@ -805,7 +786,7 @@ function validateAcceptedMetadata(
     if (
         metadata.messageId !== run.messageId ||
         metadata.runId !== run.runId ||
-        metadata.sessionId !== run.session.id ||
+        metadata.sessionId !== run.conversationId ||
         metadata.delivery !== run.delivery
     ) {
         throw new Error("Rig protocol received metadata for a different message.");
