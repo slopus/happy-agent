@@ -44,6 +44,12 @@ import {
     type SecretUpdateInput,
 } from "./Secret.js";
 import {
+    secretFingerprintInputSchema,
+    secretFingerprintProviderSchema,
+    type SecretFingerprintInput,
+    type SecretFingerprintProvider,
+} from "./SecretFingerprint.js";
+import {
     secretAuthorizationSchema,
     secretAuthorizationOperationSchema,
     secretMutationRequestSchema,
@@ -60,6 +66,7 @@ import {
     type SecretDetachProof,
     type SecretMutationProof,
     type SecretOperationReceipt,
+    type SecretRegisterIdProof,
     type SecretRemoveProof,
     type SecretStore,
     type SecretStoreAttachResult,
@@ -88,8 +95,6 @@ const MAX_PAGE_SIZE = 100;
 const DEFAULT_MAX_OUTPUT_CHARACTERS = 12_000;
 const MAX_OUTPUT_CHARACTERS = 100_000;
 const MAX_SECRET_LIST_ITEMS = 256;
-const MAX_FINGERPRINT_INPUT_BYTES = 256_000;
-const MAX_FINGERPRINT_INPUT_DEPTH = 32;
 const REGISTER_ID_KEY = "register_secret_id";
 
 const identityResultSchema = Type.Union([
@@ -118,6 +123,7 @@ const postCommitErrorSchema = Type.Function(
 const secretFeatureOptionsSchema = Type.Object(
     {
         store: secretStoreSchema,
+        fingerprintProvider: secretFingerprintProviderSchema,
         idFactory: Type.Optional(identityFactorySchema),
         mutationIdFactory: Type.Optional(identityFactorySchema),
         eventIdFactory: Type.Optional(eventFactorySchema),
@@ -166,6 +172,7 @@ export class SecretsFeature implements AgentFeature {
     readonly name = "secrets";
 
     readonly #store: SecretStore;
+    readonly #fingerprintProvider: SecretFingerprintProvider;
     readonly #idFactory: SecretIdentityFactory;
     readonly #mutationIdFactory: SecretIdentityFactory;
     readonly #eventIdFactory: SecretEventFactory;
@@ -179,6 +186,7 @@ export class SecretsFeature implements AgentFeature {
     constructor(options: SecretsFeatureOptions) {
         assertSecretsFeatureOptions(options);
         this.#store = options.store;
+        this.#fingerprintProvider = options.fingerprintProvider;
         this.#idFactory = options.idFactory ?? (() => globalThis.crypto.randomUUID());
         this.#mutationIdFactory =
             options.mutationIdFactory ?? (() => globalThis.crypto.randomUUID());
@@ -255,18 +263,6 @@ export class SecretsFeature implements AgentFeature {
         this.#assertOptions(options);
         await this.#authorizeOperation(ctx, actingAgentId, "register");
         const normalizedInput = normalizeRegistrationInput(input);
-        const requestedFingerprint = fingerprint({
-            kind: "register",
-            actingAgentId,
-            input: withoutRegistrationId(normalizedInput),
-        });
-        const id = await this.#registrationId(
-            ctx,
-            actingAgentId,
-            normalizedInput.id,
-            requestedFingerprint,
-        );
-        const registration = this.#normalizeRegistration({ ...normalizedInput, id });
         const operation = await this.#operation(
             ctx,
             actingAgentId,
@@ -274,15 +270,15 @@ export class SecretsFeature implements AgentFeature {
             "register",
             options.operationId,
             {
-                id,
-                input: withoutRegistrationId(registration),
+                operation: "register",
+                actingAgentId,
+                input: normalizedInput,
             },
         );
-        const eventId = await this.#eventId(ctx, actingAgentId, operation);
-        const at = this.#now();
 
         return await this.#runTransaction(ctx, "register", async (txCtx) => {
             const receipt = await this.#readReceipt(txCtx, actingAgentId, operation);
+            const persistedProof = await this.#readMutationProof(txCtx, actingAgentId, operation);
             if (receipt !== undefined) {
                 return {
                     result: await this.#replayRegister(
@@ -290,11 +286,33 @@ export class SecretsFeature implements AgentFeature {
                         actingAgentId,
                         operation,
                         receipt,
-                        registration,
+                        persistedProof,
+                        normalizedInput,
                     ),
                 };
             }
+            if (persistedProof !== undefined) {
+                throw new Error(
+                    "Secret store has an immutable registration identity proof without its receipt.",
+                );
+            }
 
+            const id = await this.#registrationId(
+                txCtx,
+                actingAgentId,
+                normalizedInput.id,
+                operation,
+            );
+            const registration = this.#normalizeRegistration({ ...normalizedInput, id });
+            const eventId = await this.#eventId(txCtx, actingAgentId, operation);
+            const at = this.#now();
+            if (normalizedInput.id === undefined) {
+                await this.#writeMutationProof(
+                    txCtx,
+                    actingAgentId,
+                    this.#registerIdProof(operation, actingAgentId, id),
+                );
+            }
             const before = await this.reference(txCtx, actingAgentId, registration.id);
             const raw = await this.#store.register(
                 txCtx,
@@ -351,7 +369,12 @@ export class SecretsFeature implements AgentFeature {
             "update",
             `update:${secretId}`,
             options.operationId,
-            { secretId, input: normalizedInput },
+            {
+                operation: "update",
+                actingAgentId,
+                secretId,
+                input: normalizedInput,
+            },
         );
         const eventId = await this.#eventId(ctx, actingAgentId, operation);
         const at = this.#now();
@@ -448,7 +471,11 @@ export class SecretsFeature implements AgentFeature {
             "remove",
             `remove:${secretId}`,
             options.operationId,
-            { secretId },
+            {
+                operation: "remove",
+                actingAgentId,
+                secretId,
+            },
         );
         const eventId = await this.#eventId(ctx, actingAgentId, operation);
         const at = this.#now();
@@ -594,7 +621,11 @@ export class SecretsFeature implements AgentFeature {
             "attach",
             `attach:${input.scopeRef}:${input.secretId}`,
             options.operationId,
-            input,
+            {
+                operation: "attach",
+                actingAgentId,
+                input,
+            },
         );
         const eventId = await this.#eventId(ctx, actingAgentId, operation);
         const at = this.#now();
@@ -714,7 +745,11 @@ export class SecretsFeature implements AgentFeature {
             "detach",
             `detach:${input.scopeRef}:${input.secretId}`,
             options.operationId,
-            input,
+            {
+                operation: "detach",
+                actingAgentId,
+                input,
+            },
         );
         const eventId = await this.#eventId(ctx, actingAgentId, operation);
         const at = this.#now();
@@ -877,7 +912,7 @@ export class SecretsFeature implements AgentFeature {
             detailed.length <= this.#maxOutputCharacters
                 ? detailed
                 : detached
-                  ? `attached\nscope=${scopeRef}\nsecret=${secretId}`
+                  ? `detached\nscope=${scopeRef}\nsecret=${secretId}`
                   : `not attached\nscope=${scopeRef}\nsecret=${secretId}`;
         if (output.length > this.#maxOutputCharacters) {
             throw new Error("Secret detach output cannot fit complete identities.");
@@ -1443,19 +1478,52 @@ export class SecretsFeature implements AgentFeature {
         actingAgentId: SecretAgentId,
         operation: SecretOperation,
         receipt: SecretOperationReceipt,
-        request: SecretRegistration,
+        proof: SecretMutationProof | undefined,
+        request: SecretRegistrationInput,
     ): Promise<SecretReference> {
         this.#assertReceiptIdentity(receipt, actingAgentId, operation);
-        if (receipt.result.operation !== "register" || receipt.result.reference.id !== request.id) {
+        if (receipt.result.operation !== "register") {
+            throw new Error("Secret registration receipt has a different identity.");
+        }
+        const secretId =
+            request.id ??
+            this.#replayRegisterIdProof(
+                actingAgentId,
+                operation,
+                proof,
+                receipt.result.reference.id,
+            );
+        if (
+            receipt.result.reference.id !== secretId ||
+            (request.id !== undefined && proof !== undefined)
+        ) {
             throw new Error("Secret registration receipt has a different identity.");
         }
         const current = await this.#requiredReference(
             ctx,
             actingAgentId,
-            request.id,
+            secretId,
             "registration replay",
         );
         return current;
+    }
+
+    #replayRegisterIdProof(
+        actingAgentId: SecretAgentId,
+        operation: SecretOperation,
+        proof: SecretMutationProof | undefined,
+        receiptSecretId: SecretId,
+    ): SecretId {
+        if (proof === undefined) {
+            throw new Error("Secret registration replay has no immutable identity proof.");
+        }
+        this.#assertMutationProofIdentity(proof, actingAgentId, operation);
+        if (proof.operation !== "register" || proof.secretId !== receiptSecretId) {
+            throw new Error(
+                "Secret registration receipt does not match its immutable identity proof.",
+            );
+        }
+        return proof.secretId;
     }
 
     async #replayUpdate(
@@ -1684,7 +1752,7 @@ export class SecretsFeature implements AgentFeature {
         ctx: Context,
         actingAgentId: SecretAgentId,
         requested: string | undefined,
-        requestFingerprint: SecretOperationFingerprint,
+        operation: SecretOperation,
     ): Promise<SecretId> {
         if (requested !== undefined) {
             this.#assertSecretId(requested);
@@ -1693,12 +1761,28 @@ export class SecretsFeature implements AgentFeature {
         return await this.#durableIdentity(
             ctx,
             actingAgentId,
-            `${REGISTER_ID_KEY}:${requestFingerprint}`,
+            `${REGISTER_ID_KEY}:${operation.operationId}`,
             () => this.#newIdentity(ctx, actingAgentId, "id"),
             secretIdSchema,
             "Secret registration",
-            requestFingerprint,
+            operation.fingerprint,
         );
+    }
+
+    #registerIdProof(
+        operation: SecretOperation,
+        actingAgentId: SecretAgentId,
+        secretId: SecretId,
+    ): SecretRegisterIdProof {
+        const proof: SecretRegisterIdProof = {
+            agentId: actingAgentId,
+            operation: "register",
+            operationId: operation.operationId,
+            fingerprint: operation.fingerprint,
+            secretId,
+        };
+        assertSecretMutationProof(proof);
+        return proof;
     }
 
     async #operation(
@@ -1707,9 +1791,16 @@ export class SecretsFeature implements AgentFeature {
         kind: SecretMutationOperation,
         key: string,
         requested: SecretOperationId | undefined,
-        request: unknown,
+        input: SecretFingerprintInput,
     ): Promise<SecretOperation> {
-        const requestFingerprint = fingerprint({ kind, actingAgentId, request });
+        if (
+            !Value.Check(secretFingerprintInputSchema, input) ||
+            input.operation !== kind ||
+            input.actingAgentId !== actingAgentId
+        ) {
+            throw new Error("Secret operation fingerprint input is invalid.");
+        }
+        const requestFingerprint = await this.#fingerprint(ctx, input);
         const operationId = await this.#durableIdentity(
             ctx,
             actingAgentId,
@@ -1725,6 +1816,31 @@ export class SecretsFeature implements AgentFeature {
             operationId,
             fingerprint: requestFingerprint,
         };
+    }
+
+    async #fingerprint(
+        ctx: Context,
+        input: SecretFingerprintInput,
+    ): Promise<SecretOperationFingerprint> {
+        const expected = deepFreeze(structuredClone(input));
+        if (!Value.Check(secretFingerprintInputSchema, expected)) {
+            throw new Error("Secret operation fingerprint input is invalid after detachment.");
+        }
+        const pending = this.#fingerprintProvider.fingerprint.call(
+            this.#fingerprintProvider,
+            ctx,
+            structuredClone(expected),
+        );
+        if (!Value.Check(Type.Promise(secretOperationFingerprintSchema), pending)) {
+            throw new Error("Secret fingerprint provider must return a Promise.");
+        }
+        const digest = await pending;
+        if (!Value.Check(secretOperationFingerprintSchema, digest)) {
+            throw new Error(
+                "Secret fingerprint provider resolved to an invalid keyed fingerprint.",
+            );
+        }
+        return digest;
     }
 
     async #eventId(
@@ -2012,11 +2128,30 @@ export class SecretsFeature implements AgentFeature {
 export function assertSecretsFeatureOptions(
     value: unknown,
 ): asserts value is SecretsFeatureOptions {
-    if (!Value.Check(secretFeatureOptionsSchema, value)) {
+    if (!Value.Check(secretFeatureOptionsSchema, secretsFeatureOptionsValidationView(value))) {
         throw new Error(
-            "Secrets feature options are invalid; check the closed store, listener, and callbacks.",
+            "Secrets feature options are invalid; check the closed store, fingerprint provider, listener, and callbacks.",
         );
     }
+}
+
+function secretsFeatureOptionsValidationView(value: unknown): unknown {
+    if (value === null || typeof value !== "object") return value;
+    const options = value as Record<string, unknown>;
+    const provider = options.fingerprintProvider;
+    if (!isClassBackedObject(provider)) return value;
+    return {
+        ...options,
+        fingerprintProvider: {
+            fingerprint: (provider as { fingerprint?: unknown }).fingerprint,
+        },
+    };
+}
+
+function isClassBackedObject(value: unknown): value is object {
+    if (value === null || typeof value !== "object") return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype !== null && prototype !== Object.prototype;
 }
 
 function normalizeRegistrationInput(input: SecretRegistrationInput): SecretRegistrationInput {
@@ -2029,13 +2164,6 @@ function normalizeRegistrationInput(input: SecretRegistrationInput): SecretRegis
         throw new Error("Secret registration input is invalid after normalization.");
     }
     return normalized;
-}
-
-function withoutRegistrationId(
-    input: SecretRegistration | SecretRegistrationInput,
-): Omit<SecretRegistration | SecretRegistrationInput, "id"> {
-    const { id: _id, ...withoutId } = input;
-    return withoutId;
 }
 
 function normalizeUpdateInput(input: SecretUpdateInput): SecretUpdateInput {
@@ -2147,29 +2275,9 @@ function sameJson(left: unknown, right: unknown): boolean {
     return JSON.stringify(canonicalize(left, 0)) === JSON.stringify(canonicalize(right, 0));
 }
 
-function fingerprint(value: unknown): SecretOperationFingerprint {
-    const encoded = JSON.stringify(canonicalize(value, 0));
-    if (encoded === undefined) {
-        throw new Error("Secret operation fingerprint input is not JSON encodable.");
-    }
-    if (new TextEncoder().encode(encoded).byteLength > MAX_FINGERPRINT_INPUT_BYTES) {
-        throw new Error("Secret operation fingerprint input exceeds its encoded byte bound.");
-    }
-    let hash = 0xcbf29ce484222325n;
-    for (let index = 0; index < encoded.length; index += 1) {
-        hash ^= BigInt(encoded.charCodeAt(index));
-        hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-    }
-    const result = `v1-${hash.toString(16).padStart(16, "0")}`;
-    if (!Value.Check(secretOperationFingerprintSchema, result)) {
-        throw new Error("Secret operation fingerprint exceeded its durable bound.");
-    }
-    return result;
-}
-
 function canonicalize(value: unknown, depth: number): unknown {
-    if (depth > MAX_FINGERPRINT_INPUT_DEPTH) {
-        throw new Error("Secret operation fingerprint input exceeds its nesting depth bound.");
+    if (depth > 32) {
+        throw new Error("Secret structured comparison exceeds its nesting depth bound.");
     }
     if (Array.isArray(value)) {
         return value.map((item) => canonicalize(item, depth + 1));

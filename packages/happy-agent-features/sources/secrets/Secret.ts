@@ -217,9 +217,12 @@ export const secretOperationIdSchema = Type.String({
     pattern: "^[^\\u0000\\r\\n]+$",
 });
 
+export const SECRET_OPERATION_FINGERPRINT_LENGTH = 64;
+
 export const secretOperationFingerprintSchema = Type.String({
-    minLength: 1,
-    maxLength: 16_000,
+    minLength: SECRET_OPERATION_FINGERPRINT_LENGTH,
+    maxLength: SECRET_OPERATION_FINGERPRINT_LENGTH,
+    pattern: "^[a-f0-9]{64}$",
 });
 
 export const secretMutationOperationSchema = Type.Union([

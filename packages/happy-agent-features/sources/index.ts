@@ -739,6 +739,7 @@ export {
     secretOperationFingerprintSchema,
     secretOperationIdSchema,
     secretOperationStateSchema,
+    SECRET_OPERATION_FINGERPRINT_LENGTH,
     secretPageSchema,
     secretReferenceSchema,
     secretRegistrationInputSchema,
@@ -772,6 +773,12 @@ export {
     type SecretUpdateInput,
 } from "./secrets/Secret.js";
 export {
+    secretFingerprintInputSchema,
+    secretFingerprintProviderSchema,
+    type SecretFingerprintInput,
+    type SecretFingerprintProvider,
+} from "./secrets/SecretFingerprint.js";
+export {
     secretEventIdSchema,
     secretEventSchema,
     secretEventTimestampSchema,
@@ -799,6 +806,7 @@ export {
     secretMutationRequestSchema,
     secretMutationProofSchema,
     secretOperationReceiptSchema,
+    secretRegisterIdProofSchema,
     secretRemoveProofSchema,
     secretResolverSchema,
     secretStoreAttachResultSchema,
@@ -814,6 +822,7 @@ export {
     type SecretMutationRequest,
     type SecretMutationProof,
     type SecretOperationReceipt,
+    type SecretRegisterIdProof,
     type SecretRemoveProof,
     type SecretResolver,
     type SecretStore,

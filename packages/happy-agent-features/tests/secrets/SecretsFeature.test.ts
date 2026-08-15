@@ -1,12 +1,15 @@
 import { AgentKV, withAgentKV } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
     assertSecretAuthorization as exportedAssertSecretAuthorization,
     assertSecretMutationProof as exportedAssertSecretMutationProof,
     secretContextSchema as exportedSecretContextSchema,
+    secretFingerprintInputSchema as exportedSecretFingerprintInputSchema,
+    secretFingerprintProviderSchema as exportedSecretFingerprintProviderSchema,
     secretAttachReferenceResultSchema as exportedSecretAttachReferenceResultSchema,
     secretAttachProofSchema as exportedSecretAttachProofSchema,
     secretDetachInputSchema as exportedSecretDetachInputSchema,
@@ -16,14 +19,18 @@ import {
     secretMutationOperationSchema as exportedSecretMutationOperationSchema,
     secretMutationOptionsSchema as exportedSecretMutationOptionsSchema,
     secretPageSchema as exportedSecretPageSchema,
+    secretRegisterIdProofSchema as exportedSecretRegisterIdProofSchema,
     secretRevisionSchema as exportedSecretRevisionSchema,
     type SecretAttachReferenceResult as ExportedSecretAttachReferenceResult,
     type SecretDetachInput as ExportedSecretDetachInput,
+    type SecretFingerprintInput as ExportedSecretFingerprintInput,
+    type SecretFingerprintProvider as ExportedSecretFingerprintProvider,
     type SecretHostEnvironment as ExportedSecretHostEnvironment,
     type SecretListInput as ExportedSecretListInput,
     type SecretMutationOperation as ExportedSecretMutationOperation,
     type SecretMutationOptions as ExportedSecretMutationOptions,
     type SecretPage as ExportedSecretPage,
+    type SecretRegisterIdProof as ExportedSecretRegisterIdProof,
 } from "../../sources/index.js";
 import {
     secretDetachInputSchema,
@@ -44,17 +51,27 @@ import {
 } from "../../sources/secrets/Secret.js";
 import {
     secretOperationReceiptSchema,
+    secretRegisterIdProofSchema,
     type SecretMutationRequest,
     type SecretMutationProof,
     type SecretOperationReceipt,
+    type SecretRegisterIdProof,
     type SecretStore,
 } from "../../sources/secrets/SecretStore.js";
 import type { SecretEvent } from "../../sources/secrets/SecretEvent.js";
+import {
+    secretFingerprintInputSchema,
+    secretFingerprintProviderSchema,
+    type SecretFingerprintInput,
+    type SecretFingerprintProvider,
+} from "../../sources/secrets/SecretFingerprint.js";
 import { SecretsFeature } from "../../sources/secrets/SecretsFeature.js";
 
 const root = createRootContext().named("secrets-feature-test");
 const AGENT = "agent-1";
 const OTHER_AGENT = "agent-2";
+const TEST_FINGERPRINT = "a".repeat(64);
+const TEST_FINGERPRINT_KEY = "secrets-feature-test-key";
 
 type StoredSecret = SecretRegistration & {
     readonly ownerAgentId: string;
@@ -103,7 +120,7 @@ class MemorySecretStore {
         | undefined;
 
     async transaction<Result>(
-        _ctx: Context,
+        ctx: Context,
         work: (txCtx: Context) => Promise<Result>,
     ): Promise<Result> {
         const outermost = this.#depth === 0;
@@ -117,7 +134,7 @@ class MemorySecretStore {
         }
         this.#depth += 1;
         try {
-            const result = await work(root);
+            const result = await work(ctx);
             this.#depth -= 1;
             if (outermost) {
                 this.#snapshot = undefined;
@@ -509,6 +526,24 @@ class ClassBackedSecretStore implements SecretStore {
     }
 }
 
+class ClassBackedFingerprintProvider implements SecretFingerprintProvider {
+    readonly inputs: SecretFingerprintInput[] = [];
+    calls = 0;
+    readonly #key: string;
+
+    constructor(key: string) {
+        this.#key = key;
+    }
+
+    async fingerprint(_ctx: Context, input: SecretFingerprintInput): Promise<string> {
+        this.calls += 1;
+        this.inputs.push(structuredClone(input));
+        return createHmac("sha256", this.#key)
+            .update(canonicalFingerprintInput(input))
+            .digest("hex");
+    }
+}
+
 function attachmentKey(agentId: string, scopeRef: string): string {
     return `${agentId}\u0000${scopeRef}`;
 }
@@ -573,6 +608,7 @@ function feature(
     let event = 0;
     return new SecretsFeature({
         store: store.contract,
+        fingerprintProvider: fingerprintProvider(),
         idFactory: () => `secret-${++id}`,
         mutationIdFactory: () => `operation-${++mutation}`,
         eventIdFactory: () => `event-${++event}`,
@@ -590,6 +626,29 @@ function feature(
     });
 }
 
+function fingerprintProvider(key = TEST_FINGERPRINT_KEY): SecretFingerprintProvider {
+    return {
+        fingerprint: async (_ctx, input) =>
+            createHmac("sha256", key).update(canonicalFingerprintInput(input)).digest("hex"),
+    };
+}
+
+function canonicalFingerprintInput(input: SecretFingerprintInput): string {
+    return JSON.stringify(canonicalFingerprintValue(input));
+}
+
+function canonicalFingerprintValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(canonicalFingerprintValue);
+    if (value !== null && typeof value === "object") {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+                .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+                .map(([key, nested]) => [key, canonicalFingerprintValue(nested)]),
+        );
+    }
+    return value;
+}
+
 function callCtx(): Context {
     const persistence = new DurableValues();
     return withAgentKV(root, new AgentKV(persistence, "secret-call."));
@@ -602,22 +661,28 @@ describe("SecretsFeature", () => {
                   detach: ExportedSecretDetachInput;
                   attachResult: ExportedSecretAttachReferenceResult;
                   environment: ExportedSecretHostEnvironment;
+                  fingerprintInput: ExportedSecretFingerprintInput;
+                  fingerprintProvider: ExportedSecretFingerprintProvider;
                   list: ExportedSecretListInput;
                   operation: ExportedSecretMutationOperation;
                   options: ExportedSecretMutationOptions;
                   page: ExportedSecretPage;
+                  registerIdProof: ExportedSecretRegisterIdProof;
               }
             | undefined = undefined;
         void publicTypes;
 
         expect(exportedSecretDetachInputSchema).toBe(secretDetachInputSchema);
         expect(exportedSecretAttachReferenceResultSchema).toBe(secretAttachReferenceResultSchema);
+        expect(exportedSecretRegisterIdProofSchema).toBe(secretRegisterIdProofSchema);
+        expect(exportedSecretFingerprintInputSchema).toBe(secretFingerprintInputSchema);
+        expect(exportedSecretFingerprintProviderSchema).toBe(secretFingerprintProviderSchema);
         expect(
             Value.Check(exportedSecretAttachProofSchema, {
                 agentId: AGENT,
                 operation: "attach",
                 operationId: "proof",
-                fingerprint: "v1-proof",
+                fingerprint: TEST_FINGERPRINT,
                 scopeRef: "scope",
                 secretId: "secret",
                 changed: true,
@@ -650,7 +715,7 @@ describe("SecretsFeature", () => {
                 agentId: AGENT,
                 operation: "remove",
                 operationId: "proof",
-                fingerprint: "v1-proof",
+                fingerprint: TEST_FINGERPRINT,
                 secretId: "secret",
                 before: null,
                 removed: false,
@@ -661,7 +726,7 @@ describe("SecretsFeature", () => {
                 agentId: AGENT,
                 operation: "remove",
                 operationId: "proof",
-                fingerprint: "v1-proof",
+                fingerprint: TEST_FINGERPRINT,
                 secretId: "secret",
                 before: null,
                 removed: false,
@@ -675,6 +740,152 @@ describe("SecretsFeature", () => {
         ).toBe(true);
         expect(Value.Check(exportedSecretContextSchema, root)).toBe(true);
         expect(() => exportedAssertSecretAuthorization(() => true)).not.toThrow();
+    });
+
+    it("uses a host-keyed opaque fingerprint without leaking raw values", async () => {
+        const store = new MemorySecretStore();
+        const durableValues = new DurableValues();
+        const ctx = withAgentKV(root, new AgentKV(durableValues, "keyed-secret-call."));
+        const provider = new ClassBackedFingerprintProvider("key-one");
+        const secrets = feature(store, {
+            fingerprintProvider: provider,
+            mutationIdFactory: () => "keyed-operation",
+        });
+        const input = {
+            id: "keyed-secret",
+            description: "Keyed secret",
+            environment: { TOKEN: "dictionary-value" },
+        };
+        const fingerprintInput: SecretFingerprintInput = {
+            operation: "register",
+            actingAgentId: AGENT,
+            input,
+        };
+        const canonical = canonicalFingerprintInput(fingerprintInput);
+        const expected = createHmac("sha256", "key-one").update(canonical).digest("hex");
+        const oldFnv = "v1-f2ff3e21e6811366";
+        const unkeyedSha = createHash("sha256").update(canonical).digest("hex");
+
+        await expect(
+            secrets.register(ctx, AGENT, input, { operationId: "keyed-operation" }),
+        ).resolves.toMatchObject({ id: input.id });
+        const receipt = store.receipts.get(receiptKey(AGENT, "keyed-operation"))!;
+        expect(receipt.fingerprint).toBe(expected);
+        expect(receipt.fingerprint).not.toBe(oldFnv);
+        expect(receipt.fingerprint).not.toBe(unkeyedSha);
+        expect(provider.calls).toBe(1);
+        expect(provider.inputs[0]).toEqual(fingerprintInput);
+        expect(input.environment.TOKEN).toBe("dictionary-value");
+
+        await secrets.update(
+            ctx,
+            AGENT,
+            input.id,
+            { environment: { TOKEN: "rotated-dictionary-value" } },
+            { operationId: "keyed-update-operation" },
+        );
+        expect(provider.inputs[1]).toEqual({
+            operation: "update",
+            actingAgentId: AGENT,
+            secretId: input.id,
+            input: { environment: { TOKEN: "rotated-dictionary-value" } },
+        });
+
+        const persisted = JSON.stringify({
+            receipts: [...store.receipts.values()],
+            proofs: [...store.proofs.values()],
+            transactionalEvents: store.transactionalEvents,
+            postCommitEvents: store.postCommitEvents,
+            callState: [...durableValues.values.values()],
+        });
+        expect(persisted).not.toContain("dictionary-value");
+        expect(persisted).not.toContain("rotated-dictionary-value");
+        expect(persisted).not.toContain("key-one");
+
+        const sameKeyReload = feature(store, {
+            fingerprintProvider: new ClassBackedFingerprintProvider("key-one"),
+        });
+        await expect(
+            sameKeyReload.register(root, AGENT, input, { operationId: "keyed-operation" }),
+        ).resolves.toMatchObject({ id: input.id });
+        expect(store.calls.filter((call) => call.method === "register")).toHaveLength(1);
+
+        const secondValueInput: SecretFingerprintInput = {
+            operation: "register",
+            actingAgentId: AGENT,
+            input: {
+                ...input,
+                environment: { TOKEN: "different-dictionary-value" },
+            },
+        };
+        const secondDigest = await provider.fingerprint(root, secondValueInput);
+        const differentKeyDigest = await fingerprintProvider("key-two").fingerprint(
+            root,
+            fingerprintInput,
+        );
+        expect(secondDigest).not.toBe(expected);
+        expect(differentKeyDigest).not.toBe(expected);
+        await expect(
+            sameKeyReload.register(root, AGENT, secondValueInput.input, {
+                operationId: "keyed-operation",
+            }),
+        ).rejects.toThrow("reused with different input");
+    });
+
+    it("rejects missing, synchronous, malformed, and throwing fingerprint providers", async () => {
+        const store = new MemorySecretStore();
+        expect(
+            () =>
+                new SecretsFeature({
+                    store: store.contract,
+                } as ConstructorParameters<typeof SecretsFeature>[0]),
+        ).toThrow("options are invalid");
+        expect(
+            () =>
+                new SecretsFeature({
+                    store: store.contract,
+                    fingerprintProvider: {
+                        ...fingerprintProvider(),
+                        rogue: true,
+                    },
+                } as unknown as ConstructorParameters<typeof SecretsFeature>[0]),
+        ).toThrow("options are invalid");
+
+        const syncProvider = {
+            fingerprint: () => TEST_FINGERPRINT,
+        } as unknown as SecretFingerprintProvider;
+        await expect(
+            feature(store, { fingerprintProvider: syncProvider }).register(root, AGENT, {
+                id: "sync-provider",
+                description: "Sync provider",
+                environment: { TOKEN: "value" },
+            }),
+        ).rejects.toThrow("must return a Promise");
+
+        const malformedProvider: SecretFingerprintProvider = {
+            fingerprint: async () => "A".repeat(64),
+        };
+        await expect(
+            feature(store, { fingerprintProvider: malformedProvider }).register(root, AGENT, {
+                id: "malformed-provider",
+                description: "Malformed provider",
+                environment: { TOKEN: "value" },
+            }),
+        ).rejects.toThrow("invalid keyed fingerprint");
+
+        const throwingProvider: SecretFingerprintProvider = {
+            fingerprint: async () => {
+                throw new Error("fingerprint unavailable");
+            },
+        };
+        await expect(
+            feature(store, { fingerprintProvider: throwingProvider }).register(root, AGENT, {
+                id: "throwing-provider",
+                description: "Throwing provider",
+                environment: { TOKEN: "value" },
+            }),
+        ).rejects.toThrow("fingerprint unavailable");
+        expect(store.records).toHaveLength(0);
     });
 
     it("keeps raw values host-only and threads the acting identity through opaque scopes", async () => {
@@ -769,6 +980,152 @@ describe("SecretsFeature", () => {
             description: "Changed",
             environmentVariables: ["TOKEN"],
             revision: "1",
+        });
+    });
+
+    it("binds a generated registration ID to an explicit operation across fresh instances", async () => {
+        const store = new MemorySecretStore();
+        let allocations = 0;
+        const original = feature(store, {
+            idFactory: () => `generated-${++allocations}`,
+        });
+        const input = {
+            description: "Generated registration",
+            environment: { TOKEN: "value" },
+        };
+        const options = { operationId: "generated-register-operation" };
+
+        const first = await original.register(root, AGENT, input, options);
+        expect(first.id).toBe("generated-1");
+        expect(allocations).toBe(1);
+        const registerCalls = store.calls.filter((call) => call.method === "register").length;
+
+        const reloaded = feature(store, {
+            idFactory: () => `generated-${++allocations}`,
+        });
+        await expect(reloaded.register(root, AGENT, input, options)).resolves.toEqual(first);
+        expect(allocations).toBe(1);
+        expect(store.calls.filter((call) => call.method === "register")).toHaveLength(
+            registerCalls,
+        );
+
+        await expect(
+            reloaded.register(
+                root,
+                AGENT,
+                {
+                    description: "Different registration",
+                    environment: { TOKEN: "value" },
+                },
+                options,
+            ),
+        ).rejects.toThrow("reused with different input");
+        expect(allocations).toBe(1);
+
+        const fresh = await reloaded.register(root, AGENT, input, {
+            operationId: "fresh-generated-register-operation",
+        });
+        expect(fresh.id).toBe("generated-2");
+        expect(fresh.id).not.toBe(first.id);
+    });
+
+    it("fails closed for missing, dangling, or malformed generated registration identity proof", async () => {
+        async function fixture(operationId: string) {
+            const store = new MemorySecretStore();
+            let allocations = 0;
+            const secrets = feature(store, {
+                idFactory: () => `retained-${++allocations}`,
+            });
+            const input = {
+                description: "Retained registration",
+                environment: { TOKEN: "value" },
+            };
+            const options = { operationId };
+            await secrets.register(root, AGENT, input, options);
+            return {
+                allocations: () => allocations,
+                input,
+                options,
+                secrets,
+                store,
+            };
+        }
+
+        const missing = await fixture("missing-register-id-proof");
+        missing.store.proofs.delete(receiptKey(AGENT, missing.options.operationId));
+        await expect(
+            missing.secrets.register(root, AGENT, missing.input, missing.options),
+        ).rejects.toThrow("no immutable identity proof");
+        expect(missing.allocations()).toBe(1);
+
+        const dangling = await fixture("dangling-register-id-proof");
+        dangling.store.receipts.delete(receiptKey(AGENT, dangling.options.operationId));
+        await expect(
+            dangling.secrets.register(root, AGENT, dangling.input, dangling.options),
+        ).rejects.toThrow("without its receipt");
+        expect(dangling.allocations()).toBe(1);
+
+        const mismatched = await fixture("mismatched-register-id-proof");
+        const mismatchKey = receiptKey(AGENT, mismatched.options.operationId);
+        const mismatchedProof = mismatched.store.proofs.get(mismatchKey);
+        if (mismatchedProof?.operation !== "register") {
+            throw new Error("expected registration ID proof");
+        }
+        mismatched.store.proofs.set(mismatchKey, {
+            ...mismatchedProof,
+            secretId: "different-retained-id",
+        });
+        await expect(
+            mismatched.secrets.register(root, AGENT, mismatched.input, mismatched.options),
+        ).rejects.toThrow("does not match its immutable identity proof");
+        expect(mismatched.allocations()).toBe(1);
+
+        const malformed = await fixture("malformed-register-id-proof");
+        const proofKey = receiptKey(AGENT, malformed.options.operationId);
+        const proof = malformed.store.proofs.get(proofKey);
+        if (proof?.operation !== "register") throw new Error("expected registration ID proof");
+        malformed.store.proofs.set(proofKey, {
+            ...proof,
+            secretId: "not a valid secret id",
+        } as SecretRegisterIdProof);
+        await expect(
+            malformed.secrets.register(root, AGENT, malformed.input, malformed.options),
+        ).rejects.toThrow("invalid immutable mutation proof");
+        expect(malformed.allocations()).toBe(1);
+    });
+
+    it("requires generated registration identity proof write/readback before mutation", async () => {
+        const store = new MemorySecretStore();
+        let skipProofWrite = true;
+        const proofStore: SecretStore = {
+            ...store.contract,
+            writeMutationProof: async (ctx, agentId, proof) => {
+                if (proof.operation === "register" && skipProofWrite) return undefined;
+                return await store.writeMutationProof(ctx, agentId, proof);
+            },
+        };
+        let allocations = 0;
+        const secrets = feature(store, {
+            store: proofStore,
+            idFactory: () => `proof-readback-${++allocations}`,
+        });
+        const input = {
+            description: "Proof readback",
+            environment: { TOKEN: "value" },
+        };
+        const options = { operationId: "proof-readback-operation" };
+        const ctx = callCtx();
+
+        await expect(secrets.register(ctx, AGENT, input, options)).rejects.toThrow(
+            "did not persist the immutable mutation proof",
+        );
+        expect(store.records).toHaveLength(0);
+        expect(store.receipts).toHaveLength(0);
+        expect(store.proofs).toHaveLength(0);
+
+        skipProofWrite = false;
+        await expect(secrets.register(ctx, AGENT, input, options)).resolves.toMatchObject({
+            id: "proof-readback-1",
         });
     });
 
@@ -1050,7 +1407,10 @@ describe("SecretsFeature", () => {
                 return { ...result, changed: !result.changed };
             },
         };
-        const malformedRegister = new SecretsFeature({ store: malformedRegisterStore });
+        const malformedRegister = new SecretsFeature({
+            store: malformedRegisterStore,
+            fingerprintProvider: fingerprintProvider(),
+        });
         await expect(
             malformedRegister.register(root, AGENT, {
                 id: "wrong-change",
@@ -1076,6 +1436,7 @@ describe("SecretsFeature", () => {
         };
         const malformedUpdate = new SecretsFeature({
             store: malformedUpdateStore,
+            fingerprintProvider: fingerprintProvider(),
             mutationIdFactory: () => "wrong-update-change-op",
             eventIdFactory: () => "wrong-update-change-event",
             clock: () => 1,
@@ -1097,6 +1458,7 @@ describe("SecretsFeature", () => {
             };
             const invalidAfterCommit = new SecretsFeature({
                 store: invalidAfterCommitStore,
+                fingerprintProvider: fingerprintProvider(),
                 idFactory: () => `after-commit-${typeof returned}`,
                 mutationIdFactory: () => `after-commit-op-${typeof returned}`,
                 eventIdFactory: () => `after-commit-event-${typeof returned}`,
@@ -1200,6 +1562,7 @@ describe("SecretsFeature", () => {
         };
         const malformedFeature = new SecretsFeature({
             store: malformed,
+            fingerprintProvider: fingerprintProvider(),
             maxPageSize: 1,
         });
         await expect(malformedFeature.list(root, AGENT, { limit: 1, cursor: 1 })).rejects.toThrow(
@@ -1240,6 +1603,7 @@ describe("SecretsFeature", () => {
         };
         const unsafeCursorFeature = new SecretsFeature({
             store: unsafeCursorStore,
+            fingerprintProvider: fingerprintProvider(),
             maxPageSize: 1,
         });
         await expect(unsafeCursorFeature.list(root, AGENT, { limit: 1 })).rejects.toThrow("cursor");
@@ -1453,6 +1817,7 @@ describe("SecretsFeature", () => {
             };
             const malformed = new SecretsFeature({
                 store: inconsistentStore,
+                fingerprintProvider: fingerprintProvider(),
                 mutationIdFactory: () => `${testCase.id}-operation`,
                 eventIdFactory: () => `${testCase.id}-event`,
                 clock: () => 1,
@@ -1493,21 +1858,24 @@ describe("SecretsFeature", () => {
         );
     });
 
-    it("bounds canonical fingerprint input after normalization", async () => {
+    it("accepts maximum bounded values through the host fingerprint provider", async () => {
         const store = new MemorySecretStore();
         const secrets = feature(store);
         const environment = Object.fromEntries(
-            Array.from({ length: 4 }, (_, index) => [`TOKEN_${index}`, "x".repeat(65_000)]),
+            Array.from({ length: 256 }, (_, index) => [`TOKEN_${index}`, "x".repeat(65_536)]),
         );
 
         await expect(
             secrets.register(root, AGENT, {
                 id: "large-fingerprint",
-                description: "Large fingerprint",
+                description: "x".repeat(2_000),
                 environment,
             }),
-        ).rejects.toThrow("encoded byte bound");
-        expect(store.records.has("large-fingerprint")).toBe(false);
+        ).resolves.toMatchObject({
+            id: "large-fingerprint",
+            environmentVariables: expect.arrayContaining(["TOKEN_0", "TOKEN_255"]),
+        });
+        expect(store.records.has("large-fingerprint")).toBe(true);
     });
 
     it("verifies every scoped page result has an authoritative attachment", async () => {
@@ -1590,6 +1958,7 @@ describe("SecretsFeature", () => {
         };
         const malformedUpdate = new SecretsFeature({
             store: malformedUpdateStore,
+            fingerprintProvider: fingerprintProvider(),
             mutationIdFactory: () => "update-forged",
             eventIdFactory: () => "event-update-forged",
             clock: () => 1,
@@ -1921,6 +2290,7 @@ describe("SecretsFeature", () => {
     it("preserves method ownership for a class-backed host store", async () => {
         const secrets = new SecretsFeature({
             store: new ClassBackedSecretStore(),
+            fingerprintProvider: fingerprintProvider(),
             idFactory: () => "class-secret",
             mutationIdFactory: () => "class-operation",
             eventIdFactory: () => "class-event",
@@ -1959,7 +2329,10 @@ describe("SecretsFeature", () => {
                       };
             },
         };
-        const malformed = new SecretsFeature({ store: malformedStore });
+        const malformed = new SecretsFeature({
+            store: malformedStore,
+            fingerprintProvider: fingerprintProvider(),
+        });
         await expect(malformed.reference(root, AGENT, "first")).rejects.toThrow(
             "different reference identity",
         );
@@ -1973,6 +2346,7 @@ describe("SecretsFeature", () => {
         };
         const secrets = new SecretsFeature({
             store: noOpReceiptStore,
+            fingerprintProvider: fingerprintProvider(),
             idFactory: () => "no-receipt",
             mutationIdFactory: () => "no-receipt-operation",
             eventIdFactory: () => "no-receipt-event",
@@ -1998,6 +2372,7 @@ describe("SecretsFeature", () => {
         let operation = 0;
         const secrets = new SecretsFeature({
             store: noOpProofStore,
+            fingerprintProvider: fingerprintProvider(),
             idFactory: () => "no-proof",
             mutationIdFactory: () => `no-proof-operation-${++operation}`,
             eventIdFactory: () => "no-proof-event",
@@ -2018,7 +2393,7 @@ describe("SecretsFeature", () => {
     it("bounds attach and detach tool text at the configured model limit", async () => {
         const store = new MemorySecretStore();
         const secrets = feature(store, { maxOutputCharacters: 256 });
-        const scopeRef = "s".repeat(100);
+        const scopeRef = `${'\t"\\'.repeat(33)}x`;
         const secretId = "s".repeat(128);
         const created = await secrets.register(root, AGENT, {
             id: secretId,
@@ -2059,8 +2434,7 @@ describe("SecretsFeature", () => {
             (await detachTool.toLLM(detachResult))[0] as { type: "text"; text: string }
         ).text;
         expect(detachText.length).toBeLessThanOrEqual(256);
-        expect(detachText).toContain(scopeRef);
-        expect(detachText).toContain(secretId);
+        expect(detachText).toBe(`detached\nscope=${scopeRef}\nsecret=${secretId}`);
         const noOpDetachResult = await detachTool.execute(root, {
             scopeRef,
             secretId: created.id,

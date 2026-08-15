@@ -108,9 +108,9 @@ export const secretStoreMutationResultSchema = Type.Union([
 ]);
 
 /**
- * Immutable host proof for a destructive/no-op mutation. Receipts are retry
- * records and may be rewritten by a host store; these proofs are a separate
- * append-only record of the before state and the mutation outcome.
+ * Immutable host proof for generated identity or destructive/no-op mutation state. Receipts are
+ * retry records and may be rewritten by a host store; proofs independently bind the generated
+ * register ID or the exact historical before state and mutation outcome.
  */
 export const secretRemoveProofSchema = Type.Object(
     {
@@ -155,7 +155,20 @@ export const secretAttachProofSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** Immutable binding from one register operation to its feature-allocated secret identity. */
+export const secretRegisterIdProofSchema = Type.Object(
+    {
+        agentId: secretAgentIdSchema,
+        operation: Type.Literal("register"),
+        operationId: secretOperationIdSchema,
+        fingerprint: secretOperationFingerprintSchema,
+        secretId: secretIdSchema,
+    },
+    { additionalProperties: false },
+);
+
 export const secretMutationProofSchema = Type.Union([
+    secretRegisterIdProofSchema,
     secretRemoveProofSchema,
     secretDetachProofSchema,
     secretAttachProofSchema,
@@ -186,6 +199,7 @@ export type SecretStoreMutationResult = Static<typeof secretStoreMutationResultS
 export type SecretRemoveProof = Static<typeof secretRemoveProofSchema>;
 export type SecretDetachProof = Static<typeof secretDetachProofSchema>;
 export type SecretAttachProof = Static<typeof secretAttachProofSchema>;
+export type SecretRegisterIdProof = Static<typeof secretRegisterIdProofSchema>;
 export type SecretMutationProof = Static<typeof secretMutationProofSchema>;
 export type SecretOperationReceipt = Static<typeof secretOperationReceiptSchema>;
 
@@ -393,6 +407,12 @@ export function assertSecretMutationProof(value: unknown): asserts value is Secr
             (proof.before !== null && proof.before.id !== proof.secretId)
         ) {
             throw new Error("Secret remove proof has an invalid before-state marker.");
+        }
+        return;
+    }
+    if (proof.operation === "register") {
+        if (proof.secretId === "") {
+            throw new Error("Secret registration identity proof has an invalid secret ID.");
         }
         return;
     }
