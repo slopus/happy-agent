@@ -4128,7 +4128,6 @@ export class InMemorySession {
         // A reset throws away the conversation that knew its task ids. Make
         // sure no commands remain even when there was no active run to abort.
         await this.#killRuntimeProcesses(ctx, { includeBackground: true });
-        this.#runtime?.context.attachments?.discard();
         await (await this.#ensureRuntime(ctx)).agent.reset();
         this.#status = "idle";
         this.#interruption = undefined;
@@ -6128,7 +6127,6 @@ export class InMemorySession {
             await this.#appendRunFinished(ctx, runId, result);
         } catch (error) {
             if (isDatabaseFailure(error)) throw error;
-            runtime?.context.attachments?.discard();
             if (this.#activeRun?.runId !== runId) return;
             const errorMessage = errorToMessage(error);
             await this.#appendDurableError(ctx, runId, errorMessage, runtime);
@@ -7064,38 +7062,6 @@ export class InMemorySession {
             stopReason !== "error" &&
             responseText === undefined;
         const subagentFailed = providerFailed || tokenExhausted;
-        const attachmentContext = this.#runtime?.context.attachments;
-        let attachmentCompletion:
-            | {
-                  attachmentMessageId: string;
-                  attachments: NonNullable<AgentMessage["attachments"]>;
-              }
-            | undefined;
-        if (subagentFailed || stopReason === "aborted" || stopReason === "error") {
-            attachmentContext?.discard();
-        } else if ((attachmentContext?.pending().length ?? 0) > 0) {
-            const target = this.#messages.findLast(
-                (entry) =>
-                    entry.runId === runId &&
-                    !entry.isPartial &&
-                    entry.message.role === "agent" &&
-                    entry.message.internal !== true,
-            );
-            if (target?.message.role === "agent") {
-                const attachments = attachmentContext?.takePending() ?? [];
-                const message: AgentMessage = {
-                    ...target.message,
-                    attachments: [...(target.message.attachments ?? []), ...attachments],
-                };
-                await this.#storeMessage(ctx, target.position, message, false, runId);
-                attachmentCompletion = {
-                    attachmentMessageId: message.id,
-                    attachments: message.attachments ?? [],
-                };
-            } else {
-                attachmentContext?.discard();
-            }
-        }
         if (!this.#workspaceArchived) {
             this.#status = subagentFailed
                 ? "error"
@@ -7135,7 +7101,6 @@ export class InMemorySession {
         }
         await this.#append(ctx, "run_finished", {
             agentRunId: result.runId,
-            ...attachmentCompletion,
             ...(result.errorMessage === undefined ? {} : { errorMessage: result.errorMessage }),
             ...(result.stopReason !== "error"
                 ? {}
@@ -7347,9 +7312,6 @@ export class InMemorySession {
                           ...gitIdentityEnvironment(profile),
                       },
                   }),
-            ...(this.projectIdentity() === undefined
-                ? {}
-                : { attachmentScope: { ...this.projectIdentity()!, sessionId: this.id } }),
             ...(agentManager === undefined
                 ? {}
                 : {
@@ -8274,7 +8236,6 @@ export class InMemorySession {
             }
         } catch (error) {
             if (isDatabaseFailure(error)) throw error;
-            runtime?.context.attachments?.discard();
             if (this.#activeRun?.runId !== queued.runId) {
                 return;
             }

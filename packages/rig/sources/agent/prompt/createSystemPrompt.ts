@@ -95,12 +95,6 @@ export async function createSystemPrompt(
         parts.push(createBundledDocsInstructions(options.context.docsPath));
     }
 
-    if (options.context.generatedMedia !== undefined) {
-        parts.push(
-            `# Generated files\n\nGenerated images and media previews are stored in \`${options.context.generatedMedia.modelDirectory}\`. Files there are shared user data and may be read by any session. Use this exact folder when referring to generated output. In Rig-managed Docker, this folder is mounted read-only at \`/happy/generated\`; only Rig's media and attachment tools write its host-side files, so do not try to modify it with shell or file tools.`,
-        );
-    }
-
     if (options.tools?.some((tool) => tool.namespace?.name === "rig") === true) {
         parts.push(RIG_AGENT_TOOL_INSTRUCTIONS);
     }

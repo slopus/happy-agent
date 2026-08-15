@@ -277,7 +277,6 @@ import {
     type WorkletManagementErrorCode,
     type WorkletResponse,
 } from "../protocol/WorkletProtocol.js";
-import { MAX_ATTACHMENT_FILE_BYTES } from "../tools/attachments/prepareAttachment.js";
 import {
     createAppletRequestSchema,
     resolveAppletOpenRequestSchema,
@@ -5852,6 +5851,7 @@ function decodeUrlComponent(value: string | undefined): string | undefined {
 }
 
 type DownloadableAttachment = Extract<Attachment, { kind: "audio" | "file" | "image" | "video" }>;
+const MAX_ATTACHMENT_FILE_BYTES = 32 * 1024 * 1024;
 
 async function readSessionAttachmentFile(
     attachment: Attachment,

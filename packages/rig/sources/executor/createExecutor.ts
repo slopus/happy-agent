@@ -3,15 +3,12 @@ import { release } from "node:os";
 import type { ProviderUsage } from "@slopus/happy-providers";
 import {
     Executor,
-    modelOpenaiGpt56Luna,
-    modelOpenaiGpt56Terra,
     type ExecutorProvider,
     type Identity,
 } from "@slopus/rig-execution";
 
 import type { AgentContext } from "../agent/context/AgentContext.js";
 import type { ConfigProvider, ConfigProviders } from "../config/types.js";
-import type { OneOffInferenceRoute, SearchInferenceRoutes } from "../tools/search/index.js";
 import { configuredBedrockExecution } from "./configuredBedrockExecution.js";
 import { claudeExecution } from "./claudeExecution.js";
 import { codexExecution } from "./codexExecution.js";
@@ -35,18 +32,11 @@ export interface CreateExecutorOptions {
 export interface CreateExecutorResult {
     executor?: Executor;
     missingCredentials: ReadonlyMap<string, string>;
-    searchRoutes: SearchInferenceRoutes;
 }
 
 export function createExecutor(options: CreateExecutorOptions): CreateExecutorResult {
     const definitions: ExecutorProvider[] = [];
     const missingCredentials = new Map<string, string>();
-    const searchRoutes: SearchInferenceRoutes = {
-        bedrockRoutes: [],
-        claudeRoutes: [],
-        codexRoutes: [],
-        grokRoutes: [],
-    };
     for (const [id, config] of Object.entries(options.providers)) {
         if (!config.enabled) continue;
         const configured = configuredExecutor(options, id, config);
@@ -65,24 +55,6 @@ export function createExecutor(options: CreateExecutorOptions): CreateExecutorRe
             options.allowEmptyModels === undefined ? {} : { allowEmpty: options.allowEmptyModels },
         );
         definitions.push(filtered);
-        if (config.type === "bedrock") {
-            const bedrockRoute = bedrockSearchRoute(filtered, config.searchModelId);
-            if (bedrockRoute !== undefined) {
-                searchRoutes.bedrockRoutes = [...searchRoutes.bedrockRoutes, bedrockRoute];
-            }
-        }
-        const route = firstVisibleRoute(filtered);
-        if (route !== undefined) {
-            if (config.type === "claude") {
-                searchRoutes.claudeRoutes = [...searchRoutes.claudeRoutes, route];
-            }
-            if (config.type === "codex") {
-                searchRoutes.codexRoutes = [...searchRoutes.codexRoutes, route];
-            }
-            if (config.type === "grok") {
-                searchRoutes.grokRoutes = [...searchRoutes.grokRoutes, route];
-            }
-        }
     }
     return {
         ...(definitions.length === 0
@@ -99,42 +71,7 @@ export function createExecutor(options: CreateExecutorOptions): CreateExecutorRe
                   }),
               }),
         missingCredentials,
-        searchRoutes,
     };
-}
-
-function firstVisibleRoute(provider: ExecutorProvider): OneOffInferenceRoute | undefined {
-    const profile = provider.profiles.find((candidate) => candidate.hidden !== true);
-    return profile === undefined ? undefined : { profile, provider };
-}
-
-/**
- * Bedrock's hosted search belongs to its GPT models: they are the ones served over the Responses
- * endpoint, while its Anthropic models go over the plain Messages transport and cannot reach it.
- *
- * These are the fallback when the configuration file does not name a search model. Search is a
- * bounded query-and-summarize call that does not need a frontier model, and both of these are
- * offered in every region where Web Search runs, so the tool answers with the same model wherever
- * it is configured.
- */
-const BEDROCK_SEARCH_MODEL_IDS = [modelOpenaiGpt56Luna.id, modelOpenaiGpt56Terra.id] as const;
-
-function bedrockSearchRoute(
-    provider: ExecutorProvider,
-    configuredModelId: string | undefined,
-): OneOffInferenceRoute | undefined {
-    // A configured model is a decision the user already made, so it is used as written or not at
-    // all. Falling back to a different model would answer their search from somewhere they did not
-    // ask for, which is worse than the tool being absent.
-    const modelIds =
-        configuredModelId === undefined ? BEDROCK_SEARCH_MODEL_IDS : [configuredModelId];
-    for (const modelId of modelIds) {
-        const profile = provider.profiles.find(
-            (candidate) => candidate.hidden !== true && candidate.id === modelId,
-        );
-        if (profile !== undefined) return { profile, provider };
-    }
-    return undefined;
 }
 
 function configuredExecutor(

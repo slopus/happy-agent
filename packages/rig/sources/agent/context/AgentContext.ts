@@ -18,18 +18,12 @@ import type { WorkspaceContext } from "./WorkspaceContext.js";
 import type { SchedulingContext } from "../../scheduling/index.js";
 import type { ProviderUsageContext } from "./ProviderUsageContext.js";
 import type { AgentTreeUsageContext } from "./AgentTreeUsageContext.js";
-import type { GeneratedMediaStore } from "../../generated-media/index.js";
-import type { AttachmentContext } from "../../tools/attachments/AttachmentContext.js";
 
 export interface AgentContext {
     agentCommunication?: AgentCommunicationContext;
     agentTreeUsage?: AgentTreeUsageContext;
-    /** Pending final-message attachment intent for the active agent run. */
-    attachments?: AttachmentContext;
     fs: FileSystemContext;
     bash: BashContext;
-    /** Rig-owned user-data storage for media the model may reference by path. */
-    generatedMedia?: GeneratedMediaStore;
     chatHistory?: ChatHistoryContext;
     /** Absolute path to Rig's bundled read-only documentation in this execution environment. */
     docsPath?: string;

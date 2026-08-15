@@ -48,13 +48,9 @@ import type { WorkletContext } from "../agent/context/WorkletContext.js";
 import type { WorkspaceContext } from "../agent/context/WorkspaceContext.js";
 import type { SchedulingContext } from "../scheduling/index.js";
 import type { ProviderUsageContext } from "../agent/context/ProviderUsageContext.js";
-import { createGeneratedMediaStore, getGeneratedDirectory } from "../generated-media/index.js";
-import { CONTAINER_GENERATED_PATH } from "../execution/index.js";
-import { AttachmentContext, type AttachmentScope } from "../tools/attachments/AttachmentContext.js";
 import type { Context } from "@steve.kite/stdlib";
 
 export interface CreateCodingAssistantAgentOptions {
-    attachmentScope?: AttachmentScope;
     appendSystemPrompt?: string;
     agentCommunication?: AgentCommunicationContext;
     agentTreeUsage?: AgentTreeUsageContext;
@@ -147,19 +143,6 @@ export function createCodingAssistantAgent(
                     sessionId: options.sessionId ?? options.agentId ?? "standalone",
                 });
     const runtimeCwd = context.fs.cwd;
-    context.attachments = new AttachmentContext(
-        options.attachmentScope === undefined ? {} : { scope: options.attachmentScope },
-    );
-    if (
-        process.env.RIG_GYM_RUNTIME !== "just-bash" &&
-        (options.docker === undefined || options.docker.container === undefined)
-    ) {
-        const hostDirectory = getGeneratedDirectory(env);
-        context.generatedMedia = createGeneratedMediaStore({
-            hostDirectory,
-            ...(options.docker === undefined ? {} : { modelDirectory: CONTAINER_GENERATED_PATH }),
-        });
-    }
     context.agentCommunication =
         options.agentCommunication ??
         ({
