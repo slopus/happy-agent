@@ -148,10 +148,7 @@ export class RigAgentService {
             const history = new HistoryFeature({
                 store: new RigHistoryStore(options.database),
             });
-            const modelSwitch = new ModelSwitchFeature({
-                history,
-                historyTool: "read_agent_history",
-            });
+            const modelSwitch = new ModelSwitchFeature({ history });
             const systemPrompt = new SystemPromptFeature();
             // The bridge is deliberately last: every configurable feature must finish its
             // transactional projection before the protocol event and terminal callbacks can be
