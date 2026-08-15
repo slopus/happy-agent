@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 
-import type { GymInferenceRequest } from "../../rig/sources/executor/gym-types.js";
+import type { GymInferenceRequest } from "../../rig/sources/agent/gym-types.js";
 import type { GymInferenceHandler, GymMockResponse } from "./types.js";
 
 export class MockInferenceServer {

@@ -8,7 +8,7 @@ import {
     type Gym,
     type TerminalSnapshot,
 } from "@slopus/rig-gym";
-import type { GymInferenceRequest } from "../../rig/sources/executor/gym-types.js";
+import type { GymInferenceRequest } from "../../rig/sources/agent/gym-types.js";
 
 const running = new Set<Gym>();
 const usageArtifacts = resolve(import.meta.dirname, "../../artifacts/session-usage");
