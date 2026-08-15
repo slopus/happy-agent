@@ -70,4 +70,46 @@ describe("createAgentRuntimeConfig", () => {
             },
         ]);
     });
+
+    it("registers every configured provider with the model-family kind used by prompts", () => {
+        const model = (id: string) => ({
+            defaultThinkingLevel: "medium",
+            id,
+            name: id,
+            thinkingLevels: ["medium"],
+        });
+        const runtime = createAgentRuntimeConfig({
+            catalog: {
+                defaultModelId: "openai/gym",
+                defaultProviderId: "gym",
+                models: [],
+                providers: [
+                    { models: [model("openai/gym")], providerId: "gym" },
+                    { models: [model("anthropic/opus-5")], providerId: "work_bedrock" },
+                    { models: [model("anthropic/sonnet-5")], providerId: "work_claude" },
+                    { models: [model("openai/gpt-5.6-sol")], providerId: "work_codex" },
+                    { models: [model("xai/grok-4.5")], providerId: "work_grok" },
+                ],
+            },
+            env: { RIG_GYM_INFERENCE_URL: "https://gym.test/inference" },
+            providers: {
+                work_bedrock: { enabled: true, type: "bedrock" },
+                work_claude: { enabled: true, type: "claude" },
+                work_codex: { enabled: true, type: "codex" },
+                work_grok: { enabled: true, type: "grok" },
+            },
+        });
+
+        expect(
+            Object.fromEntries(
+                runtime.providers.ids.map((id) => [id, runtime.providers.typeOf(id)]),
+            ),
+        ).toEqual({
+            gym: "codex",
+            work_bedrock: "bedrock",
+            work_claude: "claude",
+            work_codex: "codex",
+            work_grok: "grok",
+        });
+    });
 });

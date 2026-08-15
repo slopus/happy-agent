@@ -1,9 +1,12 @@
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { createId } from "@paralleldrive/cuid2";
+import { AgentSystemLocal, type Agent } from "@slopus/happy-agent-base";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfigProviders } from "../../config/types.js";
+import type { GymInferenceRequest } from "../../executor/gym-types.js";
 import type { ModelCatalog, ProtocolSession } from "../../protocol/index.js";
 import { PersistentSessionStore } from "../../session/PersistentSessionStore.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
@@ -13,8 +16,36 @@ import type { RigAgentProtocolSession } from "../RigProtocolFeature.js";
 
 const temporaryDirectories: string[] = [];
 const ctx = createTestRootContext().named("rig-agent-service-test");
+const codexModelId = "openai/gpt-5.6-sol";
+const claudeModelId = "anthropic/sonnet-5";
+const promptModelCatalog: ModelCatalog = {
+    defaultModelId: codexModelId,
+    defaultProviderId: "gym",
+    models: [],
+    providers: [
+        {
+            models: [
+                {
+                    defaultThinkingLevel: "medium",
+                    id: codexModelId,
+                    name: "Codex",
+                    thinkingLevels: ["medium"],
+                },
+                {
+                    defaultThinkingLevel: "medium",
+                    id: claudeModelId,
+                    name: "Claude",
+                    thinkingLevels: ["medium"],
+                },
+            ],
+            providerId: "gym",
+            providerType: "gym",
+        },
+    ],
+};
 
 afterEach(async () => {
+    vi.unstubAllGlobals();
     await Promise.all(
         temporaryDirectories
             .splice(0)
@@ -23,6 +54,60 @@ afterEach(async () => {
 });
 
 describe("RigAgentService", () => {
+    it("gives an agent created through the service a system prompt", async () => {
+        const world = await openPromptWorld();
+        try {
+            const agent = await createPromptAgent(world);
+            await dispatchPrompt(world, agent, codexModelId, 1);
+
+            expect(world.requests).toHaveLength(1);
+            expect(world.requests[0]?.context.systemPrompt).toContain(
+                "You are Rig, built by Happy",
+            );
+        } finally {
+            await world.close();
+        }
+    });
+
+    it("selects different prompts for agents using different models", async () => {
+        const world = await openPromptWorld();
+        try {
+            const codexAgent = await createPromptAgent(world);
+            const claudeAgent = await createPromptAgent(world);
+            await dispatchPrompt(world, codexAgent, codexModelId, 1);
+            await dispatchPrompt(world, claudeAgent, claudeModelId, 2);
+
+            expect(world.requests.map((request) => request.modelId)).toEqual([
+                codexModelId,
+                claudeModelId,
+            ]);
+            expect(world.requests[0]?.context.systemPrompt).not.toBe(
+                world.requests[1]?.context.systemPrompt,
+            );
+        } finally {
+            await world.close();
+        }
+    });
+
+    it("uses the switched model's prompt on the next inference", async () => {
+        const world = await openPromptWorld();
+        try {
+            const agent = await createPromptAgent(world);
+            await dispatchPrompt(world, agent, codexModelId, 1);
+            await dispatchPrompt(world, agent, claudeModelId, 2);
+
+            expect(world.requests.map((request) => request.modelId)).toEqual([
+                codexModelId,
+                claudeModelId,
+            ]);
+            expect(world.requests[1]?.context.systemPrompt).not.toBe(
+                world.requests[0]?.context.systemPrompt,
+            );
+        } finally {
+            await world.close();
+        }
+    });
+
     it("opens Agent Base on its dedicated database and can reopen after a clean close", async () => {
         const directory = await mkdtemp(join(process.cwd(), ".rig-agent-service-test-"));
         temporaryDirectories.push(directory);
@@ -252,3 +337,83 @@ describe("RigAgentService", () => {
         }
     });
 });
+
+type PromptWorld = Awaited<ReturnType<typeof openPromptWorld>>;
+
+async function createPromptAgent(world: PromptWorld): Promise<Agent> {
+    const agent = await world.system.create(ctx, {}, { id: createId() });
+    await agent.waitForIdle();
+    return agent;
+}
+
+async function dispatchPrompt(
+    world: PromptWorld,
+    agent: Agent,
+    model: string,
+    expectedRequests: number,
+): Promise<void> {
+    await world.system.send(
+        ctx,
+        agent.id,
+        { content: [{ text: "Use the selected prompt.", type: "text" }], role: "user" },
+        {
+            await: true,
+            id: createId(),
+            model,
+            provider: "gym",
+        },
+    );
+    await agent.waitForIdle();
+    await vi.waitFor(() => {
+        expect(world.requests).toHaveLength(expectedRequests);
+    });
+}
+
+async function openPromptWorld() {
+    const directory = await mkdtemp(join(process.cwd(), ".rig-agent-service-test-"));
+    temporaryDirectories.push(directory);
+    const requests: GymInferenceRequest[] = [];
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+        requests.push(JSON.parse(String(init?.body)) as GymInferenceRequest);
+        return new Response(
+            JSON.stringify({
+                content: [{ text: "Done.", type: "text" }],
+            }),
+            {
+                headers: { "content-type": "application/json" },
+                status: 200,
+            },
+        );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const store = await PersistentSessionStore.open(ctx, {
+        createRuntime: () => {
+            throw new Error("Legacy runtime is unavailable in this test.");
+        },
+        databasePath: join(directory, "sessions.sqlite"),
+        modelCatalog: promptModelCatalog,
+    });
+    const createSystem = vi.spyOn(AgentSystemLocal, "create");
+    const service = await RigAgentService.open(ctx, {
+        database: store.database,
+        env: { RIG_GYM_INFERENCE_URL: "https://gym.test/inference" },
+        modelCatalog: promptModelCatalog,
+        providers: {},
+    });
+    const created = createSystem.mock.results.at(-1)?.value;
+    createSystem.mockRestore();
+    const system = await created;
+    if (!(system instanceof AgentSystemLocal)) {
+        throw new Error("RigAgentService did not create an AgentSystemLocal.");
+    }
+    return {
+        close: async () => {
+            await service.close(ctx);
+            await store.close(ctx);
+        },
+        requests,
+        service,
+        store,
+        system,
+    };
+}

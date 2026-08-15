@@ -9,7 +9,11 @@ import {
     type AgentMessageMetadata,
     type AgentPermissionMode,
 } from "@slopus/happy-agent-base";
-import { HistoryFeature, ModelSwitchFeature } from "@slopus/happy-agent-features";
+import {
+    HistoryFeature,
+    ModelSwitchFeature,
+    SystemPromptFeature,
+} from "@slopus/happy-agent-features";
 import type { SessionReasoningEffort, SessionUserMessage } from "@slopus/happy-providers";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -148,6 +152,7 @@ export class RigAgentService {
                 history,
                 historyTool: "read_agent_history",
             });
+            const systemPrompt = new SystemPromptFeature();
             // The bridge is deliberately last: every configurable feature must finish its
             // transactional projection before the protocol event and terminal callbacks can be
             // staged.
@@ -155,7 +160,7 @@ export class RigAgentService {
                 withDatabase(ctx, options.database),
                 storage,
                 {
-                    features: [history, modelSwitch, bridge],
+                    features: [systemPrompt, history, modelSwitch, bridge],
                     models: runtime.models,
                     provider: runtime.defaultProvider,
                     providers: runtime.providers,
