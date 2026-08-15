@@ -446,9 +446,6 @@ export const sessions = sqliteTable(
         workspaceTransferJson: text("workspace_transfer_json")
             .notNull()
             .default('{"status":"idle"}'),
-        workspaceQueueWaiting: integer("workspace_queue_waiting", { mode: "boolean" })
-            .notNull()
-            .default(false),
         /** When a chat started out belonging nowhere. Null once it has been filed, or never was. */
         unsortedSinceMs: integer("unsorted_since_ms"),
         ownerInstanceId: text("owner_instance_id").notNull(),
@@ -682,104 +679,6 @@ export const sessionTurns = sqliteTable(
     (table) => [
         primaryKey({ columns: [table.sessionId, table.runId] }),
         index("session_turns_order").on(table.sessionId, table.firstPosition),
-    ],
-);
-
-export const queuedRuns = sqliteTable(
-    "queued_runs",
-    {
-        sessionId: text("session_id")
-            .notNull()
-            .references(() => sessions.id, { onDelete: "cascade" }),
-        runId: text("run_id").notNull(),
-        debug: integer("debug", { mode: "boolean" }).notNull(),
-        debugDirectory: text("debug_directory"),
-        displayText: text("display_text").notNull(),
-        kind: text("kind").notNull(),
-        text: text("text").notNull(),
-        userMessageJson: text("user_message_json").notNull(),
-        integrationConfigJson: text("integration_config_json"),
-        createdAtMs: integer("created_at_ms").notNull(),
-    },
-    (table) => [primaryKey({ columns: [table.sessionId, table.runId] })],
-);
-
-export const pendingContextMessages = sqliteTable(
-    "pending_context_messages",
-    {
-        sessionId: text("session_id")
-            .notNull()
-            .references(() => sessions.id, { onDelete: "cascade" }),
-        messageId: text("message_id").notNull(),
-        position: integer("position").notNull(),
-        anchorRunId: text("anchor_run_id").notNull(),
-        createdAtMs: integer("created_at_ms").notNull(),
-    },
-    (table) => [
-        primaryKey({ columns: [table.sessionId, table.messageId] }),
-        unique().on(table.sessionId, table.position),
-        index("pending_context_messages_session_fifo").on(table.sessionId, table.position),
-    ],
-);
-
-export const durableUserInputs = sqliteTable(
-    "durable_user_inputs",
-    {
-        sessionId: text("session_id")
-            .notNull()
-            .references(() => sessions.id, { onDelete: "cascade" }),
-        requestId: text("request_id").notNull(),
-        runId: text("run_id").notNull(),
-        batchId: text("batch_id").notNull(),
-        toolCallId: text("tool_call_id").notNull(),
-        providerToolCallId: text("provider_tool_call_id"),
-        toolCallIndex: integer("tool_call_index").notNull(),
-        toolName: text("tool_name").notNull(),
-        toolArgumentsJson: text("tool_arguments_json").notNull(),
-        kind: text("kind").notNull(),
-        permissionJson: text("permission_json"),
-        requestJson: text("request_json").notNull(),
-        responseJson: text("response_json"),
-        resultJson: text("result_json"),
-        status: text("status").notNull(),
-        consumed: integer("consumed", { mode: "boolean" }).notNull(),
-        createdAtMs: integer("created_at_ms").notNull(),
-        resolvedAtMs: integer("resolved_at_ms"),
-        detachedAtMs: integer("detached_at_ms"),
-        answerDueAtMs: integer("answer_due_at_ms"),
-        answerWaitStartedAtMs: integer("answer_wait_started_at_ms"),
-    },
-    (table) => [
-        primaryKey({ columns: [table.sessionId, table.requestId] }),
-        index("durable_user_inputs_session_created").on(table.sessionId, table.createdAtMs),
-    ],
-);
-
-export const durableWaits = sqliteTable(
-    "durable_waits",
-    {
-        id: text("id").primaryKey(),
-        sessionId: text("session_id")
-            .notNull()
-            .references(() => sessions.id, { onDelete: "cascade" }),
-        runId: text("run_id").notNull(),
-        batchId: text("batch_id").notNull(),
-        toolCallId: text("tool_call_id").notNull(),
-        providerToolCallId: text("provider_tool_call_id"),
-        toolCallIndex: integer("tool_call_index").notNull(),
-        toolName: text("tool_name").notNull(),
-        kind: text("kind").notNull(),
-        argumentsJson: text("arguments_json").notNull(),
-        status: text("status").notNull(),
-        consumed: integer("consumed", { mode: "boolean" }).notNull(),
-        createdAtMs: integer("created_at_ms").notNull(),
-        dueAtMs: integer("due_at_ms").notNull(),
-        resultJson: text("result_json"),
-        resultBlockJson: text("result_block_json"),
-    },
-    (table) => [
-        unique().on(table.sessionId, table.toolCallId),
-        index("durable_waits_session_created").on(table.sessionId, table.createdAtMs),
     ],
 );
 
