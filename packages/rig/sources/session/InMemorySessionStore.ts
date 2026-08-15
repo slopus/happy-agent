@@ -61,7 +61,6 @@ import {
     type SpecialSecretRegistration,
 } from "../secrets/index.js";
 import type { SecretAttachmentScope } from "../secrets/index.js";
-import type { ExternalToolCall } from "../external-tools/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
 import { rethrowDatabaseFailure } from "../persistence/rethrowDatabaseFailure.js";
 import type { TX } from "../persistence/Transaction.js";
@@ -953,20 +952,6 @@ export class InMemorySessionStore implements SessionStore {
 
     loadedSessions(): readonly InMemorySession[] {
         return [...this.#sessions.values()];
-    }
-
-    async listExternalToolCalls(
-        ctx: Context,
-        options: { limit?: number; status?: ExternalToolCall["status"] } = {},
-    ): Promise<readonly ExternalToolCall[]> {
-        return [...this.#sessions.values()]
-            .flatMap((session) =>
-                session.externalToolCalls(
-                    options.status === undefined ? {} : { status: options.status },
-                ),
-            )
-            .sort((left, right) => left.createdAt - right.createdAt)
-            .slice(0, options.limit ?? 100);
     }
 
     async listDurableUserInputs(ctx: Context): Promise<readonly DurableUserInputCall[]> {

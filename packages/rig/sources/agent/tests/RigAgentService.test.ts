@@ -215,8 +215,6 @@ describe("RigAgentService", () => {
         try {
             const requests = [
                 { option: "systemPrompt", request: { systemPrompt: "custom", text: "message" } },
-                { option: "externalTools", request: { externalTools: [], text: "message" } },
-                { option: "skills", request: { skills: [], text: "message" } },
                 { option: "debug", request: { debug: true, text: "message" } },
                 { option: "interactive", request: { interactive: true, text: "message" } },
                 {

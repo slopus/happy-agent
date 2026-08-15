@@ -68,8 +68,6 @@ event queue. Durable events remain available after a server restart.
 | `goal_changed`                  | A goal is created, changes status, completes, or is cleared.                                          | `goal`: current `SessionGoal` or `null`                                                                    | Yes    |
 | `subagent_changed`              | A child agent's summary changes and its parent is notified.                                           | `subagent`: current `SubagentSummary`                                                                      | Yes    |
 | `workflow_changed`              | A workflow starts, advances, logs, completes, errors, or stops.                                       | `update`: incremental `WorkflowRunUpdate`                                                                  | Yes    |
-| `external_tool_call_requested`  | A model invokes an integration-owned durable function or requests a durable skill.                    | `call`: complete `ExternalToolCall`, including arguments, callback IDs, and optional `skill`               | Yes    |
-| `external_tool_call_resolved`   | An integration returns a result, error, or cancellation for a durable function or skill request.      | `call`: updated `ExternalToolCall`                                                                         | Yes    |
 
 `stopReason` is one of `stop`, `length`, `toolUse`, `error`, or `aborted`.
 `SessionTitleStatus` is one of `idle`, `generating`, `ready`, or `error`.

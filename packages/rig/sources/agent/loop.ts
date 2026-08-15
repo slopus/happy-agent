@@ -70,7 +70,6 @@ import {
     type PermissionReviewTranscript,
 } from "../permissions/index.js";
 import type { DebugLog } from "../debug/index.js";
-import type { DurableSkillDefinition } from "../external-skills/types.js";
 import { resolveModelImageProfile } from "./impl/resolveModelImageProfile.js";
 import { toExecutorTool } from "./tools/toExecutorTool.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
@@ -91,7 +90,6 @@ export interface RunAgentLoopOptions {
     tools: readonly AnyDefinedTool[];
     /** Returns the complete fixed tool array for the next inference iteration. */
     resolveTools?: () => Promise<readonly AnyDefinedTool[]>;
-    durableSkills?: readonly DurableSkillDefinition[];
     instructions?: string;
     messages: readonly Message[];
     /** Model-facing history, when the visible transcript has been compacted. */
@@ -290,7 +288,6 @@ export async function runAgentLoop(
         context: options.context,
         ...(options.effort === undefined ? {} : { effort: options.effort }),
         tools: options.tools,
-        ...(options.durableSkills === undefined ? {} : { durableSkills: options.durableSkills }),
     });
     const composedSystemPrompt =
         providerPrompt.systemPromptOverride ?? providerPrompt.systemPrompt ?? "";

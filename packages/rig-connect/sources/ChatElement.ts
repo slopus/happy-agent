@@ -1,9 +1,6 @@
 import type { ToolPresentation } from "./ToolPresentation.js";
 import type {
     BackgroundProcess,
-    DurableSkillDefinition,
-    ExternalToolCall,
-    ExternalToolDefinition,
     GitChangeSnapshot,
     McpServerSummary,
     ModelCatalog,
@@ -320,9 +317,6 @@ export interface SessionState {
     mcpServers: readonly McpServerSummary[];
     workflowsEnabled: boolean;
     workflows: readonly WorkflowRun[];
-    externalTools: readonly ExternalToolDefinition[];
-    skills: readonly DurableSkillDefinition[];
-    pendingExternalToolCalls: readonly ExternalToolCall[];
     scheduledMessages: readonly ScheduledMessage[];
     permissionReviews: readonly PermissionReviewState[];
     git?: GitChangeSnapshot;
@@ -388,7 +382,6 @@ export type MutationAction =
     | "run_shell_command"
     | "stop_background_process"
     | "stop_background_processes"
-    | "resolve_external_tool_call"
     | "cancel_scheduled_message"
     | "record_activity"
     | "stop_workflow"

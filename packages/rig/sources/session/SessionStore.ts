@@ -44,7 +44,6 @@ import type { AgentTreeUsage } from "../agent/index.js";
 import type { InMemorySession } from "./InMemorySession.js";
 import type { SecretAttachmentScope } from "../secrets/index.js";
 import type { SpecialSecretKind, SpecialSecretRegistration } from "../secrets/index.js";
-import type { ExternalToolCall } from "../external-tools/index.js";
 import type { GlobalEventQueue } from "../global-event/GlobalEventQueue.js";
 import type { LiveGlobalEventQueue } from "../global-event/LiveGlobalEventQueue.js";
 import type { ProjectAvatarAsset, ProjectSessionSettings } from "../project/ProjectRepository.js";
@@ -159,13 +158,6 @@ export interface SessionStore {
     listActive(ctx: Context, options?: { limit?: number }): Promise<readonly SessionSummary[]>;
     /** Sessions already resident in memory; implementations must not hydrate storage to answer. */
     loadedSessions(): readonly InMemorySession[];
-    listExternalToolCalls(
-        ctx: Context,
-        options?: {
-            limit?: number;
-            status?: ExternalToolCall["status"];
-        },
-    ): Promise<readonly ExternalToolCall[]>;
     listDurableUserInputs(ctx: Context): Promise<readonly DurableUserInputCall[]>;
     listSubagents(ctx: Context, parentSessionId: string): Promise<readonly SubagentSummary[]>;
     queryAgentTreeUsage(ctx: Context, sessionId: string): Promise<AgentTreeUsage | undefined>;

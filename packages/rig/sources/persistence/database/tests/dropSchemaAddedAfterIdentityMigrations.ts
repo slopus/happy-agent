@@ -91,4 +91,21 @@ export async function dropSessionScopeSchema(database: SessionDatabase): Promise
     } finally {
         await database.run(sql.raw("PRAGMA foreign_keys = ON"));
     }
+    const legacyColumns = await database.all<{ name: string }>(
+        sql.raw("PRAGMA table_info(sessions)"),
+    );
+    if (!legacyColumns.some((column) => column.name === "external_tools_json")) {
+        await database.run(
+            sql.raw(
+                "ALTER TABLE sessions ADD COLUMN external_tools_json TEXT NOT NULL DEFAULT '[]'",
+            ),
+        );
+    }
+    if (!legacyColumns.some((column) => column.name === "durable_skills_json")) {
+        await database.run(
+            sql.raw(
+                "ALTER TABLE sessions ADD COLUMN durable_skills_json TEXT NOT NULL DEFAULT '[]'",
+            ),
+        );
+    }
 }

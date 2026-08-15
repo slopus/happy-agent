@@ -232,7 +232,6 @@ function idleSession(): InMemorySession {
         permissionMode: "auto",
         providerId: "codex",
         scope: { kind: "unsorted" },
-        skills: [],
         snapshot: { tools: [] },
         status: "idle",
         tasks: [],

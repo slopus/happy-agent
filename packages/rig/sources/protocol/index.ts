@@ -291,7 +291,6 @@ export type {
     ResizeRemoteTerminalRequest,
 } from "../terminal/index.js";
 export type { GoalStatus, SessionGoal } from "../goals/index.js";
-export type { DurableSkillDefinition } from "../external-skills/index.js";
 export type { ScheduledMessage } from "../scheduling/index.js";
 export type {
     ProviderUsage,
@@ -362,8 +361,6 @@ export type {
     DaemonConfig,
     DaemonIdentity,
     DisconnectSessionTerminalResponse,
-    ExternalToolCallRequestedEvent,
-    ExternalToolCallResolvedEvent,
     ForkSessionResponse,
     GetCurrentProviderQuotaResponse,
     GetDaemonConfigResponse,
@@ -376,7 +373,6 @@ export type {
     ListSessionsArchivedFilter,
     ListSessionsOptions,
     ListSecretsResponse,
-    ListExternalToolCallsResponse,
     ListSubagentsResponse,
     ListModelsResponse,
     HealthResponse,
@@ -393,8 +389,6 @@ export type {
     ProviderQuotaObservedEvent,
     RecordSessionActivityResponse,
     ReadBackgroundProcessResponse,
-    ResolveExternalToolCallRequest,
-    ResolveExternalToolCallResponse,
     RewindSessionRequest,
     RewindSessionResponse,
     RegisterSecretRequest,

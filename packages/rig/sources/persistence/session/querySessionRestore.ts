@@ -6,8 +6,6 @@ import { Value } from "@sinclair/typebox/value";
 
 import type { Message } from "../../agent/types.js";
 import type { DockerExecutionConfig } from "../../execution/index.js";
-import type { DurableSkillDefinition } from "../../external-skills/index.js";
-import type { ExternalToolDefinition } from "../../external-tools/index.js";
 import type { SessionGoal } from "../../goals/index.js";
 import { parsePermissionMode } from "../../permissions/index.js";
 import type {
@@ -37,7 +35,6 @@ import {
     readString,
 } from "./impl/sqliteRow.js";
 import { queryDurableUserInputs } from "./queryDurableUserInputs.js";
-import { queryExternalToolCallsForSession } from "./queryExternalToolCallsForSession.js";
 import { querySessionHasEarlierStoredMessage } from "./querySessionHasEarlierStoredMessage.js";
 import { querySessionPartialMessages } from "./querySessionPartialMessages.js";
 import { queryPendingContextMessages } from "./queryPendingContextMessages.js";
@@ -161,11 +158,6 @@ export async function querySessionRestore(
             messages,
             durableUserInputs: [...(await queryDurableUserInputs(ctx, sessionId))],
             durableWaits: [...(await queryDurableWaits(ctx, sessionId))],
-            externalToolCalls: [...(await queryExternalToolCallsForSession(ctx, sessionId))],
-            externalTools: JSON.parse(
-                readString(row, "external_tools_json"),
-            ) as ExternalToolDefinition[],
-            skills: JSON.parse(readString(row, "durable_skills_json")) as DurableSkillDefinition[],
             modelId,
             models: JSON.parse(readString(row, "models_json")) as Model[],
             orderKey: readString(row, "order_key"),
@@ -272,11 +264,9 @@ async function queryQueuedRuns(tx: TX, sessionId: string): Promise<PersistedQueu
                 ? {}
                 : (JSON.parse(configJson) as {
                       effort?: string;
-                      externalTools?: readonly ExternalToolDefinition[];
                       modelId?: string;
                       providerId?: string;
                       serviceTier?: ServiceTier | null;
-                      skills?: readonly DurableSkillDefinition[];
                       systemPrompt?: string | null;
                   });
         const debug = readNumber(row, "debug") !== 0;

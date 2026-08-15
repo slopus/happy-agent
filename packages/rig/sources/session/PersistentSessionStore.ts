@@ -90,7 +90,6 @@ import {
     type SpecialSecretRegistration,
 } from "../secrets/index.js";
 import type { SecretAttachmentScope } from "../secrets/index.js";
-import type { ExternalToolCall } from "../external-tools/index.js";
 import type { DurableUserInputCall } from "../user-input/index.js";
 import type { DurableWait, ScheduledMessage } from "../scheduling/index.js";
 import type { GitCommandRunner } from "../git/types.js";
@@ -131,12 +130,9 @@ import {
 } from "../persistence/database/migrateSessionDatabase.js";
 import { queryRigDataEpoch } from "../persistence/database/queryRigDataEpoch.js";
 import { querySessionDatabaseVersion } from "../persistence/database/querySessionDatabaseVersion.js";
-import { durablePermissionHandoff } from "../persistence/session/durablePermissionHandoff.js";
 import { durableUserInputPrune } from "../persistence/session/durableUserInputPrune.js";
 import { durableUserInputSave } from "../persistence/session/durableUserInputSave.js";
 import { queryDurableUserInputs } from "../persistence/session/queryDurableUserInputs.js";
-import { externalToolCallPrune } from "../persistence/session/externalToolCallPrune.js";
-import { externalToolCallSave } from "../persistence/session/externalToolCallSave.js";
 import { projectSecretAttach } from "../persistence/session/projectSecretAttach.js";
 import { projectSecretDetach } from "../persistence/session/projectSecretDetach.js";
 import { secretRegister } from "../persistence/session/secretRegister.js";
@@ -168,7 +164,6 @@ import { durableWaitPrune } from "../persistence/scheduling/durableWaitPrune.js"
 import { scheduledMessageSave } from "../persistence/scheduling/scheduledMessageSave.js";
 import { scheduledMessagePrune } from "../persistence/scheduling/scheduledMessagePrune.js";
 import { queryNextPendingScheduledMessage } from "../persistence/scheduling/queryScheduledMessages.js";
-import { queryExternalToolCalls } from "../persistence/session/queryExternalToolCalls.js";
 import { queryFirstRootSessionIdForWorkspace } from "../persistence/session/queryFirstRootSessionIdForWorkspace.js";
 import { queryInterruptedSessionCandidates } from "../persistence/session/queryInterruptedSessionCandidates.js";
 import { queryProjectSecretIds } from "../persistence/session/queryProjectSecretIds.js";
@@ -1391,14 +1386,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         return this.#cachedSessions();
     }
 
-    async listExternalToolCalls(
-        ctx: Context,
-        options: { limit?: number; status?: ExternalToolCall["status"] } = {},
-    ): Promise<readonly ExternalToolCall[]> {
-        ctx = withDatabase(ctx, this.#database);
-        return await queryExternalToolCalls(ctx, options);
-    }
-
     async listDurableUserInputs(ctx: Context): Promise<readonly DurableUserInputCall[]> {
         ctx = withDatabase(ctx, this.#database);
         return await queryDurableUserInputs(ctx);
@@ -2474,20 +2461,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
         );
     }
 
-    async upsertExternalToolCall(ctx: Context, call: ExternalToolCall): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await externalToolCallSave(ctx, call);
-    }
-
-    async handoffDurablePermissionToExternalTool(
-        ctx: Context,
-        externalCall: ExternalToolCall,
-        permissionCall: DurableUserInputCall,
-    ): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await durablePermissionHandoff(ctx, externalCall, permissionCall);
-    }
-
     async upsertDurableUserInput(ctx: Context, call: DurableUserInputCall): Promise<void> {
         ctx = withDatabase(ctx, this.#database);
         await durableUserInputSave(ctx, call);
@@ -2506,11 +2479,6 @@ export class PersistentSessionStore implements SessionStore, InMemorySessionPers
     async scheduledMessageChanged(ctx: Context): Promise<void> {
         ctx = withDatabase(ctx, this.#database);
         await this.#afterTransactionCommit(ctx, (ctx) => this.#armScheduledMessageTimer(ctx));
-    }
-
-    async pruneExternalToolCalls(ctx: Context, sessionId: string, retain: number): Promise<void> {
-        ctx = withDatabase(ctx, this.#database);
-        await externalToolCallPrune(ctx, sessionId, retain);
     }
 
     async pruneDurableUserInputs(ctx: Context, sessionId: string, retain: number): Promise<void> {

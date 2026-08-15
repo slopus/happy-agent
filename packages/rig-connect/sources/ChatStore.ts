@@ -10,7 +10,6 @@ import type {
     ContentBlock,
     CompactionMessage,
     ErrorMessage,
-    ExternalToolCall,
     GitChangeSnapshot,
     McpServerSummary,
     Message,
@@ -156,7 +155,6 @@ export class ChatStore {
             backgroundProcesses: [],
             connection: "connecting",
             cwd: "",
-            externalTools: [],
             mcpServers: [],
             modelLocked: false,
             modelCatalog: {
@@ -172,14 +170,12 @@ export class ChatStore {
             pendingUserInputs: [],
             permissionMode: "",
             permissionReviews: [],
-            pendingExternalToolCalls: [],
             scope: { kind: "unsorted" },
             projectSecretIds: [],
             providerId: "",
             secretIds: [],
             scheduledMessages: [],
             sessionSecretIds: [],
-            skills: [],
             loadingMore: false,
             sessionId,
             shellCommands: [],
@@ -602,7 +598,6 @@ export class ChatStore {
             archived: session.archived,
             backgroundProcesses: session.backgroundProcesses ?? [],
             cwd: session.cwd,
-            externalTools: session.externalTools ?? [],
             mcpServers: session.mcpServers ?? [],
             modelLocked: session.modelLocked,
             modelCatalog: session.modelCatalog,
@@ -612,7 +607,6 @@ export class ChatStore {
             ...(session.profileId === undefined ? {} : { profileId: session.profileId }),
             ...(session.orderKey === undefined ? {} : { orderKey: session.orderKey }),
             pendingSteeringMessages: session.pendingSteeringMessages ?? [],
-            pendingExternalToolCalls: session.pendingExternalToolCalls ?? [],
             pendingUserInputs: session.pendingUserInputs,
             permissionReviews: session.permissionReviews ?? [],
             permissionMode: session.permissionMode,
@@ -627,7 +621,6 @@ export class ChatStore {
             sessionSecretIds: session.sessionSecretIds ?? [],
             sessionId: session.id,
             shellCommands: session.shellCommands ?? [],
-            skills: session.skills ?? [],
             status: session.status,
             subagents: session.subagents ?? [],
             tasks: session.tasks,
@@ -711,15 +704,11 @@ export class ChatStore {
                     "titleError",
                     "tokens",
                 ]),
-                externalTools: current.externalTools ?? this.#session.externalTools,
                 mcpServers: current.mcpServers ?? this.#session.mcpServers,
-                pendingExternalToolCalls:
-                    current.pendingExternalToolCalls ?? this.#session.pendingExternalToolCalls,
                 projectSecretIds: current.projectSecretIds ?? this.#session.projectSecretIds,
                 secretIds: current.secretIds ?? this.#session.secretIds,
                 scheduledMessages: current.scheduledMessages ?? this.#session.scheduledMessages,
                 sessionSecretIds: current.sessionSecretIds ?? this.#session.sessionSecretIds,
-                skills: current.skills ?? this.#session.skills,
                 titleStatus: current.titleStatus ?? this.#session.titleStatus,
                 workflows: current.workflows ?? this.#session.workflows,
                 workflowsEnabled: current.workflowsEnabled ?? this.#session.workflowsEnabled,
@@ -1020,31 +1009,6 @@ export class ChatStore {
                               }
                             : workflow,
                     ),
-                };
-                break;
-            }
-            case "external_tool_call_requested": {
-                const { call } = event.data as { call: ExternalToolCall };
-                if (!this.#session.pendingExternalToolCalls.some((item) => item.id === call.id)) {
-                    this.#session = {
-                        ...this.#session,
-                        pendingExternalToolCalls: [...this.#session.pendingExternalToolCalls, call],
-                    };
-                }
-                break;
-            }
-            case "external_tool_call_resolved": {
-                const { call } = event.data as { call: ExternalToolCall };
-                this.#session = {
-                    ...this.#session,
-                    pendingExternalToolCalls:
-                        call.status === "pending"
-                            ? this.#session.pendingExternalToolCalls.map((item) =>
-                                  item.id === call.id ? call : item,
-                              )
-                            : this.#session.pendingExternalToolCalls.filter(
-                                  (item) => item.id !== call.id,
-                              ),
                 };
                 break;
             }
@@ -1375,7 +1339,6 @@ export class ChatStore {
             archived: session.archived,
             backgroundProcesses: session.backgroundProcesses ?? [],
             cwd: session.cwd,
-            externalTools: session.externalTools ?? [],
             mcpServers: session.mcpServers ?? [],
             modelLocked: session.modelLocked,
             modelCatalog: session.modelCatalog,
@@ -1384,7 +1347,6 @@ export class ChatStore {
             ownerInstanceId: session.ownerInstanceId,
             ...(session.profileId === undefined ? {} : { profileId: session.profileId }),
             ...(session.orderKey === undefined ? {} : { orderKey: session.orderKey }),
-            pendingExternalToolCalls: session.pendingExternalToolCalls ?? [],
             pendingSteeringMessages: session.pendingSteeringMessages ?? [],
             pendingUserInputs: session.pendingUserInputs,
             permissionReviews: session.permissionReviews ?? [],
@@ -1400,7 +1362,6 @@ export class ChatStore {
             sessionSecretIds: session.sessionSecretIds ?? [],
             sessionId: session.id,
             shellCommands: session.shellCommands ?? [],
-            skills: session.skills ?? [],
             status: session.status,
             subagents: session.subagents ?? [],
             tasks: session.tasks,

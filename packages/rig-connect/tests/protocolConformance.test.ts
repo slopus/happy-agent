@@ -183,8 +183,6 @@ type ApplicationReadEventType =
     | "tasks_changed"
     | "goal_changed"
     | "workflow_changed"
-    | "external_tool_call_requested"
-    | "external_tool_call_resolved"
     | "subagent_changed"
     | "shell_command_started"
     | "shell_command_finished"

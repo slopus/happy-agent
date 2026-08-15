@@ -16,18 +16,12 @@ export async function sessionSaveQueuedRun(
         const tx = ctx.tx;
         const integrationConfigJson =
             run.effort === undefined &&
-            run.externalTools === undefined &&
             run.modelId === undefined &&
             run.providerId === undefined &&
             run.serviceTier === undefined &&
-            run.skills === undefined &&
             run.systemPrompt === undefined
                 ? null
                 : JSON.stringify({
-                      ...(run.externalTools === undefined
-                          ? {}
-                          : { externalTools: run.externalTools }),
-                      ...(run.skills === undefined ? {} : { skills: run.skills }),
                       ...(run.effort === undefined ? {} : { effort: run.effort }),
                       ...(run.modelId === undefined ? {} : { modelId: run.modelId }),
                       ...(run.providerId === undefined ? {} : { providerId: run.providerId }),

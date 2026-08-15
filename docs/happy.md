@@ -253,9 +253,8 @@ chat, Happy 2 resolves or creates a binding of (chat, agent) to a Rig session:
   match.
 - Sessions are created with the `full_access` permission mode. That is
   deliberate: the agent is already confined by a dedicated container sandbox,
-  and Happy 2's durable external functions require it. **Full access here means
-  "no extra Rig-side sandbox inside an already sandboxed container", not "free
-  rein on the user's machine".**
+  so **full access here means "no extra Rig-side sandbox inside an already
+  sandboxed container", not "free rein on the user's machine".**
 - Per-agent and per-channel secrets are registered with Rig and reconciled onto
   the session, so environment values are attached and detached as bindings
   change.
@@ -263,13 +262,11 @@ chat, Happy 2 resolves or creates a binding of (chat, agent) to a Rig session:
 **Turns.** Messages addressed to agents become durable turns that Happy 2
 drains one at a time per chat. A channel has a default agent and may address
 additional agent members; a direct message can only address its own agent.
-Happy 2 submits the prompt to Rig together with the external tool definitions
-and durable skills contributed by installed plugins, streams the agent-loop
-events back out of the global event stream, and turns them into Happy 2
-messages, typing indicators, live activity (phase, tool names, subagents,
-background terminals, token counts), and a final reply. Steering delivers new
-user text into a running turn; stopping a run ends it in Rig and releases the
-worker lease.
+Happy 2 submits the prompt to Rig, streams the agent-loop events back out of the
+global event stream, and turns them into Happy 2 messages, typing indicators,
+live activity (phase, tool names, subagents, background terminals, token
+counts), and a final reply. Steering delivers new user text into a running
+turn; stopping a run ends it in Rig and releases the worker lease.
 
 **Terminals and previews.** Happy 2 can open Rig remote terminals inside the
 agent's container and attach them to the app over WebSocket. Optional
@@ -367,10 +364,6 @@ different in ways that matter:
   direct message that people and possibly other agents read. Your text blocks,
   tool calls, subagents, and background terminals are surfaced live, so partial
   work is visible while you are still working.
-- **Extra tools may appear.** Happy 2 contributes plugin functions as external
-  tools and plugin skills as durable skills for the turn. It executes them on
-  the host side and returns their results; they are bound to the current turn
-  and the current chat.
 - **Turns are queued and steerable.** New user messages can be delivered into a
   running turn, and a reader can stop your run at any time. A stopped or steered
   turn is a normal outcome.

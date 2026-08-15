@@ -40,7 +40,6 @@ const expectedTables = [
     "durable_global_events",
     "durable_user_inputs",
     "durable_waits",
-    "external_tool_calls",
     "happy_outbox",
     "happy_sessions",
     "project_avatar_assets",

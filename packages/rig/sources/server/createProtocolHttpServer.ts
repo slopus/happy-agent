@@ -54,7 +54,6 @@ import type {
     ProviderUsageEntry,
     SessionStateResponse,
     ListGlobalEventsResponse,
-    ListExternalToolCallsResponse,
     ListSecretsResponse,
     HealthResponse,
     RigDaemonInstallationDiscovery,
@@ -94,8 +93,6 @@ import type {
     ReadProjectFileRevisionResponse,
     RunShellCommandRequest,
     RunShellCommandResponse,
-    ResolveExternalToolCallRequest,
-    ResolveExternalToolCallResponse,
     RegisterSecretResponse,
     SearchFilesResponse,
     SecretSessionResponse,
@@ -3418,30 +3415,6 @@ async function handleRequest(
         return;
     }
 
-    if (
-        request.method === "GET" &&
-        route.name === "external-tool-calls" &&
-        route.sessionId === undefined
-    ) {
-        const status = url.searchParams.get("status") ?? "pending";
-        if (!["pending", "completed", "failed", "cancelled"].includes(status)) {
-            sendJson(response, 400, { error: "External function status is invalid." });
-            return;
-        }
-        const limit = parseLimit(url.searchParams.get("limit"));
-        if (url.searchParams.has("limit") && limit === undefined) {
-            sendJson(response, 400, { error: "External function call limit is invalid." });
-            return;
-        }
-        sendJson<ListExternalToolCallsResponse>(response, 200, {
-            calls: await store.listExternalToolCalls(ctx, {
-                limit: limit ?? 100,
-                status: status as import("../external-tools/index.js").ExternalToolCall["status"],
-            }),
-        });
-        return;
-    }
-
     if (request.method === "GET" && route.name === "secret-registrations") {
         sendJson<ListSecretsResponse>(response, 200, { secrets: await store.listSecrets(ctx) });
         return;
@@ -4284,35 +4257,6 @@ async function handleRequest(
                 ...(mutationId === undefined ? {} : { mutationId }),
             }),
         );
-        return;
-    }
-
-    if (request.method === "GET" && route.name === "external-tool-calls") {
-        sendJson(response, 200, { calls: session.externalToolCalls() });
-        return;
-    }
-
-    if (request.method === "POST" && route.name === "external-tool-call") {
-        const body = await readJson<unknown>(request, 1_048_576);
-        if (!isExternalToolCallResolution(body)) {
-            sendJson(response, 400, { error: "External function result is invalid." });
-            return;
-        }
-        try {
-            const result = await session.resolveExternalToolCall(
-                ctx,
-                route.externalToolCallId,
-                body as ResolveExternalToolCallRequest,
-            );
-            if (result === undefined) {
-                sendJson(response, 404, { error: "External function call not found." });
-                return;
-            }
-            sendJson<ResolveExternalToolCallResponse>(response, 200, result);
-        } catch (error) {
-            if (isDatabaseFailure(error)) throw error;
-            sendJson(response, 409, { error: errorToMessage(error) });
-        }
         return;
     }
 
@@ -5194,7 +5138,6 @@ function matchRoute(pathname: string):
               | "live-events-stream"
               | "catalog"
               | "global-events-trim"
-              | "external-tool-calls"
               | "config"
               | "global-instructions"
               | "global-security-policy"
@@ -5386,7 +5329,6 @@ function matchRoute(pathname: string):
               | "draft"
               | "effort"
               | "events"
-              | "external-tool-calls"
               | "fork"
               | "goal"
               | "messages"
@@ -5422,7 +5364,6 @@ function matchRoute(pathname: string):
           sessionId: string;
       }
     | { name: "user-input"; requestId: string; sessionId: string }
-    | { name: "external-tool-call"; externalToolCallId: string; sessionId: string }
     | { name: "scheduled-message-cancel"; scheduledMessageId: string; sessionId: string }
     | { name: "secret"; secretId: string; sessionId: string }
     | { name: "background-process"; processSessionId: number; sessionId: string }
@@ -5461,7 +5402,6 @@ function matchRoute(pathname: string):
     if (pathname === "/catalog") return { name: "catalog" };
     if (pathname === "/timeline") return { name: "timeline" };
     if (pathname === "/events/trim") return { name: "global-events-trim" };
-    if (pathname === "/external-tool-calls") return { name: "external-tool-calls" };
     if (pathname === "/models") return { name: "models" };
     if (pathname === "/messages") return { name: "messages" };
     if (pathname === "/git/watch") return { name: "git-watch" };
@@ -5817,13 +5757,6 @@ function matchRoute(pathname: string):
             sessionId,
         };
     }
-    if (parts.length === 4 && parts[2] === "external-tool-calls" && parts[3] !== undefined) {
-        return {
-            name: "external-tool-call",
-            externalToolCallId: decodeURIComponent(parts[3]),
-            sessionId,
-        };
-    }
     if (
         parts.length === 5 &&
         parts[2] === "attachments" &&
@@ -5887,9 +5820,6 @@ function matchRoute(pathname: string):
     if (parts[2] === "draft") return { name: "draft", sessionId };
     if (parts[2] === "effort") return { name: "effort", sessionId };
     if (parts[2] === "events") return { name: "events", sessionId };
-    if (parts[2] === "external-tool-calls") {
-        return { name: "external-tool-calls", sessionId };
-    }
     if (parts[2] === "fork") return { name: "fork", sessionId };
     if (parts[2] === "goal") return { name: "goal", sessionId };
     if (parts[2] === "messages") return { name: "messages", sessionId };
@@ -6362,7 +6292,6 @@ function isSessionMutation(routeName: string, method: string | undefined): boole
                 "background-processes-stop",
                 "compact",
                 "context",
-                "external-tool-call",
                 "fork",
                 "messages",
                 "read",
@@ -6603,34 +6532,6 @@ class InvalidJsonBodyError extends Error {}
 
 class RequestBodyTooLargeError extends Error {}
 
-function isExternalToolCallResolution(value: unknown): value is ResolveExternalToolCallRequest {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-    if (JSON.stringify(value).length > 1_048_576) return false;
-    const candidate = value as Record<string, unknown>;
-    if (candidate.status === "failed") {
-        if (candidate.error === null || typeof candidate.error !== "object") return false;
-        const error = candidate.error as Record<string, unknown>;
-        return (
-            typeof error.message === "string" &&
-            (error.code === undefined || typeof error.code === "string")
-        );
-    }
-    if (candidate.status !== "completed") return false;
-    if (candidate.content === undefined) return true;
-    return (
-        Array.isArray(candidate.content) &&
-        candidate.content.every((block) => {
-            if (block === null || typeof block !== "object" || Array.isArray(block)) return false;
-            const content = block as Record<string, unknown>;
-            return content.type === "text"
-                ? typeof content.text === "string"
-                : content.type === "image" &&
-                      typeof content.mediaType === "string" &&
-                      typeof content.data === "string";
-        })
-    );
-}
-
 async function streamEvents(
     ctx: Context,
     request: IncomingMessage,
@@ -6860,21 +6761,10 @@ async function sessionStreamHello(
                       ...(currentSession.interruption === undefined
                           ? {}
                           : { interruption: currentSession.interruption }),
-                      ...(currentSession.externalTools === undefined
-                          ? {}
-                          : { externalTools: currentSession.externalTools }),
                       mcpServers: currentSession.mcpServers,
-                      ...(currentSession.pendingExternalToolCalls === undefined
-                          ? {}
-                          : {
-                                pendingExternalToolCalls: currentSession.pendingExternalToolCalls,
-                            }),
                       projectSecretIds: currentSession.projectSecretIds,
                       secretIds: currentSession.secretIds,
                       sessionSecretIds: currentSession.sessionSecretIds,
-                      ...(currentSession.skills === undefined
-                          ? {}
-                          : { skills: currentSession.skills }),
                       ...(currentSession.scheduledMessages === undefined
                           ? {}
                           : { scheduledMessages: currentSession.scheduledMessages }),

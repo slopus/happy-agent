@@ -54,7 +54,6 @@ import type {
     ContentBlock,
     BackgroundProcessSnapshot,
     ComputePreparationEvent,
-    ExternalToolCallResolution,
     CreateDocumentRequest,
     CreateFolderRequest,
     CreateFolderItemRequest,
@@ -1027,11 +1026,6 @@ export interface RigConnection {
         processSessionId: number,
         options?: { signal?: AbortSignal; waitMs?: number },
     ) => Promise<BackgroundProcessSnapshot | undefined>;
-    resolveExternalToolCall: (
-        sessionId: string,
-        callId: string,
-        resolution: ExternalToolCallResolution,
-    ) => MutationId;
     cancelScheduledMessage: (sessionId: string, scheduledMessageId: string) => MutationId;
     recordActivity: (sessionId: string) => MutationId;
     connectTerminalPresence: (
@@ -6908,23 +6902,6 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         return response.status === 404 ? undefined : (response.data as BackgroundProcessSnapshot);
     };
 
-    const resolveExternalToolCall = (
-        sessionId: string,
-        callId: string,
-        resolution: ExternalToolCallResolution,
-    ): MutationId => {
-        const pending =
-            sessionEntries.get(sessionId)?.store.session().pendingExternalToolCalls ?? [];
-        return enqueueSessionUpdate(
-            "resolve_external_tool_call",
-            sessionId,
-            `external-tool-calls/${encodeURIComponent(callId)}`,
-            "POST",
-            resolution,
-            { pendingExternalToolCalls: pending.filter((call) => call.id !== callId) },
-        );
-    };
-
     const cancelScheduledMessage = (sessionId: string, scheduledMessageId: string): MutationId => {
         const id = nextMutationId();
         const mutation: PendingMutation = {
@@ -7568,7 +7545,6 @@ export function connectRig(options: ConnectRigOptions): RigConnection {
         registerSecret,
         recordActivity,
         renameGroup,
-        resolveExternalToolCall,
         resetSession,
         requestSharingContact,
         acceptSharingContactRequest,

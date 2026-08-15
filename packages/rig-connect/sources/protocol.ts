@@ -818,44 +818,6 @@ export interface WorkflowRunUpdate extends Partial<Omit<WorkflowRun, "runId">> {
     runId: string;
 }
 
-export interface DurableSkillDefinition {
-    description: string;
-    location: "durable";
-    name: string;
-}
-
-export interface ExternalToolDefinition {
-    description: string;
-    label?: string;
-    name: string;
-    parameters: unknown;
-}
-
-export type ExternalToolCallResolution =
-    | { status: "completed"; content?: readonly ContentBlock[]; output?: unknown }
-    | {
-          status: "failed";
-          error: { code?: string; data?: unknown; message: string };
-      };
-
-export interface ExternalToolCall {
-    arguments: unknown;
-    batchId: string;
-    consumed: boolean;
-    createdAt: number;
-    definition: ExternalToolDefinition;
-    id: string;
-    providerToolCallId?: string;
-    resolution?: ExternalToolCallResolution;
-    resolvedAt?: number;
-    runId: string;
-    sessionId: string;
-    skill?: DurableSkillDefinition;
-    status: "pending" | "completed" | "failed" | "cancelled";
-    toolCallId: string;
-    toolCallIndex: number;
-}
-
 export interface GitFileChange {
     binary: boolean;
     deletions?: number;
@@ -993,9 +955,6 @@ export interface ProtocolSession {
     workflowsEnabled?: boolean;
     workflows?: readonly WorkflowRun[];
     sessionTokenCount?: SessionTokenCount;
-    externalTools?: readonly ExternalToolDefinition[];
-    skills?: readonly DurableSkillDefinition[];
-    pendingExternalToolCalls?: readonly ExternalToolCall[];
     scheduledMessages?: readonly ScheduledMessage[];
 }
 
@@ -1085,16 +1044,13 @@ export interface SessionStateResponse extends SessionStreamHello {
 export interface SessionStreamCurrentState {
     draft?: string;
     draftUpdatedAt?: number;
-    externalTools?: readonly ExternalToolDefinition[];
     git?: GitChangeSnapshot;
     interruption?: SessionInterruption;
     mcpServers?: readonly McpServerSummary[];
-    pendingExternalToolCalls?: readonly ExternalToolCall[];
     projectSecretIds?: readonly string[];
     secretIds?: readonly string[];
     sessionTokenCount?: SessionTokenCount;
     sessionSecretIds?: readonly string[];
-    skills?: readonly DurableSkillDefinition[];
     scheduledMessages?: readonly ScheduledMessage[];
     titleError?: string;
     titleStatus?: "error" | "generating" | "idle" | "ready";
@@ -1174,8 +1130,6 @@ export type InterpretedSessionEvent =
     | BaseSessionEvent<"mcp_servers_changed", { servers: readonly McpServerSummary[] }>
     | BaseSessionEvent<"mutation_applied", { mutationId: MutationId }>
     | BaseSessionEvent<"workflow_changed", { update: WorkflowRunUpdate }>
-    | BaseSessionEvent<"external_tool_call_requested", { call: ExternalToolCall }>
-    | BaseSessionEvent<"external_tool_call_resolved", { call: ExternalToolCall }>
     | BaseSessionEvent<
           "scheduled_message_changed",
           { message: ScheduledMessage; mutationId?: MutationId }

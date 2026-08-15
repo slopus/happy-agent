@@ -413,8 +413,6 @@ export const sessions = sqliteTable(
         instructions: text("instructions"),
         appendSystemPrompt: text("append_system_prompt"),
         systemPrompt: text("system_prompt"),
-        externalToolsJson: text("external_tools_json").notNull(),
-        durableSkillsJson: text("durable_skills_json").notNull(),
         status: text("status").notNull(),
         activeRunId: text("active_run_id"),
         activeSinceMs: integer("active_since_ms"),
@@ -721,32 +719,6 @@ export const pendingContextMessages = sqliteTable(
         primaryKey({ columns: [table.sessionId, table.messageId] }),
         unique().on(table.sessionId, table.position),
         index("pending_context_messages_session_fifo").on(table.sessionId, table.position),
-    ],
-);
-
-export const externalToolCalls = sqliteTable(
-    "external_tool_calls",
-    {
-        id: text("id").primaryKey(),
-        sessionId: text("session_id")
-            .notNull()
-            .references(() => sessions.id, { onDelete: "cascade" }),
-        runId: text("run_id").notNull(),
-        batchId: text("batch_id").notNull(),
-        toolCallId: text("tool_call_id").notNull(),
-        providerToolCallId: text("provider_tool_call_id"),
-        toolCallIndex: integer("tool_call_index").notNull(),
-        definitionJson: text("definition_json").notNull(),
-        skillJson: text("skill_json"),
-        argumentsJson: text("arguments_json").notNull(),
-        status: text("status").notNull(),
-        resolutionJson: text("resolution_json"),
-        consumed: integer("consumed", { mode: "boolean" }).notNull(),
-        createdAtMs: integer("created_at_ms").notNull(),
-        resolvedAtMs: integer("resolved_at_ms"),
-    },
-    (table) => [
-        index("external_tool_calls_session_created").on(table.sessionId, table.createdAtMs),
     ],
 );
 

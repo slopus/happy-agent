@@ -43,9 +43,6 @@
         },
         "./dist/terminal/index.js": {
             "types": "./dist/types.d.ts"
-        },
-        "./dist/external-tools/index.js": {
-            "types": "./dist/types.d.ts"
         }
     },
     "publishConfig": {

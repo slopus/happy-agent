@@ -15,7 +15,6 @@ import type { AnyDefinedTool, Message } from "../types.js";
 import type { Model, PreambleMessage, Provider } from "@slopus/rig-execution";
 import type { Context } from "@steve.kite/stdlib";
 import { createSecretInstructions } from "../../secrets/index.js";
-import type { DurableSkillDefinition } from "../../external-skills/types.js";
 
 export interface CreateSystemPromptOptions {
     appendSystemPrompt?: string;
@@ -27,7 +26,6 @@ export interface CreateSystemPromptOptions {
     messages: readonly Message[];
     context: AgentContext;
     tools?: readonly AnyDefinedTool[];
-    durableSkills?: readonly DurableSkillDefinition[];
     effort?: string;
 }
 
@@ -51,11 +49,7 @@ export async function createSystemPrompt(
     parts.push(AGENTS_MD_SPEC);
 
     const loadedSkills = await loadAgentSkillCatalog(ctx, options.context);
-    const skillInstructions = await loadSkillInstructions(
-        options.context.fs,
-        options.durableSkills ?? [],
-        loadedSkills,
-    );
+    const skillInstructions = await loadSkillInstructions(options.context.fs, loadedSkills);
     if (skillInstructions !== undefined) {
         parts.push(skillInstructions);
     }

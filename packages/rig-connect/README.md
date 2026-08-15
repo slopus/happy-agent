@@ -447,8 +447,8 @@ the tools running underneath it in `label`, while `awaitingTools` still lists th
 The session state also carries the live facts a complete conversation surface renders: project,
 worktree, environment and agent identity; model locking, effort and service tier; permission mode;
 composer draft and recap; title generation and structured interruption state; pending steering and
-input requests; tasks, goal, subagents, MCP servers and workflows; secret attachments, external
-tools and durable skills; background processes and ordered shell commands; permission reviews,
+input requests; tasks, goal, subagents, MCP servers and workflows; secret attachments; background
+processes and ordered shell commands; permission reviews,
 context size, usage, quota, and Git changes. Each is initialized by the opening frame and tracked
 continuously rather than fetched on demand. `connection` is `connecting`, `live`, `reconnecting`,
 or `closed`, so a transport interruption is visible rather than a silent stall.

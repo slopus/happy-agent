@@ -42,7 +42,6 @@ import type { CodingAssistantRuntime } from "./CodingAssistantRuntime.js";
 import { createDefaultInstructions } from "./createDefaultInstructions.js";
 import { createGymJustBashAgentContext } from "./createGymJustBashAgentContext.js";
 import { modelToolSurface } from "./modelToolSurface.js";
-import type { DurableSkillDefinition } from "../external-skills/types.js";
 import { resolveGeminiApiKey } from "../tools/search/resolveGeminiApiKey.js";
 import { readAgentHistoryTool } from "../tools/read_agent_history.js";
 import { agentCommunicationTools } from "../tools/agents/index.js";
@@ -78,7 +77,6 @@ export interface CreateCodingAssistantAgentOptions {
     cwd: string;
     ctx: Context;
     docker?: DockerExecutionConfig;
-    durableSkills?: readonly DurableSkillDefinition[];
     agentId?: string;
     /** Stable Rig identity whose credentials and usage this runtime consumes. */
     ownerInstanceId?: string;
@@ -418,7 +416,6 @@ export function createCodingAssistantAgent(
               ? {}
               : { instructions: createDefaultInstructions(runtimeCwd) }),
         ...(options.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : {}),
-        ...(options.durableSkills !== undefined ? { durableSkills: options.durableSkills } : {}),
         ...(options.messages !== undefined ? { messages: options.messages } : {}),
         ...(options.contextMessages !== undefined
             ? { contextMessages: options.contextMessages }

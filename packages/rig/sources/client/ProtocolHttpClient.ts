@@ -62,7 +62,6 @@ import type {
     MoveSessionRequest,
     UpdateFolderRequest,
     ListGlobalEventsResponse,
-    ListExternalToolCallsResponse,
     ListModelsResponse,
     ListFileTreeRequest,
     ListFileTreeResponse,
@@ -86,8 +85,6 @@ import type {
     ReadProjectFileResponse,
     ReadProjectFileRevisionResponse,
     RegisterProjectRequest,
-    ResolveExternalToolCallRequest,
-    ResolveExternalToolCallResponse,
     RewindSessionResponse,
     RunShellCommandRequest,
     RunShellCommandResponse,
@@ -142,7 +139,6 @@ import type {
     RemoteTerminalResponse,
     ResizeRemoteTerminalRequest,
 } from "../terminal/index.js";
-import type { ExternalToolCall } from "../external-tools/index.js";
 import { connectRemoteTerminalWebSocket } from "./connectRemoteTerminalWebSocket.js";
 import { RemoteTerminalAttachment } from "./RemoteTerminalAttachment.js";
 import { RemoteTerminalClientReplica } from "./RemoteTerminalClientReplica.js";
@@ -1214,29 +1210,6 @@ export class ProtocolHttpClient {
 
     broadcastMessage(request: BroadcastMessageRequest): Promise<BroadcastMessageResponse> {
         return this.#requestJson("POST", "/messages", request);
-    }
-
-    listExternalToolCalls(sessionId: string): Promise<{ calls: readonly ExternalToolCall[] }> {
-        return this.#requestJson(
-            "GET",
-            `/sessions/${encodeURIComponent(sessionId)}/external-tool-calls`,
-        );
-    }
-
-    listPendingExternalToolCalls(limit = 100): Promise<ListExternalToolCallsResponse> {
-        return this.#requestJson("GET", `/external-tool-calls?limit=${encodeURIComponent(limit)}`);
-    }
-
-    resolveExternalToolCall(
-        sessionId: string,
-        callId: string,
-        request: ResolveExternalToolCallRequest,
-    ): Promise<ResolveExternalToolCallResponse> {
-        return this.#requestJson(
-            "POST",
-            `/sessions/${encodeURIComponent(sessionId)}/external-tool-calls/${encodeURIComponent(callId)}`,
-            request,
-        );
     }
 
     cancelScheduledMessage(

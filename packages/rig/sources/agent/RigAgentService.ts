@@ -649,15 +649,11 @@ export function assertAgentSubmissionOptionsSupported(request: SubmitMessageRequ
     const unsupported =
         request.systemPrompt !== undefined
             ? ["custom system prompt", "systemPrompt"]
-            : request.externalTools !== undefined
-              ? ["external tools", "externalTools"]
-              : request.skills !== undefined
-                ? ["durable skills", "skills"]
-                : request.debug !== undefined
-                  ? ["debug logging", "debug"]
-                  : request.interactive !== undefined
-                    ? ["interactive mode", "interactive"]
-                    : undefined;
+            : request.debug !== undefined
+              ? ["debug logging", "debug"]
+              : request.interactive !== undefined
+                ? ["interactive mode", "interactive"]
+                : undefined;
     if (unsupported === undefined) return;
     throw new Error(
         `The ${unsupported[0]} option ('${unsupported[1]}') is unavailable for Agent Base submissions.`,

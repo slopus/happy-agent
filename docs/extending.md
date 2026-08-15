@@ -390,18 +390,6 @@ Skill files are **instruction resources only**. Frontmatter that requests hooks,
 shell execution, model switching, or permission changes is ignored by design; do
 not add such fields expecting them to work.
 
-### Integration-owned (durable) skills
-
-An external integration can expose a skill by metadata alone, without putting a
-file on disk, through `POST /sessions/{sessionId}/messages` with a `skills` array
-where each entry uses `"location": "durable"`. When the model selects one, Rig
-invokes its built-in `read_skill` tool, which becomes an external call the
-integration completes with the full `SKILL.md` text. Durable skills cover
-`SKILL.md` itself; other referenced resources need an integration-provided access
-mechanism.
-
----
-
 ## MCP servers
 
 MCP is how Rig consumes tools it did not write. Servers are configured in TOML,
@@ -543,11 +531,6 @@ host application's job.
 
 ### Other integration surfaces
 
-- **External functions and durable skills** — `POST /sessions/{id}/messages` may
-  carry `systemPrompt`, `externalTools`, and `skills`; pending calls are consumed
-  from `GET /external-tool-calls` and completed by a separate authenticated
-  request. This lets an integration expose functions to a model without
-  installing any code in the daemon.
 - **Project and workspace files** — `GET`/`PUT` `/projects/{id}/file` and
   `/projects/{id}/workspaces/{id}/file`, with SHA-256 optimistic concurrency, a
   32 MB limit, and Rig's workspace boundary applied.

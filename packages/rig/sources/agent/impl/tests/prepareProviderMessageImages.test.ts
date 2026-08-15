@@ -59,7 +59,7 @@ describe("prepareProviderMessageImages", () => {
             {
                 role: "toolResult",
                 toolCallId: "call-large",
-                toolName: "external_tool",
+                toolName: "read_file",
                 content: [{ type: "text", text: "x".repeat(100_000) }],
                 isError: false,
                 timestamp: 1,

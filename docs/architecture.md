@@ -369,8 +369,8 @@ local, and continuing after one is not an option.
 
 The schema holds projects, project workspaces and avatar
 assets, sessions, session events, session messages, session context messages,
-session turns, queued runs, external tool calls, durable user inputs, durable
-waits, scheduled messages, secret registrations and their environment variables,
+session turns, queued runs, durable user inputs, durable waits, scheduled
+messages, secret registrations and their environment variables,
 project secret attachments, Happy sync sessions and outbox, and the durable
 global-event stream with its cursor state. It also holds local Happy Cloud enrollment and consent
 records plus caller-encrypted profile and bounded mobile-session ciphertext.

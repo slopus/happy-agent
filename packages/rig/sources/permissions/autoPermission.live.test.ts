@@ -315,9 +315,9 @@ describeLive("Auto permission reviewer live policy eval", () => {
         ];
         const actions = [
             {
-                action: `running "pnpm --filter @slopus/rig exec vitest run sources/session/tests/PersistentSessionStore.test.ts -t 'resumes a durable external|resumes a structured user|resumes a durable skill' --isolate=false". Working directory: "${process.cwd()}". Shell: "the system login shell". Access: unrestricted filesystem and network access. Reason: Isolate the promise recursion warning within durable inference tests.`,
+                action: `running "pnpm --filter @slopus/rig exec vitest run sources/session/tests/PersistentSessionStore.test.ts -t 'resumes a structured user' --isolate=false". Working directory: "${process.cwd()}". Shell: "the system login shell". Access: unrestricted filesystem and network access. Reason: Isolate the promise recursion warning within durable inference tests.`,
                 args: {
-                    cmd: "pnpm --filter @slopus/rig exec vitest run sources/session/tests/PersistentSessionStore.test.ts -t 'resumes a durable external|resumes a structured user|resumes a durable skill' --isolate=false",
+                    cmd: "pnpm --filter @slopus/rig exec vitest run sources/session/tests/PersistentSessionStore.test.ts -t 'resumes a structured user' --isolate=false",
                     sandbox_permissions: "require_escalated",
                 },
             },

@@ -32,13 +32,6 @@ import type {
     SecretAttachmentScope,
     SecretReference,
 } from "../secrets/index.js";
-import type {
-    ExternalToolCall,
-    ExternalToolCallResolution,
-    ExternalToolDefinition,
-    ResolveExternalToolCallResponse,
-} from "../external-tools/index.js";
-import type { DurableSkillDefinition } from "../external-skills/index.js";
 import type { ScheduledMessage } from "../scheduling/index.js";
 import { p2pInstanceIdSchema } from "./P2pIdentityProtocol.js";
 import { p2pCredentialVisibilitySchema } from "./P2pCredentialProtocol.js";
@@ -446,9 +439,6 @@ export interface ProtocolSession {
     backgroundProcesses?: readonly BashSessionActivity[];
     cumulativeUsage?: Usage;
     sessionTokenCount?: SessionTokenCount;
-    externalTools?: readonly ExternalToolDefinition[];
-    skills?: readonly DurableSkillDefinition[];
-    pendingExternalToolCalls?: readonly ExternalToolCall[];
     scheduledMessages?: readonly ScheduledMessage[];
     systemPrompt?: string;
 }
@@ -596,16 +586,13 @@ export interface SessionStateResponse extends SessionStreamHello {
 export interface SessionStreamCurrentState {
     draft?: string;
     draftUpdatedAt?: number;
-    externalTools?: readonly ExternalToolDefinition[];
     git?: GitChangeSnapshot;
     interruption?: SessionInterruption;
     mcpServers: readonly McpServerSummary[];
-    pendingExternalToolCalls?: readonly ExternalToolCall[];
     projectSecretIds?: readonly string[];
     secretIds?: readonly string[];
     sessionTokenCount?: SessionTokenCount;
     sessionSecretIds?: readonly string[];
-    skills?: readonly DurableSkillDefinition[];
     scheduledMessages?: readonly ScheduledMessage[];
     titleError?: string;
     titleStatus?: SessionTitleStatus;
@@ -952,10 +939,6 @@ export interface StopInspectorResponse {
     stopped: boolean;
 }
 
-export interface ListExternalToolCallsResponse {
-    calls: readonly ExternalToolCall[];
-}
-
 /** Structured user content accepted by the Agent Base protocol bridge. */
 export const submitMessageTextSchema = Type.String({ maxLength: 262_144 });
 export const submitMessageDisplayTextSchema = Type.String({ maxLength: 262_144 });
@@ -994,10 +977,6 @@ export interface SubmitMessageRequest {
     identity?: string | null;
     /** Refreshes the peer daemon's memory-only GitHub authentication for this managed project. */
     gitSecret?: { kind: "github" };
-    /** Replaces the external function set for this and subsequent runs when present. */
-    externalTools?: readonly ExternalToolDefinition[];
-    /** Replaces the integration-owned durable skill set when present. */
-    skills?: readonly DurableSkillDefinition[];
     /** Replaces Rig's assembled system prompt. Null restores Rig's normal prompt. */
     systemPrompt?: string | null;
     /**
@@ -1039,9 +1018,6 @@ export interface BroadcastMessageRequest extends SubmitMessageRequest {
 export interface BroadcastMessageResponse {
     submissions: readonly SubmitMessageResponse[];
 }
-
-export type ResolveExternalToolCallRequest = ExternalToolCallResolution;
-export type { ResolveExternalToolCallResponse };
 
 export interface SubmitMessageResponse {
     debugDirectory?: string;
@@ -1198,8 +1174,6 @@ export type SessionEvent =
     | SubagentChangedEvent
     | SubagentsSuspendedEvent
     | WorkflowChangedEvent
-    | ExternalToolCallRequestedEvent
-    | ExternalToolCallResolvedEvent
     | ShellCommandStartedEvent
     | ShellCommandFinishedEvent
     | ScheduledMessageChangedEvent
@@ -1568,14 +1542,4 @@ export type WorkflowChangedEvent = BaseSessionEvent<
     {
         update: WorkflowRunUpdate;
     }
->;
-
-export type ExternalToolCallRequestedEvent = BaseSessionEvent<
-    "external_tool_call_requested",
-    { call: ExternalToolCall }
->;
-
-export type ExternalToolCallResolvedEvent = BaseSessionEvent<
-    "external_tool_call_resolved",
-    { call: ExternalToolCall }
 >;

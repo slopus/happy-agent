@@ -63,7 +63,6 @@ describe("the unread state a chat is left in", () => {
             "run_finished",
             "run_error",
             "user_input_requested",
-            "external_tool_call_requested",
             "agent_message",
             "message_submitted",
         ];

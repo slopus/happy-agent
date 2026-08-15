@@ -664,10 +664,6 @@ describe("connectRig mutations", () => {
             ]);
             rig.stopBackgroundProcesses("session-1");
             rig.stopBackgroundProcess("session-1", 12);
-            rig.resolveExternalToolCall("session-1", "call-1", {
-                output: { accepted: true },
-                status: "completed",
-            });
             rig.cancelScheduledMessage("session-1", "scheduled-1");
             expect(connection.session().scheduledMessages).toEqual([
                 expect.objectContaining({ id: "scheduled-1", status: "cancelled" }),
@@ -696,7 +692,6 @@ describe("connectRig mutations", () => {
                 "POST /sessions/session-1/shell",
                 "POST /sessions/session-1/background-processes/stop",
                 "DELETE /sessions/session-1/background-processes/12",
-                "POST /sessions/session-1/external-tool-calls/call-1",
                 "POST /sessions/session-1/scheduled-messages/scheduled-1/cancel",
                 "POST /sessions/session-1/activity",
             ]);

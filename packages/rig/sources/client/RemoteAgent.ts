@@ -869,29 +869,6 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
             this.#session = { ...this.#session, tasks: event.data.tasks };
             return;
         }
-
-        if (event.type === "external_tool_call_requested") {
-            this.#session = {
-                ...this.#session,
-                pendingExternalToolCalls: [
-                    ...(this.#session.pendingExternalToolCalls ?? []).filter(
-                        (call) => call.id !== event.data.call.id,
-                    ),
-                    event.data.call,
-                ],
-            };
-            return;
-        }
-
-        if (event.type === "external_tool_call_resolved") {
-            this.#session = {
-                ...this.#session,
-                pendingExternalToolCalls: (this.#session.pendingExternalToolCalls ?? []).filter(
-                    (call) => call.id !== event.data.call.id,
-                ),
-            };
-            return;
-        }
     }
 
     #replaceSession(session: ProtocolSession): void {

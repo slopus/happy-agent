@@ -68,8 +68,6 @@ describe("createProtocolHttpServer", () => {
         try {
             for (const [field, value] of [
                 ["systemPrompt", "custom prompt"],
-                ["externalTools", []],
-                ["skills", []],
                 ["debug", true],
                 ["interactive", true],
             ] as const) {
@@ -1435,20 +1433,6 @@ describe("createProtocolHttpServer", () => {
         try {
             const request = {
                 all: true,
-                externalTools: [
-                    {
-                        description: "Look up a ticket.",
-                        name: "lookup_ticket",
-                        parameters: { type: "object" },
-                    },
-                ],
-                skills: [
-                    {
-                        description: "Check a release outside Rig.",
-                        location: "durable",
-                        name: "release-check",
-                    },
-                ],
                 systemPrompt: "Exact broadcast prompt.",
                 text: "Check the queue.",
             } as const;
@@ -1471,61 +1455,6 @@ describe("createProtocolHttpServer", () => {
             await first.abort(ctx);
             await second.abort(ctx);
             await close();
-        }
-    });
-
-    it("lists and idempotently resolves external function calls through the integration API", async () => {
-        const store = await PersistentSessionStore.open(ctx, {
-            databasePath: ":memory:",
-        });
-        const state = pausedGoalState();
-        await store.saveSession(ctx, state);
-        await store.upsertExternalToolCall(ctx, {
-            arguments: { ticket: 42 },
-            batchId: "batch-1",
-            consumed: false,
-            createdAt: 100,
-            definition: {
-                description: "Look up a ticket.",
-                name: "lookup_ticket",
-                parameters: { type: "object" },
-            },
-            id: "external-call-1",
-            runId: "run-1",
-            sessionId: state.id,
-            status: "pending",
-            toolCallId: "provider-call-1",
-            toolCallIndex: 0,
-        });
-        const { client, close } = await startServer({ store });
-        try {
-            await expect(client.listPendingExternalToolCalls()).resolves.toMatchObject({
-                calls: [{ id: "external-call-1", sessionId: state.id }],
-            });
-            await expect(client.listExternalToolCalls(state.id)).resolves.toMatchObject({
-                calls: [{ id: "external-call-1", status: "pending" }],
-            });
-            await expect(
-                client.resolveExternalToolCall(state.id, "external-call-1", {
-                    output: "x".repeat(1_048_576),
-                    status: "completed",
-                }),
-            ).rejects.toThrow("allowed limit");
-            await expect(
-                client.resolveExternalToolCall(state.id, "external-call-1", {
-                    output: { state: "resolved" },
-                    status: "completed",
-                }),
-            ).resolves.toMatchObject({ accepted: true, call: { status: "completed" } });
-            await expect(
-                client.resolveExternalToolCall(state.id, "external-call-1", {
-                    output: { state: "resolved" },
-                    status: "completed",
-                }),
-            ).resolves.toMatchObject({ accepted: false });
-        } finally {
-            await close();
-            await store.close(ctx);
         }
     });
 

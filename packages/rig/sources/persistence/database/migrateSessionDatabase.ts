@@ -62,6 +62,7 @@ import { happyProjectionProgress } from "./migrations/54-happy-projection-progre
 import { agentBaseStorage } from "./migrations/55-agent-base-storage.js";
 import { agentHistory } from "./migrations/56-agent-history.js";
 import { agentMessageSubmissions } from "./migrations/57-agent-message-submissions.js";
+import { removeExternalToolCalls } from "./migrations/58-remove-external-tool-calls.js";
 
 interface MigrationContext {
     createDataEpoch: () => string;
@@ -131,6 +132,7 @@ const migrations: readonly SessionDatabaseMigration[] = [
     agentBaseStorage,
     agentHistory,
     agentMessageSubmissions,
+    removeExternalToolCalls,
 ];
 export const SESSION_DATABASE_APPLICATION_ID = 0x52494732;
 export const RIG_DATA_IDENTITY_MIGRATION_INDEX = 19;

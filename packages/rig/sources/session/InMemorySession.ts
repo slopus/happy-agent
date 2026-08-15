@@ -126,7 +126,6 @@ export interface SessionEventCommitCheckpoint {
     readonly elapsedMs: number;
     readonly durableUserInputs: ReadonlyMap<string, DurableUserInputCall>;
     readonly durableWaits: ReadonlyMap<string, DurableWait>;
-    readonly externalToolCalls: ReadonlyMap<string, ExternalToolCall>;
     readonly goal: SessionGoal | undefined;
     readonly interruption: SessionInterruption | undefined;
     readonly lastMessageAt: number | undefined;
@@ -260,16 +259,6 @@ import {
 import { createRequestDebugDirectory, DebugLog } from "../debug/index.js";
 import { SecretRegistry, SessionSecretContext } from "../secrets/index.js";
 import type { SecretAttachmentScope } from "../secrets/index.js";
-import {
-    createExternalTool,
-    externalToolResolutionToContent,
-    replaceExternalTools,
-    type ExternalToolCall,
-    type ExternalToolCallResolution,
-    type ExternalToolDefinition,
-    type ExternalToolInstallation,
-    type ResolveExternalToolCallResponse,
-} from "../external-tools/index.js";
 import { createErrorMessage } from "../agent/impl/createErrorMessage.js";
 import { createErrorToolResultBlock } from "../agent/impl/createErrorToolResultBlock.js";
 import { createModelSwitchHistoryMessage } from "../agent/impl/createModelSwitchHistoryMessage.js";
@@ -277,7 +266,6 @@ import { createToolResultBlock } from "../agent/impl/createToolResultBlock.js";
 import type { AgentMessage, ErrorMessage, ToolCallBlock, ToolResultBlock } from "../agent/types.js";
 import type { RigAgentConfiguration } from "../agent/RigProtocolFeature.js";
 import { isCodexV2CollaborationModel } from "../agent/tools/codex/isCodexV2CollaborationModel.js";
-import { createDurableSkillTool, type DurableSkillDefinition } from "../external-skills/index.js";
 import type {
     DurableWait,
     DurableWaitRequest,
@@ -286,7 +274,6 @@ import type {
     WaitResult,
 } from "../scheduling/index.js";
 
-const MAX_RETAINED_EXTERNAL_TOOL_CALLS = 1_000;
 const MAX_RETAINED_DURABLE_USER_INPUTS = 1_000;
 const MAX_RETAINED_DURABLE_WAITS = 1_000;
 const MAX_RETAINED_SETTLED_SCHEDULED_MESSAGES = 1_000;
@@ -340,8 +327,6 @@ export interface PersistedQueuedRun {
     runId: string;
     text: string;
     userMessage: UserMessage;
-    externalTools?: readonly ExternalToolDefinition[];
-    skills?: readonly DurableSkillDefinition[];
     systemPrompt?: string | null;
 }
 
@@ -415,12 +400,9 @@ export interface PersistedSessionState {
     /** The newest session event included in `usageSummary`. */
     usageSummaryEventId?: EventId;
     tools: readonly string[];
-    externalToolCalls?: readonly ExternalToolCall[];
     durableUserInputs?: readonly DurableUserInputCall[];
     durableWaits?: readonly DurableWait[];
     scheduledMessages?: readonly ScheduledMessage[];
-    externalTools?: readonly ExternalToolDefinition[];
-    skills?: readonly DurableSkillDefinition[];
     systemPrompt?: string;
     workflows?: readonly PersistedWorkflowRun[];
     workflowsEnabled?: boolean;
@@ -468,11 +450,6 @@ export interface InMemorySessionPersistence {
             runId: string;
         },
     ): Promise<void>;
-    handoffDurablePermissionToExternalTool?(
-        ctx: Context,
-        externalCall: ExternalToolCall,
-        permissionCall: DurableUserInputCall,
-    ): Promise<void>;
     insertQueuedRun(ctx: Context, sessionId: string, run: PersistedQueuedRun): Promise<void>;
     insertPendingContextMessage?(
         ctx: Context,
@@ -496,7 +473,6 @@ export interface InMemorySessionPersistence {
         turnLimit: number,
         after: EventId,
     ): Promise<SessionTranscriptWindow | undefined>;
-    pruneExternalToolCalls?(ctx: Context, sessionId: string, retain: number): Promise<void>;
     pruneDurableUserInputs?(ctx: Context, sessionId: string, retain: number): Promise<void>;
     pruneDurableWaits?(ctx: Context, sessionId: string, retain: number): Promise<void>;
     pruneScheduledMessages?(
@@ -535,7 +511,6 @@ export interface InMemorySessionPersistence {
         },
     ): Promise<string>;
     upsertMessage(ctx: Context, sessionId: string, message: PersistedSessionMessage): Promise<void>;
-    upsertExternalToolCall?(ctx: Context, call: ExternalToolCall): Promise<void>;
     upsertDurableUserInput?(ctx: Context, call: DurableUserInputCall): Promise<void>;
     upsertDurableWait?(ctx: Context, wait: DurableWait): Promise<void>;
     upsertScheduledMessage?(ctx: Context, message: ScheduledMessage): Promise<void>;
@@ -627,11 +602,6 @@ interface ActiveRun {
 interface MetadataGenerationTarget {
     kind: "initial" | "refined";
     runId: string;
-}
-
-interface ExternalToolWaiter {
-    reject: (error: Error) => void;
-    resolve: (resolution: ExternalToolCallResolution) => void;
 }
 
 interface DurableWaitWaiter {
@@ -767,20 +737,12 @@ export class InMemorySession {
     #effort: string | undefined;
     #serviceTier: ServiceTier | undefined;
     #goal: SessionGoal | undefined;
-    #externalToolCalls = new Map<string, ExternalToolCall>();
     #durableUserInputs = new Map<string, DurableUserInputCall>();
     #durableWaits = new Map<string, DurableWait>();
     #durableWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
     #durableWaitWaiters = new Map<string, DurableWaitWaiter>();
     #resumingDurableToolRun = false;
     #resumeDurableToolRunAgain = false;
-    #externalToolDefinitions: readonly ExternalToolDefinition[] = [];
-    #durableSkillDefinitions: readonly DurableSkillDefinition[] = [];
-    #externalToolInstallation: ExternalToolInstallation = {
-        installed: new Set(),
-        shadowed: new Map(),
-    };
-    #externalToolWaiters = new Map<string, ExternalToolWaiter>();
     #folders: FolderRepository | undefined;
     #instructions: string | undefined;
     #interruption: SessionInterruption | undefined;
@@ -1038,11 +1000,6 @@ export class InMemorySession {
         this.#appendSystemPrompt =
             options.restore?.appendSystemPrompt ?? options.request.appendSystemPrompt;
         this.#systemPrompt = options.restore?.systemPrompt;
-        this.#externalToolDefinitions = [...(options.restore?.externalTools ?? [])];
-        this.#durableSkillDefinitions = [...(options.restore?.skills ?? [])];
-        for (const call of options.restore?.externalToolCalls ?? []) {
-            this.#externalToolCalls.set(call.id, cloneExternalToolCall(call));
-        }
         for (const call of options.restore?.durableUserInputs ?? []) {
             this.#durableUserInputs.set(call.request.requestId, structuredClone(call));
         }
@@ -1387,7 +1344,6 @@ export class InMemorySession {
         const runningProcesses = this.#activeProcessCount();
         if (this.#activeRun === undefined && this.#queue.length === 0 && runningProcesses === 0) {
             if (runId !== undefined && this.hasDurableToolRun()) {
-                await this.#cancelExternalToolCalls(ctx, runId);
                 await this.#cancelDurableUserInputs(ctx, runId);
                 await this.#cancelDurableWaits(ctx, runId);
                 this.#restoredActiveRunId = undefined;
@@ -1427,7 +1383,6 @@ export class InMemorySession {
         this.#queue = [];
         await this.#pauseActiveGoal(ctx);
         if (runId !== undefined) {
-            await this.#cancelExternalToolCalls(ctx, runId);
             await this.#cancelDurableUserInputs(ctx, runId);
             await this.#cancelDurableWaits(ctx, runId);
         }
@@ -2702,7 +2657,6 @@ export class InMemorySession {
             ...this.#queue.map((run) => run.runId),
         ]);
         for (const runId of runIds) {
-            await this.#cancelExternalToolCalls(ctx, runId);
             await this.#cancelDurableUserInputs(ctx, runId);
             await this.#cancelDurableWaits(ctx, runId);
         }
@@ -3984,7 +3938,6 @@ export class InMemorySession {
         ]);
         for (const runId of runIds) {
             await Promise.all([
-                this.#cancelExternalToolCalls(ctx, runId),
                 this.#cancelDurableUserInputs(ctx, runId),
                 this.#cancelDurableWaits(ctx, runId),
             ]);
@@ -4929,9 +4882,6 @@ export class InMemorySession {
             ...(this.#usage.totalTokens === 0
                 ? {}
                 : { cumulativeUsage: structuredClone(this.#usage) }),
-            externalTools: this.#externalToolDefinitions.map((definition) => ({ ...definition })),
-            skills: this.#durableSkillDefinitions.map((definition) => ({ ...definition })),
-            pendingExternalToolCalls: this.externalToolCalls({ status: "pending" }),
             scheduledMessages: this.scheduledMessages(),
             ...(this.#systemPrompt !== undefined ? { systemPrompt: this.#systemPrompt } : {}),
             ...(this.#goal !== undefined ? { goal: { ...this.#goal } } : {}),
@@ -5074,14 +5024,11 @@ export class InMemorySession {
             usageSummary,
             ...(usageSummaryEventId === undefined ? {} : { usageSummaryEventId }),
             tools: this.#tools,
-            externalToolCalls: this.externalToolCalls(),
             durableUserInputs: [...this.#durableUserInputs.values()].map((call) =>
                 structuredClone(call),
             ),
             durableWaits: [...this.#durableWaits.values()].map((wait) => structuredClone(wait)),
             scheduledMessages: this.scheduledMessages(),
-            externalTools: this.#externalToolDefinitions.map((definition) => ({ ...definition })),
-            skills: this.#durableSkillDefinitions.map((definition) => ({ ...definition })),
             ...(this.#systemPrompt !== undefined ? { systemPrompt: this.#systemPrompt } : {}),
             workflowsEnabled: this.#workflowsEnabled,
             workflows: [...this.#workflowRuns.values()].map((run) => ({
@@ -5260,14 +5207,6 @@ export class InMemorySession {
             runId,
             text: request.text,
             userMessage,
-            ...(request.externalTools === undefined
-                ? {}
-                : {
-                      externalTools: request.externalTools.map((definition) => ({ ...definition })),
-                  }),
-            ...(request.skills === undefined
-                ? {}
-                : { skills: request.skills.map((definition) => ({ ...definition })) }),
             ...(request.systemPrompt === undefined ? {} : { systemPrompt: request.systemPrompt }),
         };
         const messagePosition = this.#nextMessagePosition();
@@ -5351,8 +5290,6 @@ export class InMemorySession {
         // Presence alone decides this, not whether the value differs from the current one, so the
         // rule does not quietly depend on what the session happens to be set to right now.
         if (
-            request.externalTools !== undefined ||
-            request.skills !== undefined ||
             request.systemPrompt !== undefined ||
             request.effort !== undefined ||
             request.modelId !== undefined ||
@@ -5360,7 +5297,7 @@ export class InMemorySession {
             request.serviceTier !== undefined
         ) {
             throw new Error(
-                "The model, reasoning effort, fast mode, external functions, durable skills, and the system prompt can only be changed by submitting a message, which runs once the current response finishes.",
+                "The model, reasoning effort, fast mode, and the system prompt can only be changed by submitting a message, which runs once the current response finishes.",
             );
         }
         await this.setArchived(ctx, false);
@@ -5647,16 +5584,6 @@ export class InMemorySession {
         return completion;
     }
 
-    externalToolCalls(options: { status?: ExternalToolCall["status"] } = {}): ExternalToolCall[] {
-        return [...this.#externalToolCalls.values()]
-            .filter((call) => options.status === undefined || call.status === options.status)
-            .sort(
-                (left, right) =>
-                    left.createdAt - right.createdAt || left.toolCallIndex - right.toolCallIndex,
-            )
-            .map(cloneExternalToolCall);
-    }
-
     async waitDurably(
         ctx: Context,
         request: DurableWaitRequest,
@@ -5726,9 +5653,6 @@ export class InMemorySession {
         const runId = this.#activeRun?.runId ?? this.#restoredActiveRunId;
         if (runId === undefined) return false;
         const calls = [
-            ...[...this.#externalToolCalls.values()]
-                .filter((call) => call.runId === runId && call.status !== "cancelled")
-                .map((call) => ({ consumed: call.consumed, toolCallId: call.toolCallId })),
             ...[...this.#durableUserInputs.values()]
                 .filter((call) => call.runId === runId && call.status !== "cancelled")
                 .map((call) => ({ consumed: call.consumed, toolCallId: call.toolCallId })),
@@ -5792,7 +5716,6 @@ export class InMemorySession {
         if (this.#workspaceArchived || this.#closing || this.#activeRun !== undefined) return;
         const runId = this.#restoredActiveRunId;
         if (runId === undefined || !this.hasDurableToolRun()) return;
-        await this.#reconcileExternalToolConsumption(ctx, runId);
         await this.#reconcileDurableUserInputConsumption(ctx, runId);
         await this.#reconcileDurableWaitConsumption(ctx, runId);
         while (true) {
@@ -5823,18 +5746,6 @@ export class InMemorySession {
             }
         }
         const unconsumed = [
-            ...[...this.#externalToolCalls.values()]
-                .filter(
-                    (call) => call.runId === runId && !call.consumed && call.status !== "cancelled",
-                )
-                .map((call) => ({
-                    batchId: call.batchId,
-                    call,
-                    createdAt: call.createdAt,
-                    kind: "external" as const,
-                    pending: call.status === "pending",
-                    toolCallIndex: call.toolCallIndex,
-                })),
             ...[...this.#durableUserInputs.values()]
                 .filter(
                     (call) => call.runId === runId && !call.consumed && call.status !== "cancelled",
@@ -5871,9 +5782,6 @@ export class InMemorySession {
                 blocks: batch
                     .sort((left, right) => left.toolCallIndex - right.toolCallIndex)
                     .map((entry) => {
-                        if (entry.kind === "external") {
-                            return this.#externalToolResultBlock(entry.call);
-                        }
                         if (entry.kind === "wait") {
                             if (entry.call.resultBlock === undefined) {
                                 throw new Error("A durable wait has no tool result.");
@@ -5894,21 +5802,18 @@ export class InMemorySession {
             }));
             await Promise.all(
                 persistedCalls.map(({ call, kind }) =>
-                    kind === "external"
-                        ? this.#persistence?.upsertExternalToolCall?.(ctx, call as ExternalToolCall)
-                        : kind === "user_input"
-                          ? this.#persistence?.upsertDurableUserInput?.(
-                                ctx,
-                                call as DurableUserInputCall,
-                            )
-                          : this.#persistence?.upsertDurableWait?.(ctx, call as DurableWait),
+                    kind === "user_input"
+                        ? this.#persistence?.upsertDurableUserInput?.(
+                              ctx,
+                              call as DurableUserInputCall,
+                          )
+                        : this.#persistence?.upsertDurableWait?.(ctx, call as DurableWait),
                 ),
             );
             await this.#storeMessage(ctx, this.#nextMessagePosition(), resultMessage, false, runId);
             for (const entry of batch) {
                 entry.call.consumed = true;
             }
-            await this.#pruneExternalToolCalls(ctx);
             await this.#pruneDurableUserInputs(ctx);
             await this.#pruneDurableWaits(ctx);
             await this.#append(ctx, "agent_message", { message: resultMessage, runId });
@@ -5927,178 +5832,6 @@ export class InMemorySession {
             );
         const running = this.#taskDrain?.run(continuation) ?? continuation();
         await running;
-    }
-
-    async resolveExternalToolCall(
-        ctx: Context,
-        callId: string,
-        resolution: ExternalToolCallResolution,
-    ): Promise<ResolveExternalToolCallResponse | undefined> {
-        const call = this.#externalToolCalls.get(callId);
-        if (call === undefined) return undefined;
-        if (call.resolution !== undefined) {
-            if (!isDeepStrictEqual(call.resolution, resolution)) {
-                throw new Error("This external function call already has a different result.");
-            }
-            return { accepted: false, call: cloneExternalToolCall(call) };
-        }
-        if (call.status !== "pending") {
-            throw new Error("This external function call is no longer waiting for a result.");
-        }
-        if (
-            call.skill !== undefined &&
-            resolution.status === "completed" &&
-            (resolution.content !== undefined || typeof resolution.output !== "string")
-        ) {
-            throw new Error(
-                "A durable skill result must provide the complete SKILL.md as text output.",
-            );
-        }
-        const nextCall = {
-            ...call,
-            resolution: cloneExternalResolution(resolution),
-            resolvedAt: this.#now(),
-            status: resolution.status,
-        };
-        await this.#persistence?.upsertExternalToolCall?.(ctx, nextCall);
-        Object.assign(call, nextCall);
-        await this.#append(ctx, "external_tool_call_resolved", {
-            call: cloneExternalToolCall(call),
-        });
-        const waiter = this.#externalToolWaiters.get(call.id);
-        if (waiter !== undefined) {
-            this.#externalToolWaiters.delete(call.id);
-            waiter.resolve(cloneExternalResolution(resolution));
-        } else {
-            this.resumeDurableToolRun(ctx);
-        }
-        return { accepted: true, call: cloneExternalToolCall(call) };
-    }
-
-    async #invokeExternalTool(
-        ctx: Context,
-        definition: ExternalToolDefinition,
-        request: {
-            arguments: unknown;
-            batchId: string;
-            providerToolCallId?: string;
-            toolCallId: string;
-            toolCallIndex: number;
-        },
-        signal?: AbortSignal,
-        skill?: DurableSkillDefinition,
-    ): Promise<ExternalToolCallResolution> {
-        const runId = this.#activeRun?.runId;
-        if (runId === undefined) throw new Error("The external function has no active run.");
-        const existing = [...this.#externalToolCalls.values()].find(
-            (call) =>
-                call.runId === runId &&
-                call.batchId === request.batchId &&
-                call.toolCallId === request.toolCallId,
-        );
-        if (existing?.resolution !== undefined) return cloneExternalResolution(existing.resolution);
-        const call: ExternalToolCall = existing ?? {
-            arguments: request.arguments,
-            batchId: request.batchId,
-            consumed: false,
-            createdAt: this.#now(),
-            definition: { ...definition },
-            id: createId(),
-            runId,
-            sessionId: this.id,
-            status: "pending",
-            ...(request.providerToolCallId === undefined
-                ? {}
-                : { providerToolCallId: request.providerToolCallId }),
-            toolCallId: request.toolCallId,
-            toolCallIndex: request.toolCallIndex,
-            ...(skill === undefined ? {} : { skill: { ...skill } }),
-        };
-        if (existing === undefined) {
-            await this.#persistence?.upsertExternalToolCall?.(ctx, call);
-            this.#externalToolCalls.set(call.id, call);
-            await this.#append(ctx, "external_tool_call_requested", {
-                call: cloneExternalToolCall(call),
-            });
-        }
-        await this.#pruneExternalToolCalls(ctx);
-        return new Promise<ExternalToolCallResolution>((resolve, reject) => {
-            let waiter: ExternalToolWaiter;
-            const abort = () => {
-                if (this.#externalToolWaiters.get(call.id) !== waiter) return;
-                this.#externalToolWaiters.delete(call.id);
-                reject(new Error(`External function ${definition.name} was interrupted.`));
-            };
-            waiter = {
-                reject: (error) => {
-                    signal?.removeEventListener("abort", abort);
-                    reject(error);
-                },
-                resolve: (resolution) => {
-                    signal?.removeEventListener("abort", abort);
-                    resolve(resolution);
-                },
-            };
-            this.#externalToolWaiters.set(call.id, waiter);
-            signal?.addEventListener("abort", abort, { once: true });
-            if (signal?.aborted === true) abort();
-        });
-    }
-
-    #externalToolResultBlock(call: ExternalToolCall): ToolResultBlock {
-        const resolution = call.resolution;
-        if (resolution === undefined) {
-            throw new Error(`External function ${call.definition.name} has no result.`);
-        }
-        const failed = resolution.status === "failed";
-        const display =
-            call.skill === undefined
-                ? `External function ${call.definition.name} ${failed ? "failed" : "completed"}`
-                : `Skill ${call.skill.name} ${failed ? "could not be read" : "read"}`;
-        return {
-            display,
-            ...(failed
-                ? {
-                      failure: {
-                          kind: "execution_failed" as const,
-                          message: resolution.error.message,
-                      },
-                      isError: true,
-                  }
-                : {}),
-            rendered: externalToolResolutionToContent(resolution),
-            ...(call.providerToolCallId === undefined
-                ? {}
-                : { providerToolCallId: call.providerToolCallId }),
-            toolCallId: call.toolCallId,
-            toolName: call.definition.name,
-            type: "tool_result",
-        };
-    }
-
-    async #reconcileExternalToolConsumption(ctx: Context, runId: string): Promise<void> {
-        const consumedToolCallIds = new Set(
-            this.#messages.flatMap((entry) =>
-                entry.message.role !== "agent"
-                    ? []
-                    : entry.message.blocks.flatMap((block) =>
-                          block.type === "tool_result" ? [block.toolCallId] : [],
-                      ),
-            ),
-        );
-        for (const call of this.#externalToolCalls.values()) {
-            if (
-                call.runId !== runId ||
-                call.consumed ||
-                !consumedToolCallIds.has(call.toolCallId)
-            ) {
-                continue;
-            }
-            const nextCall = { ...call, consumed: true };
-            await this.#persistence?.upsertExternalToolCall?.(ctx, nextCall);
-            Object.assign(call, nextCall);
-        }
-        await this.#pruneExternalToolCalls(ctx);
     }
 
     async #resumeAnsweredDurableUserInput(ctx: Context, call: DurableUserInputCall): Promise<void> {
@@ -6423,47 +6156,6 @@ export class InMemorySession {
         await this.#persistence.transaction(ctx, prune);
     }
 
-    async #cancelExternalToolCalls(ctx: Context, runId: string): Promise<void> {
-        for (const call of this.#externalToolCalls.values()) {
-            if (call.runId !== runId || call.status !== "pending") continue;
-            const nextCall = { ...call, resolvedAt: this.#now(), status: "cancelled" as const };
-            await this.#persistence?.upsertExternalToolCall?.(ctx, nextCall);
-            Object.assign(call, nextCall);
-            await this.#append(ctx, "external_tool_call_resolved", {
-                call: cloneExternalToolCall(call),
-            });
-            const waiter = this.#externalToolWaiters.get(call.id);
-            if (waiter !== undefined) {
-                await this.#afterTransactionCommit(ctx, () => {
-                    if (this.#externalToolWaiters.get(call.id) !== waiter) return;
-                    this.#externalToolWaiters.delete(call.id);
-                    waiter.reject(
-                        new Error(`External function ${call.definition.name} was cancelled.`),
-                    );
-                });
-            }
-        }
-        await this.#pruneExternalToolCalls(ctx);
-    }
-
-    async #pruneExternalToolCalls(ctx: Context): Promise<void> {
-        const eligible = [...this.#externalToolCalls.values()]
-            .filter((call) => call.status === "cancelled" || call.consumed)
-            .sort(
-                (left, right) =>
-                    (right.resolvedAt ?? right.createdAt) - (left.resolvedAt ?? left.createdAt) ||
-                    right.toolCallIndex - left.toolCallIndex,
-            );
-        for (const call of eligible.slice(MAX_RETAINED_EXTERNAL_TOOL_CALLS)) {
-            this.#externalToolCalls.delete(call.id);
-        }
-        await this.#persistence?.pruneExternalToolCalls?.(
-            ctx,
-            this.id,
-            MAX_RETAINED_EXTERNAL_TOOL_CALLS,
-        );
-    }
-
     async #continueDurableToolRun(ctx: Context, runId: string): Promise<void> {
         if (this.#activeRun !== undefined || this.#closing) return;
         const controller = new AbortController();
@@ -6749,9 +6441,6 @@ export class InMemorySession {
             durableWaits: new Map(
                 [...this.#durableWaits].map(([id, wait]) => [id, structuredClone(wait)]),
             ),
-            externalToolCalls: new Map(
-                [...this.#externalToolCalls].map(([id, call]) => [id, structuredClone(call)]),
-            ),
             goal: this.#goal === undefined ? undefined : { ...this.#goal },
             interruption:
                 this.#interruption === undefined ? undefined : structuredClone(this.#interruption),
@@ -6839,9 +6528,6 @@ export class InMemorySession {
         );
         this.#durableWaits = new Map(
             [...checkpoint.durableWaits].map(([id, wait]) => [id, structuredClone(wait)]),
-        );
-        this.#externalToolCalls = new Map(
-            [...checkpoint.externalToolCalls].map(([id, call]) => [id, structuredClone(call)]),
         );
         this.#goal = checkpoint.goal === undefined ? undefined : { ...checkpoint.goal };
         this.#interruption =
@@ -7416,11 +7102,6 @@ export class InMemorySession {
                     block.type === "tool_result" ? [block.toolCallId] : [],
                 ),
             );
-            for (const call of this.#externalToolCalls.values()) {
-                if (call.runId !== runId || !resultIds.has(call.toolCallId)) continue;
-                call.consumed = true;
-                await this.#persistence?.upsertExternalToolCall?.(ctx, call);
-            }
             for (const call of this.#durableUserInputs.values()) {
                 if (call.runId !== runId || !resultIds.has(call.toolCallId)) continue;
                 const result = message.blocks.find(
@@ -7449,7 +7130,6 @@ export class InMemorySession {
                 await this.#persistence?.upsertDurableWait?.(ctx, next);
                 this.#durableWaits.set(next.id, next);
             }
-            await this.#pruneExternalToolCalls(ctx);
             await this.#pruneDurableUserInputs(ctx);
             await this.#pruneDurableWaits(ctx);
         }
@@ -7869,9 +7549,6 @@ export class InMemorySession {
             sessionId: this.#agentMetadata.rootSessionId,
             startDate: toLocalDate(this.events.firstMessageCreatedAt() ?? this.#createdAt),
             ...(this.#systemPrompt !== undefined ? { systemPrompt: this.#systemPrompt } : {}),
-            ...(this.#durableSkillDefinitions.length === 0
-                ? {}
-                : { durableSkills: this.#durableSkillDefinitions }),
             tasks: {
                 create: (request) => this.#taskSession().createTask(ctx, request),
                 get: (taskId) => this.#taskSession().getTask(taskId),
@@ -7995,8 +7672,6 @@ export class InMemorySession {
                 createEncryptedAgentTransportScope(runtime.executor, runtime.agent.model) !==
                 undefined;
         }
-        this.#externalToolInstallation = { installed: new Set(), shadowed: new Map() };
-        this.#installExternalTools(runtime);
         let previousBackgroundCount = runtime.context.bash.activeSessionCount?.() ?? 0;
         runtime.context.bash.setActiveSessionCountListener?.((running) => {
             const runId = this.#activeRun?.runId ?? this.#lastSessionRunId ?? "background";
@@ -8065,75 +7740,9 @@ export class InMemorySession {
             this.#runtime?.agent.setSystemPrompt(this.#systemPrompt);
             changed = true;
         }
-        if (queued.externalTools !== undefined) {
-            this.#externalToolDefinitions = queued.externalTools.map((definition) => ({
-                ...definition,
-            }));
-            if (this.#runtime !== undefined) this.#installExternalTools(this.#runtime);
-            changed = true;
-        }
-        if (queued.skills !== undefined) {
-            this.#durableSkillDefinitions = queued.skills.map((definition) => ({ ...definition }));
-            this.#runtime?.agent.setDurableSkills(this.#durableSkillDefinitions);
-            if (this.#runtime !== undefined) this.#installExternalTools(this.#runtime);
-            changed = true;
-        }
         if (changed) {
             await this.#append(ctx, "session_updated", { session: this.clientSnapshot() });
         } else await this.#saveSession(ctx);
-    }
-
-    #installExternalTools(runtime: CodingAssistantRuntime): void {
-        const externalTools = this.#externalToolDefinitions.map((definition) =>
-            createExternalTool({
-                definition,
-                invoke: (request, signal) =>
-                    withWorkerContext(
-                        "external-tool",
-                        (workerCtx) =>
-                            this.#invokeExternalTool(workerCtx, definition, request, signal),
-                        { sessionId: this.id },
-                    ),
-            }),
-        );
-        if (this.#durableSkillDefinitions.length > 0) {
-            externalTools.push(
-                createDurableSkillTool({
-                    skills: this.#durableSkillDefinitions,
-                    invoke: (skill, request, signal) =>
-                        withWorkerContext(
-                            "external-skill",
-                            (workerCtx) =>
-                                this.#invokeExternalTool(
-                                    workerCtx,
-                                    {
-                                        description: `Read the complete SKILL.md for ${skill.name}.`,
-                                        label: "Read skill",
-                                        name: "read_skill",
-                                        parameters: {
-                                            additionalProperties: false,
-                                            properties: { name: { type: "string" } },
-                                            required: ["name"],
-                                            type: "object",
-                                        },
-                                    },
-                                    request,
-                                    signal,
-                                    skill,
-                                ),
-                            { sessionId: this.id },
-                        ),
-                }),
-            );
-        }
-        const replacement = replaceExternalTools(
-            runtime.agent.tools,
-            externalTools,
-            this.#externalToolInstallation,
-        );
-        runtime.agent.setTools(replacement.tools);
-        this.#externalToolInstallation = replacement.installation;
-        this.#tools = runtime.agent.tools.map((tool) => tool.name);
     }
 
     #taskSession(): InMemorySession {
@@ -9971,34 +9580,6 @@ function replaceUsage(total: Usage, previous: Usage | undefined, next: Usage | u
                         }),
               };
     return next === undefined ? withoutPrevious : addUsage(withoutPrevious, next);
-}
-
-function cloneExternalToolCall(call: ExternalToolCall): ExternalToolCall {
-    return {
-        ...call,
-        definition: { ...call.definition, parameters: { ...call.definition.parameters } },
-        ...(call.skill === undefined ? {} : { skill: { ...call.skill } }),
-        ...(call.resolution === undefined
-            ? {}
-            : { resolution: cloneExternalResolution(call.resolution) }),
-    };
-}
-
-function cloneExternalResolution(
-    resolution: ExternalToolCallResolution,
-): ExternalToolCallResolution {
-    if (resolution.status === "failed") {
-        return { status: "failed", error: { ...resolution.error } };
-    }
-    return {
-        status: "completed",
-        ...(resolution.content === undefined
-            ? {}
-            : { content: resolution.content.map((block) => ({ ...block })) }),
-        ...(Object.prototype.hasOwnProperty.call(resolution, "output")
-            ? { output: resolution.output }
-            : {}),
-    };
 }
 
 function durableWaitResultBlock(wait: DurableWait, result: WaitResult): ToolResultBlock {
