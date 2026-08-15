@@ -214,6 +214,15 @@ export class RigAgentService {
         } as SteerMessageResponse;
     }
 
+    async deliverMessage(
+        ctx: Context,
+        session: RigAgentProtocolSession,
+        request: SubmitMessageRequest,
+    ): Promise<SubmitMessageResponse | SteerMessageResponse> {
+        const delivery = this.#bridge.hasPending(stableAgentId(session.id)) ? "steer" : "run";
+        return await this.#dispatch(ctx, session, request, delivery);
+    }
+
     async compact(ctx: Context, session: RigAgentProtocolSession): Promise<AgentCompactionResult> {
         const agent = await this.#agent(ctx, session.id);
         await this.#system.compact(ctx, agent.id, { await: true });

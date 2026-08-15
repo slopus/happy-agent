@@ -1086,6 +1086,7 @@ async function runOwnedLocalProtocolServer(
             await p2pNetwork?.close();
         });
         const startedPluginManager = (pluginManager = new PluginManager({
+            ...(agents === undefined ? {} : { agents }),
             daemonLog,
             ...(loadedConfig.config.docker === undefined
                 ? {}
@@ -1161,6 +1162,7 @@ async function runOwnedLocalProtocolServer(
                                         "rig.daemon.happy_sync.open",
                                         () =>
                                             happyModule.HappySyncService.open(ctx, {
+                                                ...(agents === undefined ? {} : { agents }),
                                                 configuration: happyConfiguration,
                                                 createSession: async (ctx, id, request) =>
                                                     store!.createWithId(
@@ -1291,19 +1293,8 @@ async function runOwnedLocalProtocolServer(
                             peer.publicKey,
                             envelope,
                         );
-                        const runtimeChanged = await runtimeRegistry.refresh(ctx);
-                        if (runtimeChanged) {
+                        if (await runtimeRegistry.refresh(ctx)) {
                             credentialUsageRouter.clearProvisionedCaches();
-                            await Promise.all(
-                                store
-                                    .loadedSessions()
-                                    .map((session) =>
-                                        session.refreshInferenceScope(
-                                            ctx,
-                                            runtimeRegistry.catalog(session.ownerInstanceId),
-                                        ),
-                                    ),
-                            );
                         }
                         return result;
                     },
@@ -1384,6 +1375,7 @@ async function runOwnedLocalProtocolServer(
                                       let next: HappySyncService;
                                       try {
                                           next = await happyModule.HappySyncService.open(ctx, {
+                                              ...(agents === undefined ? {} : { agents }),
                                               configuration: nextConfiguration,
                                               createSession: async (ctx, id, request) =>
                                                   store!.createWithId(

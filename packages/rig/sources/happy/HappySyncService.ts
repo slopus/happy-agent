@@ -23,6 +23,7 @@ import type { HappyConnectionConfiguration, HappySessionProtocolMessage } from "
 import type { Context } from "@steve.kite/stdlib";
 import { withWorkerContext } from "../observability/index.js";
 import type { SessionDatabase } from "../persistence/database/SessionDatabase.js";
+import type { RigAgentService } from "../agent/RigAgentService.js";
 
 const MAX_BACKFILLED_MESSAGES = 10_000;
 const MAX_MAPPED_EVENTS = 4_096;
@@ -30,6 +31,7 @@ const MAX_RECOVERY_EVENTS_PER_PASS = 256;
 const ATTACH_RETRY_DELAY_MS = 5_000;
 
 export interface HappySyncServiceOptions {
+    agents?: RigAgentService;
     configuration: HappyConnectionConfiguration;
     createSession?: (
         ctx: Context,
@@ -53,6 +55,7 @@ export interface HappySyncServiceOptions {
 
 export class HappySyncService {
     readonly #attaches = new Map<string, Promise<void>>();
+    readonly #agents: RigAgentService | undefined;
     readonly #attachRetryAfter = new Map<string, number>();
     readonly #backfillTimers = new Map<string, NodeJS.Timeout>();
     readonly #clients = new Map<string, HappySessionClient>();
@@ -72,6 +75,7 @@ export class HappySyncService {
     readonly #socketFactory: HappySessionClientOptions["socketFactory"];
 
     private constructor(options: HappySyncServiceOptions, repository: HappySyncRepository) {
+        this.#agents = options.agents;
         this.#configuration = options.configuration;
         this.#credentialFingerprint = fingerprint(options.configuration);
         this.#createSession = options.createSession;
@@ -193,6 +197,7 @@ export class HappySyncService {
                 });
                 if (this.#closed) return;
                 client = new HappySessionClient({
+                    ...(this.#agents === undefined ? {} : { agents: this.#agents }),
                     configuration: this.#configuration,
                     ...(this.#fetch === undefined ? {} : { fetch: this.#fetch }),
                     getSubagents: (ctx, sessionId) => this.#getSubagents(ctx, sessionId),

@@ -65,12 +65,14 @@ import { removePluginDockerContainers } from "./startPluginDockerContainer.js";
 import { DEFAULT_PLUGIN_STARTUP_TIMEOUT_MS } from "./PluginStartupState.js";
 import { formatComputePreparationNotice } from "./formatComputePreparationNotice.js";
 import { withWorkerContext } from "../observability/index.js";
+import type { RigAgentService } from "../agent/RigAgentService.js";
 
 const PLUGIN_STATUS_PUBLICATION_INTERVAL_MS = 100;
 const PLUGIN_PROCESS_EXIT_SETTLE_MS = 100;
 const MAX_COMPUTE_SESSION_PREPARATIONS = 1_000;
 
 export interface PluginManagerOptions {
+    agents?: RigAgentService;
     appRegistry?: PluginAppRegistry;
     computeRegistry?: PluginComputeRegistry;
     daemonLog: DaemonLog;
@@ -130,6 +132,7 @@ export class PluginManager implements ManagedNetworkInterceptor {
     readonly directory: string;
 
     readonly #appRegistry: PluginAppRegistry;
+    readonly #agents: RigAgentService | undefined;
     #catalog: { promise: Promise<PluginCatalog>; version: EventId } | undefined;
     readonly #createEventId = createEventIdFactory();
     #catalogVersion: EventId = this.#createEventId();
@@ -179,6 +182,7 @@ export class PluginManager implements ManagedNetworkInterceptor {
             throw new Error("PluginManager requires the shared MCP registry.");
         }
         this.#appRegistry = options.appRegistry ?? new PluginAppRegistry(options.mcpRegistry!);
+        this.#agents = options.agents;
         this.#daemonLog = options.daemonLog;
         this.#computeRegistry =
             options.computeRegistry ??
@@ -907,6 +911,7 @@ export class PluginManager implements ManagedNetworkInterceptor {
             }
             const startupStartedAt = Date.now();
             const starting = this.#start(plugin, {
+                ...(this.#agents === undefined ? {} : { agents: this.#agents }),
                 appRegistry: this.#appRegistry,
                 computeRegistry: this.#computeRegistry,
                 ...(this.#defaultDocker === undefined

@@ -59,6 +59,7 @@ import {
 } from "happy-plugins/internal";
 
 import { errorToMessage } from "../errorToMessage.js";
+import type { RigAgentService } from "../agent/RigAgentService.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
 import type { GeneratedMediaStore } from "../generated-media/index.js";
 import { isDatabaseFailure } from "../persistence/isDatabaseFailure.js";
@@ -92,6 +93,7 @@ const MAX_WORKSPACE_FILE_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_MEDIA_REQUEST_BYTES = 15 * 1024 * 1024;
 
 export interface CreatePluginApiServerOptions {
+    agents?: RigAgentService;
     compute?: PluginComputeConnection;
     computeRegistry?: PluginComputeRegistry;
     defaultDocker?: DockerExecutionConfig;
@@ -1007,7 +1009,10 @@ async function handleRequest(
             sendJson(response, 404, { error: "No agent has that Agent ID." });
             return;
         }
-        const delivered = await target.deliverNotification(ctx, {
+        if (options.agents === undefined) {
+            throw new PluginApiRequestError("Agent messaging is unavailable.");
+        }
+        const delivered = await options.agents.deliverMessage(ctx, target, {
             displayText: `${options.pluginName}: ${body.message}`,
             text: [
                 `Message from the Rig plugin ${JSON.stringify(options.pluginName)}.`,

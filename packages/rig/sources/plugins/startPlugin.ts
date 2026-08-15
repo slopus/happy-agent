@@ -10,6 +10,7 @@ import type { HappyPluginStatus } from "happy-plugins";
 import { createSandboxedCommand } from "../agent/context/createSandboxedCommand.js";
 import { createToolEnvironment } from "../agent/context/createToolEnvironment.js";
 import type { DockerExecutionConfig } from "../execution/index.js";
+import type { RigAgentService } from "../agent/RigAgentService.js";
 import type { GeneratedMediaStore } from "../generated-media/index.js";
 import type { SessionStore } from "../session/SessionStore.js";
 import { createPluginNodeRuntime } from "./createPluginNodeRuntime.js";
@@ -48,6 +49,7 @@ export interface RunningPlugin {
 }
 
 export interface StartPluginOptions {
+    agents?: RigAgentService;
     appRegistry?: PluginAppRegistry;
     dataDirectory?: string;
     defaultDocker?: DockerExecutionConfig;
@@ -170,6 +172,7 @@ export async function startPlugin(
         throw error;
     }
     const server = createPluginApiServer({
+        ...(options.agents === undefined ? {} : { agents: options.agents }),
         ...(compute === undefined ? {} : { compute }),
         ...(options.computeRegistry === undefined
             ? {}
