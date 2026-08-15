@@ -61,7 +61,7 @@ import {
     submitContentBlockSchema,
     submitContentSchema,
 } from "../protocol/index.js";
-import type { AgentCompactionResult } from "./Agent.js";
+import type { AgentCompactionResult } from "./AgentContracts.js";
 import type { ConfigProviders } from "../config/types.js";
 import type { ModelCatalog } from "../protocol/index.js";
 import { createAgentRuntimeConfig } from "./createAgentRuntimeConfig.js";

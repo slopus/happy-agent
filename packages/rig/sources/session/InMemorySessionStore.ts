@@ -47,7 +47,6 @@ import type {
     WriteDocumentRequest,
     UpdateSecretRequest,
 } from "../protocol/index.js";
-import { AgentSessionManager } from "./AgentSessionManager.js";
 import { InMemorySession, type InMemorySessionOptions } from "./InMemorySession.js";
 import { createModelCatalog } from "../model-catalog/createModelCatalog.js";
 import { retriedSession } from "./retriedSession.js";
@@ -121,7 +120,6 @@ import {
 
 export interface InMemorySessionStoreOptions {
     projectClone?: ProjectRepositoryOptions["cloneRemote"];
-    createRuntime?: InMemorySessionOptions["createRuntime"];
     defaultDocker?: DockerExecutionConfig;
     localInstanceId?: string;
     modelCatalog?: ModelCatalog;
@@ -139,8 +137,6 @@ export interface InMemorySessionStoreOptions {
 type WorkspaceArchiveTeardown = (ctx: Context) => Promise<void>;
 
 export class InMemorySessionStore implements SessionStore {
-    #agentManager: AgentSessionManager;
-    #createRuntime: InMemorySessionOptions["createRuntime"];
     readonly #defaultDocker: DockerExecutionConfig | undefined;
     #modelCatalog: ModelCatalog;
     readonly localInstanceId: string;
@@ -323,111 +319,7 @@ export class InMemorySessionStore implements SessionStore {
         this.#secrets = new SecretRegistry(options.secrets);
         this.#modelCatalog = this.#resolveModelCatalog(this.localInstanceId);
         this.#onWorkspaceCleanupError = options.onWorkspaceCleanupError;
-        this.#createRuntime = options.createRuntime;
         this.#defaultDocker = options.defaultDocker;
-        this.#agentManager = new AgentSessionManager({
-            localInstanceId: this.localInstanceId,
-            repository: {
-                archiveOwnedWorkspace: async (workerCtx, ownerSessionId, projectId, workspaceId) =>
-                    (await this.#projects.getOwnedWorkspace(
-                        workerCtx,
-                        ownerSessionId,
-                        projectId,
-                        workspaceId,
-                    )) === undefined
-                        ? undefined
-                        : this.archiveWorkspace(workerCtx, projectId, workspaceId),
-                createOwnedWorkspace: (workerCtx, ownerSessionId, projectId, request) => {
-                    const owner = this.#sessions.get(ownerSessionId)?.snapshot();
-                    const createdBy =
-                        owner?.profileId === undefined
-                            ? undefined
-                            : {
-                                  instanceId: owner.ownerInstanceId,
-                                  profileId: owner.profileId,
-                              };
-                    return this.#projects.createWorkspace(
-                        workerCtx,
-                        projectId,
-                        {
-                            ...request,
-                            ...(createdBy === undefined ? {} : { identity: createdBy.profileId }),
-                        },
-                        ownerSessionId,
-                        createdBy === undefined ? {} : { createdBy },
-                    );
-                },
-                configureWorkspaceRequest: (workerCtx, request) =>
-                    this.#configureWorkspaceRequest(workerCtx, request),
-                createSubagent: (workerCtx, request, metadata, contextMessages) =>
-                    this.#createSession(workerCtx, request, metadata, contextMessages),
-                findByAgentId: (agentId) => {
-                    const matches = [...this.#sessions.values()].filter(
-                        (session) => session.agentIdentity().agentId === agentId,
-                    );
-                    return matches.length === 1 ? matches[0] : undefined;
-                },
-                get: (sessionId) => this.#sessions.get(sessionId),
-                listByRoot: (rootSessionId) =>
-                    [...this.#sessions.values()].filter(
-                        (session) =>
-                            session.agentMetadata().rootSessionId === rootSessionId &&
-                            session.isSubagent(),
-                    ),
-                registerProject: (workerCtx, path) =>
-                    this.#projects.registerProject(workerCtx, { path }),
-                queryAgentTreeUsage: (sessionId) =>
-                    queryLiveAgentTreeUsage(this.#sessions.values(), sessionId),
-                ownedWorkspace: (workerCtx, ownerSessionId, projectId, workspaceId) =>
-                    this.#projects.getOwnedWorkspace(
-                        workerCtx,
-                        ownerSessionId,
-                        projectId,
-                        workspaceId,
-                    ),
-                waitForWorkspaceReady: (_workerCtx, projectId, workspaceId, signal) =>
-                    this.#workspaceReadyWaiters.wait(projectId, workspaceId, signal),
-                completeScheduledSessionTransfer: async (
-                    workerCtx,
-                    sessionId,
-                    targetWorkspaceId,
-                ) => {
-                    const result = await this.#executeSessionTransfer(
-                        workerCtx,
-                        sessionId,
-                        targetWorkspaceId,
-                        true,
-                    );
-                    if (result === undefined) {
-                        throw new Error("The session is no longer available.");
-                    }
-                },
-                scheduleSessionTransfer: (workerCtx, sessionId, targetWorkspaceId) => {
-                    const session = this.#sessions.get(sessionId);
-                    if (session === undefined) {
-                        throw new Error("The session is no longer available.");
-                    }
-                    return scheduleSessionWorkspaceTransfer(workerCtx, {
-                        hasAttachedSessions: (_requestCtx, workspaceId) =>
-                            [...this.#sessions.values()].some((candidate) => {
-                                const snapshot = candidate.snapshot();
-                                return (
-                                    snapshot.archived !== true &&
-                                    snapshot.scope.kind === "workspace" &&
-                                    snapshot.scope.workspaceId === workspaceId
-                                );
-                            }),
-                        projects: this.#projects,
-                        releaseTarget: (workspaceId, ownerSessionId) =>
-                            this.#releaseWorkspaceTransferTarget(workspaceId, ownerSessionId),
-                        reserveTarget: (workspaceId, ownerSessionId) =>
-                            this.#reserveWorkspaceTransferTarget(workspaceId, ownerSessionId),
-                        session,
-                        targetWorkspaceId,
-                    });
-                },
-            },
-        });
     }
 
     async changeEffort(
@@ -605,11 +497,9 @@ export class InMemorySessionStore implements SessionStore {
         }
         const session = await InMemorySession.open(ctx, {
             presence: this.presence,
-            agentManager: this.#agentManager,
             workspaceRunReadiness: (target) => workspaceRunReadiness(ctx, this.#projects, target),
             createEventId: createEventIdFactory(),
             ...(targetSessionId === undefined ? {} : { id: targetSessionId }),
-            ...(this.#createRuntime === undefined ? {} : { createRuntime: this.#createRuntime }),
             modelCatalog: this.#modelCatalogFor(state.ownerInstanceId),
             onInitialTitle: (metadata) => this.#inheritWorkspaceName(ctx, metadata),
             request: forkRequest,
@@ -810,13 +700,9 @@ export class InMemorySessionStore implements SessionStore {
                     : undefined;
             const session = await InMemorySession.open(ctx, {
                 presence: this.presence,
-                agentManager: this.#agentManager,
                 workspaceRunReadiness: (target) =>
                     workspaceRunReadiness(ctx, this.#projects, target),
                 createEventId: createEventIdFactory(),
-                ...(this.#createRuntime === undefined
-                    ? {}
-                    : { createRuntime: this.#createRuntime }),
                 modelCatalog: this.#modelCatalogFor(ownerInstanceId),
                 onInitialTitle: (metadata) => this.#inheritWorkspaceName(ctx, metadata),
                 ...(metadata !== undefined ? { metadata } : {}),
@@ -1907,16 +1793,6 @@ export class InMemorySessionStore implements SessionStore {
         if (event.data.workspace.status === "initializing") return;
         await this.#afterTransactionCommit(async () => {
             await this.#workspaceReadyWaiters.changed(event.projectId, event.workspaceId);
-            for (const session of this.#sessions.values()) {
-                const state = session.state();
-                if (
-                    state.scope.kind === "workspace" &&
-                    state.scope.workspaceId === event.workspaceId &&
-                    state.workspaceQueueWaiting === true
-                ) {
-                    session.workspaceReadinessChanged();
-                }
-            }
         });
     }
 

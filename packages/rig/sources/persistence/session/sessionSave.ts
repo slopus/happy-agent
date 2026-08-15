@@ -94,7 +94,6 @@ export async function sessionSave(
                       }),
             workflowsEnabled: state.workflowsEnabled !== false,
             workflowsJson: JSON.stringify(state.workflows ?? []),
-            workspaceQueueWaiting: state.workspaceQueueWaiting === true,
             workspaceTransferJson: JSON.stringify(state.workspaceTransfer ?? { status: "idle" }),
         };
         const {

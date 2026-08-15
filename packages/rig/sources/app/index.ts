@@ -5,10 +5,6 @@ export type {
 } from "./CodingAssistantAgentBackend.js";
 export type { CodingAssistantAppOptions, DefaultModelPreference } from "./CodingAssistantApp.js";
 export type { AppTranscriptEntry, AppTranscriptRole } from "./AppTranscriptEntry.js";
-export type { CodingAssistantRuntime } from "../runtime/CodingAssistantRuntime.js";
-export { createCodingAssistantAgent } from "../runtime/createCodingAssistantAgent.js";
-export type { CreateCodingAssistantAgentOptions } from "../runtime/createCodingAssistantAgent.js";
-export { createDefaultInstructions } from "../runtime/createDefaultInstructions.js";
 export { main } from "./main.js";
 export { runDaemonCommand } from "./runDaemonCommand.js";
 export { runMonit } from "./runMonit.js";

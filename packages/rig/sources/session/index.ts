@@ -1,14 +1,8 @@
-export {
-    AgentSessionManager,
-    type AgentSessionManagerOptions,
-    type AgentSessionRepository,
-} from "./AgentSessionManager.js";
 export { InMemorySession } from "./InMemorySession.js";
 export type { InMemorySessionPersistence } from "./InMemorySessionPersistence.js";
 export type {
     InMemorySessionOptions,
     PersistedPendingContextMessage,
-    PersistedQueuedRun,
     PersistedSessionMessage,
     PersistedSessionState,
     PersistedWorkflowRun,
@@ -31,7 +25,6 @@ export {
 } from "./SessionEventLog.js";
 export { SessionTerminalTracker } from "./SessionTerminalTracker.js";
 export { configureSessionRequest } from "./configureSessionRequest.js";
-export { generateSessionMetadata } from "./generateSessionMetadata.js";
 export { isLiveOnlySessionEvent } from "./isLiveOnlySessionEvent.js";
 export { selectRecentSessionEvents } from "./selectRecentSessionEvents.js";
 export { sessionActivityAfterEvent } from "./sessionActivityAfterEvent.js";

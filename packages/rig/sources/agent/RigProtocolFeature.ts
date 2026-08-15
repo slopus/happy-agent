@@ -8,13 +8,17 @@ import type {
     AgentMessageMetadata,
 } from "@slopus/happy-agent-base";
 import type { SessionEvent as ProviderSessionEvent, SessionUsage } from "@slopus/happy-providers";
-import type { AssistantContent, AssistantMessage, StopReason } from "@slopus/rig-execution";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { AgentLoopEvent } from "./loop.js";
+import type {
+    AgentEventAssistantContent,
+    AgentEventAssistantMessage,
+    AgentLoopEvent,
+} from "./AgentLoopEvent.js";
 import type { AgentMessage, Message, ToolCallBlock, UserMessage } from "./types.js";
+import type { StopReason } from "../protocol/InferenceProtocol.js";
 import {
     createEventIdFactory,
     protocolAgentBlockSchema,
@@ -74,7 +78,7 @@ export interface RigAgentProtocolSession {
 }
 
 interface PendingInference {
-    readonly content: AssistantContent[];
+    readonly content: AgentEventAssistantContent[];
     currentIndex?: number;
     iteration: number;
     readonly messageId: string;
@@ -808,7 +812,7 @@ function validateAcceptedMetadata(
     }
 }
 
-function partial(inference: PendingInference, run: PendingProtocolRun): AssistantMessage {
+function partial(inference: PendingInference, run: PendingProtocolRun): AgentEventAssistantMessage {
     return {
         api: run.providerId,
         content: [...inference.content],
@@ -849,7 +853,7 @@ function toAgentBlock(
 
 function toAssistantToolCall(
     toolCall: ToolCallBlock,
-): Extract<AssistantContent, { type: "toolCall" }> {
+): Extract<AgentEventAssistantContent, { type: "toolCall" }> {
     return {
         arguments:
             typeof toolCall.arguments === "object" &&

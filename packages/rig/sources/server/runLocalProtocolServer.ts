@@ -596,11 +596,6 @@ async function runOwnedLocalProtocolServer(
         };
         store = await ctx.span("rig.daemon.session_store.open", () =>
             PersistentSessionStore.open(ctx, {
-                createRuntime: () => {
-                    throw new Error(
-                        "Legacy Rig execution is unavailable; daemon messages are handled by Happy Agent Base.",
-                    );
-                },
                 databasePath: paths.databasePath,
                 ...(loadedConfig.config.docker === undefined
                     ? {}

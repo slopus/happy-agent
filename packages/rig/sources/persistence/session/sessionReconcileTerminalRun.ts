@@ -1,8 +1,8 @@
 import type { Context } from "@steve.kite/stdlib";
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
-import { queuedRuns, sessions } from "../database/schema.js";
+import { sessions } from "../database/schema.js";
 import { inTx } from "../inTx.js";
 
 export async function sessionReconcileTerminalRun(
@@ -29,12 +29,6 @@ export async function sessionReconcileTerminalRun(
                 updatedAtMs: input.updatedAt,
             })
             .where(eq(sessions.id, input.sessionId))
-            .run();
-        await tx
-            .delete(queuedRuns)
-            .where(
-                and(eq(queuedRuns.sessionId, input.sessionId), eq(queuedRuns.runId, input.runId)),
-            )
             .run();
     });
 }

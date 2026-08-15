@@ -3172,11 +3172,7 @@ async function handleRequest(
         }
         sendJson<BroadcastMessageResponse>(response, 202, {
             submissions: await Promise.all(
-                sessions.map((candidate) =>
-                    runtimeConfig.agents === undefined
-                        ? candidate!.submit(ctx, message)
-                        : runtimeConfig.agents.submit(ctx, candidate!, message),
-                ),
+                sessions.map((candidate) => runtimeConfig.agents!.submit(ctx, candidate!, message)),
             ),
         });
         return;
@@ -4148,6 +4144,10 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "messages") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Messaging");
+            return;
+        }
         const transport = decodeTemporaryGitCredential(await readJson<unknown>(request));
         if (transport === undefined) {
             sendJson(response, 400, { error: "Temporary Git credentials are invalid." });
@@ -4160,17 +4160,6 @@ async function handleRequest(
         }
         if (rejectUnsupportedAgentSubmissionOptions(response, runtimeConfig, body)) return;
         if (!(await authorizeMessageProfile(ctx, request, response, runtimeConfig, body))) return;
-        if (runtimeConfig.agents === undefined && body.clientSubmissionId !== undefined) {
-            const submitted = session.events.messageSubmission(body.clientSubmissionId);
-            if (submitted !== undefined) {
-                sendJson<SubmitMessageResponse>(response, 202, {
-                    eventId: submitted.id,
-                    runId: submitted.data.runId,
-                    sessionId: session.id,
-                });
-                return;
-            }
-        }
         if (
             !(await prepareSessionGitCredential(
                 ctx,
@@ -4190,15 +4179,10 @@ async function handleRequest(
         sendJson<SubmitMessageResponse>(
             response,
             202,
-            runtimeConfig.agents === undefined
-                ? await session.submit(ctx, {
-                      ...body,
-                      ...(mutationId === undefined ? {} : { mutationId }),
-                  })
-                : await runtimeConfig.agents.submit(ctx, session, {
-                      ...body,
-                      ...(mutationId === undefined ? {} : { mutationId }),
-                  }),
+            await runtimeConfig.agents.submit(ctx, session, {
+                ...body,
+                ...(mutationId === undefined ? {} : { mutationId }),
+            }),
         );
         return;
     }
@@ -4281,6 +4265,10 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "steer") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Steering");
+            return;
+        }
         const transport = decodeTemporaryGitCredential(await readJson<unknown>(request));
         if (transport === undefined) {
             sendJson(response, 400, { error: "Temporary Git credentials are invalid." });
@@ -4293,18 +4281,6 @@ async function handleRequest(
         }
         if (rejectUnsupportedAgentSubmissionOptions(response, runtimeConfig, body)) return;
         if (!(await authorizeMessageProfile(ctx, request, response, runtimeConfig, body))) return;
-        if (runtimeConfig.agents === undefined && body.clientSubmissionId !== undefined) {
-            const submitted = session.events.messageSubmission(body.clientSubmissionId);
-            if (submitted !== undefined) {
-                sendJson<SteerMessageResponse>(response, 202, {
-                    delivery: submitted.data.delivery === "steer" ? "steer" : "run",
-                    eventId: submitted.id,
-                    runId: submitted.data.runId,
-                    sessionId: session.id,
-                });
-                return;
-            }
-        }
         if (
             !(await prepareSessionGitCredential(
                 ctx,
@@ -4322,9 +4298,7 @@ async function handleRequest(
             sendJson<SteerMessageResponse>(
                 response,
                 202,
-                runtimeConfig.agents === undefined
-                    ? await session.steer(ctx, body)
-                    : await runtimeConfig.agents.steer(ctx, session, body),
+                await runtimeConfig.agents.steer(ctx, session, body),
             );
         } catch (error) {
             if (isDatabaseFailure(error)) throw error;
@@ -4336,6 +4310,10 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "abort") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Abort");
+            return;
+        }
         const mutationId = requestMutationId(request);
         const completed =
             mutationId === undefined
@@ -4357,28 +4335,12 @@ async function handleRequest(
         }
         if (!sessionMutationCanApply(request, response, session)) return;
         try {
-            if (runtimeConfig.agents !== undefined) {
-                const expectedRunId = url.searchParams.get("expectedRunId") ?? undefined;
-                const steeringMessageIds = url.searchParams.getAll("steeringMessageId");
-                sendJson<AbortRunResponse>(
-                    response,
-                    200,
-                    await runtimeConfig.agents.abort(ctx, session, {
-                        continuePendingSteering:
-                            url.searchParams.get("continuePendingSteering") === "1",
-                        ...(expectedRunId === undefined ? {} : { expectedRunId }),
-                        ...(mutationId === undefined ? {} : { mutationId }),
-                        ...(steeringMessageIds.length === 0 ? {} : { steeringMessageIds }),
-                    }),
-                );
-                return;
-            }
             const expectedRunId = url.searchParams.get("expectedRunId") ?? undefined;
             const steeringMessageIds = url.searchParams.getAll("steeringMessageId");
             sendJson<AbortRunResponse>(
                 response,
                 200,
-                await session.abort(ctx, {
+                await runtimeConfig.agents.abort(ctx, session, {
                     continuePendingSteering:
                         url.searchParams.get("continuePendingSteering") === "1",
                     ...(expectedRunId === undefined ? {} : { expectedRunId }),
@@ -4503,36 +4465,35 @@ async function handleRequest(
     }
 
     if (request.method === "POST" && route.name === "compact") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Compaction");
+            return;
+        }
         const mutationId = requestMutationId(request);
         if (sessionMutationCompleted(session, mutationId)) {
             sendJson(response, 200, { session: session.snapshot() });
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
-        if (runtimeConfig.agents !== undefined) {
-            try {
-                const result = await runtimeConfig.agents.compact(ctx, session);
-                await session.recordMutationApplied(ctx, mutationId);
-                sendJson<CompactSessionResponse>(response, 200, {
-                    result,
-                    session: session.snapshot(),
-                });
-            } catch (error) {
-                if (isDatabaseFailure(error)) throw error;
-                sendJson(response, 409, { error: errorToMessage(error) });
-            }
-            return;
+        try {
+            const result = await runtimeConfig.agents.compact(ctx, session);
+            await session.recordMutationApplied(ctx, mutationId);
+            sendJson<CompactSessionResponse>(response, 200, {
+                result,
+                session: session.snapshot(),
+            });
+        } catch (error) {
+            if (isDatabaseFailure(error)) throw error;
+            sendJson(response, 409, { error: errorToMessage(error) });
         }
-        const result = await session.compact(ctx);
-        await session.recordMutationApplied(ctx, mutationId);
-        sendJson<CompactSessionResponse>(response, 200, {
-            result,
-            session: session.snapshot(),
-        });
         return;
     }
 
     if (request.method === "PATCH" && route.name === "effort") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Reasoning effort changes");
+            return;
+        }
         const body = await readJson<ChangeEffortRequest>(request);
         const mutationId = body.mutationId ?? requestMutationId(request);
         if (sessionMutationCompleted(session, mutationId)) {
@@ -4540,30 +4501,25 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
-        if (runtimeConfig.agents !== undefined) {
-            try {
-                sendJson(response, 200, {
-                    session: await runtimeConfig.agents.changeEffort(ctx, session, {
-                        ...body,
-                        ...(mutationId === undefined ? {} : { mutationId }),
-                    }),
-                });
-            } catch (error) {
-                if (isDatabaseFailure(error)) throw error;
-                sendJson(response, 409, { error: errorToMessage(error) });
-            }
-            return;
+        try {
+            sendJson(response, 200, {
+                session: await runtimeConfig.agents.changeEffort(ctx, session, {
+                    ...body,
+                    ...(mutationId === undefined ? {} : { mutationId }),
+                }),
+            });
+        } catch (error) {
+            if (isDatabaseFailure(error)) throw error;
+            sendJson(response, 409, { error: errorToMessage(error) });
         }
-        sendJson(response, 200, {
-            session: await session.changeEffort(ctx, {
-                ...body,
-                ...(mutationId === undefined ? {} : { mutationId }),
-            }),
-        });
         return;
     }
 
     if (request.method === "PATCH" && route.name === "service-tier") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Fast mode changes");
+            return;
+        }
         const body = await readJson<ChangeServiceTierRequest>(request);
         const mutationId = body.mutationId ?? requestMutationId(request);
         if (sessionMutationCompleted(session, mutationId)) {
@@ -4571,30 +4527,25 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
-        if (runtimeConfig.agents !== undefined) {
-            try {
-                sendJson(response, 200, {
-                    session: await runtimeConfig.agents.changeServiceTier(ctx, session, {
-                        ...body,
-                        ...(mutationId === undefined ? {} : { mutationId }),
-                    }),
-                });
-            } catch (error) {
-                if (isDatabaseFailure(error)) throw error;
-                sendJson(response, 409, { error: errorToMessage(error) });
-            }
-            return;
+        try {
+            sendJson(response, 200, {
+                session: await runtimeConfig.agents.changeServiceTier(ctx, session, {
+                    ...body,
+                    ...(mutationId === undefined ? {} : { mutationId }),
+                }),
+            });
+        } catch (error) {
+            if (isDatabaseFailure(error)) throw error;
+            sendJson(response, 409, { error: errorToMessage(error) });
         }
-        sendJson(response, 200, {
-            session: await session.changeServiceTier(ctx, {
-                ...body,
-                ...(mutationId === undefined ? {} : { mutationId }),
-            }),
-        });
         return;
     }
 
     if (request.method === "PATCH" && route.name === "model") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Model changes");
+            return;
+        }
         const body = await readJson<ChangeModelRequest>(request);
         const mutationId = body.mutationId ?? requestMutationId(request);
         const completed =
@@ -4612,26 +4563,9 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
-        if (runtimeConfig.agents !== undefined) {
-            try {
-                sendJson(response, 200, {
-                    session: await runtimeConfig.agents.changeModel(ctx, session, {
-                        ...body,
-                        ...(mutationId === undefined ? {} : { mutationId }),
-                    }),
-                });
-            } catch (error) {
-                if (isDatabaseFailure(error)) throw error;
-                sendJson(response, 409, {
-                    error: errorToMessage(error),
-                    session: session.snapshot(),
-                });
-            }
-            return;
-        }
         try {
             sendJson(response, 200, {
-                session: await session.changeModel(ctx, {
+                session: await runtimeConfig.agents.changeModel(ctx, session, {
                     ...body,
                     ...(mutationId === undefined ? {} : { mutationId }),
                 }),
@@ -4647,6 +4581,10 @@ async function handleRequest(
     }
 
     if (request.method === "PATCH" && route.name === "permissions") {
+        if (runtimeConfig.agents === undefined) {
+            sendAgentsModeUnavailable(response, "Permission changes");
+            return;
+        }
         const body = await readJson<ChangePermissionModeRequest>(request);
         if (!isPermissionMode(body.permissionMode)) {
             sendJson(response, 400, {
@@ -4660,26 +4598,17 @@ async function handleRequest(
             return;
         }
         if (!sessionMutationCanApply(request, response, session)) return;
-        if (runtimeConfig.agents !== undefined) {
-            try {
-                sendJson(response, 200, {
-                    session: await runtimeConfig.agents.changePermissionMode(ctx, session, {
-                        ...body,
-                        ...(mutationId === undefined ? {} : { mutationId }),
-                    }),
-                });
-            } catch (error) {
-                if (isDatabaseFailure(error)) throw error;
-                sendJson(response, 409, { error: errorToMessage(error) });
-            }
-            return;
+        try {
+            sendJson(response, 200, {
+                session: await runtimeConfig.agents.changePermissionMode(ctx, session, {
+                    ...body,
+                    ...(mutationId === undefined ? {} : { mutationId }),
+                }),
+            });
+        } catch (error) {
+            if (isDatabaseFailure(error)) throw error;
+            sendJson(response, 409, { error: errorToMessage(error) });
         }
-        sendJson(response, 200, {
-            session: await session.changePermissionMode(ctx, {
-                ...body,
-                ...(mutationId === undefined ? {} : { mutationId }),
-            }),
-        });
         return;
     }
 
