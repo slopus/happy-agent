@@ -17,7 +17,7 @@ const providerShape = (
     catalog: ReturnType<typeof createModelCatalog>,
     providerId: string,
 ): {
-    providerType: string;
+    providerType: string | undefined;
     disabledReason: string | undefined;
     serviceTiers: readonly string[] | undefined;
     modelIds: readonly string[];

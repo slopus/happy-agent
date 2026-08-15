@@ -1,15 +1,15 @@
-import { defineModel } from "@slopus/rig-execution";
+import type { Model } from "@slopus/happy-agent-base";
 
 import type { ModelCatalog } from "../protocol/index.js";
 import { readGymContextWindow } from "./readGymContextWindow.js";
 
-const gymModel = defineModel({
+const gymModel: Model = {
     id: "openai/gym",
     name: "Gym",
     thinkingLevels: ["off", "low", "medium", "high"],
     defaultThinkingLevel: "off",
     contextWindow: 272_000,
-});
+};
 
 /**
  * The gym provider's catalog entry, present only when a gym inference endpoint is configured. The

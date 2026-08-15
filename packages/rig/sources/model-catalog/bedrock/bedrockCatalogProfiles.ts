@@ -1,9 +1,6 @@
-import {
-    createExecutorModelProfiles,
-    type ExecutorModelProfile,
-} from "@slopus/rig-execution";
-
 import type { ConfigBedrockProvider } from "../../config/types.js";
+import { curatedModelProfiles } from "../curatedModelProfiles.js";
+import type { ModelCatalogProfile } from "../ModelCatalogProfile.js";
 import { BEDROCK_MODEL_ROUTES } from "./bedrock-model-routes.js";
 import { readConfiguredBedrockBearerToken } from "./readConfiguredBedrockBearerToken.js";
 import { resolveBedrockModelRegion } from "./resolveBedrockModelRegion.js";
@@ -21,7 +18,7 @@ export function bedrockCatalogProfiles(
     providerId: string,
     config: ConfigBedrockProvider,
     env: NodeJS.ProcessEnv,
-): readonly ExecutorModelProfile[] | undefined {
+): readonly ModelCatalogProfile[] | undefined {
     const bearerToken = readConfiguredBedrockBearerToken(config, env);
     if (bearerToken === undefined) return undefined;
     const defaultRegion = config.region?.trim() || resolveBedrockRegion(env);
@@ -32,9 +29,21 @@ export function bedrockCatalogProfiles(
             undefined
         );
     });
-    return createExecutorModelProfiles({
-        models: routes.map((route) => route.model),
-        providerId,
-        providerType: "bedrock",
+    const builtins = new Map(
+        [
+            ...curatedModelProfiles(providerId, "claude"),
+            ...curatedModelProfiles(providerId, "codex"),
+        ].map((profile) => [profile.id, profile]),
+    );
+    return routes.map((route) => {
+        const profile = builtins.get(route.model.id);
+        if (profile === undefined) {
+            throw new Error(`The curated Bedrock catalog has no model '${route.model.id}'.`);
+        }
+        return {
+            ...profile,
+            model: route.model,
+            providerType: "bedrock",
+        };
     });
 }

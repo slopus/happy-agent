@@ -1,16 +1,7 @@
-import {
-    modelAnthropicFable5,
-    modelAnthropicOpus5,
-    modelAnthropicOpus48,
-    modelAnthropicSonnet5,
-    modelOpenaiGpt54,
-    modelOpenaiGpt56Luna,
-    modelOpenaiGpt56Sol,
-    modelOpenaiGpt56Terra,
-} from "@slopus/rig-execution";
-import type { Model } from "@slopus/rig-execution";
+import type { Model } from "@slopus/happy-agent-base";
 
 import type { BedrockModelTransport } from "../../config/bedrock-model-overrides.js";
+import { curatedModel } from "../curatedModelProfiles.js";
 
 export type { BedrockModelTransport };
 
@@ -83,7 +74,7 @@ const ANTHROPIC_OPUS_4_8_MANTLE_REGIONS = [
 
 export const BEDROCK_MODEL_ROUTES: readonly BedrockModelRoute[] = [
     {
-        model: modelAnthropicSonnet5,
+        model: curatedModel("anthropic/sonnet-5"),
         provider: "anthropic",
         transports: [
             { transport: "mantle", regions: ANTHROPIC_SONNET_5_MANTLE_REGIONS },
@@ -91,7 +82,7 @@ export const BEDROCK_MODEL_ROUTES: readonly BedrockModelRoute[] = [
         ],
     },
     {
-        model: modelAnthropicFable5,
+        model: curatedModel("anthropic/fable-5"),
         provider: "anthropic",
         transports: [
             { transport: "mantle", regions: ANTHROPIC_FABLE_5_MANTLE_REGIONS },
@@ -99,7 +90,7 @@ export const BEDROCK_MODEL_ROUTES: readonly BedrockModelRoute[] = [
         ],
     },
     {
-        model: modelAnthropicOpus5,
+        model: curatedModel("anthropic/opus-5"),
         provider: "anthropic",
         transports: [
             { transport: "mantle", regions: ANTHROPIC_OPUS_5_MANTLE_REGIONS },
@@ -107,7 +98,7 @@ export const BEDROCK_MODEL_ROUTES: readonly BedrockModelRoute[] = [
         ],
     },
     {
-        model: modelAnthropicOpus48,
+        model: curatedModel("anthropic/opus-4-8"),
         provider: "anthropic",
         transports: [
             { transport: "mantle", regions: ANTHROPIC_OPUS_4_8_MANTLE_REGIONS },
@@ -115,22 +106,22 @@ export const BEDROCK_MODEL_ROUTES: readonly BedrockModelRoute[] = [
         ],
     },
     {
-        model: bedrockModel(modelOpenaiGpt56Sol, true),
+        model: bedrockModel(curatedModel("openai/gpt-5.6-sol"), true),
         provider: "openai",
         transports: [{ transport: "mantle", regions: ["us-east-1", "us-east-2"] }],
     },
     {
-        model: bedrockModel(modelOpenaiGpt56Terra, true),
+        model: bedrockModel(curatedModel("openai/gpt-5.6-terra"), true),
         provider: "openai",
         transports: [{ transport: "mantle", regions: ["us-east-1", "us-east-2", "us-west-2"] }],
     },
     {
-        model: bedrockModel(modelOpenaiGpt56Luna, false),
+        model: bedrockModel(curatedModel("openai/gpt-5.6-luna"), false),
         provider: "openai",
         transports: [{ transport: "mantle", regions: ["us-east-1", "us-east-2", "us-west-2"] }],
     },
     {
-        model: modelOpenaiGpt54,
+        model: curatedModel("openai/gpt-5.4"),
         provider: "openai",
         transports: [{ transport: "mantle", regions: ["us-east-1", "us-east-2", "us-west-2"] }],
     },

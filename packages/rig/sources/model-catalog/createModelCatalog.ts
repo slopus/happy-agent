@@ -1,16 +1,10 @@
-import {
-    builtinModelProfiles,
-    modelOpenaiGpt56Luna,
-    modelOpenaiGpt56Sol,
-    modelOpenaiGpt56Terra,
-    type ExecutorModelProfile,
-} from "@slopus/rig-execution";
-
 import { DEFAULT_RIG_CONFIG } from "../config/defaultConfig.js";
 import type { ConfigProvider, ConfigProviders } from "../config/types.js";
 import type { ModelCatalog } from "../protocol/index.js";
 import { bedrockCatalogProfiles } from "./bedrock/bedrockCatalogProfiles.js";
+import { curatedModelProfiles } from "./curatedModelProfiles.js";
 import { gymCatalogProvider } from "./gymCatalogProvider.js";
+import type { ModelCatalogProfile } from "./ModelCatalogProfile.js";
 import { uniqueModelsById } from "./uniqueModelsById.js";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -110,9 +104,9 @@ export function createModelCatalog(
     const defaultModel = gymEnabled
         ? (defaultProvider.models.find((model) => model.id === "openai/gym") ??
           defaultProvider.models[0])
-        : (defaultProvider.models.find((model) => model.id === modelOpenaiGpt56Sol.id) ??
-          defaultProvider.models.find((model) => model.id === modelOpenaiGpt56Terra.id) ??
-          defaultProvider.models.find((model) => model.id === modelOpenaiGpt56Luna.id) ??
+        : (defaultProvider.models.find((model) => model.id === "openai/gpt-5.6-sol") ??
+          defaultProvider.models.find((model) => model.id === "openai/gpt-5.6-terra") ??
+          defaultProvider.models.find((model) => model.id === "openai/gpt-5.6-luna") ??
           defaultProvider.models[0]);
     if (defaultModel === undefined) {
         throw new Error("No inference models are currently available.");
@@ -135,15 +129,15 @@ function providerCatalogProfiles(
     providerId: string,
     config: ConfigProvider,
     env: NodeJS.ProcessEnv,
-): readonly ExecutorModelProfile[] | undefined {
+): readonly ModelCatalogProfile[] | undefined {
     if (config.type === "bedrock") return bedrockCatalogProfiles(providerId, config, env);
-    return builtinModelProfiles(providerId, config.type);
+    return curatedModelProfiles(providerId, config.type);
 }
 
 function filterProviderProfiles(
-    profiles: readonly ExecutorModelProfile[],
+    profiles: readonly ModelCatalogProfile[],
     config: ConfigProvider,
-): readonly ExecutorModelProfile[] {
+): readonly ModelCatalogProfile[] {
     const included = config.includeModels === undefined ? undefined : new Set(config.includeModels);
     const excluded = new Set(config.excludeModels ?? []);
     return profiles.filter(
