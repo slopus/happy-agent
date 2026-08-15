@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { defineModel } from "@slopus/rig-execution";
 
 import type { GymInferenceRequest } from "../../agent/gym-types.js";
 import type { ModelCatalog } from "../../protocol/index.js";
+import { defineTestModel as defineModel } from "../../testing/defineTestModel.js";
 import { TrackedTaskDrain } from "../../utils/TrackedTaskDrain.js";
 import { PersistentSessionStore } from "../PersistentSessionStore.js";
 

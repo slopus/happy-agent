@@ -1,6 +1,6 @@
-import type { Usage } from "@slopus/rig-execution";
 import { describe, expect, it } from "vitest";
 
+import type { Usage } from "../protocol/index.js";
 import { formatSessionTokenStatus } from "./formatSessionTokenStatus.js";
 
 describe("formatSessionTokenStatus", () => {

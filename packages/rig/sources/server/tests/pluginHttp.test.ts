@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
-import { defineModel } from "@slopus/rig-execution";
+import { defineTestModel as defineModel } from "../../testing/defineTestModel.js";
 
 import {
     PluginAppError,

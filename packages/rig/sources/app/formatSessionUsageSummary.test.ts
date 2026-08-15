@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GetSessionUsageResponse } from "../protocol/index.js";
-import { defineModel } from "@slopus/rig-execution";
+import { defineTestModel as defineModel } from "../testing/defineTestModel.js";
 import { formatSessionUsageSummary } from "./formatSessionUsageSummary.js";
 
 const codex = defineModel({

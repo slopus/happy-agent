@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { SessionEvent } from "../../../protocol/index.js";
-import type { Usage } from "@slopus/rig-execution";
+import type { SessionEvent, Usage } from "../../../protocol/index.js";
 import { aggregateSessionUsage } from "../aggregateSessionUsage.js";
 
 describe("aggregateSessionUsage", () => {

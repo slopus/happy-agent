@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createPermissionContext } from "../permissions/index.js";
-import { defineModel } from "@slopus/rig-execution";
 import type { ModelCatalog, ProtocolSession, SessionEvent } from "../protocol/index.js";
 import { createJustBashToolHarness } from "../testing/createAgentTestHarness.js";
 import { createTestRootContext } from "../testing/createTestRootContext.js";
+import { defineTestModel as defineModel } from "../testing/defineTestModel.js";
 import type { ProtocolHttpClient } from "./ProtocolHttpClient.js";
 import { RemoteAgent } from "./RemoteAgent.js";
 import { RemoteAgentRunError } from "./RemoteAgentRunError.js";

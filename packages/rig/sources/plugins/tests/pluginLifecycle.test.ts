@@ -2,7 +2,6 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type Dockerode from "dockerode";
-import { defineModel } from "@slopus/rig-execution";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 
@@ -13,6 +12,7 @@ import type { ComputePreparationEvent, PluginsChangedEvent } from "../../protoco
 import { DaemonLog } from "../../server/DaemonLog.js";
 import { InMemorySessionStore } from "../../session/InMemorySessionStore.js";
 import { createTestRootContext } from "../../testing/createTestRootContext.js";
+import { defineTestModel as defineModel } from "../../testing/defineTestModel.js";
 import { PluginManager } from "../PluginManager.js";
 import { PluginComputeRegistry } from "../PluginComputeRegistry.js";
 import type { GitHubFetch } from "../fetchBoundedGitHubResource.js";

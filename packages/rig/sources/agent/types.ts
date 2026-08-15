@@ -4,21 +4,15 @@
 
 import type { Static, TSchema } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
+import type { Model } from "@slopus/happy-agent-base";
+import type { SessionAssistantMessage, SessionProviderError } from "@slopus/happy-providers";
 
 import type { AgentContext } from "./context/AgentContext.js";
-import type {
-    Message as ProviderMessage,
-    AssistantMessage as ProviderAssistantMessage,
-    Model,
-    Provider,
-    ProviderError,
-    Tool as ExecutorTool,
-    Usage,
-} from "@slopus/rig-execution";
 import type { ToolResultPresentation } from "./ToolResultPresentation.js";
 import type { ToolCallPresentation } from "./ToolCallPresentation.js";
 import type { UnansweredUserInput, UserInputResponse } from "../user-input/types.js";
 import type { Attachment } from "../protocol/Attachment.js";
+import type { Usage } from "../protocol/InferenceProtocol.js";
 import type { ServiceNotice } from "../protocol/ServiceNotice.js";
 
 /** Plain text content. */
@@ -169,7 +163,7 @@ export interface CompactionMessage {
      * Complete provider-authored replacement context. Present only on the private model-context
      * copy; the visible transcript copy deliberately does not expose provider-native payloads.
      */
-    replacementMessages?: readonly ProviderMessage[];
+    replacementMessages?: readonly unknown[];
     /** Model requested for the compaction inference. */
     requestedModelId?: string;
     /** Provider-reported model that performed the compaction inference. */
@@ -193,7 +187,7 @@ export interface ErrorMessage {
     providerId?: string;
     requestedModelId?: string;
     /** Bounded provider-native diagnostics retained for support and debugging. */
-    providerError?: ProviderError;
+    providerError?: SessionProviderError;
     /**
      * Display-only failures duplicate information already represented in model context, such as
      * an automatic permission denial that is also the tool result.
@@ -218,7 +212,7 @@ export interface AgentMessage {
     requestedModelId?: string;
     responseModel?: string;
     /** Exact ordered provider blocks retained for replay. */
-    sessionMessage?: NonNullable<ProviderAssistantMessage["sessionMessage"]>;
+    sessionMessage?: SessionAssistantMessage;
     /** Durable model context that must never be presented as transcript content. */
     internal?: true;
 }
@@ -249,8 +243,6 @@ export interface ToolExecutionOptions {
     /** Reports a short ephemeral activity label while the tool remains active. */
     onStatus?: (status: string) => void;
     signal?: AbortSignal;
-    /** Exact provider selected for the active agent turn. */
-    provider?: Provider;
     /** Original identifier emitted by the provider for this tool call. */
     providerToolCallId?: string;
     toolBatchId?: string;
@@ -277,12 +269,8 @@ export interface DefinedTool<
     name: string;
     label: string;
     description: string;
-    /** Exact provider-facing definition when JSON-schema function calling cannot represent it. */
-    executorTool?: ExecutorTool;
     /** Keep this tool out of the initial prompt when the provider supports native tool search. */
     deferLoading?: boolean;
-    /** Converts provider-facing custom-tool arguments into this tool's typed arguments. */
-    parseExecutorToolArguments?: (argumentsValue: unknown) => Record<string, unknown>;
     /** Provider-facing namespace containing this tool. */
     namespace?: ToolNamespace;
     arguments: TArgsSchema;
@@ -338,9 +326,7 @@ export interface AnyDefinedTool {
     name: string;
     label: string;
     description: string;
-    executorTool?: ExecutorTool;
     deferLoading?: boolean;
-    parseExecutorToolArguments?: (argumentsValue: unknown) => Record<string, unknown>;
     namespace?: ToolNamespace;
     arguments: TSchema;
     returnType: TSchema;
@@ -391,9 +377,7 @@ export function defineTool<
     name: string;
     label: string;
     description: string;
-    executorTool?: ExecutorTool;
     deferLoading?: boolean;
-    parseExecutorToolArguments?: (argumentsValue: unknown) => Record<string, unknown>;
     namespace?: ToolNamespace;
     arguments: TArgsSchema;
     returnType: TReturnSchema;

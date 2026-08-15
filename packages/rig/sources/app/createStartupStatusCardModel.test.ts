@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { defineModel } from "@slopus/rig-execution";
 import type { ProtocolSession } from "../protocol/index.js";
+import { defineTestModel as defineModel } from "../testing/defineTestModel.js";
 import { createStartupStatusCardModel } from "./createStartupStatusCardModel.js";
 
 describe("createStartupStatusCardModel", () => {

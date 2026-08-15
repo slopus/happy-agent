@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Model } from "@slopus/rig-execution";
+import type { Model } from "@slopus/happy-agent-base";
 
 import type { ConfigProviders } from "../config/types.js";
 import type { ModelCatalog } from "../protocol/index.js";
