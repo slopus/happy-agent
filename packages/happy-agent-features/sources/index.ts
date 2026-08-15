@@ -933,3 +933,7 @@ export { listSlotsTool } from "./slots/tools/list_slots.js";
 export { removeSlotTool } from "./slots/tools/remove_slot.js";
 export { reorderSlotsTool } from "./slots/tools/reorder_slots.js";
 export { updateSlotTool } from "./slots/tools/update_slot.js";
+
+// Workspaces: host-owned worktree/Git references, bounded catalogs, and
+// cursor-addressable detail.
+export * from "./workspaces/index.js";
