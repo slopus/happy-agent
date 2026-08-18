@@ -393,6 +393,8 @@ describe("Happy Agent Rig compatibility", () => {
         await connection.client.submitMessage(messageSession.id, {
             ...SELECTION,
             await: true,
+            debug: true,
+            interactive: false,
             modelId: "scripted-model-2",
             mutationId: "message-model",
             permissionMode: "read_only",
