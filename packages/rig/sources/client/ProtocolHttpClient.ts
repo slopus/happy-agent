@@ -1243,15 +1243,26 @@ export class ProtocolHttpClient {
     async watchSessionEvents(options: WatchSessionEventsOptions): Promise<void> {
         let after = options.after;
         while (options.signal?.aborted !== true) {
+            let consumerFailed = false;
+            let consumerError: unknown;
             try {
                 after = await this.#watchSessionEventsOnce(after, {
                     ...options,
                     onEvent: async (event) => {
-                        await options.onEvent(event);
+                        try {
+                            await options.onEvent(event);
+                        } catch (error) {
+                            consumerFailed = true;
+                            consumerError = error;
+                            throw error;
+                        }
                         after = event.id;
                     },
                 });
             } catch (error) {
+                if (consumerFailed) {
+                    throw consumerError;
+                }
                 if (options.signal?.aborted) {
                     return;
                 }
@@ -1409,6 +1420,7 @@ export class ProtocolHttpClient {
                     response.setEncoding("utf8");
                     response.on("data", (chunk: string) => {
                         if (terminalScheduled) return;
+                        response.pause();
                         buffer += chunk;
                         for (;;) {
                             const boundary = buffer.indexOf("\n\n");
@@ -1444,6 +1456,16 @@ export class ProtocolHttpClient {
                                 settle(error);
                             });
                         }
+                        const accepted = application;
+                        void accepted.then(
+                            () => {
+                                if (!terminalScheduled) response.resume();
+                            },
+                            (error: unknown) => {
+                                response.destroy();
+                                settle(error);
+                            },
+                        );
                     });
                     response.on("end", () => settle());
                     response.on("error", settle);
@@ -1534,7 +1556,6 @@ function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
             return;
         }
         const timer = setTimeout(resolve, ms);
-        timer.unref?.();
         signal?.addEventListener(
             "abort",
             () => {

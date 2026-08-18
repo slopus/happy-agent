@@ -97,9 +97,9 @@ async function run(
                 after: submitted.eventId,
                 sessionId: session.id,
                 signal: controller.signal,
-                onEvent(event) {
+                async onEvent(event) {
                     if (options.outputFormat === "stream-json") {
-                        process.stdout.write(`${JSON.stringify({ event, type: "event" })}\n`);
+                        await writeStdout(`${JSON.stringify({ event, type: "event" })}\n`);
                     }
                     if (event.type === "user_input_requested") {
                         failure = "The agent requested interactive input during a headless run.";
@@ -156,6 +156,32 @@ async function run(
     } finally {
         await sessionTerminal.close().catch(() => undefined);
     }
+}
+
+export async function writeStdout(value: string): Promise<void> {
+    if (process.stdout.write(value)) return;
+    await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+            process.stdout.off("close", onClose);
+            process.stdout.off("drain", onDrain);
+            process.stdout.off("error", onError);
+        };
+        const onClose = () => {
+            cleanup();
+            reject(new Error("Standard output closed before Rig could write the event."));
+        };
+        const onDrain = () => {
+            cleanup();
+            resolve();
+        };
+        const onError = (error: Error) => {
+            cleanup();
+            reject(error);
+        };
+        process.stdout.once("close", onClose);
+        process.stdout.once("drain", onDrain);
+        process.stdout.once("error", onError);
+    });
 }
 
 async function openSession(
