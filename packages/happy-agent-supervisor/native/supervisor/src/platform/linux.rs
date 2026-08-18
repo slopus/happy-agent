@@ -1,7 +1,7 @@
 use crate::exec::exec_target;
 use crate::platform::child::{
-    STATUS_EXIT, WorkloadStatus, install_signal_forwarders, reproduce_status, reset_signal_handlers,
-    set_forward_target, wait_for_pid, wait_status_to_workload_status,
+    STATUS_EXIT, WorkloadStatus, install_signal_forwarders, reproduce_status,
+    reset_signal_handlers, set_forward_target, wait_for_pid, wait_status_to_workload_status,
 };
 use crate::policy::{PermissionMode, SupervisorPolicy};
 use crate::proxy::{OutgoingProxy, egress};
@@ -347,7 +347,26 @@ fn canonical_optional_paths(paths: &[PathBuf]) -> SupervisorResult<Vec<PathBuf>>
             result.push(canonical);
         }
     }
-    Ok(result)
+    // A directory mask already denies every descendant. Keeping a nested target would make setup
+    // fail after the parent is masked because that child no longer exists in the mount namespace.
+    // Sort first so an ancestor wins regardless of the order in the policy.
+    result.sort_by(|left, right| {
+        left.components()
+            .count()
+            .cmp(&right.components().count())
+            .then_with(|| left.cmp(right))
+    });
+    let mut collapsed: Vec<PathBuf> = Vec::with_capacity(result.len());
+    for path in result {
+        if collapsed
+            .iter()
+            .any(|ancestor| ancestor.is_dir() && path.starts_with(ancestor))
+        {
+            continue;
+        }
+        collapsed.push(path);
+    }
+    Ok(collapsed)
 }
 
 fn bind_mount(path: &Path, recursive: bool) -> SupervisorResult<()> {
@@ -802,6 +821,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn read_denials_collapse_descendants_of_a_denied_directory() {
+        let root = tempfile::tempdir().unwrap_or_else(|error| panic!("temporary root: {error}"));
+        let denied = root.path().join("denied");
+        let nested = denied.join("credential");
+        fs::create_dir(&denied).unwrap_or_else(|error| panic!("denied directory: {error}"));
+        fs::write(&nested, "secret").unwrap_or_else(|error| panic!("nested credential: {error}"));
+
+        let paths = canonical_optional_paths(&[nested, denied.clone()])
+            .unwrap_or_else(|error| panic!("canonical denied paths: {error}"));
+
+        assert_eq!(
+            paths,
+            vec![
+                denied
+                    .canonicalize()
+                    .unwrap_or_else(|error| panic!("canonical denied directory: {error}"))
+            ]
+        );
+    }
+
+    #[test]
     fn legacy_remount_preserves_existing_mount_restrictions() {
         let flags = mount_option_flags(
             "rw,nosuid,nodev,noexec,sync,mand,dirsync,nosymfollow,noatime,nodiratime,iversion,lazytime",
@@ -820,5 +860,4 @@ mod tests {
 
         assert_eq!(flags, expected);
     }
-
 }
