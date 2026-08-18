@@ -48,6 +48,38 @@ describe("Claude session recreation cache", () => {
             expect(replayed).toEqual(originalHistory);
         });
     }, 15_000);
+
+    it("restarts the real SDK query when caller-owned reasoning diverges", async () => {
+        await withServer(async (harness) => {
+            const session = harness.session();
+            const first = await harness.run(session, [user("Refactor the parser.")]);
+            const original = replayContext(first.events);
+            const assistant = original[1];
+            if (assistant?.role !== "assistant") throw new Error("Expected assistant history.");
+
+            const restarted = await harness.run(session, [
+                original[0]!,
+                {
+                    ...assistant,
+                    content: assistant.content.map((block) =>
+                        block.type === "reasoning"
+                            ? {
+                                  type: "reasoning" as const,
+                                  text: "CALLER_EDITED_REASONING",
+                                  reasoning: "GOLDEN_SIGNATURE",
+                              }
+                            : block,
+                    ),
+                },
+                user("Now update the tests."),
+            ]);
+            const wireMessages = JSON.stringify(restarted.request.messages);
+
+            expect(reasoningBlocks(restarted.request)).toHaveLength(0);
+            expect(wireMessages).not.toContain("The parser entry point is misnamed.");
+            expect(wireMessages).toContain("Now update the tests.");
+        });
+    }, 15_000);
 });
 
 function user(content: string): SessionMessage {

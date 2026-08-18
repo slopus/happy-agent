@@ -1913,8 +1913,8 @@ describe("ClaudeSession", () => {
                 },
             }),
         );
-        // The executor round trip decorates the assistant it replays with fields Claude never
-        // sent back, so wire identity - not raw equality - has to drive the decision.
+        // JSON formatting is not part of Claude's replayed tool input, so equivalent arguments
+        // must not break the live tool loop.
         const events = await collectSessionEvents(
             session.run(testContext, {
                 context: {
@@ -1927,7 +1927,6 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                { type: "reasoning", reasoning: "round-trip-only" },
                                 {
                                     type: "tool_call",
                                     callId: "call-1",
@@ -1950,55 +1949,64 @@ describe("ClaudeSession", () => {
         expect(textFromSessionEvents(events)).toBe("CONTINUED");
     });
 
-    it("restarts when the caller edits the assistant message the query generated", async () => {
-        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
-        if (credential === null) throw new Error("Expected test credential.");
-        const query = vi.fn<ClaudeSdkQuery>(() => fakeQuery("ANSWER"));
-        const session = new ClaudeSession("edited-assistant-session", {
-            instructions: "",
-            credential,
-            model: "sonnet[1m]",
-            query,
-            tools: [],
-        });
+    it.each([
+        ["assistant text", [{ type: "text", text: "EDITED ANSWER" }]],
+        [
+            "signed reasoning",
+            [
+                { type: "reasoning", text: "Added later.", reasoning: "signed-reasoning" },
+                { type: "text", text: "ANSWER" },
+            ],
+        ],
+    ] as const)(
+        "restarts when the caller changes %s that replay would send",
+        async (_, content) => {
+            const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+            if (credential === null) throw new Error("Expected test credential.");
+            const query = vi.fn<ClaudeSdkQuery>(() => fakeQuery("ANSWER"));
+            const session = new ClaudeSession("edited-assistant-session", {
+                instructions: "",
+                credential,
+                model: "sonnet[1m]",
+                query,
+                tools: [],
+            });
 
-        await collectSessionEvents(
-            session.run(testContext, {
-                context: {
-                    instructions: "",
-                    messages: [
-                        {
-                            role: "user",
-                            content: [{ type: "text" as const, text: "First." }],
-                        },
-                    ],
-                },
-            }),
-        );
-        await collectSessionEvents(
-            session.run(testContext, {
-                context: {
-                    instructions: "",
-                    messages: [
-                        {
-                            role: "user",
-                            content: [{ type: "text" as const, text: "First." }],
-                        },
-                        {
-                            role: "assistant",
-                            content: [{ type: "text" as const, text: "EDITED ANSWER" }],
-                        },
-                        {
-                            role: "user",
-                            content: [{ type: "text" as const, text: "Second." }],
-                        },
-                    ],
-                },
-            }),
-        );
+            await collectSessionEvents(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [
+                            {
+                                role: "user",
+                                content: [{ type: "text" as const, text: "First." }],
+                            },
+                        ],
+                    },
+                }),
+            );
+            await collectSessionEvents(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [
+                            {
+                                role: "user",
+                                content: [{ type: "text" as const, text: "First." }],
+                            },
+                            { role: "assistant", content },
+                            {
+                                role: "user",
+                                content: [{ type: "text" as const, text: "Second." }],
+                            },
+                        ],
+                    },
+                }),
+            );
 
-        expect(query).toHaveBeenCalledTimes(2);
-    });
+            expect(query).toHaveBeenCalledTimes(2);
+        },
+    );
 
     it("restarts rather than dropping a system notice queued behind the next prompt", async () => {
         const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });

@@ -16,7 +16,11 @@ import { EmptyResponseError, emptyResponseDoneEvent } from "@/core/EmptyResponse
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import { EMPTY_SESSION_USAGE, type SessionUsage } from "@/core/SessionUsage.js";
 import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
-import type { SessionContext, SessionToolCallBlock } from "@/core/SessionContext.js";
+import type {
+    SessionContext,
+    SessionMessage,
+    SessionToolCallBlock,
+} from "@/core/SessionContext.js";
 import { SessionAssistantMessageAccumulator } from "@/core/SessionAssistantMessageAccumulator.js";
 import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import type { SessionReasoningEffort, SessionRunRequest } from "@/core/SessionRunRequest.js";
@@ -36,10 +40,9 @@ import { ClaudeToolBridge } from "@/vendors/claude/impl/ClaudeToolBridge.js";
 import {
     createClaudeLivePromptMessage,
     createClaudeSessionReplay,
+    replayPrefixMatches,
     type ClaudeSessionReplay,
 } from "@/vendors/claude/impl/createClaudeSessionReplay.js";
-import { claudeMessageIdentity } from "@/vendors/claude/impl/claudeMessageIdentity.js";
-import { resolveClaudeLiveDelta } from "@/vendors/claude/impl/resolveClaudeLiveDelta.js";
 import {
     claudeSdkBuiltInToolNames,
     toClaudeSdkOptions,
@@ -89,8 +92,6 @@ export class ClaudeSession extends BaseSession {
     private readonly query: ClaudeSdkQuery;
     private activeQuery: ReturnType<ClaudeSdkQuery> | undefined;
     private activeQueryKey: string | undefined;
-    /** Wire identity of the conversation the live query holds, including what it generated. */
-    private sentConversation: readonly string[] | undefined;
     private activePromptQueue: ClaudePromptQueue | undefined;
     private activeReplay: ClaudeSessionReplay | undefined;
     private activeToolBridge: ClaudeToolBridge | undefined;
@@ -176,6 +177,7 @@ export class ClaudeSession extends BaseSession {
         for await (const event of this.streamQuery({
             context: compactContext,
             model,
+            previousMessages: this.context.messages,
             ...(this.activeEffort === undefined ? {} : { effort: this.activeEffort }),
             ...(signal === undefined ? {} : { abort: signal }),
             compaction: true,
@@ -246,6 +248,7 @@ export class ClaudeSession extends BaseSession {
         this.activeModel = model;
         const effort = request.effort ?? this.activeEffort;
         this.activeEffort = effort;
+        const previousMessages = this.context.messages;
         this.context = {
             instructions: request.context.instructions ?? this.context.instructions,
             messages: [...request.context.messages],
@@ -260,6 +263,7 @@ export class ClaudeSession extends BaseSession {
             for await (const event of this.streamQuery({
                 context: this.context,
                 model,
+                previousMessages,
                 ...(effort === undefined ? {} : { effort }),
                 ...(signal === undefined ? {} : { abort: signal }),
                 ...(request.structuredOutput === undefined
@@ -356,14 +360,6 @@ export class ClaudeSession extends BaseSession {
                         instructions: this.context.instructions,
                         messages: [...this.context.messages, assistantMessage],
                     };
-                    // The query generated this turn, so it holds it even though no caller sent it.
-                    // Leaving it out would let a later edit of this message look like an append.
-                    if (this.sentConversation !== undefined) {
-                        this.sentConversation = [
-                            ...this.sentConversation,
-                            claudeMessageIdentity(assistantMessage),
-                        ];
-                    }
                 }
             }
             if (blockStopped) yield { type: "block_stop" };
@@ -379,6 +375,7 @@ export class ClaudeSession extends BaseSession {
         effort?: SessionReasoningEffort;
         maxRetries?: number;
         model: string;
+        previousMessages: readonly SessionMessage[];
         structuredOutput?: SessionRunRequest["structuredOutput"];
     }): AsyncGenerator<SessionEvent> {
         yield { type: "block_start" };
@@ -402,22 +399,36 @@ export class ClaudeSession extends BaseSession {
             systemPrompt,
             tools,
         });
-        // Subsumes the older tail check: the live MCP bridge can close a tool batch only while
-        // its results remain at the context tail, and requiring the suffix to be exactly that
-        // batch already refuses anything appended after it rather than stranding the open tool.
-        const incomingConversation = configuredContext.messages.map(claudeMessageIdentity);
-        const delta =
-            this.activeQuery === undefined ||
-            this.activePromptQueue === undefined ||
-            this.activeQueryKey !== queryKey
-                ? ({ kind: "restart" } as const)
-                : resolveClaudeLiveDelta({
-                      incoming: incomingConversation,
-                      messages: configuredContext.messages,
-                      pendingToolCallIds: this.lastQueryToolCalls.map((call) => call.callId),
-                      sent: this.sentConversation,
-                  });
-        const continuingQuery = delta.kind !== "restart";
+        const appendedMessages = replayPrefixMatches(
+            options.previousMessages,
+            configuredContext.messages,
+            options.model,
+        )
+            ? configuredContext.messages.slice(options.previousMessages.length)
+            : undefined;
+        const liveToolResults =
+            appendedMessages?.flatMap((message) => (message.role === "tool" ? [message] : [])) ??
+            [];
+        const pendingToolCallIds = new Set(this.lastQueryToolCalls.map((call) => call.callId));
+        const continuesToolBatch =
+            this.lastQueryToolCalls.length > 0 &&
+            appendedMessages !== undefined &&
+            appendedMessages.length === this.lastQueryToolCalls.length &&
+            liveToolResults.length === appendedMessages.length &&
+            liveToolResults.every((result) => pendingToolCallIds.delete(result.callId)) &&
+            pendingToolCallIds.size === 0;
+        const promptMessage = appendedMessages?.[0];
+        const continuesPrompt =
+            this.lastQueryToolCalls.length === 0 &&
+            appendedMessages?.length === 1 &&
+            (promptMessage?.role === "user" ||
+                promptMessage?.role === "system" ||
+                promptMessage?.role === "agent");
+        const continuingQuery =
+            this.activeQuery !== undefined &&
+            this.activePromptQueue !== undefined &&
+            this.activeQueryKey === queryKey &&
+            (continuesToolBatch || continuesPrompt);
         if (!continuingQuery) this.closeActiveQuery();
         const {
             abort: _abort,
@@ -510,8 +521,8 @@ export class ClaudeSession extends BaseSession {
                 this.activeQueryKey = queryKey;
                 this.activeQuery = this.query({ prompt: promptQueue, options: sdkOptions });
                 stream = this.activeQuery;
-            } else if (delta.kind === "tool_results") {
-                if (this.activeToolBridge?.resolveAll(delta.results) !== true) {
+            } else if (continuesToolBatch) {
+                if (this.activeToolBridge?.resolveAll(liveToolResults) !== true) {
                     throw new Error("Claude could not match every result in the tool batch.");
                 }
             } else {
@@ -519,8 +530,6 @@ export class ClaudeSession extends BaseSession {
                     createClaudeLivePromptMessage(configuredContext.messages),
                 );
             }
-            // Only once the turn has actually been handed over does the query hold it.
-            this.sentConversation = incomingConversation;
             if (stream === undefined) throw new Error("Claude SDK query was not created.");
             for (;;) {
                 const next = await nextClaudeMessage(stream, aborted, options.abort);
@@ -944,7 +953,6 @@ export class ClaudeSession extends BaseSession {
         this.activeQuery?.close();
         this.activeQuery = undefined;
         this.activeQueryKey = undefined;
-        this.sentConversation = undefined;
         this.activeReplay = undefined;
     }
 }

@@ -1,11 +1,13 @@
 import { testContext } from "./testContext.js";
 
 import { createServer } from "node:http";
+import { query as claudeSdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 
 import { ClaudeAuthTokenCredential } from "@/vendors/claude/ClaudeAuthTokenCredential.js";
-import { ClaudeSession } from "@/vendors/claude/ClaudeSession.js";
+import { ClaudeCodeCredential } from "@/vendors/claude/ClaudeCodeCredential.js";
+import { ClaudeSession, type ClaudeSdkQuery } from "@/vendors/claude/ClaudeSession.js";
 import { renderClaudeSystemPrompt } from "@/vendors/claude/impl/renderClaudeSystemPrompt.js";
 import { claude_opus_4_8_system_prompt } from "@/vendors/claude/prompts/claude_opus_4_8_system_prompt.js";
 import type { SessionTool } from "@/core/SessionTool.js";
@@ -301,6 +303,96 @@ describe.skipIf(!live)("Claude live session", () => {
             session.destroy();
         }
     });
+});
+
+describe.skipIf(process.env.RIG_LIVE_TEST !== "1")("Claude live history", () => {
+    it(
+        "restarts the real SDK query and replays a newly inserted context notice",
+        { timeout: 120_000 },
+        async () => {
+            const credential =
+                (await ClaudeAuthTokenCredential.tryLoad({ env: process.env })) ??
+                (await ClaudeCodeCredential.tryLoad({ env: process.env }));
+            if (credential === null) {
+                throw new Error("Sign in with Claude Code or provide ANTHROPIC_AUTH_TOKEN.");
+            }
+            let queryCreations = 0;
+            const query: ClaudeSdkQuery = (options) => {
+                queryCreations += 1;
+                return claudeSdkQuery(options);
+            };
+            const session = new ClaudeSession("happy-providers-claude-history-live", {
+                instructions:
+                    "Follow exact output requests. Treat positional context notices as authoritative.",
+                credential,
+                model: "sonnet[1m]",
+                query,
+                tools: [],
+            });
+            const firstPrompt = "Reply with exactly FIRST_LIVE_CONTEXT and nothing else.";
+            const marker = "LIVE_CONTEXT_NOTICE_9F4C";
+            try {
+                const first = await collectSessionEvents(
+                    session.run(testContext, {
+                        context: {
+                            instructions:
+                                "Follow exact output requests. Treat positional context notices as authoritative.",
+                            messages: [
+                                {
+                                    role: "user",
+                                    content: [{ type: "text", text: firstPrompt }],
+                                },
+                            ],
+                        },
+                    }),
+                );
+                const firstText = textFromSessionEvents(first).trim();
+                expect(firstText).toBe("FIRST_LIVE_CONTEXT");
+
+                const second = await collectSessionEvents(
+                    session.run(testContext, {
+                        context: {
+                            instructions:
+                                "Follow exact output requests. Treat positional context notices as authoritative.",
+                            messages: [
+                                {
+                                    role: "user",
+                                    content: [{ type: "text", text: firstPrompt }],
+                                },
+                                {
+                                    role: "assistant",
+                                    content: [{ type: "text", text: firstText }],
+                                },
+                                {
+                                    role: "system",
+                                    content: [
+                                        {
+                                            type: "text",
+                                            text: `The required live marker is ${marker}. For the next request, reply with exactly that marker and nothing else.`,
+                                        },
+                                    ],
+                                },
+                                {
+                                    role: "user",
+                                    content: [
+                                        {
+                                            type: "text",
+                                            text: "Reply with exactly the marker supplied by the immediately preceding context notice, and nothing else.",
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    }),
+                );
+
+                expect(textFromSessionEvents(second).trim()).toBe(marker);
+                expect(queryCreations).toBe(2);
+            } finally {
+                session.destroy();
+            }
+        },
+    );
 });
 
 function normalizeJsonSchema(value: unknown): unknown {

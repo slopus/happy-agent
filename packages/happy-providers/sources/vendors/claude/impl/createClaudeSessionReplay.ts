@@ -85,18 +85,44 @@ export function createClaudeLivePromptMessage(
     );
 }
 
+/** Whether the incoming history starts with the messages Claude would replay for the prior one. */
+export function replayPrefixMatches(
+    expected: readonly SessionMessage[],
+    incoming: readonly SessionMessage[],
+    model: string,
+): boolean {
+    if (expected.length > incoming.length) return false;
+    return expected.every(
+        (message, index) =>
+            JSON.stringify(toReplayComparison(toReplayMessage(message), model, index)) ===
+            JSON.stringify(toReplayComparison(toReplayMessage(incoming[index]!), model, index)),
+    );
+}
+
 /**
  * Anthropic has no system role inside a conversation, so a session system message becomes a
  * `<system-reminder>` user turn in the position the caller placed it. A message from another
  * agent takes the same route, as the notification that names who sent it.
  */
 function toReplayMessages(messages: readonly SessionMessage[]): ReplayMessage[] {
-    return messages.map((message) => {
-        if (message.role === "agent") {
-            return toSessionReminderMessage(toSessionAgentNotificationMessage(message));
-        }
-        return message.role === "system" ? toSessionReminderMessage(message) : message;
-    });
+    return messages.map(toReplayMessage);
+}
+
+function toReplayMessage(message: SessionMessage): ReplayMessage {
+    if (message.role === "agent") {
+        return toSessionReminderMessage(toSessionAgentNotificationMessage(message));
+    }
+    return message.role === "system" ? toSessionReminderMessage(message) : message;
+}
+
+function toReplayComparison(message: ReplayMessage, model: string, index: number): unknown {
+    if (message.role === "assistant") {
+        return toSdkAssistantMessage(message, model, `comparison-${String(index)}`);
+    }
+    if (message.role === "tool") return toToolResultBlock(message);
+    const content = replayMessageContent(message);
+    if (content === null) return null;
+    return toSdkHistoryUserMessage(content);
 }
 
 function findPromptStart(messages: readonly ReplayMessage[]): number {
@@ -201,17 +227,11 @@ function toSessionStoreEntries(
             parentUuid = uuid;
             continue;
         }
-        if (message.role === "compaction" && message.content === null) continue;
-        const content: readonly SessionInputBlock[] =
-            message.role === "compaction"
-                ? [{ type: "text", text: message.content! }]
-                : message.content;
+        const content = replayMessageContent(message);
+        if (content === null) continue;
         entries.push({
             ...base,
-            message: {
-                role: "user",
-                content: toSdkContent(content),
-            },
+            message: toSdkHistoryUserMessage(content),
             type: "user",
         });
         parentUuid = uuid;
@@ -224,6 +244,20 @@ function toSdkUserMessage(message: SessionUserMessage): SDKUserMessage {
         type: "user",
         parent_tool_use_id: null,
         message: { role: "user", content: toSdkContent(message.content) },
+    };
+}
+
+function replayMessageContent(
+    message: Extract<ReplayMessage, { role: "compaction" | "user" }>,
+): readonly SessionInputBlock[] | null {
+    if (message.role === "user") return message.content;
+    return message.content === null ? null : [{ type: "text", text: message.content }];
+}
+
+function toSdkHistoryUserMessage(content: readonly SessionInputBlock[]) {
+    return {
+        role: "user" as const,
+        content: toSdkContent(content),
     };
 }
 
