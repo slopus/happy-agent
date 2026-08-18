@@ -145,7 +145,6 @@ async function createProvider(
                   : await CodexSessionCredential.tryLoad({ authFile: provider.authFile })));
         return new CodexProvider({
             credential: required(credential, "Codex", id),
-            parallelToolCalls: true,
             ...(provider.baseUrl === undefined ? {} : { endpoint: provider.baseUrl }),
             ...(provider.transport === undefined || provider.transport === "auto"
                 ? {}

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { CodexProvider } from "@slopus/happy-providers";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -34,6 +35,29 @@ describe("ConfigModule", () => {
         expect(configuration.sources.global.exists).toBe(false);
         expect(configuration.sources.runtime.exists).toBe(false);
         expect(configuration.values.defaults.modelId).toBe("openai/gpt-5.6-sol");
+    });
+
+    it("lets Codex model capabilities select Responses Lite", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-codex-lite-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            [
+                "[providers]",
+                "default_enable = false",
+                "[providers.codex]",
+                'api_key = "test-key"',
+                "credential_isolation = true",
+                "enabled = true",
+            ].join("\n"),
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+        const provider = await module.providers.resolve("codex", "openai/gpt-5.6-sol");
+
+        expect(provider).toBeInstanceOf(CodexProvider);
+        expect((provider as CodexProvider).parallelToolCalls).toBeUndefined();
     });
 
     it("merges global happy.toml with runtime.toml, with runtime winning", async () => {
