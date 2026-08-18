@@ -600,7 +600,6 @@ function projectProviderEvent(
         rigEvent = {
             contentIndex: run.activeIndex,
             messageId,
-            partial: partialMessage(run, now),
             type: "text_start",
         };
     } else if (event.type === "text_delta") {
@@ -613,7 +612,6 @@ function projectProviderEvent(
             contentIndex: index,
             delta: event.delta,
             messageId,
-            partial: partialMessage(run, now),
             type: "text_delta",
         };
     } else if (event.type === "text_end") {
@@ -623,7 +621,6 @@ function projectProviderEvent(
             content,
             contentIndex: index,
             messageId,
-            partial: partialMessage(run, now),
             type: "text_end",
         };
     } else if (event.type === "reasoning_start") {
@@ -633,7 +630,6 @@ function projectProviderEvent(
         rigEvent = {
             contentIndex: run.activeIndex,
             messageId,
-            partial: partialMessage(run, now),
             type: "thinking_start",
         };
     } else if (event.type === "reasoning_delta") {
@@ -646,7 +642,6 @@ function projectProviderEvent(
             contentIndex: index,
             delta: event.delta,
             messageId,
-            partial: partialMessage(run, now),
             type: "thinking_delta",
         };
     } else if (event.type === "reasoning_end") {
@@ -659,7 +654,6 @@ function projectProviderEvent(
             content,
             contentIndex: index,
             messageId,
-            partial: partialMessage(run, now),
             type: "thinking_end",
         };
     } else if (event.type === "toolcall_start") {
@@ -680,7 +674,6 @@ function projectProviderEvent(
         rigEvent = {
             contentIndex: index,
             messageId,
-            partial: partialMessage(run, now),
             type: "toolcall_start",
         };
     } else if (event.type === "toolcall_delta") {
@@ -690,7 +683,6 @@ function projectProviderEvent(
             contentIndex: index,
             delta: event.delta,
             messageId,
-            partial: partialMessage(run, now),
             type: "toolcall_delta",
         };
     } else if (event.type === "toolcall_end") {
@@ -707,7 +699,6 @@ function projectProviderEvent(
         rigEvent = {
             contentIndex: index,
             messageId,
-            partial: partialMessage(run, now),
             toolCall,
             type: "toolcall_end",
         };

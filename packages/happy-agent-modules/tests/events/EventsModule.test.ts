@@ -811,6 +811,66 @@ describe("EventsModule", () => {
         }
     });
 
+    it("keeps streaming provider deltas compact while retaining reset recovery state", async () => {
+        const events = new EventsModule({ now: () => 560 });
+        const database = moduleDatabase(
+            events.migrations ?? [],
+            "events-compact-provider-projection-test",
+        );
+        await database.ready;
+        try {
+            const hooks = await resolveModuleHooks(database.context, events);
+            const scope = scopeFor("agent-compact-projection");
+            await hooks.messageAcceptedTransact?.(database.context, scope, {
+                id: "message-compact-projection",
+                kind: "send",
+                message: { role: "user", content: [{ type: "text", text: "Project compactly." }] },
+            });
+
+            const prefix = "large-prefix-".repeat(10_000);
+            await hooks.onEvent?.(database.context, scope, { type: "text_start" });
+            await hooks.onEvent?.(database.context, scope, {
+                type: "text_delta",
+                delta: prefix,
+            });
+            await hooks.onEvent?.(database.context, scope, {
+                type: "text_delta",
+                delta: "x",
+            });
+            await hooks.onEvent?.(database.context, scope, { type: "text_end" });
+            await hooks.onEvent?.(database.context, scope, { type: "block_reset" });
+
+            const providerEvents =
+                events
+                    .replay(events.originCursor())
+                    ?.events.filter((event) => event.type === "provider.event") ?? [];
+            const compactDelta = providerEvents[2]?.payload as {
+                readonly rigEvent?: Record<string, unknown>;
+            };
+            expect(compactDelta.rigEvent).toEqual({
+                contentIndex: 0,
+                delta: "x",
+                messageId: "message-compact-projection-assistant",
+                type: "text_delta",
+            });
+            expect(JSON.stringify(compactDelta.rigEvent)).not.toContain(prefix);
+            for (const event of providerEvents.slice(0, 4)) {
+                expect(
+                    (event.payload as { readonly rigEvent?: Record<string, unknown> }).rigEvent,
+                ).not.toHaveProperty("partial");
+            }
+            const reset = providerEvents[4]?.payload as
+                | { readonly rigEvent?: Record<string, unknown> }
+                | undefined;
+            expect(reset?.rigEvent).toMatchObject({
+                partial: { content: [] },
+                type: "block_reset",
+            });
+        } finally {
+            database.close();
+        }
+    });
+
     it("does not carry a failed inference message into a later successful retry", async () => {
         const events = new EventsModule({ now: () => 575 });
         const database = moduleDatabase(events.migrations ?? [], "events-retry-state-test");
