@@ -24,6 +24,9 @@ export interface ComputeTextFileWrite {
  * other means — a patch whose context lines must match the file before a single byte is written
  * proves the same thing the read log proves, and demanding both would refuse a correct edit for
  * paperwork. It is not a way to write blind.
+ *
+ * `allowUnread` permits a blind first write but still refuses a stale write when the file was
+ * previously read and then changed. Claude uses that distinction in Full access.
  */
 export async function writeComputeTextFile(
     compute: Compute,
@@ -33,12 +36,15 @@ export async function writeComputeTextFile(
         readonly path: string;
         readonly content: string;
         readonly requireRead?: boolean;
+        readonly allowUnread?: boolean;
     },
 ): Promise<ComputeTextFileWrite> {
     const permissions = computePermissionsForContext(ctx);
     const filePath = resolveComputePath(options.path, compute.cwd, compute.fs.home);
     if (options.requireRead !== false) {
-        await reads.assertRead(ctx, compute.fs, permissions, filePath);
+        await reads.assertRead(ctx, compute.fs, permissions, filePath, {
+            ...(options.allowUnread === undefined ? {} : { allowUnread: options.allowUnread }),
+        });
     }
     const existed = await compute.fs.exists(permissions, filePath);
     const parent = parentComputePath(filePath);

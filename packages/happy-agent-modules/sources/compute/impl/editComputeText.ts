@@ -18,6 +18,9 @@ export interface ComputeTextEdit {
  * meant one of several and got all of them has silently changed code it never looked at. A
  * replacement identical to what it replaces is refused rather than reported as a change that
  * happened.
+ *
+ * `allowUnread` may be enabled only by a caller whose permission mode deliberately accepts a
+ * blind exact-match edit. A file that was read still carries its normal staleness guard.
  */
 export async function editComputeText(
     compute: Compute,
@@ -28,6 +31,7 @@ export async function editComputeText(
         readonly oldText: string;
         readonly newText: string;
         readonly replaceAll?: boolean;
+        readonly allowUnread?: boolean;
     },
 ): Promise<ComputeTextEdit> {
     if (options.oldText === options.newText) {
@@ -35,7 +39,13 @@ export async function editComputeText(
     }
     const permissions = computePermissionsForContext(ctx);
     const filePath = resolveComputePath(options.path, compute.cwd, compute.fs.home);
-    await reads.assertRead(ctx, compute.fs, permissions, filePath);
+    await reads.assertRead(
+        ctx,
+        compute.fs,
+        permissions,
+        filePath,
+        options.allowUnread === true ? { allowUnread: true } : {},
+    );
     const content = await compute.fs.readFile(permissions, filePath);
     const occurrences = countOccurrences(content, options.oldText);
     if (occurrences === 0) throw new Error(`This text does not appear in ${filePath}.`);

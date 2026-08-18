@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { agentPermissionMode, defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { Compute } from "../../Compute.js";
 import { describeComputePathAction } from "../../impl/describeComputePathAction.js";
@@ -65,6 +65,7 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
                 oldText: old_string,
                 newText: new_string,
                 ...(replace_all === undefined ? {} : { replaceAll: replace_all }),
+                allowUnread: agentPermissionMode(ctx) === "full_access",
             }),
         toLLM: (result) => [{ type: "text", text: `The file ${result.path} has been updated.` }],
     });

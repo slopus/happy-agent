@@ -1,3 +1,4 @@
+import { withAgentPermissionMode } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
@@ -119,6 +120,23 @@ describe("Claude's Read", () => {
 });
 
 describe("Claude's Write and Edit", () => {
+    it("refuses to edit a file this agent has not read in Auto", async () => {
+        const { compute, tool, call } = await machine();
+        compute.write("/workspace/app.ts", "const a = 1;");
+
+        await expect(
+            tool("Edit").execute(
+                ctx,
+                {
+                    file_path: "/workspace/app.ts",
+                    old_string: "const a = 1;",
+                    new_string: "const a = 2;",
+                },
+                call,
+            ),
+        ).rejects.toThrow(/has not been read yet/);
+    });
+
     it("refuses to overwrite a file this agent has not read", async () => {
         const { compute, tool, call } = await machine();
         compute.write("/workspace/app.ts", "const a = 1;");
@@ -130,6 +148,55 @@ describe("Claude's Write and Edit", () => {
                 call,
             ),
         ).rejects.toThrow(/has not been read yet/);
+    });
+
+    it("lets Full access edit and overwrite existing files without a dedicated Read", async () => {
+        const { compute, tool, call } = await machine();
+        const fullAccess = withAgentPermissionMode(ctx, "full_access");
+        compute.write("/workspace/edit.ts", "const a = 1;");
+        compute.write("/workspace/write.ts", "const b = 1;");
+
+        const edited = await tool("Edit").execute(
+            fullAccess,
+            {
+                file_path: "/workspace/edit.ts",
+                old_string: "const a = 1;",
+                new_string: "const a = 2;",
+            },
+            call,
+        );
+        const written = await tool("Write").execute(
+            fullAccess,
+            { file_path: "/workspace/write.ts", content: "const b = 2;" },
+            call,
+        );
+
+        expect(edited.replacements).toBe(1);
+        expect(written.created).toBe(false);
+        expect(compute.files.get("/workspace/edit.ts")?.content).toBe("const a = 2;");
+        expect(compute.files.get("/workspace/write.ts")?.content).toBe("const b = 2;");
+
+        compute.write("/workspace/edit.ts", "const a = 3;");
+        await expect(
+            tool("Edit").execute(
+                fullAccess,
+                {
+                    file_path: "/workspace/edit.ts",
+                    old_string: "const a = 3;",
+                    new_string: "const a = 4;",
+                },
+                call,
+            ),
+        ).rejects.toThrow(/changed since it was last read/);
+
+        compute.write("/workspace/write.ts", "const b = 3;");
+        await expect(
+            tool("Write").execute(
+                fullAccess,
+                { file_path: "/workspace/write.ts", content: "const b = 4;" },
+                call,
+            ),
+        ).rejects.toThrow(/changed since it was last read/);
     });
 
     it("creates a new file without any prior read", async () => {

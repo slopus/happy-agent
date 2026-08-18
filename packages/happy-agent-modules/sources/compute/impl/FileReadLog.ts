@@ -66,11 +66,13 @@ export class FileReadLog {
         fs: ComputeFileSystem,
         permissions: ComputePermissions,
         path: string,
+        options: { readonly allowUnread?: boolean } = {},
     ): Promise<void> {
         if (!(await fs.exists(permissions, path))) return;
         const entries = readLog(await this.#kv.read(ctx, READS_KEY));
         const known = entries.find((entry) => entry.path === path);
         if (known === undefined) {
+            if (options.allowUnread === true) return;
             throw new Error(`This file has not been read yet. Read it before changing it: ${path}`);
         }
         const stat = await fs.stat(permissions, path);

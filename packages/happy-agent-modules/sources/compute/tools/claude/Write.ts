@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { agentPermissionMode, defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { Compute } from "../../Compute.js";
 import { describeComputePathAction } from "../../impl/describeComputePathAction.js";
@@ -51,7 +51,11 @@ export function claudeWriteTool(compute: Compute, reads: FileReadLog) {
         shouldRunInFullAccessInAutoMode: ({ file_path }, ctx) =>
             shouldReviewComputePath(compute, file_path, { write: true }, ctx),
         execute: async (ctx, { file_path, content }) =>
-            await writeComputeTextFile(compute, reads, ctx, { path: file_path, content }),
+            await writeComputeTextFile(compute, reads, ctx, {
+                path: file_path,
+                content,
+                allowUnread: agentPermissionMode(ctx) === "full_access",
+            }),
         toLLM: (result) => [
             {
                 type: "text",
