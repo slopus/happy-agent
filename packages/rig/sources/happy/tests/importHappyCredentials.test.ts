@@ -131,6 +131,86 @@ describe("importHappyCredentials", () => {
         expect(imported?.credentials).toMatchObject({ token: "newer-rig-login" });
     });
 
+    it("imports an explicitly configured home that holds a different account, even when older", async () => {
+        const root = await mkdtemp(join(tmpdir(), "rig-happy-switch-"));
+        temporaryDirectories.push(root);
+        const home = join(root, "home");
+        const rigHome = join(home, ".happy", "rig");
+        const sourceHome = join(home, "dev-home");
+        const targetHome = join(rigHome, "happy");
+        await mkdir(sourceHome, { recursive: true });
+        await mkdir(targetHome, { recursive: true });
+        const source = {
+            secret: Buffer.alloc(32, 1).toString("base64"),
+            token: "dev-account",
+        };
+        const target = {
+            secret: Buffer.alloc(32, 2).toString("base64"),
+            token: "cached-prod-account",
+        };
+        const sourceCredentialsPath = join(sourceHome, "access.key");
+        const targetCredentialsPath = join(targetHome, "access.key");
+        await writeFile(sourceCredentialsPath, JSON.stringify(source));
+        await writeFile(targetCredentialsPath, JSON.stringify(target));
+        await utimes(sourceCredentialsPath, new Date(1_000), new Date(1_000));
+        await utimes(targetCredentialsPath, new Date(2_000), new Date(2_000));
+        await writeFile(
+            join(sourceHome, "settings.json"),
+            JSON.stringify({ serverUrl: "https://dev-account.example" }),
+        );
+        await writeFile(
+            join(targetHome, "settings.json"),
+            JSON.stringify({ serverUrl: "https://cached-prod.example" }),
+        );
+        await utimes(join(sourceHome, "settings.json"), new Date(1_000), new Date(1_000));
+        await utimes(join(targetHome, "settings.json"), new Date(2_000), new Date(2_000));
+
+        const imported = await importHappyCredentials({
+            environment: { HAPPY_HOME_DIR: sourceHome },
+            homeDirectory: home,
+            rigHome,
+        });
+
+        expect(imported).toMatchObject({
+            imported: true,
+            serverUrl: "https://dev-account.example",
+        });
+        expect(imported?.credentials).toMatchObject({ token: "dev-account" });
+    });
+
+    it("still protects a direct Rig login from an explicit home holding the same account", async () => {
+        const root = await mkdtemp(join(tmpdir(), "rig-happy-same-"));
+        temporaryDirectories.push(root);
+        const home = join(root, "home");
+        const rigHome = join(home, ".happy", "rig");
+        const sourceHome = join(home, "dev-home");
+        const targetHome = join(rigHome, "happy");
+        await mkdir(sourceHome, { recursive: true });
+        await mkdir(targetHome, { recursive: true });
+        const sharedSecret = Buffer.alloc(32, 1).toString("base64");
+        const sourceCredentialsPath = join(sourceHome, "access.key");
+        const targetCredentialsPath = join(targetHome, "access.key");
+        await writeFile(
+            sourceCredentialsPath,
+            JSON.stringify({ secret: sharedSecret, token: "older-token" }),
+        );
+        await writeFile(
+            targetCredentialsPath,
+            JSON.stringify({ secret: sharedSecret, token: "newer-token" }),
+        );
+        await utimes(sourceCredentialsPath, new Date(1_000), new Date(1_000));
+        await utimes(targetCredentialsPath, new Date(2_000), new Date(2_000));
+
+        const imported = await importHappyCredentials({
+            environment: { HAPPY_HOME_DIR: sourceHome },
+            homeDirectory: home,
+            rigHome,
+        });
+
+        expect(imported).toMatchObject({ imported: false });
+        expect(imported?.credentials).toMatchObject({ token: "newer-token" });
+    });
+
     it("keeps loading credentials when imported Happy settings cannot be written", async () => {
         const root = await mkdtemp(join(tmpdir(), "rig-happy-settings-write-"));
         temporaryDirectories.push(root);

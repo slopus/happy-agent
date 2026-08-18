@@ -28,9 +28,22 @@ export async function importHappyCredentials(
     const sourceSettings = await readJson(join(sourceHome, "settings.json"));
     let imported = false;
 
+    // The freshness gate below assumes source and target hold the same
+    // account, where the newer copy is the better one; a newer target also
+    // protects a direct `rig happy auth` login from being clobbered by a
+    // stale external home. Both assumptions break when HAPPY_HOME_DIR is set
+    // explicitly and names a different account: the user just said which
+    // account this daemon should use, and the cached copy being newer only
+    // records when it was cached. An explicit switch therefore always imports;
+    // the default ~/.happy keeps the protective freshness semantics.
+    const accountChanged =
+        Boolean(environment.HAPPY_HOME_DIR?.trim()) &&
+        holdsDifferentAccount(sourceCredentials, await readJson(targetPaths.credentialsPath));
+
     if (
         sourceCredentials !== undefined &&
-        (await isNewerThanTarget(join(sourceHome, "access.key"), targetPaths.credentialsPath))
+        (accountChanged ||
+            (await isNewerThanTarget(join(sourceHome, "access.key"), targetPaths.credentialsPath)))
     ) {
         try {
             const parsed = parseHappyCredentials(sourceCredentials);
@@ -42,7 +55,8 @@ export async function importHappyCredentials(
     }
     if (
         isRecord(sourceSettings) &&
-        (await isNewerThanTarget(join(sourceHome, "settings.json"), targetPaths.settingsPath))
+        (accountChanged ||
+            (await isNewerThanTarget(join(sourceHome, "settings.json"), targetPaths.settingsPath)))
     ) {
         try {
             await writeHappyJsonFile(targetPaths.settingsPath, sourceSettings);
@@ -75,6 +89,29 @@ export async function importHappyCredentials(
             ...(settingsServerUrl === undefined ? {} : { targetServerUrl: settingsServerUrl }),
         }),
     };
+}
+
+/**
+ * The encryption key is the account's identity: tokens rotate within an
+ * account, keys never do. Unreadable or malformed sides return false — the
+ * regular freshness gate and the malformed-source guard handle those.
+ */
+function holdsDifferentAccount(source: unknown, target: unknown): boolean {
+    const sourceIdentity = accountIdentity(source);
+    const targetIdentity = accountIdentity(target);
+    if (sourceIdentity === undefined || targetIdentity === undefined) return false;
+    return sourceIdentity !== targetIdentity;
+}
+
+function accountIdentity(value: unknown): string | undefined {
+    try {
+        const { stored } = parseHappyCredentials(value);
+        return stored.encryption === undefined
+            ? `legacy:${stored.secret}`
+            : `dataKey:${stored.encryption.publicKey}`;
+    } catch {
+        return undefined;
+    }
 }
 
 async function readJson(path: string): Promise<unknown | undefined> {

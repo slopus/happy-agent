@@ -14,15 +14,14 @@ describe("configureDevelopmentEnvironment", () => {
 
         expect(environment).toEqual({
             RIG_DEVELOPMENT_BUILD_ID: "existing-build",
-            RIG_DISABLE_HAPPY_SYNC: "1",
             RIG_SERVER_DIRECTORY: "/workspace/rig/.rig-dev",
         });
     });
 
-    it("preserves an explicit Happy development opt-in", async () => {
+    it("preserves an explicit Happy development opt-out", async () => {
         const environment = {
             RIG_DEVELOPMENT_BUILD_ID: "existing-build",
-            RIG_DISABLE_HAPPY_SYNC: "0",
+            RIG_DISABLE_HAPPY_SYNC: "1",
         };
 
         await configureDevelopmentEnvironment({
@@ -30,7 +29,7 @@ describe("configureDevelopmentEnvironment", () => {
             repositoryRoot: "/workspace/rig",
         });
 
-        expect(environment.RIG_DISABLE_HAPPY_SYNC).toBe("0");
+        expect(environment.RIG_DISABLE_HAPPY_SYNC).toBe("1");
     });
 
     it("replaces inherited global Rig paths with checkout-local development state", async () => {
@@ -48,7 +47,6 @@ describe("configureDevelopmentEnvironment", () => {
 
         expect(environment).toEqual({
             RIG_DEVELOPMENT_BUILD_ID: "existing-build",
-            RIG_DISABLE_HAPPY_SYNC: "1",
             RIG_SERVER_DIRECTORY: "/workspace/rig/.rig-dev",
         });
         expect(getEnvironmentLocalServerPaths(environment, 501)).toEqual({
