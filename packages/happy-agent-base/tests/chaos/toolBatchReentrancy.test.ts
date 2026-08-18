@@ -34,6 +34,60 @@ function resultsIn(persistence: InMemoryPersistence): SessionToolResultMessage[]
  * it refuses outright, and what it does with a batch whose calls cannot be told apart.
  */
 describe("tool batch concurrency and re-entrancy", () => {
+    it("commits simultaneous tool results exactly once and in call order", async () => {
+        const persistence = new InMemoryPersistence();
+        let entered = 0;
+        let release!: () => void;
+        const together = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const tool = defineAgentTool({
+            name: "same_tick",
+            parameters: Type.Object({}),
+            returnType: Type.Object({ value: Type.String() }),
+            shouldReviewInAutoMode: () => false,
+            execute: async (_callCtx, _args, call) => {
+                entered += 1;
+                if (entered === 2) release();
+                await together;
+                return { value: call.providerCallId };
+            },
+            toLLM: (result) => [{ type: "text", text: result.value }],
+        });
+        const agent = await AgentBase.create(ctx, {
+            id: "simultaneous-result-commit",
+            providers: providersOf(
+                new ScriptedProvider([
+                    toolCallsTurn([
+                        { callId: "first", name: "same_tick" },
+                        { callId: "second", name: "same_tick" },
+                    ]),
+                    textTurn("after"),
+                ]),
+            ),
+            provider: "scripted",
+            persistence,
+            initialState: { tools: [tool] },
+        });
+
+        await agent.send(ctx, user("go"), { await: true });
+        await agent.waitForIdle();
+        await agent.close();
+
+        expect(resultsIn(persistence)).toEqual([
+            {
+                role: "tool",
+                callId: "first",
+                content: [{ type: "text", text: "first" }],
+            },
+            {
+                role: "tool",
+                callId: "second",
+                content: [{ type: "text", text: "second" }],
+            },
+        ]);
+    });
+
     it("keeps each call of a concurrent batch in its own persistence scope", async () => {
         const observed: unknown[] = [];
         let entered = 0;

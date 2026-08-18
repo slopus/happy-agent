@@ -3334,64 +3334,78 @@ export class AgentBase {
         // would land behind the failure record, where no later turn could make sense of it. So
         // the first failed commit closes the batch to every result that was not committed yet.
         let commitFailed = false;
-        const commitReady = async (): Promise<void> => {
-            if (commitFailed) return;
-            try {
-                await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
-                    while (committed < entries.length) {
-                        const entry = entries[committed];
-                        const proposed = results[committed];
-                        if (entry === undefined || proposed === undefined) return;
-                        let winner = proposed;
-                        await this.#recordTransaction(lockCtx, async (txCtx) => {
-                            const resultKey = this.#toolResultKey(entry.id);
-                            await this.#persistence.writeValueIfAbsent(txCtx, resultKey, proposed);
-                            const claims = await this.#persistence.readValues(txCtx, resultKey);
-                            const stored = claims.find(({ key }) => key === resultKey)?.value;
-                            if (!Value.Check(storedToolResultSchema, stored)) {
-                                throw new Error(
-                                    `The committed result claim for tool "${entry.id}" is not valid.`,
+        // Tool execution remains parallel, but the ordered conversation tail has one drainer.
+        // Without this queue, two same-tick results can both read the same `committed` index,
+        // append the first result twice, and only then advance it.
+        let commitQueue = Promise.resolve();
+        const commitReady = (): Promise<void> => {
+            const draining = commitQueue.then(async () => {
+                if (commitFailed) return;
+                try {
+                    await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
+                        while (committed < entries.length) {
+                            const entry = entries[committed];
+                            const proposed = results[committed];
+                            if (entry === undefined || proposed === undefined) return;
+                            let winner = proposed;
+                            await this.#recordTransaction(lockCtx, async (txCtx) => {
+                                const resultKey = this.#toolResultKey(entry.id);
+                                await this.#persistence.writeValueIfAbsent(
+                                    txCtx,
+                                    resultKey,
+                                    proposed,
                                 );
-                            }
-                            const result = stored as SessionToolResultMessage;
-                            if (result.callId !== entry.providerCallId) {
-                                throw new Error(
-                                    `The committed result claim for tool "${entry.id}" has the wrong provider call ID.`,
+                                const claims = await this.#persistence.readValues(txCtx, resultKey);
+                                const stored = claims.find(({ key }) => key === resultKey)?.value;
+                                if (!Value.Check(storedToolResultSchema, stored)) {
+                                    throw new Error(
+                                        `The committed result claim for tool "${entry.id}" is not valid.`,
+                                    );
+                                }
+                                const result = stored as SessionToolResultMessage;
+                                if (result.callId !== entry.providerCallId) {
+                                    throw new Error(
+                                        `The committed result claim for tool "${entry.id}" has the wrong provider call ID.`,
+                                    );
+                                }
+                                winner = result;
+                                results[committed] = result;
+                                await this.#appendRecord(txCtx, {
+                                    type: "tool",
+                                    message: result,
+                                });
+                                // The call is answered, so both its retry record and its temporary
+                                // invocation store disappear in this same result transaction.
+                                await this.#persistence.deleteValue(txCtx, entry.key);
+                                await this.#persistence.deleteValue(txCtx, resultKey);
+                                await this.#invokeToolTransactHook(
+                                    txCtx,
+                                    entry.id,
+                                    entry.providerCallId,
+                                    this.#hooks.afterToolCallTransact,
+                                    result,
                                 );
-                            }
-                            winner = result;
-                            results[committed] = result;
-                            await this.#appendRecord(txCtx, {
-                                type: "tool",
-                                message: result,
+                                await this.#kv.scoped("call", entry.id).clear(txCtx);
                             });
-                            // The call is answered, so both its retry record and its temporary
-                            // invocation store disappear in this same result transaction.
-                            await this.#persistence.deleteValue(txCtx, entry.key);
-                            await this.#persistence.deleteValue(txCtx, resultKey);
-                            await this.#invokeToolTransactHook(
-                                txCtx,
-                                entry.id,
-                                entry.providerCallId,
-                                this.#hooks.afterToolCallTransact,
-                                result,
-                            );
-                            await this.#kv.scoped("call", entry.id).clear(txCtx);
-                        });
-                        this.#messages.push(winner);
-                        committed += 1;
-                    }
-                    // The batch is fully answered, so its results are what the model is owed a
-                    // response to. Recording that here means a crash between the last result and
-                    // the next request resumes as an inference rather than as a finished batch.
-                    if (committed === entries.length) {
-                        await this.#recordPending(lockCtx, "inference");
-                    }
-                });
-            } catch (error: unknown) {
-                commitFailed = true;
-                throw error;
-            }
+                            this.#messages.push(winner);
+                            committed += 1;
+                        }
+                        // The batch is fully answered, so its results are what the model is owed a
+                        // response to. Recording that here means a crash between the last result and
+                        // the next request resumes as an inference rather than as a finished batch.
+                        if (committed === entries.length) {
+                            await this.#recordPending(lockCtx, "inference");
+                        }
+                    });
+                } catch (error: unknown) {
+                    commitFailed = true;
+                    throw error;
+                }
+            });
+            // A failed drainer still releases the queue. Its caller propagates the failure while
+            // later finishers observe `commitFailed` and leave the append-only tail alone.
+            commitQueue = draining.catch(() => undefined);
+            return draining;
         };
         this.#toolsRunning += 1;
         const batch = Promise.all(
