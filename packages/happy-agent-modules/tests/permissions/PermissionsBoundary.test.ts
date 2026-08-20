@@ -332,6 +332,7 @@ describe("permissions boundary contracts", () => {
         expect(readOnly).toContain("Nothing on the host is writable");
         expect(workspaceWrite).toContain("Workspace write mode");
         expect(workspaceWrite).toContain("Writes are confined to the working directory");
+        expect(workspaceWrite).toContain("Git control paths are read-only");
         expect(auto).toContain("Auto mode");
         expect(auto).toContain("reviewed automatically");
         expect(fullAccess).toContain("Full access mode");

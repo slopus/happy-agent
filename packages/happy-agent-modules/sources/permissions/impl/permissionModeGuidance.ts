@@ -79,7 +79,7 @@ function sandboxLimitsInstructions(mode: Exclude<AgentPermissionMode, "full_acce
         "Shell commands run in a sandbox with these limits:",
         mode === "read_only"
             ? "- Nothing on the host is writable except temporary directories, and on macOS no local socket may be created."
-            : "- Writes are confined to the working directory, its Git control directory, and temporary directories. Everything else on the host is readable but not writable.",
+            : "- Writes are confined to the working directory and temporary directories; Git control paths are read-only. Everything else on the host is readable but not writable.",
         "- Put any local unix socket inside the working directory. On macOS a socket anywhere else is refused, including one in a temporary directory. Never rely on reaching the host's own sockets, such as the Docker daemon or the SSH agent.",
         "- On macOS, binding a local TCP or UDP port is refused unless the user has enabled local binding in configuration. On Linux and in Docker, a listener is reachable only from inside that command.",
         "- Outbound network access is blocked except for domains and ports the user has allowed, which are reached through a managed proxy.",
