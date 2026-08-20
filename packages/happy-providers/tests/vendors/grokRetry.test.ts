@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { APIConnectionError } from "openai";
 
 import { delayBeforeGrokRetry, isRetryableGrokError } from "@/vendors/grok/impl/grokRetry.js";
 import { isRetryableGrokCompactionError } from "@/vendors/grok/errors/grokErrors.js";
@@ -25,40 +26,85 @@ describe("Grok retry contract", () => {
         expect(isRetryableGrokCompactionError(message)).toBe(true);
     });
 
-    it.each([429, 500, 502, 503, 504, 520])(
+    it.each([408, 429, 500, 502, 503, 504, 520, 599])(
         "retries production HTTP %s before output",
         (status) => {
             expect(isRetryableGrokError({ status, message: "request failed" })).toBe(true);
         },
     );
 
-    it.each([400, 401, 403, 404, 408, 409, 422, 501, 505, 599])(
+    it.each([400, 401, 403, 404, 409, 413, 422, 451])(
         "does not retry terminal HTTP %s",
         (status) => {
             expect(isRetryableGrokError({ status, message: "request failed" })).toBe(false);
         },
     );
 
-    it("retries nested transport failures", () => {
-        expect(
-            isRetryableGrokError({
-                message: "request failed",
-                cause: { code: "ECONNRESET" },
-            }),
-        ).toBe(true);
+    it("reads the status out of a deeply wrapped rejection", () => {
+        expect(isRetryableGrokError(new Error("request failed", { cause: { status: 400 } }))).toBe(
+            false,
+        );
     });
 
-    it("never retries aborts", () => {
-        expect(isRetryableGrokError({ name: "AbortError", status: 503 })).toBe(false);
+    it.each([
+        ["a named socket failure", Object.assign(new Error("read"), { code: "ECONNRESET" })],
+        [
+            "a TLS alert nobody enumerated",
+            Object.assign(new Error("TLS alert: bad record mac"), {
+                code: "ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC",
+            }),
+        ],
+        ["a protocol error", Object.assign(new Error("stream failed"), { code: "EPROTO" })],
+        ["an error with no code at all", new Error("something went sideways")],
+        ["an SDK connection error", new APIConnectionError({ cause: new Error("fetch failed") })],
+        ["a bare string", "the socket hung up"],
+        ["a value that is not an error", { nothing: "useful" }],
+    ])("retries %s, because nothing says it is hopeless", (_description, error) => {
+        expect(isRetryableGrokError(error)).toBe(true);
     });
 
-    it("honors the proxy's explicit no-retry header", () => {
+    it.each([
+        "This model's maximum context length is 500000 tokens",
+        "Your credit balance is too low to continue",
+        "subscription:free-usage-exhausted",
+    ])("does not retry the permanently hopeless: %s", (message) => {
+        expect(isRetryableGrokError(new Error(message))).toBe(false);
+    });
+
+    it("finds a hopeless meaning wrapped inside a transport error", () => {
         expect(
-            isRetryableGrokError({
-                status: 503,
-                headers: { "x-should-retry": "false" },
-            }),
+            isRetryableGrokError(
+                new Error("fetch failed", {
+                    cause: new Error("prompt is too long for this model"),
+                }),
+            ),
         ).toBe(false);
+    });
+
+    it.each([
+        ["a bare abort", { name: "AbortError", status: 503 }],
+        [
+            "an abort wrapped by the SDK",
+            new APIConnectionError({
+                cause: new DOMException("The request was cancelled.", "AbortError"),
+            }),
+        ],
+    ])("never retries %s", (_description, error) => {
+        expect(isRetryableGrokError(error)).toBe(false);
+    });
+
+    it.each([
+        ["directly on the rejection", { status: 503, headers: { "x-should-retry": "false" } }],
+        [
+            "on a nested cause",
+            new APIConnectionError({
+                cause: Object.assign(new Error("The proxy rejected the retry."), {
+                    headers: { "x-should-retry": "false" },
+                }),
+            }),
+        ],
+    ])("honors an explicit no-retry directive %s", (_description, error) => {
+        expect(isRetryableGrokError(error)).toBe(false);
     });
 
     it("honors the proxy retry delay", async () => {

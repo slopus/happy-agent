@@ -43,10 +43,12 @@ message order, request options, stable headers, and event structure remain real.
 
 ## Supported production surface
 
-The provider supports only `grok-4.5`. The model catalog is curated by Rig rather than fetched
-from Grok at runtime. `GrokProvider` accepts a credential, optional endpoint, and optional model.
-A model must be supplied either on the provider or on each inference run. Compaction uses the
-provider model when configured and otherwise reuses the model selected by the latest run.
+The provider supports the curated `grok-4.6`, `grok-build`, `grok-4.5`, and
+`grok-composer-2.5-fast` models. The model catalog is curated by Rig rather than fetched from Grok
+at runtime. Protocol reproduction remains trace-driven against Grok 4.5. `GrokProvider` accepts a
+credential, optional endpoint, and optional model. A model must be supplied either on the provider
+or on each inference run. Compaction uses the provider model when configured and otherwise reuses
+the model selected by the latest run.
 
 The default endpoint is `https://cli-chat-proxy.grok.com/v1`. A custom endpoint is useful for
 tests and compatible gateways, but proxy-only authentication headers are emitted only for the
@@ -232,11 +234,16 @@ Retries are owned by `GrokSession`, not by the outer agent loop. Ordinary infere
 retryable transport failures before response content begins. It never replays a completed tool,
 command, or other session mutation.
 
-The captured production policy is represented by `impl/grokRetry.ts`:
+`impl/grokRetry.ts` answers whether a rejection may be sent again, and its default is yes. Only
+what can be named as hopeless is terminal, because a list of retryable transport failures goes
+stale every time the network finds a new way to break, and each code missing from it is a turn
+lost to a blip the next attempt would have survived:
 
-- retryable HTTP statuses are 429, 500, 502, 503, 504, and 520;
-- common DNS, connection, socket, timeout, and premature-stream failures are retryable;
-- aborts and `x-should-retry: false` are terminal;
+- aborts anywhere in the cause chain, and `x-should-retry: false`, are terminal;
+- every 4xx is terminal except 408 and 429, which are themselves requests to try again;
+- a context overflow or an exhausted balance is terminal, since neither changes on a replay;
+- everything else is retried, including 5xx, unrecognized socket and TLS codes, and errors
+  carrying no code at all;
 - `retry-after-ms` and `retry-after` are honored;
 - otherwise delay starts at two seconds, doubles to a 30-second cap, and adds jitter;
 - retries use the shared inference budget, defaulting to ten retries after the initial request;
@@ -380,17 +387,19 @@ responses, typed failures, and missing terminal events.
 compaction, three-attempt failure, resampling, custom retention instructions, abort safety,
 summary cleanup, existing-reminder repositioning, and turn-index behavior.
 
-`tests/vendors/grokRetry.test.ts` covers the retry classification and delay contract.
-`tests/grokImages.test.ts` covers native image-error recovery, and
+`tests/vendors/grokRetry.test.ts` covers the retry classification and delay contract, and
+`tests/vendors/grokConnectionRetry.test.ts` covers rebuilding a dropped connection as HTTP/1 and
+completing the retry. `tests/grokImages.test.ts` covers native image-error recovery, and
 `tests/grokCredential.test.ts` covers OIDC refresh after an unauthorized response.
-`tests/grok.live.test.ts` separately verifies real tool-less inference, encrypted-reasoning tool
-continuation, and structural compaction against Grok 4.5.
+`tests/grok.live.test.ts` separately verifies real tool-less inference against Grok 4.6, plus
+encrypted-reasoning tool continuation and structural compaction against Grok 4.5.
 
 ## Intentional limitations
 
 - Rig owns transcript persistence, tool execution, and permissions; Grok CLI local session files,
   native tools, and its permission UI are not authoritative.
-- Only Grok 4.5 is supported. Models are not discovered from Grok during startup.
+- Only the four curated models above are supported. Models are not discovered from Grok during
+  startup.
 - The complete vanilla prompt and tools are exported assets, not hidden defaults. Server search is
   present only when the session tool catalog contains the corresponding native `server`
   descriptors.

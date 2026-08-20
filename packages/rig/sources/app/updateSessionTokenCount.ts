@@ -22,14 +22,17 @@ export function updateSessionTokenCount(
         return { ...previous, lastContextTokens: 0 };
     }
     const contextTokens = Math.max(0, update.contextTokens);
+    if (update.type === "compaction") {
+        return { lastContextTokens: contextTokens, totalTokens: previous.totalTokens };
+    }
 
-    // A request's total describes the context it processed, and later requests replay the same
-    // grown context, so the session counts its footprint once rather than summing every replay.
+    // Later requests replay the grown context, so count the exact provider measurement once
+    // rather than summing every inference in a tool loop. Older callers without a measurement
+    // fall back to the request total, whose input is already inclusive of cache tokens.
+    const measuredTokens =
+        contextTokens > 0 ? contextTokens : Math.max(0, update.usage.totalTokens);
     return {
         lastContextTokens: contextTokens,
-        totalTokens:
-            update.type === "compaction"
-                ? previous.totalTokens
-                : Math.max(previous.totalTokens, update.usage.totalTokens),
+        totalTokens: Math.max(previous.totalTokens, measuredTokens),
     };
 }

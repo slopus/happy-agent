@@ -103,6 +103,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
     #sendOwnsLoopEvents = false;
     #resyncing: Promise<AgentSnapshot> | undefined;
     #selection: PendingSelection | undefined;
+    #contextTokens: number | undefined;
 
     constructor(options: RemoteAgentOptions) {
         this.#agent = options.agent;
@@ -113,6 +114,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
         this.#draft = structuredClone(options.bootstrap.draft);
         this.#lastMode = options.bootstrap.mode;
         this.#pending = structuredClone(options.bootstrap.pending);
+        this.#contextTokens = options.bootstrap.context?.contextTokens;
         this.id = options.agent.id;
         for (const run of options.history.runs) {
             for (const message of run.messages) this.#messages.set(message.id, message);
@@ -269,7 +271,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                     },
                     input: usage.input,
                     output: usage.output,
-                    totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+                    totalTokens: usage.input + usage.output,
                 },
             })),
         );
@@ -290,7 +292,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
             quotas: await this.providerQuotas(),
             sessionTokenCount: {
                 lastContextTokens: response.context?.contextTokens ?? 0,
-                totalTokens: groups.reduce((total, group) => total + group.usage.totalTokens, 0),
+                totalTokens: response.context?.contextTokens ?? 0,
             },
         };
     }
@@ -522,6 +524,10 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
         if (!belongsToAgent(event, this.id)) return undefined;
         this.#applyResourceEvent(event);
         this.#applyBootstrapEvent(event);
+        if (event.type === "agent.context.updated") {
+            this.#contextTokens = event.payload.context?.contextTokens;
+            return undefined;
+        }
         if (event.type === "run.finished") {
             if (event.payload.run.status === "failed") {
                 // A failed run's service record is its error report, rendered as one.
@@ -546,7 +552,13 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
             if (cached === undefined || usage === undefined) return undefined;
             const projected = toRigMessage(cached);
             if (projected.role !== "agent") return undefined;
-            return { ...projected, usage };
+            return {
+                ...projected,
+                usage,
+                ...(this.#contextTokens === undefined
+                    ? {}
+                    : { contextTokens: this.#contextTokens }),
+            };
         }
         const message = this.#projectMessageEvent(event);
         if (message !== undefined && message !== MESSAGE_DELETED && event.type !== "message.delta")
@@ -677,6 +689,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
         this.#draft = structuredClone(bootstrap.draft);
         this.#lastMode = bootstrap.mode;
         this.#pending = structuredClone(bootstrap.pending);
+        this.#contextTokens = bootstrap.context?.contextTokens;
         this.#history = history;
         this.#messages.clear();
         this.#messageEventResults.clear();
@@ -824,7 +837,7 @@ function flattenRunUsage(usage: UsageBreakdown): Usage | undefined {
         }
     }
     if (!observed) return undefined;
-    total.totalTokens = total.input + total.output + total.cacheRead + total.cacheWrite;
+    total.totalTokens = total.input + total.output;
     return total;
 }
 

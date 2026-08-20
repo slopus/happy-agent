@@ -47,7 +47,7 @@ describe("settings reveal reasoning and usage without corrupting layout", () => 
 
         gym.terminal.type("/usage");
         gym.terminal.press("enter");
-        const usage = await gym.terminal.waitForText("Session tokens: 1.4k");
+        const usage = await gym.terminal.waitForText("Session tokens: 1.3k");
         expect(usage.text.replace(/\s+/gu, " ")).toContain(
             "1.2k input · 100 output · 40 cache read · 30 cache write",
         );

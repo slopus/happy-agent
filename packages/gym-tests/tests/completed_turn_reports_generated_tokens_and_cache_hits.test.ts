@@ -16,11 +16,11 @@ describe("completed turn usage summary", () => {
             inference: [
                 {
                     content: [{ text: "FIRST_TURN_DONE", type: "text" }],
-                    usage: usage({ cacheRead: 100, input: 900, output: 300 }),
+                    usage: usage({ cacheRead: 100, input: 1_000, output: 300 }),
                 },
                 {
                     content: [{ text: "SECOND_TURN_DONE", type: "text" }],
-                    usage: usage({ cacheRead: 900, input: 100, output: 300 }),
+                    usage: usage({ cacheRead: 900, input: 1_000, output: 300 }),
                 },
             ],
         });
@@ -53,7 +53,7 @@ describe("completed turn usage summary", () => {
             inference: [
                 {
                     content: [{ text: "QUIET_TURN_DONE", type: "text" }],
-                    usage: usage({ cacheRead: 100, input: 900, output: 300 }),
+                    usage: usage({ cacheRead: 100, input: 1_000, output: 300 }),
                 },
             ],
         });
@@ -84,6 +84,6 @@ function usage(values: { cacheRead: number; input: number; output: number }): {
         cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
         input: values.input,
         output: values.output,
-        totalTokens: values.cacheRead + values.input + values.output,
+        totalTokens: values.input + values.output,
     };
 }

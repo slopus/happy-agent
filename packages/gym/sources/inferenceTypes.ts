@@ -11,9 +11,15 @@ export interface GymInferenceMessage {
     [key: string]: unknown;
 }
 
+export interface GymInferenceTool {
+    name: string;
+    [key: string]: unknown;
+}
+
 export interface GymInferenceContext {
     messages: readonly GymInferenceMessage[];
     systemPrompt?: string;
+    tools?: readonly GymInferenceTool[];
     [key: string]: unknown;
 }
 

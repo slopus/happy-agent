@@ -10,6 +10,7 @@
         "test:gym:api": "node --experimental-strip-types scripts/runHappyApiSuite.ts",
         "test:gym:fast": "node runGymLane.ts fast",
         "test:gym:heavy": "pnpm run prepare:image && RIG_GYM_SKIP_BUILD=1 node runGymLane.ts heavy",
+        "test:gym:live:grok": "RIG_LIVE_TEST=1 vitest run tests/grok_4_6_real_inference_uses_terminal_and_tool.live.test.ts --testTimeout=300000",
         "test:gym:slow": "node runGymLane.ts slow",
         "test:gym:full": "pnpm run test:gym:fast && pnpm run test:gym:slow && pnpm run test:gym:docker",
         "test:gym:docker": "pnpm run prepare:image && RIG_GYM_SKIP_BUILD=1 node runGymLane.ts docker"

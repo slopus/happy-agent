@@ -1,54 +1,53 @@
-import { isEmptyResponseError } from "@/core/EmptyResponseError.js";
+import {
+    grokErrorStatus,
+    isGrokBillingError,
+    isGrokContextOverflowError,
+} from "@/vendors/grok/errors/grokErrors.js";
 import { GROK_INFERENCE_RETRY_INITIAL_DELAY_MS } from "@/vendors/grok/impl/grokConstants.js";
 
-const RETRYABLE_ERROR_CODES = new Set([
-    "EAI_AGAIN",
-    "ECONNABORTED",
-    "ECONNREFUSED",
-    "ECONNRESET",
-    "EHOSTUNREACH",
-    "ENETDOWN",
-    "ENETUNREACH",
-    "ENOTFOUND",
-    "EPIPE",
-    "ETIMEDOUT",
-    "UND_ERR_BODY_TIMEOUT",
-    "UND_ERR_CONNECT_TIMEOUT",
-    "UND_ERR_HEADERS_TIMEOUT",
-    "UND_ERR_SOCKET",
-]);
-
-const TRANSPORT_MESSAGE_PATTERNS = [
-    /^fetch failed$/iu,
-    /^Response stream closed before completion\.$/iu,
-    /^WebSocket error$/iu,
-    /^WebSocket closed(?: 1006)?$/iu,
-    /^stream disconnected before completion(?:: .+)?$/iu,
-];
-
+/**
+ * Whether sending this request again could plausibly succeed.
+ *
+ * The answer defaults to yes, and only the rejections we can name as hopeless say no. An
+ * enumeration of retryable transport failures is the wrong shape for this question: the network
+ * invents new ways to break faster than anyone maintains a list, and every code missing from such
+ * a list becomes a turn that dies on a blip a second attempt would have survived. Being wrong in
+ * this direction costs one bounded, backed-off request; being wrong in the other costs the user
+ * their work. `GrokSession` caps the attempts, so an error nobody recognizes is retried a few
+ * times and then surfaces on its own.
+ *
+ * This is the same default `isRetryableGrokCompactionError` already takes for compaction.
+ */
 export function isRetryableGrokError(value: unknown): boolean {
-    if (isEmptyResponseError(value)) return true;
-    if (isAbortError(value)) return false;
+    // A cancelled request is not a failed one. This outranks everything below, because an abort
+    // that races a real failure still carries that failure's status and headers.
+    if (hasAbortError(value, new Set())) return false;
+    // The server is entitled to say a request must not be sent again.
     if (errorHeader(value, "x-should-retry")?.toLowerCase() === "false") return false;
 
     const status = grokErrorStatus(value);
-    if ([429, 500, 502, 503, 504, 520].includes(status ?? -1)) {
-        return true;
-    }
-    const code = errorCode(value);
-    if (code !== undefined && RETRYABLE_ERROR_CODES.has(code)) return true;
+    if (status !== undefined && isPermanentClientStatus(status)) return false;
 
+    // A context that does not fit, and a balance that cannot pay, are identical on every attempt.
     const message = errorMessage(value);
-    return (
-        message !== undefined && TRANSPORT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))
-    );
+    if (
+        message !== undefined &&
+        (isGrokContextOverflowError(message) || isGrokBillingError(message))
+    ) {
+        return false;
+    }
+
+    return true;
 }
 
-export function grokErrorStatus(value: unknown): number | undefined {
-    if (!isRecord(value)) return undefined;
-    if (typeof value.status === "number") return value.status;
-    if (typeof value.statusCode === "number") return value.statusCode;
-    return grokErrorStatus(value.cause);
+/**
+ * The client rejections a byte-identical retry cannot fix.
+ *
+ * Every 4xx qualifies except the two that are themselves requests to try again: 408 says the
+ * server gave up waiting for this request, and 429 says to send the same one later.
+ */
+function isPermanentClientStatus(status: number): boolean {
+    return status >= 400 && status < 500 && status !== 408 && status !== 429;
 }
 
 export function delayBeforeGrokRetry(
@@ -101,6 +100,12 @@ function errorHeader(value: unknown, name: string): string | undefined {
     return errorHeader(value.cause, name);
 }
 
+/**
+ * The complete text of a rejection, including the causes wrapped inside it.
+ *
+ * The SDK buries the upstream sentence several errors deep, and the meanings read here are
+ * substrings rather than whole messages, so joining the chain finds them wherever they landed.
+ */
 function errorMessage(value: unknown): string | undefined {
     if (typeof value === "string") return value;
     if (value instanceof Error) {
@@ -111,15 +116,16 @@ function errorMessage(value: unknown): string | undefined {
     return undefined;
 }
 
-function errorCode(value: unknown): string | undefined {
-    if (!isRecord(value)) return undefined;
-    if (typeof value.code === "string") return value.code;
-    return errorCode(value.cause);
-}
-
 function isAbortError(value: unknown): boolean {
     if (!isRecord(value)) return false;
     return value.name === "AbortError" || value.code === "ABORT_ERR";
+}
+
+function hasAbortError(value: unknown, seen: Set<object>): boolean {
+    if (isAbortError(value)) return true;
+    if (!isRecord(value) || seen.has(value)) return false;
+    seen.add(value);
+    return hasAbortError(value.cause, seen);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

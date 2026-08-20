@@ -262,7 +262,7 @@ function defaultModelId(
     if (providerId === "bedrock") return "openai/gpt-5.6-sol";
     if (providerId === "claude") return "anthropic/sonnet-5";
     if (providerId === "codex") return "openai/gpt-5.6-sol";
-    if (providerId === "grok") return "xai/grok-4.5";
+    if (providerId === "grok") return "xai/grok-4.6";
     if (providerId === "kimi") return "moonshot/kimi-k3";
     return "openai/gym";
 }

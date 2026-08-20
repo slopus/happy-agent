@@ -11,9 +11,9 @@ describe("formatTurnUsageSummary", () => {
                 cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
                 input: 1_000,
                 output: 3_120,
-                totalTokens: 5_120,
+                totalTokens: 4_120,
             }),
-        ).toBe("3.1k generated · 45% cache hit");
+        ).toBe("3.1k generated · 90% cache hit");
     });
 
     it("reports no cache hits when nothing cache-eligible was sent", () => {

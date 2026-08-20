@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { GrokProvider, GrokSessionCredential } from "@slopus/happy-providers";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
     ConfigModule,
@@ -13,6 +14,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all(
         temporaryDirectories.splice(0).map((path) => rm(path, { force: true, recursive: true })),
     );
@@ -248,6 +250,27 @@ describe("ConfigModule", () => {
             type: "codex",
         });
         expect(configuration.values.providers.codex).not.toHaveProperty("apiKey");
+    });
+
+    it("uses the ambient Grok CLI session without an explicit auth file", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-grok-session-"));
+        temporaryDirectories.push(root);
+        await writeFile(
+            join(root, "auth.json"),
+            JSON.stringify({
+                "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+                    key: "grok-session-token",
+                },
+            }),
+        );
+        vi.stubEnv("GROK_HOME", root);
+        vi.stubEnv("XAI_API_KEY", "");
+
+        const config = await ConfigModule.load(join(root, ".happy"));
+        const provider = await config.providers.resolve("grok", "xai/grok-4.6");
+
+        expect(provider).toBeInstanceOf(GrokProvider);
+        expect((provider as GrokProvider).credential).toBeInstanceOf(GrokSessionCredential);
     });
 
     it("rejects a TOML date table for a known scalar and bounds unknown metadata", () => {

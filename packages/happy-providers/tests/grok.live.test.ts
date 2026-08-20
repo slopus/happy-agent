@@ -21,7 +21,7 @@ async function resolveGrokCredential(): Promise<GrokCredential | null> {
 }
 
 describeLive("GrokProvider live", () => {
-    it("streams tool-less inference against Grok Build", async () => {
+    it("streams tool-less inference against Grok 4.6", async () => {
         const credential = await resolveGrokCredential();
         if (credential === null) {
             expect.fail("RIG_LIVE_TEST=1 is set but no grok credentials were found");
@@ -40,12 +40,16 @@ describeLive("GrokProvider live", () => {
                         {
                             role: "user",
                             content: [
-                                { type: "text" as const, text: "Reply with exactly: grok live ok" },
+                                {
+                                    type: "text" as const,
+                                    text: "Reply with exactly: grok 4.6 live ok",
+                                },
                             ],
                         },
                     ],
                 },
-                model: "grok-4.5",
+                effort: "high",
+                model: "grok-4.6",
             }),
         );
 
@@ -55,7 +59,7 @@ describeLive("GrokProvider live", () => {
         expect(tokenUsage).toBeDefined();
 
         const text = textFromSessionEvents(events);
-        expect(text.toLowerCase()).toContain("grok live ok");
+        expect(text.toLowerCase()).toContain("grok 4.6 live ok");
         if (tokenUsage?.type === "token_usage") {
             expect(tokenUsage.usage.totalTokens).toBeGreaterThan(0);
         }

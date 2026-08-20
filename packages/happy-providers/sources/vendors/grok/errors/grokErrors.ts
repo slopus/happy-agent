@@ -3,7 +3,6 @@ import {
     extractProviderRetryResetAt,
 } from "@/core/extractProviderErrorDiagnostics.js";
 import type { SessionErrorKind, SessionProviderError } from "@/core/SessionEvent.js";
-import { grokErrorStatus } from "@/vendors/grok/impl/grokRetry.js";
 
 const CONTEXT_OVERFLOW_PATTERNS = [
     "too long for this model",
@@ -59,6 +58,19 @@ const PERMANENT_COMPACTION_PATTERNS = [
     "model stopped responding",
     "response truncated by max_tokens",
 ] as const;
+
+/**
+ * The HTTP status an upstream rejection carries, wherever it sits in the cause chain.
+ *
+ * The SDK wraps a failed request several errors deep, so the status is rarely on the object that
+ * was thrown.
+ */
+export function grokErrorStatus(value: unknown): number | undefined {
+    if (!isErrorRecord(value)) return undefined;
+    if (typeof value.status === "number") return value.status;
+    if (typeof value.statusCode === "number") return value.statusCode;
+    return grokErrorStatus(value.cause);
+}
 
 /** Mirrors `xai_grok_sampling_types::is_context_length_error`. */
 export function isGrokContextOverflowError(message: string): boolean {
@@ -163,6 +175,10 @@ export function isRetryableGrokCompactionError(message: string): boolean {
     if (status === undefined) return true;
     const code = Number(status);
     return code === 408 || code === 429 || code >= 500;
+}
+
+function isErrorRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
 }
 
 function isGrokInternalError(message: string): boolean {

@@ -15,7 +15,7 @@ describe("session token and cache status", () => {
             inference: [
                 {
                     content: [{ text: "DEFAULT_USAGE_RECORDED", type: "text" }],
-                    usage: usage({ cacheRead: 100, input: 900, output: 100 }),
+                    usage: usage({ cacheRead: 100, input: 1_000, output: 100 }),
                 },
             ],
         });
@@ -33,11 +33,11 @@ describe("session token and cache status", () => {
             inference: [
                 {
                     content: [{ text: "FIRST_USAGE_RECORDED", type: "text" }],
-                    usage: usage({ cacheRead: 100, input: 900, output: 100 }),
+                    usage: usage({ cacheRead: 100, input: 1_000, output: 100 }),
                 },
                 {
                     content: [{ text: "SECOND_USAGE_RECORDED", type: "text" }],
-                    usage: usage({ cacheRead: 900, input: 100, output: 100 }),
+                    usage: usage({ cacheRead: 900, input: 1_000, output: 100 }),
                 },
             ],
         });
@@ -88,6 +88,6 @@ function usage(values: { cacheRead: number; input: number; output: number }): {
         cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
         input: values.input,
         output: values.output,
-        totalTokens: values.cacheRead + values.input + values.output,
+        totalTokens: values.input + values.output,
     };
 }

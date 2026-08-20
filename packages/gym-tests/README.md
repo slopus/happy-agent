@@ -1,8 +1,8 @@
 # Rig gym
 
-The Rig gym is the end-to-end test harness for the complete terminal agent experience. It drives the real Rig CLI through a pseudo-terminal, supplies deterministic model responses, and interprets terminal output with the prebuilt `@slopus/ghostty-wasm` package.
+The Rig gym is the end-to-end test harness for the complete terminal agent experience. It drives the real Rig CLI through a pseudo-terminal, supplies deterministic model responses by default, and interprets terminal output with the prebuilt `@slopus/ghostty-wasm` package. Explicit live scenarios may instead select a deployed provider and use real inference.
 
-The goal is to test the product at the same boundary a user experiences while keeping model behavior deterministic. A gym test can exercise terminal rendering, multiline input, tool calls, real processes, filesystem changes, interactive questions, interruptions, provider failures, and concurrency without calling a live model.
+The ordinary suite tests the product at the same boundary a user experiences while keeping model behavior deterministic. A gym test can exercise terminal rendering, multiline input, tool calls, real processes, filesystem changes, interactive questions, interruptions, provider failures, and concurrency without calling a live model.
 
 ## Core principles
 
@@ -26,9 +26,9 @@ The goal is to test the product at the same boundary a user experiences while ke
 | Filesystem                | Root-confined temporary workspace and home fixtures          |
 | Terminal input            | Real PTY input sent through `node-pty`                       |
 | Terminal output           | Real PTY output interpreted by `@slopus/ghostty-wasm`        |
-| Model/provider inference  | Mocked by a test-owned HTTP server on the host               |
+| Model/provider inference  | Mocked normally; real only in explicit opt-in live scenarios |
 | Provider transport        | Real authenticated local HTTP request                        |
-| Credentials               | Not used; the gym provider is selected explicitly            |
+| Credentials               | Not used normally; isolated credentials in opt-in live tests |
 
 The host controls model inference and terminal input. JustBash implements the local shell/filesystem boundary without starting host commands. Docker-mode scenarios retain the real Linux process and filesystem boundary.
 
@@ -130,6 +130,28 @@ pnpm test:gym:heavy
 
 Set `RIG_GYM_HEAVY_SESSION_SCALE` to a positive multiplier for quicker iteration
 or larger stress runs. The default `1` generates a calibrated roughly 200 MB session database.
+
+### Live provider Gym
+
+The ordinary Gym suite always uses deterministic inference. To exercise Grok 4.6 through the real
+Rig CLI, daemon, agent loop, Grok provider, and xAI backend, run:
+
+```sh
+pnpm test:gym:live:grok
+```
+
+This opt-in test costs real tokens and requires either `XAI_API_KEY` or the Grok sign-in stored at
+`$GROK_HOME/auth.json` or `~/.grok/auth.json`. An API key reaches the session as an environment
+variable and a CLI sign-in is named by path; neither is ever copied into the Gym or printed.
+
+A live scenario reaches its provider by naming that provider's own `base_url` in the Gym's
+`happy.toml`. The Gym replaces inference for every configured account except one already aimed at
+an explicit endpoint, so without that line the mock server answers and nothing live is proven.
+Asserting that `gym.inference.requests` stays empty is what makes the difference visible.
+
+The scenario asks Grok 4.6 to call a real terminal tool, waits for the tool result and the final
+answer at the PTY boundary, and checks the nonzero input and output tokens xAI reported for the
+turn, in both the per-model line and the session total.
 
 Set `mode: "docker"` on every scenario that needs Docker. `dockerSocket`, `entrypoint`, and `image` are rejected in local mode so a test cannot silently leave the fast lane.
 

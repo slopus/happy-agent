@@ -65,6 +65,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: 500_000,
         autoCompactWindow: 450_000,
     }),
+    "xai/grok-4.6": Object.freeze({
+        contextWindow: 500_000,
+        autoCompactWindow: 450_000,
+    }),
     "xai/grok-build": Object.freeze({
         contextWindow: 500_000,
         autoCompactWindow: 450_000,
@@ -90,6 +94,7 @@ const CATALOG: readonly CatalogAgentModel[] = [
     model("claude", "anthropic/sonnet-5", "Sonnet 5"),
     model("claude", "anthropic/fable-5", "Fable 5"),
     model("claude", "anthropic/opus-4-8", "Opus 4.8 1M"),
+    model("grok", "xai/grok-4.6", "Grok 4.6", ["low", "medium", "high", "xhigh"], "high"),
     model("grok", "xai/grok-build", "Grok Build", ["medium"]),
     model("grok", "xai/grok-4.5", "Grok 4.5", ["low", "medium", "high"], "high"),
     model("grok", "xai/grok-composer-2.5-fast", "Composer 2.5", ["off"], "off"),
@@ -262,8 +267,8 @@ async function createProvider(
     }
 
     if (provider.type === "grok") {
-        // Grok reads its key from the environment unless isolation forbids it, so an isolated
-        // provider is handed an empty environment rather than the process's own.
+        // Grok reads its key from the environment unless isolation forbids it. Ambient providers
+        // may also reuse the default Grok CLI session; isolated ones must name their auth file.
         const env = ambient ? undefined : {};
         const withEnv = <T extends object>(input: T) =>
             env === undefined ? input : { ...input, env };
@@ -276,9 +281,13 @@ async function createProvider(
                         : { authFile: provider.authFile }),
                 }),
             )) ??
-            (provider.authFile === undefined
-                ? null
-                : await GrokSessionCredential.tryLoad(withEnv({ authFile: provider.authFile })));
+            (ambient || provider.authFile !== undefined
+                ? await GrokSessionCredential.tryLoad(
+                      withEnv(
+                          provider.authFile === undefined ? {} : { authFile: provider.authFile },
+                      ),
+                  )
+                : null);
         return new GrokProvider({
             credential: required(credential, "Grok", id),
             ...(provider.baseUrl === undefined ? {} : { endpoint: provider.baseUrl }),

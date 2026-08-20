@@ -43,6 +43,7 @@ const heavyTests = new Set(["very_large_session_stays_usable_from_fresh_start_an
 
 const tests = readdirSync(testDirectory)
     .filter((name) => name.endsWith(".test.ts"))
+    .filter((name) => !name.endsWith(".live.test.ts"))
     .filter((name) => {
         if (lane === "heavy") return heavyTests.has(name);
         if (heavyTests.has(name)) return false;

@@ -40,4 +40,5 @@ export type {
     GymInferenceOptions,
     GymInferenceRequest,
     GymInferenceResponse,
+    GymInferenceTool,
 } from "./inferenceTypes.js";

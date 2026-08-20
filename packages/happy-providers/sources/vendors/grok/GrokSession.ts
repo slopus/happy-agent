@@ -20,15 +20,15 @@ import type { SessionModelConfiguration } from "@/core/SessionModelConfiguration
 import type { SessionTool } from "@/core/SessionTool.js";
 import type { GrokCredential } from "@/vendors/VendorCredential.js";
 import { GrokConnection } from "@/vendors/grok/impl/GrokConnection.js";
-import { classifyGrokError, classifyGrokProviderError } from "@/vendors/grok/errors/grokErrors.js";
+import {
+    classifyGrokError,
+    classifyGrokProviderError,
+    grokErrorStatus,
+} from "@/vendors/grok/errors/grokErrors.js";
 import { countGrokUserQueries } from "@/vendors/grok/impl/grokMessages.js";
 import { createGrokCompactionContinuation } from "@/vendors/grok/impl/grokCompaction.js";
 import { createGrokCompactionPrompt } from "@/vendors/grok/impl/grokCompaction.js";
-import {
-    delayBeforeGrokRetry,
-    grokErrorStatus,
-    isRetryableGrokError,
-} from "@/vendors/grok/impl/grokRetry.js";
+import { delayBeforeGrokRetry, isRetryableGrokError } from "@/vendors/grok/impl/grokRetry.js";
 import { extractGrokUserQuery } from "@/vendors/grok/impl/grokMessages.js";
 import { findLastGrokUserQuery } from "@/vendors/grok/impl/grokMessages.js";
 import { formatGrokCompactionSummary } from "@/vendors/grok/impl/grokCompaction.js";

@@ -306,6 +306,13 @@ Response — `200`:
                 "defaultEffort": "medium",
                 "serviceTiers": []
             },
+            "xai/grok-4.6": {
+                "name": "Grok 4.6",
+                "contextWindow": 500000,
+                "efforts": ["low", "medium", "high", "xhigh"],
+                "defaultEffort": "high",
+                "serviceTiers": []
+            },
             "xai/grok-build": {
                 "name": "Grok Build",
                 "contextWindow": 500000,
