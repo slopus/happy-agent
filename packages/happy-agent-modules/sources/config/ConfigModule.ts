@@ -794,6 +794,7 @@ const pathSchemaSet = Type.Object(
         localConfigPath: pathSchema,
         logPath: pathSchema,
         observationHome: pathSchema,
+        pidPath: pathSchema,
         publicHome: pathSchema,
         runtimeConfigPath: pathSchema,
         securityPath: pathSchema,
@@ -1036,7 +1037,8 @@ export class ConfigModule implements AgentModule {
      * second registry that would sign in again.
      */
     get providers(): AgentProviders {
-        this.#providers ??= this.#resolveScripted()?.providers ?? agentProviders(this.configuration);
+        this.#providers ??=
+            this.#resolveScripted()?.providers ?? agentProviders(this.configuration);
         return this.#providers;
     }
 
@@ -1508,6 +1510,7 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         localConfigPath: join(process.cwd(), "happy.toml"),
         logPath: join(observationHome, "agent.log"),
         observationHome,
+        pidPath: join(agentHome, "daemon.pid"),
         publicHome,
         runtimeConfigPath: join(agentHome, "runtime.toml"),
         securityPath: join(configHome, "SECURITY.md"),

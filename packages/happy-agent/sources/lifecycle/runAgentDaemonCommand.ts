@@ -1,15 +1,23 @@
 import { HappyAgentClient, type HealthResponse } from "@slopus/happy-agent-client";
 
+import { AgentDaemonError } from "./AgentDaemonError.js";
 import { createUnixSocketFetch } from "./createUnixSocketFetch.js";
+import { isDaemonProcessRunning, killDaemonFromPidFile, readDaemonPid } from "./daemonPid.js";
 import { readDaemonTokenIfPresent } from "./daemonToken.js";
 import { ensureAgentDaemon } from "./ensureAgentDaemon.js";
 import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
 import { stopLocalProtocolServer } from "./stopLocalProtocolServer.js";
 
-export type AgentDaemonCommand = "reload" | "start" | "stop" | "status";
+export type AgentDaemonCommand = "kill" | "reload" | "start" | "stop" | "status";
 
 export function isAgentDaemonCommand(value: string | undefined): value is AgentDaemonCommand {
-    return value === "start" || value === "stop" || value === "status" || value === "reload";
+    return (
+        value === "start" ||
+        value === "stop" ||
+        value === "status" ||
+        value === "reload" ||
+        value === "kill"
+    );
 }
 
 export interface RunAgentDaemonCommandOptions {
@@ -26,6 +34,7 @@ export async function runAgentDaemonCommand(
     options: RunAgentDaemonCommandOptions = {},
 ): Promise<void> {
     const log = options.log ?? ((line: string) => console.log(line));
+    const paths = getHappyDaemonPaths();
     const ensureOptions = {
         ...(options.entrypoint === undefined ? {} : { entrypoint: options.entrypoint }),
         ...(options.runInProcess === undefined ? {} : { runInProcess: options.runInProcess }),
@@ -37,29 +46,50 @@ export async function runAgentDaemonCommand(
             ...ensureOptions,
         });
         log(`Daemon is running at ${connection.paths.socketPath}`);
+        log(`Daemon PID: ${String((await readDaemonPid(connection.paths.pidPath)) ?? "unknown")}`);
         log(`Daemon log: ${connection.paths.logPath}`);
+        log(`Shutdown log: ${connection.paths.observationLogPath}`);
+        return;
+    }
+
+    if (command === "kill") {
+        const result = await killDaemonFromPidFile(paths.pidPath);
+        if (!result.killed) {
+            log("Daemon is not running.");
+            return;
+        }
+        log(`Daemon process ${String(result.pid)} was killed.`);
         return;
     }
 
     const connection = await connectToExistingDaemon();
     if (command === "reload") {
         if (connection !== undefined) {
-            await stopLocalProtocolServer(connection.client, getHappyDaemonPaths().socketPath);
+            await stopLocalProtocolServer(connection.client, paths);
+        } else {
+            await assertNoUnresponsiveDaemon(paths.pidPath);
         }
         const reloaded = await ensureAgentDaemon({
             confirmRestart: async () => true,
             ...ensureOptions,
         });
         log(`Daemon is running at ${reloaded.paths.socketPath}`);
+        log(`Daemon PID: ${String((await readDaemonPid(reloaded.paths.pidPath)) ?? "unknown")}`);
         log(`Daemon log: ${reloaded.paths.logPath}`);
+        log(`Shutdown log: ${reloaded.paths.observationLogPath}`);
         return;
     }
 
     if (command === "status") {
-        const paths = getHappyDaemonPaths();
+        const pid = await readDaemonPid(paths.pidPath);
         if (connection === undefined) {
-            log("Daemon is not running.");
+            if (pid !== undefined && (await isDaemonProcessRunning(pid))) {
+                log(`Daemon process ${String(pid)} is running but not responding.`);
+            } else {
+                log("Daemon is not running.");
+            }
             log(`Daemon log: ${paths.logPath}`);
+            log(`Shutdown log: ${paths.observationLogPath}`);
             return;
         }
         if (!connection.health.ready) {
@@ -68,16 +98,28 @@ export async function runAgentDaemonCommand(
             return;
         }
         log(`Daemon is running at ${paths.socketPath}`);
+        log(`Daemon PID: ${String(pid ?? "unknown")}`);
         log(`Daemon log: ${paths.logPath}`);
+        log(`Shutdown log: ${paths.observationLogPath}`);
         return;
     }
 
     if (connection === undefined) {
+        await assertNoUnresponsiveDaemon(paths.pidPath);
         log("Daemon is not running.");
         return;
     }
-    await connection.client.shutdown();
     log("Daemon is stopping.");
+    await stopLocalProtocolServer(connection.client, paths);
+    log("Daemon stopped.");
+}
+
+async function assertNoUnresponsiveDaemon(pidPath: string): Promise<void> {
+    const pid = await readDaemonPid(pidPath);
+    if (pid === undefined || !(await isDaemonProcessRunning(pid))) return;
+    throw new AgentDaemonError(`Daemon process ${String(pid)} is running but not responding.`, {
+        hint: "Run 'happy-agent kill' to force it to stop.",
+    });
 }
 
 async function connectToExistingDaemon(): Promise<

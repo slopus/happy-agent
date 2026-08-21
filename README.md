@@ -268,14 +268,12 @@ The debug directory contains its own Git ignore rule. Its files use private
 permissions, but can still contain complete prompts, source excerpts, command
 output, and model reasoning; treat them as sensitive when sharing.
 
-Daemon process logs are separate from request debug traces. Run `/debug` to see
-the exact daemon log path. By default, the current log is `server.log` inside
-the temporary `rig-<user id>` daemon directory. It contains timestamped JSONL
-lifecycle and failure records plus raw stderr from dependencies and fatal Node
-errors. When it reaches 10 MiB, the next daemon start moves it to
-`server.previous.log`; Rig keeps only that one previous log. Setting
-`RIG_SERVER_DIRECTORY` moves the daemon log, control files, and session database
-into that directory.
+Daemon logs are separate from request debug traces. `rig daemon status` prints both paths. The raw
+process log is `~/.happy/agent/daemon.log`; it captures stdout, stderr, dependency failures, and
+fatal Node errors, and rotates to `daemon.previous.log` at 10 MiB. Structured runtime records are
+written to `~/.happy/agent/observation/agent.log`, including every named shutdown step, its
+duration, failures, and a warning when a step is still running after one second. `HAPPY_HOME_DIR`
+moves the whole `.happy` root, including both logs and `daemon.pid`.
 
 Headless runs are normal persisted sessions. Continue or branch from them later:
 

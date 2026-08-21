@@ -539,6 +539,7 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/shutdown") {
+                ctx.log.info(`daemon:shutdown:request pid=${String(process.pid)} source=api`);
                 sendJson(response, 202, { shuttingDown: true, pid: process.pid });
                 setImmediate(() => {
                     for (const listener of [...this.#shutdownListeners]) {

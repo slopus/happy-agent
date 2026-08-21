@@ -10,7 +10,13 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import type { Compute, HostComputeConfig } from "@slopus/happy-agent-compute";
-import { createRootContext, detach, type Context, type RootContext } from "@steve.kite/stdlib";
+import {
+    createRootContext,
+    detach,
+    withLogContext,
+    type Context,
+    type RootContext,
+} from "@steve.kite/stdlib";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { AbortModule } from "../abort/index.js";
@@ -57,6 +63,9 @@ import { openHappyAgentDatabase } from "./HappyAgentDatabase.js";
 import { acquireHappyAgentStorageLock } from "./HappyAgentStorageLock.js";
 import { InstallationModule } from "./InstallationModule.js";
 import { instrumentModuleLogging } from "./instrumentModuleLogging.js";
+
+const SLOW_SHUTDOWN_STEP_MS = 1_000;
+type ShutdownHandler = () => Promise<void> | void;
 
 /** The only runtime inputs not owned by configuration. Product startup supplies only version. */
 export interface StartHappyAgentRuntimeOptions {
@@ -166,24 +175,59 @@ export async function startHappyAgentRuntime(
         // Starter files are a convenience; a read-only home must not keep the daemon down.
         ctx.log.warn("Could not create the user's starter configuration files.", {}, error);
     }
-    const unwind: (() => Promise<void> | void)[] = [async () => await observation.close(ctx)];
+    const shutdownHandlers = new Map<string, ShutdownHandler>();
+    const registerShutdown = (name: string, handler: ShutdownHandler): void => {
+        if (shutdownHandlers.has(name)) {
+            throw new Error(`The runtime already has a shutdown handler named "${name}".`);
+        }
+        shutdownHandlers.set(name, handler);
+    };
+    registerShutdown("observation", async () => await observation.close(ctx));
     let closed = false;
-    const backgroundTasks = new Set<Promise<void>>();
-    const close = async (): Promise<void> => {
-        if (closed) return;
+    let closing: Promise<void> | undefined;
+    const backgroundTasks = new Map<Promise<void>, string>();
+    const close = (): Promise<void> => {
+        if (closing !== undefined) return closing;
         closed = true;
-        const failures: unknown[] = [];
-        while (backgroundTasks.size > 0) await Promise.allSettled(backgroundTasks);
-        for (const step of unwind.splice(0)) {
-            try {
-                await step();
-            } catch (error) {
-                failures.push(error);
+        closing = (async () => {
+            const shutdownCtx = withLogContext(ctx.named("runtime-shutdown"), {
+                module: "runtime",
+                pid: process.pid,
+            });
+            const startedAt = performance.now();
+            shutdownCtx.log.info(
+                `daemon:shutdown:runtime:start pid=${String(process.pid)} steps=${String(shutdownHandlers.size)} backgroundTasks=${String(backgroundTasks.size)}`,
+            );
+            const failures: unknown[] = [];
+            if (backgroundTasks.size > 0) {
+                const names = [...backgroundTasks.values()].slice(0, 8).join(",");
+                shutdownCtx.log.info(
+                    `daemon:shutdown:background pid=${String(process.pid)} tasks=${names}${backgroundTasks.size > 8 ? ",…" : ""}`,
+                );
+                await runRuntimeShutdownStep(
+                    shutdownCtx,
+                    "background",
+                    async () => {
+                        await Promise.allSettled(backgroundTasks.keys());
+                    },
+                    failures,
+                );
             }
-        }
-        if (failures.length > 0) {
-            throw new AggregateError(failures, "The Happy agent runtime did not close cleanly.");
-        }
+            for (const [name, handler] of [...shutdownHandlers.entries()].reverse()) {
+                await runRuntimeShutdownStep(shutdownCtx, name, handler, failures);
+            }
+            shutdownHandlers.clear();
+            if (failures.length > 0) {
+                throw new AggregateError(
+                    failures,
+                    "The Happy agent runtime did not close cleanly.",
+                );
+            }
+            shutdownCtx.log.info(
+                `daemon:shutdown:runtime:finish pid=${String(process.pid)} durationMs=${String(Math.round(performance.now() - startedAt))}`,
+            );
+        })();
+        return closing;
     };
 
     try {
@@ -210,10 +254,10 @@ export async function startHappyAgentRuntime(
         }
 
         const main = await openHappyAgentDatabase(paths.databasePath);
-        unwind.unshift(() => main.close());
+        registerShutdown("main-database", () => main.close());
         await chmod(paths.databasePath, 0o600);
         const review = await openHappyAgentDatabase(paths.autoDatabasePath);
-        unwind.unshift(() => review.close());
+        registerShutdown("auto-database", () => review.close());
         await chmod(paths.autoDatabasePath, 0o600);
 
         const runtimeRoot = detach(ctx);
@@ -227,7 +271,7 @@ export async function startHappyAgentRuntime(
                 .finally(() => {
                     backgroundTasks.delete(task);
                 });
-            backgroundTasks.add(task);
+            backgroundTasks.set(task, name);
         };
 
         const suppliedCompute = options.compute;
@@ -240,7 +284,7 @@ export async function startHappyAgentRuntime(
                           (await suppliedCompute(computeCtx, computeConfig)) as HostCompute,
                   });
         const compute = createComputeModules(computeModule);
-        unwind.unshift(async () => await compute.computeModule.dispose(ctx));
+        registerShutdown("compute", async () => await compute.computeModule.dispose(ctx));
 
         const events = new EventsModule();
         const history = new HistoryModule(events);
@@ -266,7 +310,7 @@ export async function startHappyAgentRuntime(
                 database: review.database,
             }),
         );
-        unwind.unshift(async () => await auto.close(ctx));
+        registerShutdown("auto", async () => await auto.close(ctx));
 
         const permissions = new PermissionsModule(compute.computeModule, auto);
         const git = new GitModule(config);
@@ -274,9 +318,9 @@ export async function startHappyAgentRuntime(
         const workspaces = new WorkspacesModule(config, projects, git);
         const titles = new TitlesModule(config, history, workspaces);
         const terminals = new TerminalsModule(projects, workspaces);
-        unwind.unshift(async () => await terminals.close());
+        registerShutdown("terminals", async () => await terminals.close());
         const files = new ProjectFilesModule(projects, workspaces, git);
-        unwind.unshift(async () => await files.close());
+        registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>();
         const murmur = new MurmurModule<LibSQLDatabase>(config, profile);
@@ -334,7 +378,7 @@ export async function startHappyAgentRuntime(
             profile,
             compute.computeModule,
         );
-        unwind.unshift(async () => await api.close());
+        registerShutdown("api", async () => await api.close());
 
         const modules: HappyAgentRuntimeModules = {
             abort,
@@ -432,9 +476,9 @@ export async function startHappyAgentRuntime(
             sendMode: "all",
             steeringMode: "all",
         });
-        unwind.unshift(async () => await system.close(ctx));
-        unwind.unshift(async () => await titles.close());
-        unwind.unshift(async () => await happy.stop());
+        registerShutdown("agent-system", async () => await system.close(ctx));
+        registerShutdown("titles", async () => await titles.close());
+        registerShutdown("happy", async () => await happy.stop());
 
         git.onSnapshot(async (snapshotCtx, entity, snapshot) => {
             const factsCtx = withDatabase(snapshotCtx);
@@ -452,7 +496,7 @@ export async function startHappyAgentRuntime(
                 );
             }
         });
-        unwind.unshift(async () => {
+        registerShutdown("projects-and-workspaces", async () => {
             git.dispose();
             await workspaces.close(withDatabase(ctx));
             await projects.close(withDatabase(ctx));
@@ -461,7 +505,7 @@ export async function startHappyAgentRuntime(
         await workspaces.open(withDatabase(ctx));
 
         profile.open(installation.epoch);
-        unwind.unshift(async () => await murmur.close(withDatabase(ctx)));
+        registerShutdown("murmur", async () => await murmur.close(withDatabase(ctx)));
         const person = await profile.get(withDatabase(ctx));
         await murmur.open(
             withDatabase(ctx),
@@ -493,4 +537,39 @@ export async function startHappyAgentRuntime(
         await close().catch(() => undefined);
         throw error;
     }
+}
+
+async function runRuntimeShutdownStep(
+    ctx: Context,
+    step: string,
+    handler: ShutdownHandler,
+    failures: unknown[],
+): Promise<void> {
+    const startedAt = performance.now();
+    ctx.log.info(`daemon:shutdown:step:start pid=${String(process.pid)} step=${step}`);
+    const slow = setTimeout(() => {
+        ctx.log.warn(
+            `daemon:shutdown:step:slow pid=${String(process.pid)} step=${step} durationMs=${String(SLOW_SHUTDOWN_STEP_MS)}`,
+        );
+    }, SLOW_SHUTDOWN_STEP_MS);
+    slow.unref();
+    try {
+        await handler();
+        ctx.log.info(
+            `daemon:shutdown:step:finish pid=${String(process.pid)} step=${step} durationMs=${String(Math.round(performance.now() - startedAt))}`,
+        );
+    } catch (error) {
+        failures.push(error);
+        ctx.log.error(
+            `daemon:shutdown:step:fail pid=${String(process.pid)} step=${step} durationMs=${String(Math.round(performance.now() - startedAt))} error=${shutdownErrorMessage(error)}`,
+            {},
+            error,
+        );
+    } finally {
+        clearTimeout(slow);
+    }
+}
+
+function shutdownErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message.replaceAll(/\s+/g, " ") : String(error);
 }

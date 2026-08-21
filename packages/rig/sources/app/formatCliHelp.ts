@@ -7,7 +7,7 @@ export function formatCliHelp(): string {
         "       rig fork [--last | --all | SESSION_ID]",
         "       rig inspect [--json]",
         "       rig upgrade",
-        "       rig daemon <start|stop|status|reload>",
+        "       rig daemon <start|stop|kill|status|reload>",
         "       rig monit",
         "",
         "Run Rig without a command to start an interactive session.",

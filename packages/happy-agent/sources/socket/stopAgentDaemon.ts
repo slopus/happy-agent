@@ -3,6 +3,7 @@ import { request } from "node:http";
 import { connect } from "node:net";
 
 import type { AgentDaemonPaths } from "./AgentSocket.js";
+import { waitForDaemonProcessExit } from "../lifecycle/daemonPid.js";
 
 export interface StopAgentDaemonResult {
     readonly stopped: boolean;
@@ -17,7 +18,15 @@ export async function stopAgentDaemon(
     if (token === undefined) return { stopped: false };
     const pid = await requestShutdown(paths.socketPath, token);
     if (pid === undefined) return { stopped: false };
-    await waitForClose(paths.socketPath, options.timeoutMs ?? 15_000);
+    const timeoutMs = options.timeoutMs ?? 15_000;
+    const [socketClosed, processExited] = await Promise.all([
+        waitForClose(paths.socketPath, timeoutMs),
+        waitForDaemonProcessExit(pid, timeoutMs),
+    ]);
+    void socketClosed;
+    if (!processExited) {
+        throw new Error(`The Happy agent process ${String(pid)} did not exit in time.`);
+    }
     return { pid, stopped: true };
 }
 

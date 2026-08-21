@@ -56,9 +56,9 @@ Both ship in the same `@slopus/rig` package.
 
 The daemon:
 
-- creates its runtime directory, by default `<tmpdir>/rig-<uid>`, holding
-  `server.sock`, `token`, `server.json` (registry), `server.log`, and
-  `diagnostics/`;
+- creates its private runtime directory at `~/.happy/agent` (or beneath
+  `HAPPY_HOME_DIR`), holding `server.sock`, `token`, `daemon.pid`, `daemon.log`,
+  the SQLite stores, and `observation/agent.log`;
 - listens on the unix socket only, with the socket `chmod`ed to `0600`, and
   authorizes every request against the token file;
 - serves the protocol HTTP routes and WebSocket terminals;
@@ -72,11 +72,11 @@ holds no agent logic; if it dies, the session keeps running.
 ### The terminal UI
 
 The CLI parses the command line and picks a mode: interactive app, headless
-`exec`, monitor, daemon control (`rig daemon start|stop|status|reload`), or offline
+`exec`, monitor, daemon control (`rig daemon start|stop|kill|status|reload`), or offline
 installation inspection (`rig inspect [--json]`). The daemon itself is the
 standalone `happy-agent` CLI, shipped beside the Rig bundle as `agent.js`; Rig
-invokes its `start`, `stop`, and `reload` commands instead of running any boot
-sequence of its own.
+invokes the same lifecycle instead of running any boot sequence of its own. Graceful stop waits for
+the daemon PID to exit; `kill` uses the persisted PID when a daemon cannot shut down cleanly.
 
 Inspection is the exception to the daemon-starting path below. It reads installation, CLI version,
 and protocol compatibility facts without starting or contacting the daemon. A clean or

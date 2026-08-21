@@ -20,6 +20,7 @@ The agent is its own daemon. Products invoke these commands instead of managing 
 ```sh
 happy-agent start    # start the daemon when none is running, replacing one that does not match
 happy-agent stop     # ask the running daemon to shut down
+happy-agent kill     # immediately kill the daemon recorded in daemon.pid
 happy-agent status   # report whether the daemon is running
 happy-agent reload   # stop the running daemon, then start a fresh one
 happy-agent run      # run the daemon in the foreground of this process
@@ -29,8 +30,11 @@ happy-agent --version
 `start` spawns a detached runtime process, redirects its output to the rotated daemon log, and
 waits until health reports ready. The Node-compatible package runs `node <cli> run`; a standalone
 binary relaunches itself. A running daemon whose reported version does not match the CLI is
-replaced. All state lives under the Happy home (`~/.happy` or `HAPPY_HOME_DIR`), in its `agent/`
-directory: `server.sock`, `token`, and `daemon.log`.
+replaced. `stop` waits for both the socket and the exact daemon PID to disappear. All state lives
+under the Happy home (`~/.happy` or `HAPPY_HOME_DIR`), in its `agent/` directory: `server.sock`,
+`token`, `daemon.pid`, the raw process `daemon.log`, and the structured runtime log at
+`observation/agent.log`. Shutdown records name every cleanup step and report its duration; a step
+still running after one second emits a slow-step warning.
 
 ## Standalone binaries
 

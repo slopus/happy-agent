@@ -9,6 +9,10 @@ export interface HappyDaemonPaths {
     readonly happyHome: string;
     /** Where the launcher captures the spawned daemon's stdout and stderr. */
     readonly logPath: string;
+    /** Structured runtime and shutdown-step records. */
+    readonly observationLogPath: string;
+    /** The exact daemon process ID, persisted for status and forced termination. */
+    readonly pidPath: string;
     readonly socketPath: string;
     readonly tokenPath: string;
 }
@@ -23,6 +27,8 @@ export function getHappyDaemonPaths(
         directory,
         happyHome,
         logPath: join(directory, "daemon.log"),
+        observationLogPath: join(directory, "observation", "agent.log"),
+        pidPath: join(directory, "daemon.pid"),
         socketPath: join(directory, "server.sock"),
         tokenPath: join(directory, "token"),
     };

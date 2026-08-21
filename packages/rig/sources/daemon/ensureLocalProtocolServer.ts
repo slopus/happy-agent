@@ -199,7 +199,7 @@ async function startLocalDaemonInProcess(paths: HappyDaemonPaths): Promise<void>
         ) {
             throw new Error("The local Happy Agent source entrypoint is invalid.");
         }
-        await module.runAgentDaemon();
+        await module.runAgentDaemon({ persistPid: false });
     });
     await inProcessDaemon;
     const observed = await waitForDaemon(paths);

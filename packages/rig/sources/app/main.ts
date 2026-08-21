@@ -79,10 +79,10 @@ async function runMain(appCtx: Context, argv: readonly string[]): Promise<0 | 2 
         const daemonCommand = commandArgs[0];
         if (!isDaemonCommand(daemonCommand)) {
             throw new RigUserError("Rig needs to know what to do with the daemon.", {
-                hint: "Usage: rig daemon <start|stop|status|reload>",
+                hint: "Usage: rig daemon <start|stop|kill|status|reload>",
             });
         }
-        await runDaemonCommand(daemonCommand);
+        await runDaemonCommand(daemonCommand, console.log, appCtx);
         return;
     }
     if (command === "monit") {
@@ -124,5 +124,11 @@ function cliLogger(): Logger {
 }
 
 function isDaemonCommand(value: string | undefined): value is DaemonCommand {
-    return value === "start" || value === "stop" || value === "status" || value === "reload";
+    return (
+        value === "start" ||
+        value === "stop" ||
+        value === "kill" ||
+        value === "status" ||
+        value === "reload"
+    );
 }

@@ -17,6 +17,7 @@ Options:
 Commands:
   start    Start the daemon when none is running, replacing one that does not match.
   stop     Ask the running daemon to shut down.
+  kill     Immediately kill the daemon process recorded in its PID file.
   status   Report whether the daemon is running.
   reload   Stop the running daemon, then start a fresh one.
   run      Run the daemon in the foreground of this process.`;

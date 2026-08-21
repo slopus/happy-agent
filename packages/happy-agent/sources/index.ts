@@ -1,6 +1,7 @@
 export {
     startHappyAgentDaemon,
     type HappyAgentDaemon,
+    type HappyAgentShutdownReason,
     type StartHappyAgentDaemonOptions,
 } from "./main.js";
 export { resolveAgentDaemonPaths, type AgentDaemonPaths } from "./socket/AgentSocket.js";
@@ -16,7 +17,7 @@ export {
 } from "./lifecycle/ensureAgentDaemon.js";
 export { getDaemonIdentity, type AgentDaemonIdentity } from "./lifecycle/getDaemonIdentity.js";
 export { getHappyDaemonPaths, type HappyDaemonPaths } from "./lifecycle/getHappyDaemonPaths.js";
-export { runAgentDaemon } from "./lifecycle/runAgentDaemon.js";
+export { runAgentDaemon, type RunAgentDaemonOptions } from "./lifecycle/runAgentDaemon.js";
 export {
     isAgentDaemonCommand,
     runAgentDaemonCommand,

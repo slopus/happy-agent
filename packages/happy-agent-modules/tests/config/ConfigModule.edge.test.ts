@@ -122,6 +122,7 @@ describe("ConfigModule edge coverage", () => {
                 localConfigPath: resolve(process.cwd(), "happy.toml"),
                 logPath: join(root, ".happy", "agent", "observation", "agent.log"),
                 observationHome: join(root, ".happy", "agent", "observation"),
+                pidPath: join(root, ".happy", "agent", "daemon.pid"),
                 publicHome: join(root, "Happy"),
                 runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),
                 securityPath: join(root, "Happy", "Config", "SECURITY.md"),

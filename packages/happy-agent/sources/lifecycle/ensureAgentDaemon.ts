@@ -79,7 +79,7 @@ export async function ensureAgentDaemon(
                 });
             }
             options.onStatus?.("Restarting local daemon.");
-            await stopLocalProtocolServer(observed.client, paths.socketPath);
+            await stopLocalProtocolServer(observed.client, paths);
         }
 
         options.onStatus?.("Starting local daemon.");
@@ -135,7 +135,7 @@ async function startAgentDaemonProcess(
     if (options.runInProcess === true) {
         // The runtime import is deferred so lifecycle management never loads the whole agent.
         const { runAgentDaemon } = await import("./runAgentDaemon.js");
-        void runAgentDaemon().catch((error: unknown) => {
+        void runAgentDaemon({ persistPid: false }).catch((error: unknown) => {
             options.onStatus?.(
                 `Local daemon stopped: ${error instanceof Error ? error.message : String(error)}`,
             );

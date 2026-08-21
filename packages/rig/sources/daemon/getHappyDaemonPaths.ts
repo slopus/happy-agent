@@ -9,6 +9,8 @@ export interface HappyDaemonPaths {
     readonly happyHome: string;
     readonly installLockPath: string;
     readonly logPath: string;
+    readonly observationLogPath: string;
+    readonly pidPath: string;
     readonly socketPath: string;
     readonly tokenPath: string;
     readonly versionsDirectory: string;
@@ -28,6 +30,8 @@ export function getHappyDaemonPaths(
         happyHome,
         installLockPath: join(distDirectory, "install.lock"),
         logPath: join(agentDirectory, "daemon.log"),
+        observationLogPath: join(agentDirectory, "observation", "agent.log"),
+        pidPath: join(agentDirectory, "daemon.pid"),
         socketPath: join(agentDirectory, "server.sock"),
         tokenPath: join(agentDirectory, "token"),
         versionsDirectory: join(distDirectory, "version"),
