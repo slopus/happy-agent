@@ -14,6 +14,7 @@ import {
     GrokProvider,
     GrokSessionCredential,
     loadCodexCredential,
+    resolveClaudeCodeExecutablePath,
     type BaseProvider,
 } from "@slopus/happy-providers";
 import type { HappyAgentConfigValues, HappyAgentConfiguration } from "../ConfigModule.js";
@@ -259,9 +260,9 @@ async function createProvider(
             ));
         return new AnthropicProvider({
             credential: required(credential, "Claude", id),
-            ...(provider.executable === undefined
-                ? {}
-                : { pathToClaudeCodeExecutable: provider.executable }),
+            // Bun cannot use the SDK's runtime require.resolve from its compiled filesystem.
+            // The standalone build adapts this resolver to materialize its embedded executable.
+            pathToClaudeCodeExecutable: provider.executable ?? resolveClaudeCodeExecutablePath(),
             ...retries,
         });
     }
