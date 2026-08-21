@@ -1,4 +1,10 @@
-import { createRootContext, type Context } from "@steve.kite/stdlib";
+import { Type } from "@sinclair/typebox";
+import {
+    createRootContext,
+    GracefulShutdown,
+    withShutdown,
+    type Context,
+} from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +14,7 @@ import {
     AgentSystemLocal,
     AgentSystemRef,
     agentSystem as agentsFromContext,
+    defineAgentTool,
     type AgentConfig,
     type AgentEnvironment,
     type AgentModule,
@@ -347,6 +354,157 @@ describe("AgentSystemLocal", () => {
         );
         await expect(first.resolve(ctx, "missing")).rejects.toThrow("system is closed");
         await second.close(ctx);
+    });
+
+    it("finishes the current agent operation, stops its loop, and releases its shutdown lock", async () => {
+        const coordinator = new GracefulShutdown();
+        const shutdownCtx = withShutdown(
+            createRootContext().named("agentSystem-graceful-shutdown-test"),
+            coordinator,
+        );
+        const acquireLock = inMemoryStorageLock();
+        const managerPersistence = new InMemoryPersistence();
+        const agentPersistence = new InMemoryPersistence();
+        const storage = (): InMemoryAgentStorage =>
+            new InMemoryAgentStorage({
+                acquireLock,
+                kv: managerKV(managerPersistence),
+                persistence: () => agentPersistence,
+            });
+        let operationStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            operationStarted = resolve;
+        });
+        let finishOperation!: () => void;
+        const operationFinished = new Promise<void>((resolve) => {
+            finishOperation = resolve;
+        });
+        let firstOperation = true;
+        const operationGate: AgentModule = {
+            name: "operation-gate",
+            beforeStart: () => ({
+                beforeInference: async () => {
+                    if (!firstOperation) return;
+                    firstOperation = false;
+                    operationStarted();
+                    await operationFinished;
+                },
+            }),
+        };
+        const firstProvider = new ScriptedProvider([textTurn("first"), textTurn("second")]);
+        const first = await AgentSystemLocal.create(shutdownCtx, storage(), {
+            modules: [operationGate],
+            providers: providersOf(firstProvider),
+            provider: "scripted",
+            models: [],
+            sendMode: "one-at-a-time",
+        });
+        const agent = await first.create(shutdownCtx, {}, { id: "shutdownagent" });
+        await agent.send(shutdownCtx, user("first"));
+        await started;
+        await agent.send(shutdownCtx, user("second"));
+
+        const closing = coordinator.shutdown({ timeout: 1_000 });
+        expect(coordinator.pending()).toContain("agent-system");
+        finishOperation();
+        await expect(closing).resolves.toEqual({ failed: [], timedOut: [] });
+
+        expect(firstProvider.sessions[0]?.requests).toHaveLength(1);
+        expect(agentPersistence.values.has("owed")).toBe(true);
+        const resumedProvider = new ScriptedProvider([textTurn("second")]);
+        const resumed = await AgentSystemLocal.create(ctx, storage(), {
+            providers: providersOf(resumedProvider),
+            provider: "scripted",
+            models: [],
+            sendMode: "one-at-a-time",
+        });
+        const resumedAgent = await resumed.resolve(ctx, "shutdownagent");
+        await resumedAgent.waitForIdle();
+        expect(resumedProvider.sessions[0]?.requests).toHaveLength(1);
+        expect(resumedProvider.sessions[0]?.requests[0]?.context.messages.at(-1)).toEqual(
+            user("second"),
+        );
+        await resumed.close(ctx);
+    });
+
+    it("waits for an in-flight tool without starting its follow-up inference", async () => {
+        const coordinator = new GracefulShutdown();
+        const shutdownCtx = withShutdown(
+            createRootContext().named("agentSystem-tool-shutdown-test"),
+            coordinator,
+        );
+        const managerPersistence = new InMemoryPersistence();
+        const agentPersistence = new InMemoryPersistence();
+        let toolStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            toolStarted = resolve;
+        });
+        let finishTool!: () => void;
+        const toolFinished = new Promise<void>((resolve) => {
+            finishTool = resolve;
+        });
+        let completed = false;
+        const toolModule: AgentModule = {
+            name: "shutdown-tool",
+            beforeStart: () => ({
+                tools: () => [
+                    defineAgentTool({
+                        name: "shutdown_tool",
+                        returnType: Type.Object({}),
+                        shouldReviewInAutoMode: () => false,
+                        execute: async () => {
+                            toolStarted();
+                            await toolFinished;
+                            completed = true;
+                            return {};
+                        },
+                        toLLM: () => [{ type: "text", text: "finished" }],
+                    }),
+                ],
+            }),
+        };
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "call-1", name: "shutdown_tool" },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("follow-up"),
+        ]);
+        const system = await AgentSystemLocal.create(
+            shutdownCtx,
+            new InMemoryAgentStorage({
+                acquireLock: inMemoryStorageLock(),
+                kv: managerKV(managerPersistence),
+                persistence: () => agentPersistence,
+            }),
+            {
+                modules: [toolModule],
+                providers: providersOf(provider),
+                provider: "scripted",
+                models: [],
+            },
+        );
+        const agent = await system.create(shutdownCtx, {}, { id: "shutdowntoolagent" });
+        await agent.send(shutdownCtx, user("run the tool"));
+        await started;
+
+        let closed = false;
+        const closing = coordinator.shutdown({ timeout: 1_000 }).then((report) => {
+            closed = true;
+            return report;
+        });
+        await Promise.resolve();
+        expect(closed).toBe(false);
+        expect(completed).toBe(false);
+        finishTool();
+        await expect(closing).resolves.toEqual({ failed: [], timedOut: [] });
+
+        expect(completed).toBe(true);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(agentPersistence.records).toContainEqual(
+            expect.objectContaining({ type: "tool" }),
+        );
     });
 
     it("caches the resolved agent and its store, and tells modules which agent they serve", async () => {

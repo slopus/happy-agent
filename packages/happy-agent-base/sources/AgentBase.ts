@@ -21,6 +21,7 @@ import {
     createContextNamespace,
     detach,
     deterministicStringify,
+    shutdown,
     withLifetime,
     type Context,
 } from "@steve.kite/stdlib";
@@ -1611,7 +1612,12 @@ export class AgentBase {
         // because the work it would abandon is the caller itself.
         const fromInsideOwnLoop = this.#insideOwnLoop();
         this.#closed = true;
-        if (!fromInsideOwnLoop) this.#closeController.abort();
+        // Graceful shutdown stops at the next operation boundary. Do not abort a tool that is
+        // already running; the coordinator's timeout and the daemon's hard exit bound one that
+        // never returns.
+        if (!fromInsideOwnLoop && !this.#gracefulShutdownRequested()) {
+            this.#closeController.abort();
+        }
         // The barrier is published before any of the shutdown runs. Destroying the provider
         // session can reenter close, and a caller arriving then has to join this shutdown rather
         // than start a second one that destroys the same session again.
@@ -1715,6 +1721,7 @@ export class AgentBase {
 
     /** The run itself, on the context of the span the whole of it belongs to. */
     async #runTurns(ctx: Context): Promise<void> {
+        if (this.#gracefulShutdownRequested()) return;
         if (this.#pending?.stage === "settlement") {
             // A prior implementation could advance to settlement while a dispatched tool was
             // still open. Never repeat that conclusion on restore: load the real history, settle
@@ -1740,9 +1747,9 @@ export class AgentBase {
         // working while its store still says it is working is one nobody is ever told about:
         // whoever is waiting on it — an owner, or the creator of a collaborator — waits for a
         // turn no process is running any more.
-        let blocked = false;
+        let outcome: "blocked" | "settling" | "shutdown" = "settling";
         try {
-            blocked = (await this.#runLoops(ctx)) === "blocked";
+            outcome = await this.#runLoops(ctx);
         } catch (error: unknown) {
             this.#runFailure = error instanceof Error ? error.message : String(error);
             // The request that opened this run is answered by the failure, however badly. Left
@@ -1753,7 +1760,7 @@ export class AgentBase {
         }
         // A run that could not settle a staged tool result is the one exception: it must leave
         // its pending state exactly as it found it, for the next attempt to finish.
-        if (blocked || this.#hasOpenToolCalls()) return;
+        if (outcome === "shutdown" || outcome === "blocked" || this.#hasOpenToolCalls()) return;
         // Nothing is asked for any more, so the outstanding work is erased. That erasure is what
         // makes the agent idle, and it commits together with whatever the settling hooks write,
         // so no owner can ever see the agent finished without their conclusions or their
@@ -1773,8 +1780,9 @@ export class AgentBase {
      * because there was nothing left to do or because a staged tool result could not settle; the
      * settling caller above decides what that ending means.
      */
-    async #runLoops(ctx: Context): Promise<"blocked" | "settling"> {
+    async #runLoops(ctx: Context): Promise<"blocked" | "settling" | "shutdown"> {
         do {
+            if (this.#gracefulShutdownRequested()) return "shutdown";
             this.#loopId ??= createId();
             const loop: AgentBaseLoop = { loopId: this.#loopId };
             setAgentSpanAttributes(ctx, { "agent.loop.id": loop.loopId });
@@ -1794,6 +1802,7 @@ export class AgentBase {
                     : (hookCtx) => this.#hooks.beforeAgentLoopTransact?.(hookCtx, loop),
             );
             await this.#invokeHook(ctx, this.#hooks.beforeAgentLoop, loop);
+            if (this.#gracefulShutdownRequested()) return "shutdown";
             do {
                 const outcome = await this.#span(
                     ctx,
@@ -1802,6 +1811,7 @@ export class AgentBase {
                     (turnCtx) => this.#runTurn(turnCtx, loop, abort),
                 );
                 if (outcome === "blocked") return "blocked";
+                if (outcome === "shutdown") return "shutdown";
                 if (outcome === "stop") break;
                 // Each turn cancels on its own scope. Reopening it here rather than at the top
                 // keeps the run's first turn under the scope its opening hook already ran in.
@@ -1829,7 +1839,7 @@ export class AgentBase {
         ctx: Context,
         loop: AgentBaseLoop,
         abort: AbortController,
-    ): Promise<"continue" | "stop" | "blocked"> {
+    ): Promise<"continue" | "stop" | "blocked" | "shutdown"> {
         this.#turnAborted = false;
         this.#durableWorkBlocked = false;
         // A failure the run has moved on from is not what its settlement reports: the turn that
@@ -1879,7 +1889,8 @@ export class AgentBase {
                 : (hookCtx) => this.#hooks.beforeTurnTransact?.(hookCtx, turnStart),
         );
         await this.#applyActions(ctx, this.#hooks.beforeTurn, abort.signal, turnStart);
-        await this.#runInference(ctx, abort);
+        if (this.#gracefulShutdownRequested()) return "shutdown";
+        if ((await this.#runInference(ctx, abort)) === "shutdown") return "shutdown";
         if (this.#durableWorkBlocked) return "blocked";
         const turn = {
             loopId: loop.loopId,
@@ -2177,7 +2188,10 @@ export class AgentBase {
      * until nothing is owed an answer. Every failure is caught here and surfaced to the
      * conversation, so a turn ends with a complete context whatever went wrong.
      */
-    async #runInference(ctx: Context, abort: AbortController): Promise<void> {
+    async #runInference(
+        ctx: Context,
+        abort: AbortController,
+    ): Promise<"complete" | "shutdown"> {
         // One shared promise for the turn's scope keeps races from piling up listeners on the
         // signal, and a scope that was aborted before this point settles it immediately: a
         // listener added afterwards would never hear the event that already happened.
@@ -2187,6 +2201,7 @@ export class AgentBase {
                   abort.signal.addEventListener("abort", () => resolve(ABORTED), { once: true });
               });
         try {
+            if (this.#gracefulShutdownRequested()) return "shutdown";
             await this.#ensureLoaded(ctx);
             // Resume a tool batch that was dispatched but cut off before its results landed, so
             // the interrupted results reach the main store before any queued message.
@@ -2198,7 +2213,9 @@ export class AgentBase {
                 // A failed batch can leave an execution unwinding in this process while its
                 // durable calls remain for resume. Do not retry a durable side effect beside its
                 // earlier invocation; a restarted process has no such in-memory predecessor.
-                if ((await Promise.race([this.#settled(), abortPromise])) === ABORTED) return;
+                if ((await Promise.race([this.#settled(), abortPromise])) === ABORTED) {
+                    return "complete";
+                }
                 // A batch that was never committed has certainly not run — the commit precedes
                 // every execution — so it is dispatched as the fresh batch it never got to be,
                 // rather than resumed, which would refuse the non-durable calls.
@@ -2211,13 +2228,15 @@ export class AgentBase {
                         abortPromise,
                     )
                 ) {
-                    return;
+                    return this.#gracefulShutdownRequested() ? "shutdown" : "complete";
                 }
+                if (this.#gracefulShutdownRequested()) return "shutdown";
             }
             let needsInference = resumed.length > 0;
             // A requested compaction runs before this turn's first inference, so the model
             // always receives a settled conversation — never one still owing tool results.
             await this.#runCompaction(ctx, abort.signal);
+            if (this.#gracefulShutdownRequested()) return "shutdown";
             // An inference is needed without any injection when tool results from a resumed batch
             // end the context, or — checked once, against the freshly loaded durable state —
             // when a cut-off run left its trailing user or tool message unanswered. Afterwards
@@ -2236,6 +2255,7 @@ export class AgentBase {
             // surfaces it to the context as a system message.
             let pendingError: string | undefined;
             while (true) {
+                if (this.#gracefulShutdownRequested()) return "shutdown";
                 // An abort during the tool batch ends the turn here, before the next inference.
                 // A cancellation arriving when the turn has nothing left to do cancels nothing:
                 // the last response already reported its own terminal event, and a second one
@@ -2275,6 +2295,7 @@ export class AgentBase {
                 await this.#consumeInjections(ctx);
                 // Nothing to answer — a start() on an idle history, or the queues ran dry.
                 if (!this.#noticeAwaitingResponse && !injected && !needsInference) break;
+                if (this.#gracefulShutdownRequested()) return "shutdown";
                 const response = await this.#span(ctx, "agent.inference", {}, (inferenceCtx) =>
                     this.#requestInference(inferenceCtx, abortPromise),
                 );
@@ -2300,6 +2321,7 @@ export class AgentBase {
                     }
                 }
                 if (state === "tool_call") {
+                    if (this.#gracefulShutdownRequested()) return "shutdown";
                     const calls = content.filter(
                         (block): block is SessionToolCallBlock =>
                             block.type === "tool_call" && block.server !== true,
@@ -2313,6 +2335,7 @@ export class AgentBase {
                         abortPromise,
                     );
                     if (closedDuringTools) break;
+                    if (this.#gracefulShutdownRequested()) return "shutdown";
                     needsInference = true;
                     continue;
                 }
@@ -2357,6 +2380,12 @@ export class AgentBase {
             this.#clearTurnRequestIfNoPendingInput();
         }
         this.#turnAborted = abort.signal.aborted;
+        return this.#gracefulShutdownRequested() ? "shutdown" : "complete";
+    }
+
+    /** Whether the stdlib coordinator carried by this agent has begun graceful shutdown. */
+    #gracefulShutdownRequested(): boolean {
+        return shutdown.get(this.#ctx)?.shuttingDown === true;
     }
 
     /**

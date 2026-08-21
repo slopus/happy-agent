@@ -24,6 +24,12 @@ Drizzle SQLite or PostgreSQL/PGlite database plus a hard database-level lock. It
 record, key-value, and migration tables itself. `AgentSystem.close()` stops its agents and releases
 the lock; the runtime intentionally contains no CAS or multi-owner coordination.
 
+When the system context carries stdlib `GracefulShutdown`, `AgentSystemLocal` registers one named
+shutdown handler (`"agent-system"` by default, configurable with `shutdownName`). Shutdown refuses
+new work, lets each in-flight inference or tool operation finish, stops before the next agentic
+operation, and then releases the storage lock. Durable work left at that boundary resumes when the
+next process opens the store.
+
 Agent Base also provides production database implementations through `openAgentSQLiteDatabase`,
 `openAgentPGliteDatabase`, and `openAgentPostgresDatabase`. Each returns one
 `AgentDatabaseConnection` that owns its Drizzle facade, driver lifetime, root-operation FIFO, root

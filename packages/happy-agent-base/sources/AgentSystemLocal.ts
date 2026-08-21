@@ -5,6 +5,7 @@ import { Value } from "@sinclair/typebox/value";
 import {
     afterCommit,
     asyncLock,
+    shutdown,
     withLifetime,
     type AsyncLock,
     type Context,
@@ -80,6 +81,8 @@ export interface AgentSystemLocalOptions<Database extends AgentDatabase = AgentD
     readonly steeringMode?: AgentBaseQueueMode;
     /** How every agent drains sent follow-ups accepted before its next response. */
     readonly sendMode?: AgentBaseQueueMode;
+    /** Stable name this collection reports to a stdlib graceful-shutdown coordinator. */
+    readonly shutdownName?: string;
 }
 
 /**
@@ -158,6 +161,8 @@ export class AgentSystemLocal<
     #lifecycle: "initializing" | "open" | "closing" | "closed" = "initializing";
     /** The shared shutdown, including release of the hard storage lock. */
     #closePromise: Promise<void> | undefined;
+    /** Removes this collection from stdlib shutdown after its storage lock is released. */
+    #unregisterShutdown: (() => void) | undefined;
 
     /**
      * Bring up a collection over one storage and carry on where the last process left off.
@@ -191,6 +196,10 @@ export class AgentSystemLocal<
                 const active = await system.#start(startCtx);
                 for (const agent of active) agent.start();
                 await system.#afterStart(startCtx);
+                system.#registerShutdown(config.shutdownName ?? "agent-system");
+                if (shutdown.get(systemCtx)?.shuttingDown === true) {
+                    await system.close(systemCtx);
+                }
                 return system;
             } catch (error: unknown) {
                 await system.close(systemCtx).catch(() => undefined);
@@ -256,6 +265,13 @@ export class AgentSystemLocal<
         await closing;
     }
 
+    /** Make this collection one named stdlib shutdown barrier when its context carries one. */
+    #registerShutdown(name: string): void {
+        this.#unregisterShutdown = shutdown
+            .get(this.#ctx)
+            ?.register(name, async (shutdownCtx) => await this.close(shutdownCtx));
+    }
+
     /** The real shutdown barrier, which keeps the hard store lock until every agent is closed. */
     async #shutdown(): Promise<void> {
         try {
@@ -275,6 +291,8 @@ export class AgentSystemLocal<
                 await this.#storageLock.release(this.#ctx);
             } finally {
                 this.#lifecycle = "closed";
+                this.#unregisterShutdown?.();
+                this.#unregisterShutdown = undefined;
             }
         }
     }
