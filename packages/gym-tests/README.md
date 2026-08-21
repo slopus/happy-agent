@@ -152,7 +152,9 @@ Asserting that `gym.inference.requests` stays empty is what makes the difference
 The scenario asks Grok 4.6 to call a real terminal tool, waits for the tool result and final answer
 at the PTY boundary, and checks the nonzero input, output, and session-work counters xAI reported.
 
-Set `mode: "docker"` on every scenario that needs Docker. `dockerSocket`, `entrypoint`, and `image` are rejected in local mode so a test cannot silently leave the fast lane.
+Set `mode: "docker"` on every scenario that needs Docker. `dockerSocket` and `image` are rejected in
+local mode so a test cannot silently leave the fast lane. A custom `entrypoint` runs locally by
+default and runs in the container only when paired with `mode: "docker"`.
 
 ### Targeted iteration
 
@@ -277,7 +279,7 @@ interface GymOptions {
 | `cols`                | `100`                               | Terminal width in cells                                          |
 | `contextWindow`       | Provider default                    | Overrides the context window for gym-backed inference            |
 | `dockerSocket`        | `false`                             | Exposes the daemon socket; requires `mode: "docker"`             |
-| `entrypoint`          | Image default                       | Replaces the image entrypoint; requires `mode: "docker"`         |
+| `entrypoint`          | Happy Terminal CLI                  | Replaces the local process or Docker entrypoint                  |
 | `environment`         | `{}`                                | Extra environment variables for Happy Terminal                   |
 | `files`               | `{}`                                | Fixture tree mounted into `/workspace`                           |
 | `homeFiles`           | `{}`                                | Trusted fixture tree mounted into `/home/happy-terminal`         |

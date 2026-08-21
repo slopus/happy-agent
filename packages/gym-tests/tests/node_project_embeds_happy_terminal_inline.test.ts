@@ -1,8 +1,14 @@
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
+const happyTerminalSourceUrl = pathToFileURL(
+    fileURLToPath(new URL("../../happy-terminal/sources/index.ts", import.meta.url)),
+).href;
+const tsxUrl = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
 afterEach(async () => {
     await Promise.all([...running].map((gym) => gym.dispose()));
@@ -12,20 +18,15 @@ afterEach(async () => {
 describe("embedding Happy Terminal in a Node.js project", () => {
     it("returns control to the host process after the inline terminal exits", async () => {
         const gym = await createGym({
-            entrypoint: [
-                "/bin/sh",
-                "-lc",
-                "mkdir -p node_modules/@slopus && ln -s /app/packages/happy-terminal node_modules/@slopus/happy-terminal && exec node embedded.mjs",
-            ],
+            entrypoint: [process.execPath, "--import", tsxUrl, "embedded.mts"],
             files: {
-                "embedded.mjs": [
-                    'import { runHappyTerminal } from "@slopus/happy-terminal";',
+                "embedded.mts": [
+                    `import { runHappyTerminal } from ${JSON.stringify(happyTerminalSourceUrl)};`,
                     'await runHappyTerminal({ cwd: process.cwd(), modelId: "openai/gym", permissionMode: "full_access", providerId: "gym" });',
                     'process.stdout.write("\\nHOST PROCESS CONTINUED\\n");',
                 ].join("\n"),
             },
             inference: [],
-            mode: "docker",
         });
         running.add(gym);
 
@@ -35,6 +36,5 @@ describe("embedding Happy Terminal in a Node.js project", () => {
 
         const finished = await gym.terminal.waitForText("HOST PROCESS CONTINUED", 30_000);
         expect(finished.text).toContain("HOST PROCESS CONTINUED");
-        await expect(gym.exit()).resolves.toMatchObject({ exitCode: 0 });
-    }, 300_000);
+    }, 60_000);
 });

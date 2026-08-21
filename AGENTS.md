@@ -157,8 +157,9 @@ Always use `pnpm` for this project. Do not use `npm`, `npx`, or `yarn` for insta
 
 ## Default release versions
 
-When the user asks to "release" without naming a product, release Happy Agent.
-Do not treat an unqualified release request as a Rig or library release.
+When the user asks to "release" without naming a product or version, release the next patch
+version of Happy Agent. Do not treat an unqualified release request as a Happy Terminal or library
+release.
 
 Happy Agent releases are always the next patch version. Release Happy Agent only by manually
 dispatching [`.github/workflows/release-happy-agent.yml`](.github/workflows/release-happy-agent.yml)
@@ -168,12 +169,21 @@ previous Happy Agent release, and write a polished, user-facing Markdown summary
 changes clearly rather than pasting commit subjects or a raw changelog. Monitor the workflow to
 completion and verify the resulting GitHub Release and its assets before reporting success.
 
+Happy Terminal releases are always stable patch releases. Never release Happy Terminal as a beta
+or any other prerelease. When the user asks to "release terminal", release the next patch version
+of `@slopus/happy-terminal`. Release Happy Terminal only by manually dispatching
+[`.github/workflows/release-happy-terminal.yml`](.github/workflows/release-happy-terminal.yml) from
+`main`; do not create or push its release tag locally. Supply the workflow's required `version` and
+`release_notes` inputs. Build a polished, user-facing Markdown changelist from every commit included
+since the previous Happy Terminal release, monitor the workflow to completion, and verify both the
+npm package and GitHub Release before reporting success.
+
 When the user explicitly names another product or library but does not name a version:
 
-- Release Rig as the next beta prerelease.
 - Release libraries as the next patch version.
 
-Use an explicitly requested version or release channel instead whenever the user provides one.
+Use an explicitly requested version or release channel instead whenever the user provides one,
+except that Happy Terminal always releases as its next stable patch version.
 
 Always release through trusted publishing by pushing the release Git tag. Never publish directly
 from local npm credentials. If a tagged patch release fails before publication, it may remain

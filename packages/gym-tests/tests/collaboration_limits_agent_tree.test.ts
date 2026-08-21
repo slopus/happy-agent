@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym, type GymInferenceBlock } from "@slopus/rig-gym";
+import { createGym, type Gym, type GymInferenceBlock } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 

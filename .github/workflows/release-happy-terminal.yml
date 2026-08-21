@@ -5,7 +5,7 @@ on:
     workflow_dispatch:
         inputs:
             version:
-                description: Semantic version without the leading v
+                description: Stable semantic version without the leading v
                 required: true
                 type: string
             release_notes:
@@ -28,7 +28,7 @@ env:
 jobs:
     build:
         name: Verify and build the npm package
-        runs-on: ubuntu-22.04
+        runs-on: ubuntu-24.04
         timeout-minutes: 45
 
         steps:
@@ -47,8 +47,8 @@ jobs:
                       echo "Happy Terminal releases must be dispatched from main." >&2
                       exit 1
                   fi
-                  if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-                      echo "Version must be semantic and must not include the leading v." >&2
+                  if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                      echo "Happy Terminal versions must be stable semantic versions without a leading v." >&2
                       exit 1
                   fi
                   if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
@@ -78,12 +78,6 @@ jobs:
                   node-version: "24"
                   package-manager-cache: false
 
-            - name: Enable Linux user namespaces
-              run: |
-                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-                  fi
-
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
@@ -102,9 +96,6 @@ jobs:
 
             - name: Build Happy Terminal
               run: pnpm --filter @slopus/happy-terminal build
-
-            - name: Build the Happy Terminal Gym image
-              run: pnpm --filter @slopus/happy-terminal-gym run build:image
 
             - name: Prove inline Node.js embedding in a real terminal
               run: >-
@@ -261,9 +252,6 @@ jobs:
                       --title "Happy Terminal v$RELEASE_VERSION"
                       --notes-file .release/notes.md
                   )
-                  if [[ "$RELEASE_VERSION" == *-* ]]; then
-                      arguments+=(--prerelease)
-                  fi
                   gh release create "${arguments[@]}"
 
             - name: Publish with npm trusted publishing
@@ -275,15 +263,9 @@ jobs:
                       exit 1
                   fi
 
-                  distribution_tag=latest
-                  if [[ "$RELEASE_VERSION" == *-* ]]; then
-                      prerelease="${RELEASE_VERSION#*-}"
-                      distribution_tag="${prerelease%%.*}"
-                  fi
-
                   node "$NPM_CLI" publish "$tarball" \
                       --access public \
-                      --tag "$distribution_tag" \
+                      --tag latest \
                       --provenance \
                       --registry https://registry.npmjs.org/
 
