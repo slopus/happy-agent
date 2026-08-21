@@ -139,7 +139,9 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
     }
 
     readonly beforeStart = async (ctx: Context): Promise<AgentModuleHooks> => {
-        const loaded = await loadEventState(ctx.db, this.capacity());
+        const loaded = await ctx.inTx(
+            async (txCtx) => await loadEventState(txCtx.db, this.capacity()),
+        );
         this.#entries.push(...loaded.events.map(freezeEvent));
         this.#occurredAt = this.#entries.at(-1)?.occurredAt ?? 0;
         this.#originCursor = loaded.originCursor ?? this.#originCursor;

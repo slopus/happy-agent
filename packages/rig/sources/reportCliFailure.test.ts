@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { reportCliFailure } from "./reportCliFailure.js";
+import { reportCliFailure, reportCliFailureAndExit } from "./reportCliFailure.js";
 import { RigUserError } from "./RigUserError.js";
 
 afterEach(() => {
@@ -34,6 +34,19 @@ describe("reportCliFailure", () => {
         expect(written()).toContain("--debug");
         expect(written()).not.toContain("node:internal");
         expect(process.exitCode).toBe(1);
+    });
+
+    it("exits after reporting a failure so detached daemons cannot linger", () => {
+        const { report, written } = capture();
+        const exit = vi.fn((code: number): never => {
+            throw new Error(`exit:${String(code)}`);
+        });
+
+        expect(() => reportCliFailureAndExit(new Error("daemon failed"), report, exit)).toThrow(
+            "exit:1",
+        );
+        expect(written()).toContain("Rig stopped unexpectedly.");
+        expect(exit).toHaveBeenCalledWith(1);
     });
 });
 
