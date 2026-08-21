@@ -192,6 +192,68 @@ describe("Happy Agent platform API", () => {
         TEST_TIMEOUT_MS,
     );
 
+    it(
+        "stays ready and reports named work while graceful shutdown waits for an agent operation",
+        async () => {
+            let operationStarted!: () => void;
+            const started = new Promise<void>((resolve) => {
+                operationStarted = resolve;
+            });
+            let finishOperation!: () => void;
+            const operationFinished = new Promise<void>((resolve) => {
+                finishOperation = resolve;
+            });
+            const gym = await createAgentGym({
+                inference: async (request) => {
+                    if (request.tools.length === 0) {
+                        return {
+                            content: [{ text: "<title>Graceful shutdown</title>", type: "text" }],
+                        };
+                    }
+                    operationStarted();
+                    await operationFinished;
+                    return { content: [{ text: "Operation finished.", type: "text" }] };
+                },
+                timeoutMs: 15_000,
+            });
+            running.add(gym);
+
+            try {
+                await gym.send("Hold this operation while shutdown starts.", { wait: false });
+                await started;
+                await expect(gym.client.shutdown()).resolves.toMatchObject({
+                    shuttingDown: true,
+                });
+
+                const health = await gym.waitUntil(async () => {
+                    const current = await gym.client.getHealth();
+                    return current.shuttingDown === true &&
+                        current.waitingFor?.includes("agent-system") === true
+                        ? current
+                        : undefined;
+                }, "graceful shutdown health");
+                expect(health).toMatchObject({
+                    healthy: true,
+                    ready: true,
+                    shuttingDown: true,
+                    status: "ready",
+                });
+                expect(health.waitingFor).toContain("agent-system");
+                await expect(gym.client.getGreeting()).resolves.toEqual({
+                    text: "Welcome to Happy Agent!",
+                });
+            } finally {
+                finishOperation();
+            }
+
+            await expect(gym.daemon.closed).resolves.toBeUndefined();
+            expect(
+                gym.inference.requests.filter((request) => request.tools.length > 0),
+            ).toHaveLength(1);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
     it("removes its isolated root when disposed", async () => {
         const gym = await start();
         const root = gym.happyHome;

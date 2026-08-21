@@ -217,6 +217,7 @@ export class AutoModule implements AgentModule {
             modules: [this.#runtime, new AutoReviewComputeModule(this.#compute, lifetime)],
             provider,
             providers: privateProviders,
+            shutdownName: "auto-agent-system",
         });
         return this.#hooks;
     };

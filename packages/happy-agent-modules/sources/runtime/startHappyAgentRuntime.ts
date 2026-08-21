@@ -13,9 +13,12 @@ import type { Compute, HostComputeConfig } from "@slopus/happy-agent-compute";
 import {
     createRootContext,
     detach,
+    GracefulShutdown,
     withLogContext,
     withLifetime,
+    withShutdown,
     type Context,
+    type GracefulShutdownReport,
     type RootContext,
 } from "@steve.kite/stdlib";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
@@ -66,7 +69,12 @@ import { InstallationModule } from "./InstallationModule.js";
 import { instrumentModuleLogging } from "./instrumentModuleLogging.js";
 
 const SLOW_SHUTDOWN_STEP_MS = 1_000;
-type ShutdownHandler = () => Promise<void> | void;
+type ShutdownHandler = (ctx: Context) => Promise<void> | void;
+
+interface RuntimeShutdownTask {
+    readonly name: string;
+    run(ctx: Context): Promise<void>;
+}
 
 /** The only runtime inputs not owned by configuration. Product startup supplies only version. */
 export interface StartHappyAgentRuntimeOptions {
@@ -154,6 +162,9 @@ export interface HappyAgentRuntime {
         readonly schemaVersion: number;
     };
     readonly background: (name: string, work: (ctx: Context) => Promise<void>) => void;
+    /** Begin the named stdlib shutdown while transports remain available. */
+    shutdown(): Promise<GracefulShutdownReport>;
+    /** Finish shutdown and dispose the API after its transport has closed. */
     close(): Promise<void>;
 }
 
@@ -169,68 +180,94 @@ export async function startHappyAgentRuntime(
     const configuration = config.configuration;
     const paths = configuration.paths;
     const observation = await ObservationModule.start(config);
-    const ctx = observation.install(createRootContext());
-    const shutdownController = new AbortController();
+    const coordinator = new GracefulShutdown();
+    const ctx = withShutdown(observation.install(createRootContext()), coordinator);
     try {
         await config.ensureUserConfigurationFiles();
     } catch (error: unknown) {
         // Starter files are a convenience; a read-only home must not keep the daemon down.
         ctx.log.warn("Could not create the user's starter configuration files.", {}, error);
     }
-    const shutdownHandlers = new Map<string, ShutdownHandler>();
-    const registerShutdown = (name: string, handler: ShutdownHandler): void => {
-        if (shutdownHandlers.has(name)) {
-            throw new Error(`The runtime already has a shutdown handler named "${name}".`);
-        }
-        shutdownHandlers.set(name, handler);
-    };
-    registerShutdown("observation", async () => await observation.close(ctx));
+    const shutdownTasks = new Map<string, RuntimeShutdownTask>();
+    const registerShutdown = (name: string, handler: ShutdownHandler): RuntimeShutdownTask =>
+        registerRuntimeShutdownTask(coordinator, shutdownTasks, name, handler);
+    let api: ApiModule | undefined;
+    let auto: AutoModule | undefined;
+    let system: AgentSystemLocal<LibSQLDatabase> | undefined;
     let closed = false;
+    let shuttingDown: Promise<GracefulShutdownReport> | undefined;
     let closing: Promise<void> | undefined;
     const backgroundTasks = new Map<Promise<void>, string>();
+    registerShutdown("background", async (shutdownCtx) => {
+        if (backgroundTasks.size === 0) return;
+        const names = [...backgroundTasks.values()].slice(0, 8).join(",");
+        shutdownCtx.log.info(
+            `daemon:shutdown:background pid=${String(process.pid)} tasks=${names}${backgroundTasks.size > 8 ? ",…" : ""}`,
+        );
+        await Promise.allSettled(backgroundTasks.keys());
+    });
+    registerShutdown("providers", async (shutdownCtx) => {
+        await Promise.allSettled([
+            system?.close(shutdownCtx) ?? Promise.resolve(),
+            auto?.close(shutdownCtx) ?? Promise.resolve(),
+        ]);
+        config.closeProviders();
+    });
+    registerShutdown("observation", async (shutdownCtx) => {
+        const otherTasks = [...shutdownTasks.values()].filter(
+            (task) => task.name !== "observation",
+        );
+        await Promise.allSettled(otherTasks.map(async (task) => await task.run(shutdownCtx)));
+        await observation.close(shutdownCtx);
+    });
+    const shutdown = (): Promise<GracefulShutdownReport> => {
+        if (shuttingDown !== undefined) return shuttingDown;
+        closed = true;
+        const shutdownCtx = withLogContext(ctx.named("runtime-shutdown"), {
+            module: "runtime",
+            pid: process.pid,
+        });
+        const startedAt = performance.now();
+        const running = coordinator.shutdown();
+        shutdownCtx.log.info(
+            `daemon:shutdown:runtime:start pid=${String(process.pid)} handlers=${String(coordinator.pending().length)} backgroundTasks=${String(backgroundTasks.size)}`,
+        );
+        shuttingDown = running.then((report) => {
+            if (report.timedOut.length > 0) {
+                shutdownCtx.log.warn(
+                    `daemon:shutdown:runtime:timeout pid=${String(process.pid)} waitingFor=${report.timedOut.join(",")}`,
+                );
+            }
+            for (const failure of report.failed) {
+                shutdownCtx.log.error(
+                    `daemon:shutdown:runtime:failure pid=${String(process.pid)} handler=${failure.name} error=${shutdownErrorMessage(failure.error)}`,
+                    {},
+                    failure.error,
+                );
+            }
+            shutdownCtx.log.info(
+                `daemon:shutdown:runtime:finish pid=${String(process.pid)} durationMs=${String(Math.round(performance.now() - startedAt))}`,
+            );
+            return report;
+        });
+        return shuttingDown;
+    };
     const close = (): Promise<void> => {
         if (closing !== undefined) return closing;
-        closed = true;
         closing = (async () => {
-            const shutdownCtx = withLogContext(ctx.named("runtime-shutdown"), {
-                module: "runtime",
-                pid: process.pid,
-            });
-            const startedAt = performance.now();
-            shutdownCtx.log.info(
-                `daemon:shutdown:runtime:start pid=${String(process.pid)} steps=${String(shutdownHandlers.size)} backgroundTasks=${String(backgroundTasks.size)}`,
-            );
-            config.closeProviders();
-            shutdownController.abort(new Error("The Happy Agent runtime is shutting down."));
-            shutdownCtx.log.info(`daemon:shutdown:providers:abort pid=${String(process.pid)}`);
-            const failures: unknown[] = [];
-            if (backgroundTasks.size > 0) {
-                const names = [...backgroundTasks.values()].slice(0, 8).join(",");
-                shutdownCtx.log.info(
-                    `daemon:shutdown:background pid=${String(process.pid)} tasks=${names}${backgroundTasks.size > 8 ? ",…" : ""}`,
-                );
-                await runRuntimeShutdownStep(
-                    shutdownCtx,
-                    "background",
-                    async () => {
-                        await Promise.allSettled(backgroundTasks.keys());
-                    },
-                    failures,
-                );
+            const report = await shutdown();
+            const failures = report.failed.map(({ error }) => error);
+            try {
+                await api?.close();
+            } catch (error) {
+                failures.push(error);
             }
-            for (const [name, handler] of [...shutdownHandlers.entries()].reverse()) {
-                await runRuntimeShutdownStep(shutdownCtx, name, handler, failures);
-            }
-            shutdownHandlers.clear();
             if (failures.length > 0) {
                 throw new AggregateError(
                     failures,
                     "The Happy agent runtime did not close cleanly.",
                 );
             }
-            shutdownCtx.log.info(
-                `daemon:shutdown:runtime:finish pid=${String(process.pid)} durationMs=${String(Math.round(performance.now() - startedAt))}`,
-            );
         })();
         return closing;
     };
@@ -259,13 +296,31 @@ export async function startHappyAgentRuntime(
         }
 
         const main = await openHappyAgentDatabase(paths.databasePath);
-        registerShutdown("main-database", () => main.close());
+        registerShutdown("main-database", async (shutdownCtx) => {
+            await system?.close(shutdownCtx);
+            await settleRuntimeShutdownTasks(shutdownCtx, shutdownTasks, [
+                "files",
+                "happy",
+                "murmur",
+                "projects-and-workspaces",
+                "terminals",
+                "titles",
+            ]);
+            await main.close();
+        });
         await chmod(paths.databasePath, 0o600);
         const review = await openHappyAgentDatabase(paths.autoDatabasePath);
-        registerShutdown("auto-database", () => review.close());
+        registerShutdown("auto-database", async (shutdownCtx) => {
+            await auto?.close(shutdownCtx);
+            await review.close();
+        });
         await chmod(paths.autoDatabasePath, 0o600);
 
-        const runtimeRoot = withLifetime(detach(ctx), shutdownController.signal);
+        const runtimeLifetime = ctx.lifetime;
+        if (runtimeLifetime === undefined) {
+            throw new Error("The Happy Agent runtime has no graceful-shutdown lifetime.");
+        }
+        const runtimeRoot = withLifetime(detach(ctx), runtimeLifetime);
         const withDatabase = (target: Context): Context => withAgentDatabase(target, main.database);
         const background = (name: string, work: (workerCtx: Context) => Promise<void>): void => {
             if (closed) return;
@@ -289,14 +344,20 @@ export async function startHappyAgentRuntime(
                           (await suppliedCompute(computeCtx, computeConfig)) as HostCompute,
                   });
         const compute = createComputeModules(computeModule);
-        registerShutdown("compute", async () => await compute.computeModule.dispose(ctx));
+        registerShutdown("compute", async (shutdownCtx) => {
+            await Promise.allSettled([
+                system?.close(shutdownCtx) ?? Promise.resolve(),
+                auto?.close(shutdownCtx) ?? Promise.resolve(),
+            ]);
+            await compute.computeModule.dispose(shutdownCtx);
+        });
 
         const events = new EventsModule();
         const history = new HistoryModule(events);
         history.onAppend(observation.recordHistory);
         const presence = new PresenceModule(config);
         const systemPrompt = new SystemPromptModule(config, compute.computeModule);
-        const auto = new AutoModule(
+        const autoModule = new AutoModule(
             config,
             compute.computeModule,
             systemPrompt,
@@ -315,9 +376,9 @@ export async function startHappyAgentRuntime(
                 database: review.database,
             }),
         );
-        registerShutdown("auto", async () => await auto.close(ctx));
+        auto = autoModule;
 
-        const permissions = new PermissionsModule(compute.computeModule, auto);
+        const permissions = new PermissionsModule(compute.computeModule, autoModule);
         const git = new GitModule(config);
         const projects = new ProjectsModule(config, git);
         const workspaces = new WorkspacesModule(config, projects, git);
@@ -336,7 +397,7 @@ export async function startHappyAgentRuntime(
         userInput.onEventTransactional(async (listenerCtx, event) => {
             if (event.type !== "user_input_answered") return;
             if (event.actingAgentId !== event.request.askingAgentId) return;
-            await auto
+            await autoModule
                 .recordUserInputEventTransactional(listenerCtx, {
                     type: "user_input_answered",
                     agentId: event.request.askingAgentId,
@@ -366,7 +427,7 @@ export async function startHappyAgentRuntime(
         const compactions = new CompactionsModule(events, usage, history);
         const contextWindow = new ContextWindowModule(config);
         const workflows = new WorkflowsModule(config, collaboration, compute.computeModule);
-        const api = new ApiModule(
+        const apiModule = new ApiModule(
             abort,
             config,
             events,
@@ -383,12 +444,12 @@ export async function startHappyAgentRuntime(
             profile,
             compute.computeModule,
         );
-        registerShutdown("api", async () => await api.close());
+        api = apiModule;
 
         const modules: HappyAgentRuntimeModules = {
             abort,
-            api,
-            auto,
+            api: apiModule,
+            auto: autoModule,
             collaboration,
             compactions,
             compute: compute.computeModule,
@@ -424,7 +485,7 @@ export async function startHappyAgentRuntime(
 
         const ordered: AgentModule<AnyAgentTool, LibSQLDatabase>[] = [
             // API must subscribe before any later module restores state or emits an event.
-            api,
+            apiModule,
             abort,
             config,
             observation,
@@ -432,7 +493,7 @@ export async function startHappyAgentRuntime(
             history,
             modelSwitch,
             permissions,
-            auto,
+            autoModule,
             presence,
             goal,
             tasks,
@@ -462,9 +523,9 @@ export async function startHappyAgentRuntime(
             .map(checkModuleToolParameters)
             .map(instrumentModuleLogging);
 
-        await api.prepare();
+        await apiModule.prepare();
         await options.onPrepared?.({
-            api,
+            api: apiModule,
             configuration,
             context: (name) => withDatabase(ctx.named(name)),
         });
@@ -473,32 +534,17 @@ export async function startHappyAgentRuntime(
             acquireLock: async () => await acquireHappyAgentStorageLock(paths.agentLockPath),
             database: main.database,
         });
-        const system = await AgentSystemLocal.create(
-            withLifetime(ctx.named("agent-system"), shutdownController.signal),
-            storage,
-            {
-                models,
-                modules: ordered,
-                provider,
-                providers,
-                sendMode: "all",
-                steeringMode: "all",
-            },
-        );
-        registerShutdown("agent-system", async () => await system.close(ctx));
-        registerShutdown("titles", async () => await titles.close());
-        registerShutdown("active-agent-runs", async () => {
-            const activeAgentIds = events.activeAgentIds();
-            if (activeAgentIds.length === 0) return;
-            ctx.log.info(
-                `daemon:shutdown:abort-active-runs pid=${String(process.pid)} agents=${String(activeAgentIds.length)}`,
-            );
-            await Promise.all(
-                activeAgentIds.map(
-                    async (agentId) => await system.abort(withDatabase(ctx), agentId),
-                ),
-            );
+        const agentSystem = await AgentSystemLocal.create(ctx.named("agent-system"), storage, {
+            models,
+            modules: ordered,
+            provider,
+            providers,
+            sendMode: "all",
+            shutdownName: "agent-system",
+            steeringMode: "all",
         });
+        system = agentSystem;
+        registerShutdown("titles", async () => await titles.close());
         registerShutdown("happy", async () => await happy.stop());
 
         git.onSnapshot(async (snapshotCtx, entity, snapshot) => {
@@ -533,10 +579,10 @@ export async function startHappyAgentRuntime(
             ...(person === undefined ? [] : ([person.id] as const)),
         );
 
-        await api.markReady();
+        await apiModule.markReady();
 
         return {
-            api,
+            api: apiModule,
             background,
             close,
             configuration,
@@ -551,8 +597,9 @@ export async function startHappyAgentRuntime(
             modules,
             provider,
             providers,
+            shutdown,
             storage,
-            system,
+            system: agentSystem,
         };
     } catch (error) {
         await close().catch(() => undefined);
@@ -560,11 +607,45 @@ export async function startHappyAgentRuntime(
     }
 }
 
+function registerRuntimeShutdownTask(
+    coordinator: GracefulShutdown,
+    tasks: Map<string, RuntimeShutdownTask>,
+    name: string,
+    handler: ShutdownHandler,
+): RuntimeShutdownTask {
+    if (tasks.has(name)) {
+        throw new Error(`The runtime already has a shutdown handler named "${name}".`);
+    }
+    let running: Promise<void> | undefined;
+    const task: RuntimeShutdownTask = {
+        name,
+        run: (ctx) => {
+            running ??= runRuntimeShutdownStep(ctx, name, handler);
+            return running;
+        },
+    };
+    tasks.set(name, task);
+    coordinator.register(name, async (ctx) => await task.run(ctx));
+    return task;
+}
+
+async function settleRuntimeShutdownTasks(
+    ctx: Context,
+    tasks: ReadonlyMap<string, RuntimeShutdownTask>,
+    names: readonly string[],
+): Promise<void> {
+    await Promise.allSettled(
+        names.flatMap((name) => {
+            const task = tasks.get(name);
+            return task === undefined ? [] : [task.run(ctx)];
+        }),
+    );
+}
+
 async function runRuntimeShutdownStep(
     ctx: Context,
     step: string,
     handler: ShutdownHandler,
-    failures: unknown[],
 ): Promise<void> {
     const startedAt = performance.now();
     ctx.log.info(`daemon:shutdown:step:start pid=${String(process.pid)} step=${step}`);
@@ -575,17 +656,17 @@ async function runRuntimeShutdownStep(
     }, SLOW_SHUTDOWN_STEP_MS);
     slow.unref();
     try {
-        await handler();
+        await handler(ctx);
         ctx.log.info(
             `daemon:shutdown:step:finish pid=${String(process.pid)} step=${step} durationMs=${String(Math.round(performance.now() - startedAt))}`,
         );
     } catch (error) {
-        failures.push(error);
         ctx.log.error(
             `daemon:shutdown:step:fail pid=${String(process.pid)} step=${step} durationMs=${String(Math.round(performance.now() - startedAt))} error=${shutdownErrorMessage(error)}`,
             {},
             error,
         );
+        throw error;
     } finally {
         clearTimeout(slow);
     }

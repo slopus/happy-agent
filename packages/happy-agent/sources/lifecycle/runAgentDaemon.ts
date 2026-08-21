@@ -7,6 +7,8 @@ import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
 export interface RunAgentDaemonOptions {
     /** False only when a test embeds the daemon inside a process it must not kill. */
     readonly persistPid?: boolean;
+    /** Hard-exit after graceful shutdown so unrelated dangling work cannot retain the process. */
+    readonly hardExit?: boolean;
 }
 
 /**
@@ -21,6 +23,7 @@ export async function runAgentDaemon(
     const gymInference = createGymInferenceFromEnvironment();
     const paths = getHappyDaemonPaths();
     const persistPid = options.persistPid ?? true;
+    const hardExit = options.hardExit ?? persistPid;
     if (persistPid) {
         process.once("exit", () => removeDaemonPidSync(paths.pidPath, process.pid));
     }
@@ -30,9 +33,21 @@ export async function runAgentDaemon(
         version: identity.version,
         ...(gymInference === undefined ? {} : { inference: gymInference }),
     });
+    if (hardExit) {
+        void daemon.closed.then(
+            () => process.exit(0),
+            (error: unknown) => {
+                process.stderr.write(
+                    `Daemon shutdown failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+                );
+                process.exit(1);
+            },
+        );
+    }
     const stop = (signal: "SIGINT" | "SIGTERM") => {
         const reason = signal === "SIGINT" ? "sigint" : "sigterm";
         void daemon.close(reason).catch((error: unknown) => {
+            if (hardExit) return;
             process.stderr.write(
                 `Daemon shutdown failed after ${signal}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
             );

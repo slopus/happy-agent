@@ -21,6 +21,8 @@ export interface StartHappyAgentDaemonOptions extends Omit<
 export type HappyAgentShutdownReason = "api" | "requested" | "sigint" | "sigterm";
 
 export interface HappyAgentDaemon {
+    /** Settles after the graceful sequence and transport finalizers finish. */
+    readonly closed: Promise<void>;
     readonly socketPath: string;
     readonly tokenPath: string;
     close(reason?: HappyAgentShutdownReason): Promise<void>;
@@ -38,6 +40,13 @@ export async function startHappyAgentDaemon(
     let pidWritten = false;
     let shutdownRequested = false;
     let runtime: HappyAgentRuntime;
+    let resolveClosed!: () => void;
+    let rejectClosed!: (error: unknown) => void;
+    const closed = new Promise<void>((resolve, reject) => {
+        resolveClosed = resolve;
+        rejectClosed = reject;
+    });
+    void closed.catch(() => undefined);
 
     try {
         runtime = await startHappyAgentRuntime({
@@ -78,13 +87,17 @@ export async function startHappyAgentDaemon(
 
     let closing: Promise<void> | undefined;
     closeDaemon = (reason = "requested") => {
-        closing ??= closeHappyAgentDaemon(runtime, bound!, unsubscribeShutdown, reason);
+        if (closing === undefined) {
+            closing = closeHappyAgentDaemon(runtime, bound!, unsubscribeShutdown, reason);
+            void closing.then(resolveClosed, rejectClosed);
+        }
         return closing;
     };
     if (shutdownRequested) void closeDaemon("api");
 
     return {
         close: closeDaemon,
+        closed,
         socketPath: bound.socketPath,
         tokenPath: runtime.configuration.paths.tokenPath,
     };
@@ -104,8 +117,16 @@ async function closeHappyAgentDaemon(
     const startedAt = performance.now();
     ctx.log.info(`daemon:shutdown:start pid=${String(process.pid)} reason=${reason}`);
     const failures: unknown[] = [];
+    await runShutdownStep(
+        ctx,
+        "graceful-runtime",
+        async () => {
+            await runtime.shutdown();
+        },
+        failures,
+    );
     await runShutdownStep(ctx, "socket", async () => await bound.close(), failures);
-    await runShutdownStep(ctx, "runtime", async () => await runtime.close(), failures);
+    await runShutdownStep(ctx, "runtime-finalizers", async () => await runtime.close(), failures);
     if (failures.length > 0) {
         throw new AggregateError(failures, "The Happy agent daemon did not close cleanly.");
     }

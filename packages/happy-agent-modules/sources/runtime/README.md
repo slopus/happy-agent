@@ -20,10 +20,12 @@ later module restores agents or emits startup events. Migrations still run throu
 Base migration pass.
 
 The main and automatic-review stores are separate databases with separate process locks. Runtime
-shutdown cancels the shared provider lifetime first, signals every run in Events' active index,
-then waits for admitted work and closes resources in reverse ownership order. Agent Base still owns
-its deliberate drain-on-close semantics; the daemon establishes the stronger replacement policy
-before entering that close barrier so an Agent upgrade cannot wait on an unbounded provider stream.
+shutdown uses stdlib's one named coordinator. Agent Base registers the main and review systems as
+`agent-system` and `auto-agent-system`; each finishes its in-flight operation, stops before the next
+agentic operation, and releases its store lock. The remaining named handlers close their resources
+with explicit dependency waits, so health can report exactly what is still pending. The API and
+socket stay outside this phase and remain ready until every graceful handler has finished or timed
+out; transport and API finalizers run only afterwards.
 
 Each SQLite database acquires its kernel-backed sibling `.lock` database before the real database
 client is constructed. A live process therefore excludes every other connector, while process

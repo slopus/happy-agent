@@ -17,7 +17,7 @@ import {
 } from "@slopus/happy-agent-base";
 import type { Static, TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { afterCommit, type Context } from "@steve.kite/stdlib";
+import { afterCommit, shutdown, type Context } from "@steve.kite/stdlib";
 import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
@@ -374,7 +374,7 @@ export class ApiModule implements AgentModule {
             this.#authenticate(request);
             const url = requestUrl(request);
             if (request.method === "GET" && url.pathname === "/v0/health") {
-                sendJson(response, 200, this.#health());
+                sendJson(response, 200, this.#health(ctx));
                 return;
             }
             if (!this.#ready) {
@@ -3571,15 +3571,18 @@ export class ApiModule implements AgentModule {
         return join(this.#config.configuration.paths.agentHome, "onboarding-v0");
     }
 
-    #health(): Record<string, unknown> {
+    #health(ctx: Context): Record<string, unknown> {
+        const gracefulShutdown = shutdown.get(ctx);
         return {
             healthy: true,
             ready: this.#ready,
+            shuttingDown: gracefulShutdown?.shuttingDown ?? false,
             status: this.#ready ? "ready" : "starting",
             version: {
                 protocol: API_PROTOCOL_VERSION,
                 daemon: this.#config.configuration.version,
             },
+            waitingFor: gracefulShutdown?.pending() ?? [],
         };
     }
 

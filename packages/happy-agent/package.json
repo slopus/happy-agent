@@ -38,8 +38,8 @@
         "test": "vitest run --passWithNoTests"
     },
     "dependencies": {
-        "@slopus/happy-agent-base": "0.0.25",
-        "@slopus/happy-agent-client": "0.0.12",
+        "@slopus/happy-agent-base": "0.0.26",
+        "@slopus/happy-agent-client": "0.0.13",
         "@slopus/happy-agent-modules": "workspace:*",
         "@slopus/happy-providers": "0.0.11",
         "@steve.kite/stdlib": "0.0.12"

@@ -1,5 +1,10 @@
 # Auto module — learnings
 
+- The private reviewer system inherits the runtime's stdlib graceful-shutdown coordinator through
+  its detached context. It must register as `auto-agent-system`, distinct from the main
+  `agent-system`, so both store locks remain visible and awaited instead of one named handler
+  replacing the other.
+
 - The history module now records who actually sent each incoming message: an accepted message is
   archived as `role: "user"` only when its metadata carries the positive `messageOrigin: "user"`
   stamp this module trusts, and as `role: "agent"` otherwise, with `senderAgentId` naming the
