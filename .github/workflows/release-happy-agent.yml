@@ -160,6 +160,7 @@ jobs:
                   binary="packages/happy-agent/dist/bin/happy-agent-$TARGET"
                   test "$("$binary" --version)" = "Happy Agent $RELEASE_VERSION"
                   "$binary" --help >/dev/null
+                  node packages/happy-agent/scripts/smoke-binary-transports.mjs "$binary"
 
                   smoke_root="$(mktemp -d /tmp/happy-agent-release.XXXXXX)"
                   export HAPPY_HOME_DIR="$smoke_root/home"

@@ -1,5 +1,5 @@
 import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../ImageGeneration.js";
-import { getImageProcessor } from "./getImageProcessor.js";
+import { getImageProcessor } from "../../impl/images/getImageProcessor.js";
 import { ImageProcessingError } from "./ImageProcessingError.js";
 import {
     promptImageOutputDimensions,
@@ -10,6 +10,7 @@ const ORIGINAL_DETAIL_LIMITS: PromptImageResizeLimits = {
     maxDimension: 6000,
     maxPatches: 10_000,
 };
+const MAX_DECODED_PIXELS = 40_000_000;
 
 export type PromptImageMediaType = "image/gif" | "image/jpeg" | "image/png" | "image/webp";
 
@@ -38,11 +39,14 @@ export async function prepareImageForPrompt(bytes: Uint8Array): Promise<Prepared
     }
 
     try {
-        const sharp = await getImageProcessor();
-        const metadata = await sharp(input, { failOn: "error" }).metadata();
+        const processor = await getImageProcessor();
+        const metadata = await processor.metadata(input, {
+            autoOrient: false,
+            maxPixels: MAX_DECODED_PIXELS,
+        });
         const width = metadata.width;
         const height = metadata.height;
-        if (width === undefined || height === undefined || width < 1 || height < 1) {
+        if (width < 1 || height < 1) {
             throw new ImageProcessingError("Image dimensions could not be determined.");
         }
 
@@ -60,34 +64,43 @@ export async function prepareImageForPrompt(bytes: Uint8Array): Promise<Prepared
         const shouldResize = target.width !== width || target.height !== height;
 
         if (!shouldResize && preservableMediaType !== undefined) {
-            await sharp(input, { failOn: "error" }).stats();
+            await processor.validate(input, {
+                autoOrient: false,
+                maxPixels: MAX_DECODED_PIXELS,
+            });
             return { bytes: input, height, mediaType: preservableMediaType, width };
         }
 
-        let pipeline = sharp(input, { failOn: "error" });
-        if (shouldResize) {
-            pipeline = pipeline.resize(target.width, target.height, {
-                fit: "fill",
-                kernel: sharp.kernel.linear,
-            });
-        }
-        // Match Codex: keep EXIF orientation paired with unrotated pixels instead of baking it in.
-        pipeline = pipeline.keepMetadata();
-
         const outputMediaType = preservableMediaType ?? "image/png";
-        if (outputMediaType === "image/jpeg") {
-            pipeline = pipeline.jpeg({ quality: 85 });
-        } else if (outputMediaType === "image/webp") {
-            pipeline = pipeline.webp({ lossless: true });
-        } else {
-            pipeline = pipeline.png();
-        }
+        const result = await processor.encode(input, {
+            autoOrient: false,
+            format:
+                outputMediaType === "image/jpeg"
+                    ? "jpeg"
+                    : outputMediaType === "image/webp"
+                      ? "webp"
+                      : "png",
+            maxPixels: MAX_DECODED_PIXELS,
+            preserveMetadata: true,
+            ...(outputMediaType === "image/webp" ? { lossless: true } : {}),
+            ...(outputMediaType === "image/jpeg" ? { quality: 85 } : {}),
+            ...(shouldResize
+                ? {
+                      resize: {
+                          filter: "linear" as const,
+                          fit: "fill" as const,
+                          height: target.height,
+                          width: target.width,
+                      },
+                  }
+                : {}),
+        });
 
         return {
-            bytes: await pipeline.toBuffer(),
-            height: target.height,
+            bytes: result.data,
+            height: result.height,
             mediaType: outputMediaType,
-            width: target.width,
+            width: result.width,
         };
     } catch (error) {
         if (error instanceof ImageProcessingError) {

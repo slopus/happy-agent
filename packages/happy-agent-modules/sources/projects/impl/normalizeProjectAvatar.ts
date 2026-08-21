@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
-import sharp from "sharp";
-
+import { getImageProcessor } from "../../impl/images/getImageProcessor.js";
 import { ProjectAvatarInputError } from "../ProjectAvatarInputError.js";
 import { rgbaToProjectAvatarThumbHash } from "./rgbaToProjectAvatarThumbHash.js";
 
@@ -31,18 +30,12 @@ export async function normalizeProjectAvatar(
         throw new ProjectAvatarInputError("The project image must be no larger than 8 MiB.");
     }
     try {
-        const image = sharp(bytes, {
-            animated: false,
-            failOn: "error",
-            limitInputPixels: MAX_DECODED_PIXELS,
-        }).rotate();
-        const metadata = await image.metadata();
-        if (
-            metadata.width === undefined ||
-            metadata.height === undefined ||
-            metadata.format === undefined ||
-            !ACCEPTED_FORMATS.has(metadata.format)
-        ) {
+        const processor = await getImageProcessor();
+        const metadata = await processor.metadata(bytes, {
+            autoOrient: true,
+            maxPixels: MAX_DECODED_PIXELS,
+        });
+        if (!ACCEPTED_FORMATS.has(metadata.format)) {
             throw new ProjectAvatarInputError(
                 "The project image does not contain a readable picture.",
             );
@@ -56,44 +49,43 @@ export async function normalizeProjectAvatar(
         if (declaredContentType !== undefined && actualContentType !== declaredContentType) {
             throw new ProjectAvatarInputError("The project image does not match its content type.");
         }
-        const result = await image
-            .resize({
+        const result = await processor.encode(bytes, {
+            autoOrient: true,
+            format: "webp",
+            maxPixels: MAX_DECODED_PIXELS,
+            quality: 82,
+            resize: {
+                filter: "lanczos3",
                 fit: "inside",
                 height: 256,
-                kernel: "lanczos3",
                 width: 256,
                 withoutEnlargement: true,
-            })
-            .webp({ quality: 82 })
-            .toBuffer({ resolveWithObject: true });
-        const placeholder = await sharp(result.data, {
-            animated: false,
-            failOn: "error",
-            limitInputPixels: MAX_DECODED_PIXELS,
-        })
-            .resize({
+            },
+        });
+        const placeholder = await processor.rgba(result.data, {
+            autoOrient: false,
+            maxPixels: MAX_DECODED_PIXELS,
+            resize: {
+                filter: "lanczos3",
                 fit: "inside",
                 height: 100,
-                kernel: "lanczos3",
                 width: 100,
                 withoutEnlargement: true,
-            })
-            .ensureAlpha()
-            .raw()
-            .toBuffer({ resolveWithObject: true });
+            },
+        });
         return {
             bytes: result.data,
             contentHash: createHash("sha256").update(result.data).digest("hex"),
             contentType: "image/webp",
-            height: result.info.height,
+            height: result.height,
             thumbhash: Buffer.from(
                 rgbaToProjectAvatarThumbHash(
-                    placeholder.info.width,
-                    placeholder.info.height,
+                    placeholder.width,
+                    placeholder.height,
                     placeholder.data,
                 ),
             ).toString("base64"),
-            width: result.info.width,
+            width: result.width,
         };
     } catch (error: unknown) {
         if (error instanceof ProjectAvatarInputError) throw error;

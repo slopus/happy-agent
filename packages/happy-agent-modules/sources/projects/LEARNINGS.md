@@ -25,6 +25,10 @@ allowed the row, event, and image to disagree. A project now durably exposes onl
 project-owned table. Set and clear update both inside the project mutation transaction, and their
 events carry the exact previous project, so every response, event, restart, and GET sees one image.
 
+Image normalization is a runtime boundary, not a Sharp boundary. Node uses Sharp and the standalone
+Bun executable uses `Bun.Image`, but both go through the same bounded processor contract and still
+produce normalized WebP bytes plus the exact ThumbHash metadata the project resource promises.
+
 ## One home project, enforced at registration
 
 The home directory is the single `home` project, but nothing stopped a second folder from being

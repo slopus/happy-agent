@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
-import sharp from "sharp";
-
+import { getImageProcessor } from "../impl/images/getImageProcessor.js";
 import { rgbaToThumbHash } from "./rgbaToThumbHash.js";
 
 export const MAX_PROFILE_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -30,12 +29,11 @@ export async function normalizeProfilePhoto(
     }
 
     const input = Buffer.from(bytes);
-    const image = sharp(input, {
-        animated: false,
-        failOn: "error",
-        limitInputPixels: MAX_DECODED_PIXELS,
-    }).rotate();
-    const metadata = await image.metadata();
+    const processor = await getImageProcessor();
+    const metadata = await processor.metadata(input, {
+        autoOrient: true,
+        maxPixels: MAX_DECODED_PIXELS,
+    });
     const actualContentType =
         metadata.format === "png"
             ? "image/png"
@@ -48,49 +46,48 @@ export async function normalizeProfilePhoto(
         throw new Error("The profile photo does not match its content type.");
     }
 
-    const normalized = await image
-        .resize({
+    const normalized = await processor.encode(input, {
+        autoOrient: true,
+        format: "webp",
+        maxPixels: MAX_DECODED_PIXELS,
+        quality: 82,
+        resize: {
+            filter: "lanczos3",
             fit: "inside",
             height: 512,
-            kernel: "lanczos3",
             width: 512,
             withoutEnlargement: true,
-        })
-        .webp({ quality: 82 })
-        .toBuffer({ resolveWithObject: true });
+        },
+    });
     if (
-        normalized.info.width < 1 ||
-        normalized.info.height < 1 ||
+        normalized.width < 1 ||
+        normalized.height < 1 ||
         normalized.data.byteLength > MAX_PROFILE_PHOTO_BYTES
     ) {
         throw new Error("The normalized profile photo is invalid.");
     }
 
-    const placeholder = await sharp(normalized.data, {
-        animated: false,
-        failOn: "error",
-        limitInputPixels: MAX_DECODED_PIXELS,
-    })
-        .resize({
+    const placeholder = await processor.rgba(normalized.data, {
+        autoOrient: false,
+        maxPixels: MAX_DECODED_PIXELS,
+        resize: {
+            filter: "lanczos3",
             fit: "inside",
             height: 100,
-            kernel: "lanczos3",
             width: 100,
             withoutEnlargement: true,
-        })
-        .ensureAlpha()
-        .raw()
-        .toBuffer({ resolveWithObject: true });
+        },
+    });
     const thumbhash = Buffer.from(
-        rgbaToThumbHash(placeholder.info.width, placeholder.info.height, placeholder.data),
+        rgbaToThumbHash(placeholder.width, placeholder.height, placeholder.data),
     ).toString("base64");
 
     return {
         bytes: normalized.data,
         contentHash: createHash("sha256").update(normalized.data).digest("hex"),
         contentType: "image/webp",
-        height: normalized.info.height,
+        height: normalized.height,
         thumbhash,
-        width: normalized.info.width,
+        width: normalized.width,
     };
 }

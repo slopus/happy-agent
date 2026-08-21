@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBinaryVersion } from "./resolveBinaryVersion.js";
 
-const MINIMUM_BUN_VERSION = [1, 3, 14] as const;
+const MINIMUM_BUN_VERSION = [1, 4, 0] as const;
 const VIRTUAL_ASSETS_MODULE = "happy-agent:binary-assets";
 const happyAgentRoot = resolve(import.meta.dirname, "..");
 
@@ -40,10 +40,6 @@ interface BinaryAssets {
     justBashWorkerGroups: Record<JustBashWorker, JustBashWorkerGroup>;
     libsqlRelativePath: string;
     montyRelativePath: string;
-    ptyAssetVariables: string[];
-    ptyDirectoryRelativePath: string;
-    ptyNativeRelativePath: string;
-    sharpNativeRelativePath: string;
     supervisorRelativePaths: Record<BinaryTarget["key"], string>;
 }
 
@@ -101,7 +97,7 @@ async function main(): Promise<void> {
 
 async function buildTarget(target: BinaryTarget): Promise<void> {
     const assets = resolveBinaryAssets(target);
-    const adapters = resolveSourceAdapters(target);
+    const adapters = resolveSourceAdapters();
     const appliedAdapters = new Set<string>();
     const outfile = join(happyAgentRoot, "dist", "bin", `happy-agent-${target.key}`);
     console.log(`Compiling ${target.key}...`);
@@ -217,10 +213,6 @@ function resolveBinaryAssets(target: BinaryTarget): BinaryAssets {
         "libsql",
     );
     const libsqlRequire = createRequire(join(libsqlRoot, "package.json"));
-    const ptyRoot = dependencyRoot("@slopus/happy-agent-modules", "@lydell/node-pty");
-    const ptyRequire = createRequire(join(ptyRoot, "package.json"));
-    const sharpRoot = dependencyRoot("@slopus/happy-agent-modules", "sharp");
-    const sharpRequire = createRequire(join(sharpRoot, "package.json"));
     const montyRoot = dependencyRoot("@slopus/happy-agent-modules", "@pydantic/monty");
     const montyRequire = createRequire(join(montyRoot, "package.json"));
     const fffRoot = dependencyRoot("@slopus/happy-agent-modules", "@ff-labs/fff-node");
@@ -235,31 +227,12 @@ function resolveBinaryAssets(target: BinaryTarget): BinaryAssets {
 
     const nativeSuffix = target.platform === "linux" ? `${target.key}-gnu` : target.key;
     const libsqlPackage = `@libsql/${nativeSuffix}`;
-    const ptyPackage = `@lydell/node-pty-${target.key}`;
-    const sharpPackage = `@img/sharp-${target.key}`;
-    const sharpLibvipsPackage = `@img/sharp-libvips-${target.key}`;
     const montyPackage = `@pydantic/monty-${nativeSuffix}`;
     const ffiPackage = `@yuuang/ffi-rs-${nativeSuffix}`;
     const fffPackage = `@ff-labs/fff-bin-${nativeSuffix}`;
     const claudePackage = `@anthropic-ai/claude-agent-sdk-${target.key}`;
 
     const libsqlSource = resolveRequired(libsqlRequire, libsqlPackage);
-    const ptyPackageRoot = packageRootFromEntry(
-        resolveRequired(ptyRequire, ptyPackage),
-        ptyPackage,
-    );
-    const ptyDirectoryRelativePath = `prebuilds/${target.key}`;
-    const ptyNativeRelativePath = `${ptyDirectoryRelativePath}/pty.node`;
-    const ptyHelperSource = join(ptyPackageRoot, ptyDirectoryRelativePath, "spawn-helper");
-    const ptyAssetVariables = [
-        "ptyNativeAsset",
-        ...(existsSync(ptyHelperSource) ? ["ptyHelperAsset"] : []),
-    ];
-    const sharpPackageRoot = dirname(resolveRequired(sharpRequire, `${sharpPackage}/package`));
-    const sharpNativeSource = onlyFile(join(sharpPackageRoot, "lib"), ".node");
-    const sharpNativeRelativePath = `node_modules/${sharpPackage}/lib/${basename(sharpNativeSource)}`;
-    const sharpLibvipsSource = resolveRequired(sharpRequire, `${sharpLibvipsPackage}/binary`);
-    const sharpLibvipsRelativePath = `node_modules/${sharpLibvipsPackage}/lib/${basename(sharpLibvipsSource)}`;
     const montySource = resolveRequired(montyRequire, montyPackage);
     const ffiSource = resolveRequired(fffRequire, ffiPackage);
     const fffSource = resolveRequired(fffRequire, fffPackage);
@@ -301,19 +274,6 @@ export const { getQuickJS } = QJS;
     );
     const assets: EmbeddedAsset[] = [
         asset("libsqlAsset", libsqlSource, "index.node"),
-        asset("ptyNativeAsset", join(ptyPackageRoot, ptyNativeRelativePath), ptyNativeRelativePath),
-        ...(existsSync(ptyHelperSource)
-            ? [
-                  asset(
-                      "ptyHelperAsset",
-                      ptyHelperSource,
-                      `${ptyDirectoryRelativePath}/spawn-helper`,
-                      true,
-                  ),
-              ]
-            : []),
-        asset("sharpNativeAsset", sharpNativeSource, sharpNativeRelativePath),
-        asset("sharpLibvipsAsset", sharpLibvipsSource, sharpLibvipsRelativePath),
         asset("montyAsset", montySource, basename(montySource)),
         asset("ffiAsset", ffiSource, basename(ffiSource)),
         asset("fffAsset", fffSource, basename(fffSource)),
@@ -386,29 +346,17 @@ export const { getQuickJS } = QJS;
         },
         libsqlRelativePath: "index.node",
         montyRelativePath: basename(montySource),
-        ptyAssetVariables,
-        ptyDirectoryRelativePath,
-        ptyNativeRelativePath,
-        sharpNativeRelativePath,
         supervisorRelativePaths,
     };
 }
 
-function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter> {
+function resolveSourceAdapters(): Map<string, SourceAdapter> {
     const adapters = new Map<string, SourceAdapter>();
-    const ptyPackage = `@lydell/node-pty-${target.key}`;
     const modulesRoot = directPackageRoot("@slopus/happy-agent-modules");
-    const ptyRoot = dependencyRoot("@slopus/happy-agent-modules", "@lydell/node-pty");
-    const ptyRequire = createRequire(join(ptyRoot, "package.json"));
-    const ptyPackageRoot = packageRootFromEntry(
-        resolveRequired(ptyRequire, ptyPackage),
-        ptyPackage,
-    );
     const libsqlRoot = packageDependencyRoot(
         dependencyRoot("@slopus/happy-agent-modules", "@libsql/client"),
         "libsql",
     );
-    const sharpRoot = dependencyRoot("@slopus/happy-agent-modules", "sharp");
     const fffRoot = dependencyRoot("@slopus/happy-agent-modules", "@ff-labs/fff-node");
     const ffiRoot = packageDependencyRoot(fffRoot, "ffi-rs");
     const computeRoot = dependencyRoot(
@@ -419,6 +367,16 @@ function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter>
     const providersRoot = directPackageRoot("@slopus/happy-providers");
     const justBashRoot = packageDependencyRoot(computeRoot, "just-bash");
     const justBashChunks = join(justBashRoot, "dist", "bundle", "chunks");
+
+    addAdapter(
+        adapters,
+        join(computeRoot, "dist", "processes", "impl", "startProcessTransport.js"),
+        {
+            name: "Bun compute PTY transport",
+            required: true,
+            adapt: adaptBunComputePtyTransport,
+        },
+    );
 
     addAdapter(adapters, join(libsqlRoot, "index.js"), {
         name: "libSQL native loader",
@@ -431,40 +389,23 @@ function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter>
                 "libSQL native loader",
             ),
     });
-    addAdapter(adapters, join(ptyRoot, "index.js"), {
-        name: "PTY platform selector",
+    addAdapter(
+        adapters,
+        join(modulesRoot, "dist", "terminals", "impl", "createHostTerminalProcessFactory.js"),
+        {
+            name: "Bun terminal process factory",
+            required: true,
+            adapt: () =>
+                'export { createBunTerminalProcessFactory as createHostTerminalProcessFactory } from "./createBunTerminalProcessFactory.js";\n',
+        },
+    );
+    addAdapter(adapters, join(modulesRoot, "dist", "impl", "images", "getImageProcessor.js"), {
+        name: "Bun image processor",
         required: true,
-        adapt: () => `module.exports = require(${JSON.stringify(ptyPackage)});\n`,
-    });
-    addAdapter(adapters, join(ptyPackageRoot, "lib", "utils.js"), {
-        name: "PTY native loader",
-        required: true,
-        adapt: () => `"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.assign = assign;
-exports.loadNativeModule = loadNativeModule;
-function assign(target, ...sources) {
-    for (const source of sources) {
-        for (const key of Object.keys(source)) target[key] = source[key];
-    }
-    return target;
-}
-function loadNativeModule(name) {
-    if (name !== "pty") throw new Error(\`Unexpected PTY native module: \${name}\`);
-    return require(${JSON.stringify(VIRTUAL_ASSETS_MODULE)}).loadNodePtyNative();
-}
+        adapt: () => `import { createBunImageProcessor } from "./createBunImageProcessor.js";
+const imageProcessor = createBunImageProcessor();
+export async function getImageProcessor() { return imageProcessor; }
 `,
-    });
-    addAdapter(adapters, join(sharpRoot, "dist", "sharp.mjs"), {
-        name: "Sharp ESM native loader",
-        required: true,
-        adapt: () =>
-            `import { loadSharpNative } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\nexport default loadSharpNative();\n`,
-    });
-    addAdapter(adapters, join(sharpRoot, "dist", "sharp.cjs"), {
-        name: "Sharp CommonJS native loader",
-        adapt: () =>
-            `module.exports = require(${JSON.stringify(VIRTUAL_ASSETS_MODULE)}).loadSharpNative();\n`,
     });
     addAdapter(
         adapters,
@@ -575,6 +516,27 @@ export function resolveBinaryForTarget(key, binaryPath) {
     return adapters;
 }
 
+function adaptBunComputePtyTransport(source: string): string {
+    const helper = join(happyAgentRoot, "dist", "binary", "startBunPtyProcessTransport.js");
+    const imported = replaceOnce(
+        source,
+        'import { spawn as spawnPty } from "@lydell/node-pty";\n',
+        `import { startBunPtyProcessTransport } from ${JSON.stringify(helper)};\n`,
+        "compute PTY import",
+    );
+    const start = imported.indexOf("function startPtyTransport(");
+    const next = imported.indexOf("function toPtyInput(", start);
+    const shell = imported.indexOf("function shellArgs(", next);
+    if (start < 0 || next < 0 || shell < 0) {
+        throw new Error("The compute PTY transport source changed.");
+    }
+    return (
+        imported.slice(0, start) +
+        `function startPtyTransport(executable, args, options) {\n    return startBunPtyProcessTransport(executable, args, options);\n}\n` +
+        imported.slice(shell)
+    );
+}
+
 function renderAssetModule(binaryAssets: BinaryAssets): string {
     const imports = binaryAssets.assets
         .flatMap(({ source, variable }) =>
@@ -623,14 +585,6 @@ function loadNative(name, files, relativePath) {
 }
 export function loadLibsqlNative() {
     return loadNative("libsql", ${files(["libsqlAsset"])}, ${JSON.stringify(binaryAssets.libsqlRelativePath)});
-}
-export function loadNodePtyNative() {
-    const files = ${files(binaryAssets.ptyAssetVariables)};
-    const root = materializeEmbeddedFiles("node-pty", files);
-    return { dir: join(root, ${JSON.stringify(binaryAssets.ptyDirectoryRelativePath)}), module: loadNative("node-pty", files, ${JSON.stringify(binaryAssets.ptyNativeRelativePath)}) };
-}
-export function loadSharpNative() {
-    return loadNative("sharp", ${files(["sharpNativeAsset", "sharpLibvipsAsset"])}, ${JSON.stringify(binaryAssets.sharpNativeRelativePath)});
 }
 export function loadMontyNative() {
     return loadNative("monty", ${files(["montyAsset"])}, ${JSON.stringify(binaryAssets.montyRelativePath)});
@@ -766,16 +720,6 @@ function resolveRequired(require: Require, specifier: string): string {
     } catch (error) {
         throw new Error(`Required binary dependency is missing: ${specifier}`, { cause: error });
     }
-}
-
-function onlyFile(directory: string, suffix: string): string {
-    const matches = readdirSync(directory)
-        .filter((name) => name.endsWith(suffix))
-        .map((name) => join(directory, name));
-    if (matches.length !== 1) {
-        throw new Error(`Expected one ${suffix} file in ${directory}, found ${matches.length}.`);
-    }
-    return realpathSync(matches[0]);
 }
 
 function onlyMatchingFile(directory: string, pattern: RegExp): string {

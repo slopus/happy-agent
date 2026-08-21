@@ -1,3 +1,4 @@
+import { chmod, unlink } from "node:fs/promises";
 import {
     createServer,
     request as requestHttp,
@@ -19,6 +20,7 @@ const CONNECT_TIMEOUT_MS = 30_000;
 export class WorkspaceProxy {
     readonly #server = createServer();
     readonly #sockets = new Set<Duplex>();
+    #socketPath: string | undefined;
 
     constructor() {
         this.#server.on("request", (request, response) => {
@@ -46,9 +48,42 @@ export class WorkspaceProxy {
         });
     }
 
-    close(): void {
+    async listen(path: string): Promise<void> {
+        if (this.#socketPath !== undefined) {
+            if (this.#socketPath === path) return;
+            throw new Error("The workspace HTTP proxy is already listening.");
+        }
+        await new Promise<void>((resolve, reject) => {
+            const failed = (error: Error): void => {
+                this.#server.off("listening", listening);
+                reject(error);
+            };
+            const listening = (): void => {
+                this.#server.off("error", failed);
+                resolve();
+            };
+            this.#server.once("error", failed);
+            this.#server.once("listening", listening);
+            this.#server.listen(path);
+        });
+        this.#socketPath = path;
+        await chmod(path, 0o600);
+    }
+
+    async close(): Promise<void> {
         for (const socket of this.#sockets) socket.destroy();
         this.#sockets.clear();
+        const path = this.#socketPath;
+        this.#socketPath = undefined;
+        if (path === undefined) return;
+        await new Promise<void>((resolve, reject) => {
+            this.#server.close((error) => (error === undefined ? resolve() : reject(error)));
+        }).catch((error: unknown) => {
+            if (!(error instanceof Error) || !/not running/i.test(error.message)) throw error;
+        });
+        await unlink(path).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT") throw error;
+        });
     }
 
     #forwardRequest(request: IncomingMessage, response: ServerResponse): void {

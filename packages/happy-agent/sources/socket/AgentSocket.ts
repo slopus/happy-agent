@@ -31,7 +31,19 @@ export async function bindAgentSocket(
     prepared: PreparedHappyAgentRuntime,
 ): Promise<BoundAgentSocket> {
     const paths = resolveAgentDaemonPaths(prepared.configuration);
-    await prepareSocket(paths.socketPath);
+    if ("bun" in process.versions) {
+        const { bindBunAgentSocket } = await import("./bindBunAgentSocket.js");
+        return await bindBunAgentSocket(prepared, paths);
+    }
+    return await bindNodeAgentSocket(prepared, paths.socketPath);
+}
+
+export async function bindNodeAgentSocket(
+    prepared: PreparedHappyAgentRuntime,
+    socketPath: string,
+    options: { readonly maxRequestsPerSocket?: number } = {},
+): Promise<BoundAgentSocket> {
+    await prepareAgentSocketPath(socketPath);
 
     const connections = new Set<Socket>();
     const server = createServer((request, response) => {
@@ -43,6 +55,9 @@ export async function bindAgentSocket(
     });
     server.headersTimeout = 10_000;
     server.keepAliveTimeout = 5_000;
+    if (options.maxRequestsPerSocket !== undefined) {
+        server.maxRequestsPerSocket = options.maxRequestsPerSocket;
+    }
     server.requestTimeout = 30_000;
     server.on("connection", (socket) => {
         connections.add(socket);
@@ -67,10 +82,10 @@ export async function bindAgentSocket(
 
     const previousUmask = process.umask(0o077);
     try {
-        await listen(server, paths.socketPath);
-        await chmod(paths.socketPath, 0o600);
+        await listen(server, socketPath);
+        await chmod(socketPath, 0o600);
     } catch (error) {
-        await closeServer(server, connections, paths.socketPath).catch(() => undefined);
+        await closeServer(server, connections, socketPath).catch(() => undefined);
         throw error;
     } finally {
         process.umask(previousUmask);
@@ -78,15 +93,15 @@ export async function bindAgentSocket(
 
     let closing: Promise<void> | undefined;
     return {
-        socketPath: paths.socketPath,
+        socketPath,
         close: () => {
-            closing ??= closeServer(server, connections, paths.socketPath);
+            closing ??= closeServer(server, connections, socketPath);
             return closing;
         },
     };
 }
 
-async function prepareSocket(socketPath: string): Promise<void> {
+export async function prepareAgentSocketPath(socketPath: string): Promise<void> {
     if (Buffer.byteLength(socketPath) > 103) {
         throw new Error("The Happy agent socket path is too long for a Unix socket.");
     }

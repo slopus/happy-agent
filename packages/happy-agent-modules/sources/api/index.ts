@@ -15,7 +15,12 @@ export {
     type ApiEventListener,
     type ApiEventPage,
 } from "./ApiEventJournal.js";
-export { ApiModule } from "./ApiModule.js";
+export {
+    ApiModule,
+    type ApiSocketRejection,
+    type PreparedTerminalSocket,
+    type PreparedWorkspaceProxySocket,
+} from "./ApiModule.js";
 export { messageResource } from "./ApiMessageProjection.js";
 export { type MessageResourceOptions } from "./ApiToolPresentation.js";
 export {

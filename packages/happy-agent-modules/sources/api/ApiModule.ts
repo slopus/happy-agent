@@ -156,6 +156,25 @@ interface AcceptedMessageBatch {
     }[];
 }
 
+export interface ApiSocketRejection {
+    readonly code: ApiErrorCode;
+    readonly message: string;
+    readonly status: number;
+}
+
+export type PreparedTerminalSocket =
+    | { readonly handled: false }
+    | { readonly handled: true; readonly rejection: ApiSocketRejection }
+    | {
+          readonly attach: (stream: import("node:stream").Duplex) => void;
+          readonly handled: true;
+      };
+
+export type PreparedWorkspaceProxySocket =
+    | { readonly handled: false }
+    | { readonly handled: true; readonly rejection: ApiSocketRejection }
+    | { readonly handled: true };
+
 /**
  * The daemon's complete application protocol boundary.
  *
@@ -342,7 +361,7 @@ export class ApiModule implements AgentModule {
         this.#backgroundScope.emitDestroy();
         for (const client of this.#webSockets.clients) client.terminate();
         this.#webSockets.close();
-        this.#workspaceProxy.close();
+        await this.#workspaceProxy.close();
     }
 
     async handleRequest(
@@ -573,36 +592,24 @@ export class ApiModule implements AgentModule {
         socket: Socket,
         head: Buffer,
     ): Promise<boolean> {
-        const match =
-            /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/terminals\/([a-z][a-z0-9]*)\/attach$/.exec(
-                requestUrl(request).pathname,
+        const prepared = await this.prepareTerminalSocket(
+            ctx,
+            requestUrl(request).pathname,
+            request.headers.authorization,
+        );
+        if (!prepared.handled) return false;
+        if ("rejection" in prepared) {
+            writeSocketError(
+                socket,
+                prepared.rejection.status,
+                prepared.rejection.message,
+                prepared.rejection.code,
             );
-        if (match === null) return false;
-        if (!this.#authorized(request)) {
-            writeSocketError(socket, 401, "Unauthorized");
             return true;
         }
-        if (!this.#ready) {
-            writeSocketError(socket, 503, "Happy Agent is still starting.");
-            return true;
-        }
-        if (this.#config.configuration.values.features.workspaces === false) {
-            writeSocketError(socket, 503, "Workspaces are disabled in this daemon.", "unsupported");
-            return true;
-        }
-        try {
-            const workspaceId = match[1] as string;
-            const terminalId = match[2] as string;
-            const { scope } = await this.#resolveWorkspaceScope(ctx, workspaceId);
-            const session = await this.#terminals.session(ctx, scope, terminalId);
-            this.#webSockets.handleUpgrade(request, socket, head, (webSocket) => {
-                const stream = new WebSocketDuplex(createNodeBinaryWebSocket(webSocket));
-                const detach = session.attach(stream);
-                stream.once("close", detach);
-            });
-        } catch (error: unknown) {
-            this.#writeSocketFailure(ctx, socket, error, "The terminal was not found.");
-        }
+        this.#webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+            prepared.attach(new WebSocketDuplex(createNodeBinaryWebSocket(webSocket)));
+        });
         return true;
     }
 
@@ -612,29 +619,79 @@ export class ApiModule implements AgentModule {
         socket: Socket,
         head: Buffer,
     ): Promise<boolean> {
-        const match = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/proxy$/.exec(
+        const prepared = await this.prepareWorkspaceProxySocket(
+            ctx,
             requestUrl(request).pathname,
+            request.headers.authorization,
         );
-        if (match === null) return false;
-        if (!this.#authorized(request)) {
-            writeSocketError(socket, 401, "Unauthorized");
+        if (!prepared.handled) return false;
+        if ("rejection" in prepared) {
+            writeSocketError(
+                socket,
+                prepared.rejection.status,
+                prepared.rejection.message,
+                prepared.rejection.code,
+            );
             return true;
         }
-        if (!this.#ready) {
-            writeSocketError(socket, 503, "Happy Agent is still starting.");
-            return true;
-        }
-        if (this.#config.configuration.values.features.workspaces === false) {
-            writeSocketError(socket, 503, "Workspaces are disabled in this daemon.", "unsupported");
-            return true;
-        }
-        try {
-            await this.#resolveWorkspaceScope(ctx, match[1] as string);
-            this.#workspaceProxy.accept(socket, head);
-        } catch (error: unknown) {
-            this.#writeSocketFailure(ctx, socket, error, "The workspace was not found.");
-        }
+        this.#workspaceProxy.accept(socket, head);
         return true;
+    }
+
+    async prepareTerminalSocket(
+        ctx: Context,
+        pathname: string,
+        authorization: string | string[] | undefined,
+    ): Promise<PreparedTerminalSocket> {
+        const match =
+            /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/terminals\/([a-z][a-z0-9]*)\/attach$/.exec(
+                pathname,
+            );
+        if (match === null) return { handled: false };
+        try {
+            this.#authenticateHeader(authorization);
+            this.#assertSocketReady();
+            const workspaceId = match[1] as string;
+            const terminalId = match[2] as string;
+            const { scope } = await this.#resolveWorkspaceScope(ctx, workspaceId);
+            const session = await this.#terminals.session(ctx, scope, terminalId);
+            return {
+                handled: true,
+                attach(stream) {
+                    const detach = session.attach(stream);
+                    stream.once("close", detach);
+                },
+            };
+        } catch (error: unknown) {
+            return {
+                handled: true,
+                rejection: this.#socketRejection(ctx, error, "The terminal was not found."),
+            };
+        }
+    }
+
+    async prepareWorkspaceProxySocket(
+        ctx: Context,
+        pathname: string,
+        authorization: string | string[] | undefined,
+    ): Promise<PreparedWorkspaceProxySocket> {
+        const match = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/proxy$/.exec(pathname);
+        if (match === null) return { handled: false };
+        try {
+            this.#authenticateHeader(authorization);
+            this.#assertSocketReady();
+            await this.#resolveWorkspaceScope(ctx, match[1] as string);
+            return { handled: true };
+        } catch (error: unknown) {
+            return {
+                handled: true,
+                rejection: this.#socketRejection(ctx, error, "The workspace was not found."),
+            };
+        }
+    }
+
+    async listenWorkspaceProxyHttp(path: string): Promise<void> {
+        await this.#workspaceProxy.listen(path);
     }
 
     #subscribeToModules(ctx: Context): void {
@@ -3616,21 +3673,37 @@ export class ApiModule implements AgentModule {
     }
 
     #authenticate(request: IncomingMessage): void {
-        if (!this.#authorized(request)) {
+        this.#authenticateHeader(request.headers.authorization);
+    }
+
+    #authenticateHeader(authorization: string | string[] | undefined): void {
+        if (!this.#authorizedHeader(authorization)) {
             throw new ApiError(401, "unauthorized", "Unauthorized");
         }
     }
 
-    #authorized(request: IncomingMessage): boolean {
+    #authorizedHeader(authorization: string | string[] | undefined): boolean {
         const token = this.#token;
         if (token === undefined) return false;
-        const header = request.headers.authorization;
-        if (header === undefined || Array.isArray(header) || !header.startsWith("Bearer ")) {
+        if (
+            authorization === undefined ||
+            Array.isArray(authorization) ||
+            !authorization.startsWith("Bearer ")
+        ) {
             return false;
         }
-        const supplied = header.slice("Bearer ".length);
+        const supplied = authorization.slice("Bearer ".length);
         if (supplied.length !== token.length) return false;
         return timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
+    }
+
+    #assertSocketReady(): void {
+        if (!this.#ready) {
+            throw new ApiError(503, "not_initialized", "Happy Agent is still starting.");
+        }
+        if (this.#config.configuration.values.features.workspaces === false) {
+            throw new ApiError(503, "unsupported", "Workspaces are disabled in this daemon.");
+        }
     }
 
     #sendError(ctx: Context, response: ServerResponse, error: unknown): void {
@@ -3718,22 +3791,19 @@ export class ApiModule implements AgentModule {
         });
     }
 
-    #writeSocketFailure(
-        ctx: Context,
-        socket: Socket,
-        error: unknown,
-        notFoundMessage: string,
-    ): void {
+    #socketRejection(ctx: Context, error: unknown, notFoundMessage: string): ApiSocketRejection {
         if (error instanceof ApiError) {
-            writeSocketError(socket, error.status, error.message, error.code);
-            return;
+            return { code: error.code, message: error.message, status: error.status };
         }
         if (error instanceof TerminalError && error.code === "not_found") {
-            writeSocketError(socket, 404, notFoundMessage, "not_found");
-            return;
+            return { code: "not_found", message: notFoundMessage, status: 404 };
         }
         ctx.log.error("The Happy Agent socket attachment failed.", {}, error);
-        writeSocketError(socket, 500, "The attachment could not be completed.", "internal");
+        return {
+            code: "internal",
+            message: "The attachment could not be completed.",
+            status: 500,
+        };
     }
 }
 

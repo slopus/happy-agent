@@ -13,7 +13,7 @@ sources/ ----> tsc ------> dist/cli.js (Node or Bun)
 ```
 
 From the repository root, `pnpm build:bun` compiles the current platform and
-`pnpm build:bun:all` compiles macOS and Linux for arm64 and x64. Bun 1.3.14 is
+`pnpm build:bun:all` compiles macOS and Linux for arm64 and x64. Bun 1.4.0 is
 pinned by `mise.toml` and invoked at that exact version through `pnpm dlx`, so
 the build also works without a version manager and does not install every
 cross-platform Bun package into `node_modules`. The four-target outputs are
@@ -23,3 +23,14 @@ cross-platform Bun package into `node_modules`. The four-target outputs are
 The manual GitHub release workflow supplies `HAPPY_AGENT_RELEASE_VERSION`; local builds omit it
 and use the package manifest version. The override changes only the version embedded in the
 compiled executable, leaving the Node-compatible package manifest untouched.
+
+The executable selects Bun-native sockets, WebSockets, PTYs, and image processing. The ordinary
+package remains Node-compatible and keeps the established Node HTTP, `ws`, `node-pty`, and Sharp
+implementations. Binary compilation replaces those runtime selectors, so their native libraries
+are not embedded in the executable.
+
+Every release target runs `smoke-binary-transports.mjs` against the compiled executable. The
+smoke proves Bun image normalization and ThumbHash, embedded file indexing, a Bun PTY command,
+a Monty workflow, live terminal input/output over the binary protocol, and HTTP through a real
+workspace `CONNECT` tunnel. These boundaries must be tested in the executable itself because the
+normal API gym runs the same source under Node rather than Bun.

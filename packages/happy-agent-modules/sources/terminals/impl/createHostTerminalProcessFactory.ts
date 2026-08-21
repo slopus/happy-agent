@@ -3,11 +3,13 @@ import { basename } from "node:path";
 import { spawn } from "@lydell/node-pty";
 
 import type { TerminalProcess, TerminalProcessFactory } from "../TerminalProcess.js";
+import { createBunTerminalProcessFactory } from "./createBunTerminalProcessFactory.js";
 
 /** A real pseudo-terminal on this machine, with this machine's environment and filesystem. */
 export function createHostTerminalProcessFactory(
     environment: NodeJS.ProcessEnv = process.env,
 ): TerminalProcessFactory {
+    if ("bun" in process.versions) return createBunTerminalProcessFactory(environment);
     return {
         async start(options) {
             const shell = options.shell ?? defaultShell(environment);
