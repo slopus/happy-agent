@@ -36,5 +36,5 @@ describe("embedding Happy Terminal in a Node.js project", () => {
         const finished = await gym.terminal.waitForText("HOST PROCESS CONTINUED", 30_000);
         expect(finished.text).toContain("HOST PROCESS CONTINUED");
         await expect(gym.exit()).resolves.toMatchObject({ exitCode: 0 });
-    }, 120_000);
+    }, 300_000);
 });

@@ -97,6 +97,9 @@ jobs:
             - name: Build Happy Terminal
               run: pnpm --filter @slopus/happy-terminal build
 
+            - name: Build the Happy Terminal Gym image
+              run: pnpm --filter @slopus/happy-terminal-gym run build:image
+
             - name: Prove inline Node.js embedding in a real terminal
               run: >-
                   pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run
