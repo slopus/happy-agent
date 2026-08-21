@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HappyAgentApiError } from "../sources/HappyAgentApiError.js";
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
+import type { DaemonUsageResponse } from "../sources/protocol/usage.js";
 
 interface RecordedRequest {
     url: string;
@@ -46,6 +47,61 @@ function streamOf(text: string): ReadableStream<Uint8Array<ArrayBuffer>> {
 }
 
 describe("HappyAgentClient", () => {
+    it("returns every provider, model, and account-usage value from daemon usage", async () => {
+        const response = {
+            providers: [
+                {
+                    providerId: "codex",
+                    type: "codex",
+                    enabled: true,
+                    models: [
+                        { id: "openai/gpt-5.6-sol", enabled: true },
+                        { id: "openai/gpt-5.6-luna", enabled: false },
+                    ],
+                    usage: {
+                        providerId: "codex",
+                        vendor: "codex",
+                        capturedAt: 1_755_400_000_000,
+                        planName: "Pro",
+                        exhausted: false,
+                        windows: {
+                            fiveHour: {
+                                usedPercent: 32,
+                                resetsAt: 1_755_412_000_000,
+                                startsAt: 1_755_394_000_000,
+                                durationMs: 18_000_000,
+                            },
+                            weekly: {
+                                usedPercent: 16,
+                                resetsAt: 1_755_900_000_000,
+                                startsAt: 1_755_295_200_000,
+                                durationMs: 604_800_000,
+                            },
+                            monthly: null,
+                        },
+                        credits: {
+                            available: true,
+                            remainingCents: 1_250,
+                            unlimited: false,
+                            usedPercent: 37.5,
+                        },
+                    },
+                    checkedAt: 1_755_400_000_100,
+                    error: null,
+                },
+            ],
+            hour: {},
+            day: {},
+            week: {},
+            month: {},
+        } satisfies DaemonUsageResponse;
+        const { fetch, requests } = stubFetch(() => json(response));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.getUsage()).resolves.toEqual(response);
+        expect(requests[0]?.url).toBe("http://agent.local/v0/usage");
+    });
+
     it("authenticates every request and resolves routes beneath the endpoint", async () => {
         const { fetch, requests } = stubFetch(() => json({ projects: [] }));
         const client = new HappyAgentClient({

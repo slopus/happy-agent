@@ -2294,14 +2294,73 @@ spawn their own subagents and processes.
 
 ### `GET /v0/usage`
 
-Reports what the whole daemon has consumed, in rolling windows ending now: the last hour, 24
-hours, 7 days, and 30 days. Each window has the same provider-then-model breakdown as agent
-usage.
+Reports both sides of installation-wide usage in one response:
+
+- what the daemon has consumed, in rolling windows ending now: the last hour, 24 hours, 7 days,
+  and 30 days; and
+- the latest account-usage reading for every configured provider, together with every model that
+  provider exposes in the effective catalog.
+
+Each token window has the same provider-then-model breakdown as agent usage. Provider-account
+readings are advisory and live only in memory. The daemon asks each provider independently every
+15 minutes, so a slow or unavailable vendor cannot withhold another provider's state. A provider
+is present even before it has answered or when it has no account-usage API.
 
 Response — `200`:
 
 ```json
 {
+    "providers": [
+        {
+            "providerId": "codex",
+            "type": "codex",
+            "enabled": true,
+            "models": [
+                {
+                    "id": "openai/gpt-5.6-sol",
+                    "enabled": true
+                },
+                {
+                    "id": "openai/gpt-5.6-terra",
+                    "enabled": true
+                },
+                {
+                    "id": "openai/gpt-5.6-luna",
+                    "enabled": true
+                }
+            ],
+            "usage": {
+                "providerId": "codex",
+                "vendor": "codex",
+                "capturedAt": 1755400000000,
+                "planName": "Pro",
+                "exhausted": false,
+                "windows": {
+                    "fiveHour": {
+                        "usedPercent": 32,
+                        "resetsAt": 1755412000000,
+                        "startsAt": 1755394000000,
+                        "durationMs": 18000000
+                    },
+                    "weekly": {
+                        "usedPercent": 16,
+                        "resetsAt": 1755900000000,
+                        "startsAt": 1755295200000,
+                        "durationMs": 604800000
+                    },
+                    "monthly": null
+                },
+                "credits": {
+                    "available": true,
+                    "remainingCents": 1250,
+                    "unlimited": false,
+                    "usedPercent": 37.5
+                }
+            },
+            "checkedAt": 1755400000100,
+            "error": null
+        }
+    ],
     "hour": {
         "codex": {
             "openai/gpt-5.6-sol": {
@@ -2323,6 +2382,20 @@ Response — `200`:
     }
 }
 ```
+
+- `providers` — optional for protocol-22 compatibility and always present on daemons that support
+  provider-account usage. It contains every configured provider, including disabled or currently
+  unavailable providers. `type`, `enabled`, and `models` have exactly the sanitized meanings and
+  model-reference shape from `GET /v0/config`; the complete model list is returned here rather
+  than only models that have spent tokens. `usage` is the latest successful normalized vendor
+  reading, or `null` before the first successful reading and for providers such as Bedrock that
+  expose no account-usage API. `checkedAt` is when the daemon last finished asking, whether or not
+  the request succeeded. `error` explains why no reading is available; a failed refresh does not
+  discard an older successful reading.
+- A non-null `usage` keeps every normalized vendor value: the human-readable `planName`, current
+  `exhausted` state, five-hour, weekly, and monthly windows, and spendable `credits`. A window is
+  `null` only when the vendor did not report it. Window timestamps are epoch milliseconds,
+  `durationMs` is milliseconds, monetary amounts are USD cents, and percentages run from 0 to 100.
 
 ## Events
 
