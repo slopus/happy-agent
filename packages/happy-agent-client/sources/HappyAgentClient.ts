@@ -151,7 +151,7 @@ interface HttpRequest {
  *
  * Every request-response route of `packages/happy-agent/API.md` is one method,
  * and the event journal is available both as pages and as the live stream. The
- * The low-level request and stream methods keep no application state. The
+ * low-level request and stream methods keep no application state. The
  * higher-level `updates` feed owns only its accepted event cursor and
  * connection state so it can resume after transport interruptions.
  *

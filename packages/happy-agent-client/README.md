@@ -12,6 +12,33 @@ emits ordered `connected`, `state_lost`, `disconnected`, and `event` items. A st
 carries the fresh cursor from which authoritative snapshots can be reloaded. Resource caching,
 version reconciliation, and optimistic mutations remain decisions for the live view built on top.
 
+`HappyReducer` is the small stateful layer over that feed. Construct it with a client, register
+update listeners, and start it when the application wants live synchronization. `getState()` and
+`subscribe()` expose a read-only Zustand-style external store suitable for
+`useSyncExternalStore`: the snapshot reference changes only when state changes. Every update
+listener registered with `subscribeUpdates()` receives every original ordered SSE item—connection
+changes, state loss, and ordinary events—after it has been reduced, together with that immutable
+snapshot. The initial state contains only `connection`, with `"connecting"`,
+`"connected"`, and `"disconnected"` values. Stopping is synchronous, immediately makes the
+reducer disconnected, and ignores any late update while stream cleanup finishes internally. A
+later start resumes from the last cursor the reducer observed.
+
+```ts
+const reducer = new HappyReducer(client);
+const removeUpdateSubscription = reducer.subscribeUpdates((update, state) => {
+    console.log(update.kind, state.connection);
+});
+const removeStateSubscription = reducer.subscribe((state, previousState) => {
+    console.log(previousState.connection, "→", state.connection);
+});
+
+reducer.start();
+console.log(reducer.getState());
+reducer.stop();
+removeUpdateSubscription();
+removeStateSubscription();
+```
+
 It is built on plain Web APIs — `fetch`, streams, `AbortController`, standard timers — so the
 same build runs unchanged in Node and in a browser. The daemon listens on a Unix domain
 socket; a caller reaching one supplies its own runtime's socket-capable `fetch`, and the
