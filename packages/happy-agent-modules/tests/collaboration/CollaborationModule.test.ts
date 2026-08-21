@@ -18,6 +18,7 @@ import {
 } from "../../sources/collaboration/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
 import { testConfig } from "../support/computeModule.js";
+import { temporaryTestConfig } from "../support/configModule.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
 const MODELS: readonly AgentModel[] = [
@@ -70,8 +71,8 @@ class Collection {
     readonly models = MODELS;
 
     /** Register an agent that already exists, as the collection would after a restart. */
-    seed(id: string, parent: string | null): void {
-        this.configs.set(id, {});
+    seed(id: string, parent: string | null, config: AgentConfig = {}): void {
+        this.configs.set(id, config);
         this.parents.set(id, parent);
     }
 
@@ -155,12 +156,13 @@ class Collection {
 
 async function started(
     collection: Collection,
+    config = testConfig,
 ): Promise<{ module: CollaborationModule; hooks: AgentModuleHooks; ctx: Context }> {
     const abort = abortModule();
     vi.spyOn(abort, "abort").mockImplementation(
         async (ctx, agentId) => await collection.abort(ctx, agentId),
     );
-    const module = new CollaborationModule(abort);
+    const module = new CollaborationModule(config, abort);
     const ctx = withAgentConfig(createRootContext().named("collaboration-test"), {
         environment: {
             osVersion: "test",
@@ -328,6 +330,154 @@ describe("collaboration", () => {
         // Creating again would throw; the retry recognises the identity the collection already
         // holds and only redoes delivery, which Agent Base settles by message ID.
         expect(collection.created).toHaveLength(1);
+    });
+
+    it("limits one root tree to five ordinary collaborators", async () => {
+        const collection = new Collection();
+        collection.seed("c1", "parent");
+        collection.seed("c2", "c1");
+        collection.seed("c3", "parent");
+        collection.seed("c4", "c3");
+        collection.seed("c5", "parent");
+        const { module, ctx } = await started(collection);
+
+        await expect(module.createToolAgent(ctx, "parent", TASK, "c6")).rejects.toThrow(
+            "limited to 5 collaborators",
+        );
+        expect(collection.created).toHaveLength(0);
+        expect(collection.delivered).toHaveLength(0);
+    });
+
+    it("allows only one of two concurrent creations to take the final tree slot", async () => {
+        const collection = new Collection();
+        for (const id of ["c1", "c2", "c3", "c4"]) collection.seed(id, "parent");
+        const { module, ctx } = await started(collection);
+
+        const outcomes = await Promise.allSettled([
+            module.createToolAgent(ctx, "parent", TASK, "c5"),
+            module.createToolAgent(ctx, "parent", TASK, "c6"),
+        ]);
+
+        expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+        expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(1);
+        expect(collection.created).toHaveLength(1);
+        expect(collection.delivered).toHaveLength(1);
+    });
+
+    it("allows a durable retry after the tree has reached its collaborator limit", async () => {
+        const collection = new Collection();
+        for (const id of ["child", "c2", "c3", "c4", "c5"]) {
+            collection.seed(id, "parent");
+        }
+        const { module, ctx } = await started(collection);
+
+        await expect(module.createToolAgent(ctx, "parent", TASK, "child")).resolves.toEqual({
+            agentId: "child",
+        });
+        expect(collection.created).toHaveLength(0);
+        expect(collection.delivered).toHaveLength(1);
+    });
+
+    it("limits collaborator depth to three agents including the root", async () => {
+        const collection = new Collection();
+        collection.seed("child", "root");
+        collection.seed("grandchild", "child");
+        const { module, ctx } = await started(collection);
+
+        await expect(
+            module.createToolAgent(ctx, "grandchild", TASK, "greatgrandchild"),
+        ).rejects.toThrow("maximum depth of 3 agents including the root");
+        expect(collection.created).toHaveLength(0);
+        expect(collection.delivered).toHaveLength(0);
+    });
+
+    it("allows a child to create a grandchild at the depth boundary", async () => {
+        const collection = new Collection();
+        collection.seed("child", "root");
+        const { module, ctx } = await started(collection);
+
+        await expect(module.createToolAgent(ctx, "child", TASK, "grandchild")).resolves.toEqual({
+            agentId: "grandchild",
+        });
+        expect(collection.created).toEqual([{ id: "grandchild", parent: "child" }]);
+    });
+
+    it("enforces collaborator limits persisted in Happy settings", async () => {
+        const config = await temporaryTestConfig(
+            ["[settings]", "max_collaborators = 2", "max_collaboration_depth = 2"].join("\n"),
+        );
+        const countCollection = new Collection();
+        countCollection.seed("c1", "root");
+        countCollection.seed("c2", "root");
+        const {
+            module: countModule,
+            hooks: countHooks,
+            ctx: countCtx,
+        } = await started(countCollection, config);
+
+        await expect(countModule.createToolAgent(countCtx, "root", TASK, "c3")).rejects.toThrow(
+            "limited to 2 collaborators",
+        );
+        const [create] = await countHooks.tools!(countCtx, {
+            agent: { id: "root", provider: "codex" },
+        } as never);
+        expect(create!.description).toContain("at most 2 ordinary collaborators");
+        expect(create!.description).toContain("maximum depth is 2 agents including the root");
+
+        const depthCollection = new Collection();
+        depthCollection.seed("child", "root");
+        const { module: depthModule, ctx: depthCtx } = await started(depthCollection, config);
+
+        await expect(
+            depthModule.createToolAgent(depthCtx, "child", TASK, "grandchild"),
+        ).rejects.toThrow("maximum depth of 2 agents including the root");
+    });
+
+    it("leaves direct module creation to the calling module's own limits", async () => {
+        const collection = new Collection();
+        for (const id of ["c1", "c2", "c3", "c4", "c5"]) {
+            collection.seed(id, "root");
+        }
+        const { module, ctx } = await started(collection);
+
+        await module.createAgent(ctx, "root", TASK, "moduleowned");
+
+        expect(collection.created).toEqual([{ id: "moduleowned", parent: "root" }]);
+    });
+
+    it("uses explicit workflow ownership as a separate tool-budget boundary", async () => {
+        const collection = new Collection();
+        for (const id of ["w1", "w2", "w3", "w4", "w5", "w6"]) {
+            collection.seed(id, "root", {
+                metadata: { workflow: { runId: "run", callIndex: Number(id.slice(1)) } },
+            });
+            collection.seed(`${id}child`, id);
+        }
+        for (const id of ["c1", "c2", "c3", "c4"]) collection.seed(id, "root");
+        const { module, ctx } = await started(collection);
+
+        await module.createToolAgent(ctx, "root", TASK, "c5");
+
+        expect(collection.created).toEqual([{ id: "c5", parent: "root" }]);
+    });
+
+    it("gives a workflow agent its own tool depth and collaborator budget", async () => {
+        const collection = new Collection();
+        collection.seed("workflowagent", "root", {
+            metadata: { workflow: { runId: "run", callIndex: 0 } },
+        });
+        const { module, ctx } = await started(collection);
+
+        await module.createToolAgent(ctx, "workflowagent", TASK, "child");
+        await module.createToolAgent(ctx, "child", TASK, "grandchild");
+
+        expect(collection.created).toEqual([
+            { id: "child", parent: "workflowagent" },
+            { id: "grandchild", parent: "child" },
+        ]);
+        await expect(
+            module.createToolAgent(ctx, "grandchild", TASK, "greatgrandchild"),
+        ).rejects.toThrow("maximum depth of 3 agents including the root");
     });
 
     it("does not treat an existing unrelated identity as a retry", async () => {
@@ -672,18 +822,18 @@ describe("collaboration", () => {
         });
     });
 
-    it("says nothing when the collaborator finished in silence", async () => {
+    it("reports when the collaborator stopped without answering", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
         await module.createAgent(ctx, "parent", TASK, "child");
         const scope = runScope("child");
 
-        // No text_end ever arrived — an interrupted turn, or one that was told no action was
-        // needed. There is no answer to pass on, and announcing the silence would tell the
-        // creator something it already knows.
+        // A hard stop can resume settlement in a later process that no longer knows the original
+        // error. The creator must still learn that no answer is coming.
         await hooks.afterAgentSettledTransact!(ctx, scope, settlement("s1"));
 
-        expect(collection.delivered).toHaveLength(1);
+        expect(collection.delivered).toHaveLength(2);
+        expect(collection.delivered[1]!.text).toBe("Collaborator child stopped without answering.");
     });
 
     it("reports why a collaborator stopped when it failed before answering", async () => {
@@ -733,17 +883,15 @@ describe("collaboration", () => {
         );
     });
 
-    it("keeps silence silent when a run ends without an answer and without a failure", async () => {
+    it("reports a stopped run even when no failure reason survived", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
         await module.createAgent(ctx, "parent", TASK, "child");
         const scope = runScope("child");
 
-        // A cancelled run is not a failed one: it was interrupted on purpose, so it settles
-        // without a failure.
         await hooks.afterAgentSettledTransact!(ctx, scope, settlement("s1"));
 
-        expect(collection.delivered).toHaveLength(1);
+        expect(collection.delivered[1]!.text).toBe("Collaborator child stopped without answering.");
     });
 
     it("reports under the settlement's identity, so a retry is not a second report", async () => {
@@ -800,7 +948,7 @@ describe("collaboration", () => {
         expect(collection.delivered[1]!.text).not.toContain("padding. \t");
     });
 
-    it("does not report a non-string or blank run-store value", async () => {
+    it("treats a non-string or blank run-store value as a missing answer", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
         await module.createAgent(ctx, "parent", TASK, "child");
@@ -810,7 +958,7 @@ describe("collaboration", () => {
             runKV: { read: async () => 123 },
         } as never;
         await hooks.afterAgentSettledTransact!(ctx, nonString, settlement("s1"));
-        expect(collection.delivered).toHaveLength(1);
+        expect(collection.delivered[1]!.text).toBe("Collaborator child stopped without answering.");
 
         const blank = {
             agent: { id: "child" },
@@ -819,7 +967,7 @@ describe("collaboration", () => {
         await expect(
             hooks.afterAgentSettledTransact!(ctx, blank, settlement("s2")),
         ).resolves.toBeUndefined();
-        expect(collection.delivered).toHaveLength(1);
+        expect(collection.delivered[2]!.text).toBe("Collaborator child stopped without answering.");
     });
 
     it("does not read run state for an agent with no creator", async () => {
@@ -874,20 +1022,22 @@ describe("collaboration", () => {
     });
 
     it("describes the offered model/provider pairs without a dynamic capacity lookup", () => {
-        const module = new CollaborationModule(abortModule());
-        const create = createAgentTool(module, "parent", "codex", MODELS);
-        const empty = createAgentTool(module, "parent", "codex", []);
+        const module = new CollaborationModule(testConfig, abortModule());
+        const create = createAgentTool(module, "parent", "codex", MODELS, 5, 3);
+        const empty = createAgentTool(module, "parent", "codex", [], 5, 3);
 
         expect(create.description).toContain("codex + gpt-5.6-sol");
         expect(create.description).toContain("claude + opus-5");
         expect(create.description).toContain("tiers: priority");
+        expect(create.description).toContain("at most 5 ordinary collaborators");
+        expect(create.description).toContain("maximum depth is 3 agents including the root");
         expect(empty.description).not.toContain("Available model/provider pairs:");
     });
 
     it("keeps send and create routine while interrupt remains reviewable", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
-        const create = createAgentTool(module, "parent", "codex", MODELS);
+        const create = createAgentTool(module, "parent", "codex", MODELS, 5, 3);
         const send = sendMessageTool(module, "parent");
         const interrupt = interruptAgentTool(module, "parent");
 
@@ -903,7 +1053,7 @@ describe("collaboration", () => {
     it("routes tool execution through the public operations and renders complete model results", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
-        const create = createAgentTool(module, "parent", "codex", MODELS);
+        const create = createAgentTool(module, "parent", "codex", MODELS, 5, 3);
         const send = sendMessageTool(module, "parent");
         const interrupt = interruptAgentTool(module, "parent");
 
@@ -948,7 +1098,9 @@ describe("collaboration", () => {
         // so this module owns no table. The released keys stay because Agent Base requires the
         // applied migrations to remain a prefix of the declared ones — drop one of these and
         // every database that ran an earlier build refuses to open.
-        expect(new CollaborationModule(abortModule()).migrations.map(([key]) => key)).toEqual([
+        expect(
+            new CollaborationModule(testConfig, abortModule()).migrations.map(([key]) => key),
+        ).toEqual([
             "001-collaboration",
             "002-drop-collaboration-receipts",
             "003-collaboration-run-state",
@@ -957,7 +1109,7 @@ describe("collaboration", () => {
     });
 
     it("refuses to work before the agent collection is available", async () => {
-        const module = new CollaborationModule(abortModule());
+        const module = new CollaborationModule(testConfig, abortModule());
         const ctx = createRootContext().named("unstarted");
 
         await expect(module.createAgent(ctx, "parent", TASK, "child")).rejects.toThrow(

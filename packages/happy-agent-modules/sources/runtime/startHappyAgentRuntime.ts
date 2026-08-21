@@ -391,7 +391,7 @@ export async function startHappyAgentRuntime(
         const profile = new ProfileModule<LibSQLDatabase>();
         const murmur = new MurmurModule<LibSQLDatabase>(config, profile);
         const abort = new AbortModule(compute.computeModule);
-        const collaboration = new CollaborationModule(abort);
+        const collaboration = new CollaborationModule(config, abort);
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
         userInput.onEventTransactional(async (listenerCtx, event) => {

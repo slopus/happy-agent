@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -36,6 +36,23 @@ describe("ConfigModule", () => {
         expect(configuration.sources.global.exists).toBe(false);
         expect(configuration.sources.runtime.exists).toBe(false);
         expect(configuration.values.defaults.modelId).toBe("openai/gpt-5.6-sol");
+        expect(configuration.values.settings).toMatchObject({
+            maxCollaborationDepth: 3,
+            maxCollaborators: 5,
+        });
+    });
+
+    it("writes collaborator controls into the starter Happy settings", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-template-"));
+        temporaryDirectories.push(root);
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        await module.ensureUserConfigurationFiles();
+
+        const source = await readFile(module.configuration.paths.globalConfigPath, "utf8");
+        expect(source).toContain("# [settings]");
+        expect(source).toContain("# max_collaborators = 5");
+        expect(source).toContain("# max_collaboration_depth = 3");
     });
 
     it("merges global happy.toml with runtime.toml, with runtime winning", async () => {
@@ -54,6 +71,8 @@ describe("ConfigModule", () => {
                 "[settings]",
                 "show_usage = true",
                 "inference_max_retries = 2",
+                "max_collaborators = 7",
+                "max_collaboration_depth = 4",
                 "",
                 "[providers.codex]",
                 'type = "codex"',
@@ -75,12 +94,16 @@ describe("ConfigModule", () => {
         });
         expect(module.configuration.values.settings).toMatchObject({
             inferenceMaxRetries: 2,
+            maxCollaborationDepth: 4,
+            maxCollaborators: 7,
             showUsage: false,
         });
         expect(module.configuration.values.providers.codex).toMatchObject({
             enabled: true,
             type: "codex",
         });
+        expect(module.configuration.provenance["settings.maxCollaborators"]).toBe("global");
+        expect(module.configuration.provenance["settings.maxCollaborationDepth"]).toBe("global");
     });
 
     it("ignores unknown TOML fields while retaining their source locations", () => {
@@ -95,6 +118,12 @@ describe("ConfigModule", () => {
     it("rejects malformed TOML and invalid known values", async () => {
         expect(() => parseHappyAgentConfigToml("[settings\nshow_usage = true")).toThrow();
         expect(() => parseHappyAgentConfigToml('[settings]\nshow_usage = "yes"')).toThrow(
+            "invalid value",
+        );
+        expect(() => parseHappyAgentConfigToml("[settings]\nmax_collaborators = 0")).toThrow(
+            "invalid value",
+        );
+        expect(() => parseHappyAgentConfigToml("[settings]\nmax_collaboration_depth = 65")).toThrow(
             "invalid value",
         );
 
@@ -136,6 +165,8 @@ describe("ConfigModule", () => {
                 "[settings]",
                 "show_usage = true",
                 "inference_max_retries = 20",
+                "max_collaborators = 100",
+                "max_collaboration_depth = 20",
                 "",
                 "[workspace]",
                 'setup_commands = ["pnpm install"]',
@@ -157,6 +188,8 @@ describe("ConfigModule", () => {
             });
             expect(configuration.values.settings).toMatchObject({
                 inferenceMaxRetries: 10,
+                maxCollaborationDepth: 3,
+                maxCollaborators: 5,
                 showUsage: true,
             });
             expect(configuration.values.workspace.setupCommands).toEqual(["pnpm install"]);

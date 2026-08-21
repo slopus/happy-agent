@@ -28,7 +28,9 @@ spelling; resolved values use ergonomic camelCase names such as `modelId`,
 `serviceTier`. The resolved snapshot includes all Rig-shaped sections:
 providers, MCP servers, Docker, network, observation, permissions, P2P,
 presence, sharing, theme, features, workspace sync/protection, and retention
-settings.
+settings. Ordinary collaboration reads `settings.maxCollaborators` and
+`settings.maxCollaborationDepth` from this snapshot; their persisted TOML spellings are
+`max_collaborators` and `max_collaboration_depth`.
 
 `[observation]` decides what the agent records about itself, and is read only
 from the global and runtime layers. A checked-in project file that turned

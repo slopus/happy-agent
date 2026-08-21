@@ -13,16 +13,18 @@ export function createAgentTool(
     thisAgentId: string,
     currentProviderId: string,
     models: readonly AgentModel[],
+    maxCollaborators: number,
+    maxCollaborationDepth: number,
 ) {
     return defineAgentTool({
         name: "create_agent",
-        description: createAgentDescription(models),
+        description: createAgentDescription(models, maxCollaborators, maxCollaborationDepth),
         parameters: collaborationCreateInputSchema,
         returnType: collaborationCreateResultSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: CollaborationCreateInput, call) =>
-            await collaboration.createAgent(
+            await collaboration.createToolAgent(
                 ctx,
                 thisAgentId,
                 withCurrentProvider(input, currentProviderId, models),
@@ -54,7 +56,11 @@ function withCurrentProvider(
  * The description is built once from the collection's models, so a model sees the same tool on
  * every turn and provider prompt caching still applies.
  */
-function createAgentDescription(models: readonly AgentModel[]): string {
+function createAgentDescription(
+    models: readonly AgentModel[],
+    maxCollaborators: number,
+    maxCollaborationDepth: number,
+): string {
     const available = models.map(
         (model) =>
             `- ${model.providerId} + ${model.id} (${model.name}; effort: ${model.effortLevels.join(", ")}${
@@ -65,6 +71,7 @@ function createAgentDescription(models: readonly AgentModel[]): string {
         "Create a collaborator and give it its first task. Use only when collaboration is explicitly requested.",
         "",
         "The collaborator works on its own. This call returns as soon as the task is delivered, and anything the collaborator has to say arrives later as a message — nothing here waits for it.",
+        `One root agent tree may contain at most ${maxCollaborators} ordinary collaborators. Reuse one with send_agent_message after reaching the limit. The maximum depth is ${maxCollaborationDepth} agents including the root.`,
         "Choose an exact model and effort. Omitting provider uses your current provider when it serves that model; otherwise provider is optional only when the model ID is unambiguous. This is the only chance to choose: a collaborator's model, effort, and permissions cannot be changed afterwards.",
         ...(available.length === 0 ? [] : ["Available model/provider pairs:", ...available]),
     ].join("\n");

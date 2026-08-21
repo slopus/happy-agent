@@ -30,8 +30,10 @@ describe("collaboration migrations", () => {
                 sql`CREATE TABLE happy_collaboration_receipts (id TEXT)`,
             );
 
-            const remove = new CollaborationModule(new AbortModule(new ComputeModule(testConfig)))
-                .migrations[3]![1];
+            const remove = new CollaborationModule(
+                testConfig,
+                new AbortModule(new ComputeModule(testConfig)),
+            ).migrations[3]![1];
             await remove(database.context, database.database);
             await remove(database.context, database.database);
 

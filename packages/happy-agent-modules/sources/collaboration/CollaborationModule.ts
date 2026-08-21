@@ -16,6 +16,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
+import type { ConfigModule } from "../config/index.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
 import {
     collaborationAgentIdSchema,
@@ -57,9 +58,12 @@ export class CollaborationModule implements AgentModule {
     readonly migrations = collaborationMigrations;
 
     readonly #abort: AbortModule;
+    readonly #config: ConfigModule;
     #agents: AgentSystemRef | undefined;
+    #toolCreationTail: Promise<void> = Promise.resolve();
 
-    constructor(abort: AbortModule) {
+    constructor(config: ConfigModule, abort: AbortModule) {
+        this.#config = config;
         this.#abort = abort;
     }
 
@@ -81,12 +85,53 @@ export class CollaborationModule implements AgentModule {
         const agents = this.#requireAgents();
         const selection = this.#validateSelection(agents.models, input);
 
+        return await this.#createAgent(ctx, actingAgentId, input, agentId, options, selection);
+    }
+
+    /**
+     * Create one collaborator requested through the model-facing `create_agent` tool.
+     *
+     * The tool owns the Happy-settings budget. Other modules use `createAgent` directly and own
+     * their own bounds, so whether an answer is reported to the creator never changes capacity.
+     */
+    async createToolAgent(
+        ctx: Context,
+        actingAgentId: string,
+        input: CollaborationCreateInput,
+        agentId: string,
+    ): Promise<CollaborationCreateResult> {
+        this.#assert(collaborationAgentIdSchema, actingAgentId, "acting agent ID");
+        this.#assert(collaborationAgentIdSchema, agentId, "collaborator ID");
+        this.#assert(collaborationCreateInputSchema, input, "create agent");
+        const agents = this.#requireAgents();
+        const selection = this.#validateSelection(agents.models, input);
+
+        return await this.#serializeToolCreation(async () => {
+            const existing = await agents.config(ctx, agentId);
+            if (existing === undefined) {
+                await this.#assertToolCreationCapacity(ctx, actingAgentId);
+            }
+            return await this.#createAgent(ctx, actingAgentId, input, agentId, {}, selection);
+        });
+    }
+
+    async #createAgent(
+        ctx: Context,
+        actingAgentId: string,
+        input: CollaborationCreateInput,
+        agentId: string,
+        options: CollaborationCreateOptions,
+        selection: CollaborationAgentSelection,
+    ): Promise<CollaborationCreateResult> {
+        const agents = this.#requireAgents();
+        const existing = await agents.config(ctx, agentId);
+
         // A durable tool call may be retried after the collaborator was created but before the
         // result was recorded. An identity this agent already created is that retry, so only the
         // half that did not finish is redone; `send` settles the rest by message ID. An identity
         // belonging to anyone else is a different agent that happens to hold the ID, and treating
         // it as a retry would hand this creator's task to a stranger.
-        if ((await agents.config(ctx, agentId)) === undefined) {
+        if (existing === undefined) {
             // The creating call does not always run on the creator's own turn — a workflow starts
             // collaborators from its own background context, which carries no agent configuration —
             // so fall back to what the creator was stored with.
@@ -188,16 +233,21 @@ export class CollaborationModule implements AgentModule {
          * The tool surface is fixed for one collection's models, so a model sees the same capabilities
          * on every turn and provider prompt caching still applies.
          */
-        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
-            createAgentTool(
-                this,
-                scope.agent.id,
-                scope.agent.provider,
-                this.#requireAgents().models,
-            ),
-            sendMessageTool(this, scope.agent.id),
-            interruptAgentTool(this, scope.agent.id),
-        ],
+        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => {
+            const settings = this.#config.configuration.values.settings;
+            return [
+                createAgentTool(
+                    this,
+                    scope.agent.id,
+                    scope.agent.provider,
+                    this.#requireAgents().models,
+                    settings.maxCollaborators,
+                    settings.maxCollaborationDepth,
+                ),
+                sendMessageTool(this, scope.agent.id),
+                interruptAgentTool(this, scope.agent.id),
+            ];
+        },
     };
 
     /** The collection every collaborator is created in and every message is delivered through. */
@@ -210,10 +260,9 @@ export class CollaborationModule implements AgentModule {
      * Pass a collaborator's answer to its creator, verbatim, when the collaborator stops working.
      *
      * This is the runtime reporting, not the model choosing to, which is what makes an answer
-     * arrive at all now that nothing waits for one. A run that said nothing reports nothing: a
-     * collaborator interrupted mid-sentence, or told that no action is needed, has no answer to
-     * pass on, and announcing its silence would put a line in the creator's conversation that
-     * tells it something it already knows.
+     * arrive at all now that nothing waits for one. A run that said nothing still reports that it
+     * stopped, because a hard stop can finish settlement in a later process that no longer knows
+     * the original error. Silence would leave the creator expecting an answer that cannot arrive.
      *
      * It all happens in the settling transaction, which is the point: this transaction erases the
      * run store, so it is the last moment the run's own words can be read, and the delivery
@@ -236,13 +285,13 @@ export class CollaborationModule implements AgentModule {
         // from a store this run does not control, and reporting it would put an empty quotation in
         // the creator's conversation.
         const answer = typeof said === "string" ? said.trim() : "";
-        // An answer is what the creator asked for; a failure is why it is not coming. A run that
-        // recovered from an error and went on to speak reports what it said, not what it survived.
+        // An answer is what the creator asked for; otherwise the creator must still learn that no
+        // answer is coming. A run that recovered from an error and went on to speak reports what
+        // it said, not what it survived.
         const report =
             answer === ""
-                ? failureReport(scope.agent.id, settlement.error)
+                ? stoppedReport(scope.agent.id, settlement.error)
                 : answerReport(scope.agent.id, answer);
-        if (report === undefined) return;
         await agents.steer(
             ctx,
             parent,
@@ -337,6 +386,82 @@ export class CollaborationModule implements AgentModule {
         );
     }
 
+    /** Enforce the model-facing tool's limits within its independently owned agent tree. */
+    async #assertToolCreationCapacity(ctx: Context, actingAgentId: string): Promise<void> {
+        const agents = this.#requireAgents();
+        const { maxCollaborationDepth, maxCollaborators } =
+            this.#config.configuration.values.settings;
+        const seenAncestors = new Set<string>();
+        let rootAgentId = actingAgentId;
+        let depth = 1;
+        for (;;) {
+            if (seenAncestors.has(rootAgentId)) {
+                throw new Error("The collaboration ancestry contains a cycle.");
+            }
+            seenAncestors.add(rootAgentId);
+            const config = await agents.config(ctx, rootAgentId);
+            // A workflow-created agent owns any collaborators it asks for through its own tool.
+            // The workflow call that created it is governed separately by WorkflowsModule.
+            if (config !== undefined && belongsToWorkflow(config.metadata)) break;
+            const parent = await agents.parentOf(ctx, rootAgentId);
+            if (parent === null) break;
+            if (depth >= maxCollaborationDepth) {
+                throw new Error(
+                    `Collaborators have a maximum depth of ${maxCollaborationDepth} agents including the root.`,
+                );
+            }
+            rootAgentId = parent;
+            depth += 1;
+        }
+        if (depth >= maxCollaborationDepth) {
+            throw new Error(
+                `Collaborators have a maximum depth of ${maxCollaborationDepth} agents including the root.`,
+            );
+        }
+
+        const pending = [rootAgentId];
+        const visited = new Set<string>();
+        let toolCollaborators = 0;
+        for (let index = 0; index < pending.length; index += 1) {
+            const current = pending[index]!;
+            if (visited.has(current)) {
+                throw new Error("The collaboration tree contains a cycle or duplicate identity.");
+            }
+            visited.add(current);
+            if (current !== rootAgentId) {
+                const config = await agents.config(ctx, current);
+                if (config === undefined) {
+                    throw new Error(`Collaborator "${current}" no longer exists.`);
+                }
+                // Direct workflow calls are separately governed roots. They and their branches do
+                // not consume the model-facing create_agent budget of the workflow owner.
+                if (belongsToWorkflow(config.metadata)) continue;
+                toolCollaborators += 1;
+                if (toolCollaborators >= maxCollaborators) {
+                    throw new Error(
+                        `Each root agent tree is limited to ${maxCollaborators} collaborators. Reuse an existing collaborator with send_agent_message.`,
+                    );
+                }
+            }
+            pending.push(...(await agents.childOf(ctx, current)));
+        }
+    }
+
+    /** Reserve tool collaborator capacity in creation order within this single-owner runtime. */
+    async #serializeToolCreation<Result>(work: () => Promise<Result>): Promise<Result> {
+        const previous = this.#toolCreationTail;
+        let release!: () => void;
+        this.#toolCreationTail = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        await previous;
+        try {
+            return await work();
+        } finally {
+            release();
+        }
+    }
+
     /** Reject a model, effort, provider, or tier the collection does not actually offer. */
     #validateSelection(
         models: readonly AgentModel[],
@@ -408,21 +533,21 @@ function answerReport(agentId: string, answer: string): string {
 }
 
 /**
- * Why this run has no answer, phrased for the creator, or nothing when it simply had none.
+ * Why this run has no answer, phrased for the creator.
  *
- * Silence and failure are not the same thing. A collaborator that was interrupted, or that was
- * told no action was needed, has nothing to add and announcing that would only tell its creator
- * what it already knows. A collaborator that hit a usage limit, lost its credentials, or died
- * with an error thrown out of its loop has stopped for a reason its creator cannot otherwise
- * discover, and which decides whether the work should be retried, sent elsewhere, or abandoned.
+ * A collaborator that hit a usage limit, lost its credentials, or died with an error thrown out
+ * of its loop has stopped for a reason its creator cannot otherwise discover, and which decides
+ * whether the work should be retried, sent elsewhere, or abandoned. A later process can finish a
+ * previously staged settlement without retaining that reason; even then, the creator must learn
+ * that the collaborator stopped and no answer is coming.
  *
  * The settlement is where that reason comes from. Every run settles, failed ones included, and it
  * carries the failure that ended the run in the same words the conversation was told — including
  * a failure the conversation itself could never record. A run that recovered and went on to speak
  * settles without one.
  */
-function failureReport(agentId: string, error: string | undefined): string | undefined {
-    if (error === undefined) return undefined;
+function stoppedReport(agentId: string, error: string | undefined): string {
+    if (error === undefined) return `Collaborator ${agentId} stopped without answering.`;
     const reason = error.trim();
     return `Collaborator ${agentId} stopped without answering. It failed with, verbatim.\n\n${
         reason === "" ? "The model did not answer." : reason
@@ -468,4 +593,10 @@ function reportsToCreator(metadata: AgentMetadata | undefined): boolean {
         return true;
     }
     return collaboration["reportToCreator"] !== false;
+}
+
+/** Workflow metadata is the explicit ownership boundary for collaborators created by its agents. */
+function belongsToWorkflow(metadata: AgentMetadata | undefined): boolean {
+    const workflow = metadata?.["workflow"];
+    return workflow !== null && typeof workflow === "object" && !Array.isArray(workflow);
 }

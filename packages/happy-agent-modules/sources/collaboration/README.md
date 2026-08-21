@@ -67,9 +67,9 @@ Collaborator b7c1 finished working. Its answer follows, verbatim.
 The parser change looks correct, but it drops the trailing newline case.
 ```
 
-A run that said nothing reports nothing. A collaborator interrupted mid-sentence, or told that no
-action is needed, has no answer to pass on, and announcing its silence would only tell the creator
-something it already knows.
+A run that said nothing still reports that it stopped. A hard stop may be settled after a restart,
+when the process no longer retains the original error; reporting the stop ensures the creator never
+waits for an answer that cannot arrive.
 
 A run that _failed_ is not silent, though. It stopped for a reason, and that reason is reported in
 place of the answer:
@@ -87,6 +87,9 @@ reason comes from the settlement itself: every run settles, failed ones included
 carries the failure that ended the run — including one thrown out of the loop, which the
 conversation could never record. A run that recovers and goes on to speak settles without a failure,
 so it reports what it said rather than what it survived.
+
+When settlement has no retained reason and the collaborator said nothing, the creator receives the
+short terminal report `Collaborator b7c1 stopped without answering.` instead.
 
 The message is tagged
 `collaboration.kind = "subagent_report"` with the collaborator's `fromAgentId`, which is what a
@@ -138,6 +141,19 @@ a model the collection does not offer is refused rather than reaching a provider
 omits `provider`, the tool uses its creator's current provider if that provider serves the requested
 model; otherwise an unambiguous model route is still accepted and an ambiguous one is refused.
 
+`max_collaborators` in `[settings]` controls how many collaborators created through `create_agent`
+one root agent tree retains across all branches and defaults to five. Collaborators are durable and
+reusable, so completed agents still count and accept later work through `send_agent_message`.
+Parallel tool calls share one reservation path and cannot race past the configured limit.
+Workflows call the module operation directly instead of going through the tool and remain under the
+workflow system's separate call limit. Workflow metadata is an explicit tree boundary, so those
+agents do not consume their owning agent's tool budget; if a workflow agent itself calls
+`create_agent`, it receives a fresh tool budget rooted at that workflow agent.
+
+`max_collaboration_depth` in `[settings]` controls `create_agent` ancestry and defaults to three
+agents including the root: root, child, and grandchild. Direct workflow creation is excluded
+because workflows enforce their own limits.
+
 A collaborator inherits its creator's environment and module configuration, and the `title` the
 call gave it is written to the agent's **real** `AgentMetadata` — not to a record of this module's
 own — so whatever shows a person their agents names it the same way it names every other.
@@ -146,7 +162,7 @@ own — so whatever shows a person their agents names it the same way it names e
 
 | Tool                 | Effect                                                          |
 | -------------------- | --------------------------------------------------------------- |
-| `create_agent`       | Creates a collaborator and delivers its opening task.           |
+| `create_agent`       | Creates a capped collaborator and delivers its opening task.    |
 | `send_agent_message` | Delivers one message to a collaborator, or back to its creator. |
 | `interrupt_agent`    | Aborts a collaborator subtree and hard-kills its processes.     |
 

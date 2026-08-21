@@ -35,6 +35,8 @@ const MAX_CONFIG_TABLE_ENTRIES = 512;
 const MAX_PROVIDER_COUNT = 64;
 const MAX_UNKNOWN_SETTINGS = 256;
 const MAX_PROVENANCE_ENTRIES = 512;
+const MAX_CONFIGURED_COLLABORATORS = 1_000;
+const MAX_CONFIGURED_COLLABORATION_DEPTH = 64;
 const MAX_INFERENCE_MAX_RETRIES = 100;
 const MAX_TOOL_RESULT_RETENTION_DAYS = 36_500;
 const MAX_MCP_TIMEOUT_SECONDS = 600;
@@ -125,6 +127,12 @@ const settingsInputSchema = Type.Object(
         happy_integration: Type.Optional(Type.Boolean()),
         inference_max_retries: Type.Optional(
             Type.Integer({ minimum: 0, maximum: MAX_INFERENCE_MAX_RETRIES }),
+        ),
+        max_collaboration_depth: Type.Optional(
+            Type.Integer({ minimum: 1, maximum: MAX_CONFIGURED_COLLABORATION_DEPTH }),
+        ),
+        max_collaborators: Type.Optional(
+            Type.Integer({ minimum: 1, maximum: MAX_CONFIGURED_COLLABORATORS }),
         ),
         show_reasoning: Type.Optional(Type.Boolean()),
         show_usage: Type.Optional(Type.Boolean()),
@@ -732,6 +740,14 @@ const resolvedValuesSchema = Type.Object(
                     minimum: 0,
                     maximum: MAX_INFERENCE_MAX_RETRIES,
                 }),
+                maxCollaborationDepth: Type.Integer({
+                    minimum: 1,
+                    maximum: MAX_CONFIGURED_COLLABORATION_DEPTH,
+                }),
+                maxCollaborators: Type.Integer({
+                    minimum: 1,
+                    maximum: MAX_CONFIGURED_COLLABORATORS,
+                }),
                 showReasoning: Type.Boolean(),
                 showUsage: Type.Boolean(),
                 toolResultRetentionDays: Type.Integer({
@@ -919,6 +935,8 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         durableGlobalEventQueue: false,
         happyIntegration: true,
         inferenceMaxRetries: 10,
+        maxCollaborationDepth: 3,
+        maxCollaborators: 5,
         showReasoning: false,
         showUsage: false,
         toolResultRetentionDays: 7,
@@ -1659,6 +1677,12 @@ function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Recor
         ...(value.inference_max_retries === undefined
             ? {}
             : { inferenceMaxRetries: value.inference_max_retries }),
+        ...(value.max_collaboration_depth === undefined
+            ? {}
+            : { maxCollaborationDepth: value.max_collaboration_depth }),
+        ...(value.max_collaborators === undefined
+            ? {}
+            : { maxCollaborators: value.max_collaborators }),
         ...(value.show_reasoning === undefined ? {} : { showReasoning: value.show_reasoning }),
         ...(value.show_usage === undefined ? {} : { showUsage: value.show_usage }),
         ...(value.tool_result_retention_days === undefined
@@ -2040,6 +2064,8 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         durable_global_event_queue: _durableGlobalEventQueue,
         happy_integration: _happyIntegration,
         inference_max_retries: _inferenceMaxRetries,
+        max_collaboration_depth: _maxCollaborationDepth,
+        max_collaborators: _maxCollaborators,
         tool_result_retention_days: _toolResultRetentionDays,
         ...projectSettings
     } = settings ?? {};
@@ -2085,6 +2111,8 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
             durable_global_event_queue: "durableGlobalEventQueue",
             happy_integration: "happyIntegration",
             inference_max_retries: "inferenceMaxRetries",
+            max_collaboration_depth: "maxCollaborationDepth",
+            max_collaborators: "maxCollaborators",
             show_reasoning: "showReasoning",
             show_usage: "showUsage",
             tool_result_retention_days: "toolResultRetentionDays",
@@ -2153,6 +2181,8 @@ function readSettings(
             "durable_global_event_queue",
             "happy_integration",
             "inference_max_retries",
+            "max_collaboration_depth",
+            "max_collaborators",
             "show_reasoning",
             "show_usage",
             "tool_result_retention_days",
