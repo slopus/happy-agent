@@ -14,9 +14,13 @@ describe("Happy Agent replacement during inference", () => {
     it("interrupts the active run and starts the replacement daemon without hanging", async () => {
         const gym = await createGym({
             mode: "docker",
-            environment: { HAPPY_HOME_DIR: "/tmp/happy" },
+            environment: {
+                HAPPY_HOME_DIR: "/tmp/happy",
+                NODE_OPTIONS: "--require=/workspace/hold-first-daemon.cjs",
+            },
             entrypoint: ["bash", "/workspace/replace-agent-during-inference.sh"],
             files: {
+                "hold-first-daemon.cjs": holdFirstDaemonPreload,
                 "replace-agent-during-inference.sh": replaceAgentDuringInferenceScript,
             },
             inference: [
@@ -35,11 +39,28 @@ describe("Happy Agent replacement during inference", () => {
 
         const screen = await gym.terminal.snapshot();
         expect(screen.text).toContain("Active inference reached the daemon");
+        expect(screen.text).toContain("forcing process");
         expect(screen.text).toContain("Replacement daemon has a new PID");
         expect(screen.text).toContain("The replacement daemon is responsive.");
         expect(screen.text).toContain(COMPLETED_MARKER);
     }, 120_000);
 });
+
+const holdFirstDaemonPreload = String.raw`const fs = require("node:fs");
+
+if (
+    process.argv[1] === "/app/happy-agent/dist/cli.js" &&
+    process.argv.includes("run")
+) {
+    try {
+        const handle = fs.openSync("/workspace/first-daemon-held", "wx");
+        fs.closeSync(handle);
+        setInterval(() => undefined, 60_000);
+    } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+    }
+}
+`;
 
 const replaceAgentDuringInferenceScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail

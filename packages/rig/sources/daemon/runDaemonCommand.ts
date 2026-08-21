@@ -5,7 +5,12 @@ import { createRootContext, type Context } from "@steve.kite/stdlib";
 
 import { RigUserError } from "../RigUserError.js";
 import { isTargetProcessAlive, waitForProcessExit } from "../processes/index.js";
-import { killDaemonFromPidFile, readDaemonPid } from "./daemonPid.js";
+import {
+    killDaemonFromPidFile,
+    killDaemonProcess,
+    readDaemonPid,
+    removeDaemonPid,
+} from "./daemonPid.js";
 import {
     ensureLocalProtocolServer,
     observeLocalProtocolServer,
@@ -13,6 +18,7 @@ import {
 import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
 
 const DAEMON_SHUTDOWN_TIMEOUT_MS = 30_000;
+const DAEMON_RELOAD_GRACE_TIMEOUT_MS = 5_000;
 
 export type DaemonCommand = "kill" | "reload" | "start" | "status" | "stop";
 
@@ -44,8 +50,12 @@ export async function runDaemonCommand(
 
     const observed = await observeLocalProtocolServer(paths);
     if (command === "reload") {
-        if (observed !== undefined) await stopLocalProtocolServer(ctx, observed.client, paths);
-        else await assertNoUnresponsiveDaemon(paths.pidPath);
+        if (observed !== undefined) {
+            await stopLocalProtocolServer(ctx, observed.client, paths, {
+                forceAfterMs: DAEMON_RELOAD_GRACE_TIMEOUT_MS,
+                onForce: log,
+            });
+        } else await assertNoUnresponsiveDaemon(paths.pidPath);
         const connection = await ensureLocalProtocolServer();
         log(`Daemon is running at ${connection.paths.socketPath}`);
         log(`Daemon PID: ${String((await readDaemonPid(connection.paths.pidPath)) ?? "unknown")}`);
@@ -88,18 +98,34 @@ async function stopLocalProtocolServer(
     ctx: Context,
     client: HappyAgentClient,
     paths: ReturnType<typeof getHappyDaemonPaths>,
+    options: {
+        readonly forceAfterMs?: number;
+        readonly onForce?: (message: string) => void;
+    } = {},
 ): Promise<void> {
     let pid = await readDaemonPid(paths.pidPath);
+    let requestError: unknown;
     try {
         pid = (await client.shutdown()).pid;
     } catch (error) {
-        const stopped = await waitForDaemonShutdown(ctx, paths.socketPath, pid);
-        if (stopped.socketRemoved && stopped.processExited) return;
+        requestError = error;
+    }
+    const timeoutMs = options.forceAfterMs ?? DAEMON_SHUTDOWN_TIMEOUT_MS;
+    const stopped = await waitForDaemonShutdown(ctx, paths.socketPath, pid, timeoutMs);
+    if (stopped.socketRemoved && stopped.processExited) return;
+    if (options.forceAfterMs !== undefined && pid !== undefined) {
+        options.onForce?.(
+            `Daemon did not stop gracefully; forcing process ${String(pid)} to exit.`,
+        );
+        if (!stopped.processExited) await killDaemonProcess(ctx, pid);
+        await removeDaemonPid(paths.pidPath, pid);
+        return;
+    }
+    if (requestError !== undefined) {
         throw new Error(
-            `Could not stop the existing local daemon: ${error instanceof Error ? error.message : String(error)}`,
+            `Could not stop the existing local daemon: ${requestError instanceof Error ? requestError.message : String(requestError)}`,
         );
     }
-    const stopped = await waitForDaemonShutdown(ctx, paths.socketPath, pid);
     if (!stopped.socketRemoved) {
         throw new Error("Timed out while waiting for the local daemon to release its socket.");
     }
@@ -114,12 +140,11 @@ async function waitForDaemonShutdown(
     ctx: Context,
     socketPath: string,
     pid: number | undefined,
+    timeoutMs: number,
 ): Promise<{ readonly processExited: boolean; readonly socketRemoved: boolean }> {
     const [socketRemoved, processExited] = await Promise.all([
-        waitForSocketRemoval(socketPath, DAEMON_SHUTDOWN_TIMEOUT_MS),
-        pid === undefined
-            ? Promise.resolve(true)
-            : waitForProcessExit(ctx, pid, DAEMON_SHUTDOWN_TIMEOUT_MS),
+        waitForSocketRemoval(socketPath, timeoutMs),
+        pid === undefined ? Promise.resolve(true) : waitForProcessExit(ctx, pid, timeoutMs),
     ]);
     return { processExited, socketRemoved };
 }

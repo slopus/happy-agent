@@ -49,23 +49,33 @@ export async function killDaemonFromPidFile(
 ): Promise<KillDaemonFromPidFileResult> {
     const pid = await readDaemonPid(pidPath);
     if (pid === undefined) return { found: false, killed: false };
+    const killed = await killDaemonProcess(ctx, pid);
+    await removeDaemonPid(pidPath, pid);
+    return { found: true, killed, pid };
+}
+
+/** Immediately kill one exact daemon PID and wait for the operating system to release it. */
+export async function killDaemonProcess(
+    ctx: Context,
+    pid: number,
+    timeoutMs: number = DAEMON_KILL_TIMEOUT_MS,
+): Promise<boolean> {
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+        throw new Error("A daemon PID must be a positive safe integer.");
+    }
     if (pid === process.pid) {
         throw new Error("Refusing to kill the process running this daemon command.");
     }
-    if (!isTargetProcessAlive(pid)) {
-        await removeDaemonPid(pidPath, pid);
-        return { found: true, killed: false, pid };
-    }
+    if (!isTargetProcessAlive(pid)) return false;
     try {
         process.kill(pid, "SIGKILL");
     } catch (error) {
         if (errorCode(error) !== "ESRCH") throw error;
     }
-    if (!(await waitForProcessExit(ctx, pid, DAEMON_KILL_TIMEOUT_MS))) {
+    if (!(await waitForProcessExit(ctx, pid, timeoutMs))) {
         throw new Error(`Daemon process ${String(pid)} did not exit after SIGKILL.`);
     }
-    await removeDaemonPid(pidPath, pid);
-    return { found: true, killed: true, pid };
+    return true;
 }
 
 function errorCode(error: unknown): string | undefined {

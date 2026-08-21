@@ -29,3 +29,9 @@ same owner-only file, sends `SIGKILL`, waits for exit, and removes the stale rec
 a persisted process that is still alive but no longer answers its socket. Named shutdown-step logs
 are written to `~/.happy/agent/observation/agent.log`; daemon commands print that path as the
 shutdown log.
+
+`reload` is also the replacement boundary used when switching downloaded Agent releases. It gives
+the authenticated old daemon five seconds to shut down gracefully. If the old release removed its
+socket but kept running, Rig reports the exact PID it is forcing, sends `SIGKILL`, waits for process
+exit, clears only that PID's stale record, and then starts the selected replacement. Plain `stop`
+never escalates automatically; the explicit `kill` command remains its recovery path.
