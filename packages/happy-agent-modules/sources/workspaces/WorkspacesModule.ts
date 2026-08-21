@@ -1246,9 +1246,21 @@ export class WorkspacesModule implements AgentModule {
                 });
             }
             const settings = await this.#folderSettings(workspace.path);
-            await runWorkspaceSetupCommands(ctx, workspace.path, settings.setupCommands, {
-                signal: controller.signal,
-            });
+            try {
+                await runWorkspaceSetupCommands(ctx, workspace.path, settings.setupCommands, {
+                    signal: controller.signal,
+                });
+            } catch (error) {
+                // Setup makes a valid checkout more convenient; it does not decide whether the
+                // checkout exists. Preserve explicit cancellation, but keep an otherwise usable
+                // workspace when an install or another project-owned command fails.
+                controller.signal.throwIfAborted();
+                ctx.lifetime?.throwIfAborted();
+                ctx.log.warn(
+                    { error, workspaceId: workspace.id },
+                    "A workspace setup command failed, but the workspace is still usable.",
+                );
+            }
         } finally {
             if (this.#setupControllers.get(workspace.id) === controller) {
                 this.#setupControllers.delete(workspace.id);

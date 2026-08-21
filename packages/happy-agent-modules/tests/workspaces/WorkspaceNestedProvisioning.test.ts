@@ -119,6 +119,44 @@ describe("nested workspace provisioning", () => {
         }
     });
 
+    it("keeps a created workspace usable when its setup command fails", async () => {
+        const repository = join(await createRoot("workspace-setup-failure-project-"), "project");
+        await mkdir(repository);
+        const world = await createWorld(
+            "workspace-setup-failure",
+            `[workspace]
+setup_commands = ['node -e "require(\\"node:fs\\").writeFileSync(\\"setup-ran.txt\\", \\"ran\\"); process.exit(23)"']`,
+        );
+        try {
+            const workspaceId = createId();
+            const project = await world.projects.create(world.database.context, {
+                id: "project-a",
+                repositoryRef: world.git.normalizeProjectCwd(repository),
+                name: "Project",
+            });
+            await readyProject(world, project.id);
+
+            const workspace = await world.workspaces.createWorkspace(
+                world.database.context,
+                project.id,
+                {
+                    id: workspaceId,
+                    name: "Setup failure",
+                } as CreateWorkspaceRequest,
+            );
+
+            expect(workspace).toMatchObject({
+                id: workspaceId,
+                status: "initializing",
+            });
+            const ready = await waitForWorkspace(world, workspaceId, "ready");
+            expect(await readFile(join(ready.path, "setup-ran.txt"), "utf8")).toBe("ran");
+            expect(ready.initializationError).toBeUndefined();
+        } finally {
+            await world.close();
+        }
+    }, 20_000);
+
     it("creates a child worktree from its ready parent branch", async () => {
         const repository = await createRepository();
         await commitFile(repository, "project.txt", "project\n");
@@ -357,9 +395,9 @@ describe("nested workspace provisioning", () => {
     });
 });
 
-async function createWorld(name: string) {
+async function createWorld(name: string, toml?: string) {
     const root = await createRoot(`happy-${name}-`);
-    const config = await testConfigRootedAt(root);
+    const config = await testConfigRootedAt(root, toml);
     const gitModule = GitModule.withRunner(gitRunner);
     const projects = new ProjectsModule(config, gitModule);
     const workspaces = new WorkspacesModule(config, projects, gitModule);

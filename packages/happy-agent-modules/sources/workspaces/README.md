@@ -93,19 +93,20 @@ on a workspace being able to answer "which branch?" and "which folder?" without 
 | `version`                                                        | An integer bumped on every durable change, and the token for optimistic concurrency.                                                                                   |
 | `creatorSessionId`                                               | The session that asked for it, if any.                                                                                                                                 |
 | `gitAhead`, `gitBehind`, `gitDetached`, `gitHead`, `gitUpstream` | What the last Git scan observed.                                                                                                                                       |
-| `initializationAttempt`, `initializationError`                   | How many times setup has been tried, and why the last try failed.                                                                                                      |
+| `initializationAttempt`, `initializationError`                   | How many initialization runs have been tried, and why the last fatal attempt failed.                                                                                   |
 | `createdAt`, `updatedAt`, `archivedAt`                           | Timestamps; `updatedAt` is forced to advance on every change.                                                                                                          |
 
 ## Lifecycle
 
 `reserve` → the module cuts the worktree or copies the folder → `recordInitialization` (base commit
-and common dir) → setup commands and the first file replication → `markReady`. If setup fails,
-`markInitializationFailed` records the error and raises `initializationAttempt` so a retry is
-distinguishable from the first try; `markFailed` is the terminal form. `applyGitFacts` and
-`applyProbe` fold in what a later scan observed — `applyProbe` is ignored unless the workspace is
-ready, so a probe racing initialization cannot resurrect a row, and both are ignored once the
-workspace is archived, because an observation that was already in flight describes a workspace nobody
-has any more.
+and common dir) → the first file replication and setup commands → `markReady`. Setup commands are
+best-effort: an install or another project-owned command may fail and write a warning without
+discarding the valid checkout. Git, folder creation, parent validation, and initial file replication
+still use `markInitializationFailed` when they fail; `markFailed` is the terminal form.
+`applyGitFacts` and `applyProbe` fold in what a later scan observed — `applyProbe` is ignored unless
+the workspace is ready, so a probe racing initialization cannot resurrect a row, and both are
+ignored once the workspace is archived, because an observation that was already in flight describes
+a workspace nobody has any more.
 
 Archival is two steps on purpose. `beginArchive` is the durable decision and moves the row to
 `archiving` immediately, and that is what `archive` returns. Folder removal does **not** run in the
