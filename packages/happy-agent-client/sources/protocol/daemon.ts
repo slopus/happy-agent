@@ -31,8 +31,12 @@ export const healthResponseSchema = Type.Object({
     healthy: Type.Boolean(),
     /** `false` while the agent system is still loading. */
     ready: Type.Boolean(),
+    /** `true` while the daemon is completing its graceful-shutdown handlers. */
+    shuttingDown: Type.Optional(Type.Boolean()),
     status: Type.Union([Type.Literal("starting"), Type.Literal("ready")]),
     version: daemonVersionSchema,
+    /** Stable names of graceful-shutdown handlers that have not finished yet. */
+    waitingFor: Type.Optional(Type.Array(Type.String())),
 });
 export type HealthResponse = Static<typeof healthResponseSchema>;
 

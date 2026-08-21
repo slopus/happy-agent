@@ -157,12 +157,20 @@ Response — `200`:
 Reports whether the daemon is alive and whether it is ready to serve the full API, and carries
 enough identity for a client to decide whether it can talk to this daemon at all.
 
-The daemon opens its socket before the agent system finishes loading, so health has two states:
+The daemon opens its socket before the agent system finishes loading, so health has two readiness
+states:
 
 - **Starting** — the socket is up but the agent system is not loaded. Only health is served;
   every other route returns an error. `ready` is `false` and `status` is `"starting"`.
 - **Ready** — the agent system is loaded and all routes are available. `ready` is `true` and
   `status` is `"ready"`.
+
+Graceful shutdown is reported separately from readiness. While graceful shutdown is in progress,
+the socket and API remain available, `ready` stays `true`, and `status` stays `"ready"`.
+`shuttingDown` is `true`, and `waitingFor` names the shutdown handlers that have not finished yet.
+The list shrinks as handlers complete. Once no handlers remain, the daemon closes the socket and
+exits the process without waiting for unrelated computations that still hold the Node.js event
+loop open.
 
 Response — `200`:
 
@@ -171,7 +179,9 @@ Response — `200`:
     "healthy": true,
     "ready": true,
     "status": "ready",
-    "version": { "protocol": 22, "daemon": "1.2.3" }
+    "version": { "protocol": 22, "daemon": "1.2.3" },
+    "shuttingDown": true,
+    "waitingFor": ["agent-system", "main-database"]
 }
 ```
 
@@ -182,6 +192,10 @@ Fields:
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
   compatibility check; `daemon` is the product version string, for display and diagnostics.
+- `shuttingDown` — optional for protocol-22 compatibility; `true` while graceful shutdown is in
+  progress and `false` otherwise.
+- `waitingFor` — optional for protocol-22 compatibility; the stable names of graceful-shutdown
+  handlers that have not finished. It is empty outside shutdown.
 
 Health is the only endpoint guaranteed to answer during startup; clients should poll it until
 `ready` is `true` before using the rest of the API.
@@ -474,8 +488,9 @@ also emits a `config.updated` event.
 
 ### `POST /v0/shutdown`
 
-Asks the daemon to shut down. The response is sent before the shutdown begins, so the caller
-gets an answer rather than a dropped connection.
+Asks the daemon to shut down. The response is sent before the shutdown begins, so the caller gets
+an answer rather than a dropped connection. The socket and API remain available during graceful
+shutdown; callers can poll health to observe `shuttingDown` and `waitingFor` until the daemon exits.
 
 Response — `202`:
 
