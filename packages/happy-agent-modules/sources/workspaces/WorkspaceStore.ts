@@ -244,12 +244,7 @@ export type WorkspaceMutationRequest = Static<typeof workspaceMutationRequestSch
 export type WorkspaceMutationResult = Static<typeof workspaceMutationResultSchema>;
 export type WorkspaceTransactionChange = Static<typeof workspaceTransactionChangeSchema>;
 
-export type {
-    Workspace,
-    WorkspaceBranchMetadata,
-    WorkspacePage,
-    WorkspacePageQuery,
-};
+export type { Workspace, WorkspaceBranchMetadata, WorkspacePage, WorkspacePageQuery };
 
 export { orderKeyBetween, sameJson, workspaceMigrations, assertWorkspace };
 

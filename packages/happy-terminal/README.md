@@ -43,7 +43,8 @@ await runHappyTerminal({
 ```
 
 Embedded sessions use `happy` in resume instructions by default. A different host command can be
-provided with `commandName`.
+provided with `commandName`. An embedded host may also provide `version` to replace the installed
+Happy Terminal package version in the startup UI.
 
 Run only one inline terminal at a time because each instance owns the process terminal while it is
 active. Happy Terminal requires Node.js 24 or newer.

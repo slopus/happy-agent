@@ -3,8 +3,17 @@ import { describe, expect, it } from "vitest";
 
 import { renderHappyTerminalBanner } from "./renderHappyTerminalBanner.js";
 
+const EXPECTED_HAPPY_LOGO = [
+    "██╗  ██╗ █████╗ ██████╗ ██████╗ ██╗   ██╗",
+    "██║  ██║██╔══██╗██╔══██╗██╔══██╗╚██╗ ██╔╝",
+    "███████║███████║██████╔╝██████╔╝ ╚████╔╝ ",
+    "██╔══██║██╔══██║██╔═══╝ ██╔═══╝   ╚██╔╝  ",
+    "██║  ██║██║  ██║██║     ██║        ██║   ",
+    "╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝        ╚═╝   ",
+] as const;
+
 describe("renderHappyTerminalBanner", () => {
-    it("renders the Happy Terminal logo beside the installed version", () => {
+    it("renders only the Happy logo with a plain version", () => {
         const rendered = stripAnsi(
             renderHappyTerminalBanner({
                 brand: "\x1b[38;5;202m",
@@ -16,12 +25,15 @@ describe("renderHappyTerminalBanner", () => {
 
         const lines = rendered.split("\n");
         expect(lines).toHaveLength(6);
-        expect(lines[0]).toContain("██╗  ██╗ █████╗ ██████╗ ██████╗ ██╗   ██╗");
-        expect(lines[5]).toContain("TERMINAL");
-        expect(rendered).toContain("██████╗");
+        for (const [index, expected] of EXPECTED_HAPPY_LOGO.entries()) {
+            expect(lines[index]?.startsWith(`  ${expected}`)).toBe(true);
+        }
+        expect(lines[5]).toContain("1.2.3");
+        expect(lines.slice(0, 5).join("\n")).not.toContain("1.2.3");
+        expect(rendered).not.toContain("TERMINAL");
     });
 
-    it("places compact versions on the final logo row when block artwork does not fit", () => {
+    it("uses a compact Happy identity when the logo does not fit", () => {
         const rendered = stripAnsi(
             renderHappyTerminalBanner({
                 brand: "",
@@ -31,7 +43,7 @@ describe("renderHappyTerminalBanner", () => {
             }).join("\n"),
         );
 
-        expect(rendered).toBe("  Happy Terminal 1.2.3  ");
+        expect(rendered).toBe("  HAPPY 1.2.3  ");
     });
 
     it("keeps a compact identity in terminals too narrow for the logo", () => {
@@ -42,7 +54,7 @@ describe("renderHappyTerminalBanner", () => {
             width: 12,
         });
 
-        expect(stripAnsi(lines.join("\n"))).toBe("  Happy Te  ");
+        expect(stripAnsi(lines.join("\n"))).toBe("  HAPPY 1.  ");
         expect(lines.every((line) => visibleWidth(line) <= 12)).toBe(true);
     });
 });

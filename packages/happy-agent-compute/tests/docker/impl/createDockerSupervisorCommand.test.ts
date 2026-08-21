@@ -26,14 +26,7 @@ describe("createDockerSupervisorCommand", () => {
         });
 
         expect(command).toEqual({
-            args: [
-                "--policy",
-                JSON.stringify(policy),
-                "--",
-                "/bin/sh",
-                "-lc",
-                "printf hello",
-            ],
+            args: ["--policy", JSON.stringify(policy), "--", "/bin/sh", "-lc", "printf hello"],
             command: DOCKER_SUPERVISOR_PATH,
         });
     });

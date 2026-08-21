@@ -75,11 +75,7 @@ describe("WorkspacesModule", () => {
         const database = workspaceDatabase("workspaces-tool-surface-test");
         await database.ready;
         try {
-            const hooks = await resolveModuleHooks(
-                database.context,
-                workspaces,
-                primaryAgents(),
-            );
+            const hooks = await resolveModuleHooks(database.context, workspaces, primaryAgents());
             const tools = await hooks.tools?.(database.context, {
                 agent: { id: "agent-1" },
             } as never);

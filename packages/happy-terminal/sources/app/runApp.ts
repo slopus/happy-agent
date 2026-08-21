@@ -63,12 +63,15 @@ export interface RunAppOptions {
     sessionSelection?: StartupSessionSelection;
     showReasoning?: boolean;
     showUsage?: boolean;
+    /** Version displayed by the host, defaulting to the installed Happy Terminal package. */
+    version?: string;
 }
 
 export type RunAppResult = { action: "exit" } | { action: "reload"; sessionId: string };
 
 export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise<RunAppResult> {
     const requestedCwd = options.cwd ?? process.cwd();
+    const version = options.version ?? readPackageVersion();
     const loadedConfig = await loadConfig({ cwd: requestedCwd });
     let compactCompletedTurns =
         options.compactCompletedTurns ?? loadedConfig.config.settings.compactCompletedTurns;
@@ -87,7 +90,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
         rows: () => terminal.rows,
         theme: startupTheme,
         tui,
-        version: readPackageVersion(),
+        version,
     });
     const terminalCrashCleanup = installTerminalCrashCleanup({ terminal, tui });
     let terminalAppearance: Promise<
@@ -238,7 +241,6 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             agent.setServiceTier(loadedConfig.config.defaults.serviceTier);
         }
 
-        const version = readPackageVersion();
         const tuiInspectorUrl = getNodeInspectorUrl();
         // The probe keeps running for /usage; startup only shows what answers within budget.
         const startupQuotas = await resolveStartupProviderQuota(() => agent.providerQuotas());

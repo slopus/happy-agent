@@ -7,9 +7,9 @@ describe("API assistant streaming identity", () => {
         const started = apiAssistantIdentityForProviderEvent("block_start", "run-one", undefined);
 
         for (const eventType of ["text_delta", "text_end", "block_stop", "block_reset"]) {
-            expect(
-                apiAssistantIdentityForProviderEvent(eventType, "run-two", started),
-            ).toEqual(started);
+            expect(apiAssistantIdentityForProviderEvent(eventType, "run-two", started)).toEqual(
+                started,
+            );
         }
 
         const next = apiAssistantIdentityForProviderEvent("block_start", "run-two", started);

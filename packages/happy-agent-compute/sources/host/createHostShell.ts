@@ -29,10 +29,7 @@ import { projectProtectedFileNames } from "../sandbox/impl/projectProtectedFileN
 import { quoteShellArgument } from "../sandbox/impl/quoteShellArgument.js";
 import { resolvePotentialPath } from "../sandbox/impl/resolvePotentialPath.js";
 import { resolveSupervisorProtectedPaths } from "../supervisor/resolveSupervisorProtectedPaths.js";
-import {
-    createSupervisorCommand,
-    createSupervisorPolicy,
-} from "../supervisor/index.js";
+import { createSupervisorCommand, createSupervisorPolicy } from "../supervisor/index.js";
 import {
     createProtectedPathMonitor,
     type ProtectedPathMonitor,
