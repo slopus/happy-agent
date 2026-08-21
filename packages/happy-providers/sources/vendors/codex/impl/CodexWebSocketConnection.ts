@@ -144,12 +144,36 @@ export class CodexWebSocketConnection {
         this.clearResponseChain();
         this.inferenceStarted = true;
         this.needsFullRequest = false;
+        const completedItems = new Map<number, ResponseOutputItem>();
+        let sawCompletedItem = false;
+        let completedItemsAreReusable = true;
         for await (const event of this.send(client, inferenceRequest, signal)) {
             turnState.observe(event);
+            if (event.type === "response.output_item.done") {
+                sawCompletedItem = true;
+                if (
+                    !Number.isSafeInteger(event.output_index) ||
+                    event.output_index < 0 ||
+                    completedItems.has(event.output_index)
+                ) {
+                    completedItemsAreReusable = false;
+                } else {
+                    completedItems.set(event.output_index, event.item);
+                }
+            }
             if (event.type === "response.completed") {
-                this.previousResponseId = event.response.id;
-                this.previousRequest = structuredClone(fullRequest);
-                this.previousResponseItems = structuredClone(event.response.output ?? []);
+                const responseItems = sawCompletedItem
+                    ? completedItemsAreReusable
+                        ? orderedResponseItems(completedItems)
+                        : undefined
+                    : (event.response.output ?? []);
+                if (responseItems !== undefined) {
+                    const committedRequest = structuredClone(fullRequest);
+                    const committedItems = structuredClone(responseItems);
+                    this.previousRequest = committedRequest;
+                    this.previousResponseItems = committedItems;
+                    this.previousResponseId = event.response.id;
+                }
             }
             yield event;
         }
@@ -242,4 +266,13 @@ export class CodexWebSocketConnection {
             onTimeout: () => this.close("stream idle timeout"),
         });
     }
+}
+
+/** Returns one complete response in wire order, or nothing when its indexes are not contiguous. */
+function orderedResponseItems(
+    items: ReadonlyMap<number, ResponseOutputItem>,
+): readonly ResponseOutputItem[] | undefined {
+    const ordered = [...items].sort(([left], [right]) => left - right);
+    if (ordered.some(([index], position) => index !== position)) return undefined;
+    return ordered.map(([, item]) => item);
 }

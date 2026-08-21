@@ -11,6 +11,8 @@ const websocket = vi.hoisted(() => ({
     closedConnectionsOnCreate: 0,
     connectionHeaders: [] as Record<string, string>[],
     emitCustomToolResponse: false,
+    emitProductionShapeToolResponse: false,
+    emptyCompletedOutput: false,
     failMidstreamOnce: false,
     midstreamFailures: 0,
     failToolCallMidstreamOnce: false,
@@ -331,6 +333,106 @@ vi.mock("openai/resources/responses/ws", () => ({
                     },
                 });
                 responseOutput.push(compactionItem);
+            } else if (websocket.emitProductionShapeToolResponse && request.generate !== false) {
+                websocket.emitProductionShapeToolResponse = false;
+                const reasoningItem = {
+                    id: "reasoning-item",
+                    type: "reasoning",
+                    encrypted_content: "opaque-reasoning",
+                    summary: [],
+                };
+                const messageItem = {
+                    id: "commentary-item",
+                    type: "message",
+                    role: "assistant",
+                    phase: "commentary",
+                    status: "completed",
+                    content: [
+                        {
+                            type: "output_text",
+                            text: "Checking.",
+                            annotations: [],
+                        },
+                    ],
+                };
+                const toolItem = {
+                    id: "function-tool-item",
+                    type: "function_call",
+                    status: "completed",
+                    call_id: "function-call",
+                    name: "exec_command",
+                    arguments: '{"cmd":"true"}',
+                };
+                this.messages.push(
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.output_item.added",
+                            output_index: 0,
+                            item: reasoningItem,
+                        },
+                    },
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.output_item.done",
+                            output_index: 0,
+                            item: reasoningItem,
+                        },
+                    },
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.output_item.added",
+                            output_index: 1,
+                            item: { ...messageItem, content: [] },
+                        },
+                    },
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.output_text.delta",
+                            output_index: 1,
+                            content_index: 0,
+                            item_id: messageItem.id,
+                            delta: "Checking.",
+                        },
+                    },
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.output_item.done",
+                            output_index: 1,
+                            item: messageItem,
+                        },
+                    },
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.output_item.added",
+                            output_index: 2,
+                            item: { ...toolItem, arguments: "" },
+                        },
+                    },
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.function_call_arguments.delta",
+                            output_index: 2,
+                            item_id: toolItem.id,
+                            delta: toolItem.arguments,
+                        },
+                    },
+                    {
+                        type: "message",
+                        message: {
+                            type: "response.output_item.done",
+                            output_index: 2,
+                            item: toolItem,
+                        },
+                    },
+                );
+                responseOutput.push(reasoningItem, messageItem, toolItem);
             } else if (websocket.emitCustomToolResponse && request.generate !== false) {
                 websocket.emitCustomToolResponse = false;
                 const toolItem = {
@@ -414,7 +516,7 @@ vi.mock("openai/resources/responses/ws", () => ({
                     type: "response.completed",
                     response: {
                         id: websocket.sent.length === 1 ? "<PREVIOUS_RESPONSE_ID>" : "response",
-                        output: responseOutput,
+                        output: websocket.emptyCompletedOutput ? [] : responseOutput,
                         usage: {
                             input_tokens: websocket.usageTotalTokens,
                             output_tokens: 1,
@@ -494,6 +596,8 @@ describe("Codex CLI mode WebSocket goldens", () => {
         websocket.closedConnectionsOnCreate = 0;
         websocket.connectionHeaders.splice(0);
         websocket.emitCustomToolResponse = false;
+        websocket.emitProductionShapeToolResponse = false;
+        websocket.emptyCompletedOutput = false;
         websocket.failMidstreamOnce = false;
         websocket.midstreamFailures = 0;
         websocket.failToolCallMidstreamOnce = false;
@@ -1637,6 +1741,77 @@ describe("Codex CLI mode WebSocket goldens", () => {
                 type: "custom_tool_call_output",
                 call_id: "custom-call",
                 output: "true",
+            },
+        ]);
+        session.destroy();
+    });
+
+    it("continues from streamed output items when the completed response output is empty", async () => {
+        const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
+        websocket.emitProductionShapeToolResponse = true;
+        websocket.emptyCompletedOutput = true;
+        const session = await codexProvider("websocket", 1, true).session("<SESSION_ID>", {
+            instructions: prompt.instructions,
+            tools: codexCliTools("gpt-5.6-sol"),
+        });
+        const user = {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "inspect it" }],
+        };
+        await drain(
+            session.run(testContext, {
+                context: { instructions: "", messages: [user] },
+                effort: "low",
+            }),
+        );
+
+        await drain(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        user,
+                        {
+                            role: "assistant",
+                            content: [
+                                {
+                                    type: "reasoning",
+                                    reasoning: JSON.stringify({
+                                        id: "reasoning-item",
+                                        type: "reasoning",
+                                        encrypted_content: "opaque-reasoning",
+                                        summary: [],
+                                    }),
+                                },
+                                { type: "text", text: "Checking." },
+                                {
+                                    type: "tool_call",
+                                    callId: "function-call",
+                                    name: "exec_command",
+                                    arguments: '{"cmd":"true"}',
+                                    vendor: { provider: "codex", type: "function_call" },
+                                },
+                            ],
+                        },
+                        {
+                            role: "tool",
+                            content: [{ type: "text", text: "done" }],
+                            callId: "function-call",
+                            vendor: { provider: "codex", type: "function_call" },
+                        },
+                    ],
+                },
+                effort: "low",
+            }),
+        );
+
+        expect(websocket.sent).toHaveLength(3);
+        expect(websocket.sent[2]!.previous_response_id).toBe("response");
+        expect(websocket.sent[2]!.input).toEqual([
+            {
+                type: "function_call_output",
+                call_id: "function-call",
+                output: "done",
             },
         ]);
         session.destroy();
