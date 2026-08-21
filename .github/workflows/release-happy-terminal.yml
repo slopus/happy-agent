@@ -260,7 +260,7 @@ jobs:
             - name: Publish with npm trusted publishing
               shell: bash
               run: |
-                  tarball="$(find release-assets -maxdepth 1 -name '*.tgz' -print -quit)"
+                  tarball="$(find "$GITHUB_WORKSPACE/release-assets" -maxdepth 1 -name '*.tgz' -print -quit)"
                   if [[ -z "$tarball" ]]; then
                       echo "The verified npm tarball is missing." >&2
                       exit 1
