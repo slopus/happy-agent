@@ -1,6 +1,6 @@
 import { runAgentDaemonCommand, type AgentDaemonCommand } from "@slopus/happy-agent";
 
-import { resolveAgentDaemonEntrypoint, toRigError } from "../client/index.js";
+import { resolveAgentDaemonEntrypoint, runDaemonInProcess, toRigError } from "../client/index.js";
 
 export type DaemonCommand = AgentDaemonCommand;
 
@@ -10,6 +10,7 @@ export async function runDaemonCommand(command: DaemonCommand): Promise<void> {
     try {
         await runAgentDaemonCommand(command, {
             ...(entrypoint === undefined ? {} : { entrypoint }),
+            runInProcess: runDaemonInProcess(),
         });
     } catch (error) {
         throw toRigError(error);

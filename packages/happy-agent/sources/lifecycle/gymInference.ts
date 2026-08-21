@@ -50,9 +50,9 @@ const EFFORTS: readonly SessionReasoningEffort[] = [
 export function createGymInferenceFromEnvironment(
     env: NodeJS.ProcessEnv = process.env,
 ): ConfigInferenceFactory | undefined {
-    const endpoint = env.RIG_GYM_INFERENCE_URL?.trim();
+    const endpoint = env.HAPPY_GYM_INFERENCE_URL?.trim();
     if (endpoint === undefined || endpoint.length === 0) return undefined;
-    const token = env.RIG_GYM_TOKEN?.trim();
+    const token = env.HAPPY_GYM_TOKEN?.trim();
 
     // The configuration decides which providers exist and which models they serve, exactly as
     // in production; the gym only replaces how each of those accounts serves inference. A

@@ -26,6 +26,7 @@ import { NativeProcessManager } from "../processes/index.js";
 import type { ContentBlock, PermissionMode, UserInputRequest } from "../protocol/index.js";
 import { readPackageVersion } from "../readPackageVersion.js";
 import { reportCliFailure } from "../reportCliFailure.js";
+import { RigUserError } from "../RigUserError.js";
 import { CodingAssistantApp, type AppExitReason } from "./CodingAssistantApp.js";
 import { createSerialTaskQueue } from "./createSerialTaskQueue.js";
 import { createStopOnceHandler } from "./createStopOnceHandler.js";
@@ -215,7 +216,17 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             opened.config.defaults.modelId;
         const effort =
             options.effort ?? loadedConfig.config.defaults.effort ?? opened.config.defaults.effort;
-        agent.setModel(modelId, effort, providerId);
+        try {
+            agent.setModel(modelId, effort, providerId);
+        } catch (error) {
+            throw new RigUserError(
+                `Model '${modelId}' is not available from provider '${providerId}' in this daemon's configuration.`,
+                {
+                    cause: error,
+                    hint: "Check RIG_MODEL and RIG_PROVIDER, or add the provider to happy.toml and run rig daemon reload.",
+                },
+            );
+        }
         agent.setPermissionMode(
             options.permissionMode ??
                 loadedConfig.config.defaults.permissionMode ??

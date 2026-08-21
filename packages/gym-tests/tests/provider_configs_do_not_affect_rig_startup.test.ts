@@ -57,7 +57,7 @@ const startWithoutProvidersScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 # Exercise the built daemon without Gym's injected inference provider or source loader.
-unset RIG_GYM_INFERENCE_URL
+unset HAPPY_GYM_INFERENCE_URL
 unset NODE_OPTIONS
 node /app/packages/rig/dist/main.js daemon start
 node /app/packages/rig/dist/main.js daemon status

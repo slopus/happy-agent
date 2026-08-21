@@ -2,6 +2,7 @@ export {
     ensureLocalProtocolServer,
     readTokenIfPresent,
     resolveAgentDaemonEntrypoint,
+    runDaemonInProcess,
     toRigError,
     type DaemonRestartRequest,
     type EnsureLocalProtocolServerOptions,

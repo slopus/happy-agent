@@ -7,7 +7,7 @@
         "build:gym": "pnpm --filter @slopus/rig-gym run build:image",
         "check": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm run check:root && pnpm --recursive --filter './packages/**' run check",
         "check:root": "tsc --noEmit -p tsconfig.json",
-        "dev": "pnpm build && HAPPY_HOME_DIR=\"$PWD/.rig-dev/.happy\" pnpm start daemon reload && HAPPY_HOME_DIR=\"$PWD/.rig-dev/.happy\" pnpm start",
+        "dev": "pnpm build && node scripts/seedDevConfig.mjs && HAPPY_HOME_DIR=\"$PWD/.rig-dev/.happy\" pnpm start daemon reload && HAPPY_HOME_DIR=\"$PWD/.rig-dev/.happy\" pnpm start",
         "format": "oxfmt --write .",
         "format:check": "oxfmt --check .",
         "link:global": "pnpm build && cd packages/rig && pnpm link --global && rig daemon reload",

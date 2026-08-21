@@ -120,9 +120,9 @@ export async function createGym(options: GymOptions): Promise<Gym> {
             execution === "docker"
                 ? [
                       "--env",
-                      `RIG_GYM_INFERENCE_URL=${inference.url}`,
+                      `HAPPY_GYM_INFERENCE_URL=${inference.url}`,
                       "--env",
-                      `RIG_GYM_TOKEN=${inference.token}`,
+                      `HAPPY_GYM_TOKEN=${inference.token}`,
                       ...(options.contextWindow === undefined
                           ? []
                           : ["--env", `RIG_GYM_CONTEXT_WINDOW=${options.contextWindow}`]),
@@ -295,8 +295,8 @@ function createLocalEnvironment(
         HOME: homePath,
         PATH: process.env.PATH ?? "",
         RIG_CONFIGURATION_DIRECTORY: join(homePath, "happy", "config"),
-        RIG_GYM_INFERENCE_URL: inference.localUrl,
-        RIG_GYM_TOKEN: inference.token,
+        HAPPY_GYM_INFERENCE_URL: inference.localUrl,
+        HAPPY_GYM_TOKEN: inference.token,
         RIG_GYM_DISPLAY_WORKSPACE: "/workspace",
         RIG_GYM_HOME_PATH: homePath,
         RIG_GYM_IN_PROCESS_DAEMON: "1",

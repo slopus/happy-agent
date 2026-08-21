@@ -16,6 +16,8 @@ export interface RunAgentDaemonCommandOptions {
     /** The daemon entrypoint handed to {@link ensureAgentDaemon} when a daemon must be spawned. */
     entrypoint?: string;
     log?: (line: string) => void;
+    /** Test-only: run a started daemon inside the calling process instead of spawning one. */
+    runInProcess?: boolean;
 }
 
 /** Runs one daemon lifecycle command and reports the outcome in human-readable lines. */
@@ -24,12 +26,15 @@ export async function runAgentDaemonCommand(
     options: RunAgentDaemonCommandOptions = {},
 ): Promise<void> {
     const log = options.log ?? ((line: string) => console.log(line));
-    const entrypoint = options.entrypoint === undefined ? {} : { entrypoint: options.entrypoint };
+    const ensureOptions = {
+        ...(options.entrypoint === undefined ? {} : { entrypoint: options.entrypoint }),
+        ...(options.runInProcess === undefined ? {} : { runInProcess: options.runInProcess }),
+    };
 
     if (command === "start") {
         const connection = await ensureAgentDaemon({
             confirmRestart: async () => true,
-            ...entrypoint,
+            ...ensureOptions,
         });
         log(`Daemon is running at ${connection.paths.socketPath}`);
         log(`Daemon log: ${connection.paths.logPath}`);
@@ -43,7 +48,7 @@ export async function runAgentDaemonCommand(
         }
         const reloaded = await ensureAgentDaemon({
             confirmRestart: async () => true,
-            ...entrypoint,
+            ...ensureOptions,
         });
         log(`Daemon is running at ${reloaded.paths.socketPath}`);
         log(`Daemon log: ${reloaded.paths.logPath}`);

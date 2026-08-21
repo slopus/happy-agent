@@ -38,6 +38,8 @@ export interface EnsureAgentDaemonOptions {
      * CLI itself; a product that embeds this lifecycle names its own daemon entrypoint here.
      */
     entrypoint?: string;
+    /** Test-only: run the daemon inside the calling process instead of spawning one. */
+    runInProcess?: boolean;
 }
 
 export interface AgentDaemonRestartRequest {
@@ -129,7 +131,7 @@ async function startAgentDaemonProcess(
 ): Promise<AgentDaemonConnection> {
     const token = await readOrCreateDaemonToken(paths.tokenPath);
     let child: ChildProcess | undefined;
-    if (process.env.RIG_GYM_IN_PROCESS_DAEMON === "1") {
+    if (options.runInProcess === true) {
         // The runtime import is deferred so lifecycle management never loads the whole agent.
         const { runAgentDaemon } = await import("./runAgentDaemon.js");
         void runAgentDaemon().catch((error: unknown) => {

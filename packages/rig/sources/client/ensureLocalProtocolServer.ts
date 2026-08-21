@@ -33,10 +33,16 @@ export async function ensureLocalProtocolServer(
         return await ensureAgentDaemon({
             ...options,
             ...(entrypoint === undefined ? {} : { entrypoint }),
+            runInProcess: runDaemonInProcess(),
         });
     } catch (error) {
         throw toRigError(error);
     }
+}
+
+/** The gym runs the daemon inside the TUI process so scenarios stay single-process. */
+export function runDaemonInProcess(): boolean {
+    return process.env.RIG_GYM_IN_PROCESS_DAEMON === "1";
 }
 
 export async function readTokenIfPresent(tokenPath: string): Promise<string | undefined> {
