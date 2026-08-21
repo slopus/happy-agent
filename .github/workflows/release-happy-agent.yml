@@ -93,7 +93,6 @@ jobs:
             - name: Run tests
               env:
                   HOME: ${{ runner.temp }}/happy-agent-test-home
-                  TMPDIR: ${{ runner.temp }}
               run: |
                   mkdir -p "$HOME"
                   pnpm --filter @slopus/happy-agent-modules test
