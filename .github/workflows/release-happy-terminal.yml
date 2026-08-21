@@ -94,6 +94,9 @@ jobs:
                   mkdir -p "$HOME"
                   pnpm --filter @slopus/happy-terminal test
 
+            - name: Build embedded Happy Agent dependencies
+              run: pnpm --filter @slopus/happy-agent-modules build
+
             - name: Build Happy Terminal
               run: pnpm --filter @slopus/happy-terminal build
 
