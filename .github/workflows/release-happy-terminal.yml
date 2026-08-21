@@ -283,6 +283,7 @@ jobs:
                   gh release create "$RELEASE_TAG" \
                       --target "$RELEASE_COMMIT" \
                       --title "Happy Terminal v$RELEASE_VERSION" \
+                      --latest=false \
                       --notes-file .release/notes.md
                   release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
                   printf 'Published [Happy Terminal v%s](%s) and `@slopus/happy-terminal@%s`.\n' \

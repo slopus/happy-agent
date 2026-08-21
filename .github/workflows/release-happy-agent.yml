@@ -269,6 +269,10 @@ jobs:
                       arguments+=(--prerelease)
                   fi
                   gh release create "${arguments[@]}" release-assets/*
-                  gh release edit "$RELEASE_TAG" --draft=false
+                  publish_arguments=(--draft=false)
+                  if [[ "$RELEASE_VERSION" != *-* ]]; then
+                      publish_arguments+=(--latest)
+                  fi
+                  gh release edit "$RELEASE_TAG" "${publish_arguments[@]}"
                   release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
                   printf 'Published [%s](%s).\n' "$RELEASE_TAG" "$release_url" >> "$GITHUB_STEP_SUMMARY"
