@@ -37,15 +37,15 @@ library.
 ## 2. Process architecture
 
 Rig runs as two processes on the local machine: a **terminal UI** (or a headless
-`rig exec` run) and a long-lived **local daemon**. Both come from the same
-`@slopus/rig` binary.
+`rig exec` run) and a long-lived **local daemon**, the standalone Happy agent.
+Both ship in the same `@slopus/rig` package.
 
 ```text
    rig / rig exec  (terminal UI, one per window)
             |
             |  HTTP + SSE over a unix socket, bearer token
             v
-   rig --server    (the daemon: sessions, agents, tools, SQLite)
+   happy-agent run  (the daemon: sessions, agents, tools, SQLite)
             |
             +-- provider inference  (happy-agent-base -> happy-providers -> vendor APIs)
             +-- sandboxed shell, filesystem, Docker, MCP, background terminals
@@ -72,9 +72,11 @@ holds no agent logic; if it dies, the session keeps running.
 ### The terminal UI
 
 The CLI parses the command line and picks a mode: interactive app, headless
-`exec`, monitor, daemon control (`rig daemon start|stop|status|reload`), offline
-installation inspection (`rig inspect [--json]`), or `--server` for the daemon
-itself.
+`exec`, monitor, daemon control (`rig daemon start|stop|status|reload`), or offline
+installation inspection (`rig inspect [--json]`). The daemon itself is the
+standalone `happy-agent` CLI, shipped beside the Rig bundle as `agent.js`; Rig
+invokes its `start`, `stop`, and `reload` commands instead of running any boot
+sequence of its own.
 
 Inspection is the exception to the daemon-starting path below. It reads installation, CLI version,
 and protocol compatibility facts without starting or contacting the daemon. A clean or

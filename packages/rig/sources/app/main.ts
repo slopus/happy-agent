@@ -3,7 +3,6 @@ import { runApp, type RunAppOptions } from "./runApp.js";
 import { runMonit } from "./runMonit.js";
 import { runExec } from "./runExec.js";
 import { parsePermissionMode } from "./parsePermissionMode.js";
-import { runHappyAgentServer } from "../daemon/index.js";
 import { parseExecCommand } from "./parseExecCommand.js";
 import { parseDesktopCommand } from "./parseDesktopCommand.js";
 import { parseSessionCommand } from "./parseSessionCommand.js";
@@ -17,10 +16,6 @@ import type { Context, Logger } from "@steve.kite/stdlib";
 import { initializeDaemonContext, withProcessContext } from "../observability/index.js";
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<0 | 2 | void> {
-    if (argv.length === 1 && argv[0] === "--server") {
-        await runHappyAgentServer();
-        return;
-    }
     initializeDaemonContext(cliLogger());
     return await withProcessContext("cli", (ctx) => runMain(ctx, argv));
 }

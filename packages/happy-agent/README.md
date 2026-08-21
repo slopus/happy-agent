@@ -1,27 +1,58 @@
 # `@slopus/happy-agent`
 
-The executable shell around the Happy Agent runtime.
+The standalone Happy agent daemon.
 
 All agent behavior lives in `@slopus/happy-agent-modules`: configuration, databases, storage
 locks, module composition, events, HTTP routing, Happy synchronization, files, Git, terminals, and
-the Agent System itself. This package owns only the daemon process boundary:
+the Agent System itself. This package owns the daemon process and its whole lifecycle:
 
 - start the modules-owned runtime;
 - bind its API to the configured Unix domain socket;
 - forward HTTP, WebSocket upgrades, and `CONNECT` tunnels to the API module;
 - secure and remove the socket;
-- stop the socket and runtime cleanly.
+- stop the socket and runtime cleanly;
+- spawn, observe, restart, and stop the detached daemon process.
+
+## Command line
+
+The agent is its own daemon. Products invoke these commands instead of managing the process:
+
+```sh
+happy-agent start    # start the daemon when none is running, replacing one that does not match
+happy-agent stop     # ask the running daemon to shut down
+happy-agent status   # report whether the daemon is running
+happy-agent reload   # stop the running daemon, then start a fresh one
+happy-agent run      # run the daemon in the foreground of this process
+```
+
+`start` spawns a detached `node <cli> run` process, redirects its output to the rotated daemon
+log, and waits until health reports ready. A running daemon whose reported version does not match
+the CLI is replaced. All state lives under the Happy home (`~/.happy` or `HAPPY_HOME_DIR`), in its
+`agent/` directory: `server.sock`, `token`, and `daemon.log`.
+
+## Library
+
+The same lifecycle is available programmatically:
 
 ```ts
-import { startHappyAgentDaemon } from "@slopus/happy-agent";
+import { ensureAgentDaemon, startHappyAgentDaemon } from "@slopus/happy-agent";
 
+// Connect to the daemon, starting or replacing one as needed.
+const { client, paths, token } = await ensureAgentDaemon();
+
+// Or embed the daemon in the current process.
 const daemon = await startHappyAgentDaemon({ happyHome: "/path/to/.happy" });
 console.log(daemon.socketPath);
 await daemon.close();
 ```
 
+A product that bundles this package names its own daemon entrypoint:
+`ensureAgentDaemon({ entrypoint })` spawns `node <entrypoint> run`, which is expected to run the
+CLI's `run` command. Rig ships the bundled CLI as `agent.js` beside its own bundle and passes that
+path.
+
 The runtime exposes starting health before Agent System restoration completes. Every request,
-including health, uses the bearer token persisted at `daemon.tokenPath`. The socket and token are
+including health, uses the bearer token persisted at the token path. The socket and token are
 owner-only.
 
 Use `@slopus/happy-agent-client` to call the API. The complete HTTP contract is specified in

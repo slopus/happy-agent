@@ -39,7 +39,7 @@ rig() {
 }
 
 read_daemon_pid() {
-    pgrep -f '/app/packages/rig/dist/main.js --server$' | head -n 1
+    pgrep -f '/app/packages/rig/dist/agent.js run$' | head -n 1
 }
 
 wait_for_exit() {

@@ -6,14 +6,16 @@ const mocks = vi.hoisted(() => ({
     waitForSocketRemoval: vi.fn(),
 }));
 
-vi.mock("./waitForSocketRemoval.js", () => ({
+vi.mock("../sources/lifecycle/waitForSocketRemoval.js", () => ({
     waitForSocketRemoval: mocks.waitForSocketRemoval,
 }));
 
 describe("stopLocalProtocolServer", () => {
     it("waits thirty seconds for the old daemon to release its socket", async () => {
         vi.resetModules();
-        const { stopLocalProtocolServer } = await import("./stopLocalProtocolServer.js");
+        const { stopLocalProtocolServer } = await import(
+            "../sources/lifecycle/stopLocalProtocolServer.js"
+        );
         mocks.waitForSocketRemoval.mockResolvedValue(true);
         const client = {
             shutdown: vi.fn().mockResolvedValue({

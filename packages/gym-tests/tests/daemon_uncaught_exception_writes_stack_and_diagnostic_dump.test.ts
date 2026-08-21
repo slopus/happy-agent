@@ -69,7 +69,7 @@ sleep 60
 `;
 
 const crashDaemonPreloadScript = String.raw`
-if (process.argv.includes("--server")) {
+if (process.argv[1] !== undefined && process.argv[1].endsWith("/agent.js") && process.argv.includes("run")) {
     const { existsSync } = require("node:fs");
     const timer = setInterval(() => {
         if (!existsSync("/workspace/trigger-daemon-crash")) return;

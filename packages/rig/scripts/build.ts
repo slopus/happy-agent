@@ -28,6 +28,9 @@ const bundle = await build({
     bundle: true,
     entryNames: "[name]",
     entryPoints: {
+        // The Happy agent daemon CLI ships beside the Rig bundle so Rig can invoke
+        // `node agent.js <command>` instead of owning any daemon boot sequence itself.
+        agent: "../happy-agent/sources/cli.ts",
         main: "sources/main.ts",
         readPackageVersion: "sources/readPackageVersion.ts",
     },

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { HappyAgentClient } from "@slopus/happy-agent-client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createUnixSocketFetch } from "./createUnixSocketFetch.js";
+import { createUnixSocketFetch } from "../sources/lifecycle/createUnixSocketFetch.js";
 
 const roots: string[] = [];
 const servers: Server[] = [];

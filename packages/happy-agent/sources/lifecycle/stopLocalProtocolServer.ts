@@ -1,5 +1,5 @@
 import type { HappyAgentClient } from "@slopus/happy-agent-client";
-import { errorToMessage } from "../errorToMessage.js";
+
 import { waitForSocketRemoval } from "./waitForSocketRemoval.js";
 
 const DAEMON_SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -18,7 +18,11 @@ export async function stopLocalProtocolServer(
     }
     if (!(await waitForSocketRemoval(socketPath, DAEMON_SHUTDOWN_TIMEOUT_MS))) {
         throw new Error(
-            "Timed out while waiting for the existing local daemon to release its socket. Rig did not start a replacement.",
+            "Timed out while waiting for the existing local daemon to release its socket. A replacement was not started.",
         );
     }
+}
+
+function errorToMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }

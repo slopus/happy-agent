@@ -1,13 +1,13 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-/** Filesystem locations of the local Happy agent daemon that Rig starts and connects to. */
+/** Filesystem locations of the local Happy agent daemon. */
 export interface HappyDaemonPaths {
     /** The daemon's private state directory, `<happyHome>/agent`. */
     readonly directory: string;
     /** Happy's private root, usually `~/.happy`. */
     readonly happyHome: string;
-    /** Where Rig captures the spawned daemon's stdout and stderr. */
+    /** Where the launcher captures the spawned daemon's stdout and stderr. */
     readonly logPath: string;
     readonly socketPath: string;
     readonly tokenPath: string;
