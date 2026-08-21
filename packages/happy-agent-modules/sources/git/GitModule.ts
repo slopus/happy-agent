@@ -658,10 +658,10 @@ export class GitModule implements AgentModule {
     /**
      * Atomically replaces the live-watch set.
      *
-     * Re-registering an unchanged entity retains its watcher and last snapshot while scheduling a
-     * reconciliation. An omitted entity is retired immediately, even when its first scan has not
-     * completed, so it cannot keep a filesystem watcher, timer, or pending publication alive after
-     * the caller lost interest.
+     * Re-registering an unchanged entity retains its watcher and last snapshot and only renews its
+     * lifetime; the stale fallback owns reconciliation. An omitted entity is retired immediately,
+     * even when its first scan has not completed, so it cannot keep a filesystem watcher, timer, or
+     * pending publication alive after the caller lost interest.
      */
     replaceTracked(entities: readonly GitTrackedEntity[]): void {
         if (!Value.Check(gitTrackedEntitiesSchema, entities)) {

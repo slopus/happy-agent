@@ -53,12 +53,19 @@ used. It combines committed, staged, unstaged, conflicted and untracked work, de
 keeps totals separate from the capped display list, omits files larger than the display limit, and
 carries both old and new bytes for binary deltas that remain displayable.
 
-Watching is a subscription, not a scan. File events are debounced and coalesced, rescans run
-concurrently up to a small limit on the module's own lifetime, and a repository that has not been
-scanned yet simply has no snapshot to report. Subscribers hear only about repositories that actually
-changed, and a subscriber that throws is treated as a failed delivery rather than a successful one,
-so the same snapshot stays pending behind the watcher's bounded backoff and is offered again. Watcher
-and scan failures are logged through `ctx.log`; nothing calls back to report them.
+Watching is a subscription, not a scan. Worktrees share physical watchers for their common Git
+directory and refs, while ref events fan out only to worktrees whose branch, upstream, or
+`origin/main` comparison can change. Recursive working-tree events are debounced and first checked
+with a path-scoped status, so ignored build output does not schedule the full snapshot scan. Full
+rescans run two at a time on the module's own lifetime. A single stale deadline is the fallback for
+missed events; renewing an unchanged subscription only extends its lifetime and does not make it
+dirty. Platforms without recursive working-tree watches use a shorter stale deadline.
+
+A repository that has not been scanned yet simply has no snapshot to report. Subscribers hear only
+about repositories that actually changed, and a subscriber that throws is treated as a failed
+delivery rather than a successful one, so the same snapshot stays pending behind the watcher's
+bounded backoff and is offered again. Watcher and scan failures are logged through `ctx.log`; nothing
+calls back to report them.
 
 Worktree deletion and adoption rely on both top-level and shared common-directory identity, and
 refuse symbolic-link destinations. A clone runs in a private staging directory and is renamed into

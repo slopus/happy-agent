@@ -135,7 +135,7 @@ describe("GitModule live tracking", () => {
         expect(module.trackedSnapshot(second)).toBe(retained);
     });
 
-    it("reconciles a retained repository when its subscription is renewed", async () => {
+    it("does not rescan a fresh retained repository when its subscription is renewed", async () => {
         const repository = await createRepository();
         const head = await commitFile(repository, "tracked.txt", "one\n");
         await setOriginMain(repository, head);
@@ -143,6 +143,9 @@ describe("GitModule live tracking", () => {
         const module = open({
             run: gitRunner.run,
             async scan(options) {
+                if (options.args.includes("--git-common-dir")) {
+                    throw new Error("Filesystem watching is unavailable in this test.");
+                }
                 if (options.args[0] === "status") statusReads += 1;
                 const result = await gitRunner.run(
                     options.cwd,
@@ -171,7 +174,8 @@ describe("GitModule live tracking", () => {
 
         module.replaceTracked([entity]);
 
-        await waitFor(() => statusReads > readsBeforeRenewal);
+        await waitForNoChange(() => statusReads, 300);
+        expect(statusReads).toBe(readsBeforeRenewal);
     }, 10_000);
 
     it("retires omitted repositories before their first scan and settles concurrent replacements to the final set", async () => {
