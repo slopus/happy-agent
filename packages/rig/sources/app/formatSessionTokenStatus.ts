@@ -1,18 +1,13 @@
 import type { Usage } from "../protocol/index.js";
 
-import { calculateCacheHitPercent } from "./calculateCacheHitPercent.js";
-import { formatCompactTokens } from "./formatCompactTokens.js";
+import { formatWorkUsageSummary } from "./formatWorkUsageSummary.js";
 
 export function formatSessionTokenStatus(options: {
     contextTokens: number;
     contextWindow?: number;
-    sessionTokens: number;
     usage: Usage;
 }): string {
-    const parts = [
-        `${formatCompactTokens(options.sessionTokens)} tokens`,
-        `${calculateCacheHitPercent(options.usage)}% cache hit`,
-    ];
+    const parts = [formatWorkUsageSummary(options.usage, { contextTokens: options.contextTokens })];
     if (options.contextWindow !== undefined && options.contextWindow > 0) {
         const contextLeftPercent = Math.min(
             100,

@@ -1,3 +1,5 @@
+import { APIUserAbortError } from "openai";
+
 import {
     grokErrorStatus,
     isGrokBillingError,
@@ -21,7 +23,7 @@ import { GROK_INFERENCE_RETRY_INITIAL_DELAY_MS } from "@/vendors/grok/impl/grokC
 export function isRetryableGrokError(value: unknown): boolean {
     // A cancelled request is not a failed one. This outranks everything below, because an abort
     // that races a real failure still carries that failure's status and headers.
-    if (hasAbortError(value, new Set())) return false;
+    if (value instanceof APIUserAbortError || isAbortError(value)) return false;
     // The server is entitled to say a request must not be sent again.
     if (errorHeader(value, "x-should-retry")?.toLowerCase() === "false") return false;
 
@@ -119,13 +121,6 @@ function errorMessage(value: unknown): string | undefined {
 function isAbortError(value: unknown): boolean {
     if (!isRecord(value)) return false;
     return value.name === "AbortError" || value.code === "ABORT_ERR";
-}
-
-function hasAbortError(value: unknown, seen: Set<object>): boolean {
-    if (isAbortError(value)) return true;
-    if (!isRecord(value) || seen.has(value)) return false;
-    seen.add(value);
-    return hasAbortError(value.cause, seen);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

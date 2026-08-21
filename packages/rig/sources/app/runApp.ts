@@ -360,6 +360,26 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             version,
         });
 
+        let usageRefresh: Promise<void> | undefined;
+        let usageRefreshQueued = false;
+        const refreshUsage = (): void => {
+            if (usageRefresh !== undefined) {
+                usageRefreshQueued = true;
+                return;
+            }
+            usageRefresh = agent
+                .getUsage()
+                .then((summary) => app.applyUsageSummary(summary))
+                .catch(() => undefined)
+                .finally(() => {
+                    usageRefresh = undefined;
+                    if (!usageRefreshQueued) return;
+                    usageRefreshQueued = false;
+                    refreshUsage();
+                });
+        };
+        refreshUsage();
+
         let terminalThemeRefresh = 0;
         const stopWatchingTerminalTheme = tui.onTerminalColorSchemeChange((colorScheme) => {
             const refresh = ++terminalThemeRefresh;
@@ -394,6 +414,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
                 if (completionChime) terminal.write("\x07");
             },
             events,
+            refreshUsage,
             signal: followController.signal,
             terminal,
         }).catch((error: unknown) => {
@@ -444,6 +465,7 @@ async function followAgentEvents(options: {
     app: CodingAssistantApp;
     chime: () => void;
     events: HappyAgentEventHub;
+    refreshUsage: () => void;
     signal: AbortSignal;
     terminal: RigTerminal;
 }): Promise<void> {
@@ -468,7 +490,16 @@ async function followAgentEvents(options: {
             if (message !== undefined && !pendingSteer) options.app.applyMessage(message);
             const loopEvent = options.agent.applyLoopEvent(event);
             if (loopEvent !== undefined) options.app.applyAgentLoopEvent(loopEvent);
-            if (event.type === "agent.updated" && event.payload.agentId === options.agent.id) {
+            if (
+                event.type === "agent.context.updated" &&
+                event.payload.agentId === options.agent.id
+            ) {
+                options.refreshUsage();
+            } else if (
+                event.type === "agent.updated" &&
+                event.payload.agentId === options.agent.id
+            ) {
+                options.refreshUsage();
                 const changes = event.payload.changes;
                 if (typeof changes.title === "string") {
                     options.terminal.setTitle(`Rig - ${sanitizeTerminalTitle(changes.title)}`);
@@ -600,6 +631,7 @@ async function followAgentEvents(options: {
                     sessionId: options.agent.id,
                     type: "run_finished",
                 });
+                options.refreshUsage();
                 if (run.reason !== "abort") options.chime();
             }
             return false;

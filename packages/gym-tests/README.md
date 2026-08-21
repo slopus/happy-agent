@@ -149,9 +149,8 @@ A live scenario reaches its provider by naming that provider's own `base_url` in
 an explicit endpoint, so without that line the mock server answers and nothing live is proven.
 Asserting that `gym.inference.requests` stays empty is what makes the difference visible.
 
-The scenario asks Grok 4.6 to call a real terminal tool, waits for the tool result and the final
-answer at the PTY boundary, and checks the nonzero input and output tokens xAI reported for the
-turn, in both the per-model line and the session total.
+The scenario asks Grok 4.6 to call a real terminal tool, waits for the tool result and final answer
+at the PTY boundary, and checks the nonzero input, output, and session-work counters xAI reported.
 
 Set `mode: "docker"` on every scenario that needs Docker. `dockerSocket`, `entrypoint`, and `image` are rejected in local mode so a test cannot silently leave the fast lane.
 

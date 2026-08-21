@@ -2190,13 +2190,13 @@ export class ApiModule implements AgentModule {
     }
 
     async #agentUsage(ctx: Context, agentId: string): Promise<Record<string, unknown>> {
-        const [records, summary] = await Promise.all([
-            this.#usageRecordsForAgentTree(ctx, agentId),
+        const [usage, summary] = await Promise.all([
+            this.#usageForAgentTree(ctx, agentId),
             this.#usage.read(ctx, agentId),
         ]);
         return {
             context: this.#agentContext(summary.currentContext),
-            usage: usageRecordsSince(records, 0),
+            usage,
         };
     }
 
@@ -2347,18 +2347,33 @@ export class ApiModule implements AgentModule {
      * wait on that same operation. The version bump runs from the module's background scope
      * instead, as an ordinary external caller the loop never waits on.
      */
-    #scheduleUsageMetadataRefresh(ctx: Context, agentId: string): void {
+    #scheduleUsageMetadataRefresh(ctx: Context, agentId: string, depth = 0): void {
+        if (depth >= 64) return;
         if (this.#pendingUsageMetadataAgents.has(agentId)) return;
         this.#pendingUsageMetadataAgents.add(agentId);
         const task = this.#backgroundScope.runInAsyncScope(async () => {
             await new Promise<void>((resolve) => setImmediate(resolve));
-            this.#pendingUsageMetadataAgents.delete(agentId);
-            if (this.#closed) return;
             try {
+                if (this.#closed) return;
                 await this.#updateAgentMetadata(ctx, agentId, {});
             } catch (error: unknown) {
                 ctx.log.warn(
                     "The API could not refresh agent metadata after usage.",
+                    { agentId },
+                    error,
+                );
+            } finally {
+                this.#pendingUsageMetadataAgents.delete(agentId);
+            }
+            if (this.#closed) return;
+            try {
+                const parentAgentId = await this.#agentSystem().parentOf(ctx, agentId);
+                if (parentAgentId !== null) {
+                    this.#scheduleUsageMetadataRefresh(ctx, parentAgentId, depth + 1);
+                }
+            } catch (error: unknown) {
+                ctx.log.warn(
+                    "The API could not refresh parent metadata after descendant usage.",
                     { agentId },
                     error,
                 );
@@ -3444,14 +3459,14 @@ export class ApiModule implements AgentModule {
         return records;
     }
 
-    async #usageRecordsForAgentTree(
+    async #usageForAgentTree(
         ctx: Context,
         rootAgentId: string,
-    ): Promise<readonly UsageInferenceRecord[]> {
+    ): Promise<Record<string, Record<string, ApiUsageTokens>>> {
         const agents = this.#agentSystem();
         const pending = [rootAgentId];
         const visited = new Set<string>();
-        const records: UsageInferenceRecord[] = [];
+        const usage: Record<string, Record<string, ApiUsageTokens>> = {};
         while (pending.length > 0) {
             if (visited.size >= 10_000) {
                 throw new ApiError(
@@ -3464,19 +3479,9 @@ export class ApiModule implements AgentModule {
             if (visited.has(agentId)) continue;
             visited.add(agentId);
             pending.push(...(await agents.childOf(ctx, agentId)));
-            let cursor: number | undefined = 0;
-            while (cursor !== undefined) {
-                const page = await this.#usage.readPage(ctx, agentId, {
-                    cursor,
-                    limit: 50,
-                });
-                for (const record of page.records) {
-                    if (record.kind === "inference") records.push(record);
-                }
-                cursor = page.nextCursor;
-            }
+            mergeUsageBreakdown(usage, await this.#usage.readAgentModelUsage(ctx, agentId));
         }
-        return records;
+        return usage;
     }
 
     #onboardingMarker(): string {
@@ -3810,6 +3815,27 @@ interface ApiUsageTokens {
     output: number;
     cacheRead: number;
     cacheWrite: number;
+}
+
+function mergeUsageBreakdown(
+    target: Record<string, Record<string, ApiUsageTokens>>,
+    source: Readonly<Record<string, Readonly<Record<string, ApiUsageTokens>>>>,
+): void {
+    for (const [providerId, models] of Object.entries(source)) {
+        const provider = (target[providerId] ??= {});
+        for (const [modelId, tokens] of Object.entries(models)) {
+            const current = (provider[modelId] ??= {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+            });
+            current.input += tokens.input;
+            current.output += tokens.output;
+            current.cacheRead += tokens.cacheRead;
+            current.cacheWrite += tokens.cacheWrite;
+        }
+    }
 }
 
 /** @internal API event journal that inherits only the current async mutation scope. */

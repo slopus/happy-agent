@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { APIConnectionError } from "openai";
+import { APIConnectionError, APIUserAbortError } from "openai";
 
 import { delayBeforeGrokRetry, isRetryableGrokError } from "@/vendors/grok/impl/grokRetry.js";
 import { isRetryableGrokCompactionError } from "@/vendors/grok/errors/grokErrors.js";
@@ -57,6 +57,12 @@ describe("Grok retry contract", () => {
         ["a protocol error", Object.assign(new Error("stream failed"), { code: "EPROTO" })],
         ["an error with no code at all", new Error("something went sideways")],
         ["an SDK connection error", new APIConnectionError({ cause: new Error("fetch failed") })],
+        [
+            "an SDK timeout wrapping a transport abort",
+            new APIConnectionError({
+                cause: new DOMException("The transport timed out.", "AbortError"),
+            }),
+        ],
         ["a bare string", "the socket hung up"],
         ["a value that is not an error", { nothing: "useful" }],
     ])("retries %s, because nothing says it is hopeless", (_description, error) => {
@@ -83,12 +89,7 @@ describe("Grok retry contract", () => {
 
     it.each([
         ["a bare abort", { name: "AbortError", status: 503 }],
-        [
-            "an abort wrapped by the SDK",
-            new APIConnectionError({
-                cause: new DOMException("The request was cancelled.", "AbortError"),
-            }),
-        ],
+        ["an SDK user abort", new APIUserAbortError()],
     ])("never retries %s", (_description, error) => {
         expect(isRetryableGrokError(error)).toBe(false);
     });

@@ -1,8 +1,13 @@
 import type { GetSessionUsageResponse, SessionUsageGroup } from "../protocol/index.js";
 import type { ProviderQuotaWindow } from "@slopus/happy-providers";
 import type { CodingAssistantModelChoice } from "./CodingAssistantAgentBackend.js";
-import { formatCompactTokens } from "./formatCompactTokens.js";
 import { formatResetDuration } from "./formatResetDuration.js";
+import {
+    calculateUsedTokens,
+    formatUsageTokens,
+    formatWorkUsageDetails,
+    formatWorkUsageSummary,
+} from "./formatWorkUsageSummary.js";
 import { humanizeProviderId } from "./humanizeProviderId.js";
 
 export function formatSessionUsageSummary(
@@ -25,7 +30,7 @@ export function formatSessionUsageSummary(
         );
         for (const group of providerGroups) {
             lines.push(`  ${modelName(group, modelChoices)}`);
-            lines.push(`    ${formatModelUsage(group)}`);
+            lines.push(...formatModelUsage(group).map((line) => `    ${line}`));
             if (isCurrentContextGroup(group, summary)) {
                 lines.push(`    ${formatContext(summary, modelChoices)}`);
             }
@@ -47,7 +52,14 @@ export function formatSessionUsageSummary(
         );
     }
 
-    lines.push(`Session tokens: ${formatTokens(summary.sessionTokenCount.totalTokens)}`);
+    lines.push(
+        `Session work: ${formatWorkUsageSummary(totalUsage(summary.groups), {
+            usedTokens: summary.groups.reduce(
+                (total, group) => total + calculateUsedTokens(group.usage),
+                0,
+            ),
+        })}`,
+    );
     return lines.join("\n");
 }
 
@@ -80,16 +92,16 @@ function modelName(
     return group.role === "permission_review" ? `${name} (permission review)` : name;
 }
 
-function formatModelUsage(group: SessionUsageGroup): string {
-    const reasoning =
-        group.usage.reasoning === undefined
-            ? ""
-            : ` · ${formatTokens(group.usage.reasoning)} reasoning`;
-    const cost =
-        group.providerId === "claude" && group.usage.cost.total > 0
-            ? ` · ${formatUsd(group.usage.cost.total)}`
-            : "";
-    return `${formatTokens(group.usage.input)} input · ${formatTokens(group.usage.output)} output · ${formatTokens(group.usage.cacheRead)} cache read · ${formatTokens(group.usage.cacheWrite)} cache write${reasoning}${cost}`;
+function formatModelUsage(group: SessionUsageGroup): string[] {
+    return [
+        ...formatWorkUsageDetails(group.usage),
+        ...(group.usage.reasoning === undefined
+            ? []
+            : [`Reasoning: ${formatUsageTokens(group.usage.reasoning)}`]),
+        ...(group.providerId === "claude" && group.usage.cost.total > 0
+            ? [`Cost: ${formatUsd(group.usage.cost.total)}`]
+            : []),
+    ];
 }
 
 function isCurrentContextGroup(
@@ -130,9 +142,9 @@ function formatContext(
             choice.model.id === context.requestedModelId,
     )?.model.contextWindow;
     const prefix = context.approximate ? "~" : "";
-    if (window === undefined) return `Context: ${prefix}${formatTokens(context.totalTokens)}`;
+    if (window === undefined) return `Context: ${prefix}${formatUsageTokens(context.totalTokens)}`;
     const percentLeft = Math.max(0, (1 - context.totalTokens / window) * 100);
-    return `Context: ${prefix}${formatTokens(context.totalTokens)} / ${formatTokens(window)} · ${formatPercent(percentLeft)} left`;
+    return `Context: ${prefix}${formatUsageTokens(context.totalTokens)} / ${formatUsageTokens(window)} · ${formatPercent(percentLeft)} left`;
 }
 
 function formatPercent(value: number): string {
@@ -148,10 +160,6 @@ function formatUsd(value: number): string {
     return `$${value < 0.01 ? value.toFixed(4) : value.toFixed(2)}`;
 }
 
-function formatTokens(value: number): string {
-    return formatCompactTokens(Math.max(0, Math.round(value))).replace(/\.0([km])$/u, "$1");
-}
-
 function humanizeIdentifier(value: string): string {
     const name = value.split("/").at(-1) ?? value;
     return name
@@ -161,4 +169,19 @@ function humanizeIdentifier(value: string): string {
 
 function distinct(values: readonly string[]): string[] {
     return [...new Set(values)];
+}
+
+function totalUsage(groups: readonly SessionUsageGroup[]): {
+    cacheRead: number;
+    input: number;
+    output: number;
+} {
+    return groups.reduce(
+        (total, group) => ({
+            cacheRead: total.cacheRead + group.usage.cacheRead,
+            input: total.input + group.usage.input,
+            output: total.output + group.usage.output,
+        }),
+        { cacheRead: 0, input: 0, output: 0 },
+    );
 }

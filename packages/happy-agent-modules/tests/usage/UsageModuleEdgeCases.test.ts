@@ -435,7 +435,7 @@ describe("UsageModule edge cases", () => {
                     inferenceRecord(`record-${index}`, "agent-1", index + 10),
                 );
             }
-            const module = new UsageModule(new EventsModule());
+            const module = await startedModule(database.context, fakeAgents({ "agent-1": {} }));
             const first = await module.readPage(database.context, "agent-1", { limit: 7 });
             expect(first.records).toHaveLength(7);
             expect(first.records[0]?.id).toBe("record-1");
@@ -455,6 +455,19 @@ describe("UsageModule edge cases", () => {
             expect(final.records).toHaveLength(3);
             expect(final.nextCursor).toBeUndefined();
             expect(final.totalRecords).toBe(MAX_USAGE_RECORDS);
+            await expect(module.readAgentModelUsage(database.context, "agent-1")).resolves.toEqual({
+                "provider-main": {
+                    "model-main": {
+                        input: 3 * (MAX_USAGE_RECORDS + 1),
+                        output: 2 * (MAX_USAGE_RECORDS + 1),
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                    },
+                },
+            });
+            await expect(
+                module.readAgentTreeUsage(database.context, "agent-1"),
+            ).resolves.toMatchObject({ totalTokens: 5 * (MAX_USAGE_RECORDS + 1) });
         });
     });
 

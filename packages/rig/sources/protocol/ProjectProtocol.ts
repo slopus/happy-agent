@@ -705,7 +705,7 @@ export type GlobalLiveEvent =
     | ProjectWorkspaceGitEvent
     | RemoteTerminalsChangedEvent
     | SessionCurrentEvent
-    | Extract<SessionEvent, { type: "session_context_changed" | "session_draft_changed" }>;
+    | Extract<SessionEvent, { type: "session_draft_changed" }>;
 
 export type GlobalEvent =
     | ComputePreparationEvent
@@ -747,7 +747,6 @@ export function isLiveGlobalEvent(event: GlobalEvent): event is GlobalLiveEvent 
         event.type === "workspace_git_changed" ||
         event.type === "remote_terminals_changed" ||
         event.type === "session_current" ||
-        event.type === "session_context_changed" ||
         event.type === "session_draft_changed"
     );
 }

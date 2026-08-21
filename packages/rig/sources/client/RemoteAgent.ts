@@ -290,10 +290,6 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                       },
                   }),
             quotas: await this.providerQuotas(),
-            sessionTokenCount: {
-                lastContextTokens: response.context?.contextTokens ?? 0,
-                totalTokens: response.context?.contextTokens ?? 0,
-            },
         };
     }
 
@@ -350,6 +346,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
         options: AgentRunOptions = {},
     ): Promise<AgentRunResult> {
         const selection = this.#selection;
+        const projectsEvents = options.onEvent !== undefined || options.onMessage !== undefined;
         this.#sendOwnsLoopEvents = options.onEvent !== undefined;
         const submitted = await this.#client
             .sendMessage(this.id, {
@@ -399,7 +396,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                 onEvent: async (event) => {
                     if (!belongsToAgent(event, this.id)) return false;
                     this.#applyResourceEvent(event);
-                    await this.#forwardMessageEvent(event, options);
+                    if (projectsEvents) await this.#forwardMessageEvent(event, options);
 
                     if (
                         event.type === "run.started" &&

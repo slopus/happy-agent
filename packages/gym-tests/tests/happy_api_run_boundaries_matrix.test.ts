@@ -146,6 +146,11 @@ describe("public run boundary matrix", () => {
             reason: "steering",
             status: "aborted",
         });
+        expect(
+            boundary.payload.finishedRun.usage[session.gym.selection.providerId]?.[
+                session.gym.selection.modelId
+            ],
+        ).toEqual({ cacheRead: 4, cacheWrite: 5, input: 6, output: 7 });
         await session.gym.waitForRun(accepted.runId);
     }, 30_000);
 
@@ -524,7 +529,20 @@ async function gatedRun(): Promise<{
                 started();
                 await gate;
             }
-            return { content: [{ text: `turn-${String(current)}`, type: "text" }] };
+            return {
+                content: [{ text: `turn-${String(current)}`, type: "text" }],
+                ...(current === 0
+                    ? {
+                          usage: {
+                              cacheRead: 4,
+                              cacheWrite: 5,
+                              input: 6,
+                              output: 7,
+                              totalTokens: 22,
+                          },
+                      }
+                    : {}),
+            };
         },
     });
     const first = await gym.send("initial work", { wait: false });

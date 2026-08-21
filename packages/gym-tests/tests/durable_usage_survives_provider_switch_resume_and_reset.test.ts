@@ -80,15 +80,17 @@ describe("durable session usage", () => {
                 screen.text.includes("Gym") &&
                 screen.text.includes("Claude") &&
                 screen.text.includes("Claude Fable Concrete") &&
-                screen.text.includes("Session tokens: 220") &&
+                screen.text.includes("Session work: 330 used · 0% cache hit") &&
                 screen.text.includes("5-hour: unavailable"),
             "multi-provider durable usage",
             30_000,
         );
         expect(switched.rows).toHaveLength(27);
         expect(switched.text).not.toContain("�");
-        expect(switched.text).toContain("100 input · 10 output");
-        expect(switched.text).toContain("200 input · 20 output");
+        expect(switched.text).toContain("Input: 100");
+        expect(switched.text).toContain("Output: 10");
+        expect(switched.text).toContain("Input: 200");
+        expect(switched.text).toContain("Output: 20");
         expect(switched.text).not.toContain("Usage Gym");
         expect(switched.rows.filter((row) => row.includes("└"))).toEqual(["  └ Gym"]);
         await gym.terminal.screenshot(`${artifacts}/multi-provider-narrow-unavailable.png`);
@@ -97,21 +99,21 @@ describe("durable session usage", () => {
         await gym.terminal.waitForText("SESSION_USAGE_RESUMED", 30_000);
         await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
         submit(gym, "/usage");
-        const resumed = await gym.terminal.waitForText("Session tokens: 220", 30_000);
+        const resumed = await gym.terminal.waitForText("Session work: 330 used", 30_000);
         await gym.terminal.screenshot(`${artifacts}/resume-exactly-once.png`);
         expect(resumed.text).toContain("Claude Fable Concrete");
 
         submit(gym, "Increment after resume.");
         await gym.terminal.waitForText("RESUMED_USAGE_TURN", 30_000);
         submit(gym, "/usage");
-        const incremented = await gym.terminal.waitForText("Session tokens: 330", 30_000);
+        const incremented = await gym.terminal.waitForText("Session work: 660 used", 30_000);
         await gym.terminal.screenshot(`${artifacts}/resume-increment.png`);
         expect(incremented.text).toContain("Claude");
 
         submit(gym, "/new");
         await gym.terminal.waitForText("Session reset. Started a new session.", 30_000);
         submit(gym, "/usage");
-        const reset = await gym.terminal.waitForText("Session tokens: 0", 30_000);
+        const reset = await gym.terminal.waitForText("Session work: 0 used", 30_000);
         expect(reset.text).not.toContain("Context: unavailable");
         await gym.terminal.screenshot(`${artifacts}/new-resets-usage.png`);
     }, 180_000);

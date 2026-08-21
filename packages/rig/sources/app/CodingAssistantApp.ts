@@ -26,6 +26,7 @@ import {
     type BashSessionActivity,
     type BashSessionSnapshot,
     type FileDiff,
+    type GetSessionUsageResponse,
     type ServiceTier,
     type Usage,
     type UserInputRequest,
@@ -44,7 +45,6 @@ import type {
     RunShellCommandResponse,
     SecretSummary,
     SessionEvent,
-    SessionTokenCount,
     SessionTask,
     SteerMessageResponse,
     SubagentSummary,
@@ -95,6 +95,7 @@ import { formatSubagentToolCall } from "./formatSubagentToolCall.js";
 import { formatToolResultForDisplay } from "./formatToolResultForDisplay.js";
 import { formatToolPermissionNotice } from "./formatToolPermissionNotice.js";
 import { formatTurnUsageSummary } from "./formatTurnUsageSummary.js";
+import { formatUsageTokens, formatWorkUsageDetails } from "./formatWorkUsageSummary.js";
 import { providerErrorResetAt } from "./providerErrorResetAt.js";
 import { humanizeReasoningLevel } from "./humanizeReasoningLevel.js";
 import { humanizePermissionMode } from "./humanizePermissionMode.js";
@@ -135,7 +136,6 @@ import type { TerminalTheme } from "./TerminalTheme.js";
 import type { StartupStatusCardModel } from "./StartupStatusCardModel.js";
 import { SecretMenuController } from "./SecretMenuController.js";
 import { TemporaryFullscreenController } from "./TemporaryFullscreenController.js";
-import { updateSessionTokenCount } from "./updateSessionTokenCount.js";
 import { renderFullscreenComponent } from "./renderFullscreenComponent.js";
 
 const RESET = "\x1b[0m";
@@ -205,7 +205,6 @@ export interface CodingAssistantAppOptions {
     initialMessages?: readonly Message[];
     initialNotices?: readonly { text: string; title: string }[];
     initialSessionEvents?: readonly SessionEvent[];
-    initialSessionTokenCount?: SessionTokenCount;
     initialSubagents?: readonly SubagentSummary[];
     initialProjectSecretIds?: readonly string[];
     initialSessionSecretIds?: readonly string[];
@@ -524,10 +523,10 @@ export class CodingAssistantApp implements Component, Focusable {
     #stoppingBackgroundTerminals = false;
     #toolStatusByCallId = new Map<string, string>();
     #usage: Usage = zeroUsage();
+    #authoritativeUsage: Usage | undefined;
     #usageRequestVersion = 0;
     #skipInitialUsageReplay = false;
     #latestContextTokens = 0;
-    #sessionTokenCount: SessionTokenCount = { lastContextTokens: 0, totalTokens: 0 };
     #activeCompactionId: string | undefined;
     #compactionStartedAtMs: number | undefined;
     #lastUserInputAtMs: number | undefined;
@@ -645,9 +644,6 @@ export class CodingAssistantApp implements Component, Focusable {
         this.#replayingInitialSessionEvents = true;
         if (options.initialUsage !== undefined) {
             this.#usage = structuredClone(options.initialUsage);
-        }
-        if (options.initialSessionTokenCount !== undefined) {
-            this.#sessionTokenCount = structuredClone(options.initialSessionTokenCount);
         }
         try {
             let reachedInitialSnapshot = options.initialWorkflowEventId === undefined;
@@ -1240,10 +1236,8 @@ export class CodingAssistantApp implements Component, Focusable {
             this.#runningToolCallIds.clear();
             this.#toolStatusByCallId.clear();
             this.#usage = zeroUsage();
+            this.#authoritativeUsage = zeroUsage();
             this.#latestContextTokens = 0;
-            this.#sessionTokenCount = updateSessionTokenCount(this.#sessionTokenCount, {
-                type: "reset",
-            });
             this.#subagents = [];
             this.#lastUserInputAtMs = undefined;
             this.#workflows = [];
@@ -1719,6 +1713,16 @@ export class CodingAssistantApp implements Component, Focusable {
         // header caches must keep serving the already-painted bytes.
         Object.assign(this.#theme, theme);
         this.invalidate();
+        this.#requestRender();
+    }
+
+    /** Replace the footer's folded counters from the attributed subtree source of truth. */
+    applyUsageSummary(summary: GetSessionUsageResponse): void {
+        this.#authoritativeUsage = summary.groups.reduce(
+            (total, group) => addUsage(total, group.usage),
+            zeroUsage(),
+        );
+        this.#latestContextTokens = summary.context?.totalTokens ?? 0;
         this.#requestRender();
     }
 
@@ -2403,15 +2407,13 @@ export class CodingAssistantApp implements Component, Focusable {
                 .getUsage()
                 .then((summary) => {
                     if (version !== this.#usageRequestVersion) return;
+                    this.applyUsageSummary(summary);
                     this.#appendEntry({
                         childText: true,
                         role: "event",
                         title: "Usage",
                         text: formatSessionUsageSummary(
-                            // This client accounts session tokens itself: the daemon aggregate
-                            // sums every request, while the session footprint counts the grown
-                            // context once.
-                            { ...summary, sessionTokenCount: this.#sessionTokenCount },
+                            summary,
                             this.#agent.modelChoices ?? [
                                 { model: this.#agent.model, providerId: this.#agent.provider.id },
                             ],
@@ -2431,20 +2433,16 @@ export class CodingAssistantApp implements Component, Focusable {
         }
 
         const contextWindow = this.#agent.model.contextWindow;
-        const context =
-            contextWindow === undefined
-                ? `${formatTokens(this.#latestContextTokens)} tokens in the latest context`
-                : `${formatTokens(this.#latestContextTokens)} of ${formatTokens(contextWindow)} context tokens (${Math.max(0, Math.round((1 - this.#latestContextTokens / contextWindow) * 100))}% left)`;
         this.#appendEntry({
             role: "event",
             title: "Token usage",
             text: [
-                context,
-                `Input: ${formatTokens(this.#usage.input)}`,
-                `Output: ${formatTokens(this.#usage.output)}`,
-                `Cache read: ${formatTokens(this.#usage.cacheRead)}`,
-                `Cache write: ${formatTokens(this.#usage.cacheWrite)}`,
-                `Session tokens: ${formatTokens(this.#sessionTokenCount.totalTokens)}`,
+                ...formatWorkUsageDetails(this.#usage),
+                ...(contextWindow === undefined
+                    ? [`Context: ${formatUsageTokens(this.#latestContextTokens)}`]
+                    : [
+                          `Context: ${formatUsageTokens(this.#latestContextTokens)} / ${formatUsageTokens(contextWindow)} · ${Math.max(0, Math.round((1 - this.#latestContextTokens / contextWindow) * 100))}% left`,
+                      ]),
             ].join("\n"),
         });
     }
@@ -2716,10 +2714,8 @@ export class CodingAssistantApp implements Component, Focusable {
                     this.#runningToolCallIds.clear();
                     this.#toolStatusByCallId.clear();
                     this.#usage = zeroUsage();
+                    this.#authoritativeUsage = zeroUsage();
                     this.#latestContextTokens = 0;
-                    this.#sessionTokenCount = updateSessionTokenCount(this.#sessionTokenCount, {
-                        type: "reset",
-                    });
                     this.#lastUserInputAtMs = undefined;
                     this.#abortNotified = false;
                     this.#statusText = "Idle";
@@ -3602,12 +3598,6 @@ export class CodingAssistantApp implements Component, Focusable {
             this.#statusText = `Compacting context · ${formatTokens(event.estimatedTokensBefore)} tokens`;
         } else if (event.type === "context_compacted") {
             this.#latestContextTokens = event.estimatedTokensAfter;
-            if (!this.#skipInitialUsageReplay) {
-                this.#sessionTokenCount = updateSessionTokenCount(this.#sessionTokenCount, {
-                    type: "compaction",
-                    contextTokens: event.estimatedTokensAfter,
-                });
-            }
             this.#appendEntry({
                 role: "event",
                 title: "Context compacted",
@@ -3629,11 +3619,6 @@ export class CodingAssistantApp implements Component, Focusable {
         } else if (event.type === "permission_review") {
             if (event.transcript !== undefined && !this.#skipInitialUsageReplay) {
                 this.#usage = addUsage(this.#usage, event.transcript.usage);
-                this.#sessionTokenCount = updateSessionTokenCount(this.#sessionTokenCount, {
-                    type: "usage",
-                    contextTokens: this.#latestContextTokens,
-                    usage: event.transcript.usage,
-                });
             }
             this.#reviewingPermissionToolCallIds.delete(event.toolCallId);
             this.#refreshToolActivityStatus();
@@ -3830,11 +3815,6 @@ export class CodingAssistantApp implements Component, Focusable {
             ) {
                 this.#accountedUsageMessageIds.add(message.id);
                 this.#usage = addUsage(this.#usage, message.usage);
-                this.#sessionTokenCount = updateSessionTokenCount(this.#sessionTokenCount, {
-                    type: "usage",
-                    contextTokens: this.#latestContextTokens,
-                    usage: message.usage,
-                });
             }
             return;
         }
@@ -3845,11 +3825,6 @@ export class CodingAssistantApp implements Component, Focusable {
             if (!this.#skipInitialUsageReplay && !this.#accountedUsageMessageIds.has(message.id)) {
                 this.#accountedUsageMessageIds.add(message.id);
                 this.#usage = addUsage(this.#usage, message.usage);
-                this.#sessionTokenCount = updateSessionTokenCount(this.#sessionTokenCount, {
-                    type: "usage",
-                    contextTokens: message.contextTokens ?? this.#latestContextTokens,
-                    usage: message.usage,
-                });
             }
             if (message.contextTokens !== undefined) {
                 this.#latestContextTokens = message.contextTokens;
@@ -4744,29 +4719,13 @@ export class CodingAssistantApp implements Component, Focusable {
         );
     }
 
-    #sessionUsage(): Usage {
-        return this.#subagents.reduce(
-            (total, subagent) =>
-                subagent.usage === undefined ? total : addUsage(total, subagent.usage),
-            this.#usage,
-        );
-    }
-
     #usageFooter(): string {
-        const usage = this.#sessionUsage();
-        const sessionTokens = this.#subagents.reduce(
-            (total, subagent) =>
-                total +
-                (subagent.sessionTokenCount?.totalTokens ?? subagent.usage?.totalTokens ?? 0),
-            this.#sessionTokenCount.totalTokens,
-        );
         return formatSessionTokenStatus({
             contextTokens: this.#latestContextTokens,
             ...(this.#agent.model.contextWindow === undefined
                 ? {}
                 : { contextWindow: this.#agent.model.contextWindow }),
-            sessionTokens,
-            usage,
+            usage: this.#authoritativeUsage ?? this.#usage,
         });
     }
 
@@ -5026,7 +4985,7 @@ export class CodingAssistantApp implements Component, Focusable {
                 {
                     value: "usage",
                     label: this.#showUsage ? "Hide token status" : "Show token status",
-                    description: "Toggle session tokens, cache hit, and context left below input.",
+                    description: "Toggle used input/output, cache hit, and context below input.",
                 },
                 {
                     value: "completion-chime",
@@ -6054,8 +6013,8 @@ export class CodingAssistantApp implements Component, Focusable {
                 completedTurn.entry.turnElapsedMs = elapsedMs;
             }
         }
-        // Snapshot session usage now so the history row never changes after later turns.
-        (completedTurn?.entry ?? latest).turnUsage = structuredClone(this.#sessionUsage());
+        // Snapshot local session usage now so the history row never changes after later turns.
+        (completedTurn?.entry ?? latest).turnUsage = structuredClone(this.#usage);
         this.#activeTurnEntryStart = undefined;
         this.#requestRender();
     }

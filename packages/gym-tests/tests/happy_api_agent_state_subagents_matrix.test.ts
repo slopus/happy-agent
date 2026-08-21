@@ -349,7 +349,7 @@ async function spawnSubagent(gym: AgentGym) {
 function subagentOptions(): Parameters<typeof createAgentGym>[0] {
     return {
         inference: (request) =>
-            request.callIndex === 0
+            request.callIndex === 1
                 ? {
                       content: [
                           {
@@ -372,7 +372,7 @@ function subagentOptions(): Parameters<typeof createAgentGym>[0] {
 function subagentOptionsForTwoChildren(): Parameters<typeof createAgentGym>[0] {
     return {
         inference: (request) =>
-            request.callIndex === 0
+            request.callIndex === 1
                 ? {
                       content: [
                           {

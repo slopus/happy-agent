@@ -1,5 +1,6 @@
 import {
     agentDatabaseRows,
+    agentDatabaseRun,
     withAgentContext,
     type AgentModuleHooks,
     type AgentSystemRef,
@@ -402,6 +403,35 @@ describe("UsageModule", () => {
         await module.migrations[1]![1](database.context, database.database);
         await module.migrations[2]![1](database.context, database.database);
         await module.migrations[3]![1](database.context, database.database);
+        const legacyRecord = {
+            id: "legacy-inference",
+            agentId: "agent-1",
+            runId: "legacy-run",
+            provider: "provider-main",
+            model: "model-main",
+            effort: "high",
+            tier: "priority",
+            kind: "inference",
+            state: "normal",
+            tokens: { input: 4, output: 2, cacheRead: 3, cacheWrite: 1 },
+            startedAt: 0,
+            finishedAt: 1,
+            durationMs: 1,
+        };
+        await agentDatabaseRun(
+            database.database,
+            sql`INSERT INTO happy_agent_usage_records
+                    (record_id, agent_id, run_id, finished_at, kind, record_json)
+                VALUES (${legacyRecord.id}, ${legacyRecord.agentId}, ${legacyRecord.runId},
+                        ${legacyRecord.finishedAt}, ${legacyRecord.kind},
+                        ${JSON.stringify(legacyRecord)})`,
+        );
+        await module.migrations[4]![1](database.context, database.database);
+        await expect(module.readAgentModelUsage(ctx, "agent-1")).resolves.toEqual({
+            "provider-main": {
+                "model-main": { input: 4, output: 2, cacheRead: 3, cacheWrite: 1 },
+            },
+        });
         const afterDrop = await agentDatabaseRows<{ name: string }>(
             database.database,
             sql`SELECT name FROM sqlite_master
@@ -413,7 +443,7 @@ describe("UsageModule", () => {
             input: 1,
             output: 1,
         });
-        expect(await module.reset(ctx, "agent-1")).toBe(1);
+        expect(await module.reset(ctx, "agent-1")).toBe(2);
 
         await recordInference(ctx, hooks, database.database, "agent-1", "inference-2", {
             input: 2,

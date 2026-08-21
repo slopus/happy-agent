@@ -72,7 +72,7 @@ describe("provider quota boundaries", () => {
         expect(exchange?.request.method).toBe("GET");
         expect(exchange?.request.headers.authorization).toBe(`Bearer ${codexToken}`);
         expect(exchange?.request.headers["chatgpt-account-id"]).toBe("account-usage-gym");
-        expect(report.text).toContain("Session tokens: 0");
+        expect(report.text).toContain("Session work: 0 used");
         expect(report.text).toContain("Weekly: 86% left · resets in 4d");
         await gym.terminal.screenshot(`${artifacts}/codex-wham-auth-quota.png`);
     }, 120_000);
@@ -95,7 +95,7 @@ describe("provider quota boundaries", () => {
         submit(gym, "/usage");
         const report = await gym.terminal.waitForText("5-hour: unavailable", 30_000);
         expect(report.text).toContain("Claude");
-        expect(report.text).toContain("Session tokens: 0");
+        expect(report.text).toContain("Session work: 0 used");
         await gym.terminal.screenshot(`${artifacts}/claude-sdk-api-key-quota-unavailable.png`);
     }, 120_000);
 

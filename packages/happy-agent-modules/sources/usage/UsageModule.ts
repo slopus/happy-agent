@@ -54,6 +54,7 @@ import {
     type UsagePageQuery,
     type UsageRecord,
     type UsageResetTarget,
+    type UsageRunBreakdown,
     type UsageRunSummary,
     type UsageSummary,
     type UsageTurnRecord,
@@ -195,6 +196,43 @@ export class UsageModule implements AgentModule {
                 );
             },
         ],
+        [
+            "005-usage-model-totals",
+            async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+                await agentDatabaseRun(
+                    database,
+                    sql`CREATE TABLE IF NOT EXISTS happy_agent_usage_model_totals (
+                        agent_id TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        input_tokens INTEGER NOT NULL,
+                        output_tokens INTEGER NOT NULL,
+                        cache_read_tokens INTEGER NOT NULL,
+                        cache_write_tokens INTEGER NOT NULL,
+                        PRIMARY KEY (agent_id, provider, model)
+                    )`,
+                );
+                await agentDatabaseRun(
+                    database,
+                    sql`INSERT INTO happy_agent_usage_model_totals
+                            (agent_id, provider, model, input_tokens, output_tokens,
+                             cache_read_tokens, cache_write_tokens)
+                        SELECT agent_id,
+                               json_extract(record_json, '$.provider'),
+                               json_extract(record_json, '$.model'),
+                               SUM(json_extract(record_json, '$.tokens.input')),
+                               SUM(json_extract(record_json, '$.tokens.output')),
+                               SUM(COALESCE(json_extract(record_json, '$.tokens.cacheRead'), 0)),
+                               SUM(COALESCE(json_extract(record_json, '$.tokens.cacheWrite'), 0))
+                        FROM happy_agent_usage_records
+                        WHERE kind = 'inference' AND json_type(record_json, '$.model') = 'text'
+                        GROUP BY agent_id,
+                                 json_extract(record_json, '$.provider'),
+                                 json_extract(record_json, '$.model')
+                        ON CONFLICT(agent_id, provider, model) DO NOTHING`,
+                );
+            },
+        ],
     ] as const;
     readonly #transactionalListeners = new Set<UsageEventListener>();
     readonly #listeners = new Set<UsageEventListener>();
@@ -300,6 +338,12 @@ export class UsageModule implements AgentModule {
             throw new Error("Usage store returned invalid run usage.");
         }
         return cloneValue(summary);
+    }
+
+    /** Read lifetime provider/model inference totals for one agent. */
+    async readAgentModelUsage(ctx: Context, agentId: string): Promise<UsageRunBreakdown> {
+        this.#assertAgentAccess(ctx, agentId);
+        return await new UsageDatabase().modelUsage(ctx, agentId);
     }
 
     /** Read a bounded aggregate for one agent or the whole collection. */

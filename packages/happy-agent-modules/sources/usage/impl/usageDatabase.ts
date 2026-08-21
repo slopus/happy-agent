@@ -10,6 +10,7 @@ import {
     usagePageQuerySchema,
     usagePageSchema,
     usageRunIdSchema,
+    usageRunBreakdownSchema,
     usageRunSummarySchema,
     usageSummarySchema,
     type UsageAggregateQuery,
@@ -17,6 +18,7 @@ import {
     type UsagePage,
     type UsagePageQuery,
     type UsageRecord,
+    type UsageRunBreakdown,
     type UsageRunSummary,
     type UsageSummary,
 } from "../Usage.js";
@@ -24,6 +26,7 @@ import { assertUsageRecord } from "./assertUsageRecord.js";
 
 const RECORDS_TABLE = "happy_agent_usage_records";
 const CONTEXTS_TABLE = "happy_agent_usage_contexts";
+const MODEL_TOTALS_TABLE = "happy_agent_usage_model_totals";
 
 export class UsageDatabase {
     async run(ctx: Context, agentId: string, runId: string): Promise<UsageRunSummary> {
@@ -69,6 +72,39 @@ export class UsageDatabase {
         return structuredClone(summary);
     }
 
+    async modelUsage(ctx: Context, agentId: string): Promise<UsageRunBreakdown> {
+        const rows = await agentDatabaseRows<{
+            provider: string;
+            model: string;
+            input_tokens: number | string;
+            output_tokens: number | string;
+            cache_read_tokens: number | string;
+            cache_write_tokens: number | string;
+        }>(
+            ctx.db,
+            sql`SELECT provider, model, input_tokens, output_tokens,
+                       cache_read_tokens, cache_write_tokens
+                FROM ${sql.raw(MODEL_TOTALS_TABLE)}
+                WHERE agent_id = ${agentId}
+                ORDER BY provider, model`,
+        );
+        const usage: UsageRunBreakdown = {};
+        for (const row of rows) {
+            const models = usage[row.provider] ?? {};
+            models[row.model] = {
+                input: Number(row.input_tokens),
+                output: Number(row.output_tokens),
+                cacheRead: Number(row.cache_read_tokens),
+                cacheWrite: Number(row.cache_write_tokens),
+            };
+            usage[row.provider] = models;
+        }
+        if (!Value.Check(usageRunBreakdownSchema, usage)) {
+            throw new Error("Usage database returned invalid model totals.");
+        }
+        return structuredClone(usage);
+    }
+
     async read(
         ctx: Context,
         agentId: string,
@@ -107,26 +143,17 @@ export class UsageDatabase {
         return structuredClone(page);
     }
 
-    /**
-     * Lifetime tokens per agent, in one pass over the bounded record table.
-     *
-     * A subtree snapshot needs a number for every agent in it, and asking per agent would read
-     * the same five hundred rows once per agent. An agent with no records is simply absent.
-     */
+    /** Lifetime tokens per agent, in one pass over the durable model totals. */
     async totalTokensByAgent(ctx: Context): Promise<ReadonlyMap<string, number>> {
-        const rows = await agentDatabaseRows<{ record_json: string }>(
+        const rows = await agentDatabaseRows<{ agent_id: string; total_tokens: number | string }>(
             ctx.db,
-            sql`SELECT record_json
-                FROM ${sql.raw(RECORDS_TABLE)}
-                ORDER BY finished_at, record_id
-                LIMIT ${MAX_USAGE_RECORDS}`,
+            sql`SELECT agent_id, SUM(input_tokens + output_tokens) AS total_tokens
+                FROM ${sql.raw(MODEL_TOTALS_TABLE)}
+                GROUP BY agent_id`,
         );
         const totals = new Map<string, number>();
         for (const row of rows) {
-            const record = this.#parseRecord(row.record_json);
-            if (record.kind !== "inference") continue;
-            const previous = totals.get(record.agentId) ?? 0;
-            totals.set(record.agentId, previous + record.tokens.input + record.tokens.output);
+            totals.set(row.agent_id, Number(row.total_tokens));
         }
         return totals;
     }
@@ -245,6 +272,22 @@ export class UsageDatabase {
                     (record_id, agent_id, run_id, finished_at, kind, record_json)
                 VALUES (${record.id}, ${record.agentId}, ${record.runId ?? null}, ${record.finishedAt}, ${record.kind}, ${JSON.stringify(record)})`,
         );
+        if (record.kind === "inference" && record.model !== undefined) {
+            await agentDatabaseRun(
+                ctx.db,
+                sql`INSERT INTO ${sql.raw(MODEL_TOTALS_TABLE)}
+                        (agent_id, provider, model, input_tokens, output_tokens,
+                         cache_read_tokens, cache_write_tokens)
+                    VALUES (${record.agentId}, ${record.provider}, ${record.model},
+                            ${record.tokens.input}, ${record.tokens.output},
+                            ${record.tokens.cacheRead ?? 0}, ${record.tokens.cacheWrite ?? 0})
+                    ON CONFLICT(agent_id, provider, model) DO UPDATE SET
+                        input_tokens = input_tokens + excluded.input_tokens,
+                        output_tokens = output_tokens + excluded.output_tokens,
+                        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+                        cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens`,
+            );
+        }
         await agentDatabaseRun(
             ctx.db,
             sql`DELETE FROM ${sql.raw(RECORDS_TABLE)}
@@ -314,6 +357,12 @@ export class UsageDatabase {
             agentId === null
                 ? sql`DELETE FROM ${sql.raw(RECORDS_TABLE)}`
                 : sql`DELETE FROM ${sql.raw(RECORDS_TABLE)} WHERE agent_id = ${agentId}`,
+        );
+        await agentDatabaseRun(
+            ctx.db,
+            agentId === null
+                ? sql`DELETE FROM ${sql.raw(MODEL_TOTALS_TABLE)}`
+                : sql`DELETE FROM ${sql.raw(MODEL_TOTALS_TABLE)} WHERE agent_id = ${agentId}`,
         );
         await agentDatabaseRun(
             ctx.db,

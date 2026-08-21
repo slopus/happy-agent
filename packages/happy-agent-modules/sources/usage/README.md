@@ -134,16 +134,19 @@ The identities come from Agent Base rather than module-owned replay state.
 Migration `002-drop-usage-reset-receipts` removes the obsolete reset-receipt table created by the
 immutable first migration. Migration `003-usage-run-attribution` adds the exact run ID and its
 bounded lookup index. Migration `004-usage-current-context` adds one current-context row per agent;
-a `null` payload is a durable invalidation tombstone.
+a `null` payload is a durable invalidation tombstone. Migration `005-usage-model-totals` adds the
+lifetime per-agent/provider/model counters that survive pruning of recent detail.
 
 - `record(ctx, UsageRecord)` inserts one record (`usage_inference_record` or `usage_turn_record`),
   keyed by Base's `inferenceId` or `turnId` and attributed by
-  `agentId`/`provider`/`model?`/`effort?`/`tier?`.
+  `agentId`/`provider`/`model?`/`effort?`/`tier?`. An attributed inference increments its model
+  totals in the same transaction before old detail is pruned.
 - `read(ctx, agentId, { cursor, limit })` returns a bounded `UsagePage` (`records`, `cursor`,
   `totalRecords`, `nextCursor?`), capped at `USAGE_PAGE_SIZE` (50) per page and `MAX_USAGE_RECORDS`
   (500) records overall.
-- `totalTokensByAgent(ctx)` sums lifetime tokens per agent in one pass, which is what an agent-tree
-  snapshot needs so it does not read the same table once per agent.
+- `modelUsage(ctx, agentId)` reads lifetime provider/model input, output, cache-read, and
+  cache-write totals; `totalTokensByAgent(ctx)` sums those durable counters in one pass for an
+  agent-tree snapshot.
 - `aggregate(ctx, { agentId?, cursor, maxGroups })` returns a `UsageSummary`: running totals
   (`inferenceCount`, `turnCount`, token and duration sums) plus a bounded, paged array of
   `UsageGroup` rows (one per provider/model/effort/tier combination), capped at
@@ -151,7 +154,8 @@ a `null` payload is a durable invalidation tombstone.
   context size from `happy_agent_usage_contexts`; the value is exact (`approximate: false`) and
   disappears after a reset/compaction writes an invalidation until a later response measures the
   new context. Updating this row and recording the turn share Agent Base's completion transaction.
-- `reset(ctx, agentId | null)` deletes matching records and reports how many were removed.
+- `reset(ctx, agentId | null)` deletes matching records, contexts, and lifetime model totals and
+  reports how many recent records were removed.
 - The host transaction is the single read/decide/write boundary every mutation runs inside, and
   stdlib `afterCommit(ctx, callback)` registers post-commit event delivery inside that same
   transaction.

@@ -187,13 +187,6 @@ export interface SessionActivity {
 
 export type SessionUnreadReason = "attention_needed" | "turn_finished";
 
-export interface SessionTokenCount {
-    /** Context window occupied after the latest inference or compaction. */
-    lastContextTokens: number;
-    /** Largest provider-measured context footprint observed in the session. */
-    totalTokens: number;
-}
-
 export interface SessionUnreadState {
     reason: SessionUnreadReason;
     since: number;
@@ -453,7 +446,6 @@ export interface ProtocolSession {
     goal?: SessionGoal;
     backgroundProcesses?: readonly BashSessionActivity[];
     cumulativeUsage?: Usage;
-    sessionTokenCount?: SessionTokenCount;
     externalTools?: readonly ExternalToolDefinition[];
     skills?: readonly DurableSkillDefinition[];
     pendingExternalToolCalls?: readonly ExternalToolCall[];
@@ -611,7 +603,6 @@ export interface SessionStreamCurrentState {
     pendingExternalToolCalls?: readonly ExternalToolCall[];
     projectSecretIds?: readonly string[];
     secretIds?: readonly string[];
-    sessionTokenCount?: SessionTokenCount;
     sessionSecretIds?: readonly string[];
     skills?: readonly DurableSkillDefinition[];
     scheduledMessages?: readonly ScheduledMessage[];
@@ -652,7 +643,6 @@ export interface SubagentSummary {
     status: SessionStatus;
     taskName?: string;
     totalTokens?: number;
-    sessionTokenCount?: SessionTokenCount;
     updatedAt: number;
     usage?: Usage;
 }
@@ -696,7 +686,6 @@ export interface SessionSummary {
     titleError?: string;
     titleStatus: SessionTitleStatus;
     recap?: string;
-    sessionTokenCount?: SessionTokenCount;
     metadataUpdatedAt?: number;
     metadataRunId?: string;
     createdAt: number;
@@ -895,7 +884,6 @@ export interface GetSessionUsageResponse {
     groups: readonly SessionUsageGroup[];
     context?: SessionContextUsage;
     quotas: readonly SessionProviderQuota[];
-    sessionTokenCount: SessionTokenCount;
 }
 
 export interface GetCurrentProviderQuotaResponse {
@@ -1114,7 +1102,6 @@ export type SessionEvent =
     | SessionStatusChangedEvent
     | SessionTitleChangedEvent
     | SessionActivityChangedEvent
-    | SessionContextChangedEvent
     | SessionGitChangedEvent
     | SessionConfigurationChangedEvent
     | PermissionModeChangedEvent
@@ -1388,17 +1375,6 @@ export type ScheduledMessageChangedEvent = BaseSessionEvent<
 export type ScheduledMessagesPrunedEvent = BaseSessionEvent<
     "scheduled_messages_pruned",
     { messageIds: readonly string[] }
->;
-
-/**
- * How much of the context window the conversation now occupies.
- *
- * Rig recomputes this as messages land, so it is reported rather than left for a
- * client to ask about on a timer.
- */
-export type SessionContextChangedEvent = BaseSessionEvent<
-    "session_context_changed",
-    { sessionTokenCount: SessionTokenCount }
 >;
 
 /**

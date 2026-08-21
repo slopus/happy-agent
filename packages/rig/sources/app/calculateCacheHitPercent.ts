@@ -1,6 +1,6 @@
 import type { Usage } from "../protocol/index.js";
 
-export function calculateCacheHitPercent(usage: Usage): number {
+export function calculateCacheHitPercent(usage: Pick<Usage, "cacheRead" | "input">): number {
     // Provider-normalized input already includes cache reads and writes. Cache reads are hits;
     // everything else in input is a miss, and output is not cache-eligible.
     const cacheReadTokens = Math.max(0, usage.cacheRead);

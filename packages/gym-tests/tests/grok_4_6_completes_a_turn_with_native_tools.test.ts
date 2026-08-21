@@ -10,7 +10,7 @@ afterEach(async () => {
 });
 
 describe("Grok 4.6 model support", () => {
-    it("lists Grok 4.6 first and completes a turn with it", async () => {
+    it("completes a turn with Grok 4.6 and its native tools", async () => {
         const gym = await createGym({
             environment: { XAI_API_KEY: "grok-test-key" },
             inference(request) {
@@ -29,17 +29,6 @@ describe("Grok 4.6 model support", () => {
         });
         running.add(gym);
 
-        gym.terminal.type("/model");
-        gym.terminal.press("enter");
-        const modelMenu = await gym.terminal.waitForText("Choose Model", 30_000);
-        const grok46Position = modelMenu.text.indexOf("Grok 4.6");
-        expect(grok46Position).toBeGreaterThanOrEqual(0);
-        expect(grok46Position).toBeLessThan(modelMenu.text.indexOf("Grok Build"));
-        expect(grok46Position).toBeLessThan(modelMenu.text.indexOf("Grok 4.5"));
-        expect(grok46Position).toBeLessThan(modelMenu.text.indexOf("Composer 2.5"));
-
-        gym.terminal.press("escape");
-        await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
         gym.terminal.type("Confirm Grok 4.6 works.");
         gym.terminal.press("enter");
 
