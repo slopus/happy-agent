@@ -23,6 +23,17 @@ runtime schemas, daemon behavior, tests, and documentation must conform to it ex
 invent, implement, preserve, or release behavior that deviates from the specification; stop and
 request a human-directed specification change when the desired behavior is not already described.
 
+Happy Agent API compatibility begins with protocol version 22. From version 22 onward, every API
+change must be backward-compatible and additive: never remove or rename an existing field, and
+never add a required field. New fields must be optional so older clients and daemons can ignore
+them safely. If a desired change cannot be made within those constraints, stop and request direct
+human guidance rather than breaking compatibility.
+
+Rig must support every Happy Agent API version from protocol version 22 onward and must be able to
+work with any Happy Agent CLI version in that compatibility range. Do not couple Rig to only its
+bundled or current CLI version; negotiate or tolerate protocol-version differences so users can
+select and run any compatible CLI release.
+
 ## Modules
 
 A module is a self-contained feature. It carries everything that feature needs to work: it extends the agent loop through its own hooks, owns its tools, starts and supervises its background processes, and holds its connections to third-party services. Adding a module to an agent is the whole installation — nothing elsewhere should have to be wired up, registered, or branched on for the feature to function.
@@ -146,7 +157,18 @@ Always use `pnpm` for this project. Do not use `npm`, `npx`, or `yarn` for insta
 
 ## Default release versions
 
-When the user asks for a release without naming a version:
+When the user asks to "release" without naming a product, release Happy Agent.
+Do not treat an unqualified release request as a Rig or library release.
+
+Happy Agent releases are always the next patch version. Release Happy Agent only by manually
+dispatching [`.github/workflows/release-happy-agent.yml`](.github/workflows/release-happy-agent.yml)
+from `main`; do not create or push its release tag locally. Supply the workflow's required
+`version` and `release_notes` inputs. Build the release notes from every commit included since the
+previous Happy Agent release, and write a polished, user-facing Markdown summary that explains the
+changes clearly rather than pasting commit subjects or a raw changelog. Monitor the workflow to
+completion and verify the resulting GitHub Release and its assets before reporting success.
+
+When the user explicitly names another product or library but does not name a version:
 
 - Release Rig as the next beta prerelease.
 - Release libraries as the next patch version.
