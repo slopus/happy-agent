@@ -24,3 +24,7 @@ values declared as TypeBox schemas and their TypeScript types derived with `Stat
 Tool calls expose the complete `ToolPresentation` discriminated union — exploration, command,
 background-terminal interaction, file diff, and web/X search — together with an exported TypeBox
 schema for each variant and `toolPresentationSchema` for the whole set.
+
+Focused agent responses and agent bootstrap include the current module-contributed slash-command
+catalog. `invokeSlashCommand` executes one through its owning module, while
+`agent.slash_commands.updated` carries complete catalog replacements discovered at turn time.

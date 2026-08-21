@@ -141,6 +141,54 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.body).toBe(JSON.stringify({ mutationId: "compact1" }));
     });
 
+    it("invokes a slash command directly through its focused agent route", async () => {
+        const { fetch, requests } = stubFetch(() =>
+            json({ agent: {}, command: {}, cursor: "c1", slashCommands: [] }, 202),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+        const request = {
+            arguments: "focus on authentication",
+            mode: {
+                effort: "medium",
+                modelId: "model1",
+                permissionMode: "auto" as const,
+                providerId: "provider1",
+                serviceTier: null,
+            },
+            mutationId: "command1",
+        };
+
+        await client.invokeSlashCommand("agent1", "review:auth", request);
+
+        expect(requests[0]?.url).toBe(
+            "http://agent.local/v0/agents/agent1/slash-commands/review%3Aauth",
+        );
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.body).toBe(JSON.stringify(request));
+    });
+
+    it("fetches slash command artwork separately with conditional caching", async () => {
+        const { fetch, requests } = stubFetch(
+            () =>
+                new Response(new Uint8Array([1, 2, 3]), {
+                    headers: { "content-type": "image/png", etag: "command-image-1" },
+                }),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        const image = await client.getSlashCommandImage("agent1", "review:auth", {
+            ifNoneMatch: "command-image-0",
+        });
+
+        expect(requests[0]?.url).toBe(
+            "http://agent.local/v0/agents/agent1/slash-commands/review%3Aauth/image",
+        );
+        expect(requests[0]?.headers.get("accept")).toBe("image/*");
+        expect(requests[0]?.headers.get("if-none-match")).toBe("command-image-0");
+        expect(image?.contentType).toBe("image/png");
+        expect(image?.etag).toBe("command-image-1");
+    });
+
     it("reports a failure with the daemon's own code and message", async () => {
         const { fetch } = stubFetch(() =>
             json(

@@ -12,6 +12,7 @@ import type {
 } from "./common.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { CompactionMessage, Run } from "./messages.js";
+import type { SlashCommandCatalog } from "./slashCommands.js";
 
 /** What the agent is doing right now. */
 export type AgentStatus = "idle" | "thinking" | "working" | "generating_tools" | "running_tools";
@@ -61,7 +62,7 @@ export interface Agent {
 }
 
 /** Every single-agent route answers with this. */
-export interface AgentResponse {
+export interface AgentResponse extends SlashCommandCatalog {
     agent: Agent;
 }
 
@@ -83,14 +84,14 @@ export interface AgentDraftResponse {
 }
 
 /** `POST /v0/agents/:agentId/abort` */
-export interface AgentAbortResponse {
+export interface AgentAbortResponse extends SlashCommandCatalog {
     agent: Agent;
     /** The run winding down arrives through events from here. */
     cursor: EventCursor;
 }
 
 /** `POST /v0/agents/:agentId/compact` */
-export interface AgentCompactResponse {
+export interface AgentCompactResponse extends SlashCommandCatalog {
     agent: Agent;
     /** The standalone maintenance run created for explicit compaction. */
     run: Run;

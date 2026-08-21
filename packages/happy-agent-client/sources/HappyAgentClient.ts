@@ -84,6 +84,10 @@ import type {
 } from "./protocol/terminals.js";
 import type { AgentUsageResponse, DaemonUsageResponse } from "./protocol/usage.js";
 import type {
+    InvokeSlashCommandRequest,
+    InvokeSlashCommandResponse,
+} from "./protocol/slashCommands.js";
+import type {
     ArchiveWorkspaceRequest,
     CreateWorkspaceRequest,
     ListWorkspacesQuery,
@@ -910,6 +914,35 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: `v0/agents/${encodeURIComponent(agentId)}/compact`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** The slash command's image bytes; `null` when the caller's `ETag` is still current. */
+    async getSlashCommandImage(
+        agentId: Cuid2,
+        name: string,
+        options: ConditionalRequestOptions = {},
+    ): Promise<BinaryContent | null> {
+        return await this.#binary({
+            method: "GET",
+            path: `v0/agents/${encodeURIComponent(agentId)}/slash-commands/${encodeURIComponent(name)}/image`,
+            ifNoneMatch: options.ifNoneMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Invoke a slash command directly on the agent module that contributed it. */
+    async invokeSlashCommand(
+        agentId: Cuid2,
+        name: string,
+        request: InvokeSlashCommandRequest,
+        options: RequestOptions = {},
+    ): Promise<InvokeSlashCommandResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/agents/${encodeURIComponent(agentId)}/slash-commands/${encodeURIComponent(name)}`,
             json: request,
             signal: options.signal,
         });

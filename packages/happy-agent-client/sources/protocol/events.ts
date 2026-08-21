@@ -25,6 +25,7 @@ import type { Question } from "./questions.js";
 import type { Terminal } from "./terminals.js";
 import type { AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
+import type { SlashCommand } from "./slashCommands.js";
 
 /**
  * What every `*.updated` payload carries beside the resource's own ID.
@@ -84,6 +85,12 @@ export interface AgentContextUpdatedPayload {
 export interface AgentDraftUpdatedPayload extends MutationEcho {
     agentId: Cuid2;
     draft: AgentDraftSnapshot;
+}
+
+/** The complete current slash-command catalog is a replacement, not a versioned resource diff. */
+export interface AgentSlashCommandsUpdatedPayload extends MutationEcho {
+    agentId: Cuid2;
+    slashCommands: SlashCommand[];
 }
 
 export type ProcessStartedPayload = MutationEcho & { process: BackgroundProcess };
@@ -194,6 +201,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"agent.updated", AgentUpdatedPayload>
     | EventEnvelope<"agent.context.updated", AgentContextUpdatedPayload>
     | EventEnvelope<"agent.draft.updated", AgentDraftUpdatedPayload>
+    | EventEnvelope<"agent.slash_commands.updated", AgentSlashCommandsUpdatedPayload>
     | EventEnvelope<"process.started", ProcessStartedPayload>
     | EventEnvelope<"process.updated", ProcessUpdatedPayload>
     | EventEnvelope<"process.exited", ProcessUpdatedPayload>

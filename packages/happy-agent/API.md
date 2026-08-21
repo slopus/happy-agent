@@ -1336,7 +1336,7 @@ Request:
 Creation always makes a top-level agent; subagents are spawned by their parents, never through
 this endpoint.
 
-Response — `201`: `{ "agent": { ... } }`. Creation is complete when it answers: the agent
+Response — `201`: `{ "agent": { ... }, "slashCommands": [ ... ] }`. Creation is complete when it answers: the agent
 exists, is `"idle"`, and is ready to receive a message. The owning project and its same-ID root
 workspace, or the owning child workspace, also advance and emit their update with the new ordered
 `agents` series.
@@ -1345,7 +1345,10 @@ workspace, or the owning child workspace, also advance and emit their update wit
 
 Returns one agent.
 
-Response — `200`: `{ "agent": { ... } }`; `404` when no such agent exists.
+Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }`; `404` when no such agent
+exists. `slashCommands` is the complete current command catalog described below. Every focused
+agent mutation response that carries `agent` also carries the same `slashCommands` field, so a
+client never has to make a second request merely to open its command menu.
 
 ### `GET /v0/agents/:agentId/mode`
 
@@ -1368,6 +1371,116 @@ Response — `200`:
 ```
 
 `mode` is `null` before the first message. `404` when no such agent exists.
+
+### Slash commands
+
+Modules may contribute slash commands for an agent alongside the instructions and tools they
+already contribute. A command belongs to the module that returned it, and invoking it calls that
+module directly; the command text is not sent to the model and the API does not switch on command
+names. Names are unique within one agent's catalog and do not include the leading slash.
+
+One command has this shape:
+
+```json
+{
+    "name": "code-review",
+    "hasArguments": true,
+    "description": "Review the current changes.",
+    "kind": "skill",
+    "image": {
+        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+    }
+}
+```
+
+- `name` — the command itself, without `/`.
+- `hasArguments` — whether text may follow the command name. Arguments are one opaque string for
+  the owning module to interpret.
+- `description` — concise human-readable help shown in command menus.
+- `kind` — optional command category such as `"skill"` or `"compaction"`. It is presentation
+  metadata, not a dispatch key.
+- `image` — optional command artwork metadata. `thumbhash` is the base64 ThumbHash placeholder the
+  client renders immediately; the image bytes are fetched separately from the focused command's
+  `image` endpoint, exactly like a project avatar. A command without artwork omits `image`.
+
+The catalog is bounded and ordered: at most 256 commands and 256 KiB of encoded JSON in total. A
+name is at most 128 characters, a description 1,024, a kind 128, arguments 1,000,000, and one
+command image 8 MiB. The daemon loads the catalog when an agent is created or restored and again
+immediately before every turn, alongside the turn's instructions and tools. It compares the
+complete ordered descriptors and the content identity of their separately served images. When
+either differs, the daemon replaces its cached copy and emits `agent.slash_commands.updated` with
+the complete new list. Clients invalidate affected command images on that replacement event and
+may revalidate them with `ETag`. A failed refresh fails the turn rather than silently running it
+with an uncertain command surface. Invocation performs the same refresh before resolving the name,
+so a removed command is never dispatched from stale cached data.
+
+The built-in command contributions include:
+
+- `compact` — `hasArguments: false`, `kind: "compaction"`; invokes the Compactions module and has
+  the same durable manual-compaction behavior as `POST /v0/agents/:agentId/compact`.
+- one command for every currently discoverable skill — `hasArguments: true`, `kind: "skill"`,
+  using the skill's name and description. Invocation calls the Skills module, which reads the
+  complete current skill and submits it with the optional arguments as the user's request under
+  the supplied mode.
+
+#### `GET /v0/agents/:agentId/slash-commands/:name/image`
+
+Serves the current cached image bytes for one focused command. The response carries the image's
+content type and a content-derived `ETag`, supports `If-None-Match` with `304`, and uses
+`Cache-Control: no-store` like project and profile images. A command that does not exist or has no
+image is `404`. The endpoint does not refresh command discovery by itself; agent snapshots, turns,
+and command invocation refresh the catalog and announce changed image content through
+`agent.slash_commands.updated`.
+
+#### `POST /v0/agents/:agentId/slash-commands/:name`
+
+Invokes one command directly on the module that contributed it. `name` is URL-encoded and omits
+the leading slash.
+
+Request:
+
+```json
+{
+    "arguments": "focus on authentication",
+    "mode": {
+        "providerId": "codex",
+        "modelId": "openai/gpt-5.6-sol",
+        "effort": "medium",
+        "serviceTier": null,
+        "permissionMode": "auto"
+    },
+    "mutationId": "..."
+}
+```
+
+- `arguments` — optional opaque text. Supplying it to a command whose `hasArguments` is `false`
+  is `400`; an argument-capable command decides whether an omitted or empty value is meaningful.
+- `mode` — the complete composer selection, required for every invocation so commands that start
+  a turn do so under exactly what the person selected. Commands such as compaction that do not run
+  inference ignore it.
+- `mutationId` — optional mutation echo. Every event caused by the invocation carries it.
+
+Response — `202` after the owning module has durably accepted the invocation:
+
+```json
+{
+    "agent": { ... },
+    "slashCommands": [ ... ],
+    "command": {
+        "name": "code-review",
+        "hasArguments": true,
+        "description": "Review the current changes.",
+        "kind": "skill"
+    },
+    "cursor": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
+}
+```
+
+`cursor` is captured before refresh and dispatch, so following the event stream from it observes
+the catalog replacement, message/run lifecycle, compaction lifecycle, or other durable effects the
+command causes. `slashCommands` is the post-refresh catalog and `command` is the exact descriptor
+that was invoked. An unknown or just-removed command is `404`; a command that cannot run in the
+agent's current state is `409`. A module failure is reported through the ordinary error contract.
 
 ### Messages and runs
 
@@ -1902,7 +2015,7 @@ Request:
   different active run is `409`, so a client cannot race a newer message and kill the wrong
   work.
 
-Response — `202`: `{ "agent": { ... }, "cursor": "..." }`. The abort is accepted. Each affected
+Response — `202`: `{ "agent": { ... }, "slashCommands": [ ... ], "cursor": "..." }`. The abort is accepted. Each affected
 run winds down with terminal status `"aborted"` and reason `"abort"`. For each affected agent
 that owns a running background process, Compute first commits a one-shot notice to that agent's
 scope in Compute's shared Agent KV saying what the abort killed. Process state and
@@ -1935,6 +2048,7 @@ Response — `202`:
 ```json
 {
     "agent": { ... },
+    "slashCommands": [ ... ],
     "run": { ... },
     "message": {
         "id": "c8n4q1r7v2x9z5m3k6p0t8w1",
@@ -1979,7 +2093,7 @@ a stale indefinitely-running block.
 
 Marks the agent read: clears `unread`. The body is `{}`, optionally with a `mutationId`.
 
-Response — `200`: `{ "agent": { ... } }` with `unread` `null`.
+Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }` with `unread` `null`.
 
 ### `POST /v0/agents/:agentId/archive`
 
@@ -1987,14 +2101,14 @@ Archives the agent. The conversation is kept — an archived agent's history rem
 but it leaves the default list and receives no messages. Archiving a working agent aborts its
 run first. Its permanent owner association and `orderKey` are retained. Idempotent.
 
-Response — `200`: `{ "agent": { ... } }` with `archivedAt` set.
+Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }` with `archivedAt` set.
 
 ### `POST /v0/agents/:agentId/unarchive`
 
 Brings an archived agent back: it reappears in the default list and can receive messages again,
 with its history, last submitted mode, owner, and order intact. Idempotent.
 
-Response — `200`: `{ "agent": { ... } }` with `archivedAt` `null`.
+Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }` with `archivedAt` `null`.
 
 ### `POST /v0/agents/:agentId/reorder`
 
@@ -2003,7 +2117,7 @@ Moves the agent in the list order.
 Request: `{ "afterId": "pfh0haxfpzowht3oi213cqos", "mutationId": "..." }` — the agent to place
 this one after, or `null` to move it first.
 
-Response — `200`: `{ "agent": { ... } }`. Reordering assigns the moved agent a fractional
+Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }`. Reordering assigns the moved agent a fractional
 `orderKey` between its destination neighbours. Neighbour agent keys and versions remain unchanged;
 only the moved agent emits an `agent.updated` reorder event. Its owning project or workspace also
 advances because the embedded ordered agent list changed.
@@ -2351,6 +2465,11 @@ how a bootstrap snapshot and an event stream reconcile.
   resource version chain; replace it whole.
     - `agentId` (ID string).
     - `draft` — the complete `{ "value", "updatedAt" }` object from the draft/bootstrap response.
+- `agent.slash_commands.updated` — turn-time or invocation-time discovery found that the focused
+  agent's slash-command catalog changed. It is computed current state and has no resource version
+  chain; replace the prior list whole.
+    - `agentId` (ID string).
+    - `slashCommands` — the complete ordered command catalog from the focused agent response.
 
 **Background processes**
 
@@ -2521,7 +2640,8 @@ One bounded snapshot for opening a conversation. It composes the exact agent obj
 steering message that inference has not accepted yet. It also captures the event cursor before
 reading, so a client can render the snapshot and follow every concurrent change without a
 snapshot-to-stream gap. Accepted messages, including compaction messages, come from the pageable
-history endpoint.
+history endpoint. The current slash-command catalog is included directly so autocomplete is ready
+with the rest of the composer.
 
 Response — `200`:
 
@@ -2570,6 +2690,14 @@ Response — `200`:
             "runId": null
         }
     ],
+    "slashCommands": [
+        {
+            "name": "compact",
+            "hasArguments": false,
+            "description": "Summarize older messages to free context space.",
+            "kind": "compaction"
+        }
+    ],
     "cursor": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
 }
 ```
@@ -2579,6 +2707,7 @@ Response — `200`:
 - `mode` — exactly the focused mode response; `null` on a fresh agent.
 - `context`, `usage` — exactly the focused usage response fields.
 - `pending` — every not-yet-accepted `queue` and `steer` message, oldest first and never paged.
+- `slashCommands` — exactly the complete catalog from the focused agent response.
 - `cursor` — the event cursor captured before the snapshot reads. Open the global event stream
   from it; duplicate facts are harmless, while no concurrent fact can disappear.
 
