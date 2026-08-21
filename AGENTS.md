@@ -174,7 +174,9 @@ or any other prerelease. When the user asks to "release terminal", release the n
 of `@slopus/happy-terminal`. Release Happy Terminal only by manually dispatching
 [`.github/workflows/release-happy-terminal.yml`](.github/workflows/release-happy-terminal.yml) from
 `main`; do not create or push its release tag locally. Supply the workflow's required `version` and
-`release_notes` inputs. Build a polished, user-facing Markdown changelist from every commit included
+`release_notes` inputs. The workflow must publish and verify npm before creating the release tag or
+GitHub Release; a failed npm publication must leave both absent. Build a polished, user-facing
+Markdown changelist from every commit included
 since the previous Happy Terminal release, monitor the workflow to completion, and verify both the
 npm package and GitHub Release before reporting success.
 

@@ -240,23 +240,6 @@ jobs:
                   fi
                   echo "RELEASE_COMMIT=$release_commit" >> "$GITHUB_ENV"
 
-            - name: Create the release tag and draft
-              shell: bash
-              env:
-                  GH_TOKEN: ${{ github.token }}
-                  RELEASE_NOTES: ${{ inputs.release_notes }}
-              run: |
-                  mkdir -p .release
-                  printf '%s\n' "$RELEASE_NOTES" > .release/notes.md
-                  arguments=(
-                      "$RELEASE_TAG"
-                      --draft
-                      --target "$RELEASE_COMMIT"
-                      --title "Happy Terminal v$RELEASE_VERSION"
-                      --notes-file .release/notes.md
-                  )
-                  gh release create "${arguments[@]}"
-
             - name: Publish with npm trusted publishing
               shell: bash
               run: |
@@ -272,10 +255,8 @@ jobs:
                       --provenance \
                       --registry https://registry.npmjs.org/
 
-            - name: Verify npm and publish the GitHub Release
+            - name: Verify npm publication
               shell: bash
-              env:
-                  GH_TOKEN: ${{ github.token }}
               run: |
                   published_version=""
                   for attempt in {1..30}; do
@@ -291,7 +272,18 @@ jobs:
                       exit 1
                   fi
 
-                  gh release edit "$RELEASE_TAG" --draft=false
+            - name: Create the release tag and GitHub Release
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_NOTES: ${{ inputs.release_notes }}
+              run: |
+                  mkdir -p .release
+                  printf '%s\n' "$RELEASE_NOTES" > .release/notes.md
+                  gh release create "$RELEASE_TAG" \
+                      --target "$RELEASE_COMMIT" \
+                      --title "Happy Terminal v$RELEASE_VERSION" \
+                      --notes-file .release/notes.md
                   release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
                   printf 'Published [Happy Terminal v%s](%s) and `@slopus/happy-terminal@%s`.\n' \
                       "$RELEASE_VERSION" "$release_url" "$RELEASE_VERSION" >> "$GITHUB_STEP_SUMMARY"
