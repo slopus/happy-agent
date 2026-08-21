@@ -21,6 +21,7 @@ import {
     agentProviders,
     type AgentModelContext,
 } from "./impl/agentCatalog.js";
+import { providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
@@ -974,6 +975,7 @@ export class ConfigModule implements AgentModule {
 
     readonly #scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined;
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
+    readonly #providerLifetime = new AbortController();
     #models: readonly AgentModel[] | undefined;
     readonly #catalogNotices: string[] = [];
     #projectsHome: string | undefined;
@@ -1037,9 +1039,16 @@ export class ConfigModule implements AgentModule {
      * second registry that would sign in again.
      */
     get providers(): AgentProviders {
-        this.#providers ??=
-            this.#resolveScripted()?.providers ?? agentProviders(this.configuration);
+        this.#providers ??= providerRegistryUntil(
+            this.#resolveScripted()?.providers ?? agentProviders(this.configuration),
+            this.#providerLifetime.signal,
+        );
         return this.#providers;
+    }
+
+    /** Cancel every provider request owned by this daemon without coupling agents to its lifetime. */
+    closeProviders(): void {
+        this.#providerLifetime.abort(new Error("The Happy Agent runtime is shutting down."));
     }
 
     /**

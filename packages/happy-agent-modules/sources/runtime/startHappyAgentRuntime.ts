@@ -14,6 +14,7 @@ import {
     createRootContext,
     detach,
     withLogContext,
+    withLifetime,
     type Context,
     type RootContext,
 } from "@steve.kite/stdlib";
@@ -169,6 +170,7 @@ export async function startHappyAgentRuntime(
     const paths = configuration.paths;
     const observation = await ObservationModule.start(config);
     const ctx = observation.install(createRootContext());
+    const shutdownController = new AbortController();
     try {
         await config.ensureUserConfigurationFiles();
     } catch (error: unknown) {
@@ -198,6 +200,9 @@ export async function startHappyAgentRuntime(
             shutdownCtx.log.info(
                 `daemon:shutdown:runtime:start pid=${String(process.pid)} steps=${String(shutdownHandlers.size)} backgroundTasks=${String(backgroundTasks.size)}`,
             );
+            config.closeProviders();
+            shutdownController.abort(new Error("The Happy Agent runtime is shutting down."));
+            shutdownCtx.log.info(`daemon:shutdown:providers:abort pid=${String(process.pid)}`);
             const failures: unknown[] = [];
             if (backgroundTasks.size > 0) {
                 const names = [...backgroundTasks.values()].slice(0, 8).join(",");
@@ -260,7 +265,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("auto-database", () => review.close());
         await chmod(paths.autoDatabasePath, 0o600);
 
-        const runtimeRoot = detach(ctx);
+        const runtimeRoot = withLifetime(detach(ctx), shutdownController.signal);
         const withDatabase = (target: Context): Context => withAgentDatabase(target, main.database);
         const background = (name: string, work: (workerCtx: Context) => Promise<void>): void => {
             if (closed) return;
@@ -468,16 +473,32 @@ export async function startHappyAgentRuntime(
             acquireLock: async () => await acquireHappyAgentStorageLock(paths.agentLockPath),
             database: main.database,
         });
-        const system = await AgentSystemLocal.create(ctx, storage, {
-            models,
-            modules: ordered,
-            provider,
-            providers,
-            sendMode: "all",
-            steeringMode: "all",
-        });
+        const system = await AgentSystemLocal.create(
+            withLifetime(ctx.named("agent-system"), shutdownController.signal),
+            storage,
+            {
+                models,
+                modules: ordered,
+                provider,
+                providers,
+                sendMode: "all",
+                steeringMode: "all",
+            },
+        );
         registerShutdown("agent-system", async () => await system.close(ctx));
         registerShutdown("titles", async () => await titles.close());
+        registerShutdown("active-agent-runs", async () => {
+            const activeAgentIds = events.activeAgentIds();
+            if (activeAgentIds.length === 0) return;
+            ctx.log.info(
+                `daemon:shutdown:abort-active-runs pid=${String(process.pid)} agents=${String(activeAgentIds.length)}`,
+            );
+            await Promise.all(
+                activeAgentIds.map(
+                    async (agentId) => await system.abort(withDatabase(ctx), agentId),
+                ),
+            );
+        });
         registerShutdown("happy", async () => await happy.stop());
 
         git.onSnapshot(async (snapshotCtx, entity, snapshot) => {

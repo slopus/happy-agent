@@ -200,11 +200,13 @@ describe("EventsModule", () => {
                     message: { content: [{ type: "text", text: "Hello" }] },
                 } as never);
                 expect(first.activeRunId("agent-1")).toBeUndefined();
+                expect(first.activeAgentIds()).toEqual([]);
                 await expect(first.activeRunIdInTransaction(txCtx, "agent-1")).resolves.toBe(runId);
             });
 
             const durableRunId = await first.activeRunIdInTransaction(database.context, "agent-1");
             expect(durableRunId).toBe(first.activeRunId("agent-1"));
+            expect(first.activeAgentIds()).toEqual(["agent-1"]);
 
             const restarted = new EventsModule();
             await restarted.beforeStart?.(database.context);
@@ -212,6 +214,7 @@ describe("EventsModule", () => {
                 restarted.activeRunIdInTransaction(database.context, "agent-1"),
             ).resolves.toBe(durableRunId);
             expect(restarted.activeRunId("agent-1")).toBe(durableRunId);
+            expect(restarted.activeAgentIds()).toEqual(["agent-1"]);
         } finally {
             database.close();
         }

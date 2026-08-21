@@ -65,6 +65,12 @@ A module that needs to reach a vendor takes this module and asks it, instead of 
 registry or building a second one that would sign in again. `bedrockSearchModels` answers the same
 way for the models a Bedrock account serves its hosted search index from.
 
+Every session resolved from the shared registry combines its caller's lifetime with the daemon's
+provider lifetime. `closeProviders()` aborts that lifetime before runtime shutdown starts draining
+agents, so a network request or stream cleanup cannot hold an Agent upgrade open indefinitely.
+The decoration is provider-neutral and preserves each concrete provider and session identity,
+including vendor-specific capabilities such as image generation and Claude executable metadata.
+
 A Bedrock account may name an AWS `profile`, including one backed by the standard
 `credential_process` setting in the AWS shared config. Optional `config_file` and
 `credentials_file` values select nonstandard AWS shared files. The account keeps the refreshable

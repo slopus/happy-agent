@@ -195,6 +195,11 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         return this.#runs.get(agentId)?.runId;
     }
 
+    /** Agent identities whose runs have started and have not reached a terminal event. */
+    activeAgentIds(): readonly string[] {
+        return [...this.#runs.keys()];
+    }
+
     /** The active run identity visible inside the caller's current transaction. */
     async activeRunIdInTransaction(ctx: Context, agentId: string): Promise<string | undefined> {
         if (!Value.Check(eventAgentIdSchema, agentId)) {
