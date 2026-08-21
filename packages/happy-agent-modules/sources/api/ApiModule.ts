@@ -139,6 +139,7 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 const MAX_ANNOUNCED_PENDING_MESSAGES = 10_000;
 const MAX_ANNOUNCED_AGENT_CREATIONS = 10_000;
+const MAX_ANNOUNCED_TERMINAL_RUNS = 10_000;
 
 interface AcceptedMessageBatch {
     readonly kind: "send" | "steering";
@@ -207,6 +208,7 @@ export class ApiModule implements AgentModule {
     readonly #announcedPendingMessages = new Set<string>();
     readonly #apiPendingMessageIds = new Set<string>();
     readonly #announcedAgentCreations = new Set<string>();
+    readonly #announcedTerminalRuns = new Set<string>();
     readonly #acceptedMessageBatches = new Map<string, AcceptedMessageBatch>();
     readonly #pendingMessageAnnouncements = new Map<
         string,
@@ -1075,11 +1077,14 @@ export class ApiModule implements AgentModule {
                     event.occurredAt,
                 );
             }
-            this.#journal.append(
-                "run.finished",
-                { agentId, run: await this.#runResource(ctx, run) },
-                event.occurredAt,
-            );
+            if (!this.#announcedTerminalRuns.has(run.id)) {
+                boundedAdd(this.#announcedTerminalRuns, run.id, MAX_ANNOUNCED_TERMINAL_RUNS);
+                this.#journal.append(
+                    "run.finished",
+                    { agentId, run: await this.#runResource(ctx, run) },
+                    event.occurredAt,
+                );
+            }
             await this.#appendAgentUpdate(ctx, event, {
                 status: "idle",
                 updatedAt: event.occurredAt,
@@ -1167,11 +1172,14 @@ export class ApiModule implements AgentModule {
             if (run === undefined || run.status === "running") {
                 throw new Error("The terminal manual compaction run is not settled in history.");
             }
-            this.#journal.append(
-                "run.finished",
-                { agentId: compaction.agentId, run: await this.#runResource(ctx, run) },
-                event.occurredAt,
-            );
+            if (!this.#announcedTerminalRuns.has(run.id)) {
+                boundedAdd(this.#announcedTerminalRuns, run.id, MAX_ANNOUNCED_TERMINAL_RUNS);
+                this.#journal.append(
+                    "run.finished",
+                    { agentId: compaction.agentId, run: await this.#runResource(ctx, run) },
+                    event.occurredAt,
+                );
+            }
         }
     }
 
@@ -1519,10 +1527,7 @@ export class ApiModule implements AgentModule {
         if (batch.messages.some((message) => this.#announcedPendingMessages.has(message.id))) {
             return;
         }
-        const previous =
-            batch.kind === "steering"
-                ? await this.#history.previousRun(ctx, agentId, batch.runId)
-                : undefined;
+        const previous = await this.#history.previousRun(ctx, agentId, batch.runId);
         if (this.#acceptedMessageBatches.get(agentId) !== batch) return;
         const first = batch.messages[0] as AcceptedMessageBatch["messages"][number];
         const occurredAt = batch.messages.at(-1)?.occurredAt ?? first.occurredAt;
@@ -1549,8 +1554,20 @@ export class ApiModule implements AgentModule {
             batch.kind === "steering" && previous?.reason === "steering"
                 ? await this.#runResource(ctx, previous)
                 : undefined;
+        const queuedFinishedRun =
+            batch.kind === "send" &&
+            previous !== undefined &&
+            previous.status !== "running" &&
+            !this.#announcedTerminalRuns.has(previous.id)
+                ? await this.#runResource(ctx, previous)
+                : undefined;
         this.#acceptedMessageBatches.delete(agentId);
         if (finishedRun !== undefined) {
+            boundedAdd(
+                this.#announcedTerminalRuns,
+                finishedRun["id"] as string,
+                MAX_ANNOUNCED_TERMINAL_RUNS,
+            );
             append(
                 "run.boundary",
                 {
@@ -1562,6 +1579,14 @@ export class ApiModule implements AgentModule {
                 occurredAt,
             );
         } else {
+            if (queuedFinishedRun !== undefined) {
+                boundedAdd(
+                    this.#announcedTerminalRuns,
+                    queuedFinishedRun["id"] as string,
+                    MAX_ANNOUNCED_TERMINAL_RUNS,
+                );
+                append("run.finished", { agentId, run: queuedFinishedRun }, occurredAt);
+            }
             append("run.started", { agentId, run: startedRun, acceptedMessageIds }, occurredAt);
         }
         append(

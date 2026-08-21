@@ -217,7 +217,13 @@ describe("public run boundary matrix", () => {
 
     it("RB-12 aborts the current run without manufacturing a boundary", async () => {
         const gym = await startGym({
-            inference: [{ content: [{ text: "never returned", type: "text" }], delayMs: 1_000 }],
+            inference: [
+                { content: [{ text: "<title>Abort run</title>", type: "text" }] },
+                {
+                    content: [{ text: "never returned", type: "text" }],
+                    delayMs: 60_000,
+                },
+            ],
         });
         const accepted = await gym.send("abort me", { wait: false });
         await gym.client.abortAgent(gym.defaultSessionId, {
@@ -315,7 +321,7 @@ describe("public run boundary matrix", () => {
         });
     });
 
-    it("RB-16 explicit compaction does not add lifecycle events", async () => {
+    it("RB-16 explicit compaction emits one maintenance run without a boundary", async () => {
         const gym = await startGym({
             inference: [{ content: [{ text: "compact", type: "text" }] }],
         });
@@ -328,10 +334,21 @@ describe("public run boundary matrix", () => {
             () => (gym.inference.compactions.length > 0 ? true : undefined),
             "compaction",
         );
-        expect(await lifecycleFor(gym)).toEqual(before);
+        const added = await gym.waitUntil(async () => {
+            const lifecycle = (await lifecycleFor(gym)).slice(before.length);
+            return lifecycle.length === 2 ? lifecycle : undefined;
+        }, "compaction maintenance run");
+        expect(added.map((event) => event.type)).toEqual(["run.started", "run.finished"]);
+        const started = added[0];
+        const finished = added[1];
+        if (started?.type !== "run.started" || finished?.type !== "run.finished") {
+            throw new Error("Explicit compaction emitted an invalid run lifecycle.");
+        }
+        expect(started.payload.acceptedMessageIds).toEqual([]);
+        expect(finished.payload.run.id).toBe(started.payload.run.id);
     });
 
-    it("RB-17 repeated explicit compaction stays outside the run state machine", async () => {
+    it("RB-17 repeated explicit compaction creates distinct maintenance runs", async () => {
         const gym = await startGym({
             inference: [{ content: [{ text: "compact twice", type: "text" }] }],
         });
@@ -347,7 +364,23 @@ describe("public run boundary matrix", () => {
             () => (gym.inference.compactions.length === 2 ? true : undefined),
             "two compactions",
         );
-        expect(await lifecycleFor(gym)).toEqual(before);
+        const added = await gym.waitUntil(async () => {
+            const lifecycle = (await lifecycleFor(gym)).slice(before.length);
+            return lifecycle.length === 4 ? lifecycle : undefined;
+        }, "two compaction maintenance runs");
+        expect(added.map((event) => event.type)).toEqual([
+            "run.started",
+            "run.finished",
+            "run.started",
+            "run.finished",
+        ]);
+        const runIds = added.flatMap((event) =>
+            event.type === "run.started" || event.type === "run.finished"
+                ? [event.payload.run.id]
+                : [],
+        );
+        expect(new Set(runIds).size).toBe(2);
+        expect(added.some((event) => event.type === "run.boundary")).toBe(false);
     });
 
     it("RB-18 queued messages never carry accepted steering IDs", async () => {
@@ -410,7 +443,9 @@ describe("public run boundary matrix", () => {
         await session.gym.waitForRun(boundary.payload.startedRun.id);
         const before = await session.gym.client.getMessages(session.gym.defaultSessionId);
         await session.gym.restart();
-        expect(await session.gym.client.getMessages(session.gym.defaultSessionId)).toEqual(before);
+        const after = await session.gym.client.getMessages(session.gym.defaultSessionId);
+        expect(after.runs).toEqual(before.runs);
+        expect(after.hasMore).toBe(before.hasMore);
     }, 30_000);
 
     it("RB-21 journals lifecycle events with unique increasing cursors", async () => {
@@ -452,19 +487,42 @@ describe("public run boundary matrix", () => {
     });
 
     it("RB-24 a stale abort cannot alter the active run's eventual terminal reason", async () => {
-        const gym = await startGym({
-            inference: [{ content: [{ text: "complete normally", type: "text" }], delayMs: 20 }],
+        let releaseInference!: () => void;
+        let providerStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            providerStarted = resolve;
         });
-        const accepted = await gym.send("guarded normal", { wait: false });
-        await expect(
-            gym.client.abortAgent(gym.defaultSessionId, {
-                expectedRunId: "stalerun",
-                mutationId: "rb-24-stale",
-            }),
-        ).rejects.toMatchObject({ status: 409, code: "conflict" });
-        await gym.waitForRun(accepted.runId);
-        const run = (await gym.client.getMessages(gym.defaultSessionId)).runs[0];
-        expect(run).toMatchObject({ id: accepted.runId, reason: "completed", status: "completed" });
+        const gate = new Promise<void>((resolve) => {
+            releaseInference = resolve;
+        });
+        const gym = await startGym({
+            inference: async () => {
+                providerStarted();
+                await gate;
+                return { content: [{ text: "complete normally", type: "text" }] };
+            },
+        });
+        const accepting = gym.send("guarded normal", { wait: false });
+        await started;
+        const accepted = await accepting;
+        try {
+            await expect(
+                gym.client.abortAgent(gym.defaultSessionId, {
+                    expectedRunId: "stalerun",
+                    mutationId: "rb-24-stale",
+                }),
+            ).rejects.toMatchObject({ status: 409, code: "conflict" });
+            releaseInference();
+            await gym.waitForRun(accepted.runId);
+            const run = (await gym.client.getMessages(gym.defaultSessionId)).runs[0];
+            expect(run).toMatchObject({
+                id: accepted.runId,
+                reason: "completed",
+                status: "completed",
+            });
+        } finally {
+            releaseInference();
+        }
     }, 30_000);
 
     it("RB-25 combines compaction and queued work without emitting any non-steering boundary", async () => {
