@@ -586,15 +586,9 @@ importers:
       '@slopus/ghostty-web':
         specifier: 0.1.3
         version: 0.1.3
-      '@slopus/happy-agent-base':
-        specifier: 0.0.25
-        version: 0.0.25(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
         specifier: 0.0.12
         version: 0.0.12
-      '@slopus/happy-agent-compute':
-        specifier: 0.1.9
-        version: 0.1.9
       '@slopus/happy-providers':
         specifier: 0.0.11
         version: 0.0.11(ws@8.21.1)(zod@4.4.3)
@@ -626,12 +620,6 @@ importers:
         specifier: ^8.21.1
         version: 8.21.1
     devDependencies:
-      '@slopus/happy-agent':
-        specifier: workspace:*
-        version: link:../happy-agent
-      '@slopus/happy-agent-modules':
-        specifier: workspace:*
-        version: link:../happy-agent-modules
       '@types/node':
         specifier: ^24.0.10
         version: 24.13.2

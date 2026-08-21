@@ -11,9 +11,9 @@ export interface StartupStatusCardUsage {
 
 export interface StartupStatusCardModel {
     access: string;
+    engineVersion?: string;
     environment: string;
     fast: boolean;
-    githubAvailable?: boolean;
     model: string;
     provider: string;
     reasoning: string;

@@ -42,7 +42,7 @@ barrier="/workspace/start-daemon-now"
 client_pids=""
 
 read_daemon_pid() {
-    pgrep -f '/app/packages/rig/dist/agent.js run$' | head -n 1
+    pgrep -f '/app/happy-agent/dist/cli.js run$' | head -n 1
 }
 
 wait_for_exit() {
@@ -81,7 +81,7 @@ for index in $(seq 1 8); do
     fi
 done
 
-daemon_count="$(pgrep -fc '/app/packages/rig/dist/agent.js run$')"
+daemon_count="$(pgrep -fc '/app/happy-agent/dist/cli.js run$')"
 if [[ "$daemon_count" != "1" ]]; then
     echo "Expected one ready daemon, found $daemon_count." >&2
     exit 1

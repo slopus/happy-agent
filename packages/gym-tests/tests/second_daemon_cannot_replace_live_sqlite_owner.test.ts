@@ -42,7 +42,7 @@ rig() {
 contender_log="/workspace/second-daemon.log"
 
 read_daemon_pid() {
-    pgrep -f '/app/packages/rig/dist/agent.js run$' | head -n 1
+    pgrep -f '/app/happy-agent/dist/cli.js run$' | head -n 1
 }
 
 wait_for_exit() {
@@ -64,7 +64,7 @@ fi
 owner_pid="$(read_daemon_pid)"
 kill -0 "$owner_pid"
 
-node /app/packages/rig/dist/agent.js run >"$contender_log" 2>&1 &
+node /app/happy-agent/dist/cli.js run >"$contender_log" 2>&1 &
 contender_pid=$!
 
 for _ in $(seq 1 200); do

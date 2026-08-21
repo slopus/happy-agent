@@ -32,7 +32,7 @@ afterEach(async () => {
 });
 
 describe("terminal startup branding", () => {
-    it("shows the Rig logo and installed version in matching block artwork", async () => {
+    it("shows the Rig logo and both runtime versions", async () => {
         const cliPath = "/tmp/rig-under-test/dist/main.js";
         const packagePath = "/tmp/rig-under-test/package.json";
         const setup = [
@@ -55,6 +55,8 @@ describe("terminal startup branding", () => {
         const startup = await gym.terminal.snapshot();
         expect(startup.text).toContain(`\n${EXPECTED_BANNER}`);
         expect(startup.text).toContain(EXPECTED_BANNER);
+        expect(startup.text).toContain("Engine: 0.0.0");
+        expect(startup.text).not.toContain("GitHub:");
         expect(startup.text).not.toContain(">_ Rig 1.2.3");
         expect(startup.text).not.toContain("Agentic coding CLI");
         expect(startup.text).not.toContain("private local daemon");

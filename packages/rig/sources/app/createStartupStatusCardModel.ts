@@ -7,7 +7,7 @@ import { humanizeSessionEnvironment } from "./humanizeSessionEnvironment.js";
 import type { StartupStatusCardModel, StartupStatusCardUsage } from "./StartupStatusCardModel.js";
 
 export function createStartupStatusCardModel(options: {
-    githubAvailable?: boolean;
+    engineVersion?: string;
     model: Model;
     resumed: boolean;
     session: ProtocolSession;
@@ -21,9 +21,9 @@ export function createStartupStatusCardModel(options: {
     const serviceTier = options.session.serviceTier ?? options.session.snapshot.serviceTier;
     return {
         access: humanizePermissionMode(options.session.permissionMode),
+        ...(options.engineVersion === undefined ? {} : { engineVersion: options.engineVersion }),
         environment: humanizeSessionEnvironment(options.session.environment),
         fast: serviceTier === "fast",
-        githubAvailable: options.githubAvailable === true,
         model: options.model.name,
         provider: humanizeProviderId(options.session.providerId),
         reasoning: humanizeReasoningLevel(effort),

@@ -26,21 +26,10 @@ describe("renderStartupStatusCard", () => {
         expect(rendered).toContain("Model: GPT Test · Reasoning: High · Provider: Codex · Fast");
         expect(rendered).toContain("Workspace: /workspace · Environment: Local");
         expect(rendered).toContain("Access: Full access");
-        expect(rendered).toContain("GitHub: Not authenticated");
+        expect(rendered).toContain("Engine: 4.5.6");
+        expect(rendered).not.toContain("GitHub");
         expect(rendered).toContain("Usage: 5h 68% left · week 84% left");
         expect(rendered).toContain("Resets: 5h in 2h 14m · week in 4d 6h");
-    });
-
-    it("reports when GitHub credentials are authenticated", () => {
-        const rendered = stripAnsi(
-            renderStartupStatusCard({
-                model: status({ githubAvailable: true }),
-                theme: DEFAULT_TERMINAL_THEME,
-                width: 96,
-            }).join("\n"),
-        );
-
-        expect(rendered).toContain("GitHub: Authenticated");
     });
 
     it("renders partial data and omits unavailable usage", () => {
@@ -146,6 +135,7 @@ describe("renderStartupStatusCard", () => {
 function status(overrides: Partial<StartupStatusCardModel> = {}): StartupStatusCardModel {
     return {
         access: "Full access",
+        engineVersion: "4.5.6",
         environment: "Local",
         fast: false,
         model: "GPT Test",

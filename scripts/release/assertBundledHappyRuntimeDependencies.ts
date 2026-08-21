@@ -1,26 +1,28 @@
 import type { PackageManifest } from "./PackageManifest.js";
 
-const BUNDLED_HAPPY_PACKAGES = ["@slopus/happy-agent", "@slopus/happy-agent-modules"] as const;
+const DAEMON_IMPLEMENTATION_PACKAGES = [
+    "@slopus/happy-agent",
+    "@slopus/happy-agent-base",
+    "@slopus/happy-agent-compute",
+    "@slopus/happy-agent-modules",
+] as const;
 
 /**
- * Ensures unpublished Happy workspaces are available to Rig's build without leaking into the
- * published manifest as dependencies npm cannot resolve.
+ * Keeps Rig on the public client contract. The daemon implementation is downloaded as a release
+ * binary and local development resolves its source checkout without package dependencies.
  */
 export function assertBundledHappyRuntimeDependencies(manifest: PackageManifest): void {
-    const published = BUNDLED_HAPPY_PACKAGES.filter(
-        (dependency) => manifest.dependencies?.[dependency] !== undefined,
+    const implementationDependencies = DAEMON_IMPLEMENTATION_PACKAGES.filter(
+        (dependency) =>
+            manifest.dependencies?.[dependency] !== undefined ||
+            manifest.devDependencies?.[dependency] !== undefined,
     );
-    const missingBuildInputs = BUNDLED_HAPPY_PACKAGES.filter(
-        (dependency) => manifest.devDependencies?.[dependency] === undefined,
-    );
-    if (published.length > 0) {
+    if (implementationDependencies.length > 0) {
         throw new Error(
-            `Rig must bundle unpublished Happy workspaces instead of publishing dependencies on: ${published.join(", ")}.`,
+            `Rig must not depend on Happy Agent implementation packages: ${implementationDependencies.join(", ")}.`,
         );
     }
-    if (missingBuildInputs.length > 0) {
-        throw new Error(
-            `Rig is missing bundled Happy build inputs: ${missingBuildInputs.join(", ")}.`,
-        );
+    if (manifest.dependencies?.["@slopus/happy-agent-client"] === undefined) {
+        throw new Error("Rig must depend on @slopus/happy-agent-client.");
     }
 }

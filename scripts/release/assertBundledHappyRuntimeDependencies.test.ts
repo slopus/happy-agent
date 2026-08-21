@@ -3,44 +3,38 @@ import { describe, it } from "node:test";
 
 import { assertBundledHappyRuntimeDependencies } from "./assertBundledHappyRuntimeDependencies.js";
 
-const bundled = {
-    "@slopus/happy-agent": "workspace:*",
-    "@slopus/happy-agent-modules": "workspace:*",
-};
-
 describe("assertBundledHappyRuntimeDependencies", () => {
-    it("accepts unpublished Happy workspaces as build-only inputs", () => {
+    it("accepts the Happy Agent client as Rig's only agent dependency", () => {
         assert.doesNotThrow(() =>
             assertBundledHappyRuntimeDependencies({
-                devDependencies: bundled,
+                dependencies: { "@slopus/happy-agent-client": "0.0.12" },
                 name: "@slopus/rig",
                 version: "1.2.3",
             }),
         );
     });
 
-    it("rejects an npm dependency on an unpublished Happy workspace", () => {
+    it("rejects daemon implementation packages in either dependency section", () => {
         assert.throws(
             () =>
                 assertBundledHappyRuntimeDependencies({
-                    dependencies: { "@slopus/happy-agent": "0.0.0" },
-                    devDependencies: bundled,
+                    dependencies: { "@slopus/happy-agent-client": "0.0.12" },
+                    devDependencies: { "@slopus/happy-agent-modules": "workspace:*" },
                     name: "@slopus/rig",
                     version: "1.2.3",
                 }),
-            /must bundle unpublished Happy workspaces/u,
+            /must not depend on Happy Agent implementation packages/u,
         );
     });
 
-    it("rejects a missing build input", () => {
+    it("rejects a missing public client dependency", () => {
         assert.throws(
             () =>
                 assertBundledHappyRuntimeDependencies({
-                    devDependencies: { "@slopus/happy-agent": "workspace:*" },
                     name: "@slopus/rig",
                     version: "1.2.3",
                 }),
-            /missing bundled Happy build inputs/u,
+            /must depend on @slopus\/happy-agent-client/u,
         );
     });
 });

@@ -35,14 +35,15 @@ RUN pnpm --filter @slopus/happy-providers build
 RUN pnpm --filter @slopus/happy-agent-modules build
 RUN pnpm --filter @slopus/happy-agent build
 RUN pnpm --filter @slopus/rig build
-# The gym runs Rig from the TypeScript sources it mounts over this image, so the deployment keeps
-# development dependencies: the published bundle compiles them in, but the sources still import
-# them directly.
 RUN pnpm --filter @slopus/rig deploy --legacy /prod/rig
+# The Gym is a development build. Give Rig the daemon built from this checkout so an isolated
+# fixture never downloads a production release from GitHub.
+RUN pnpm --filter @slopus/happy-agent deploy --prod --legacy /prod/happy-agent
 # Every deployed @slopus/ghostty-web copy ships only its build output, so point its exports at the
 # build instead of the TypeScript sources it normally resolves to inside the workspace. pnpm may
 # install both a published copy and a workspace-file copy at different physical paths.
-RUN find /prod/rig/node_modules -path '*/@slopus/ghostty-web/package.json' \
+RUN find /prod/rig/node_modules /prod/happy-agent/node_modules \
+    -path '*/@slopus/ghostty-web/package.json' \
     -exec node --input-type=module --eval "import { readFileSync, writeFileSync } from 'node:fs'; const path = process.argv[1]; const manifest = JSON.parse(readFileSync(path, 'utf8')); manifest.exports['.'] = { types: './dist/index.d.ts', default: './dist/index.js' }; writeFileSync(path, JSON.stringify(manifest, null, 2) + '\\n')" {} \;
 RUN pnpm --filter @slopus/rig-gym-tests deploy --prod --legacy /prod/gym
 
@@ -62,9 +63,11 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=build /prod/rig packages/rig
+COPY --from=build /prod/happy-agent happy-agent
 COPY --from=build /prod/gym gym
 
 ENV HOME=/home/rig
+ENV RIG_GYM_HAPPY_AGENT_COMMAND="[\"node\",\"/app/happy-agent/dist/cli.js\"]"
 ENV TERM=xterm-256color
 RUN mkdir -p /home/rig /workspace && chown -R node:node /home/rig /workspace
 

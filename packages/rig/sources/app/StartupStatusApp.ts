@@ -1,11 +1,9 @@
 import { truncateToWidth, type Component, type Focusable, type TUI } from "@earendil-works/pi-tui";
 
-import type { DaemonRestartRequest } from "../client/index.js";
 import type { AgentCatalogEntry } from "../client/index.js";
 import { createSelectionPanel } from "./createSelectionPanel.js";
 import { createSessionPicker, fitSessionPickerToViewport } from "./createSessionPicker.js";
 import { formatActivityElapsedTime } from "./formatActivityElapsedTime.js";
-import { formatDaemonRestartMessage } from "./formatDaemonRestartMessage.js";
 import { renderActivityWave } from "./renderActivityWave.js";
 import { renderRigBanner } from "./renderRigBanner.js";
 import { DEFAULT_TERMINAL_THEME } from "./defaultTerminalTheme.js";
@@ -105,37 +103,6 @@ export class StartupStatusApp implements Component, Focusable {
                 subtitle: options.subtitle,
                 theme: this.#theme,
                 title: options.title,
-            });
-            this.#tui.requestRender();
-        });
-    }
-
-    confirmDaemonRestart(request: DaemonRestartRequest): Promise<boolean> {
-        this.setStatus("Waiting for restart confirmation.");
-        return new Promise((resolve) => {
-            const finish = (restart: boolean) => {
-                this.#selectionPanel = undefined;
-                this.#tui.requestRender();
-                resolve(restart);
-            };
-            this.#selectionPanel = createSelectionPanel({
-                theme: this.#theme,
-                items: [
-                    {
-                        description: "Stop the running daemon and continue with this CLI.",
-                        label: "Restart daemon",
-                        value: "restart",
-                    },
-                    {
-                        description: "Leave the running daemon unchanged.",
-                        label: "Exit Rig",
-                        value: "exit",
-                    },
-                ],
-                onCancel: () => finish(false),
-                onSelect: (item) => finish(item.value === "restart"),
-                subtitle: formatDaemonRestartMessage(request),
-                title: "Restart local daemon?",
             });
             this.#tui.requestRender();
         });

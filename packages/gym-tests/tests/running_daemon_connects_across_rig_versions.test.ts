@@ -1,22 +1,15 @@
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createGym, type Gym } from "@slopus/rig-gym";
 
 const running = new Set<Gym>();
-const currentVersion = (
-    JSON.parse(readFileSync(new URL("../../rig/package.json", import.meta.url), "utf8")) as {
-        version: string;
-    }
-).version;
-
 afterEach(async () => {
     await Promise.all([...running].map((gym) => gym.dispose()));
     running.clear();
 });
 
-describe("starting Rig with a stale production daemon", () => {
-    it("asks before replacing a daemon from another installed version", async () => {
+describe("starting Rig with an already-running daemon", () => {
+    it("connects to its socket without comparing the Rig package version", async () => {
         const cliPath = "/tmp/rig-under-test/dist/main.js";
         const packagePath = "/tmp/rig-under-test/package.json";
         const setup = [
@@ -32,20 +25,13 @@ describe("starting Rig with a stale production daemon", () => {
             mode: "docker",
             entrypoint: ["/bin/sh", "-lc", setup],
             inference: [],
-            startupText: "Restart local daemon?",
-            timeoutMs: 10_000,
+            timeoutMs: 20_000,
         });
         running.add(gym);
 
-        const prompt = await gym.terminal.snapshot();
-        expect(prompt.text).toContain(`The running daemon uses Rig ${currentVersion}`);
-        expect(prompt.text).toContain("this CLI is Rig 999.999.999");
-        expect(prompt.text).toContain("Restart daemon");
-        expect(prompt.text).toContain("Exit Rig");
-
-        gym.terminal.press("enter");
-
-        const started = await gym.terminal.waitForText("Ask Rig to do anything", 20_000);
+        const started = await gym.terminal.snapshot();
+        expect(started.text).toContain("Ask Rig to do anything");
         expect(started.text).not.toContain("Restart local daemon?");
+        expect(started.text).not.toContain("Restart daemon");
     });
 });

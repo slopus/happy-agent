@@ -192,6 +192,7 @@ function describePresenceWait(answerWaitMs: number | null): string {
 }
 
 export interface CodingAssistantAppOptions {
+    engineVersion?: string;
     activeAgentLabel?: string;
     agent: CodingAssistantAgentBackend;
     attachSecret?: (id: string, scope: SecretAttachmentScope) => void | Promise<void>;
@@ -593,6 +594,9 @@ export class CodingAssistantApp implements Component, Focusable {
         const snapshot = options.agent.snapshot();
         const startupStatus: StartupStatusCardModel = {
             access: humanizePermissionMode(options.agent.permissionMode),
+            ...(options.engineVersion === undefined
+                ? {}
+                : { engineVersion: options.engineVersion }),
             environment: "Local",
             fast: snapshot.serviceTier === "fast",
             model: options.agent.model.name,

@@ -1,14 +1,12 @@
 export {
     ensureLocalProtocolServer,
     readTokenIfPresent,
-    resolveAgentDaemonEntrypoint,
     runDaemonInProcess,
-    toRigError,
     type DaemonRestartRequest,
     type EnsureLocalProtocolServerOptions,
     type LocalProtocolServerConnection,
 } from "./ensureLocalProtocolServer.js";
-export { createUnixSocketFetch } from "@slopus/happy-agent";
+export { createUnixSocketFetch } from "../daemon/index.js";
 export { HappyAgentEventHub } from "./HappyAgentEventHub.js";
 export {
     ensureWorkspaceForCwd,

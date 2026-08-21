@@ -78,29 +78,6 @@ describe("StartupStatusApp", () => {
         expect(tui.requestRender).not.toHaveBeenCalledWith(true);
     });
 
-    it("asks before restarting a daemon from another production version", async () => {
-        const app = new StartupStatusApp({
-            cwd: "/workspace",
-            tui: fakeTui(),
-            version: "1.3.0",
-        });
-        const confirmation = app.confirmDaemonRestart({
-            currentIdentity: { version: "1.3.0" },
-            runningIdentity: { version: "1.2.0" },
-        });
-
-        const rendered = stripAnsi(app.render(80).join("\n"));
-        expect(rendered).toContain("Restart local daemon?");
-        expect(rendered).toContain("The running daemon uses Rig 1.2.0");
-        expect(rendered).toContain("this CLI is Rig 1.3.0");
-        expect(rendered).toContain("Restart daemon");
-        expect(rendered).toContain("Exit Rig");
-
-        app.handleInput("\r");
-
-        await expect(confirmation).resolves.toBe(true);
-    });
-
     it("picks an agent on the startup screen instead of a numbered prompt", async () => {
         const app = new StartupStatusApp({
             cwd: "/workspace",

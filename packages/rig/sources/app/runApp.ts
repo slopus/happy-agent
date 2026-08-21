@@ -110,7 +110,6 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
     const opened = await (async () => {
         try {
             const localServer = await ensureLocalProtocolServer({
-                confirmRestart: (request) => startup.confirmDaemonRestart(request),
                 onStatus: (message) => startup.setStatus(message),
             });
             let agentId = options.resumeSessionId;
@@ -260,6 +259,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
         ];
         const app = new CodingAssistantApp({
             agent,
+            engineVersion: opened.localServer.health.version.daemon,
             compactCompletedTurns,
             completionChime,
             ctx,
@@ -274,7 +274,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
                         tuiInspectorUrl: openNodeInspector(),
                     };
                 },
-                stateDirectory: opened.localServer.paths.directory,
+                stateDirectory: opened.localServer.paths.agentDirectory,
                 tuiStderrIsTTY: process.stderr.isTTY === true,
                 ...(tuiInspectorUrl === undefined ? {} : { tuiInspectorUrl }),
             },
@@ -342,6 +342,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             showUsage,
             startupStatus: {
                 access: humanizePermissionMode(agent.permissionMode),
+                engineVersion: opened.localServer.health.version.daemon,
                 environment: opened.workspace.compute.type === "host" ? "Local" : "Docker",
                 fast: agent.confirmedServiceTier !== undefined,
                 model: agent.model.name,
