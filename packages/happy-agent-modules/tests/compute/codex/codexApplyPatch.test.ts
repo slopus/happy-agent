@@ -17,13 +17,7 @@ function patch(...body: readonly string[]): string {
     return ["*** Begin Patch", ...body, "*** End Patch", ""].join("\n");
 }
 
-/**
- * Put a file on the machine through a patch, so the agent has read it.
- *
- * Codex's surface has no file-read tool: the read log is filled by a write, by viewing an image,
- * or by another vendor's read tool earlier in the same conversation. Adding the file first is the
- * shortest honest way for a test to reach a file this agent is allowed to change.
- */
+/** Put a file on the machine through a patch for tests that build on an earlier change. */
 async function addFile(
     toolset: Awaited<ReturnType<typeof machine>>,
     path: string,
@@ -143,7 +137,7 @@ describe("codex apply_patch", () => {
         );
     });
 
-    it("deletes a file the agent has read", async () => {
+    it("deletes a file created by an earlier patch", async () => {
         const toolset = await machine();
         await addFile(toolset, "old.ts", ["gone soon"]);
 
@@ -237,9 +231,7 @@ describe("codex apply_patch", () => {
     });
 
     it("changes a file it never read when the patch quotes what it is changing", async () => {
-        // Codex's surface has no file-read tool at all, so the quoted lines are what proves the
-        // agent is not editing blind. Demanding a logged read as well would leave the surface
-        // unable to change anything that exists.
+        // The quoted lines are checked against the current file before the patch is applied.
         const toolset = await machine();
         toolset.compute.write("/workspace/sources/util.ts", "export const NAME = 'old';\n");
 
@@ -261,40 +253,33 @@ describe("codex apply_patch", () => {
         );
     });
 
-    it("refuses to append to a file this agent has never read", async () => {
-        // A hunk made only of additions quotes nothing, so it proves nothing about the file it is
-        // being appended to, and the read log is all that is left.
+    it("appends to a file without a prior read", async () => {
         const toolset = await machine();
         toolset.compute.write("/workspace/sources/util.ts", "export const NAME = 'old';\n");
 
-        await expect(
-            toolset.tool("apply_patch").execute(
-                ctx,
-                {
-                    patch: patch(
-                        "*** Update File: sources/util.ts",
-                        "@@",
-                        "+export const EXTRA = 1;",
-                    ),
-                },
-                toolset.call,
-            ),
-        ).rejects.toThrow(/has not been read yet/);
+        await toolset.tool("apply_patch").execute(
+            ctx,
+            {
+                patch: patch("*** Update File: sources/util.ts", "@@", "+export const EXTRA = 1;"),
+            },
+            toolset.call,
+        );
+
         expect(toolset.compute.files.get("/workspace/sources/util.ts")?.content).toBe(
-            "export const NAME = 'old';\n",
+            "export const NAME = 'old';\nexport const EXTRA = 1;\n",
         );
     });
 
-    it("refuses to delete a file this agent has never read", async () => {
+    it("deletes a file without a prior read", async () => {
         const toolset = await machine();
         toolset.compute.write("/workspace/old.ts", "somebody's work\n");
 
-        await expect(
-            toolset
-                .tool("apply_patch")
-                .execute(ctx, { patch: patch("*** Delete File: old.ts") }, toolset.call),
-        ).rejects.toThrow(/has not been read yet/);
-        expect(toolset.compute.files.has("/workspace/old.ts")).toBe(true);
+        const result = await toolset
+            .tool("apply_patch")
+            .execute(ctx, { patch: patch("*** Delete File: old.ts") }, toolset.call);
+
+        expect(result.changes).toEqual([{ kind: "delete", path: "/workspace/old.ts" }]);
+        expect(toolset.compute.files.has("/workspace/old.ts")).toBe(false);
     });
 
     it("refuses a change whose lines somebody else has already taken away", async () => {

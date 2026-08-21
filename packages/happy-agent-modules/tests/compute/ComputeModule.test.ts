@@ -157,14 +157,14 @@ describe("ComputeModule", () => {
         } as never);
 
         expect(claudeInstructions).not.toContain("/srv/app");
-        expect(claudeInstructions).toContain("Read a file before changing it");
-        expect(claudeInstructions).toContain("Write and Edit refuse a file you have not read");
+        expect(claudeInstructions).toContain("without a prior Read");
+        expect(claudeInstructions).toContain("the stale change is refused");
         expect(claudeInstructions).toContain("comes back with a shell ID");
 
         const grokInstructions = await hooks.instructions!(agentCtx, {
             agent: { id: "agent-b", model: "xai/grok-4.5" },
         } as never);
-        expect(grokInstructions).toContain("write and search_replace refuse a file");
+        expect(grokInstructions).toContain("without a prior read_file");
     });
 
     it("rejects invalid computes returned by the global provider", async () => {

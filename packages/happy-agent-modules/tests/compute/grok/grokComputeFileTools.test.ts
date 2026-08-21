@@ -85,24 +85,29 @@ describe("Grok's compute file tools", () => {
         expect(compute.files.get("/workspace/sources/new.ts")?.content).toContain("A = 2");
     });
 
-    it("refuses to overwrite a file this agent never read", async () => {
-        const { tool } = await project();
+    it("overwrites a file without a prior read", async () => {
+        const { compute, tool } = await project();
 
-        await expect(
-            tool("write").execute(ctx, { file_path: "readme.md", content: "gone\n" }),
-        ).rejects.toThrow(/has not been read yet/u);
+        const result = await tool("write").execute(ctx, {
+            file_path: "readme.md",
+            content: "gone\n",
+        });
+
+        expect(result.created).toBe(false);
+        expect(compute.files.get("/workspace/readme.md")?.content).toBe("gone\n");
     });
 
-    it("refuses to replace text in a file this agent never read", async () => {
-        const { tool } = await project();
+    it("replaces matching text without a prior read", async () => {
+        const { compute, tool } = await project();
 
-        await expect(
-            tool("search_replace").execute(ctx, {
-                file_path: "sources/main.ts",
-                old_string: "return 1;",
-                new_string: "return 2;",
-            }),
-        ).rejects.toThrow(/has not been read yet/u);
+        const result = await tool("search_replace").execute(ctx, {
+            file_path: "sources/main.ts",
+            old_string: "return 1;",
+            new_string: "return 2;",
+        });
+
+        expect(result.replacements).toBe(1);
+        expect(compute.files.get("/workspace/sources/main.ts")?.content).toContain("return 2;");
     });
 
     it("refuses to change a file that moved on after it was read", async () => {

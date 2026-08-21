@@ -91,7 +91,7 @@ A patch is a sequence of file sections between a \`*** Begin Patch\` line and an
 *** Delete File: path/to/old.ts
 *** End Patch
 
-Put \`*** Move to: new/path.ts\` directly after \`*** Update File:\` to rename the file as well, and \`*** End of File\` after a hunk that must match the very end of the file. Quote the lines you are changing: a hunk whose context does not match the file is refused, and nothing is written unless the whole patch applies. Deleting a file, and appending to one without quoting any of it, are refused until you have read that file.`,
+Put \`*** Move to: new/path.ts\` directly after \`*** Update File:\` to rename the file as well, and \`*** End of File\` after a hunk that must match the very end of the file. Quote the lines you are changing: a hunk whose context does not match the file is refused, and nothing is written unless the whole patch applies.`,
         parameters: applyPatchParametersSchema,
         returnType: applyPatchResultSchema,
         // Writing files cannot commit atomically with the tool result, and a patch applied twice

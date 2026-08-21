@@ -164,7 +164,7 @@ describe("compute implementation boundaries", () => {
         expect(globToRegExp("README", { ignoreCase: true }).test("readme")).toBe(true);
     });
 
-    it("treats malformed persisted read state as empty and records valid reads", async () => {
+    it("allows a file with no valid remembered read and records later reads", async () => {
         const persistence = new MemoryPersistence();
         const { log, kv } = readLogFor(persistence);
         const compute = new FakeCompute();
@@ -173,7 +173,7 @@ describe("compute implementation boundaries", () => {
 
         await expect(
             log.assertRead(ctx, compute.fs, permissions, "/workspace/app.ts"),
-        ).rejects.toThrow(/has not been read yet/);
+        ).resolves.toBeUndefined();
         await log.record(ctx, "/workspace/app.ts", 2_000);
         await expect(
             log.assertRead(ctx, compute.fs, permissions, "/workspace/app.ts"),

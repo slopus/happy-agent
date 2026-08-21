@@ -16,14 +16,13 @@ export interface ComputeTextFileWrite {
 /**
  * Create a file or replace one whole.
  *
- * An existing file must have been read first and must not have changed since; a file that does
- * not exist yet is nobody's work to lose. A successful write counts as a read, because the agent
- * now knows exactly what the file holds and a following edit is not working blind.
+ * An existing file may be replaced without a prior read. When the agent has read or written it
+ * before, the remembered version must still be current. A successful write records the new state
+ * because the agent now knows exactly what the file holds.
  *
- * `requireRead` may be turned off only by a caller that already carries the same protection by
- * other means — a patch whose context lines must match the file before a single byte is written
- * proves the same thing the read log proves, and demanding both would refuse a correct edit for
- * paperwork. It is not a way to write blind.
+ * `requireRead` may be turned off by a caller that already checks the current contents by other
+ * means — a patch whose context lines must match the file before a single byte is written does
+ * not also need the remembered timestamp.
  */
 export async function writeComputeTextFile(
     compute: Compute,

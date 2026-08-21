@@ -14,7 +14,7 @@ imported from `../claude/` or `../codex/`, and nothing here may be imported by t
 duplication between the three directories is the point.
 
 What _is_ shared is behavior, not surface: path resolution, the Auto-review predicate, the
-read-before-write log, output bounding and the command-session plumbing all live in
+remembered-file freshness log, output bounding and the command-session plumbing all live in
 `../../impl/`. A tool in this directory owns its wording and its schemas and calls those helpers
 for everything else.
 

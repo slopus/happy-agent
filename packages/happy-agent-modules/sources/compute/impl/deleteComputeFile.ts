@@ -6,13 +6,13 @@ import type { FileReadLog } from "../../impl/FileReadLog.js";
 import { resolveComputePath } from "./resolveComputePath.js";
 
 /**
- * Remove one file the agent has read.
+ * Remove one file.
  *
  * Directories are not removed here. A recursive removal is a decision of a different size, and a
  * shell command is where it belongs, in the open, rather than hidden behind a file tool.
  *
- * `requireRead` may be turned off only by a caller that already carries the same protection by
- * other means, such as a patch whose own content had to match the file first.
+ * `requireRead` may be turned off by a caller that already checks the current contents by other
+ * means, such as a patch whose own content had to match the file first.
  */
 export async function deleteComputeFile(
     compute: Compute,

@@ -52,7 +52,7 @@ type PlannedChange =
  *
  * A hunk that removes or quotes a line proves the agent is working from what the file really
  * holds: if any of those lines were not there, the patch was refused before a byte was written.
- * A hunk made only of additions proves nothing, since it appends to a file nobody has looked at.
+ * A hunk made only of additions proves nothing about the file's existing contents.
  */
 function hunksProveFileContents(hunks: readonly CodexPatchHunk[]): boolean {
     return (
@@ -68,11 +68,9 @@ function hunksProveFileContents(hunks: readonly CodexPatchHunk[]): boolean {
  * Every file it then touches goes through the module's own write, move, and delete helpers, so
  * the staleness check and the file read log apply to a patch as they apply to any other change.
  *
- * Read-before-write is satisfied differently here, because Codex's surface has no file-read tool
- * at all: a patch whose hunks quote the lines they change has already proved, by matching them,
- * everything a logged read would have proved, and refusing it for want of a read the agent has no
- * way to perform would leave the surface unable to edit anything. A hunk made only of additions
- * proves nothing and still needs the read, and a deletion — which quotes nothing — always does.
+ * Existing files need no prior logged read. A patch whose hunks quote current lines uses that
+ * match as its freshness proof. Appends and deletions consult any remembered timestamp but are
+ * also allowed when the file has no read-log entry.
  */
 export async function applyCodexPatch(
     compute: Compute,
@@ -167,8 +165,8 @@ export async function applyCodexPatch(
             await writeComputeTextFile(compute, reads, ctx, {
                 path: change.path,
                 content: change.content,
-                // The hunks matched the file before anything was planned, which is the proof the
-                // read log exists to provide.
+                // The hunks matched the file before anything was planned, so a remembered
+                // timestamp does not add another useful freshness check.
                 ...(change.kind === "update" && change.provenByContext
                     ? { requireRead: false }
                     : {}),
@@ -177,8 +175,6 @@ export async function applyCodexPatch(
             continue;
         }
         if (change.kind === "delete") {
-            // A deletion quotes nothing, so nothing but the read log stands between the model and
-            // a file it has never seen.
             await deleteComputeFile(compute, reads, ctx, { path: change.path });
             changes.push({ kind: "delete", path: change.path });
             continue;
@@ -188,7 +184,7 @@ export async function applyCodexPatch(
             destination: change.destination,
             ...(change.provenByContext ? { requireRead: false } : {}),
         });
-        // The move records the destination as read, so rewriting it is not a blind change.
+        // The move records the destination, so the following rewrite checks the state just moved.
         if (change.contentChanged) {
             await writeComputeTextFile(compute, reads, ctx, {
                 path: change.destination,

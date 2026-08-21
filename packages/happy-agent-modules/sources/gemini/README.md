@@ -50,10 +50,10 @@ the approved call in Full access.
 ## Files
 
 Generated media is written through the compute filesystem: the path is resolved the way the
-machine resolves it, missing directories are created, and the finished file counts as read so a
-second generation to the same path is not working blind. A file that already exists must have been
-read first, and the read log the module keeps is its own — a generation will not overwrite a file
-this module has not written, which is what keeps a prompt from quietly replacing somebody's work.
+machine resolves it, missing directories are created, and the finished file is remembered. An
+existing file may be overwritten without a prior read. Once this module has read or written a path,
+later generations check that remembered timestamp both before and after the external request so an
+intervening change is not silently discarded.
 
 ## Storage
 

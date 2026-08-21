@@ -12,7 +12,7 @@ export interface ComputeTextEdit {
 }
 
 /**
- * Replace exact text inside a file the agent has read.
+ * Replace exact text inside a file.
  *
  * The text must appear exactly once unless every occurrence was asked for, because a model that
  * meant one of several and got all of them has silently changed code it never looked at. A

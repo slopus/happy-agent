@@ -105,7 +105,7 @@ vendor-shaped skin over one shared helper in `impl/`, so behavior cannot drift b
 - `readComputeTextFile`, `listComputeDirectory`, `findComputeFiles`, `searchComputeFileContents` —
   paged, size-bounded reads that report their own truncation.
 - `writeComputeTextFile`, `editComputeText`, `deleteComputeFile`, `moveComputeFile` — the write
-  path, each enforcing the read requirement unless a caller proves the file's contents another way.
+  path, each checking remembered freshness unless a caller proves current contents another way.
 - `startComputeCommand`, `readComputeCommand`, `writeComputeCommandInput`, `stopComputeCommand` —
   the command lifecycle, including the background grace period and delta-only reads.
 - `shouldReviewComputePath`, `canonicalComputePath`, `boundOutputText` — permission and bounding
@@ -119,18 +119,17 @@ shell IDs, Codex's patch format, Grok's task IDs. Nothing there is shared across
 Two rules govern every file tool and are stated to the model directly in `instructions()`, in that
 vendor's vocabulary, since tool descriptions alone cannot carry them:
 
-- **Reading earns the right to change.** `FileReadLog` remembers, per agent, which files it has
-  read and at what `mtimeMs`. A write refuses a file this agent has not read, and refuses one that
-  changed on disk since it was read, rather than silently discarding whoever changed it.
+- **Unremembered files may be changed; remembered files must still be current.** `FileReadLog`
+  remembers, per agent, which files it has read or written and at what `mtimeMs`. With no entry, a
+  write proceeds. With an entry, a change refuses a different timestamp rather than silently
+  discarding work saved after the agent last saw the file.
 - **A command that outlives its wait is not killed.** It keeps running under an ID, and every later
   read of it returns only what is new since the last read.
 
-Codex is the one place the first rule bends, because Codex's surface has no file-read tool at all —
-`apply_patch` is the only way in. A patch hunk that quotes context or removed lines proves the same
-thing a logged read proves: the model knows what is there now. So an update or move whose every
-hunk carries a non-added line applies without a prior read; an append-only hunk, which proves
-nothing, and every delete still require one. That is what the helpers' `requireRead` option exists
-for, and no other vendor passes it.
+Codex's patch context is its own freshness proof. An update or move whose hunks quote current lines
+does not also consult the remembered timestamp. An append-only hunk and a delete consult any
+remembered timestamp, but proceed when no read-log entry exists. That is what the helpers'
+`requireRead` option controls, and no other vendor turns it off.
 
 Permissions are decided per path or per command, not per tool. `shouldReviewComputePath` resolves
 the proposed path, checks it stays inside `compute.cwd`, and — following every symbolic link with
@@ -208,7 +207,7 @@ through `scope.kv`, and keeps every agent's one-shot abort notice in the one col
 
 - `"reads"` → an array of `{ path: string, mtimeMs: number }`, oldest first, validated against a
   TypeBox schema on read (`Value.Check`); anything that fails validation, such as a log written by
-  an older version, is treated as empty rather than blocking every edit.
+  an older version, is treated as empty and therefore places no restriction on an edit.
 - `"abort-notices.<agent ID>.pending"` in shared KV → the validated process-tree count and bounded
   live-session descriptions from the most recent abort that killed something. It is overwritten
   by a newer abort, prepended by the instructions hook, and deleted in the transaction that starts
@@ -216,14 +215,15 @@ through `scope.kv`, and keeps every agent's one-shot abort notice in the one col
   inherit an old notice.
 
 `record(ctx, path, mtimeMs)` removes any existing entry for `path`, appends the new one, and keeps
-only the most recent 512 entries (`MAX_REMEMBERED_READS`) — the log is a guard against a blind
-edit, not a transcript, so only recently-read files are worth remembering. `AgentKV.update` makes
-the read-decide-write operation durable, and the module's keyed lock serializes concurrent updates
-for the same agent before they reach that store. File mutations themselves are not serialized per
-path: frozen Agent Base exposes no tool lock, and this module does not add a module-level heap
-lock. Concurrent edits to one path remain future host-coordination debt.
+only the most recent 512 entries (`MAX_REMEMBERED_READS`) — the log guards against changing stale
+remembered state, not a transcript, so only recently-observed files are worth keeping.
+`AgentKV.update` makes the read-decide-write operation durable, and the module's keyed lock
+serializes concurrent updates for the same agent before they reach that store. File mutations
+themselves are not serialized per path: frozen Agent Base exposes no tool lock, and this module
+does not add a module-level heap lock. Concurrent edits to one path remain future host-coordination
+debt.
 The log belongs to the agent's conversation rather than to a single run, so a write interrupted by
-a restart can simply be retried — the file it left behind is one this agent has already read.
+a restart can simply be retried — the file it left behind is already the state this agent recorded.
 
 Command state itself is not persisted by this module at all: a running command's output, status,
 and delta cursor live in the compute's own `ComputeShell`, which is the host's to keep or drop when

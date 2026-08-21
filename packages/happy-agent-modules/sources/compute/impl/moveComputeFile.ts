@@ -21,8 +21,8 @@ export interface ComputeFileMove {
  * same file, so there is nothing there to lose. Directories created for the destination are
  * removed again when the move itself fails, so a failed call leaves no half-built tree.
  *
- * `requireRead` may be turned off only by a caller that already carries the same protection by
- * other means, such as a patch whose context lines had to match the file before anything moved.
+ * `requireRead` may be turned off by a caller that already checks the current contents by other
+ * means, such as a patch whose context lines had to match the file before anything moved.
  */
 export async function moveComputeFile(
     compute: Compute,

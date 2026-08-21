@@ -134,16 +134,16 @@ its public methods, and its storage and event contracts.
 
 ### The machine
 
-| Module                                                | What it adds                                                                                                                                             |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Compute](sources/compute/README.md)                  | One machine offered as each vendor's own filesystem and shell tools, with read-before-write enforcement and background commands that outlive their wait. |
-| [Permissions](sources/permissions/README.md)          | The permission mode turned into behavior: per-call review, temporary elevation, refusal handling, and mode-change notices.                               |
-| Auto (`sources/auto`)                                 | The automatic reviewer permissions asks in Auto mode, running on its own private database and its own read-only compute.                                 |
-| [MCP](sources/mcp/README.md)                          | MCP servers, tools, resources, and prompts, always reviewed in Auto.                                                                                     |
-| [Search](sources/search/README.md)                    | A bounded common `web_fetch` plus explicit per-vendor search tool wrappers.                                                                              |
-| [Image generation](sources/imageGeneration/README.md) | Prompt-to-PNG on the configured Codex accounts, including edits from local paths or recent conversation images.                                          |
-| [Gemini](sources/gemini/README.md)                    | Image and music generation and questions about local media files, on a Gemini key of its own.                                                            |
-| [Git](sources/git/README.md)                          | Reading, probing, and watching repositories, and the worktree and clone actions the catalogs perform. No hooks, no tools.                                |
+| Module                                                | What it adds                                                                                                                                    |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Compute](sources/compute/README.md)                  | One machine offered as each vendor's own filesystem and shell tools, with stale-file detection and background commands that outlive their wait. |
+| [Permissions](sources/permissions/README.md)          | The permission mode turned into behavior: per-call review, temporary elevation, refusal handling, and mode-change notices.                      |
+| Auto (`sources/auto`)                                 | The automatic reviewer permissions asks in Auto mode, running on its own private database and its own read-only compute.                        |
+| [MCP](sources/mcp/README.md)                          | MCP servers, tools, resources, and prompts, always reviewed in Auto.                                                                            |
+| [Search](sources/search/README.md)                    | A bounded common `web_fetch` plus explicit per-vendor search tool wrappers.                                                                     |
+| [Image generation](sources/imageGeneration/README.md) | Prompt-to-PNG on the configured Codex accounts, including edits from local paths or recent conversation images.                                 |
+| [Gemini](sources/gemini/README.md)                    | Image and music generation and questions about local media files, on a Gemini key of its own.                                                   |
+| [Git](sources/git/README.md)                          | Reading, probing, and watching repositories, and the worktree and clone actions the catalogs perform. No hooks, no tools.                       |
 
 ### Work
 

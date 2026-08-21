@@ -14,18 +14,18 @@ const fileReadLogSchema = Type.Array(fileReadSchema);
 const READS_KEY = "reads";
 
 /**
- * How many files are remembered. The log is a guard against a blind edit, not a record of the
- * conversation, so only the files recently in hand are worth keeping and the oldest fall off.
+ * How many files are remembered. The log guards against changing a stale remembered file, not a
+ * record of the conversation, so only the files recently in hand are worth keeping and the oldest
+ * fall off.
  */
 const MAX_REMEMBERED_READS = 512;
 
 /**
- * What this agent has actually read, so that what it changes is something it has seen.
+ * What this agent has actually read or written, so later changes can detect stale knowledge.
  *
- * A model that edits a file it never read is working from what it imagines the file contains, and
- * a model that edits a file changed since it read it is throwing away whoever changed it. Both
- * are refused here rather than discovered afterwards in a diff. Writing counts as reading: after
- * a write the agent knows exactly what the file holds, so the next edit is allowed to proceed.
+ * A file with no remembered read may be changed. Once the agent has read or written one, a later
+ * change is refused if somebody else changed it in the meantime. Writing counts as reading: after
+ * a write the agent knows exactly what the file holds, so the next edit can check the same state.
  *
  * The log belongs to the agent's conversation rather than to a run, which is what lets a write
  * interrupted by a restart simply be made again: the file it left behind is one this agent has
@@ -54,11 +54,10 @@ export class FileReadLog {
     }
 
     /**
-     * Refuse a change to a file this agent has not read, or has read and something else has
-     * changed since. A file that does not exist yet is nobody's work to lose, so creating one
-     * needs no reading first. Any modification time other than the remembered one counts as a
-     * change: a restored backup or a clock moved backwards leaves an older stamp on a file whose
-     * contents are no longer the ones that were read.
+     * Refuse a change when the agent remembers this file and something else has changed it since.
+     * A file with no remembered read is allowed. Any modification time other than the remembered
+     * one counts as a change: a restored backup or a clock moved backwards leaves an older stamp
+     * on a file whose contents are no longer the ones that were read.
      */
     async assertRead(
         ctx: Context,
@@ -69,9 +68,7 @@ export class FileReadLog {
         if (!(await fs.exists(permissions, path))) return;
         const entries = readLog(await this.#kv.read(ctx, READS_KEY));
         const known = entries.find((entry) => entry.path === path);
-        if (known === undefined) {
-            throw new Error(`This file has not been read yet. Read it before changing it: ${path}`);
-        }
+        if (known === undefined) return;
         const stat = await fs.stat(permissions, path);
         if (stat.mtimeMs !== known.mtimeMs) {
             throw new Error(

@@ -128,17 +128,22 @@ describe("the Gemini module's tools", () => {
         expect(request).not.toHaveBeenCalled();
     });
 
-    it("refuses to overwrite an unread file before spending a generation", async () => {
-        const { compute, request, tool } = await machine();
+    it("overwrites an existing output without a prior read", async () => {
+        const { compute, request, tool } = await machine(() =>
+            interaction({ type: "image", mime_type: "image/png", data: "AQID" }),
+        );
         compute.writeBuffer("/workspace/existing.png", new Uint8Array([9]));
 
-        await expect(
-            tool("gemini_imagegen").execute(ctx, {
-                output_path: "existing.png",
-                prompt: "A replacement image",
-            }),
-        ).rejects.toThrow(/has not been read yet/);
-        expect(request).not.toHaveBeenCalled();
+        const result = await tool("gemini_imagegen").execute(ctx, {
+            output_path: "existing.png",
+            prompt: "A replacement image",
+        });
+
+        expect(result.path).toBe("/workspace/existing.png");
+        expect(await compute.fs.readFileBuffer({} as never, result.path)).toEqual(
+            new Uint8Array([1, 2, 3]),
+        );
+        expect(request).toHaveBeenCalledOnce();
     });
 
     it("reports the exact action and boundary a reviewer decides on", async () => {

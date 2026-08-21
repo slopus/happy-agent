@@ -24,7 +24,7 @@ Usage:
 - target_file can be a relative path in the workspace or an absolute path.
 - By default, it reads up to ${String(MAX_LINES)} lines starting from the beginning of the file.
 - Results are returned with line numbers starting at 1 in the format LINE_NUMBER→LINE_CONTENT.
-- Reading a file is what earns the right to change it: write and search_replace refuse a file you have not read.`,
+- Reading records the file's current state so a later write can detect if somebody else changed it first.`,
         parameters: Type.Object(
             {
                 target_file: Type.String({

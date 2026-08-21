@@ -119,17 +119,32 @@ describe("Claude's Read", () => {
 });
 
 describe("Claude's Write and Edit", () => {
-    it("refuses to overwrite a file this agent has not read", async () => {
+    it("overwrites a file without a prior read", async () => {
         const { compute, tool, call } = await machine();
         compute.write("/workspace/app.ts", "const a = 1;");
 
-        await expect(
-            tool("Write").execute(
-                ctx,
-                { file_path: "/workspace/app.ts", content: "const a = 2;" },
-                call,
-            ),
-        ).rejects.toThrow(/has not been read yet/);
+        const result = await tool("Write").execute(
+            ctx,
+            { file_path: "/workspace/app.ts", content: "const a = 2;" },
+            call,
+        );
+
+        expect(result.created).toBe(false);
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe("const a = 2;");
+    });
+
+    it("edits a file without a prior read when the exact text matches", async () => {
+        const { compute, tool, call } = await machine();
+        compute.write("/workspace/app.ts", "const a = 1;");
+
+        const result = await tool("Edit").execute(
+            ctx,
+            { file_path: "/workspace/app.ts", old_string: "a = 1", new_string: "a = 2" },
+            call,
+        );
+
+        expect(result.replacements).toBe(1);
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe("const a = 2;");
     });
 
     it("creates a new file without any prior read", async () => {

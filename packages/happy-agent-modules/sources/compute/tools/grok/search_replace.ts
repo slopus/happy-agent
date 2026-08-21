@@ -7,13 +7,12 @@ import { editComputeText } from "../../impl/editComputeText.js";
 import type { FileReadLog } from "../../../impl/FileReadLog.js";
 import { shouldReviewComputePath } from "../../impl/shouldReviewComputePath.js";
 
-/** Grok's `search_replace`: replace exact text inside a file the agent has read. */
+/** Grok's `search_replace`: replace exact text inside a file. */
 export function grokSearchReplaceTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "search_replace",
         description: `Replace an exact string in a file.
 
-- Read the file with read_file before editing it.
 - read_file prefixes each line with "LINE_NUMBER→". That prefix is not part of the file: match only what comes after the →, with its exact indentation.
 - old_string must match exactly one place in the file. If it appears more than once, add surrounding lines to make it unique, or set replace_all to change every occurrence.`,
         parameters: Type.Object(

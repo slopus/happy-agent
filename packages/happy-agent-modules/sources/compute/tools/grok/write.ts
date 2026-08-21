@@ -13,7 +13,7 @@ export function grokWriteTool(compute: Compute, reads: FileReadLog) {
         name: "write",
         description: `Create or overwrite a file.
 
-- Writing to an existing path replaces the file — read it first with the read_file tool.
+- Writing to an existing path replaces the file.
 - Parent directories are created for you.
 - Prefer search_replace for changing part of a file; this tool is for new files and complete rewrites.`,
         parameters: Type.Object(
