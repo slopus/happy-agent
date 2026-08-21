@@ -12,11 +12,14 @@ import type {
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
+import type { InvokeSlashCommandRequest } from "@slopus/happy-agent-client";
 
 import { EventsModule } from "../events/index.js";
 import { HistoryModule, type HistoryMessage } from "../history/index.js";
+import type { SlashCommandDefinition } from "../slashCommands/index.js";
 import { UsageModule } from "../usage/index.js";
 import {
+    CompactionAgentBusyError,
     CompactionAlreadyRunningError,
     compactionIdSchema,
     compactionPageQuerySchema,
@@ -44,6 +47,31 @@ export class CompactionsModule implements AgentModule {
         private readonly usage: UsageModule,
         private readonly history: HistoryModule,
     ) {}
+
+    async slashCommands(
+        _ctx: Context,
+        _agentId: string,
+    ): Promise<readonly SlashCommandDefinition[]> {
+        return [
+            {
+                description: "Summarize older messages to free context space.",
+                hasArguments: false,
+                kind: "compaction",
+                name: "compact",
+            },
+        ];
+    }
+
+    async invokeSlashCommand(
+        ctx: Context,
+        agentId: string,
+        name: string,
+        _input: InvokeSlashCommandRequest,
+    ): Promise<void> {
+        if (name !== "compact") throw new Error(`The compactions module does not own /${name}.`);
+        if (this.events.activeRunId(agentId) !== undefined) throw new CompactionAgentBusyError();
+        await this.startManual(ctx, agentId);
+    }
 
     async get(ctx: Context, compactionId: string): Promise<Compaction | undefined> {
         assertCompactionId(compactionId);

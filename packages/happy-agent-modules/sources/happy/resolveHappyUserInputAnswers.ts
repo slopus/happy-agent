@@ -6,7 +6,7 @@ import type {
     UserInputAnswerInput,
     UserInputOptions,
     UserInputRequest,
-} from "@slopus/happy-agent-modules";
+} from "../userInput/index.js";
 
 const happyAnswerSchema = Type.Object(
     {

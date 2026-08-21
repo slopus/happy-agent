@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { UserInputRequest } from "@slopus/happy-agent-modules";
+import type { UserInputRequest } from "../userInput/index.js";
 import {
     createHappyAgentState,
     rememberHappyResolvedCommunication,

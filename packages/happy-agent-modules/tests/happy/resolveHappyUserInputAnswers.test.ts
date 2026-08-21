@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveHappyUserInputAnswers } from "../../sources/happy/index.js";
-import type { UserInputOptions, UserInputRequest } from "@slopus/happy-agent-modules";
+import type { UserInputOptions, UserInputRequest } from "../../sources/userInput/index.js";
 
 const CHOICES: UserInputOptions = {
     choices: [

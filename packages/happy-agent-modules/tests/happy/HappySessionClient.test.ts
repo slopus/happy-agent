@@ -17,7 +17,7 @@ import type {
     HappySocket,
     HappySyncDatabase,
 } from "../../sources/happy/index.js";
-import type { UserInputRequest } from "@slopus/happy-agent-modules";
+import type { UserInputRequest } from "../../sources/userInput/index.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 
 const AGENT_ID = "agent-1";

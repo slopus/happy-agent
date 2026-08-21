@@ -601,6 +601,7 @@ export * from "./observation/index.js";
 
 // Integration modules: Happy clients, MCP servers, and skills.
 export * from "./mcp/index.js";
+export * from "./slashCommands/index.js";
 export * from "./skills/index.js";
 
 // Profile: the one person this installation belongs to.

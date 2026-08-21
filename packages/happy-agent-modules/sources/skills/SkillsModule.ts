@@ -1,17 +1,22 @@
 import { basename, dirname, join } from "node:path";
 
+import { createId } from "@paralleldrive/cuid2";
 import {
     defineAgentTool,
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
+import type { InvokeSlashCommandRequest } from "@slopus/happy-agent-client";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { type Context } from "@steve.kite/stdlib";
 
 import type { ComputeModule, ComputePermissions, HostCompute } from "../compute/index.js";
+import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
+import type { SlashCommandDefinition } from "../slashCommands/index.js";
 import {
     MAX_SKILL_COUNT,
     MAX_SKILL_DOCUMENT_BYTES,
@@ -34,6 +39,8 @@ const exact = { additionalProperties: false } as const;
 const MAX_SKILL_DISCOVERY_ENTRIES = 4_096;
 const MAX_SKILL_FILES_INSPECTED = 256;
 const SKILL_DIRECTORY_PAGE_SIZE = 256;
+const SKILL_INVOCATIONS_KEY = "slash-command-invocations";
+const MAX_SKILL_INVOCATIONS_PER_RUN = 16;
 /** A directory skills are looked for under, and what the skills found there are called. */
 const discoveredRootSchema = Type.Object(
     {
@@ -64,6 +71,18 @@ const discoveryBudgetSchema = Type.Object(
     exact,
 );
 type DiscoveryBudget = Static<typeof discoveryBudgetSchema>;
+const skillInvocationSchema = Type.Object(
+    {
+        content: Type.String({ minLength: 1, maxLength: MAX_SKILL_DOCUMENT_BYTES }),
+        messageId: Type.String({ minLength: 1, maxLength: 256 }),
+        name: Type.String({ minLength: 1, maxLength: 128 }),
+    },
+    exact,
+);
+const skillInvocationsSchema = Type.Array(skillInvocationSchema, {
+    maxItems: MAX_SKILL_INVOCATIONS_PER_RUN,
+});
+type SkillInvocation = Static<typeof skillInvocationSchema>;
 
 const callableSchema = Type.Function([], Type.Any());
 /**
@@ -96,9 +115,61 @@ const skillsComputeSchema = Type.Object(
 export class SkillsModule implements AgentModule {
     readonly name = "skills";
     readonly #compute: ComputeModule;
+    #agents: AgentSystemRef | undefined;
 
     constructor(compute: ComputeModule) {
         this.#compute = compute;
+    }
+
+    async slashCommands(ctx: Context, agentId: string): Promise<readonly SlashCommandDefinition[]> {
+        return (await this.#discover(ctx, agentId)).map((entry) => ({
+            description: entry.description,
+            hasArguments: true,
+            kind: "skill",
+            name: entry.name,
+        }));
+    }
+
+    async invokeSlashCommand(
+        ctx: Context,
+        agentId: string,
+        name: string,
+        input: InvokeSlashCommandRequest,
+    ): Promise<void> {
+        const agents = this.#agents;
+        if (agents === undefined) throw new Error("The skills module has not started.");
+        const document = await this.read(ctx, agentId, { name });
+        const id = createId();
+        const text =
+            input.arguments === undefined
+                ? `Use the /${name} skill.`
+                : `Use the /${name} skill.\n\n${input.arguments}`;
+        await agents.send(
+            ctx,
+            agentId,
+            { role: "user", content: [{ type: "text", text }] },
+            {
+                effort: input.mode.effort as never,
+                id,
+                metadata: {
+                    ...USER_MESSAGE_ORIGIN_METADATA,
+                    ...(input.mutationId === undefined ? {} : { mutationId: input.mutationId }),
+                    mode: input.mode,
+                    skillInvocation: {
+                        content: document.content,
+                        messageId: id,
+                        name: document.name,
+                    },
+                },
+                model: input.mode.modelId,
+                permissionMode: input.mode.permissionMode,
+                provider: input.mode.providerId,
+                ...(input.mode.serviceTier === null
+                    ? {}
+                    : { serviceTier: input.mode.serviceTier as never }),
+            },
+        );
+        await agents.updateMetadata(ctx, agentId, { lastMode: input.mode });
     }
 
     /** Discover a bounded page from the current skill catalog. */
@@ -172,7 +243,24 @@ export class SkillsModule implements AgentModule {
     readonly #hooks: AgentModuleHooks = {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const entries = await this.#discover(ctx, scope.agent.id);
-            return entries.length === 0 ? "" : formatInstructions(entries);
+            const invocations = await this.#skillInvocations(ctx, scope);
+            return [
+                entries.length === 0 ? "" : formatInstructions(entries),
+                ...invocations.map(formatInvokedSkill),
+            ]
+                .filter((text) => text.length > 0)
+                .join("\n\n");
+        },
+
+        messageAcceptedTransact: async (ctx, scope, accepted) => {
+            const invocation = accepted.metadata?.["skillInvocation"];
+            if (!Value.Check(skillInvocationSchema, invocation)) return;
+            const current = await this.#skillInvocations(ctx, scope);
+            if (current.some((candidate) => candidate.messageId === invocation.messageId)) return;
+            if (current.length >= MAX_SKILL_INVOCATIONS_PER_RUN) {
+                throw new Error("Too many skills were invoked in one agent run.");
+            }
+            await scope.runKV.write(ctx, SKILL_INVOCATIONS_KEY, [...current, invocation]);
         },
 
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
@@ -200,7 +288,25 @@ export class SkillsModule implements AgentModule {
         },
     };
 
-    readonly beforeStart = (): AgentModuleHooks => this.#hooks;
+    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+        this.#agents = agents;
+        return this.#hooks;
+    };
+
+    async #skillInvocations(ctx: Context, scope: AgentModuleScope): Promise<SkillInvocation[]> {
+        const runKV = scope.runKV;
+        if (runKV === undefined) return [];
+        const stored = await runKV.read(ctx, SKILL_INVOCATIONS_KEY);
+        if (stored === undefined) return [];
+        if (!Value.Check(skillInvocationsSchema, stored)) {
+            throw new Error("The skills module found invalid invoked-skill state.");
+        }
+        return structuredClone(stored);
+    }
+}
+
+function formatInvokedSkill(invocation: SkillInvocation): string {
+    return `The user directly invoked the /${invocation.name} skill for this run. Follow its complete instructions below.\n\n<skill name="${invocation.name}">\n${invocation.content}\n</skill>`;
 }
 
 async function discoverSkills(

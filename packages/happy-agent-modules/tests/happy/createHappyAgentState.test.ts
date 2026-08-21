@@ -6,7 +6,7 @@ import {
     toHappyCommunication,
     type HappyResolvedCommunication,
 } from "../../sources/happy/index.js";
-import type { UserInputRequest } from "@slopus/happy-agent-modules";
+import type { UserInputRequest } from "../../sources/userInput/index.js";
 
 function request(id: string, overrides: Partial<UserInputRequest> = {}): UserInputRequest {
     return {

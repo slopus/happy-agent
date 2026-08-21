@@ -7,6 +7,7 @@ import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
+import type { MessageMode } from "@slopus/happy-agent-client";
 import {
     currentAgentEnvironment,
     type AgentConfig,
@@ -22,6 +23,7 @@ import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
 import {
+    CompactionAgentBusyError,
     CompactionAlreadyRunningError,
     CompactionsModule,
     compactionSchema,
@@ -64,6 +66,12 @@ import {
     type Project,
     type ProjectEvent,
 } from "../projects/index.js";
+import {
+    SlashCommandInputError,
+    SlashCommandNotFoundError,
+    SlashCommandsModule,
+    slashCommandCatalogEventPayloadSchema,
+} from "../slashCommands/index.js";
 import {
     TerminalError,
     TerminalsModule,
@@ -116,6 +124,7 @@ import {
     draftBodySchema,
     emptyMutationBodySchema,
     gitWatchBodySchema,
+    invokeSlashCommandRequestSchema,
     messageSendBodySchema,
     profilePatchBodySchema,
     projectCloneBodySchema,
@@ -199,6 +208,7 @@ export class ApiModule implements AgentModule {
     readonly #usage: UsageModule;
     readonly #profile: ProfileModule;
     readonly #compute: ComputeModule;
+    readonly #slashCommands: SlashCommandsModule;
     readonly #mutationIds = new AsyncLocalStorage<string>();
     readonly #backgroundScope = new AsyncResource("happy-agent-api");
     /** Agents whose usage-driven metadata refresh is already scheduled. */
@@ -259,6 +269,7 @@ export class ApiModule implements AgentModule {
         usage: UsageModule,
         profile: ProfileModule,
         compute: ComputeModule,
+        slashCommands: SlashCommandsModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -275,6 +286,7 @@ export class ApiModule implements AgentModule {
         this.#usage = usage;
         this.#profile = profile;
         this.#compute = compute;
+        this.#slashCommands = slashCommands;
     }
 
     readonly beforeStart = async (
@@ -1038,6 +1050,17 @@ export class ApiModule implements AgentModule {
             await this.#waitForPendingMessageAnnouncements(agentId);
             await this.#flushAcceptedMessages(ctx, agentId);
         }
+        if (event.type === "slash_commands.updated") {
+            if (!Value.Check(slashCommandCatalogEventPayloadSchema, payload)) {
+                throw new Error("The slash command catalog event is invalid.");
+            }
+            this.#journal.append(
+                "agent.slash_commands.updated",
+                { agentId, slashCommands: payload.slashCommands },
+                event.occurredAt,
+            );
+            return;
+        }
         if (event.type === "agent.created") {
             await this.#announceCreatedAgent(ctx, agentId);
             await this.#refreshParentSubagents(ctx, agentId);
@@ -1728,8 +1751,7 @@ export class ApiModule implements AgentModule {
             const body = await bodyAs(request, agentCreateBodySchema, "agent creation");
             const agents = this.#agentSystem();
             if (body.id !== undefined && (await agents.config(ctx, body.id)) !== undefined) {
-                const existing = await this.#requireAgentResource(ctx, body.id);
-                sendJson(response, 201, { agent: existing });
+                sendJson(response, 201, await this.#focusedAgentResponse(ctx, body.id));
                 return true;
             }
             const ownership = await this.#resolveWorkspaceScope(ctx, body.workspaceId);
@@ -1774,14 +1796,15 @@ export class ApiModule implements AgentModule {
                     ...(body.mutationId === undefined ? {} : { mutationId: body.mutationId }),
                 });
             }
-            sendJson(response, 201, { agent });
+            sendJson(response, 201, {
+                agent,
+                slashCommands: await this.#slashCommands.catalog(ctx, created.id),
+            });
             return true;
         }
         const agentMatch = /^\/v0\/agents\/([a-z][a-z0-9]*)$/.exec(url.pathname);
         if (agentMatch !== null && request.method === "GET") {
-            sendJson(response, 200, {
-                agent: await this.#requireAgentResource(ctx, agentMatch[1] as string),
-            });
+            sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentMatch[1] as string));
             return true;
         }
         const action =
@@ -1831,6 +1854,7 @@ export class ApiModule implements AgentModule {
                 );
                 sendJson(response, 202, {
                     agent: await this.#requireAgentResource(ctx, agentId),
+                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
                     cursor,
                 });
                 return true;
@@ -1864,6 +1888,7 @@ export class ApiModule implements AgentModule {
                 }
                 sendJson(response, 202, {
                     agent: await this.#requireAgentResource(ctx, agentId),
+                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
                     run: await this.#runResource(ctx, run),
                     message: messageResource(this.#compactions.historyMessage(compaction)),
                     cursor,
@@ -1879,6 +1904,7 @@ export class ApiModule implements AgentModule {
                 );
                 sendJson(response, 200, {
                     agent: await this.#requireAgentResource(ctx, agentId),
+                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
                 });
                 return true;
             }
@@ -1907,6 +1933,7 @@ export class ApiModule implements AgentModule {
                 }
                 sendJson(response, 200, {
                     agent: await this.#requireAgentResource(ctx, agentId),
+                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
                 });
                 return true;
             }
@@ -1952,6 +1979,7 @@ export class ApiModule implements AgentModule {
                 }
                 sendJson(response, 200, {
                     agent: await this.#requireAgentResource(ctx, agentId),
+                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
                 });
                 return true;
             }
@@ -2013,6 +2041,74 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             return false;
+        }
+        const slashCommandImage =
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/slash-commands\/([^/]+)\/image$/.exec(url.pathname);
+        if (slashCommandImage !== null && request.method === "GET") {
+            const agentId = slashCommandImage[1] as string;
+            await this.#requireAgentResource(ctx, agentId);
+            const name = decodePathSegment(slashCommandImage[2] as string, "slash command name");
+            const image = await this.#slashCommands.image(ctx, agentId, name);
+            if (image === undefined) throw notFound("The slash command has no image.");
+            if (request.headers["if-none-match"] === image.etag) {
+                response.writeHead(304, {
+                    "cache-control": "no-store",
+                    etag: image.etag,
+                });
+                response.end();
+                return true;
+            }
+            response.writeHead(200, {
+                "cache-control": "no-store",
+                "content-length": image.blob.byteLength,
+                "content-type": image.mediaType,
+                etag: image.etag,
+            });
+            response.end(Buffer.from(image.blob));
+            return true;
+        }
+        const slashCommand = /^\/v0\/agents\/([a-z][a-z0-9]*)\/slash-commands\/([^/]+)$/.exec(
+            url.pathname,
+        );
+        if (slashCommand !== null && request.method === "POST") {
+            const agentId = slashCommand[1] as string;
+            await this.#requireAgentResource(ctx, agentId);
+            const name = decodePathSegment(slashCommand[2] as string, "slash command name");
+            const body = await bodyAs(
+                request,
+                invokeSlashCommandRequestSchema,
+                "slash command invocation",
+            );
+            this.#assertAvailableAgentMode(body.mode);
+            const cursor = this.#journal.cursor();
+            let invoked;
+            try {
+                invoked = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await this.#slashCommands.invoke(ctx, agentId, name, body),
+                );
+            } catch (error: unknown) {
+                if (error instanceof SlashCommandNotFoundError) {
+                    throw notFound(error.message);
+                }
+                if (error instanceof SlashCommandInputError) {
+                    throw invalidRequest(error.message);
+                }
+                if (
+                    error instanceof CompactionAgentBusyError ||
+                    error instanceof CompactionAlreadyRunningError
+                ) {
+                    throw new ApiError(409, "conflict", error.message);
+                }
+                throw error;
+            }
+            sendJson(response, 202, {
+                agent: await this.#requireAgentResource(ctx, agentId),
+                slashCommands: invoked.slashCommands,
+                command: invoked.command,
+                cursor,
+            });
+            return true;
         }
         // Question IDs are provider tool-call IDs, which mix cases, underscores, and hyphens.
         const answer =
@@ -2302,11 +2398,12 @@ export class ApiModule implements AgentModule {
         // Capture first so every concurrent mutation is either in this snapshot or replayed.
         const cursor = this.#journal.cursor();
         const agent = await this.#requireAgentResource(ctx, agentId);
-        const [draft, mode, usage, pending] = await Promise.all([
+        const [draft, mode, usage, pending, slashCommands] = await Promise.all([
             this.#agentDraft(ctx, agentId),
             this.#agentMode(ctx, agentId),
             this.#agentUsage(ctx, agentId),
             this.#history.pending(ctx, agentId),
+            this.#slashCommands.catalog(ctx, agentId),
         ]);
         return {
             ...usage,
@@ -2314,8 +2411,33 @@ export class ApiModule implements AgentModule {
             draft,
             mode,
             pending: pending.map(pendingMessageResource),
+            slashCommands,
             cursor,
         };
+    }
+
+    async #focusedAgentResponse(ctx: Context, agentId: string): Promise<Record<string, unknown>> {
+        const agent = await this.#requireAgentResource(ctx, agentId);
+        return {
+            agent,
+            slashCommands: await this.#slashCommands.catalog(ctx, agentId),
+        };
+    }
+
+    #assertAvailableAgentMode(mode: MessageMode): void {
+        const selected = this.#config.models.find(
+            (model) => model.providerId === mode.providerId && model.id === mode.modelId,
+        );
+        if (
+            selected === undefined ||
+            !selected.effortLevels.some((effort) => effort === mode.effort) ||
+            (mode.serviceTier !== null &&
+                !selected.serviceTiers?.some((tier) => tier === mode.serviceTier))
+        ) {
+            throw invalidRequest(
+                "The selected provider, model, effort, or service tier is unavailable.",
+            );
+        }
     }
 
     async #requireAgentResource(ctx: Context, agentId: string): Promise<Record<string, unknown>> {
@@ -3847,6 +3969,14 @@ function requestUrl(request: IncomingMessage): URL {
         return new URL(request.url ?? "/", "http://happy-agent.invalid");
     } catch {
         throw invalidRequest("The request URL is invalid.");
+    }
+}
+
+function decodePathSegment(value: string, name: string): string {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        throw invalidRequest(`The ${name} is not valid URL encoding.`);
     }
 }
 

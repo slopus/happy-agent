@@ -113,6 +113,22 @@ describe("CompactionsModule", () => {
         for (const database of databases.splice(0)) database.close();
     });
 
+    it("contributes the argument-free compaction command", async () => {
+        const environment = await createEnvironment("compactions-slash-command");
+        databases.push(environment.database);
+
+        await expect(
+            environment.compactions.slashCommands(environment.database.context, "agent1"),
+        ).resolves.toEqual([
+            {
+                description: "Summarize older messages to free context space.",
+                hasArguments: false,
+                kind: "compaction",
+                name: "compact",
+            },
+        ]);
+    });
+
     it("records successful manual lifecycle and the first replacement measurement", async () => {
         const environment = await createEnvironment("compactions-manual-success");
         databases.push(environment.database);

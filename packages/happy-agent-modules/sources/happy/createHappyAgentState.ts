@@ -1,4 +1,4 @@
-import type { UserInputRequest } from "@slopus/happy-agent-modules";
+import type { UserInputRequest } from "../userInput/index.js";
 
 /**
  * Happy carries a question the agent asked on its own channel, apart from

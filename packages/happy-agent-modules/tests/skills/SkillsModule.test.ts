@@ -1,3 +1,8 @@
+import type {
+    AgentBaseMessageOptions,
+    AgentQueuedMessage,
+    AgentSystemRef,
+} from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
@@ -97,6 +102,101 @@ describe("SkillsModule", () => {
         await expect(module.list(ctx, agentId)).resolves.toMatchObject({
             skills: [{ name: "shared" }],
         });
+    });
+
+    it("contributes each skill as a command and injects the invoked document for the run", async () => {
+        const compute = new FakeCompute("/workspace");
+        compute.directories.add("/workspace/.git");
+        compute.write(
+            "/workspace/.agents/skills/review/SKILL.md",
+            skill("review", "Review the changes.", "Complete review instructions."),
+        );
+        const module = moduleFor(compute);
+        let sent:
+            | {
+                  readonly message: AgentQueuedMessage;
+                  readonly options: AgentBaseMessageOptions | undefined;
+              }
+            | undefined;
+        let metadataUpdate: unknown;
+        const agents = {
+            send: async (
+                _ctx: unknown,
+                _agentId: string,
+                message: AgentQueuedMessage,
+                options?: AgentBaseMessageOptions,
+            ) => {
+                sent = { message, options };
+                return {} as never;
+            },
+            updateMetadata: async (_ctx: unknown, _agentId: string, update: unknown) => {
+                metadataUpdate = update;
+                return {} as never;
+            },
+        } as unknown as AgentSystemRef;
+        const hooks = await resolveModuleHooks(ctx, module, agents);
+
+        await expect(module.slashCommands(ctx, agentId)).resolves.toEqual([
+            {
+                description: "Review the changes.",
+                hasArguments: true,
+                kind: "skill",
+                name: "review",
+            },
+        ]);
+        await module.invokeSlashCommand(ctx, agentId, "review", {
+            arguments: "focus on authentication",
+            mode: {
+                effort: "medium",
+                modelId: "openai/gpt-5.6-sol",
+                permissionMode: "auto",
+                providerId: "codex",
+                serviceTier: null,
+            },
+            mutationId: "command-1",
+        });
+
+        expect(sent?.message).toEqual({
+            role: "user",
+            content: [
+                {
+                    type: "text",
+                    text: "Use the /review skill.\n\nfocus on authentication",
+                },
+            ],
+        });
+        expect(sent?.options?.metadata).toMatchObject({
+            mutationId: "command-1",
+            mode: { modelId: "openai/gpt-5.6-sol" },
+            skillInvocation: {
+                content: expect.stringContaining("Complete review instructions."),
+                name: "review",
+            },
+        });
+        expect(metadataUpdate).toEqual({
+            lastMode: expect.objectContaining({ modelId: "openai/gpt-5.6-sol" }),
+        });
+
+        const values = new Map<string, unknown>();
+        const invokedScope = {
+            agent: { id: agentId },
+            runKV: {
+                read: async (_ctx: unknown, key: string) => values.get(key),
+                write: async (_ctx: unknown, key: string, value: unknown) => {
+                    values.set(key, value);
+                },
+            },
+        } as never;
+        const acceptedMetadata = sent?.options?.metadata;
+        await hooks.messageAcceptedTransact?.(ctx, invokedScope, {
+            id: sent?.options?.id ?? "missing",
+            kind: "send",
+            message: sent?.message ?? { role: "user", content: [] },
+            ...(acceptedMetadata === undefined ? {} : { metadata: acceptedMetadata }),
+        });
+        await expect(hooks.instructions?.(ctx, invokedScope)).resolves.toContain(
+            "Complete review instructions.",
+        );
     });
 
     it("bounds system instructions for a large valid catalog", async () => {

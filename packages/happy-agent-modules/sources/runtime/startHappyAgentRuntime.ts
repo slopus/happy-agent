@@ -53,6 +53,7 @@ import { ProjectsModule } from "../projects/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
+import { SlashCommandsModule } from "../slashCommands/index.js";
 import { SkillsModule } from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TasksModule } from "../tasks/index.js";
@@ -134,6 +135,7 @@ export interface HappyAgentRuntimeModules {
     readonly scheduling: SchedulingModule;
     readonly search: SearchModule;
     readonly secrets: SecretsModule;
+    readonly slashCommands: SlashCommandsModule;
     readonly skills: SkillsModule;
     readonly systemPrompt: SystemPromptModule;
     readonly tasks: TasksModule;
@@ -425,6 +427,7 @@ export async function startHappyAgentRuntime(
         const tasks = new TasksModule();
         const usage = new UsageModule(events);
         const compactions = new CompactionsModule(events, usage, history);
+        const slashCommands = new SlashCommandsModule(events, compactions, compute.skillsModule);
         const contextWindow = new ContextWindowModule(config);
         const workflows = new WorkflowsModule(config, collaboration, compute.computeModule);
         const apiModule = new ApiModule(
@@ -443,6 +446,7 @@ export async function startHappyAgentRuntime(
             usage,
             profile,
             compute.computeModule,
+            slashCommands,
         );
         api = apiModule;
 
@@ -472,6 +476,7 @@ export async function startHappyAgentRuntime(
             scheduling,
             search,
             secrets,
+            slashCommands,
             skills: compute.skillsModule,
             systemPrompt,
             tasks,
@@ -500,6 +505,7 @@ export async function startHappyAgentRuntime(
             usage,
             events,
             compactions,
+            slashCommands,
             contextWindow,
             profile,
             murmur,

@@ -122,3 +122,10 @@ export class CompactionAlreadyRunningError extends Error {
         this.name = "CompactionAlreadyRunningError";
     }
 }
+
+export class CompactionAgentBusyError extends Error {
+    constructor() {
+        super("A working agent cannot be compacted explicitly.");
+        this.name = "CompactionAgentBusyError";
+    }
+}

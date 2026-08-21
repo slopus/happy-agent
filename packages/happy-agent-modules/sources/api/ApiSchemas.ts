@@ -1,6 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import { cuid2Schema } from "@slopus/happy-agent-base";
 
+export { invokeSlashCommandRequestSchema } from "@slopus/happy-agent-client";
+
 import { createTerminalInputSchema, resizeTerminalInputSchema } from "../terminals/index.js";
 
 export const apiIdSchema = Type.String({
