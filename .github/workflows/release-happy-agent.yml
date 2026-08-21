@@ -1,0 +1,261 @@
+name: Release Happy Agent
+run-name: Release Happy Agent v${{ inputs.version }}
+
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: Semantic version without the leading v
+                required: true
+                type: string
+            release_notes:
+                description: Markdown change notes for the GitHub Release
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+concurrency:
+    group: release-happy-agent
+    cancel-in-progress: false
+
+env:
+    RELEASE_TAG: v${{ inputs.version }}
+    RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+    verify:
+        name: Verify release inputs and source
+        runs-on: ubuntu-24.04
+        timeout-minutes: 45
+
+        steps:
+            - name: Check out main
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+
+            - name: Validate release inputs
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_NOTES: ${{ inputs.release_notes }}
+              run: |
+                  if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+                      echo "Happy Agent releases must be dispatched from main." >&2
+                      exit 1
+                  fi
+                  if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+                      echo "Version must be semantic and must not include the leading v." >&2
+                      exit 1
+                  fi
+                  if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
+                      echo "Release notes must not be blank." >&2
+                      exit 1
+                  fi
+                  git fetch origin main --tags
+                  if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+                      echo "Happy Agent releases must start from the current main branch." >&2
+                      exit 1
+                  fi
+                  if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
+                      echo "Tag $RELEASE_TAG already exists." >&2
+                      exit 1
+                  fi
+                  if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+                      echo "Release $RELEASE_TAG already exists." >&2
+                      exit 1
+                  fi
+
+            - name: Set up pnpm
+              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+            - name: Set up Node.js
+              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Build Happy Agent JavaScript
+              run: |
+                  pnpm --filter @slopus/happy-agent-modules build
+                  pnpm --filter @slopus/happy-agent build
+
+            - name: Run type checks
+              run: |
+                  pnpm --filter @slopus/happy-agent-modules check
+                  pnpm --filter @slopus/happy-agent check
+
+            - name: Run tests
+              env:
+                  HOME: ${{ runner.temp }}/happy-agent-test-home
+                  TMPDIR: ${{ runner.temp }}
+              run: |
+                  mkdir -p "$HOME"
+                  pnpm --filter @slopus/happy-agent-modules test
+                  pnpm --filter @slopus/happy-agent test
+
+    build:
+        name: Build ${{ matrix.target }}
+        needs: verify
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 45
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - runner: macos-15
+                      target: darwin-arm64
+                    - runner: macos-15-intel
+                      target: darwin-x64
+                    - runner: ubuntu-24.04-arm
+                      target: linux-arm64
+                    - runner: ubuntu-24.04
+                      target: linux-x64
+
+        steps:
+            - name: Check out the verified commit
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+            - name: Set up pnpm
+              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+            - name: Set up Node.js
+              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Build Happy Agent
+              run: |
+                  pnpm --filter @slopus/happy-agent-modules build
+                  pnpm --filter @slopus/happy-agent build
+                  pnpm --filter @slopus/happy-agent build:bun --target "$TARGET"
+              env:
+                  HAPPY_AGENT_RELEASE_VERSION: ${{ inputs.version }}
+                  TARGET: ${{ matrix.target }}
+
+            - name: Smoke test the release binary
+              shell: bash
+              run: |
+                  binary="packages/happy-agent/dist/bin/happy-agent-$TARGET"
+                  test "$("$binary" --version)" = "Happy Agent $RELEASE_VERSION"
+                  "$binary" --help >/dev/null
+
+                  smoke_root="$(mktemp -d /tmp/happy-agent-release.XXXXXX)"
+                  export HAPPY_HOME_DIR="$smoke_root/home"
+                  cleanup() {
+                      "$binary" stop >/dev/null 2>&1 || true
+                  }
+                  trap cleanup EXIT
+
+                  "$binary" start
+                  "$binary" status
+                  "$binary" stop
+                  for attempt in {1..100}; do
+                      status_output="$("$binary" status)"
+                      if [[ "$status_output" == *"Daemon is not running."* ]]; then
+                          trap - EXIT
+                          exit 0
+                      fi
+                      sleep 0.1
+                  done
+                  echo "$status_output" >&2
+                  exit 1
+              env:
+                  TARGET: ${{ matrix.target }}
+
+            - name: Package release asset
+              shell: bash
+              run: |
+                  mkdir -p release-assets
+                  archive="happy-agent-$RELEASE_VERSION-$TARGET.tar.gz"
+                  tar -czf "release-assets/$archive" \
+                      -C packages/happy-agent/dist/bin \
+                      "happy-agent-$TARGET"
+                  (
+                      cd release-assets
+                      shasum -a 256 "$archive" > "$archive.sha256"
+                  )
+              env:
+                  TARGET: ${{ matrix.target }}
+
+            - name: Upload release asset
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: happy-agent-${{ matrix.target }}
+                  path: release-assets/*
+                  if-no-files-found: error
+                  retention-days: 7
+
+    publish:
+        name: Publish GitHub Release
+        needs:
+            - verify
+            - build
+        runs-on: ubuntu-24.04
+        timeout-minutes: 15
+        permissions:
+            contents: write
+
+        steps:
+            - name: Check out the verified commit
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+
+            - name: Download release assets
+              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              with:
+                  pattern: happy-agent-*
+                  path: release-assets
+                  merge-multiple: true
+
+            - name: Confirm the release target
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  git fetch origin main --tags
+                  if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+                      echo "The verified commit is no longer on main." >&2
+                      exit 1
+                  fi
+                  if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
+                      echo "Tag $RELEASE_TAG was created while this release was building." >&2
+                      exit 1
+                  fi
+                  if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+                      echo "Release $RELEASE_TAG was created while this release was building." >&2
+                      exit 1
+                  fi
+
+            - name: Publish the tag and GitHub Release
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_NOTES: ${{ inputs.release_notes }}
+              run: |
+                  mkdir -p .release
+                  printf '%s\n' "$RELEASE_NOTES" > .release/notes.md
+                  arguments=(
+                      "$RELEASE_TAG"
+                      --draft
+                      --target "$GITHUB_SHA"
+                      --title "Happy Agent $RELEASE_TAG"
+                      --notes-file .release/notes.md
+                  )
+                  if [[ "$RELEASE_VERSION" == *-* ]]; then
+                      arguments+=(--prerelease)
+                  fi
+                  gh release create "${arguments[@]}" release-assets/*
+                  gh release edit "$RELEASE_TAG" --draft=false
+                  release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+                  printf 'Published [%s](%s).\n' "$RELEASE_TAG" "$release_url" >> "$GITHUB_STEP_SUMMARY"

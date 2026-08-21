@@ -23,6 +23,7 @@ happy-agent stop     # ask the running daemon to shut down
 happy-agent status   # report whether the daemon is running
 happy-agent reload   # stop the running daemon, then start a fresh one
 happy-agent run      # run the daemon in the foreground of this process
+happy-agent --version
 ```
 
 `start` spawns a detached runtime process, redirects its output to the rotated daemon log, and
@@ -43,6 +44,12 @@ pnpm build:bun
 `packages/happy-agent/dist/bin/`. The normal TypeScript package stays Node-compatible; native
 libraries, WebAssembly, workers, and provider executables are adapted only at the binary build
 boundary.
+
+Releases are created from the manual **Release Happy Agent** GitHub Actions workflow on `main`.
+The workflow takes a semantic version without the leading `v` and Markdown release notes, runs the
+Happy Agent checks and tests, builds and smokes all four binaries, and only then publishes the
+GitHub Release and its `v<version>` tag. Rig's npm releases use the separate `rig-v<version>` tag
+namespace.
 
 ## Library
 

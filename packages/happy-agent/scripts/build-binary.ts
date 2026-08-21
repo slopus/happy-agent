@@ -3,6 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { createRequire, type Require } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { resolveBinaryVersion } from "./resolveBinaryVersion.js";
+
 const MINIMUM_BUN_VERSION = [1, 3, 14] as const;
 const VIRTUAL_ASSETS_MODULE = "happy-agent:binary-assets";
 const happyAgentRoot = resolve(import.meta.dirname, "..");
@@ -109,7 +111,9 @@ async function buildTarget(target: BinaryTarget): Promise<void> {
             target: target.bunTarget,
         },
         define: {
-            HAPPY_AGENT_BUILD_VERSION: JSON.stringify(readPackageVersion()),
+            HAPPY_AGENT_BUILD_VERSION: JSON.stringify(
+                resolveBinaryVersion(readPackageVersion(), process.env.HAPPY_AGENT_RELEASE_VERSION),
+            ),
             HAPPY_AGENT_STANDALONE: "true",
         },
         entrypoints: [join(happyAgentRoot, "dist", "cli.js")],

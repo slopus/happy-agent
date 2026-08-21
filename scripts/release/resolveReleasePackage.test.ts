@@ -9,7 +9,7 @@ describe("resolveReleasePackage", () => {
         const target = resolveReleasePackage(undefined);
 
         assert.equal(target.key, "rig");
-        assert.equal(target.tagPrefix, "v");
+        assert.equal(target.tagPrefix, "rig-v");
         assert.deepEqual(target.testArguments, [["run", "test:release"]]);
         const rootManifest = JSON.parse(
             readFileSync(new URL("../../package.json", import.meta.url), "utf8"),

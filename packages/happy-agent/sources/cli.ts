@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
 import { AgentDaemonError } from "./lifecycle/AgentDaemonError.js";
-import {
-    isAgentDaemonCommand,
-    runAgentDaemonCommand,
-} from "./lifecycle/runAgentDaemonCommand.js";
+import { getDaemonIdentity } from "./lifecycle/getDaemonIdentity.js";
+import { isAgentDaemonCommand, runAgentDaemonCommand } from "./lifecycle/runAgentDaemonCommand.js";
 
 /**
  * The `happy-agent` command line: the Happy agent is its own daemon and owns its whole boot
@@ -12,6 +10,9 @@ import {
  */
 
 const USAGE = `Usage: happy-agent <command>
+
+Options:
+  -v, --version  Show the installed Happy Agent version.
 
 Commands:
   start    Start the daemon when none is running, replacing one that does not match.
@@ -28,6 +29,10 @@ async function main(): Promise<void> {
     const [command, ...rest] = process.argv.slice(2);
     if (command === "--help" || command === "-h" || command === undefined) {
         console.log(USAGE);
+        return;
+    }
+    if (command === "--version" || command === "-v") {
+        console.log(`Happy Agent ${getDaemonIdentity().version}`);
         return;
     }
     if (rest.length > 0) {

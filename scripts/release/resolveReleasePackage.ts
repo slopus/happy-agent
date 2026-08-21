@@ -62,11 +62,11 @@ const PACKAGES: Record<ReleasePackageKey, ReleasePackage> = {
     rig: {
         buildArguments: ["run", "build"],
         checkArguments: ["run", "check"],
-        commitPrefix: "Release v",
+        commitPrefix: "Release Rig v",
         directory: fileURLToPath(new URL("../../packages/rig/", import.meta.url)),
         key: "rig",
         manifestPath: "packages/rig/package.json",
-        tagPrefix: "v",
+        tagPrefix: "rig-v",
         testArguments: [["run", "test:release"]],
     },
 };

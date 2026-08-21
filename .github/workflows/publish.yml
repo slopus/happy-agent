@@ -5,7 +5,7 @@ on:
         branches:
             - main
         tags:
-            - "v*"
+            - "rig-v*"
             - "happy-agent-base-v*"
             - "happy-plugins-v*"
             - "happy-providers-v*"
