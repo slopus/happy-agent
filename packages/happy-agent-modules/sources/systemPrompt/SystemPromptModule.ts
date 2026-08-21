@@ -168,6 +168,7 @@ export class SystemPromptModule implements AgentModule {
                     environment,
                     availableModels: this.#models,
                     currentModel: scope.agent.model,
+                    currentProvider: scope.agent.provider,
                 }),
             );
         }

@@ -166,6 +166,17 @@ describe("Grok continuation goldens", () => {
         expect(request.reasoning).toEqual({ summary: "concise" });
     });
 
+    it("omits unsupported reasoning effort for Grok Build", () => {
+        const request = createGrokOpenAIRequest({
+            apiModelId: "grok-build",
+            context: { instructions: "System prompt.", messages: [] },
+            effort: "medium",
+            tools: [],
+        });
+
+        expect(request.reasoning).toEqual({ summary: "concise" });
+    });
+
     it("maps reasoning, tool calls, encrypted continuation, usage, and completion", async () => {
         const events = await collect(
             mapOpenAIResponseStream(

@@ -21,13 +21,16 @@ export function assembleEnvironmentPrompt(options: {
     environment: AgentEnvironment;
     availableModels: readonly SystemPromptAvailableModel[];
     currentModel: string | undefined;
+    currentProvider: string;
 }): string {
-    const { environment, currentModel } = options;
+    const { currentModel, currentProvider, environment } = options;
     const shell = environment.shell.trim();
     const catalogEntry =
         currentModel === undefined
             ? undefined
-            : options.availableModels.find((model) => model.id === currentModel);
+            : (options.availableModels.find(
+                  (model) => model.id === currentModel && model.providerId === currentProvider,
+              ) ?? options.availableModels.find((model) => model.id === currentModel));
     const currentModelLine =
         currentModel === undefined
             ? undefined
@@ -41,6 +44,7 @@ export function assembleEnvironmentPrompt(options: {
         ...(shell.length === 0 ? [] : [`- Shell: ${shell}`]),
         `- OS version: ${environment.osVersion}`,
         ...(currentModelLine === undefined ? [] : [currentModelLine]),
+        `- Current provider: \`${currentProvider}\``,
         "- Scratch directory: `.context/` in the working directory. Strongly prefer it for temporary files, throwaway scripts, and notes or instructions for other agents; keep it gitignored (add the entry if missing) unless there is a real reason not to, and never commit it.",
         "- By default the user sees only the last message you send before stopping; earlier messages are collapsed. Include all essential information in that last message.",
         "- When the project is a Git folder, a workspace and a worktree are the same thing: creating a workspace creates a new worktree, and deleting a workspace archives it.",

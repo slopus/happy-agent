@@ -99,11 +99,13 @@ state this module keeps. That store exists only for the duration of a run and is
 transaction that settles it.
 
 Reading it and delivering the report both happen inside that settling transaction, which is what
-makes the report reliable. `send` composes with an outer storage transaction: the queue entry is
-written in it, an idle creator is loaded to receive it, and the run that reads it starts only once
-the transaction commits. So the collaborator has stopped and its creator has been told, or neither
-is true. If the delivery fails, the settlement rolls back with it and the run stays recorded as
-unfinished, so the report is made again the next time it settles rather than being lost.
+makes the report reliable. The report uses `steer`, so an active creator receives it after its
+current response and tool batch instead of waiting until the creator would otherwise stop.
+`steer` composes with an outer storage transaction: the queue entry is written in it, an idle
+creator is loaded to receive it, and the run that reads it starts only once the transaction
+commits. So the collaborator has stopped and its creator has been told, or neither is true. If the
+delivery fails, the settlement rolls back with it and the run stays recorded as unfinished, so the
+report is made again the next time it settles rather than being lost.
 
 ### Messages are asynchronous, always
 
@@ -132,7 +134,9 @@ carries no selection. Every later message carries none of them, so an agent that
 collaborator cannot turn it into a different model, make it think harder, or widen its permissions.
 
 The requested selection is validated against `AgentSystemRef.models` before anything is created, so
-a model the collection does not offer is refused rather than reaching a provider.
+a model the collection does not offer is refused rather than reaching a provider. When the call
+omits `provider`, the tool uses its creator's current provider if that provider serves the requested
+model; otherwise an unambiguous model route is still accepted and an ambiguous one is refused.
 
 A collaborator inherits its creator's environment and module configuration, and the `title` the
 call gave it is written to the agent's **real** `AgentMetadata` — not to a record of this module's

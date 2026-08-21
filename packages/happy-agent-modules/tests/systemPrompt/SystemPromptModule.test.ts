@@ -169,6 +169,7 @@ describe("SystemPromptModule", () => {
         expect(prompt).toContain("- Shell: /bin/zsh");
         expect(prompt).toContain("- OS version: 25.5.0");
         expect(prompt).toContain("- Current model: Claude Opus (`anthropic/opus-5`)");
+        expect(prompt).toContain("- Current provider: `provider`");
         expect(prompt).toContain(
             "- Scratch directory: `.context/` in the working directory. Strongly prefer it",
         );
@@ -215,6 +216,7 @@ describe("SystemPromptModule", () => {
             "- Shell: /bin/zsh",
             "- OS version: 25.5.0",
             "- Current model: Claude Opus (`anthropic/opus-5`)",
+            "- Current provider: `provider`",
             "- Scratch directory: `.context/` in the working directory. Strongly prefer it for temporary files, throwaway scripts, and notes or instructions for other agents; keep it gitignored (add the entry if missing) unless there is a real reason not to, and never commit it.",
             "- By default the user sees only the last message you send before stopping; earlier messages are collapsed. Include all essential information in that last message.",
             "- When the project is a Git folder, a workspace and a worktree are the same thing: creating a workspace creates a new worktree, and deleting a workspace archives it.",

@@ -39,8 +39,8 @@ import { sendMessageTool } from "./tools/send_message.js";
  * Agents are actors: each one already has a durable inbox, an identity, and a parent, all owned by
  * Agent Base. So this module stores nothing. It has no tables of its own — every question it
  * answers is asked of the agent collection through `AgentSystemRef`, and every message it sends
- * goes into the recipient's real inbox by way of `send`, which is already idempotent on the
- * message ID a durable tool call gives it. Its only migrations retire the schema it used to keep.
+ * goes into the recipient's real durable inbox. Agent Base makes those queue writes idempotent on
+ * the supplied message ID. Its only migrations retire the schema it used to keep.
  *
  * Messages are asynchronous, in both directions and without exception. Nothing here waits for an
  * answer, and nothing records that one is owed: a reply is simply a message sent back, and it
@@ -189,7 +189,12 @@ export class CollaborationModule implements AgentModule {
          * on every turn and provider prompt caching still applies.
          */
         tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
-            createAgentTool(this, scope.agent.id, this.#requireAgents().models),
+            createAgentTool(
+                this,
+                scope.agent.id,
+                scope.agent.provider,
+                this.#requireAgents().models,
+            ),
             sendMessageTool(this, scope.agent.id),
             interruptAgentTool(this, scope.agent.id),
         ],
@@ -238,7 +243,7 @@ export class CollaborationModule implements AgentModule {
                 ? failureReport(scope.agent.id, settlement.error)
                 : answerReport(scope.agent.id, answer);
         if (report === undefined) return;
-        await agents.send(
+        await agents.steer(
             ctx,
             parent,
             {

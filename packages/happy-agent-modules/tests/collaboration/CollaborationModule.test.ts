@@ -60,6 +60,7 @@ class Collection {
     readonly parents = new Map<string, string | null>();
     readonly created: Array<{ readonly id: string; readonly parent: string | null }> = [];
     readonly delivered: Delivery[] = [];
+    readonly steered: Delivery[] = [];
     readonly aborted: string[] = [];
     createReturnId: string | undefined;
     sendReturnId: string | undefined;
@@ -116,6 +117,27 @@ class Collection {
         return {
             id: this.sendReturnId ?? (options.id as string),
             delivery: "send",
+            accepted: "created",
+        };
+    }
+
+    async steer(
+        _ctx: Context,
+        agentId: string,
+        message: { readonly content: readonly { readonly text: string }[] },
+        options: Record<string, unknown>,
+    ): Promise<AgentMessageAcceptance> {
+        if (this.sendFailure !== undefined) throw this.sendFailure;
+        const delivery = {
+            toAgentId: agentId,
+            text: message.content[0]!.text,
+            options,
+        };
+        this.delivered.push(delivery);
+        this.steered.push(delivery);
+        return {
+            id: this.sendReturnId ?? (options.id as string),
+            delivery: "steer",
             accepted: "created",
         };
     }
@@ -400,6 +422,28 @@ describe("collaboration", () => {
         ).rejects.toThrow("available from more than one provider");
     });
 
+    it("uses the creator's current provider when an ambiguous model omits one", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+        const tools = await hooks.tools!(ctx, {
+            agent: { id: "parent", provider: "claude" },
+        } as never);
+        const create = tools.find((tool) => tool.name === "create_agent");
+        if (create === undefined) throw new Error("The create_agent tool was not offered.");
+
+        await create.execute(
+            ctx,
+            { ...TASK, model: "opus-5", effort: "medium" },
+            toolCall("currentproviderchild"),
+        );
+
+        expect(collection.delivered[0]!.options).toMatchObject({
+            model: "opus-5",
+            effort: "medium",
+            provider: "claude",
+        });
+    });
+
     it("refuses a service tier the chosen model does not offer", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
@@ -606,6 +650,7 @@ describe("collaboration", () => {
             toAgentId: "parent",
             text: "Collaborator child finished working. Its answer follows, verbatim.\n\nThe parser change looks correct.",
         });
+        expect(collection.steered).toHaveLength(1);
     });
 
     it("marks the report so it can be shown as a notice rather than as someone talking", async () => {
@@ -830,8 +875,8 @@ describe("collaboration", () => {
 
     it("describes the offered model/provider pairs without a dynamic capacity lookup", () => {
         const module = new CollaborationModule(abortModule());
-        const create = createAgentTool(module, "parent", MODELS);
-        const empty = createAgentTool(module, "parent", []);
+        const create = createAgentTool(module, "parent", "codex", MODELS);
+        const empty = createAgentTool(module, "parent", "codex", []);
 
         expect(create.description).toContain("codex + gpt-5.6-sol");
         expect(create.description).toContain("claude + opus-5");
@@ -842,7 +887,7 @@ describe("collaboration", () => {
     it("keeps send and create routine while interrupt remains reviewable", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
-        const create = createAgentTool(module, "parent", MODELS);
+        const create = createAgentTool(module, "parent", "codex", MODELS);
         const send = sendMessageTool(module, "parent");
         const interrupt = interruptAgentTool(module, "parent");
 
@@ -858,7 +903,7 @@ describe("collaboration", () => {
     it("routes tool execution through the public operations and renders complete model results", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
-        const create = createAgentTool(module, "parent", MODELS);
+        const create = createAgentTool(module, "parent", "codex", MODELS);
         const send = sendMessageTool(module, "parent");
         const interrupt = interruptAgentTool(module, "parent");
 

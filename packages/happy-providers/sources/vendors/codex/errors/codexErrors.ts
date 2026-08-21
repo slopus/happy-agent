@@ -329,6 +329,13 @@ export function isCodexWebSocketUnavailableError(error: unknown): boolean {
     const details = readDetails(error, new Set());
     if (details.statuses.some((status) => status === 404 || status === 405 || status === 426))
         return true;
+    if (
+        details.messages.some((message) =>
+            /websocket connection.+failed:\s*expected 101 status code/iu.test(message),
+        )
+    ) {
+        return true;
+    }
     return (
         details.statuses.includes(400) &&
         details.messages.some((message) =>

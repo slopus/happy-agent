@@ -191,6 +191,9 @@ Ordinary inference does not set `temperature` or `top_p`. The low, medium, and h
 the request body, system prompt, selected tool schemas, stable headers, encrypted reasoning, and
 normal completion against real CLI traffic.
 
+`grok-build` and `grok-composer-2.5-fast` do not accept `reasoning.effort`, so their requests keep
+the concise summary configuration but omit the unsupported effort field.
+
 The session tracks a logical user-turn index. A tool call and its externally supplied tool result
 remain part of the same turn and reuse the same header value. The index increments only when the
 rebuilt context introduces another real user query.

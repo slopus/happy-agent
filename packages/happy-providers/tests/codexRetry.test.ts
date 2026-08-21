@@ -158,6 +158,15 @@ describe("Codex stream retries", () => {
         expect(isRetryableCodexStreamError(disconnected)).toBe(true);
     });
 
+    it("recognizes the runtime's failed WebSocket upgrade as unavailable", () => {
+        const error = new Error(
+            "WebSocket connection to 'wss://chatgpt.com/backend-api/codex/responses' failed: Expected 101 status code",
+        );
+
+        expect(isCodexWebSocketUnavailableError(error)).toBe(true);
+        expect(isRetryableCodexStreamError(error)).toBe(true);
+    });
+
     it("retries WebSocket server rejections unless their code proves they are terminal", () => {
         const rejected = new WebSocketError("Invalid 'input': expected an array.", {
             type: "error",

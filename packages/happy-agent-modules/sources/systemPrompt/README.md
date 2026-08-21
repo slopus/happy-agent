@@ -48,8 +48,8 @@ the trimmed identity prompt, matching the legacy substitution order.
 `instructions(ctx, scope)` is asynchronous because AGENTS.md files are discovered live. Its exact
 order is the selected vendor prompt, the optional environment section, then the AGENTS.md
 specification and documents. The environment contains working directory, platform, shell, OS
-version, scratch-directory guidance, final-message visibility, workspace/worktree guidance, and
-the model catalog `ConfigModule.models` reports.
+version, the current model and provider IDs, scratch-directory guidance, final-message visibility,
+workspace/worktree guidance, and the model catalog `ConfigModule.models` reports.
 
 The catalog is read from configuration the first time the environment section is assembled and
 kept from then on, so every agent sees the same routes for the life of the installation. It

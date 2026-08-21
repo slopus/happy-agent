@@ -13,6 +13,7 @@ const websocket = vi.hoisted(() => ({
     emitCustomToolResponse: false,
     emitProductionShapeToolResponse: false,
     emptyCompletedOutput: false,
+    expected101Once: false,
     failMidstreamOnce: false,
     midstreamFailures: 0,
     failToolCallMidstreamOnce: false,
@@ -218,6 +219,16 @@ vi.mock("openai/resources/responses/ws", () => ({
                 this.messages.push({
                     type: "error",
                     error: Object.assign(new Error("not found"), { status: 404 }),
+                });
+                return;
+            }
+            if (websocket.expected101Once && request.generate !== false) {
+                websocket.expected101Once = false;
+                this.messages.push({
+                    type: "error",
+                    error: new Error(
+                        "WebSocket connection to 'wss://chatgpt.com/backend-api/codex/responses' failed: Expected 101 status code",
+                    ),
                 });
                 return;
             }
@@ -1662,6 +1673,37 @@ describe("Codex CLI mode WebSocket goldens", () => {
         ).toEqual([1, 2, 3]);
         expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
         expect(sse.requests).toHaveLength(2);
+        session.destroy();
+    });
+
+    it("falls back to SSE after the runtime rejects the WebSocket upgrade", async () => {
+        const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
+        websocket.expected101Once = true;
+        const session = await codexProvider("auto", 1).session("<SESSION_ID>", {
+            instructions: prompt.instructions,
+            tools: codexCliTools("gpt-5.6-sol"),
+        });
+        const events = [];
+        for await (const event of session.run(testContext, {
+            context: {
+                instructions: "",
+                messages: [
+                    {
+                        role: "user",
+                        content: [{ type: "text" as const, text: "fallback" }],
+                    },
+                ],
+            },
+            effort: "low",
+        })) {
+            events.push(event);
+        }
+
+        expect(events.filter((event) => event.type === "retrying")).toEqual([
+            expect.objectContaining({ attempt: 1, reason: expect.stringContaining("SSE") }),
+        ]);
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        expect(sse.requests).toHaveLength(1);
         session.destroy();
     });
 
