@@ -100,6 +100,11 @@ import type { QueryParameters } from "./endpointUrl.js";
 import { endpointUrl } from "./endpointUrl.js";
 import { readApiError } from "./HappyAgentApiError.js";
 import { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
+import {
+    reconnectingUpdates,
+    type HappyAgentUpdate,
+    type HappyAgentUpdatesOptions,
+} from "./updates.js";
 
 /** What the client needs to reach a daemon. */
 export interface HappyAgentClientOptions {
@@ -146,9 +151,9 @@ interface HttpRequest {
  *
  * Every request-response route of `packages/happy-agent/API.md` is one method,
  * and the event journal is available both as pages and as the live stream. The
- * client keeps no state beyond the endpoint and the token: it does not cache
- * resources, reconcile versions, retry, or reconnect. Those are decisions for
- * whatever builds a live view on top of it.
+ * The low-level request and stream methods keep no application state. The
+ * higher-level `updates` feed owns only its accepted event cursor and
+ * connection state so it can resume after transport interruptions.
  *
  * It is built on `fetch`, streams, `AbortController`, and standard timers
  * alone, so one build runs unchanged in Node and in a browser. Nothing is
@@ -1108,6 +1113,19 @@ export class HappyAgentClient {
             throw new EventStreamProtocolError("The event stream carried no body.");
         }
         yield* readEventStream(response.body);
+    }
+
+    /**
+     * Follows daemon updates across connection failures.
+     *
+     * Events are yielded in strictly increasing cursor order. Duplicate and
+     * older events are ignored, reconnects resume after the last accepted
+     * cursor with exponential backoff, and connection, interruption, and
+     * recoverable journal-gap transitions are visible in the same ordered
+     * iteration.
+     */
+    async *updates(options: HappyAgentUpdatesOptions = {}): AsyncGenerator<HappyAgentUpdate> {
+        yield* reconnectingUpdates((streamOptions) => this.streamEvents(streamOptions), options);
     }
 
     // Bootstrap

@@ -5,9 +5,12 @@ A typed client for the Happy agent HTTP API, specified endpoint by endpoint in
 
 `HappyAgentClient` is built from an endpoint and a bearer token. It has one typed method per
 request-response route, and it opens the event journal both as pulled pages and as a typed
-async iterator over the live Server-Sent Events stream, cancelled with an `AbortSignal`. It
-keeps no state: caching, version reconciliation, optimistic mutations, retries, and
-reconnection are decisions for whatever builds a live view on top of it.
+async iterator over the live Server-Sent Events stream, cancelled with an `AbortSignal`.
+`updates()` adds the durable client-side behavior a live view normally needs: it reconnects with
+exponential backoff from the last accepted cursor, filters duplicate and outdated events, and
+emits ordered `connected`, `state_lost`, `disconnected`, and `event` items. A state-loss item
+carries the fresh cursor from which authoritative snapshots can be reloaded. Resource caching,
+version reconciliation, and optimistic mutations remain decisions for the live view built on top.
 
 It is built on plain Web APIs — `fetch`, streams, `AbortController`, standard timers — so the
 same build runs unchanged in Node and in a browser. The daemon listens on a Unix domain

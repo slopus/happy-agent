@@ -5,6 +5,7 @@ export type { ApiErrorBody } from "./HappyAgentApiError.js";
 export { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
 export { readSseFrames } from "./readSseFrames.js";
 export type { SseFrame } from "./readSseFrames.js";
+export type { HappyAgentUpdate, HappyAgentUpdatesOptions } from "./updates.js";
 export { endpointUrl } from "./endpointUrl.js";
 export type { QueryParameters, QueryValue } from "./endpointUrl.js";
 export { applyMessageDelta } from "./applyMessageDelta.js";
