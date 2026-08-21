@@ -78,6 +78,12 @@ jobs:
                   node-version: "24"
                   package-manager-cache: false
 
+            - name: Enable Linux user namespaces
+              run: |
+                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+                  fi
+
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
