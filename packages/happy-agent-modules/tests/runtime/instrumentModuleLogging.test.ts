@@ -59,6 +59,8 @@ describe("instrumentModuleLogging", () => {
     });
 
     it("logs and preserves a hook failure", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
         const records: LogRecord[] = [];
         const ctx = withLogger(createRootContext(), recordingLogger(records));
         const failure = new Error("broken hook");
