@@ -16,6 +16,16 @@ transaction. The API projects those durable facts through ordinary `message.crea
 enforce one running attempt per agent, and attach the first later context measurement; it is not a
 second public source of truth.
 
+## Provider usage replaces the provisional source size
+
+A running compaction may begin with the most recent context measurement so the UI has an immediate
+provisional size. Once the provider completes, a usable normalized `usage.input` is the exact
+source size and replaces that provisional value. Native compaction may report multiple iterations,
+so retaining the earlier inference measurement can undercount the source substantially. A zero
+input does not replace a known positive context because test doubles and providers without a
+measurement use zeroed usage objects. The generated compaction output is not part of the source
+size.
+
 ## Recovery must settle visible state
 
 Failure, cancellation, settlement without a provider outcome, and daemon restart all move a

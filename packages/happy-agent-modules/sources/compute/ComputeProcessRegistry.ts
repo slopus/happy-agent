@@ -122,9 +122,11 @@ export class ComputeProcessRegistry {
         this.#handles.delete(processId);
         this.#exitedOrder.push({ agentId, processId });
         this.#emit({
+            agentId,
             changes: { endedAt, exitCode, status: "exited" },
             previousVersion: before.version,
             processId,
+            runningProcesses: this.#runningProcesses(agentId),
             type: "process_exited",
             version,
         });
@@ -201,7 +203,12 @@ export class ComputeProcessRegistry {
         sessionIds.set(sessionId, process.id);
         state.records.set(process.id, process);
         this.#handles.set(process.id, { agentId, compute, sessionId });
-        this.#emit({ process: structuredClone(process), type: "process_started" });
+        this.#emit({
+            agentId,
+            process: structuredClone(process),
+            runningProcesses: this.#runningProcesses(agentId),
+            type: "process_started",
+        });
         return process;
     }
 
@@ -259,6 +266,14 @@ export class ComputeProcessRegistry {
             state.sessionIds.set(compute, ids);
         }
         return ids;
+    }
+
+    #runningProcesses(agentId: string): number {
+        let running = 0;
+        for (const process of this.#processes.get(agentId)?.records.values() ?? []) {
+            if (process.status === "running") running += 1;
+        }
+        return running;
     }
 
     #emit(event: ComputeProcessEvent): void {

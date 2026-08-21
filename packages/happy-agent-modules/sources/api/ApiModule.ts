@@ -214,7 +214,6 @@ export class ApiModule implements AgentModule {
         { readonly promise: Promise<void>; readonly resolve: () => void }
     >();
     readonly #messageSendGates = new Map<string, Promise<void>>();
-    readonly #processOwners = new Map<string, string>();
     readonly #agentEventChains = new Map<string, Promise<void>>();
     readonly #backgroundMetadataUpdates = new Set<Promise<void>>();
 
@@ -268,6 +267,9 @@ export class ApiModule implements AgentModule {
         this.#subscribeToModules(ctx);
         await this.prepare();
         return {
+            agentRestoredTransact: async (hookCtx, _scope, agent) => {
+                await this.#restoreActiveRun(hookCtx, agent.id);
+            },
             metadataChangedTransact: async (hookCtx, scope, change) => {
                 const archivedAt = change.update["archivedAt"];
                 if (
@@ -284,6 +286,30 @@ export class ApiModule implements AgentModule {
             },
         };
     };
+
+    /** Rehydrate the public run projection before Agent Base resumes a process-interrupted turn. */
+    async #restoreActiveRun(ctx: Context, agentId: string): Promise<void> {
+        const runId = this.#events.activeRunId(agentId);
+        if (runId === undefined) return;
+        const page = await this.#history.runs(ctx, agentId, { limit: 1 });
+        const run = page.runs.find((candidate) => candidate.id === runId);
+        if (run === undefined || run.status !== "running") {
+            throw new Error("The active agent run is missing from durable history.");
+        }
+        const summary = await this.#usage.readRun(ctx, agentId, runId);
+        const restored = {
+            id: run.id,
+            status: "running",
+            reason: null,
+            startedAt: run.startedAt,
+            endedAt: null,
+            usage: summary.usage,
+            costUsd: summary.costUsd,
+        };
+        afterCommit(ctx, () => {
+            this.#activeRuns.set(agentId, restored);
+        });
+    }
 
     get ready(): boolean {
         return this.#ready;
@@ -335,7 +361,6 @@ export class ApiModule implements AgentModule {
         for (const pending of this.#pendingMessageAnnouncements.values()) pending.resolve();
         this.#pendingMessageAnnouncements.clear();
         this.#messageSendGates.clear();
-        this.#processOwners.clear();
         await Promise.allSettled(this.#agentEventChains.values());
         this.#agentEventChains.clear();
         await Promise.allSettled(this.#backgroundMetadataUpdates);
@@ -729,35 +754,20 @@ export class ApiModule implements AgentModule {
 
     async #convertProcessEvent(ctx: Context, event: ComputeProcessEvent): Promise<void> {
         if (event.type === "process_started") {
-            const process = event.process;
-            this.#processOwners.set(process.id, process.agentId);
-            this.#journal.append("process.started", { process });
-            await this.#announceProcessCount(ctx, process.agentId);
-            return;
+            this.#journal.append("process.started", { process: event.process });
+        } else {
+            this.#journal.append(
+                event.type === "process_exited" ? "process.exited" : "process.updated",
+                {
+                    processId: event.processId,
+                    previousVersion: event.previousVersion,
+                    version: event.version,
+                    changes: event.changes,
+                },
+            );
         }
-        const agentId = this.#processOwners.get(event.processId);
-        this.#journal.append(
-            event.type === "process_exited" ? "process.exited" : "process.updated",
-            {
-                ...(agentId === undefined ? {} : { agentId }),
-                processId: event.processId,
-                previousVersion: event.previousVersion,
-                version: event.version,
-                changes: event.changes,
-            },
-        );
-        if (agentId !== undefined) {
-            if (event.type === "process_exited") this.#processOwners.delete(event.processId);
-            await this.#announceProcessCount(ctx, agentId);
-        }
-    }
-
-    async #announceProcessCount(ctx: Context, agentId: string): Promise<void> {
-        const running = [...this.#processOwners.values()].filter(
-            (ownerAgentId) => ownerAgentId === agentId,
-        ).length;
-        await this.#updateAgentMetadata(ctx, agentId, {
-            processes: { running },
+        await this.#updateAgentMetadata(ctx, event.agentId, {
+            processes: { running: event.runningProcesses },
         });
     }
 

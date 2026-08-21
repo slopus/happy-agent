@@ -265,14 +265,17 @@ export class CompactionsModule implements AgentModule {
             (await database.running(ctx, agentId));
         if (running === undefined || running.status !== "running") return;
         const completedAt = Math.max(running.updatedAt, Date.now());
-        const tokensBefore = boundedTokens(attempt.contextTokens);
+        const provisionalTokens = boundedTokens(attempt.contextTokens);
+        const measuredTokens = boundedTokens(attempt.result.usage.input);
+        const tokensBefore =
+            measuredTokens === undefined || (measuredTokens === 0 && (provisionalTokens ?? 0) > 0)
+                ? provisionalTokens
+                : measuredTokens;
         const next: Compaction = {
             ...running,
             completedAt,
             status: "completed",
-            ...(running.tokensBefore === undefined && tokensBefore !== undefined
-                ? { tokensBefore }
-                : {}),
+            ...(tokensBefore === undefined ? {} : { tokensBefore }),
             updatedAt: completedAt,
             version: running.version + 1,
         };

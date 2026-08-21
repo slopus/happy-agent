@@ -41,6 +41,8 @@ export type ComputeProcessChanges = Static<typeof computeProcessChangesSchema>;
 
 /**
  * Daemon-lifetime lifecycle events emitted after the module's in-memory transition is visible.
+ * Every event names its owner and the post-transition running count so observers never need a
+ * reverse process index or a later, race-prone state query.
  *
  * The underscore names are the module vocabulary. ApiModule converts them to the public dotted
  * event vocabulary at its one wire boundary.
@@ -48,16 +50,20 @@ export type ComputeProcessChanges = Static<typeof computeProcessChangesSchema>;
 export const computeProcessEventSchema = Type.Union([
     Type.Object(
         {
+            agentId: Type.String({ minLength: 1, maxLength: 128 }),
             process: computeProcessSchema,
+            runningProcesses: Type.Integer({ minimum: 0 }),
             type: Type.Literal("process_started"),
         },
         exact,
     ),
     Type.Object(
         {
+            agentId: Type.String({ minLength: 1, maxLength: 128 }),
             changes: computeProcessChangesSchema,
             previousVersion: eventIdSchema,
             processId: Type.String({ minLength: 1, maxLength: 128 }),
+            runningProcesses: Type.Integer({ minimum: 0 }),
             type: Type.Literal("process_updated"),
             version: eventIdSchema,
         },
@@ -65,9 +71,11 @@ export const computeProcessEventSchema = Type.Union([
     ),
     Type.Object(
         {
+            agentId: Type.String({ minLength: 1, maxLength: 128 }),
             changes: computeProcessChangesSchema,
             previousVersion: eventIdSchema,
             processId: Type.String({ minLength: 1, maxLength: 128 }),
+            runningProcesses: Type.Integer({ minimum: 0 }),
             type: Type.Literal("process_exited"),
             version: eventIdSchema,
         },

@@ -42,7 +42,14 @@ describe("ComputeModule process lifecycle", () => {
         expect(running?.version).toMatch(
             /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
         );
-        expect(events).toEqual([{ process: running, type: "process_started" }]);
+        expect(events).toEqual([
+            {
+                agentId: AGENT_ID,
+                process: running,
+                runningProcesses: 1,
+                type: "process_started",
+            },
+        ]);
 
         const stopped = await module.stopProcess(ctx, AGENT_ID, running!.id);
         expect(stopped).toMatchObject({
@@ -52,8 +59,14 @@ describe("ComputeModule process lifecycle", () => {
         });
         expect(stopped?.version).not.toBe(running?.version);
         expect(events).toEqual([
-            { process: running, type: "process_started" },
             {
+                agentId: AGENT_ID,
+                process: running,
+                runningProcesses: 1,
+                type: "process_started",
+            },
+            {
+                agentId: AGENT_ID,
                 changes: {
                     endedAt: stopped?.endedAt,
                     exitCode: null,
@@ -61,6 +74,7 @@ describe("ComputeModule process lifecycle", () => {
                 },
                 previousVersion: running?.version,
                 processId: running?.id,
+                runningProcesses: 0,
                 type: "process_exited",
                 version: stopped?.version,
             },
@@ -108,6 +122,38 @@ describe("ComputeModule process lifecycle", () => {
         expect(events.filter((event) => event.type === "process_exited")).toHaveLength(1);
     });
 
+    it("reports the owner and exact running count after each transition", async () => {
+        const compute = new FakeCompute();
+        compute.script("first", { keepRunning: true });
+        compute.script("second", { keepRunning: true });
+        const { module, tool } = await computeToolset(ctx, compute, {
+            model: "anthropic/opus-5",
+        });
+        const events: ComputeProcessEvent[] = [];
+        module.onProcessEvent((event) => {
+            events.push(event);
+        });
+
+        await tool("Bash").execute(ctx, { command: "first", run_in_background: true });
+        await tool("Bash").execute(ctx, { command: "second", run_in_background: true });
+        const first = (await module.listProcesses(ctx, AGENT_ID)).find(
+            (process) => process.command === "first",
+        );
+        await module.stopProcess(ctx, AGENT_ID, first!.id);
+
+        expect(
+            events.map(({ agentId, runningProcesses, type }) => ({
+                agentId,
+                runningProcesses,
+                type,
+            })),
+        ).toEqual([
+            { agentId: AGENT_ID, runningProcesses: 1, type: "process_started" },
+            { agentId: AGENT_ID, runningProcesses: 2, type: "process_started" },
+            { agentId: AGENT_ID, runningProcesses: 1, type: "process_exited" },
+        ]);
+    });
+
     it("projects background processes without a backend detach hook", async () => {
         const compute = new FakeCompute();
         delete compute.shell.detachSession;
@@ -132,7 +178,14 @@ describe("ComputeModule process lifecycle", () => {
             command: "watch",
             status: "running",
         });
-        expect(events).toEqual([{ process: running, type: "process_started" }]);
+        expect(events).toEqual([
+            {
+                agentId: AGENT_ID,
+                process: running,
+                runningProcesses: 1,
+                type: "process_started",
+            },
+        ]);
 
         const stopped = await module.stopProcess(ctx, AGENT_ID, running!.id);
         expect(stopped).toMatchObject({

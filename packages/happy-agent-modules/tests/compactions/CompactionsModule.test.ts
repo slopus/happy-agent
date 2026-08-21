@@ -143,7 +143,7 @@ describe("CompactionsModule", () => {
         ).toMatchObject({
             id: started.id,
             status: "completed",
-            tokensBefore: 201_000,
+            tokensBefore: 120,
         });
 
         await inCompletion(database.context, async (txCtx) => {
@@ -165,6 +165,82 @@ describe("CompactionsModule", () => {
             "compaction.message-updated",
             "compaction.message-updated",
         ]);
+    });
+
+    it("replaces the prior context estimate with exact compaction request usage", async () => {
+        const environment = await createEnvironment("compactions-exact-source-usage");
+        databases.push(environment.database);
+        const { compactions, database, hooks } = environment;
+
+        await startBaseAttempt(hooks, database.context, scope(database.database), {
+            compactionId: "exactsource1",
+            contextTokens: 551_000,
+        });
+        await inCompletion(database.context, async (txCtx) => {
+            await hooks.historyErasedTransact?.(txCtx, scope(database.database), {
+                compactionId: "exactsource1",
+                contextTokens: 551_000,
+                loopId: "loop1",
+                turnId: "turn1",
+                result: {
+                    status: "completed",
+                    preservedMessages: [],
+                    usage: {
+                        input: 1_102_000,
+                        output: 29_800,
+                        cacheRead: 1_000_000,
+                        cacheWrite: 50_000,
+                        totalTokens: 1_131_800,
+                    },
+                    context: { instructions: "", messages: [] },
+                },
+            });
+        });
+
+        expect(
+            (await compactions.listPage(database.context, "agent1")).compactions[0],
+        ).toMatchObject({
+            status: "completed",
+            tokensBefore: 1_102_000,
+        });
+    });
+
+    it("keeps a positive provisional size when provider usage is zeroed", async () => {
+        const environment = await createEnvironment("compactions-zero-source-usage");
+        databases.push(environment.database);
+        const { compactions, database, hooks } = environment;
+
+        await startBaseAttempt(hooks, database.context, scope(database.database), {
+            compactionId: "zerosource1",
+            contextTokens: 551_000,
+        });
+        await inCompletion(database.context, async (txCtx) => {
+            await hooks.historyErasedTransact?.(txCtx, scope(database.database), {
+                compactionId: "zerosource1",
+                contextTokens: 551_000,
+                loopId: "loop1",
+                turnId: "turn1",
+                result: {
+                    status: "completed",
+                    preservedMessages: [],
+                    usage: {
+                        input: 0,
+                        output: 0,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                        totalTokens: 0,
+                    },
+                    context: { instructions: "", messages: [] },
+                },
+            });
+        });
+
+        expect(
+            (await compactions.listPage(database.context, "agent1")).compactions[0],
+        ).toMatchObject({
+            status: "completed",
+            tokensBefore: 551_000,
+        });
     });
 
     it("settles a failed manual provider outcome with its reason", async () => {
