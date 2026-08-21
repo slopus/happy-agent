@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,18 +22,21 @@ let directory: string;
 let files: ProjectFilesModule;
 let invalidateGit: ReturnType<typeof vi.fn>;
 let markGitChanged: ReturnType<typeof vi.fn>;
+let readGitFileAtRevision: ReturnType<typeof vi.fn>;
 let root: ProjectFileRoot;
 
 beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "happy-agent-files-"));
     invalidateGit = vi.fn();
     markGitChanged = vi.fn();
+    readGitFileAtRevision = vi.fn();
     files = new ProjectFilesModule(
         {} as ProjectsModule,
         {} as WorkspacesModule,
         {
             invalidate: invalidateGit,
             markChanged: markGitChanged,
+            readFileAtRevision: readGitFileAtRevision,
         } as unknown as GitModule,
     );
     root = { projectId: "project-1", root: await realpath(directory) };
@@ -172,6 +175,50 @@ describe("ProjectFilesModule writes", () => {
         } satisfies Partial<ProjectFileError>);
         await expect(readFile(join(directory, "note.txt"), "utf8")).resolves.toBe(
             winner.value.hash === hash("left") ? "left" : "right",
+        );
+    });
+});
+
+describe("ProjectFilesModule client access", () => {
+    it("treats paths protected from model writes as ordinary client files", async () => {
+        await mkdir(join(directory, ".git"));
+        await writeFile(join(directory, ".git", "config"), "[core]\n", "utf8");
+        await writeFile(join(directory, "AGENTS.md"), "Current instructions.\n", "utf8");
+        await writeFile(join(directory, "AGENTS_SECURITY.md"), "Security instructions.\n", "utf8");
+        readGitFileAtRevision.mockResolvedValue({
+            content: Buffer.from("Historical instructions.\n", "utf8"),
+            found: true,
+        });
+
+        const rootTree = await files.tree(root, { limit: 50 });
+        const gitTree = await files.tree(root, { limit: 50, path: ".git" });
+        const current = await files.read(root, { path: "AGENTS.md" });
+        const security = await files.read(root, { path: "AGENTS_SECURITY.md" });
+        const historical = await files.readRevision(root, {
+            path: "AGENTS.md",
+            revision: "HEAD~1",
+        });
+        await files.write(root, {
+            content: Buffer.from("Updated by the client.\n", "utf8").toString("base64"),
+            expectedHash: current.hash,
+            path: "AGENTS.md",
+        });
+
+        expect(rootTree.entries.map((entry) => entry.name)).toEqual(
+            expect.arrayContaining([".git", "AGENTS.md", "AGENTS_SECURITY.md"]),
+        );
+        expect(gitTree.entries.map((entry) => entry.name)).toContain("config");
+        expect(Buffer.from(current.content, "base64").toString("utf8")).toBe(
+            "Current instructions.\n",
+        );
+        expect(Buffer.from(security.content, "base64").toString("utf8")).toBe(
+            "Security instructions.\n",
+        );
+        expect(Buffer.from(historical.content ?? "", "base64").toString("utf8")).toBe(
+            "Historical instructions.\n",
+        );
+        await expect(readFile(join(directory, "AGENTS.md"), "utf8")).resolves.toBe(
+            "Updated by the client.\n",
         );
     });
 });

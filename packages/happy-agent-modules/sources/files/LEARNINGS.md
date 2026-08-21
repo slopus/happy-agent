@@ -29,3 +29,10 @@ event journal.
 The API resolves a project or child-workspace resource through `ProjectFilesModule` first. The
 index uses that canonical root without deriving another path, so a child workspace searches and
 lists its own checkout rather than the root project's files.
+
+## Viewer access is not a model permission boundary
+
+The project-files API is an authenticated client surface for browsing, previewing and occasional
+human edits. Every valid path inside the selected root is available there, including `.git`,
+`AGENTS.md` and `AGENTS_SECURITY.md`; traversal and symlink escapes remain forbidden. Restrictions
+on model writes belong to the compute sandbox and its host policy, not to the file viewer.

@@ -169,7 +169,6 @@ export class ProjectFilesModule implements AgentModule {
 
     readonly #git: GitModule;
     readonly #listeners = new Set<ProjectFilesEventListener>();
-    readonly #protectedPaths = [".git", "AGENTS.md", "AGENTS_SECURITY.md"] as const;
     readonly #projects: ProjectsModule;
     readonly #index = new WorkspaceFileIndex();
     readonly #workspaces: WorkspacesModule;
@@ -319,7 +318,7 @@ export class ProjectFilesModule implements AgentModule {
             throw new ProjectFileError(400, "invalid", "A file path is required.");
         }
         const path = await this.#resolveExisting(root.root, query.path, false);
-        await this.#assertSafe(path, root.root, query.path);
+        this.#assertWithinRoot(path, root.root);
         const relativeDirectory = dirname(query.path);
         this.#watcherInstance().watchDirectory(
             root,
@@ -343,7 +342,7 @@ export class ProjectFilesModule implements AgentModule {
         if (query.path.length === 0) {
             throw new ProjectFileError(400, "invalid", "A file path is required.");
         }
-        await this.#assertSafeRelative(query.path);
+        this.#assertRelativePath(query.path);
         // Git answering with nothing — an unknown revision, a path that was not a file there, or
         // content past the bound — is "this file has no content at that revision", which is what a
         // client asking to see an older version needs to be told.
@@ -366,11 +365,11 @@ export class ProjectFilesModule implements AgentModule {
         if (input.path.length === 0) {
             throw new ProjectFileError(400, "invalid", "A file path is required.");
         }
-        await this.#assertSafeRelative(input.path);
+        this.#assertRelativePath(input.path);
         const bytes = decodeBase64(input.content);
         this.#assertSize(bytes.byteLength);
         const target = await this.#resolveWritePath(root.root, input.path);
-        await this.#assertSafe(target, root.root, input.path);
+        this.#assertWithinRoot(target, root.root);
         const result = await this.#withWriteLock(
             target,
             async () => await this.#writeCompared(target, input, bytes),
@@ -486,7 +485,7 @@ export class ProjectFilesModule implements AgentModule {
     }
 
     async #resolveExisting(root: string, path: string, directory: boolean): Promise<string> {
-        await this.#assertSafeRelative(path);
+        this.#assertRelativePath(path);
         const candidate = resolve(root, path);
         if (!isWithin(root, candidate)) {
             throw new ProjectFileError(403, "forbidden", "The path is outside the selected root.");
@@ -497,7 +496,7 @@ export class ProjectFilesModule implements AgentModule {
         } catch {
             throw new ProjectFileError(404, "missing", "The requested path was not found.");
         }
-        await this.#assertSafe(canonical, root, path);
+        this.#assertWithinRoot(canonical, root);
         const information = await lstat(canonical);
         if (directory && !information.isDirectory()) {
             throw new ProjectFileError(400, "invalid", "The requested path is not a directory.");
@@ -532,38 +531,18 @@ export class ProjectFilesModule implements AgentModule {
         }
     }
 
-    async #assertSafe(path: string, root: string, relativePath: string): Promise<void> {
+    #assertWithinRoot(path: string, root: string): void {
         if (!isWithin(root, path)) {
             throw new ProjectFileError(403, "forbidden", "The path is outside the selected root.");
         }
-        const segments = relativePath.split("/");
-        if (
-            segments.some((segment) =>
-                this.#protectedPaths.some(
-                    (protectedPath) =>
-                        segment === protectedPath ||
-                        relativePath === protectedPath ||
-                        relativePath.startsWith(`${protectedPath}/`),
-                ),
-            )
-        ) {
-            throw new ProjectFileError(403, "forbidden", "The selected path is protected.");
-        }
     }
 
-    async #assertSafeRelative(path: string): Promise<void> {
+    #assertRelativePath(path: string): void {
         if (
             !Value.Check(relativeFilePathSchema, path) ||
             path.split("/").some((part) => part === ".." || part === ".")
         ) {
             throw new ProjectFileError(400, "invalid", "The path must be a relative POSIX path.");
-        }
-        if (
-            this.#protectedPaths.some(
-                (protectedPath) => path === protectedPath || path.startsWith(`${protectedPath}/`),
-            )
-        ) {
-            throw new ProjectFileError(403, "forbidden", "The selected path is protected.");
         }
     }
 
