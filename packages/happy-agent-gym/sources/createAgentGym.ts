@@ -40,6 +40,8 @@ export interface AgentGymOptions extends GymHomeOptions {
     readonly compaction?: GymCompactionHandler;
     /** Replaces the two models a gym serves. */
     readonly models?: readonly AgentModel[];
+    /** Test-owned environment values supplied to the daemon's configuration module. */
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
     /** The default budget for every `waitFor` in this gym. */
     readonly timeoutMs?: number;
     /** The version the daemon reports. */
@@ -245,9 +247,17 @@ class AgentGymInstance implements AgentGym {
         const daemon = await startHappyAgentDaemon({
             compute: createGymCompute(),
             environment: {
+                ANTHROPIC_API_KEY: undefined,
+                ANTHROPIC_AUTH_TOKEN: undefined,
+                CLAUDE_CODE_OAUTH_TOKEN: undefined,
+                CODEX_HOME: join(this.#home.root, "credentials", "codex"),
                 GIT_CEILING_DIRECTORIES: resolve(this.#home.root, "..", ".."),
+                GROK_HOME: join(this.#home.root, "credentials", "grok"),
                 HAPPY_AGENT_PROJECTS_DIRECTORY: join(this.#home.root, "projects"),
                 HAPPY_AGENT_WORKSPACES_DIRECTORY: join(this.#home.root, "workspaces"),
+                OPENAI_API_KEY: undefined,
+                XAI_API_KEY: undefined,
+                ...this.#options.environment,
             },
             happyHome: this.#home.happyHome,
             inference: {

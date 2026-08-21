@@ -29,6 +29,12 @@ export interface AgentModelContext {
 
 type CatalogAgentModel = AgentModel & AgentModelContext;
 
+/** One provider/model route in the complete catalog, whether or not configuration enables it. */
+export type ConfiguredAgentModel = AgentModel & {
+    readonly contextWindow: number | null;
+    readonly enabled: boolean;
+};
+
 const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freeze({
     "anthropic/fable-5": Object.freeze({
         contextWindow: 1_000_000,
@@ -123,17 +129,9 @@ export function agentModels(
     onIgnored?: (message: string) => void,
 ): readonly CatalogAgentModel[] {
     const values = configuration.values;
-    const available: CatalogAgentModel[] = [];
-    for (const [id, provider] of Object.entries(values.providers)) {
-        if (provider.enabled === false) continue;
-        const source = provider.type === "bedrock" ? BEDROCK_CATALOG : CATALOG;
-        for (const candidate of source) {
-            if (provider.type !== "bedrock" && candidate.providerId !== provider.type) continue;
-            if (provider.includeModels?.includes(candidate.id) === false) continue;
-            if (provider.excludeModels?.includes(candidate.id) === true) continue;
-            available.push({ ...candidate, providerId: id });
-        }
-    }
+    const available = agentModelCatalog(configuration)
+        .filter((candidate) => candidate.enabled)
+        .map(({ enabled: _enabled, ...candidate }) => candidate as CatalogAgentModel);
     const wantedModel = values.defaults.modelId;
     const wantedProvider = values.defaults.providerId;
     const chosen =
@@ -164,6 +162,31 @@ export function agentModels(
             ? chosen
             : { ...chosen, defaultEffort: effort as AgentModel["defaultEffort"] };
     return [first, ...available.filter((candidate) => candidate !== chosen)];
+}
+
+/**
+ * Every curated model for every configured provider, including disabled and filtered routes.
+ *
+ * Catalog responses must not be inferred from models that happened to run: an excluded model is
+ * still one the daemon knows, and its false `enabled` value is the fact clients need to display.
+ */
+export function agentModelCatalog(
+    configuration: HappyAgentConfiguration,
+): readonly ConfiguredAgentModel[] {
+    const models: ConfiguredAgentModel[] = [];
+    const values = configuration.values;
+    for (const [id, provider] of Object.entries(values.providers)) {
+        const source = provider.type === "bedrock" ? BEDROCK_CATALOG : CATALOG;
+        for (const candidate of source) {
+            if (provider.type !== "bedrock" && candidate.providerId !== provider.type) continue;
+            const enabled =
+                provider.enabled !== false &&
+                provider.includeModels?.includes(candidate.id) !== false &&
+                provider.excludeModels?.includes(candidate.id) !== true;
+            models.push({ ...candidate, enabled, providerId: id });
+        }
+    }
+    return models;
 }
 
 /** Context limits for one enabled provider/model route, when the curated catalog knows them. */

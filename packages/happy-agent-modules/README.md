@@ -147,14 +147,15 @@ its public methods, and its storage and event contracts.
 
 ### Work
 
-| Module                                       | What it adds                                                                                            |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| [Goal](sources/goal/README.md)               | One durable long-running objective per agent, kept moving until complete, blocked, paused, or cleared.  |
-| [Tasks](sources/tasks/README.md)             | A durable task list with dependencies, priority, ordering, and acyclicity validation.                   |
-| [Scheduling](sources/scheduling/README.md)   | Durable waits an agent can take, and messages it asks to be delivered to itself later.                  |
-| [Workflows](sources/workflows/README.md)     | Run a sandboxed Python script that orchestrates agents, and inspect, wait for, resume or cancel it.     |
-| [Usage](sources/usage/README.md)             | Advisory token and timing accounting for one agent and its tree, which never fails a turn.              |
-| [Compactions](sources/compactions/README.md) | Durable manual and automatic context-compaction lifecycle, run association, recovery, and measurements. |
+| Module                                            | What it adds                                                                                               |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| [Goal](sources/goal/README.md)                    | One durable long-running objective per agent, kept moving until complete, blocked, paused, or cleared.     |
+| [Tasks](sources/tasks/README.md)                  | A durable task list with dependencies, priority, ordering, and acyclicity validation.                      |
+| [Scheduling](sources/scheduling/README.md)        | Durable waits an agent can take, and messages it asks to be delivered to itself later.                     |
+| [Workflows](sources/workflows/README.md)          | Run a sandboxed Python script that orchestrates agents, and inspect, wait for, resume or cancel it.        |
+| [Usage](sources/usage/README.md)                  | Advisory token and timing accounting for one agent and its tree, which never fails a turn.                 |
+| [Provider usage](sources/providerUsage/README.md) | Memory-only vendor quota readings for every configured provider, refreshed independently every 15 minutes. |
+| [Compactions](sources/compactions/README.md)      | Durable manual and automatic context-compaction lifecycle, run association, recovery, and measurements.    |
 
 ### People and other agents
 

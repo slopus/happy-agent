@@ -50,6 +50,7 @@ import { PermissionsModule } from "../permissions/index.js";
 import { PresenceModule } from "../presence/index.js";
 import { ProfileModule } from "../profile/index.js";
 import { ProjectsModule } from "../projects/index.js";
+import { ProviderUsageModule } from "../providerUsage/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
@@ -132,6 +133,7 @@ export interface HappyAgentRuntimeModules {
     readonly presence: PresenceModule;
     readonly profile: ProfileModule<LibSQLDatabase>;
     readonly projects: ProjectsModule;
+    readonly providerUsage: ProviderUsageModule;
     readonly scheduling: SchedulingModule;
     readonly search: SearchModule;
     readonly secrets: SecretsModule;
@@ -426,6 +428,8 @@ export async function startHappyAgentRuntime(
         const secrets = new SecretsModule();
         const tasks = new TasksModule();
         const usage = new UsageModule(events);
+        const providerUsage = new ProviderUsageModule(config);
+        registerShutdown("provider-usage", async () => await providerUsage.close());
         const compactions = new CompactionsModule(events, usage, history);
         const slashCommands = new SlashCommandsModule(events, compactions, compute.skillsModule);
         const contextWindow = new ContextWindowModule(config);
@@ -444,6 +448,7 @@ export async function startHappyAgentRuntime(
             permissions,
             userInput,
             usage,
+            providerUsage,
             profile,
             compute.computeModule,
             slashCommands,
@@ -473,6 +478,7 @@ export async function startHappyAgentRuntime(
             presence,
             profile,
             projects,
+            providerUsage,
             scheduling,
             search,
             secrets,
@@ -503,6 +509,7 @@ export async function startHappyAgentRuntime(
             goal,
             tasks,
             usage,
+            providerUsage,
             events,
             compactions,
             slashCommands,

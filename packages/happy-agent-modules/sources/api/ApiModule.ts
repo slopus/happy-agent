@@ -66,6 +66,7 @@ import {
     type Project,
     type ProjectEvent,
 } from "../projects/index.js";
+import { ProviderUsageModule } from "../providerUsage/index.js";
 import {
     SlashCommandInputError,
     SlashCommandNotFoundError,
@@ -206,6 +207,7 @@ export class ApiModule implements AgentModule {
     readonly #permissions: PermissionsModule;
     readonly #userInput: UserInputModule;
     readonly #usage: UsageModule;
+    readonly #providerUsage: ProviderUsageModule;
     readonly #profile: ProfileModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
@@ -267,6 +269,7 @@ export class ApiModule implements AgentModule {
         permissions: PermissionsModule,
         userInput: UserInputModule,
         usage: UsageModule,
+        providerUsage: ProviderUsageModule,
         profile: ProfileModule,
         compute: ComputeModule,
         slashCommands: SlashCommandsModule,
@@ -284,6 +287,7 @@ export class ApiModule implements AgentModule {
         this.#permissions = permissions;
         this.#userInput = userInput;
         this.#usage = usage;
+        this.#providerUsage = providerUsage;
         this.#profile = profile;
         this.#compute = compute;
         this.#slashCommands = slashCommands;
@@ -3611,7 +3615,23 @@ export class ApiModule implements AgentModule {
     async #daemonUsage(ctx: Context): Promise<Record<string, unknown>> {
         const now = Date.now();
         const records = await this.#allUsageRecords(ctx);
+        const accountUsage = new Map(
+            this.#providerUsage.list().map((entry) => [entry.providerId, entry]),
+        );
+        const providers = Object.entries(this.#sanitizedCatalog().providers).map(
+            ([providerId, provider]) => {
+                const account = accountUsage.get(providerId);
+                return {
+                    providerId,
+                    ...provider,
+                    usage: account?.usage ?? null,
+                    checkedAt: account?.checkedAt ?? null,
+                    error: account?.error ?? null,
+                };
+            },
+        );
         return {
+            providers,
             hour: usageRecordsSince(records, now - 60 * 60 * 1_000),
             day: usageRecordsSince(records, now - 24 * 60 * 60 * 1_000),
             week: usageRecordsSince(records, now - 7 * 24 * 60 * 60 * 1_000),
@@ -3710,47 +3730,7 @@ export class ApiModule implements AgentModule {
 
     #sanitizedConfig(): Record<string, unknown> {
         const values = this.#config.configuration.values;
-        const models = Object.fromEntries(
-            this.#config.models.map((model) => [
-                model.id,
-                {
-                    name: model.name,
-                    contextWindow:
-                        this.#config.modelContext(model.providerId, model.id)?.contextWindow ??
-                        null,
-                    efforts: model.effortLevels,
-                    defaultEffort: model.defaultEffort,
-                    serviceTiers: model.serviceTiers ?? [],
-                },
-            ]),
-        );
-        const providers = Object.fromEntries(
-            Object.entries(values.providers).map(([id, provider]) => [
-                id,
-                {
-                    type: provider.type,
-                    enabled: provider.enabled !== false,
-                    models: this.#config.models
-                        .filter((model) => model.providerId === id)
-                        .map((model) => ({ id: model.id, enabled: provider.enabled !== false })),
-                },
-            ]),
-        );
-        // A scripted catalog may serve providers the configuration files never name; every model
-        // in the catalog must be reachable through the provider list a client sees.
-        for (const model of this.#config.models) {
-            if (model.providerId in providers) continue;
-            const compatibility = this.#config.providers.typeOf(model.providerId);
-            providers[model.providerId] = {
-                // The response's provider types are the configurable vendor set; a scripted
-                // provider reports the closest vendor shape instead of extending the protocol.
-                type: compatibility === null || compatibility === "gym" ? "codex" : compatibility,
-                enabled: true,
-                models: this.#config.models
-                    .filter((candidate) => candidate.providerId === model.providerId)
-                    .map((candidate) => ({ id: candidate.id, enabled: true })),
-            };
-        }
+        const { models, providers } = this.#sanitizedCatalog();
         return {
             defaults: {
                 providerId: values.defaults.providerId ?? this.#config.models[0]?.providerId,
@@ -3795,6 +3775,67 @@ export class ApiModule implements AgentModule {
             theme: values.theme,
             workspace: values.workspace,
         };
+    }
+
+    #sanitizedCatalog(): ApiCatalog {
+        const routes = this.#config.catalog;
+        const models: Record<string, ApiModelDefinition> = {};
+        for (const route of routes) {
+            const candidate: ApiModelDefinition = {
+                name: route.name,
+                contextWindow: route.contextWindow,
+                efforts: [...route.effortLevels],
+                defaultEffort: route.defaultEffort,
+                serviceTiers: [...(route.serviceTiers ?? [])],
+            };
+            const existing = models[route.id];
+            if (
+                existing === undefined ||
+                candidate.efforts.length + candidate.serviceTiers.length >
+                    existing.efforts.length + existing.serviceTiers.length
+            ) {
+                models[route.id] = candidate;
+            }
+        }
+
+        const providers: Record<string, ApiProviderDefinition> = {};
+        for (const [providerId, provider] of Object.entries(
+            this.#config.configuration.values.providers,
+        )) {
+            providers[providerId] = {
+                type: provider.type,
+                enabled: provider.enabled !== false,
+                models: [],
+            };
+        }
+        for (const route of routes) {
+            let provider = providers[route.providerId];
+            if (provider === undefined) {
+                const compatibility = this.#config.providers.typeOf(route.providerId);
+                provider = {
+                    type:
+                        compatibility === null || compatibility === "gym" ? "codex" : compatibility,
+                    enabled: true,
+                    models: [],
+                };
+                providers[route.providerId] = provider;
+            }
+            const definition = models[route.id];
+            if (definition === undefined) continue;
+            const efforts = [...route.effortLevels];
+            const serviceTiers = [...(route.serviceTiers ?? [])];
+            provider.models.push({
+                id: route.id,
+                enabled: route.enabled,
+                ...(sameStrings(efforts, definition.efforts) ? {} : { efforts }),
+                ...(route.defaultEffort === definition.defaultEffort
+                    ? {}
+                    : { defaultEffort: route.defaultEffort }),
+                ...(route.name === definition.name ? {} : { name: route.name }),
+                ...(sameStrings(serviceTiers, definition.serviceTiers) ? {} : { serviceTiers }),
+            });
+        }
+        return { models, providers };
     }
 
     #authenticate(request: IncomingMessage): void {
@@ -4044,6 +4085,38 @@ interface ApiUsageTokens {
     output: number;
     cacheRead: number;
     cacheWrite: number;
+}
+
+interface ApiCatalog {
+    readonly models: Record<string, ApiModelDefinition>;
+    readonly providers: Record<string, ApiProviderDefinition>;
+}
+
+interface ApiModelDefinition {
+    readonly name: string;
+    readonly contextWindow: number | null;
+    readonly efforts: string[];
+    readonly defaultEffort: string;
+    readonly serviceTiers: string[];
+}
+
+interface ApiProviderDefinition {
+    readonly type: string;
+    readonly enabled: boolean;
+    readonly models: ApiProviderModelReference[];
+}
+
+interface ApiProviderModelReference {
+    readonly id: string;
+    readonly enabled: boolean;
+    readonly efforts?: string[];
+    readonly defaultEffort?: string;
+    readonly name?: string;
+    readonly serviceTiers?: string[];
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function mergeUsageBreakdown(

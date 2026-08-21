@@ -217,21 +217,22 @@ describe("Happy Agent environment API", () => {
         "starts with empty daemon usage, records public inference usage, and retains it on restart",
         async () => {
             gym = await createAgentGym({
-                inference: [
-                    {
-                        content: [{ text: "usage recorded", type: "text" }],
-                        usage: {
-                            cacheRead: 2,
-                            cacheWrite: 1,
-                            input: 11,
-                            output: 7,
-                            totalTokens: 21,
-                        },
-                    },
-                ],
+                inference: (request) =>
+                    request.sessionId.startsWith("naming:")
+                        ? { content: [{ text: "<title>Usage test</title>", type: "text" }] }
+                        : {
+                              content: [{ text: "usage recorded", type: "text" }],
+                              usage: {
+                                  cacheRead: 2,
+                                  cacheWrite: 1,
+                                  input: 11,
+                                  output: 7,
+                                  totalTokens: 21,
+                              },
+                          },
                 timeoutMs: 15_000,
             });
-            await expect(gym.client.getUsage()).resolves.toEqual({
+            await expect(gym.client.getUsage()).resolves.toMatchObject({
                 day: {},
                 hour: {},
                 month: {},

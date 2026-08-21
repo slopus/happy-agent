@@ -16,11 +16,14 @@ import { parse, TomlDate, type TomlTable, type TomlValue } from "smol-toml";
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { getManagedWorkspacesDirectory } from "../impl/managedWorkspacesDirectory.js";
 import {
+    agentModelCatalog,
     agentModelContext,
     agentModels,
     agentProviders,
     type AgentModelContext,
+    type ConfiguredAgentModel,
 } from "./impl/agentCatalog.js";
+import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.js";
 import { providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
@@ -994,6 +997,7 @@ export class ConfigModule implements AgentModule {
     readonly #scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined;
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
     readonly #providerLifetime = new AbortController();
+    #catalog: readonly ConfiguredAgentModel[] | undefined;
     #models: readonly AgentModel[] | undefined;
     readonly #catalogNotices: string[] = [];
     #projectsHome: string | undefined;
@@ -1032,6 +1036,30 @@ export class ConfigModule implements AgentModule {
         return this.#models;
     }
 
+    /** Every configured provider/model route, including disabled and filtered catalog entries. */
+    get catalog(): readonly ConfiguredAgentModel[] {
+        if (this.#catalog !== undefined) return this.#catalog;
+        const catalog = [...agentModelCatalog(this.configuration)];
+        const scripted = this.#resolveScripted()?.models;
+        if (scripted !== undefined) {
+            for (const model of scripted) {
+                const route = catalog.findIndex(
+                    (candidate) =>
+                        candidate.providerId === model.providerId && candidate.id === model.id,
+                );
+                const entry: ConfiguredAgentModel = {
+                    ...model,
+                    contextWindow: agentModelContext(model.id)?.contextWindow ?? null,
+                    enabled: true,
+                };
+                if (route === -1) catalog.push(entry);
+                else catalog[route] = entry;
+            }
+        }
+        this.#catalog = catalog;
+        return this.#catalog;
+    }
+
     /** Curated context limits for one enabled provider/model route. */
     modelContext(providerId: string, modelId: string): AgentModelContext | undefined {
         const enabled = this.models.some(
@@ -1067,6 +1095,19 @@ export class ConfigModule implements AgentModule {
     /** Cancel every provider request owned by this daemon without coupling agents to its lifetime. */
     closeProviders(): void {
         this.#providerLifetime.abort(new Error("The Happy Agent runtime is shutting down."));
+    }
+
+    /** Ask one configured account for its complete normalized vendor usage reading. */
+    async readProviderUsage(
+        ctx: Context,
+        providerId: string,
+    ): Promise<import("@slopus/happy-providers").ProviderUsage | null> {
+        return await loadConfiguredProviderUsage({
+            environment: { ...process.env, ...this.#environment },
+            providerId,
+            providers: this.configuration.values.providers,
+            ...(ctx.lifetime === undefined ? {} : { signal: ctx.lifetime }),
+        });
     }
 
     /**

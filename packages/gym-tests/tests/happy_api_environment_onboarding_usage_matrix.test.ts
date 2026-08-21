@@ -1,3 +1,7 @@
+import { once } from "node:events";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+
 import { createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -5,10 +9,13 @@ const TEST_TIMEOUT_MS = 30_000;
 
 describe("Happy Agent onboarding and usage matrix", () => {
     const gyms = new Set<AgentGym>();
+    const servers = new Set<Server>();
 
     afterEach(async () => {
         await Promise.all([...gyms].map(async (gym) => await gym.dispose()));
         gyms.clear();
+        await Promise.all([...servers].map(closeServer));
+        servers.clear();
     });
 
     it(
@@ -146,7 +153,7 @@ describe("Happy Agent onboarding and usage matrix", () => {
         async () => {
             const gym = await start(gyms);
 
-            await expect(gym.client.getUsage()).resolves.toEqual({
+            await expect(gym.client.getUsage()).resolves.toMatchObject({
                 day: {},
                 hour: {},
                 month: {},
@@ -224,7 +231,12 @@ describe("Happy Agent onboarding and usage matrix", () => {
 
             await gym.restart();
 
-            await expect(gym.client.getUsage()).resolves.toEqual(before);
+            await expect(gym.client.getUsage()).resolves.toMatchObject({
+                day: before.day,
+                hour: before.hour,
+                month: before.month,
+                week: before.week,
+            });
         },
         TEST_TIMEOUT_MS,
     );
@@ -257,7 +269,140 @@ describe("Happy Agent onboarding and usage matrix", () => {
         },
         TEST_TIMEOUT_MS,
     );
+
+    it(
+        "environment-013 returns every provider, every model, and every account quota value",
+        async () => {
+            const server = createServer((request, response) => {
+                response.setHeader("content-type", "application/json");
+                if (request.url === "/api/oauth/usage") {
+                    response.end(
+                        JSON.stringify({
+                            subscription_type: "max",
+                            five_hour: {
+                                utilization: 31,
+                                resets_at: "2030-01-01T05:00:00.000Z",
+                            },
+                            seven_day: {
+                                utilization: 47,
+                                resets_at: "2030-01-08T00:00:00.000Z",
+                            },
+                            extra_usage: {
+                                is_enabled: true,
+                                monthly_limit: 100,
+                                used_credits: 42,
+                                utilization: 42,
+                            },
+                            limits: [],
+                        }),
+                    );
+                    return;
+                }
+                if (request.url === "/api/oauth/profile") {
+                    response.end(JSON.stringify({ account: { has_claude_max: true } }));
+                    return;
+                }
+                response.statusCode = 404;
+                response.end(JSON.stringify({ error: "not found" }));
+            });
+            servers.add(server);
+            server.listen(0, "127.0.0.1");
+            await once(server, "listening");
+            const address = server.address() as AddressInfo;
+            const gym = await createAgentGym({
+                config: [
+                    "[providers]",
+                    "default_enable = false",
+                    "",
+                    "[providers.claude]",
+                    "enabled = true",
+                    'oauth_token = "gym-oauth-token"',
+                    'include_models = ["anthropic/opus-5"]',
+                ].join("\n"),
+                environment: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(address.port)}` },
+                timeoutMs: 15_000,
+            });
+            gyms.add(gym);
+
+            const usage = await gym.waitUntil(async () => {
+                const candidate = await gym.client.getUsage();
+                return candidate.providers?.find(
+                    (provider) => provider.providerId === "claude" && provider.usage !== null,
+                ) === undefined
+                    ? undefined
+                    : candidate;
+            }, "Claude account usage to reach the public usage endpoint");
+            const providers = usage.providers ?? [];
+
+            expect(providers.map((provider) => provider.providerId)).toEqual([
+                "bedrock",
+                "claude",
+                "codex",
+                "grok",
+                "gym",
+            ]);
+            const claude = providers.find((provider) => provider.providerId === "claude");
+            expect(claude?.models).toEqual([
+                { id: "anthropic/opus-5", enabled: true },
+                { id: "anthropic/sonnet-5", enabled: false },
+                { id: "anthropic/fable-5", enabled: false },
+                { id: "anthropic/opus-4-8", enabled: false },
+            ]);
+            expect(providers.find((provider) => provider.providerId === "codex")?.models).toEqual([
+                { id: "openai/gpt-5.6-sol", enabled: false },
+                { id: "openai/gpt-5.6-terra", enabled: false },
+                { id: "openai/gpt-5.6-luna", enabled: false },
+            ]);
+            expect(providers.find((provider) => provider.providerId === "gym")?.models).toEqual([
+                { id: "gym/model", enabled: true },
+                { id: "gym/model-2", enabled: true },
+            ]);
+            expect(claude).toMatchObject({
+                type: "claude",
+                enabled: true,
+                checkedAt: expect.any(Number),
+                error: null,
+                usage: {
+                    providerId: "claude",
+                    vendor: "claude",
+                    capturedAt: expect.any(Number),
+                    planName: "Max",
+                    exhausted: false,
+                    windows: {
+                        fiveHour: {
+                            usedPercent: 31,
+                            startsAt: Date.parse("2030-01-01T00:00:00.000Z"),
+                            resetsAt: Date.parse("2030-01-01T05:00:00.000Z"),
+                            durationMs: 18_000_000,
+                        },
+                        weekly: {
+                            usedPercent: 47,
+                            startsAt: Date.parse("2030-01-01T00:00:00.000Z"),
+                            resetsAt: Date.parse("2030-01-08T00:00:00.000Z"),
+                            durationMs: 604_800_000,
+                        },
+                        monthly: null,
+                    },
+                    credits: {
+                        available: true,
+                        remainingCents: null,
+                        unlimited: false,
+                        usedPercent: 42,
+                    },
+                },
+            });
+            expect(usage).toMatchObject({ day: {}, hour: {}, month: {}, week: {} });
+        },
+        TEST_TIMEOUT_MS,
+    );
 });
+
+async function closeServer(server: Server): Promise<void> {
+    if (!server.listening) return;
+    await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+    });
+}
 
 async function start(gyms: Set<AgentGym>): Promise<AgentGym> {
     const gym = await createAgentGym({ timeoutMs: 15_000 });
@@ -284,11 +429,21 @@ async function startWithUsage(
           }[],
 ): Promise<AgentGym> {
     const turns = Array.isArray(usage) ? usage : [usage];
+    let turn = 0;
     const gym = await createAgentGym({
-        inference: turns.map((tokens) => ({
-            content: [{ text: "usage response", type: "text" as const }],
-            usage: tokens,
-        })),
+        inference: (request) => {
+            if (request.sessionId.startsWith("naming:")) {
+                return { content: [{ text: "<title>Usage test</title>", type: "text" }] };
+            }
+            const tokens = turns[turn];
+            turn += 1;
+            return tokens === undefined
+                ? { error: { message: `No usage fixture for turn ${String(turn - 1)}.` } }
+                : {
+                      content: [{ text: "usage response", type: "text" }],
+                      usage: tokens,
+                  };
+        },
         timeoutMs: 15_000,
     });
     gyms.add(gym);
