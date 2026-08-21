@@ -3,9 +3,9 @@ import { Type, type Static } from "@sinclair/typebox";
 /**
  * The shapes Happy speaks on the wire.
  *
- * Outbound envelopes are plain interfaces: Rig builds them, so there is nothing
+ * Outbound envelopes are plain interfaces: Happy Agent builds them, so there is nothing
  * to validate. Anything arriving from the server or the phone carries a schema,
- * because it arrives as JSON that Rig did not write.
+ * because it arrives as JSON that Happy Agent did not write.
  */
 
 /** Token counts as Happy names them. */
@@ -92,7 +92,7 @@ export type HappyRemoteSelection = Static<typeof happyRemoteSelectionSchema>;
 /**
  * What one decrypted remote message turned out to be.
  *
- * `echo` is Rig's own message coming back; it carries nothing new and must not
+ * `echo` is Happy Agent's own message coming back; it carries nothing new and must not
  * be replayed into the conversation.
  */
 export type HappyRemoteInput =
@@ -100,7 +100,7 @@ export type HappyRemoteInput =
     | { kind: "attachment"; mimeType?: string; name: string; ref: string; size: number }
     | { kind: "text"; selection: HappyRemoteSelection; text: string };
 
-/** Marks a message Rig itself produced, so its echo can be recognized. */
+/** Marks a message Happy Agent itself produced, so its echo can be recognized. */
 export const HAPPY_SENT_FROM_RIG = "rig";
 
 /** Namespaces the identity of a message that came from Happy. */

@@ -251,7 +251,7 @@ describe("Grok's compute command tools", () => {
         );
     });
 
-    it("asks no reviewer about work Rig itself started", async () => {
+    it("asks no reviewer about work Happy Agent itself started", async () => {
         const { tool } = await machine();
 
         expect(tool("get_command_or_subagent_output").shouldReviewInAutoMode({}, ctx)).toBe(false);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -12,7 +12,7 @@ afterEach(async () => {
 describe("user configuration initialization", () => {
     it("creates a commented happy.toml and empty global markdown files", async () => {
         const gym = await createGym({
-            inference: [{ content: [{ text: "Rig is ready.", type: "text" }] }],
+            inference: [{ content: [{ text: "Happy Terminal is ready.", type: "text" }] }],
         });
         running.add(gym);
 
@@ -26,8 +26,8 @@ describe("user configuration initialization", () => {
         gym.terminal.type("Confirm the session is ready.");
         gym.terminal.press("enter");
 
-        const snapshot = await gym.terminal.waitForText("Rig is ready.", 30_000);
-        expect(snapshot.text).toContain("Rig is ready.");
+        const snapshot = await gym.terminal.waitForText("Happy Terminal is ready.", 30_000);
+        expect(snapshot.text).toContain("Happy Terminal is ready.");
     }, 30_000);
 
     it("preserves an existing happy.toml while creating global markdown files", async () => {
@@ -68,7 +68,7 @@ describe("user configuration initialization", () => {
     }, 30_000);
 });
 
-const configurationDirectory = "/home/rig/happy/config";
+const configurationDirectory = "/home/happy-terminal/happy/config";
 
 const verifyGeneratedFilesScript = String.raw`
 import { readFile } from "node:fs/promises";

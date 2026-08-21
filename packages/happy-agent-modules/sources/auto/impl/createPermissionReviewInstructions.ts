@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
  * The guardian system prompt: the bundled tenant template with the built-in policy inserted,
  * optionally extended by the user's own security rules, followed by the output contract.
  *
- * The policy itself is ported byte-for-byte from Rig v1's
+ * The policy itself is ported byte-for-byte from Happy Agent v1's
  * `agent/prompt/permissionReviewInstructions.ts`, so the reviewer judges by exactly the same
  * rules. The output contract deliberately deviates: v1 asked for hand-assembled JSON, and a
  * rationale that quoted the user ("sync to main") produced invalid JSON, so an allow was read as

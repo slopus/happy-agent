@@ -3,8 +3,8 @@
  * Every setting ships commented out so the built-in defaults keep applying until the person
  * deliberately uncomments one.
  */
-export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Rig.
-# Uncomment only the settings you want to change. Rig uses its built-in defaults for everything
+export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
+# Uncomment only the settings you want to change. Happy Agent uses its built-in defaults for everything
 # left commented out.
 
 # [defaults]
@@ -13,7 +13,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Rig.
 # effort = "medium"
 # permission_mode = "auto"
 # service_tier = "default"
-# instructions = "Additional instructions for every Rig session."
+# instructions = "Additional instructions for every Happy Agent session."
 
 # [settings]
 # inference_max_retries = 10
@@ -141,7 +141,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Rig.
 # workdir = "/workspace"
 # socket_path = "/var/run/docker.sock"
 # The following options apply only when image is set.
-# name = "rig-session"
+# name = "happy-agent-session"
 # env = { NODE_ENV = "development" }
 # mounts = [{ source = "/host/path", target = "/container/path", read_only = true }]
 
@@ -158,7 +158,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Rig.
 
 # [mcp_servers.remote]
 # url = "https://example.com/mcp"
-# http_headers = { "X-Client" = "Rig" }
+# http_headers = { "X-Client" = "Happy Agent" }
 # bearer_token_env_var = "MCP_BEARER_TOKEN"
 # oauth_client_id_env_var = "MCP_CLIENT_ID"
 # oauth_client_secret_env_var = "MCP_CLIENT_SECRET"

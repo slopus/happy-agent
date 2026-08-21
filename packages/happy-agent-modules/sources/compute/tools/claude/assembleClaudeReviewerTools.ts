@@ -14,7 +14,7 @@ import { claudeReadTool } from "./Read.js";
  * A reviewer looks; it never changes the workspace. So this is the fixed subset of Claude's coding
  * tools that only gather evidence — the file reader, the search and glob tools, the shell, and the
  * seam that types into a shell the reviewer already started — and nothing that writes. It mirrors
- * Rig v1 exactly, where each of these tools, and only these, carried `availableToPermissionReviewer:
+ * Happy Agent v1 exactly, where each of these tools, and only these, carried `availableToPermissionReviewer:
  * true`: `Read`, `Grep`, `Glob`, `Bash`, and the seam that types into a shell. Claude's `Edit`,
  * `Write`, `BashOutput`, and `BashStop` were deliberately not flagged, so they are deliberately
  * absent here too. The array

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -12,7 +12,7 @@ afterEach(async () => {
 describe("TUI reload after daemon failure", () => {
     it("starts a replacement daemon and resumes the same session", async () => {
         const gym = await createGym({
-            environment: { RIG_GYM_IN_PROCESS_DAEMON: "0" },
+            environment: { HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON: "0" },
             inference(request, callIndex) {
                 const context = JSON.stringify(request.context.messages);
                 if (callIndex === 0) {
@@ -31,7 +31,7 @@ describe("TUI reload after daemon failure", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("BEFORE_DAEMON_CRASH") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the initial turn to finish",
             30_000,
         );
@@ -42,7 +42,7 @@ describe("TUI reload after daemon failure", () => {
             (snapshot) =>
                 snapshot.text.includes("Resumed") &&
                 snapshot.text.includes("BEFORE_DAEMON_CRASH") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the TUI to reload the persisted session",
             30_000,
         );
@@ -53,7 +53,7 @@ describe("TUI reload after daemon failure", () => {
         const completed = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("AFTER_TUI_RELOAD") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the reloaded TUI to complete another turn",
             30_000,
         );

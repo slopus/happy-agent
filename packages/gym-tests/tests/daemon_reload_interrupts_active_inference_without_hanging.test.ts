@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "ACTIVE_INFERENCE_AGENT_REPLACEMENT_COMPLETE";
@@ -66,12 +66,12 @@ const replaceAgentDuringInferenceScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
 active_log="/workspace/active-inference.log"
 touch "$active_log"
-rig exec --stream-json "Keep this inference active while the Happy Agent is replaced." \
+happy-terminal exec --stream-json "Keep this inference active while the Happy Agent is replaced." \
     >"$active_log" 2>&1 &
 active_client_pid="$!"
 
@@ -82,7 +82,7 @@ fi
 echo "Active inference reached the daemon"
 
 old_daemon_pid="$(tr -d '[:space:]' < /tmp/happy/agent/daemon.pid)"
-rig daemon reload
+happy-terminal daemon reload
 new_daemon_pid="$(tr -d '[:space:]' < /tmp/happy/agent/daemon.pid)"
 
 if [[ "$new_daemon_pid" = "$old_daemon_pid" ]]; then
@@ -101,9 +101,9 @@ if ! timeout 20 tail --pid="$active_client_pid" -f /dev/null; then
     exit 1
 fi
 
-rig exec --json "Prove the replacement daemon can run inference." | tee /workspace/replacement.json
+happy-terminal exec --json "Prove the replacement daemon can run inference." | tee /workspace/replacement.json
 grep -q "The replacement daemon is responsive." /workspace/replacement.json
-rig daemon stop
+happy-terminal daemon stop
 
 echo ${COMPLETED_MARKER}
 sleep 60

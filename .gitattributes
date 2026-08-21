@@ -1,2 +1,2 @@
-packages/rig/sources/profiles/claude/claude-* whitespace=-blank-at-eol
-packages/rig/sources/profiles/codex/codex-* whitespace=-blank-at-eol,-blank-at-eof
+packages/happy-terminal/sources/profiles/claude/claude-* whitespace=-blank-at-eol
+packages/happy-terminal/sources/profiles/codex/codex-* whitespace=-blank-at-eol,-blank-at-eof

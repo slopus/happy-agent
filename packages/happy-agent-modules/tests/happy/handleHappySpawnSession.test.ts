@@ -132,7 +132,7 @@ describe("starting a session from somebody's phone", () => {
         expect(spawn.started[0]?.cwd).toBe(missing);
     });
 
-    it("refuses a model this Rig does not have rather than choosing another", async () => {
+    it("refuses a model this Happy Agent does not have rather than choosing another", async () => {
         const spawn = spawner("remote-1");
         expect(
             await handleHappySpawnSession({
@@ -143,7 +143,10 @@ describe("starting a session from somebody's phone", () => {
                 params: request({ modelId: "some-other-model" }),
                 remoteSessionId: spawn.remoteSessionId,
             }),
-        ).toEqual({ errorMessage: "That model is not available in this Rig.", type: "error" });
+        ).toEqual({
+            errorMessage: "That model is not available in this Happy Agent.",
+            type: "error",
+        });
         expect(spawn.started).toEqual([]);
     });
 
@@ -164,7 +167,7 @@ describe("starting a session from somebody's phone", () => {
         });
     });
 
-    it("refuses a permission mode Rig does not have", async () => {
+    it("refuses a permission mode Happy Agent does not have", async () => {
         const spawn = spawner("remote-1");
         expect(
             await handleHappySpawnSession({
@@ -175,7 +178,10 @@ describe("starting a session from somebody's phone", () => {
                 params: request({ permissionMode: "anything_goes" }),
                 remoteSessionId: spawn.remoteSessionId,
             }),
-        ).toEqual({ errorMessage: "That permission mode is not one Rig has.", type: "error" });
+        ).toEqual({
+            errorMessage: "That permission mode is not one Happy Agent has.",
+            type: "error",
+        });
     });
 
     it("refuses a relative directory", async () => {
@@ -207,7 +213,7 @@ describe("starting a session from somebody's phone", () => {
                 remoteSessionId: spawn.remoteSessionId,
             }),
         ).toEqual({
-            errorMessage: "Happy asked for a session Rig does not know how to start.",
+            errorMessage: "Happy asked for a session Happy Agent does not know how to start.",
             type: "error",
         });
     });

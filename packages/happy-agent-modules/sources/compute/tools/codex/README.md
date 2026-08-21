@@ -7,7 +7,7 @@ Codex's own filesystem and shell surface: `exec_command`, `write_stdin`, `kill_s
 ## Why none of this is shared
 
 These are the names, argument schemas, and wording a Codex model was trained on. They are not a
-Rig abstraction with a Codex label on it, so nothing in this directory is imported by
+Happy Agent abstraction with a Codex label on it, so nothing in this directory is imported by
 `tools/claude/` or `tools/grok/`, and nothing in those directories is imported here. The result
 schema, the model-facing text, the defaults, the error wording, and the Auto-permission
 declarations all belong to Codex alone. Two vendors ending up with near-identical files is the
@@ -42,7 +42,7 @@ itself — `*** Begin Patch`, `*** Add File:`, `*** Update File:`, `*** Delete F
 the model to put the patch in the `patch` field instead of repeating the vendor's "do not wrap the
 patch in JSON", which would be false in this runtime.
 
-**No `secrets` argument.** Rig's `exec_command` accepts attached secret bundles. This module has no
+**No `secrets` argument.** Happy Agent's `exec_command` accepts attached secret bundles. This module has no
 secret resolver, so the field is absent rather than accepted and ignored.
 
 ## Auto permissions
@@ -51,7 +51,7 @@ secret resolver, so the field is absent rather than accepted and ignored.
   `sandbox_permissions: "require_escalated"`. Omitting the field keeps the command sandboxed.
 - `write_stdin` is reviewed when it types something, and is never elevated: input reaches nothing
   the session could not already reach. An empty poll is neither reviewed nor elevated.
-- `kill_session` is never reviewed. It ends work Rig itself started.
+- `kill_session` is never reviewed. It ends work Happy Agent itself started.
 - `apply_patch` is reviewed, and elevated, when any path the patch names would be reviewed for
   writing — including a patch whose paths cannot be read at all.
 - `view_image` mirrors an ordinary read of its path.

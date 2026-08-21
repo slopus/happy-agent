@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -106,7 +106,7 @@ describe("file autocomplete filters and navigates without replaying history", ()
         const completed = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("FILE_MENTION_FILTER_ACCEPTED") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "completed file mention turn and idle composer",
             30_000,
@@ -137,7 +137,7 @@ describe("file autocomplete filters and navigates without replaying history", ()
         const bottom = await gym.terminal.snapshot();
         expect(bottom.scroll.atBottom).toBe(true);
         expect(bottom.text).toContain("FILE_MENTION_FILTER_ACCEPTED");
-        expect(bottom.text).toContain("Ask Rig to do anything");
+        expect(bottom.text).toContain("Ask Happy Terminal to do anything");
         expect(bottom.text).toContain("gym off · /workspace");
     }, 120_000);
 });

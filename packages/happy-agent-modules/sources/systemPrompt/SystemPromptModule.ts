@@ -80,7 +80,7 @@ export class SystemPromptModule implements AgentModule {
     /**
      * Who the agent says it is, substituted into whichever prompt is chosen.
      *
-     * There is one identity, and it is Rig's own: an installation that renamed itself would be
+     * There is one identity, and it is Happy Agent's own: an installation that renamed itself would be
      * telling the model it is something the rest of the product is not.
      */
     readonly #identity: SystemPromptIdentity = DEFAULT_SYSTEM_PROMPT_IDENTITY;

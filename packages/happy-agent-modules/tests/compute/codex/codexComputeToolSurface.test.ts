@@ -16,7 +16,7 @@ async function machine() {
 /**
  * Codex's own parameters, copied from
  * `packages/happy-providers/sources/vendors/codex/tools/*.ts`. The value says whether the vendor
- * marks that field required. Descriptions are deliberately not compared: Rig's live wording
+ * marks that field required. Descriptions are deliberately not compared: Happy Agent's live wording
  * extends the vendor's, and this is a check on shape.
  */
 const VENDOR_PARAMETERS: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
@@ -44,7 +44,7 @@ const VENDOR_PARAMETERS: Readonly<Record<string, Readonly<Record<string, boolean
 /**
  * Fields Codex declares that this module deliberately does not offer.
  *
- * `login` and `prefix_rule` describe approval machinery Rig does not have, and Rig's own
+ * `login` and `prefix_rule` describe approval machinery Happy Agent does not have, and Happy Agent's own
  * `exec_command` drops them too. There is no secret resolver here either, so no `secrets` field
  * appears in any of these tools.
  */
@@ -213,7 +213,7 @@ describe("codex compute tool surface", () => {
         ).toContain('sending "y\\n" to shell session 4');
     });
 
-    it("never asks a reviewer about stopping work Rig itself started", async () => {
+    it("never asks a reviewer about stopping work Happy Agent itself started", async () => {
         const { tool } = await machine();
 
         expect(await tool("kill_session").shouldReviewInAutoMode({ session_id: 1 }, ctx)).toBe(

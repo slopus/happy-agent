@@ -37,6 +37,6 @@ export type SystemPromptIdentity = Static<typeof systemPromptIdentitySchema>;
 
 /** The identity a prompt carries when the host never names another. */
 export const DEFAULT_SYSTEM_PROMPT_IDENTITY: SystemPromptIdentity = Object.freeze({
-    name: "Rig",
-    prompt: "You are Rig, built by Happy",
+    name: "Happy Agent",
+    prompt: "You are Happy Agent, built by Happy",
 });

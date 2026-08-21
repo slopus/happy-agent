@@ -11,9 +11,9 @@ call.
 
 ## What a workspace is
 
-Rig knows about _projects_ and _workspaces_:
+Happy Agent knows about _projects_ and _workspaces_:
 
-- A **project** is a folder Rig has been pointed at. It has an ID, a name, and a
+- A **project** is a folder Happy Agent has been pointed at. It has an ID, a name, and a
   storage key derived from the name.
 - A **workspace** belongs to one project. It has an ID, a name, a path, a status,
   and — when this session created it — an `owned` flag.
@@ -38,11 +38,11 @@ Workspaces are created under a managed root, one directory per project:
 
 The root depends on the platform:
 
-| Platform | Root                                                      |
-| -------- | --------------------------------------------------------- |
-| macOS    | `~/Happy/Workspaces`                                      |
-| Linux    | `~/happy/workspaces`                                      |
-| Any      | `RIG_WORKSPACES_DIRECTORY` (absolute path) overrides both |
+| Platform | Root                                                              |
+| -------- | ----------------------------------------------------------------- |
+| macOS    | `~/Happy/Workspaces`                                              |
+| Linux    | `~/happy/workspaces`                                              |
+| Any      | `HAPPY_AGENT_WORKSPACES_DIRECTORY` (absolute path) overrides both |
 
 Storage keys are slugs of the display name (lowercase, ASCII, dashes, at most 48
 characters). A collision gets a numeric suffix: `workspace`, `workspace-2`,
@@ -73,7 +73,7 @@ A workspace a person has named is never renamed again by a chat.
 What happens, in order:
 
 1. **The base commit is resolved.**
-   With no `base_ref`, Rig fetches `origin` and forks `origin/<trunk>` — the
+   With no `base_ref`, Happy Agent fetches `origin` and forks `origin/<trunk>` — the
    trunk as the remote has it, not whatever the project folder happens to be
    checked out on. It falls back to the local branch when there is no reachable
    `origin`. An explicit `base_ref` is used exactly as given, and an unknown ref
@@ -168,7 +168,7 @@ the default; read their output with `TaskOutput` (or your provider's equivalent)
 stop them with `TaskStop`, and send follow-up work with `SendMessage`. `read_only:
 true` restricts the child to Read only instead of inheriting your permission mode.
 Model and reasoning effort are required. `provider` is optional and selects a
-specific visible account when the user's request calls for one; otherwise Rig
+specific visible account when the user's request calls for one; otherwise Happy Agent
 resolves and routes the provider. `context: "parent"` includes the delegator's
 conversation; the default, `"task"`, starts with only the prompt.
 `service_tier: "priority"` requests priority service when supported.
@@ -277,5 +277,5 @@ protected_sync = [".env.production"]
 ## Tracking changes
 
 For a workspace branch, the baseline for "what changed" is the branch's merge
-base with `origin/main`; local `main` is never used. Rig tracks changes
+base with `origin/main`; local `main` is never used. Happy Agent tracks changes
 line by line, detects binary files, and handles large files separately.

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym, type InterceptedHttpExchange } from "@slopus/rig-gym";
+import { createGym, type Gym, type InterceptedHttpExchange } from "@slopus/happy-terminal-gym";
 
-const BLOCK_MARKER = "RIG_GYM_BLOCKED_AFTER_REASONING_INSPECTION";
+const BLOCK_MARKER = "HAPPY_TERMINAL_GYM_BLOCKED_AFTER_REASONING_INSPECTION";
 const USER_PROMPT = "Inspect the Claude reasoning request.";
 const running = new Set<Gym>();
 
@@ -20,7 +20,7 @@ describe("Claude SDK reasoning traces", () => {
                 ANTHROPIC_BASE_URL: "http://api.anthropic.test",
                 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
                 DISABLE_TELEMETRY: "1",
-                RIG_EFFORT: "max",
+                HAPPY_TERMINAL_EFFORT: "max",
             },
             httpProxy: {
                 handler(request) {

@@ -79,8 +79,8 @@ function answer(overrides: Partial<SearchAnswer> = {}): SearchAnswer {
     return {
         provider: "codex",
         query: "rig",
-        answer: "Rig is a coding agent.",
-        sources: [{ title: "Rig", url: "https://example.test/rig" }],
+        answer: "Happy Agent is a coding agent.",
+        sources: [{ title: "Happy Agent", url: "https://example.test/rig" }],
         durationMs: 12,
         ...overrides,
     };
@@ -268,7 +268,9 @@ describe("SearchModule", () => {
                 type: "text",
                 text: expect.stringContaining("https://example.test/rig"),
             });
-            expect((blocks[0] as { text: string }).text).toContain("Rig is a coding agent.");
+            expect((blocks[0] as { text: string }).text).toContain(
+                "Happy Agent is a coding agent.",
+            );
         }
 
         const fetch = tools.find((tool) => tool.name === "web_fetch")!;

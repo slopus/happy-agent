@@ -1,13 +1,13 @@
-# Rig gym
+# Happy Terminal gym
 
-The Rig gym is the end-to-end test harness for the complete terminal agent experience. It drives the real Rig CLI through a pseudo-terminal, supplies deterministic model responses by default, and interprets terminal output with the prebuilt `@slopus/ghostty-wasm` package. Explicit live scenarios may instead select a deployed provider and use real inference.
+The Happy Terminal gym is the end-to-end test harness for the complete terminal agent experience. It drives the real Happy Terminal CLI through a pseudo-terminal, supplies deterministic model responses by default, and interprets terminal output with the prebuilt `@slopus/ghostty-wasm` package. Explicit live scenarios may instead select a deployed provider and use real inference.
 
 The ordinary suite tests the product at the same boundary a user experiences while keeping model behavior deterministic. A gym test can exercise terminal rendering, multiline input, tool calls, real processes, filesystem changes, interactive questions, interruptions, provider failures, and concurrency without calling a live model.
 
 ## Core principles
 
 1. **Every instance is isolated.** Each call to `createGym` creates unique workspace and home fixtures, an inference server, PTY, and terminal emulator.
-2. **Use JustBash by default.** Ordinary scenarios execute Rig directly from TypeScript with Node's native type stripping. The daemon runs in the CLI process and shell tools use a root-confined JustBash filesystem.
+2. **Use JustBash by default.** Ordinary scenarios execute Happy Terminal directly from TypeScript with Node's native type stripping. The daemon runs in the CLI process and shell tools use a root-confined JustBash filesystem.
 3. **Opt out explicitly for system contracts.** Set `mode: "docker"` when a scenario needs real OS processes, Docker, Sandbox Runtime, sockets, executables, or host/container permission boundaries.
 4. **Mock only inference and the local shell runtime.** Model responses are scripted. The CLI, daemon, agent loop, tool dispatch, HTTP transport, persistence, terminal input, and rendering remain real.
 5. **Interact like a user.** Drive behavior through terminal input and assert the terminal screen or resulting observable state. Avoid calling application internals to move a scenario forward.
@@ -17,18 +17,18 @@ The ordinary suite tests the product at the same boundary a user experiences whi
 
 ## What is real and what is mocked
 
-| Part                      | Behavior in the gym                                          |
-| ------------------------- | ------------------------------------------------------------ |
-| Rig CLI and daemon        | Native Node TypeScript process; Docker only when requested   |
-| Agent loop                | Real                                                         |
-| Tool dispatch             | Real                                                         |
-| Shell and child processes | JustBash by default; real container processes in Docker mode |
-| Filesystem                | Root-confined temporary workspace and home fixtures          |
-| Terminal input            | Real PTY input sent through `node-pty`                       |
-| Terminal output           | Real PTY output interpreted by `@slopus/ghostty-wasm`        |
-| Model/provider inference  | Mocked normally; real only in explicit opt-in live scenarios |
-| Provider transport        | Real authenticated local HTTP request                        |
-| Credentials               | Not used normally; isolated credentials in opt-in live tests |
+| Part                          | Behavior in the gym                                          |
+| ----------------------------- | ------------------------------------------------------------ |
+| Happy Terminal CLI and daemon | Native Node TypeScript process; Docker only when requested   |
+| Agent loop                    | Real                                                         |
+| Tool dispatch                 | Real                                                         |
+| Shell and child processes     | JustBash by default; real container processes in Docker mode |
+| Filesystem                    | Root-confined temporary workspace and home fixtures          |
+| Terminal input                | Real PTY input sent through `node-pty`                       |
+| Terminal output               | Real PTY output interpreted by `@slopus/ghostty-wasm`        |
+| Model/provider inference      | Mocked normally; real only in explicit opt-in live scenarios |
+| Provider transport            | Real authenticated local HTTP request                        |
+| Credentials                   | Not used normally; isolated credentials in opt-in live tests |
 
 The host controls model inference and terminal input. JustBash implements the local shell/filesystem boundary without starting host commands. Docker-mode scenarios retain the real Linux process and filesystem boundary.
 
@@ -41,9 +41,9 @@ Vitest scenario on the host
     │          ▲
     │          │ authenticated inference requests
     │          │
-    ├── node-pty ─────────────── Node runs packages/rig/sources/main.ts
+    ├── node-pty ─────────────── Node runs packages/happy-terminal/sources/main.ts
     │          │                         │
-    │          │ keystrokes              ├── Rig CLI + in-process daemon
+    │          │ keystrokes              ├── Happy Terminal CLI + in-process daemon
     │          │                         ├── real agent loop and tools
     │          │ PTY output              └── root-confined JustBash runtime
     └── @slopus/ghostty-wasm emulator
@@ -55,16 +55,16 @@ Vitest scenario on the host
 1. Creates a unique temporary workspace and writes fixture files.
 2. Starts a token-protected mock inference HTTP server on an ephemeral host port.
 3. Starts an in-process `@slopus/ghostty-wasm` emulator for the requested terminal dimensions.
-4. Runs Rig's TypeScript entry point directly through native Node and `node-pty`.
+4. Runs Happy Terminal's TypeScript entry point directly through native Node and `node-pty`.
 5. Mounts the temporary workspace and home into the root-confined JustBash filesystem.
-6. Configures Rig to use the `gym` provider, `openai/gym` model, and full-access permissions.
+6. Configures Happy Terminal to use the `gym` provider, `openai/gym` model, and full-access permissions.
 7. Feeds every PTY output chunk into the Ghostty terminal state.
-8. Waits until the Rig composer is visible before returning the `Gym` instance.
+8. Waits until the Happy Terminal composer is visible before returning the `Gym` instance.
 9. On disposal, stops the PTY and services, then deletes the temporary workspace and home with bounded retries.
 
-Docker mode replaces steps 4 and 5 with a shared warm runner container. Every Gym process gets private Bubblewrap mount, user, IPC, and UTS namespaces with unique workspace, home, and temporary directories. Processes share the runner's PID namespace so daemon lifecycle commands behave like one real machine and Rig's nested shell sandbox sees a consistent `/proc`. Disposal finds the exact Gym UUID in each process's mount table, revalidates it immediately before termination, and kills children before parents; the shared runner is removed after the lane completes.
+Docker mode replaces steps 4 and 5 with a shared warm runner container. Every Gym process gets private Bubblewrap mount, user, IPC, and UTS namespaces with unique workspace, home, and temporary directories. Processes share the runner's PID namespace so daemon lifecycle commands behave like one real machine and Happy Terminal's nested shell sandbox sees a consistent `/proc`. Disposal finds the exact Gym UUID in each process's mount table, revalidates it immediately before termination, and kills children before parents; the shared runner is removed after the lane completes.
 
-Restricted-command scenarios run Sandbox Runtime inside the shared Gym runner. Gym removes Docker's seccomp filter so Bubblewrap can create nested namespaces, but adds no host capabilities; `RIG_GYM_OUTER_ISOLATION=docker` enables Sandbox Runtime's documented nested-container mode only when `/.dockerenv` is also present. The outer unprivileged container and each test's private filesystem remain the host boundary.
+Restricted-command scenarios run Sandbox Runtime inside the shared Gym runner. Gym removes Docker's seccomp filter so Bubblewrap can create nested namespaces, but adds no host capabilities; `HAPPY_TERMINAL_GYM_OUTER_ISOLATION=docker` enables Sandbox Runtime's documented nested-container mode only when `/.dockerenv` is also present. The outer unprivileged container and each test's private filesystem remain the host boundary.
 
 ## Repository layout
 
@@ -79,7 +79,7 @@ packages/gym-tests/
 ├── tsconfig.json
 └── tests/                     All end-to-end gym scenarios
 
-packages/rig/sources/executor/
+packages/happy-terminal/sources/executor/
 ├── createGymProvider.ts       Container-side provider transport
 └── gym-types.ts               Shared inference protocol
 ```
@@ -113,13 +113,13 @@ This runs every JustBash scenario with four file workers.
 For the compressed iteration lane, which excludes true-clock and Docker cases:
 
 ```sh
-pnpm --filter @slopus/rig-gym-tests test:gym:fast
+pnpm --filter @slopus/happy-terminal-gym-tests test:gym:fast
 ```
 
 To run local and explicit Docker scenarios:
 
 ```sh
-pnpm --filter @slopus/rig-gym-tests test:gym:full
+pnpm --filter @slopus/happy-terminal-gym-tests test:gym:full
 ```
 
 Run the opt-in, real-world-scale session startup and resume scenario separately:
@@ -128,13 +128,13 @@ Run the opt-in, real-world-scale session startup and resume scenario separately:
 pnpm test:gym:heavy
 ```
 
-Set `RIG_GYM_HEAVY_SESSION_SCALE` to a positive multiplier for quicker iteration
+Set `HAPPY_TERMINAL_GYM_HEAVY_SESSION_SCALE` to a positive multiplier for quicker iteration
 or larger stress runs. The default `1` generates a calibrated roughly 200 MB session database.
 
 ### Live provider Gym
 
 The ordinary Gym suite always uses deterministic inference. To exercise Grok 4.6 through the real
-Rig CLI, daemon, agent loop, Grok provider, and xAI backend, run:
+Happy Terminal CLI, daemon, agent loop, Grok provider, and xAI backend, run:
 
 ```sh
 pnpm test:gym:live:grok
@@ -165,24 +165,24 @@ pnpm build:gym
 Then run one descriptive test file without rebuilding:
 
 ```sh
-RIG_GYM_SKIP_BUILD=1 pnpm --filter @slopus/rig-gym-tests exec vitest run \
+HAPPY_TERMINAL_GYM_SKIP_BUILD=1 pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run \
   tests/agent_edits_fixture_with_real_shell.test.ts
 ```
 
 Run every explicit Docker scenario with:
 
 ```sh
-RIG_GYM_SKIP_BUILD=1 pnpm test:gym:docker
+HAPPY_TERMINAL_GYM_SKIP_BUILD=1 pnpm test:gym:docker
 ```
 
-Gym automatically uses a stable tag derived from the Dockerfile, lockfile, and package manifests. Worktrees with the same runtime dependencies share the image safely because Rig's current TypeScript source is mounted read-only when the runner starts. Set `RIG_GYM_IMAGE` only to override that generated tag:
+Gym automatically uses a stable tag derived from the Dockerfile, lockfile, and package manifests. Worktrees with the same runtime dependencies share the image safely because Happy Terminal's current TypeScript source is mounted read-only when the runner starts. Set `HAPPY_TERMINAL_GYM_IMAGE` only to override that generated tag:
 
 ```sh
-RIG_GYM_IMAGE=rig-gym:my-workspace RIG_GYM_SKIP_BUILD=1 \
+HAPPY_TERMINAL_GYM_IMAGE=happy-terminal-gym:my-workspace HAPPY_TERMINAL_GYM_SKIP_BUILD=1 \
   pnpm test:gym:docker
 ```
 
-Normal source and test changes do not rebuild the image. The dependency lockfile, Dockerfile, TypeScript/workspace configuration, production Gym dependencies, and Rig build metadata produce a new runtime tag. Test scripts and other non-runtime manifest fields do not invalidate it. The Dockerfile uses a persistent BuildKit pnpm-store cache when an install layer really is invalidated. Set `RIG_GYM_REBUILD=1` only to force replacement of an existing runtime tag.
+Normal source and test changes do not rebuild the image. The dependency lockfile, Dockerfile, TypeScript/workspace configuration, production Gym dependencies, and Happy Terminal build metadata produce a new runtime tag. Test scripts and other non-runtime manifest fields do not invalidate it. The Dockerfile uses a persistent BuildKit pnpm-store cache when an install layer really is invalidated. Set `HAPPY_TERMINAL_GYM_REBUILD=1` only to force replacement of an existing runtime tag.
 
 The Docker lane runs ordinary and long-clock files concurrently, then runs the small timing-sensitive group serially. All ordinary Gyms with the same capability boundary share one container; tests that request the Docker socket use a separate shared runner.
 
@@ -206,7 +206,7 @@ Keep one coherent end-to-end behavior per file. Shared assertion helpers may sta
 ```ts
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -271,28 +271,28 @@ interface GymOptions {
 }
 ```
 
-| Option                | Default                  | Purpose                                                          |
-| --------------------- | ------------------------ | ---------------------------------------------------------------- |
-| `args`                | `[]`                     | Arguments passed to the Rig CLI                                  |
-| `cols`                | `100`                    | Terminal width in cells                                          |
-| `contextWindow`       | Provider default         | Overrides the context window for gym-backed inference            |
-| `dockerSocket`        | `false`                  | Exposes the daemon socket; requires `mode: "docker"`             |
-| `entrypoint`          | Image default            | Replaces the image entrypoint; requires `mode: "docker"`         |
-| `environment`         | `{}`                     | Extra environment variables for Rig                              |
-| `files`               | `{}`                     | Fixture tree mounted into `/workspace`                           |
-| `homeFiles`           | `{}`                     | Trusted fixture tree mounted into `/home/rig`                    |
-| `httpProxy`           | Disabled                 | Record, replace, rewrite, or forward provider HTTP               |
-| `image`               | Runtime dependency tag   | Docker image tag to build or run                                 |
-| `inference`           | `[]`                     | Ordered gym-provider responses or a request handler              |
-| `modelId`             | Provider default         | Model selected for the session                                   |
-| `mode`                | `just-bash`              | Use `docker` only for a real-shell or container contract         |
-| `permissionMode`      | `full_access`            | Permission mode, or `from_config` to leave the environment unset |
-| `providerId`          | `gym`                    | Gym or a deployed provider contract                              |
-| `providerOverrides`   | `[]`                     | Routes selected providers through deterministic inference        |
-| `rows`                | `32`                     | Terminal height in cells                                         |
-| `startupText`         | `Ask Rig to do anything` | Visible text that marks startup as complete                      |
-| `terminalColorScheme` | `dark`                   | Initial terminal color scheme used by the Ghostty interpreter    |
-| `timeoutMs`           | `20_000`                 | Maximum startup wait for the composer                            |
+| Option                | Default                             | Purpose                                                          |
+| --------------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| `args`                | `[]`                                | Arguments passed to the Happy Terminal CLI                       |
+| `cols`                | `100`                               | Terminal width in cells                                          |
+| `contextWindow`       | Provider default                    | Overrides the context window for gym-backed inference            |
+| `dockerSocket`        | `false`                             | Exposes the daemon socket; requires `mode: "docker"`             |
+| `entrypoint`          | Image default                       | Replaces the image entrypoint; requires `mode: "docker"`         |
+| `environment`         | `{}`                                | Extra environment variables for Happy Terminal                   |
+| `files`               | `{}`                                | Fixture tree mounted into `/workspace`                           |
+| `homeFiles`           | `{}`                                | Trusted fixture tree mounted into `/home/happy-terminal`         |
+| `httpProxy`           | Disabled                            | Record, replace, rewrite, or forward provider HTTP               |
+| `image`               | Runtime dependency tag              | Docker image tag to build or run                                 |
+| `inference`           | `[]`                                | Ordered gym-provider responses or a request handler              |
+| `modelId`             | Provider default                    | Model selected for the session                                   |
+| `mode`                | `just-bash`                         | Use `docker` only for a real-shell or container contract         |
+| `permissionMode`      | `full_access`                       | Permission mode, or `from_config` to leave the environment unset |
+| `providerId`          | `gym`                               | Gym or a deployed provider contract                              |
+| `providerOverrides`   | `[]`                                | Routes selected providers through deterministic inference        |
+| `rows`                | `32`                                | Terminal height in cells                                         |
+| `startupText`         | `Ask Happy Terminal to do anything` | Visible text that marks startup as complete                      |
+| `terminalColorScheme` | `dark`                              | Initial terminal color scheme used by the Ghostty interpreter    |
+| `timeoutMs`           | `20_000`                            | Maximum startup wait for the composer                            |
 
 Set `startupText` to a stable visible fragment only when a deliberately narrow startup viewport
 truncates the default placeholder.
@@ -333,17 +333,17 @@ await expect(gym.readFile("src/result.txt")).resolves.toBe("fixture contents\n")
 `gym.workspacePath` exposes the temporary host path for advanced diagnostics. Prefer `gym.readFile` in assertions so tests remain clear and path-safe.
 
 Use `homeFiles` for configuration that must originate from the simulated user's trusted home
-directory, such as `happy/config/happy.toml`. Its keys are relative to `/home/rig`. Keep
+directory, such as `happy/config/happy.toml`. Its keys are relative to `/home/happy-terminal`. Keep
 repository-controlled fixtures in `files` so security tests preserve the source boundary.
 
-For provider-boundary tests that need to compare Rig with a directly invoked SDK in the same
+For provider-boundary tests that need to compare Happy Terminal with a directly invoked SDK in the same
 deployed image, `gym.runInContainer(command, args, options)` runs a command in `/workspace` and
 returns its standard output and error. Keep normal product scenarios at the terminal boundary;
 this helper is intended for controlled companion processes such as a vanilla provider SDK probe.
 
 ## Mock inference
 
-The inference server is the only intentional test double. Rig still makes a real authenticated HTTP request from the container to the host for every model call.
+The inference server is the only intentional test double. Happy Terminal still makes a real authenticated HTTP request from the container to the host for every model call.
 
 ### Ordered responses
 
@@ -410,7 +410,7 @@ interface GymInferenceResponse {
 }
 ```
 
-- `content` may contain text, thinking, or client-executed tool-call blocks accepted by Rig's
+- `content` may contain text, thinking, or client-executed tool-call blocks accepted by Happy Terminal's
   provider types.
 - `completionDelayMs` delays the final provider result after content has streamed. It intentionally
   continues through cancellation so tests can reproduce a completion already in flight.
@@ -511,7 +511,7 @@ environment value and exempt `host.docker.internal` from proxying:
 ```ts
 environment: {
     NO_PROXY: "host.docker.internal",
-    RIG_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
+    HAPPY_TERMINAL_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
 }
 ```
 
@@ -669,7 +669,7 @@ For rendering regressions, also verify screen health. Scroll counters alone do n
 
 ```ts
 expect(screen.rows).toHaveLength(34);
-expect(screen.text).toContain("Ask Rig to do anything");
+expect(screen.text).toContain("Ask Happy Terminal to do anything");
 expect(screen.text).toContain("Gym Off • /workspace");
 expect(screen.text).not.toContain("\x1b[200~");
 expect(screen.text).not.toContain("\x1b[201~");
@@ -686,7 +686,7 @@ gym.terminal.scrollBy(5);
 gym.terminal.scrollToBottom();
 ```
 
-These methods manipulate the `libghostty-vt` viewport. They simulate a user scrolling the terminal emulator; they do not send Page Up, mouse-wheel, or keyboard bytes to Rig. A later snapshot is ordered after the scroll command, so no separate delay is needed.
+These methods manipulate the `libghostty-vt` viewport. They simulate a user scrolling the terminal emulator; they do not send Page Up, mouse-wheel, or keyboard bytes to Happy Terminal. A later snapshot is ordered after the scroll command, so no separate delay is needed.
 
 For `scrollBy`, positive values move down toward live output and negative values move up into history.
 
@@ -719,12 +719,12 @@ The default gym test command currently runs test files without file-level parall
 
 ```ts
 const gym = await createGym({
-    image: "rig-gym-with-extra-tools:local",
+    image: "happy-terminal-gym-with-extra-tools:local",
     inference,
 });
 ```
 
-Without `RIG_GYM_SKIP_BUILD=1`, the runner builds the repository's standard `packages/gym/Dockerfile` under that tag. To use an externally prepared image with additional system dependencies, build it first, ensure it preserves the standard image's entrypoint and `/workspace` behavior, then run the test with image building skipped.
+Without `HAPPY_TERMINAL_GYM_SKIP_BUILD=1`, the runner builds the repository's standard `packages/gym/Dockerfile` under that tag. To use an externally prepared image with additional system dependencies, build it first, ensure it preserves the standard image's entrypoint and `/workspace` behavior, then run the test with image building skipped.
 
 Prefer the standard image. Add a custom image only when the behavior genuinely depends on another system package or environment characteristic.
 
@@ -799,11 +799,11 @@ Use `gym.readFile` for expected outputs. During local diagnosis, `gym.workspaceP
 
 ### Check the mounted source and image
 
-Rig source is mounted into the warm runner and executes through Node's native TypeScript support, so source changes do not require a rebuild. Run `pnpm build:gym` after package-manifest, lockfile, or Dockerfile changes. Use `RIG_GYM_REBUILD=1 pnpm build:gym` only when deliberately replacing an existing runtime image.
+Happy Terminal source is mounted into the warm runner and executes through Node's native TypeScript support, so source changes do not require a rebuild. Run `pnpm build:gym` after package-manifest, lockfile, or Dockerfile changes. Use `HAPPY_TERMINAL_GYM_REBUILD=1 pnpm build:gym` only when deliberately replacing an existing runtime image.
 
 ### Check for leaked containers
 
-Shared runner containers use names prefixed with `rig-gym-pool-`. Normal suite cleanup removes them. If a test process is killed abruptly, inspect Docker for leftovers before interpreting isolation failures.
+Shared runner containers use names prefixed with `happy-terminal-gym-pool-`. Normal suite cleanup removes them. If a test process is killed abruptly, inspect Docker for leftovers before interpreting isolation failures.
 
 ### Keep failure injection explicit
 
@@ -811,7 +811,7 @@ Use scripted HTTP status responses, delayed inference, malformed content, or exa
 
 ## Common mistakes
 
-- Running Rig directly on the host instead of using `createGym`.
+- Running Happy Terminal directly on the host instead of using `createGym`.
 - Mocking shell commands, tools, or filesystem operations that the gym is meant to integrate.
 - Using `paste` when the bug concerns raw typing, or `type` when the behavior specifically concerns bracketed paste.
 - Sleeping for a fixed duration instead of waiting for visible state.

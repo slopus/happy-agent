@@ -129,11 +129,12 @@ function shellArgs(shell: string, command: string): string[] {
     return name === "cmd.exe" || name === "cmd" ? ["/d", "/s", "/c", command] : ["-c", command];
 }
 
-/** Rig's own configuration variables are not part of the person's project environment. */
+/** Happy Agent's own configuration variables are not part of the person's project environment. */
 function shellEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     return Object.fromEntries(
         Object.entries(environment).filter(
-            ([name, value]) => value !== undefined && !name.toUpperCase().startsWith("RIG_"),
+            ([name, value]) =>
+                value !== undefined && !name.toUpperCase().startsWith("HAPPY_AGENT_"),
         ),
     );
 }

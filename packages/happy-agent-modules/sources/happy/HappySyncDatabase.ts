@@ -474,7 +474,7 @@ export function createHappySyncDatabase() {
                 position: Number(row.position),
             };
             if (!Value.Check(happyOutboxEntrySchema, entry)) {
-                throw new Error("The Happy outbox contains a message Rig cannot read.");
+                throw new Error("The Happy outbox contains a message Happy Agent cannot read.");
             }
             return entry;
         });
@@ -504,7 +504,7 @@ function parseSession(row: SessionRow): HappySyncSession {
         updatedAt: Number(row.updated_at_ms),
     };
     if (!Value.Check(happySyncSessionSchema, session)) {
-        throw new Error("The Happy session table contains a row Rig cannot read.");
+        throw new Error("The Happy session table contains a row Happy Agent cannot read.");
     }
     return session;
 }
@@ -513,6 +513,6 @@ function parseJson(value: string, label: string): unknown {
     try {
         return JSON.parse(value) as unknown;
     } catch {
-        throw new Error(`Rig could not read a stored ${label}.`);
+        throw new Error(`Happy Agent could not read a stored ${label}.`);
     }
 }

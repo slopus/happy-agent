@@ -8,7 +8,7 @@ import { autoTranscriptMessageSchema } from "./impl/createAutoPermissionTranscri
  * private reviewer's own runtime state in `auto-agent.sqlite`.
  *
  * Everything here is validated with TypeBox before a write and after a read. The v2 review system
- * is durable where Rig v1's was process memory, so a value that survives a restart has to prove it
+ * is durable where Happy Agent v1's was process memory, so a value that survives a restart has to prove it
  * is still the value it claims to be — a dangling reviewer cursor or a half-written evidence row is
  * exactly the kind of state that must fail a review closed rather than approve from a partial past.
  */
@@ -58,7 +58,7 @@ export type AutoEvidenceState = Static<typeof autoEvidenceStateSchema>;
 
 /**
  * The private reviewer's durable cursor, persisted beside the reviewer agent in the private
- * database. It is the durable equivalent of Rig v1's in-memory `reviewedMessageCount` /
+ * database. It is the durable equivalent of Happy Agent v1's in-memory `reviewedMessageCount` /
  * `reportedOwnMessageCount`: `evidenceGeneration` binds the cursor to the exact main-history
  * generation it was taken against, and the two offsets record how far into the main evidence and
  * into the reviewer's own history the last confirmed-normal review reached.

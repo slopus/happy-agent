@@ -5,7 +5,7 @@ import type { ReleasePackage } from "./ReleasePackage.js";
 import { resolveReleasePackage } from "./resolveReleasePackage.js";
 
 export function readPackageManifest(
-    releasePackage: ReleasePackage = resolveReleasePackage("rig"),
+    releasePackage: ReleasePackage = resolveReleasePackage("happy-terminal"),
 ): PackageManifest {
     return JSON.parse(
         readFileSync(`${releasePackage.directory}/package.json`, "utf8"),

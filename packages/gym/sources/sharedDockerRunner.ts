@@ -75,7 +75,7 @@ export function dockerSandboxArguments(
         "/workspace",
         "--bind",
         `${containerRoot}/home`,
-        "/home/rig",
+        "/home/happy-terminal",
         "--bind",
         `${stateRoot}/tmp`,
         "/tmp",
@@ -83,7 +83,7 @@ export function dockerSandboxArguments(
         // so the daemon's private directory lives on container-local storage instead.
         "--bind",
         `${stateRoot}/agent`,
-        "/home/rig/.happy/agent",
+        "/home/happy-terminal/.happy/agent",
         "--tmpfs",
         "/gyms",
         "--tmpfs",
@@ -100,7 +100,7 @@ async function startSharedDockerRunner(options: {
     imageId: string;
     repositoryRoot: string;
 }): Promise<SharedDockerRunner> {
-    const runId = process.env.RIG_GYM_RUN_ID ?? `process-${String(process.pid)}`;
+    const runId = process.env.HAPPY_TERMINAL_GYM_RUN_ID ?? `process-${String(process.pid)}`;
     const safeRunId = runId.replaceAll(/[^A-Za-z0-9_.-]/gu, "-").slice(0, 48);
     const keyHash = createHash("sha256")
         .update(SHARED_DOCKER_RUNNER_VERSION)
@@ -109,8 +109,8 @@ async function startSharedDockerRunner(options: {
         .update(options.repositoryRoot)
         .digest("hex")
         .slice(0, 12);
-    const containerName = `rig-gym-pool-${safeRunId}-${keyHash}`;
-    const hostRoot = join(tmpdir(), `rig-gym-pool-${safeRunId}-${keyHash}`);
+    const containerName = `happy-terminal-gym-pool-${safeRunId}-${keyHash}`;
+    const hostRoot = join(tmpdir(), `happy-terminal-gym-pool-${safeRunId}-${keyHash}`);
     const containerRoot = "/gyms";
     await mkdir(hostRoot, { recursive: true });
     await chmod(hostRoot, 0o777);
@@ -124,22 +124,22 @@ async function startSharedDockerRunner(options: {
             "--name",
             containerName,
             "--label",
-            `rig.gym.run=${runId}`,
+            `happy-terminal.gym.run=${runId}`,
             "--security-opt",
             "seccomp=unconfined",
             "--add-host",
             "host.docker.internal:host-gateway",
             "--env",
-            "NODE_OPTIONS=--experimental-transform-types --import=/app/rig-source-hook.mjs",
+            "NODE_OPTIONS=--experimental-transform-types --import=/app/happy-terminal-source-hook.mjs",
             "--volume",
             `${hostRoot}:${containerRoot}`,
             ...(options.dockerSocket ? ["--volume", `${hostRoot}:${hostRoot}`] : []),
             "--volume",
-            `${join(options.repositoryRoot, "packages/rig/sources")}:/app/packages/rig/sources:ro`,
+            `${join(options.repositoryRoot, "packages/happy-terminal/sources")}:/app/packages/happy-terminal/sources:ro`,
             "--volume",
-            `${join(options.repositoryRoot, "packages/rig/package.json")}:/app/packages/rig/package.json:ro`,
+            `${join(options.repositoryRoot, "packages/happy-terminal/package.json")}:/app/packages/happy-terminal/package.json:ro`,
             "--volume",
-            `${join(options.repositoryRoot, "packages/gym/sources/registerTypeScriptSourceHooks.mjs")}:/app/rig-source-hook.mjs:ro`,
+            `${join(options.repositoryRoot, "packages/gym/sources/registerTypeScriptSourceHooks.mjs")}:/app/happy-terminal-source-hook.mjs:ro`,
             "--tmpfs",
             "/gym-state:uid=1000,gid=1000,mode=0777",
             ...(options.dockerSocket

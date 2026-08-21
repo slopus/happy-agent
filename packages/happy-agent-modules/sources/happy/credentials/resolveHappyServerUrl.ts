@@ -12,7 +12,7 @@ export function resolveHappyServerUrl(options: {
     targetServerUrl?: string;
 }): string {
     const configured =
-        options.environment.RIG_HAPPY_SERVER_URL?.trim() ||
+        options.environment.HAPPY_AGENT_HAPPY_SERVER_URL?.trim() ||
         options.environment.HAPPY_SERVER_URL?.trim();
     return (
         configured ||

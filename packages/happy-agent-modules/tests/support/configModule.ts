@@ -10,7 +10,7 @@ import { ConfigModule, type ConfigModuleLoadOptions } from "../../sources/config
  * Everything a module under test asks configuration for — where managed projects and workspaces
  * live, where the agent keeps its own state, what a workspace folder does by default — is settled
  * here rather than passed to that module. Relocating the two managed roots is the product's own
- * mechanism: `RIG_PROJECTS_DIRECTORY` and `RIG_WORKSPACES_DIRECTORY` are what a person sets to keep
+ * mechanism: `HAPPY_AGENT_PROJECTS_DIRECTORY` and `HAPPY_AGENT_WORKSPACES_DIRECTORY` are what a person sets to keep
  * their checkouts somewhere else. The getters are read once while those variables are set, because
  * configuration settles its layout once per installation and remembers it, and the variables are
  * put back afterwards so the rest of the process is unaffected.
@@ -24,10 +24,10 @@ export async function testConfigRootedAt(
     toml?: string,
     options?: ConfigModuleLoadOptions,
 ): Promise<ConfigModule> {
-    const previousProjects = process.env.RIG_PROJECTS_DIRECTORY;
-    const previousWorkspaces = process.env.RIG_WORKSPACES_DIRECTORY;
-    process.env.RIG_PROJECTS_DIRECTORY = join(root, "projects");
-    process.env.RIG_WORKSPACES_DIRECTORY = join(root, "workspaces");
+    const previousProjects = process.env.HAPPY_AGENT_PROJECTS_DIRECTORY;
+    const previousWorkspaces = process.env.HAPPY_AGENT_WORKSPACES_DIRECTORY;
+    process.env.HAPPY_AGENT_PROJECTS_DIRECTORY = join(root, "projects");
+    process.env.HAPPY_AGENT_WORKSPACES_DIRECTORY = join(root, "workspaces");
     try {
         const happyHome = join(root, "happy");
         if (toml !== undefined) {
@@ -40,8 +40,8 @@ export async function testConfigRootedAt(
         void config.workspacesHome;
         return config;
     } finally {
-        restore("RIG_PROJECTS_DIRECTORY", previousProjects);
-        restore("RIG_WORKSPACES_DIRECTORY", previousWorkspaces);
+        restore("HAPPY_AGENT_PROJECTS_DIRECTORY", previousProjects);
+        restore("HAPPY_AGENT_WORKSPACES_DIRECTORY", previousWorkspaces);
     }
 }
 

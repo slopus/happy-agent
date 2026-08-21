@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { libsqlCommonJsScript } from "./libsqlScript.js";
 
 const running = new Set<Gym>();
@@ -36,7 +36,7 @@ describe("Happy configuration", () => {
             "-e",
             libsqlCommonJsScript(`
 const fs = require("node:fs");
-const database = await openDatabase("/home/rig/.happy/agent/agent.sqlite", true);
+const database = await openDatabase("/home/happy-terminal/.happy/agent/agent.sqlite", true);
 let sessions = 0;
 try {
     sessions = (
@@ -47,7 +47,7 @@ try {
 } finally {
     await database.close();
 }
-const copied = fs.existsSync("/home/rig/.happy/agent/happy/access.key");
+const copied = fs.existsSync("/home/happy-terminal/.happy/agent/happy/access.key");
 process.stdout.write(JSON.stringify({ copied, sessions }));
 `),
         ]);

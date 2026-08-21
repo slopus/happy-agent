@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -56,7 +56,7 @@ describe("aborting a turn under automatic permission review", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("Session interrupted") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the reviewed turn to be aborted",
             30_000,
         );

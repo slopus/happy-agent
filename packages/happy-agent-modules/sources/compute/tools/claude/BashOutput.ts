@@ -65,7 +65,7 @@ export function claudeBashOutputTool(compute: Compute) {
         // Reading consumes the output: a second read after a restart would come back empty and
         // lose everything the first one was about to report.
         durable: false,
-        // Reading back work Rig itself started stays inside the machine the agent already has.
+        // Reading back work Happy Agent itself started stays inside the machine the agent already has.
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { bash_id, block, timeout }) => {
             const commandId = parseClaudeBashId(bash_id);

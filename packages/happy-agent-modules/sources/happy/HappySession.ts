@@ -66,6 +66,6 @@ export interface HappySpawnRequest {
     readonly modelId: string;
     readonly permissionMode: AgentPermissionMode;
     readonly providerId: string;
-    /** The session id Rig reserved for this request, the same one on every retry. */
+    /** The session id Happy Agent reserved for this request, the same one on every retry. */
     readonly sessionId: string;
 }

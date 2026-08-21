@@ -43,7 +43,7 @@ export async function prepareReferencedImages(paths: readonly string[]): Promise
     return images;
 }
 
-/** A path as a person would write it: `~` for home, otherwise relative to where Rig runs. */
+/** A path as a person would write it: `~` for home, otherwise relative to where Happy Agent runs. */
 function resolveImagePath(path: string): string {
     if (path === "~") return homedir();
     if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));

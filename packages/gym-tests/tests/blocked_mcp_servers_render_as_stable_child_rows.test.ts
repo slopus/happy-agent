@@ -2,10 +2,10 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, type Gym } from "@slopus/rig-gym";
+import { captureScrollback, createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const BLOCKED_REASON =
-    "MCP servers are available in Auto or Full access because they can act outside Rig's sandbox.";
+    "MCP servers are available in Auto or Full access because they can act outside Happy Agent's sandbox.";
 const running = new Set<Gym>();
 
 afterEach(async () => {
@@ -64,7 +64,7 @@ describe("blocked MCP servers render as stable child rows", () => {
         expect(narrowText).toContain("OpenAI Developer Docs");
         expect(narrowText).toContain("PostHog");
         expect(compactNarrowText).toContain(
-            "MCPserversareavailableinAutoorFullaccessbecausetheycanactoutsideRig'ssandbox.",
+            "MCPserversareavailableinAutoorFullaccessbecausetheycanactoutsideHappyAgent'ssandbox.",
         );
         expect(narrowRows.filter((row) => row === "• MCP servers blocked")).toHaveLength(1);
         expect(narrowRows.filter((row) => row.includes("└"))).toHaveLength(1);
@@ -75,7 +75,7 @@ describe("blocked MCP servers render as stable child rows", () => {
 });
 
 async function writeProof(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_PROOF_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_PROOF_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -13,7 +13,7 @@ describe("starting a selected Happy Agent release", () => {
     it("runs the installed binary without a Happy Agent package dependency", async () => {
         const gym = await createGym({
             mode: "docker",
-            environment: { RIG_GYM_HAPPY_AGENT_COMMAND: "" },
+            environment: { HAPPY_TERMINAL_GYM_HAPPY_AGENT_COMMAND: "" },
             homeFiles: {
                 ".happy/dist/config.json": `${JSON.stringify(
                     { downloadedVersions: ["1.2.3"], selectedVersion: "1.2.3" },
@@ -23,7 +23,7 @@ describe("starting a selected Happy Agent release", () => {
                 ".happy/dist/version/1.2.3/happy-agent": {
                     content: [
                         "#!/usr/bin/env bash",
-                        'printf "%s\\n" "$*" > /home/rig/.happy/dist/selected-binary-command',
+                        'printf "%s\\n" "$*" > /home/happy-terminal/.happy/dist/selected-binary-command',
                         'exec node /app/happy-agent/dist/cli.js "$@"',
                         "",
                     ].join("\n"),
@@ -36,10 +36,10 @@ describe("starting a selected Happy Agent release", () => {
         running.add(gym);
 
         const invoked = await gym.runInContainer("cat", [
-            "/home/rig/.happy/dist/selected-binary-command",
+            "/home/happy-terminal/.happy/dist/selected-binary-command",
         ]);
         expect(invoked.stdout.trim()).toBe("start");
         const screen = await gym.terminal.snapshot();
-        expect(screen.text).toContain("Ask Rig to do anything");
+        expect(screen.text).toContain("Ask Happy Terminal to do anything");
     }, 120_000);
 });

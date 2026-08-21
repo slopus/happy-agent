@@ -1,6 +1,6 @@
-# Evaluating Rig
+# Evaluating Happy Agent
 
-This guide defines Rig's small, local agent evaluation. The current suite is a
+This guide defines Happy Agent's small, local agent evaluation. The current suite is a
 directional comparison, not a leaderboard result or a statistically powered
 claim. It favors hard paired tasks, cost control, and trajectory inspection over
 a large aggregate score.
@@ -23,9 +23,9 @@ The initial run compares these four arms:
 
 | Arm | Harness         | Model                  |
 | --- | --------------- | ---------------------- |
-| A   | Rig             | `openai/gpt-5.6-sol`   |
+| A   | Happy Agent     | `openai/gpt-5.6-sol`   |
 | B   | stock Codex CLI | `openai/gpt-5.6-sol`   |
-| C   | Rig             | `openai/gpt-5.6-terra` |
+| C   | Happy Agent     | `openai/gpt-5.6-terra` |
 | D   | stock Codex CLI | `openai/gpt-5.6-terra` |
 
 Every arm receives the same task instruction and task container. The primary
@@ -119,11 +119,11 @@ manifest.
 Freeze these values in the generated job files:
 
 - Harbor `v0.20.0`; do not use an unpinned `main` checkout.
-- Rig from a clean worktree at commit
+- Happy Agent from a clean worktree at commit
   `e266da4e376fd9770b3ad5d60dfc232c70154c59`.
 - stock `codex-cli 0.144.6`.
 - exactly one attempt, no model or trial retry, and concurrency one.
-- `medium` reasoning effort for all arms. Rig's model defaults and Harbor's
+- `medium` reasoning effort for all arms. Happy Agent's model defaults and Harbor's
   Codex default differ, so an implicit value is invalid.
 - standard API service, never Priority.
 - each task's native agent timeout, capped at 30 minutes: 900 seconds for
@@ -133,7 +133,7 @@ Freeze these values in the generated job files:
   project-external instructions in either arm.
 - stock Codex's Harbor adapter must invoke its documented
   `--dangerously-bypass-approvals-and-sandbox` mode inside the task container;
-  the adapter smoke test must assert this before comparing it with Rig's Full
+  the adapter smoke test must assert this before comparing it with Happy Agent's Full
   access mode.
 - task CPU and RAM limits enforced, a PID limit of 512, no GPU, and at most 10
   GB writable task storage where Harbor supports it.
@@ -248,27 +248,26 @@ container. Harbor's stock adapter writes its supplied token to a temporary
 Codex auth file that model-generated code can read, which is why a disposable,
 model-scoped token is mandatory.
 
-### Rig adapter
+### Happy Agent adapter
 
-Implement `RigAgent` as a small Harbor `BaseAgent` or `BaseInstalledAgent` and
-load it directly with `--agent path.to.agent:RigAgent`; do not fork Harbor.
+Implement `HappyAgent` as a small Harbor `BaseAgent` or `BaseInstalledAgent` and
+load it directly with `--agent path.to.agent:HappyAgent`; do not fork Harbor.
 The adapter must:
 
-1. Upload a `pnpm pack` artifact built from the pinned clean Rig worktree and
+1. Upload a `pnpm pack` artifact built from the pinned clean Happy Agent worktree and
    install it during Harbor's trusted setup phase.
-2. Create empty, trial-local `RIG_HOME`, `RIG_CONFIGURATION_DIRECTORY`, and
-   `CODEX_HOME` directories. Disable Happy sync and set
-   `providers.default_enable = false` in the trial-local Rig config, enabling
+2. Create empty, trial-local `HAPPY_TERMINAL_HOME`, `HAPPY_TERMINAL_CONFIGURATION_DIRECTORY`, and
+   `CODEX_HOME` directories. Set `happy_integration = false` and
+   `providers.default_enable = false` in the trial-local Happy Agent config, enabling
    only Codex and the selected model. Construct an explicit
    process-environment allowlist containing only ordinary runtime variables and
    the trial's OpenAI proxy values; do not inherit Anthropic, xAI, Moonshot,
    Gemini, AWS, or other provider credentials. Do not copy host sessions,
    credentials, config, skills, or MCP state.
-3. Run Rig inside the Harbor task container with the exact instruction:
+3. Run Happy Terminal against Happy Agent inside the Harbor task container with the exact instruction:
 
     ```sh
-    RIG_DISABLE_HAPPY_SYNC=1 \
-    rig exec --stream-json \
+    happy-terminal exec --stream-json \
       --provider codex \
       --model "$MODEL" \
       --effort medium \
@@ -277,13 +276,13 @@ The adapter must:
     ```
 
 4. Supply only the disposable `OPENAI_API_KEY` and the proxy as
-   `RIG_CODEX_BASE_URL`. Full access is acceptable only inside the disposable,
+   `HAPPY_TERMINAL_CODEX_BASE_URL`. Full access is acceptable only inside the disposable,
    externally restricted task container and matches stock Codex's benchmark
    posture.
 5. Save the complete JSONL stream, stderr, final response, tool calls, wall
    time, exit status, and package identity under Harbor's agent logs. For each
    line where `.type === "event"` and `.event.type === "agent_message"`,
-   aggregate `.event.data.message.usage`. Rig currently reports token counts
+   aggregate `.event.data.message.usage`. Happy Agent currently reports token counts
    there but leaves monetary cost at zero, and `run_finished` has no usage
    rollup.
 6. Convert the run to Harbor's trajectory format, or retain enough stable raw
@@ -317,7 +316,7 @@ Complete and record this checklist in order:
 4. **ARM/emulation.** Confirm each amd64 Terminal-Bench image builds, starts,
    runs its oracle, and stays within its native timeout under Docker Desktop
    emulation.
-5. **Rig adapter smoke.** Build Rig from the clean pinned worktree, invoke it in
+5. **Happy Agent adapter smoke.** Build Happy Agent from the clean pinned worktree, invoke it in
    a disposable Harbor fixture, preserve JSONL and usage, reject interactive
    input, and propagate timeout and nonzero-exit states.
 6. **Proxy accounting.** Against a mock upstream, prove the proxy restricts the
@@ -337,7 +336,7 @@ Complete and record this checklist in order:
 10. **Dry report.** Generate the final per-task CSV/JSON and paired report from
     oracle and mock artifacts. Review the frozen arm order, projected spend,
     safety evidence, and `git diff` before authorizing the pilot. Write
-    `preflight-passed.json` with hashes of the lock, job files, Rig package,
+    `preflight-passed.json` with hashes of the lock, job files, Happy Agent package,
     proxy policy, canary results, oracle results, prices, and review sign-off.
     Confirm the token issuer rejects a missing, stale, or mismatched sign-off.
 
@@ -351,7 +350,7 @@ grader for all four arms. Do not change graders after seeing outcomes.
 Report SWE-bench and Terminal-Bench separately for Sol and Terra. For each
 model/benchmark pair include:
 
-- Rig pass count, Codex pass count, paired delta, both pass, Rig only, Codex
+- Happy Agent pass count, Codex pass count, paired delta, both pass, Happy Agent only, Codex
   only, and both fail;
 - uncached input, cached input, cache-write, and output tokens plus calculated
   spend and wall time;
@@ -363,7 +362,7 @@ malformed patch or submission, timeout, interactive-input request, provider
 error, tool/runtime/harness failure, or task-image/setup/grader failure. Do not
 turn infrastructure failures into model failures, and do not omit them.
 
-Audit every discordant Rig-only or Codex-only task, every infrastructure
+Audit every discordant Happy Agent-only or Codex-only task, every infrastructure
 failure, several both-fail trajectories, and several both-pass trajectories.
 Preserve raw trajectories, predictions, grader logs, proxy accounting, exact
 versions, the lock, dirty-state check, and report-generation inputs.
@@ -377,7 +376,7 @@ The primary end-to-end table counts every paid trial that started inference:
 reward one is a pass and every other terminal outcome is unresolved, with the
 failure class shown explicitly. This captures harness reliability without
 calling an infrastructure failure a model error. Also report a capability
-sensitivity table that excludes an entire model-specific Rig/Codex task pair if
+sensitivity table that excludes an entire model-specific Happy Agent/Codex task pair if
 either arm had an infrastructure failure. Never exclude only the failed arm,
 and always print both denominators.
 

@@ -10,10 +10,10 @@ export function getManagedWorkspacesDirectory(
     homeDirectory: string = homedir(),
     platform: NodeJS.Platform = process.platform,
 ): string {
-    const configuredDirectory = environment.RIG_WORKSPACES_DIRECTORY?.trim();
+    const configuredDirectory = environment.HAPPY_AGENT_WORKSPACES_DIRECTORY?.trim();
     if (configuredDirectory !== undefined && configuredDirectory.length > 0) {
         if (!isAbsolute(configuredDirectory)) {
-            throw new Error("RIG_WORKSPACES_DIRECTORY must be an absolute path.");
+            throw new Error("HAPPY_AGENT_WORKSPACES_DIRECTORY must be an absolute path.");
         }
         return resolve(configuredDirectory);
     }

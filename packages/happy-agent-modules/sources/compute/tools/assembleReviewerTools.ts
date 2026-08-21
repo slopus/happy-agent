@@ -10,7 +10,7 @@ import { assembleGrokReviewerTools } from "./grok/assembleGrokReviewerTools.js";
 /**
  * The one place the automatic permission reviewer becomes a tool surface.
  *
- * Rig v1 gave its review side agent its own provider's tools — a Claude review got Claude's tools, a
+ * Happy Agent v1 gave its review side agent its own provider's tools — a Claude review got Claude's tools, a
  * Codex review got Codex's — so the model saw the names it was trained on. This does the same: the
  * vendor is the vendor of the reviewer's own model route, chosen the moment the reviewer assembles
  * its tools for an inference, not the vendor of the agent under review. Each vendor's read-only

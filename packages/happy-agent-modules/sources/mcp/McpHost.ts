@@ -30,7 +30,7 @@ import {
 
 /**
  * The host owns every boundary that can reach an MCP server.  In particular, this contract does
- * not expose a Client, Transport, socket, process, credential, or path.  A Rig adapter can hand
+ * not expose a Client, Transport, socket, process, credential, or path.  A Happy Agent adapter can hand
  * these calls to its existing McpClientManager, while another host can use a remote MCP broker.
  * `getToolPolicy` is optional for hosts that already include policy lists in server summaries.
  */

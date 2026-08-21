@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym, type TerminalSnapshot } from "@slopus/rig-gym";
+import { createGym, type Gym, type TerminalSnapshot } from "@slopus/happy-terminal-gym";
 
 const ARTIFACTS = resolve(import.meta.dirname, "../../artifacts/startup-status-card");
 const running = new Set<Gym>();
@@ -76,7 +76,7 @@ describe("resolved startup status card", () => {
             (snapshot) =>
                 snapshot.rows.every((row) => visibleWidth(row) <= 19) &&
                 snapshot.text.includes("New session") &&
-                snapshot.text.includes("Ask Rig"),
+                snapshot.text.includes("Ask Happy Terminal"),
             "one responsive status card after resize",
             30_000,
         );
@@ -93,11 +93,11 @@ async function createResumingGym(cols: number, rows: number, marker: string): Pr
         entrypoint: [
             "bash",
             "-lc",
-            `node /app/packages/rig/dist/main.js; echo ${marker}; exec node /app/packages/rig/dist/main.js resume --last`,
+            `node /app/packages/happy-terminal/dist/main.js; echo ${marker}; exec node /app/packages/happy-terminal/dist/main.js resume --last`,
         ],
         inference: [{ content: [{ text: "REPLAY_HISTORY", type: "text" }] }],
         rows,
-        ...(cols === 19 ? { startupText: "Ask Rig" } : {}),
+        ...(cols === 19 ? { startupText: "Ask Happy Terminal" } : {}),
     });
 }
 
@@ -105,7 +105,9 @@ async function recordTranscript(gym: Gym): Promise<void> {
     gym.terminal.type("Keep one turn for resume replay.");
     gym.terminal.press("enter");
     await gym.terminal.waitUntil(
-        (snapshot) => snapshot.text.includes("REPLAY_HISTORY") && snapshot.text.includes("Ask Rig"),
+        (snapshot) =>
+            snapshot.text.includes("REPLAY_HISTORY") &&
+            snapshot.text.includes("Ask Happy Terminal"),
         "the transcript marker and idle composer",
         30_000,
     );

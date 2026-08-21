@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -32,7 +32,7 @@ describe("failed remote run service messages", () => {
         const failure = await gym.terminal.waitUntil(
             (screen) =>
                 screen.text.includes("Codex authentication is missing a ChatGPT account ID.") &&
-                screen.text.includes("Ask Rig to do anything") &&
+                screen.text.includes("Ask Happy Terminal to do anything") &&
                 !screen.text.includes("esc to interrupt"),
             "the daemon service failure to settle",
         );

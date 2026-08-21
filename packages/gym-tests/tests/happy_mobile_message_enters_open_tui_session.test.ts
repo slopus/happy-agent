@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { decryptHappyPayload, encryptHappyPayload } from "@slopus/happy-agent-modules";
 
 const running = new Set<Gym>();
@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 describe("Happy mobile input", () => {
-    it("publishes and applies Rig permission modes before mobile input enters the TUI", async () => {
+    it("publishes and applies Happy Agent permission modes before mobile input enters the TUI", async () => {
         const secret = new Uint8Array(32).fill(7);
         const encryptedMobileMessage = Buffer.from(
             encryptHappyPayload(secret, "legacy", {
@@ -25,7 +25,7 @@ describe("Happy mobile input", () => {
         const gym = await createGym({
             environment: {
                 NO_PROXY: "127.0.0.1,localhost",
-                RIG_HAPPY_SERVER_URL: "{{HTTP_PROXY_URL}}",
+                HAPPY_AGENT_HAPPY_SERVER_URL: "{{HTTP_PROXY_URL}}",
             },
             homeFiles: {
                 ".happy/access.key": JSON.stringify({
@@ -96,14 +96,17 @@ describe("Happy mobile input", () => {
             },
             inference: [
                 {
-                    content: [{ text: "The Happy message reached Rig.", type: "text" }],
+                    content: [{ text: "The Happy message reached Happy Terminal.", type: "text" }],
                 },
             ],
             timeoutMs: 30_000,
         });
         running.add(gym);
 
-        const screen = await gym.terminal.waitForText("The Happy message reached Rig.", 30_000);
+        const screen = await gym.terminal.waitForText(
+            "The Happy message reached Happy Terminal.",
+            30_000,
+        );
         expect(screen.text).toContain("Continue from Happy mobile.");
         const request = gym.inference.requests.find(
             (candidate) => !candidate.options.sessionId?.endsWith(":title"),

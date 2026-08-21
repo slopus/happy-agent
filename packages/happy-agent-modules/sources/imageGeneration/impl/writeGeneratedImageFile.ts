@@ -4,7 +4,7 @@ import { join } from "node:path";
 /**
  * Publish one finished image into the shared generated-files folder.
  *
- * The folder is Rig's own and people browse it while agents write to it, so the bytes land under a
+ * The folder is Happy Agent's own and people browse it while agents write to it, so the bytes land under a
  * temporary name and a rename — atomic on the same filesystem — publishes them. A reader therefore
  * sees either no file or the whole image, never half of one.
  */

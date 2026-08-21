@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -40,11 +40,11 @@ describe("Markdown and terminal controls render without screen corruption", () =
         gym.terminal.type("Render hostile Markdown safely.");
         gym.terminal.press("enter");
         const rendered = await gym.terminal.waitForText("MARKDOWN_END", 30_000);
-        expect(rendered.title).toContain("Rig");
+        expect(rendered.title).toContain("Happy Terminal");
         expect(rendered.title).not.toContain("CORRUPTED_TITLE");
         expect(rendered.text).toContain("CONTROL_ACONTROL_BCONTROL_C");
         expect(rendered.text).toContain("const answer: number = 42;");
-        expect(rendered.text).toContain("Ask Rig to do anything");
+        expect(rendered.text).toContain("Ask Happy Terminal to do anything");
         expect(rendered.text).toContain("gym off · /workspace");
         expect(rendered.text).not.toContain("\x1b[2J");
         expect(rendered.text).not.toContain("�");
@@ -56,7 +56,7 @@ describe("Markdown and terminal controls render without screen corruption", () =
         gym.terminal.type("Verify the terminal remains usable.");
         gym.terminal.press("enter");
         const followUp = await gym.terminal.waitForText("CONTROL_FOLLOW_UP_ACCEPTED", 30_000);
-        expect(followUp.title).toContain("Rig");
+        expect(followUp.title).toContain("Happy Terminal");
         expect(followUp.scroll.atBottom).toBe(true);
         expect(followUp.text).not.toContain("�");
     });

@@ -60,9 +60,12 @@ export function redactGitAuthenticationText(
         );
         if (match?.[1] === undefined) continue;
         const capability = /\/([a-f0-9]{64})\/$/u.exec(match[1])?.[1];
-        redacted = redacted.replaceAll(match[1], "http://127.0.0.1/[Rig Git authentication]/");
+        redacted = redacted.replaceAll(
+            match[1],
+            "http://127.0.0.1/[Happy Agent Git authentication]/",
+        );
         if (capability !== undefined) {
-            redacted = redacted.replaceAll(capability, "[Rig Git authentication]");
+            redacted = redacted.replaceAll(capability, "[Happy Agent Git authentication]");
         }
     }
     return redacted;
@@ -371,7 +374,7 @@ function forwardedHeaders(headers: IncomingHttpHeaders, token: string): Incoming
         ...(headers["git-protocol"] === undefined
             ? {}
             : { "git-protocol": headers["git-protocol"] }),
-        "user-agent": headers["user-agent"] ?? "Rig Git broker",
+        "user-agent": headers["user-agent"] ?? "Happy Agent Git broker",
     };
 }
 

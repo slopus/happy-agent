@@ -38,7 +38,7 @@ export async function handleHappySessionRpc(options: {
     }
     if (options.method === "communication") {
         if (!Value.Check(communicationSchema, options.params)) {
-            return { error: "Happy sent an answer Rig could not read." };
+            return { error: "Happy sent an answer Happy Agent could not read." };
         }
         // A dismissal, including one from a phone that could not draw the form,
         // takes the question away rather than answering it with nothing.

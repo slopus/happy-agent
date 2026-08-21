@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "CRASHED_DAEMON_RELEASED_SQLITE_OWNERSHIP";
@@ -35,7 +35,7 @@ const replaceCrashedDaemonScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
 read_daemon_pid() {
@@ -54,22 +54,22 @@ wait_for_exit() {
     return 1
 }
 
-rig daemon start
+happy-terminal daemon start
 crashed_pid="$(read_daemon_pid)"
 kill -KILL "$crashed_pid"
 wait_for_exit "$crashed_pid"
 
-rig daemon start
+happy-terminal daemon start
 replacement_pid="$(read_daemon_pid)"
 if [[ "$replacement_pid" = "$crashed_pid" ]]; then
     echo "The crashed daemon was not replaced." >&2
     exit 1
 fi
 kill -0 "$replacement_pid"
-rig daemon status
+happy-terminal daemon status
 
 echo "Replacement daemon acquired SQLite ownership"
-rig daemon stop
+happy-terminal daemon stop
 wait_for_exit "$replacement_pid"
 echo ${COMPLETED_MARKER}
 sleep 60

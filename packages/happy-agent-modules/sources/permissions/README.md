@@ -104,7 +104,7 @@ long-window rate.
   not a function is rejected.
 - `PERMISSION_REVIEW_TIMEOUT_MS` (90,000), `PERMISSION_REFUSALS_BEFORE_STOPPING` (3), and
   `PERMISSION_ANNOUNCE_TIMEOUT_MS` (5,000) are the module's own bounds, exported so a reader can
-  see them rather than so a host can change them. They are Rig v1's values: the review budget, the
+  see them rather than so a host can change them. They are Happy Agent v1's values: the review budget, the
   consecutive-refusal limit, and the ceiling on how long one decision waits for its observers.
 - `PermissionReviewer.review(ctx, request: PermissionReviewRequest): Promise<PermissionReviewDecision>`
   is the contract a host implements. `PermissionReviewRequest` carries `agentId`, `callId`, the

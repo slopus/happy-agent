@@ -3,7 +3,7 @@
  *
  * These deliberately do not use `node:path`. The paths belong to the compute, not to the process
  * holding these tools: an agent working inside a container names `/workspace/app` while the host
- * running Rig may be a Windows machine, and `node:path` would answer with that host's separator
+ * running Happy Agent may be a Windows machine, and `node:path` would answer with that host's separator
  * and its idea of what is absolute. So the rules are the machine's — a leading separator, or a
  * drive letter for a Windows compute — and everything else is ordinary segment arithmetic.
  */

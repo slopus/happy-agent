@@ -18,7 +18,7 @@ export function createMcpTrustUserInputRequest(
         request.source === "project"
             ? "this project's configuration"
             : request.source === "runtime"
-              ? "your saved Rig preferences"
+              ? "your saved Happy Agent preferences"
               : "your user configuration";
     const boundary =
         request.config.transport === "stdio"
@@ -46,7 +46,7 @@ export function createMcpTrustUserInputRequest(
                 multiSelect: false,
                 options: [
                     {
-                        description: `${boundary}${environment} This decision is saved and Rig asks again if the server configuration changes.`,
+                        description: `${boundary}${environment} This decision is saved and Happy Agent asks again if the server configuration changes.`,
                         label: MCP_TRUST_ANSWER,
                     },
                     {
@@ -55,7 +55,7 @@ export function createMcpTrustUserInputRequest(
                         label: "Don't trust",
                     },
                 ],
-                question: `Trust MCP server ${quote(request.name)} from ${source}? MCP servers operate outside Rig's filesystem sandbox.`,
+                question: `Trust MCP server ${quote(request.name)} from ${source}? MCP servers operate outside Happy Agent's filesystem sandbox.`,
             },
         ],
     };

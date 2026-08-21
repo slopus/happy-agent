@@ -21,7 +21,7 @@ describe("renderTerminalSnapshotPng terminal defaults", () => {
         ["dark", rgb(238), rgb(13)],
         ["light", rgb(13), rgb(238)],
     ])("uses Ghostty's %s foreground and background", async (_scheme, foreground, background) => {
-        const directory = await mkdtemp(join(tmpdir(), "rig-gym-screenshot-"));
+        const directory = await mkdtemp(join(tmpdir(), "happy-terminal-gym-screenshot-"));
         temporaryDirectories.push(directory);
         const outputPath = join(directory, "terminal.png");
 

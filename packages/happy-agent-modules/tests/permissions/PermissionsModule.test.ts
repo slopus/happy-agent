@@ -64,7 +64,7 @@ const escalatingTool = defineAgentTool({
     toLLM: () => [{ type: "text", text: "published" }],
 });
 
-/** A tool Rig's own sandbox cannot contain at all. */
+/** A tool Happy Agent's own sandbox cannot contain at all. */
 const externalTool = defineAgentTool({
     name: "call_server",
     returnType: Type.Object({}),

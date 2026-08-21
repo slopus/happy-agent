@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -23,7 +23,7 @@ describe("bang-prefixed shell commands", () => {
 
         await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 !snapshot.text.includes("Shell mode"),
             "backspace at the empty shell prompt to return to the normal composer",
         );
@@ -44,7 +44,7 @@ describe("bang-prefixed shell commands", () => {
             (snapshot) =>
                 snapshot.text.includes("Ran echo direct-output > result.txt && cat result.txt") &&
                 snapshot.text.includes("direct-output") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the direct shell command to finish and return to the idle composer",
             30_000,
         );
@@ -84,7 +84,7 @@ describe("bang-prefixed shell commands", () => {
             (snapshot) =>
                 snapshot.text.includes("Agent finished.") &&
                 snapshot.text.includes("Ran echo queued-output > queued.txt && cat queued.txt") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the queued direct shell command to run after the agent response",
             30_000,
         );
@@ -113,7 +113,7 @@ describe("bang-prefixed shell commands", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("Ran echo context-output") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the direct shell command to finish",
             30_000,
         );
@@ -172,7 +172,7 @@ describe("bang-prefixed shell commands", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("1 background terminal running · /ps to view") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the shell command to move to the background",
             30_000,
         );
@@ -191,7 +191,7 @@ describe("bang-prefixed shell commands", () => {
                 snapshot.text.includes("Running") &&
                 snapshot.text.includes("BANG_LOG_080") &&
                 snapshot.text.includes("PgUp/PgDn scroll") &&
-                !snapshot.text.includes("Ask Rig to do anything"),
+                !snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the full-screen background terminal viewer",
             30_000,
         );
@@ -212,7 +212,7 @@ describe("bang-prefixed shell commands", () => {
 
         await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 !snapshot.text.includes("background terminal running"),
             "the composer to return after stopping the background terminal",
             30_000,

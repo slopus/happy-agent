@@ -58,7 +58,7 @@ export function codexWriteStdinTool(compute: Compute) {
         describeAutoPermissionAction: ({ chars, session_id }) =>
             `sending ${JSON.stringify(chars ?? "")} to shell session ${String(session_id)}. Access: the session's own input, inside the sandbox it was started in`,
         // Typing into a live program is the program acting, not a lookup, so it is decided on. An
-        // empty poll types nothing and only reads work Rig itself started, so it is not. Neither
+        // empty poll types nothing and only reads work Happy Agent itself started, so it is not. Neither
         // needs elevation: input reaches nothing the session could not already reach.
         shouldReviewInAutoMode: ({ chars }) => chars !== undefined && chars.length > 0,
         execute: async (ctx, { chars, max_output_tokens, session_id, yield_time_ms }) => {

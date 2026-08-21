@@ -18,7 +18,7 @@ export function workspaceStorageKey(value: string): string {
 }
 
 /**
- * The branch Rig manages for a workspace.
+ * The branch Happy Agent manages for a workspace.
  *
  * It is built from the workspace's own name rather than from the folder the checkout happens to
  * sit in, because other software reads the branch name and expects it to describe the work.

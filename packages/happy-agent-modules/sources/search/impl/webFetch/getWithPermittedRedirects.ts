@@ -36,7 +36,7 @@ export async function getWithPermittedRedirects(
             response = await fetch(url, {
                 headers: {
                     Accept: "text/markdown, text/html, */*",
-                    "User-Agent": "Rig (+https://github.com/slopus/rig)",
+                    "User-Agent": "Happy Agent (+https://github.com/slopus/happy-agent)",
                 },
                 redirect: "manual",
                 signal: timedSignal.signal,

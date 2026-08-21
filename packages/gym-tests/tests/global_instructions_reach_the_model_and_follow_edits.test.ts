@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -44,7 +44,7 @@ describe("global instructions reach the model and follow edits", () => {
         // on the next turn, without restarting anything.
         await gym.runInContainer("node", [
             "-e",
-            'require("node:fs").writeFileSync("/home/rig/happy/config/AGENTS.md", "Always greet the user in Japanese.\\n")',
+            'require("node:fs").writeFileSync("/home/happy-terminal/happy/config/AGENTS.md", "Always greet the user in Japanese.\\n")',
         ]);
 
         gym.terminal.type("Say hello again.");

@@ -108,7 +108,7 @@ export async function findRepositoryAvatar(root: string): Promise<Buffer | undef
 /**
  * Asks the hosting service for the owner's picture when the repository has none of its own.
  *
- * Only the three hosts Rig understands are contacted, only over HTTPS, only without redirects,
+ * Only the three hosts Happy Agent understands are contacted, only over HTTPS, only without redirects,
  * and only for an image served from that host's own avatar domain. Failure is ordinary: a project
  * without a picture is perfectly usable.
  */
@@ -125,7 +125,7 @@ export async function findHostingAvatar(
     timeout.unref?.();
     try {
         const metadata = await fetch(metadataUrl(repository), {
-            headers: { accept: "application/json", "user-agent": "Rig" },
+            headers: { accept: "application/json", "user-agent": "Happy Agent" },
             redirect: "error",
             signal: controller.signal,
         });
@@ -147,7 +147,7 @@ export async function findHostingAvatar(
             return undefined;
         }
         const response = await fetch(avatar, {
-            headers: { accept: "image/*", "user-agent": "Rig" },
+            headers: { accept: "image/*", "user-agent": "Happy Agent" },
             redirect: "error",
             signal: controller.signal,
         });

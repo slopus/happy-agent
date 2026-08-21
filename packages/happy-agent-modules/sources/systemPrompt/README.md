@@ -1,7 +1,7 @@
 # System prompt
 
 `SystemPromptModule` is the single instruction module for an agent. It selects the native prompt
-for the model in force, substitutes Rig's own identity, appends truthful host environment details,
+for the model in force, substitutes Happy Agent's own identity, appends truthful host environment details,
 and supplies the global, security, and project `AGENTS.md` instruction chain.
 
 ```text
@@ -24,7 +24,7 @@ The constructor takes modules and nothing else. Configuration owns the model cat
 person's global `AGENTS.md`, and compute owns which machine an agent runs on, so neither a
 catalog, an identity, a path, nor a reader callback is passed in.
 
-There is one identity and it is Rig's own (`DEFAULT_SYSTEM_PROMPT_IDENTITY`): an installation that
+There is one identity and it is Happy Agent's own (`DEFAULT_SYSTEM_PROMPT_IDENTITY`): an installation that
 renamed itself would be telling the model it is something the rest of the product is not.
 `systemPromptIdentitySchema` still describes that value — a non-blank name of at most 128
 characters free of NULs, carriage returns, line feeds, `{`, and `}`, and a non-blank prompt of at

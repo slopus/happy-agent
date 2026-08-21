@@ -7,7 +7,7 @@
   cut: older Happy clients are incompatible, legacy manifests without `author`, `category`, or a
   valid bounded square PNG no longer load, and Happy must bump `@slopus/rig-connect` in lockstep
   before consuming the new catalog contract.
-- Added protocol version 6 installation discovery for Happy onboarding, including stable Rig data
+- Added protocol version 6 installation discovery for Happy onboarding, including stable Happy Agent data
   epochs, offline CLI inspection, explicit schema compatibility, and bounded browser-safe
   rig-connect discovery.
 - Added strict local Happy Cloud enrollment records, independent default-denied capability consent,

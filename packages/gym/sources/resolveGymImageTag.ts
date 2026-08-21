@@ -7,7 +7,7 @@ import { formatGymImageTag } from "./formatGymImageTag.js";
 const resolvedTags = new Map<string, Promise<string>>();
 
 export function resolveGymImageTag(repositoryRoot: string): Promise<string> {
-    const configuredImage = process.env.RIG_GYM_IMAGE;
+    const configuredImage = process.env.HAPPY_TERMINAL_GYM_IMAGE;
     if (configuredImage !== undefined) return Promise.resolve(configuredImage);
 
     let tag = resolvedTags.get(repositoryRoot);
@@ -46,7 +46,7 @@ async function fingerprintGymRuntime(repositoryRoot: string): Promise<string> {
             }),
         ],
         [
-            "packages/rig/package.json",
+            "packages/happy-terminal/package.json",
             (manifest: PackageManifest) => ({
                 bin: manifest.bin,
                 name: manifest.name,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "DAEMON_CRASH_STACK_WRITTEN_TO_LOG";
@@ -35,12 +35,12 @@ const crashDaemonAndCheckReportScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
-export RIG_CRASH_TEST_SECRET="must-not-appear-in-report"
+export HAPPY_TERMINAL_CRASH_TEST_SECRET="must-not-appear-in-report"
 export NODE_OPTIONS="$NODE_OPTIONS --require=/workspace/crash-daemon-preload.cjs"
-daemon_log="/home/rig/.happy/agent/daemon.log"
+daemon_log="/home/happy-terminal/.happy/agent/daemon.log"
 
 wait_for_exit() {
     local target_pid="$1"
@@ -54,13 +54,13 @@ wait_for_exit() {
     return 1
 }
 
-rig daemon start
+happy-terminal daemon start
 daemon_pid="$(pgrep -f '/app/happy-agent/dist/cli.js run$' | head -n 1)"
 test -n "$daemon_pid"
 touch /workspace/trigger-daemon-crash
 wait_for_exit "$daemon_pid"
 grep -q "daemon uncaught crash marker" "$daemon_log"
-if grep -q "$RIG_CRASH_TEST_SECRET" "$daemon_log"; then
+if grep -q "$HAPPY_TERMINAL_CRASH_TEST_SECRET" "$daemon_log"; then
     echo "The daemon log persisted an environment secret." >&2
     exit 1
 fi

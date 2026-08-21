@@ -114,7 +114,7 @@ export const mcpModuleOptionsSchema = Type.Object(
 export type McpModuleOptions = Static<typeof mcpModuleOptionsSchema>;
 
 /**
- * One shared MCP capability serves every agent.  Rig supplies the host; this class owns the
+ * One shared MCP capability serves every agent.  Happy Agent supplies the host; this class owns the
  * provider-neutral operations, validation, naming, permission declarations, and model rendering.
  */
 export class McpModule implements AgentModule {
@@ -186,7 +186,7 @@ export class McpModule implements AgentModule {
 
         /**
          * The dynamic tool list is intentionally rebuilt from the host's current connected
-         * catalog. Rig remains authoritative for connection lifetime and trust; the module never
+         * catalog. Happy Agent remains authoritative for connection lifetime and trust; the module never
          * caches a client or treats its own heap as a server record.
          */
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {

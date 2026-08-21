@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const INJECTION_SENTINEL = "PROJECT_CONFIG_INJECTION_SENTINEL_4E2C";
 const running = new Set<Gym>();
@@ -54,7 +54,7 @@ describe("project config keeps useful preferences without elevating permissions"
             (snapshot) =>
                 snapshot.text.includes("Project permission ignored") &&
                 snapshot.text.includes("auto") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "a visible warning and the trusted permission default",
             30_000,
@@ -72,7 +72,7 @@ describe("project config keeps useful preferences without elevating permissions"
             (snapshot) =>
                 (snapshot.text.includes("PROJECT_PREFERENCES_APPLIED") ||
                     snapshot.text.includes("PROJECT_PREFERENCES_MISSING")) &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the useful project config outcome",
             30_000,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -17,7 +17,7 @@ describe("the debug command", () => {
             entrypoint: [
                 "bash",
                 "-lc",
-                "exec node /app/packages/rig/dist/main.js 2>/workspace/tui-inspector.log",
+                "exec node /app/packages/happy-terminal/dist/main.js 2>/workspace/tui-inspector.log",
             ],
             inference(request, callIndex) {
                 expect(callIndex).toBe(0);
@@ -31,7 +31,7 @@ describe("the debug command", () => {
         submit(gym, "/debug");
         const report = await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("globalThis.__rigDebug") &&
+                snapshot.text.includes("globalThis.__happyTerminalDebug") &&
                 snapshot.text.includes("TUI inspector") &&
                 snapshot.text.includes("Daemon inspector") &&
                 snapshot.text.includes("State directory") &&
@@ -116,7 +116,7 @@ function evaluate(url) {
                 id: 1,
                 method: "Runtime.evaluate",
                 params: {
-                    expression: "({ kind: globalThis.__rigDebug?.kind, keys: Object.keys(globalThis.__rigDebug ?? {}), sessionId: globalThis.__rigDebug?.sessionId })",
+                    expression: "({ kind: globalThis.__happyTerminalDebug?.kind, keys: Object.keys(globalThis.__happyTerminalDebug ?? {}), sessionId: globalThis.__happyTerminalDebug?.sessionId })",
                     returnByValue: true,
                 },
             }));

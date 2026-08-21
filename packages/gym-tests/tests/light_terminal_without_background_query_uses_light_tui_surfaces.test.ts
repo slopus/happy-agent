@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym, type TerminalSnapshot } from "@slopus/rig-gym";
+import { createGym, type Gym, type TerminalSnapshot } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -25,7 +25,9 @@ describe("light terminals without background-color query support", () => {
         // color-scheme report alone, so surfaces derive from the pure-white fallback.
         const snapshot = await gym.terminal.waitForText("Theme-aware response.");
         expect(rowBackgroundIndexes(snapshot, "Respect the light theme.")).toEqual([255]);
-        expect(rowBackgroundIndexes(snapshot, "Ask Rig to do anything")).toEqual([244, 255]);
+        expect(rowBackgroundIndexes(snapshot, "Ask Happy Terminal to do anything")).toEqual([
+            244, 255,
+        ]);
     }, 20_000);
 });
 

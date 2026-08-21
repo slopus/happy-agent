@@ -147,11 +147,11 @@ const rpcRequestSchema = Type.Object(
 );
 
 /**
- * One Rig session as it appears on the phone.
+ * One Happy Agent session as it appears on the phone.
  *
  * Everything Happy knows about a session goes through here: the session is
  * created, its messages are delivered, what the person sends comes back, and
- * what Rig is doing is published as it changes. The loop is deliberately dull —
+ * what Happy Agent is doing is published as it changes. The loop is deliberately dull —
  * do everything owed, then wait to be told there is more — because that is what
  * makes it safe to interrupt at any point and pick up where it stopped.
  */
@@ -224,7 +224,7 @@ export class HappySessionClient {
                 );
             }
         } catch (error) {
-            // Happy is optional; the session ends in Rig whatever the server says.
+            // Happy is optional; the session ends in Happy Agent whatever the server says.
             this.#options.context.log.debug("Happy did not accept the archive.", {}, error);
         } finally {
             await this.close();
@@ -297,7 +297,7 @@ export class HappySessionClient {
         );
         const body: unknown = await response.json();
         if (!Value.Check(remoteSessionSchema, body)) {
-            throw new Error("Happy returned a session Rig could not read.");
+            throw new Error("Happy returned a session Happy Agent could not read.");
         }
         const remote = body.session;
         this.#metadataVersion = remote.metadataVersion;
@@ -405,7 +405,7 @@ export class HappySessionClient {
             const response = await this.#request(url.toString());
             const body: unknown = await response.json();
             if (!Value.Check(messagePageSchema, body)) {
-                throw new Error("Happy returned a message page Rig could not read.");
+                throw new Error("Happy returned a message page Happy Agent could not read.");
             }
             const messages = body.messages.filter((message): message is HappyRemoteMessage =>
                 Value.Check(happyRemoteMessageSchema, message),
@@ -521,7 +521,7 @@ export class HappySessionClient {
             return undefined;
         }
         const mimeType = attachment.mimeType ?? "image/jpeg";
-        // Rig can put a picture in front of a model; it cannot do that with a spreadsheet.
+        // Happy Agent can put a picture in front of a model; it cannot do that with a spreadsheet.
         if (!mimeType.startsWith("image/")) return undefined;
         return { data: Buffer.from(decrypted).toString("base64"), mimeType };
     }
@@ -642,7 +642,7 @@ export class HappySessionClient {
                 sid: state.remoteSessionId,
             });
             if (!Value.Check(acknowledgementSchema, answer)) {
-                throw new Error("Happy returned a metadata answer Rig could not read.");
+                throw new Error("Happy returned a metadata answer Happy Agent could not read.");
             }
             if (answer.result === "success" && answer.version !== undefined) {
                 this.#metadataVersion = answer.version;
@@ -650,7 +650,7 @@ export class HappySessionClient {
                 this.#metadataBase = metadata;
                 return;
             }
-            // Somebody else wrote first. Take their version, put Rig's own facts
+            // Somebody else wrote first. Take their version, put Happy Agent's own facts
             // back on top of it, and try again.
             if (answer.result === "version-mismatch" && answer.version !== undefined) {
                 if (answer.metadata === undefined) {
@@ -658,7 +658,7 @@ export class HappySessionClient {
                 }
                 const latest = this.#decode(state, answer.metadata);
                 if (!Value.Check(recordSchema, latest)) {
-                    throw new Error("Happy returned metadata Rig could not read.");
+                    throw new Error("Happy returned metadata Happy Agent could not read.");
                 }
                 this.#metadataVersion = answer.version;
                 this.#metadataBase = latest;
@@ -668,7 +668,7 @@ export class HappySessionClient {
             }
             throw new Error("Happy refused the metadata update.");
         }
-        throw new Error("Happy metadata kept changing underneath Rig.");
+        throw new Error("Happy metadata kept changing underneath Happy Agent.");
     }
 
     /**
@@ -701,14 +701,14 @@ export class HappySessionClient {
                 sid: state.remoteSessionId,
             });
             if (!Value.Check(acknowledgementSchema, answer)) {
-                throw new Error("Happy returned an agent state answer Rig could not read.");
+                throw new Error("Happy returned an agent state answer Happy Agent could not read.");
             }
             if (answer.result === "success" && answer.version !== undefined) {
                 this.#agentStateVersion = answer.version;
                 this.#lastAgentState = serialized;
                 return;
             }
-            // Happy owns the version, not the contents: Rig is the only writer
+            // Happy owns the version, not the contents: Happy Agent is the only writer
             // of question state, so take the version and publish again.
             if (answer.result === "version-mismatch" && answer.version !== undefined) {
                 this.#agentStateVersion = answer.version;
@@ -716,7 +716,7 @@ export class HappySessionClient {
             }
             throw new Error("Happy refused the agent state update.");
         }
-        throw new Error("Happy agent state kept changing underneath Rig.");
+        throw new Error("Happy agent state kept changing underneath Happy Agent.");
     }
 
     /** When a question was first published, held still so it does not republish forever. */
@@ -772,7 +772,7 @@ export class HappySessionClient {
             }),
             ...(this.#archiving
                 ? {
-                      archiveReason: "The session was ended in Rig.",
+                      archiveReason: "The session was ended in Happy Agent.",
                       archivedBy: "rig",
                       lifecycleState: "archived",
                       lifecycleStateSince: Date.now(),

@@ -12,8 +12,8 @@ const PROJECT_PROOFS_TABLE = "happy_agent_module_project_mutation_proofs";
 /**
  * The projects module owns these tables. They deliberately use stable,
  * human-readable names so a module upgrade can append migrations without
- * borrowing Rig's application schema. An existing migration is never edited:
- * a released Rig may already have applied it.
+ * borrowing Happy Agent's application schema. An existing migration is never edited:
+ * a released Happy Agent may already have applied it.
  */
 export const projectMigrations = [
     [
@@ -113,7 +113,7 @@ export const projectMigrations = [
         "004-project-folder-record",
         /**
          * A project is now a real folder with a kind, a storage key, presence,
-         * initialization state and cached Git facts. Rig is early-stage, so the
+         * initialization state and cached Git facts. Happy Agent is early-stage, so the
          * old rows are dropped rather than migrated column by column: an opaque
          * repository reference cannot be turned into a canonical folder path
          * here, and inventing one would put unusable rows in front of the user.
@@ -183,7 +183,7 @@ export const projectMigrations = [
         /**
          * A project belongs to this installation, not to an agent. The owning agent was always
          * the one identity the daemon had, so the column decided nothing and every read ignored
-         * it. Rig is early-stage: the generation is advanced and the catalog reset rather than
+         * it. Happy Agent is early-stage: the generation is advanced and the catalog reset rather than
          * rewriting rows to drop a column SQLite would have to rebuild the table for anyway.
          */
         async (_ctx: Context, database: AgentDatabase): Promise<void> => {

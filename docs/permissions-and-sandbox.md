@@ -1,13 +1,13 @@
 # Permissions, sandboxing, and shell behavior
 
-This document describes what an agent running inside Rig is allowed to do, how a
+This document describes what an agent running inside Happy Agent is allowed to do, how a
 restricted action can be escalated, and why a refused action must not be
 retried by another route. It is written for coding agents, and it describes the
 behavior that is actually implemented.
 
 ## One permission model for every provider
 
-Rig has a single permission model. Codex, Claude, Grok, and MCP tools all
+Happy Agent has a single permission model. Codex, Claude, Grok, and MCP tools all
 execute through the same `AgentContext`, the same filesystem boundary, the same
 shell sandbox, and the same `PermissionContext`. Provider differences exist only
 in tool names, argument schemas, result formatting, and model-facing guidance.
@@ -28,7 +28,7 @@ The relevant fields on a tool definition are:
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `shouldReviewInAutoMode`          | Required. Whether this exact invocation must be reviewed in Auto.                                           |
 | `shouldRunInFullAccessInAutoMode` | Whether an allowed review also grants this one execution Full access. Review alone never implies elevation. |
-| `requiresAutoOrFullAccess`        | The tool acts outside Rig's local sandbox and cannot run at all in Read only or Workspace write.            |
+| `requiresAutoOrFullAccess`        | The tool acts outside Happy Agent's local sandbox and cannot run at all in Read only or Workspace write.    |
 | `describeAutoPermissionAction`    | Human-readable description of the exact reviewed boundary. Required whenever a review can happen.           |
 | `autoPermissionInstructions`      | Provider-specific Auto guidance injected into the system prompt only while the tool is active.              |
 | `availableToPermissionReviewer`   | Whether the read-only reviewer agent may call the tool while investigating.                                 |
@@ -64,7 +64,7 @@ override.
   Git control files without Full access."
 - Shell writes are confined to the working directory, its Git control paths, and
   temporary directories. Shell network access is blocked except for destinations
-  the user allowed in configuration, reached through Rig's managed proxy.
+  the user allowed in configuration, reached through Happy Agent's managed proxy.
 
 ### Auto
 
@@ -82,7 +82,7 @@ Auto is Workspace write plus automatic review.
 
 ### Full access
 
-Rig's filesystem, shell, and network restrictions are removed.
+Happy Agent's filesystem, shell, and network restrictions are removed.
 `createSandboxedCommand` returns the raw command with no sandbox wrapper, and
 `assertCanReadPath` / `assertCanWritePath` return immediately. Full access does
 not claim to provide the restricted sandbox boundary — it is the absence of it.
@@ -164,7 +164,7 @@ one tool execution to `full_access`, then restore Auto immediately.
 | Grok `run_terminal_command` | `sandbox_permissions: "require_escalated"` | `description`         |
 
 A Pi `bash` tool with `sandbox_permissions: "require_escalated"` and a
-`justification` is sometimes described alongside these. Rig currently ships the
+`justification` is sometimes described alongside these. Happy Agent currently ships the
 Codex, Claude, and Grok shell surfaces only; the Pi surface is part of the stated
 model, not of what runs today.
 
@@ -197,18 +197,18 @@ so rewriting the command does not change the outcome.
   anywhere else is refused, including in a temporary directory, and the home
   directory (or any ancestor of it) is never granted socket scope — that is
   exactly where `~/.docker`, `~/.gnupg`, and agent sockets live. The host's own
-  sockets — the Docker daemon, the SSH agent, Rig's control socket — are
+  sockets — the Docker daemon, the SSH agent, Happy Agent's control socket — are
   unreachable by design.
 - **Local port binding**: on macOS, binding a local TCP or UDP port is refused
   unless the user enabled `network.allowLocalBinding` in configuration. On Linux
   and inside Docker the command gets its own network namespace (`--unshare-net`),
   so a listener it starts is reachable only from inside that command.
 - **Outbound network** is blocked except for domains and ports the user allowed,
-  which are reached through Rig's managed HTTP/SOCKS proxy. The allowlist comes
+  which are reached through Happy Agent's managed HTTP/SOCKS proxy. The allowlist comes
   from `network.allowedDomains` with `network.allowedPorts` (default `[443]`);
   `network.deniedDomains` overrides it. A blocked request explains itself: not in
   the allowlist, in the denylist, DNS could not be resolved safely within two
-  seconds, or the destination resolves to a local or private address. Rig owns
+  seconds, or the destination resolves to a local or private address. Happy Agent owns
   the proxy environment variables; unsetting them cannot grant direct access.
   Only the user can change the policy, in the repository's `happy.toml` or the
   global config.
@@ -217,7 +217,7 @@ so rewriting the command does not change the outcome.
   every other system credential store the same way. Secrets reach a command only
   through the `secrets` argument, which injects an attached session bundle.
 - **Protected paths** are read-only even inside the workspace: `.agents`,
-  `.codex`, the project config files, and Rig's own server directory, socket,
+  `.codex`, the project config files, and Happy Agent's own server directory, socket,
   and token paths.
 
 When a limit blocks necessary work: in Auto, request reviewed full-access
@@ -245,7 +245,7 @@ command and is not something to route around.
 The repository's root `happy.toml` is part of the sandbox boundary because it
 can grant managed network access to later commands. Restricted commands see an
 existing file read-only. When it does not exist, it remains absent before,
-during, and after the command; Rig never creates a placeholder or other
+during, and after the command; Happy Agent never creates a placeholder or other
 synthetic file at that path.
 
 ## Shell and background processes
@@ -287,30 +287,30 @@ done about full-screen applications beyond that. Interactive flags such as
 
 ## MCP
 
-An MCP server executes outside Rig's local filesystem sandbox, so Rig cannot
+An MCP server executes outside Happy Agent's local filesystem sandbox, so Happy Agent cannot
 enforce its boundary locally.
 
 - Every MCP tool sets `requiresAutoOrFullAccess: true`. In Read only or
   Workspace write the call fails with "This action requires Auto or Full access
-  because it can operate outside Rig's local sandbox."
+  because it can operate outside Happy Agent's local sandbox."
 - Every direct and dynamic MCP tool invocation is reviewed in Auto:
   `shouldReviewInAutoMode: () => true`, including `call_mcp_tool` and
   `get_mcp_prompt`.
 - Server-supplied annotations such as `readOnlyHint` are untrusted metadata.
   They are never authorization evidence and never a reason to skip review.
-- Rig-owned protocol operations that are intrinsically read-only skip review:
+- Happy Agent-owned protocol operations that are intrinsically read-only skip review:
   `list_mcp_tools`, `list_mcp_resources`, `list_mcp_resource_templates`,
   `read_mcp_resource`, `list_mcp_prompts`.
 - The approval text discloses the external boundary explicitly: the server can
-  perform actions outside Rig's filesystem sandbox.
+  perform actions outside Happy Agent's filesystem sandbox.
 
 ## Docker sandbox environments
 
-Rig can run a session's commands inside a Docker container. The same permission
+Happy Agent can run a session's commands inside a Docker container. The same permission
 model applies; Docker is the outer isolation, not a replacement for the inner
 sandbox.
 
-An image or existing container used as a Rig execution environment must contain
+An image or existing container used as a Happy Agent execution environment must contain
 Bubblewrap and `socat`, and must allow the nested namespaces Bubblewrap needs.
 `prepareDockerSandbox` probes for exactly that and fails with an actionable
 message: install `bubblewrap` and `socat` in the image, and when connecting to an

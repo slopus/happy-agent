@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 describe("widening a scrolled session until it fits", () => {
     // Real-emulator regression: disposal traps after this resize and incremental-render sequence.
@@ -29,7 +29,7 @@ describe("widening a scrolled session until it fits", () => {
             const narrow = await gym.terminal.waitUntil(
                 (snapshot) =>
                     snapshot.text.includes("WIDEN_HISTORY_END") &&
-                    snapshot.text.includes("Ask Rig to do anything") &&
+                    snapshot.text.includes("Ask Happy Terminal to do anything") &&
                     snapshot.scroll.atBottom,
                 "overflowing narrow history at the bottom",
                 30_000,
@@ -79,12 +79,12 @@ describe("widening a scrolled session until it fits", () => {
             expect(countOccurrences(transcript, "gym off · /workspace")).toBe(1);
 
             gym.terminal.press("backspace");
-            await gym.terminal.waitForText("Ask Rig to do anything");
+            await gym.terminal.waitForText("Ask Happy Terminal to do anything");
             submit(gym, "Confirm the widened session remains usable.");
             const followUp = await gym.terminal.waitUntil(
                 (snapshot) =>
                     snapshot.text.includes("WIDEN_FOLLOW_UP_OK") &&
-                    snapshot.text.includes("Ask Rig to do anything") &&
+                    snapshot.text.includes("Ask Happy Terminal to do anything") &&
                     snapshot.scroll.atBottom,
                 "a follow-up after widening the scrolled session",
                 30_000,

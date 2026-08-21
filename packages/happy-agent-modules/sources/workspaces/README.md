@@ -261,7 +261,7 @@ subscription.
 The module owns `happy_agent_module_workspaces` through its ordered Agent Base migrations.
 Migration `004-workspace-git-record` drops and recreates the table rather than migrating it column
 by column: a workspace is now a branch, a folder, a base, and a lifecycle instead of an opaque
-catalog row, and the old rows could not describe a real worktree anyway. Rig is early stage, so
+catalog row, and the old rows could not describe a real worktree anyway. Happy Agent is early stage, so
 that trade is the honest one. Unique indexes cover `path`, `(project_ref, branch)`,
 `(project_ref, storage_key)`, and `(project_ref, name_key)`; listing is ordered by
 `(project_ref, order_key, id)`.

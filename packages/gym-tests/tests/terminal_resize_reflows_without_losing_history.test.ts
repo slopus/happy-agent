@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, type Gym } from "@slopus/rig-gym";
+import { captureScrollback, createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -39,7 +39,7 @@ describe("terminal resize rebuilds from source", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("REFLOW_HISTORY_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "initial reflow transcript and idle composer",
             30_000,
@@ -84,7 +84,7 @@ describe("terminal resize rebuilds from source", () => {
         const followUp = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("REFLOW_FOLLOW_UP_ACCEPTED") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "follow-up response after narrow and wide resizes",
             30_000,
@@ -123,7 +123,7 @@ async function settleResize(
             snapshot.rows.length === rows &&
             snapshot.scroll.visibleRows === rows &&
             !snapshot.text.includes(marker) &&
-            snapshot.text.includes("Ask Rig to do anything") &&
+            snapshot.text.includes("Ask Happy Terminal to do anything") &&
             snapshot.scroll.atBottom,
         `healthy ${columns} by ${rows} layout at the bottom`,
         30_000,

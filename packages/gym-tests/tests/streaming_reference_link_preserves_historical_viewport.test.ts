@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, waitForTerminalOutput, type Gym } from "@slopus/rig-gym";
+import { createGym, waitForTerminalOutput, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -109,7 +109,7 @@ async function waitForIdleText(gym: Gym, text: string): Promise<void> {
     await gym.terminal.waitUntil(
         (snapshot) =>
             snapshot.text.includes(text) &&
-            snapshot.text.includes("Ask Rig to do anything") &&
+            snapshot.text.includes("Ask Happy Terminal to do anything") &&
             snapshot.scroll.atBottom,
         `idle response containing ${text}`,
         30_000,
@@ -117,13 +117,13 @@ async function waitForIdleText(gym: Gym, text: string): Promise<void> {
 }
 
 async function writeProof(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_PROOF_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_PROOF_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(`${directory}/${name}`);
 }
 
 async function writeOutputTrace(chunks: readonly string[]): Promise<void> {
-    const directory = process.env.RIG_GYM_PROOF_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_PROOF_DIR;
     if (directory === undefined) return;
     await mkdir(directory, { recursive: true });
     await writeFile(

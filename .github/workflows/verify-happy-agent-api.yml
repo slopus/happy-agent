@@ -84,11 +84,11 @@ jobs:
               run: |
                   pnpm --filter @slopus/happy-agent check
                   pnpm --filter @slopus/happy-agent-gym check
-                  pnpm --filter @slopus/rig-gym-tests check
+                  pnpm --filter @slopus/happy-terminal-gym-tests check
 
             - name: Run the Linux Files and Git preflight
               run: |
-                  pnpm --filter @slopus/rig-gym-tests exec vitest run \
+                  pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run \
                     tests/happy_api_chaos_files.test.ts \
                     tests/happy_api_files_git.test.ts \
                     tests/happy_api_git_matrix.test.ts \

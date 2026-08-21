@@ -4,11 +4,11 @@ import { describe, it } from "node:test";
 import { assertBundledHappyRuntimeDependencies } from "./assertBundledHappyRuntimeDependencies.js";
 
 describe("assertBundledHappyRuntimeDependencies", () => {
-    it("accepts the Happy Agent client as Rig's only agent dependency", () => {
+    it("accepts the Happy Agent client as Happy Terminal's only agent dependency", () => {
         assert.doesNotThrow(() =>
             assertBundledHappyRuntimeDependencies({
                 dependencies: { "@slopus/happy-agent-client": "0.0.12" },
-                name: "@slopus/rig",
+                name: "@slopus/happy-terminal",
                 version: "1.2.3",
             }),
         );
@@ -20,7 +20,7 @@ describe("assertBundledHappyRuntimeDependencies", () => {
                 assertBundledHappyRuntimeDependencies({
                     dependencies: { "@slopus/happy-agent-client": "0.0.12" },
                     devDependencies: { "@slopus/happy-agent-modules": "workspace:*" },
-                    name: "@slopus/rig",
+                    name: "@slopus/happy-terminal",
                     version: "1.2.3",
                 }),
             /must not depend on Happy Agent implementation packages/u,
@@ -31,7 +31,7 @@ describe("assertBundledHappyRuntimeDependencies", () => {
         assert.throws(
             () =>
                 assertBundledHappyRuntimeDependencies({
-                    name: "@slopus/rig",
+                    name: "@slopus/happy-terminal",
                     version: "1.2.3",
                 }),
             /must depend on @slopus\/happy-agent-client/u,

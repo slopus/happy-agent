@@ -22,7 +22,7 @@ import {
 /**
  * The main-agent evidence archive, owned by `AutoModule` in the main database.
  *
- * Rig v1 built the reviewer's transcript straight from the live conversation. That is exactly what
+ * Happy Agent v1 built the reviewer's transcript straight from the live conversation. That is exactly what
  * cannot be reproduced from `HistoryModule.messages()`, whose public record intentionally drops the
  * message provenance, the collaboration origin, and the human-owned portion of an interactive
  * answer that the reviewer's trust classification depends on. So `AutoModule` observes the base

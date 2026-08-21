@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -65,7 +65,7 @@ describe("daemon request failures do not crash the client", () => {
             gym.terminal.waitUntil(
                 (snapshot) =>
                     snapshot.text.includes("THE_CLIENT_SURVIVED_THE_FAILED_ABORT") &&
-                    snapshot.text.includes("Ask Rig to do anything"),
+                    snapshot.text.includes("Ask Happy Terminal to do anything"),
                 "the active run to finish after its abort request failed",
                 30_000,
             ),
@@ -91,7 +91,7 @@ async function waitForLiveTerminal<T>(gym: Gym, observation: Promise<T>): Promis
         observation,
         gym.exit().then(({ exitCode, signal }) => {
             throw new Error(
-                `Rig exited while handling a failed daemon request (code ${exitCode}, signal ${String(signal)}).`,
+                `Happy Terminal exited while handling a failed daemon request (code ${exitCode}, signal ${String(signal)}).`,
             );
         }),
     ]);

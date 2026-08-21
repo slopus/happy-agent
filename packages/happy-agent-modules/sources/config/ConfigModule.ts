@@ -1173,7 +1173,7 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * The folder projects Rig cloned for someone live under.
+     * The folder projects Happy Agent cloned for someone live under.
      *
      * A project records its own folder once it exists, so this only decides where the next clone
      * lands. Like the rest of the layout it is settled once per installation.

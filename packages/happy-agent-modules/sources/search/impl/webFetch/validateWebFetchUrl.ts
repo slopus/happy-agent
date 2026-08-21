@@ -1,6 +1,6 @@
 const MAX_URL_LENGTH = 2_000;
 
-/** Whether an address is a public web page Rig is willing to fetch. */
+/** Whether an address is a public web page Happy Agent is willing to fetch. */
 export function validateWebFetchUrl(url: string): boolean {
     if (url.length > MAX_URL_LENGTH) return false;
     try {

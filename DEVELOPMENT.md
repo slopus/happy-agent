@@ -1,19 +1,21 @@
-# Developing Rig
+# Developing Happy Agent and Happy Terminal
 
-Thanks for helping improve Rig. This guide contains the repository-specific
+Thanks for helping improve Happy Agent and Happy Terminal. This guide contains the repository-specific
 setup, testing, and release details that contributors need. For product usage
 and configuration, start with the [README](README.md).
 
 ## Repository layout
 
-Rig is a pnpm TypeScript workspace.
+This repository is a pnpm TypeScript workspace.
 
-- `packages/rig` contains the published `@slopus/rig` CLI, agent runtime, and
-  local daemon. Its entry point is `packages/rig/sources/main.ts`.
+- `packages/happy-agent` contains the headless Happy Agent daemon and lifecycle entry points.
+- `packages/happy-agent-modules` contains the daemon's tools and product features.
+- `packages/happy-terminal` contains the published `@slopus/happy-terminal` TUI, standalone CLI,
+  and Node.js embedding API. Its executable entry point is `packages/happy-terminal/sources/main.ts`.
 - `packages/gym` contains the host-side end-to-end harness, PTY integration,
   fixtures, and Docker image definition.
-- `packages/gym-tests` contains black-box terminal scenarios that exercise the
-  built Rig agent in fresh containers.
+- `packages/gym-tests` contains black-box terminal scenarios that exercise Happy Terminal and
+  Happy Agent together in fresh containers.
 - `scripts` contains repository release automation.
 
 Shared TypeScript and code-quality configuration lives at the workspace root.
@@ -27,47 +29,47 @@ Install dependencies from the repository root:
 pnpm install
 ```
 
-Build and start Rig with checkout-local state:
+Build and start Happy Terminal with checkout-local state:
 
 ```sh
 pnpm dev
 ```
 
 This builds the checkout, reloads its isolated Happy agent, and runs the built
-Rig CLI. The agent socket, token, logs, registry, and session database stay
-under the ignored `.rig-dev` directory instead of the normal Happy home. The
+Happy Terminal CLI. The agent socket, token, logs, registry, and session database stay
+under the ignored `.happy-terminal-dev` directory instead of the normal Happy home. The
 agent remains available after the TUI exits; the next `pnpm dev` reloads it from
 the newest build.
 
-## Running this checkout as the global `rig`
+## Running this checkout as the global `happy-terminal`
 
-To make `rig` resolve to a fresh build from this checkout, run:
+To make `happy-terminal` resolve to a fresh build from this checkout, run:
 
 ```sh
 pnpm link:global
 ```
 
-This builds every package, links `packages/rig` globally, and reloads the normal
-Rig daemon from that build. The link points at this checkout, but Rig executes
-`packages/rig/dist/main.js`, so run `pnpm link:global` again whenever you want to
+This builds every package, links `packages/happy-terminal` globally, and reloads the normal
+Happy Agent daemon from that build. The link points at this checkout, but Happy Terminal executes
+`packages/happy-terminal/dist/main.js`, so run `pnpm link:global` again whenever you want to
 rebuild and restart it with newer source.
 
-Use `pnpm unlink:global` to remove the link before installing a published Rig
+Use `pnpm unlink:global` to remove the link before installing a published Happy Terminal
 again. Linking the real package uses the normal Happy home, sessions, and daemon;
 it is not isolated like `pnpm dev`.
 
 ## Live process debugging
 
-Run `/debug` in any interactive Rig session to start loopback-only Node
+Run `/debug` in any interactive Happy Terminal session to start loopback-only Node
 inspectors for both the terminal UI and daemon. The command reports the current
 session, state directory, and both inspector URLs. In either inspector, evaluate
-`globalThis.__rigDebug` to start walking the live process state.
+`globalThis.__happyTerminalDebug` to start walking the live process state.
 
 Breakpoints suspend the process they target until it is resumed. Native
 inspector output from the daemon is written to the state directory's
-`server.log`. The TUI inherits Rig's stderr, so redirect it when starting Rig if
+`server.log`. The TUI inherits Happy Terminal's stderr, so redirect it when starting Happy Terminal if
 you want to keep inspector messages out of the interface, for example
-`rig 2>rig-tui.log`. If stderr is still the terminal, `/debug` warns and asks for
+`happy-terminal 2>happy-terminal-tui.log`. If stderr is still the terminal, `/debug` warns and asks for
 confirmation before starting. The inspectors use ephemeral ports bound to
 `127.0.0.1`; Node does not authenticate inspector connections, so do not expose
 those ports beyond the local machine.
@@ -89,7 +91,7 @@ before publishing.
 
 ## End-to-end gym
 
-The gym runs the built Rig CLI and daemon through a real PTY in a fresh Docker
+The gym runs the built Happy Terminal CLI and Happy Agent daemon through a real PTY in a fresh Docker
 container. Only inference is mocked; shell processes, tools, files, daemon
 behavior, terminal rendering, interruption, and concurrency are real.
 
@@ -112,7 +114,7 @@ instance.
 
 ## Agent evaluations
 
-Read [EVALUATIONS.md](EVALUATIONS.md) before comparing Rig with another agent
+Read [EVALUATIONS.md](EVALUATIONS.md) before comparing Happy Terminal with another agent
 harness. It defines the frozen hard-task suite, paired run contract, spend
 gates, Docker and credential isolation, preflight requirements, and reporting
 rules. A benchmark run is not authorized merely because its configuration is
@@ -123,10 +125,10 @@ documented; paid trials remain blocked until that guide's preflight is complete.
 Local reference implementations live in `~/Developer/coding-assistant-sources`,
 including the Codex and Claude Code source trees. Consult them when implementing
 or comparing provider-aligned behavior. Preserve the useful model-facing
-semantics while adapting them to Rig's simpler product model.
+semantics while adapting them to Happy Terminal's simpler product model.
 
 Pi packages are used as foundations for model streaming and the terminal UI.
-Rig intentionally layers a curated experience on top instead of mirroring every
+Happy Terminal intentionally layers a curated experience on top instead of mirroring every
 Pi customization mechanism.
 
 ## Code organization
@@ -158,8 +160,8 @@ feels. An exact version such as `pnpm release 0.4.0` says the same thing
 explicitly, and there are `pnpm release:minor` and `pnpm release:patch`
 shorthands.
 
-Rig is still on `0.x` and takes no major release, which the command refuses. A
-major version is a promise about compatibility, and Rig deliberately changes its
+Happy Terminal is still on `0.x` and takes no major release, which the command refuses. A
+major version is a promise about compatibility, and Happy Terminal deliberately changes its
 own schemas, protocol, and configuration instead of carrying migrations for
 them. Leaving `0.x` is a decision about the product rather than about one
 release, so it is made by changing the rule in
@@ -167,8 +169,8 @@ release, so it is made by changing the rule in
 
 The command runs type checks and tests, builds the package, creates the release
 commit and tag, previews the package contents, and pushes the release to `main`.
-Pushing a tag named `v<package version>` starts the `Publish package` GitHub
-Actions workflow, which repeats the validation and publishes `@slopus/rig` to
+Pushing a tag named `happy-terminal-v<package version>` starts the `Publish package` GitHub
+Actions workflow, which repeats the validation and publishes `@slopus/happy-terminal` to
 npm.
 
 ### Beta releases
@@ -186,11 +188,11 @@ distribution tag and never move `latest`. Install or advance to the newest beta
 with:
 
 ```sh
-rig upgrade
+happy-terminal upgrade
 ```
 
-That command runs `npm install -g @slopus/rig@beta`. When the installed version
-is a canary, it preserves that channel and installs `@slopus/rig@canary`
+That command runs `npm install -g @slopus/happy-terminal@beta`. When the installed version
+is a canary, it preserves that channel and installs `@slopus/happy-terminal@canary`
 instead.
 
 ### Canary builds
@@ -199,7 +201,7 @@ Every push to `main` publishes a canary to npm under the `canary` distribution
 tag, so a change can be installed and used before it is released:
 
 ```sh
-npm install --global @slopus/rig@canary
+npm install --global @slopus/happy-terminal@canary
 ```
 
 A canary is versioned from the release it followed — `0.0.148-canary.<build>.<commit>`
@@ -219,11 +221,11 @@ The publish workflow uses npm Trusted Publishing, so it does not need a
 long-lived npm token or a contributor's npm account:
 
 1. In the GitHub repository settings, create an environment named `npm`. Under
-   deployment branches and tags, select only matching tags and add `v*`. Do not
+   deployment branches and tags, select only matching tags and add `happy-terminal-v*`. Do not
    add required reviewers if every collaborator with permission to create tags
    should be able to release.
-2. In the npm settings for `@slopus/rig`, add a GitHub Actions trusted publisher
-   for organization `slopus`, repository `rig`, workflow `publish.yml`, and
+2. In the npm settings for `@slopus/happy-terminal`, add a GitHub Actions trusted publisher
+   for organization `slopus`, repository `happy-terminal`, workflow `publish.yml`, and
    environment `npm`. Allow the `npm publish` action.
 3. Do not create an `NPM_TOKEN` GitHub secret. The workflow requests a short-lived
    OIDC credential for each run and npm automatically records provenance for the

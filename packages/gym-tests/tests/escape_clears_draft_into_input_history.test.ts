@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -21,14 +21,14 @@ describe("Escape in the composer", () => {
         await waitForComposer(gym, draft);
         gym.terminal.press("escape");
 
-        await waitForComposer(gym, "Ask Rig to do anything");
+        await waitForComposer(gym, "Ask Happy Terminal to do anything");
         expect(agentRequests(gym)).toHaveLength(0);
         await screenshot(gym, "escape-cleared-draft.png");
 
         gym.terminal.press("up");
         await waitForComposer(gym, draft);
         gym.terminal.press("down");
-        await waitForComposer(gym, "Ask Rig to do anything");
+        await waitForComposer(gym, "Ask Happy Terminal to do anything");
         gym.terminal.press("up");
         await waitForComposer(gym, draft);
     }, 60_000);
@@ -42,7 +42,7 @@ describe("Escape in the composer", () => {
         await waitForComposer(gym, draft);
         gym.terminal.write("\x1b\x1b");
 
-        await waitForComposer(gym, "Ask Rig to do anything");
+        await waitForComposer(gym, "Ask Happy Terminal to do anything");
         gym.terminal.press("up");
         await waitForComposer(gym, draft);
         expect(agentRequests(gym)).toHaveLength(0);
@@ -70,7 +70,7 @@ function composerText(snapshot: { rows: readonly string[] }): string | undefined
 }
 
 async function screenshot(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_SCREENSHOT_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_SCREENSHOT_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }

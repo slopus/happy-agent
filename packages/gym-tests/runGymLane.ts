@@ -58,8 +58,8 @@ const tests = readdirSync(testDirectory)
 process.stdout.write(`Running ${String(tests.length)} ${lane} Gym test files.\n`);
 const environment = {
     ...process.env,
-    RIG_GYM_RUN_ID: process.env.RIG_GYM_RUN_ID ?? randomUUID(),
-    ...(lane === "fast" ? { RIG_GYM_TIME_SCALE: "0.5" } : {}),
+    HAPPY_TERMINAL_GYM_RUN_ID: process.env.HAPPY_TERMINAL_GYM_RUN_ID ?? randomUUID(),
+    ...(lane === "fast" ? { HAPPY_TERMINAL_GYM_TIME_SCALE: "0.5" } : {}),
 };
 let results: Awaited<ReturnType<typeof runTests>>[];
 if (lane === "docker") {
@@ -110,7 +110,7 @@ if (lane === "docker") {
     ];
 }
 
-cleanupDockerRunners(environment.RIG_GYM_RUN_ID);
+cleanupDockerRunners(environment.HAPPY_TERMINAL_GYM_RUN_ID);
 
 for (const result of results) {
     if (result.error !== undefined) throw result.error;
@@ -153,7 +153,7 @@ function runTests(
 function cleanupDockerRunners(runId: string): void {
     const listed = spawnSync(
         "docker",
-        ["ps", "--all", "--quiet", "--filter", `label=rig.gym.run=${runId}`],
+        ["ps", "--all", "--quiet", "--filter", `label=happy-terminal.gym.run=${runId}`],
         { encoding: "utf8" },
     );
     const containerIds = listed.stdout?.trim().split(/\s+/u).filter(Boolean) ?? [];
@@ -161,7 +161,7 @@ function cleanupDockerRunners(runId: string): void {
         spawnSync("docker", ["rm", "--force", ...containerIds], { stdio: "ignore" });
     }
     const safeRunId = runId.replaceAll(/[^A-Za-z0-9_.-]/gu, "-").slice(0, 48);
-    const prefix = `rig-gym-pool-${safeRunId}-`;
+    const prefix = `happy-terminal-gym-pool-${safeRunId}-`;
     for (const name of readdirSync(tmpdir())) {
         if (!name.startsWith(prefix)) continue;
         rmSync(join(tmpdir(), name), { force: true, recursive: true });

@@ -5,14 +5,14 @@ on:
         branches:
             - main
         tags:
-            - "rig-v*"
+            - "happy-terminal-v*"
             - "happy-agent-base-v*"
             - "happy-plugins-v*"
             - "happy-providers-v*"
     workflow_dispatch:
 
 env:
-    RELEASE_PACKAGE: ${{ startsWith(github.ref_name, 'happy-agent-base-v') && 'happy-agent-base' || startsWith(github.ref_name, 'happy-plugins-v') && 'happy-plugins' || startsWith(github.ref_name, 'happy-providers-v') && 'happy-providers' || 'rig' }}
+    RELEASE_PACKAGE: ${{ startsWith(github.ref_name, 'happy-agent-base-v') && 'happy-agent-base' || startsWith(github.ref_name, 'happy-plugins-v') && 'happy-plugins' || startsWith(github.ref_name, 'happy-providers-v') && 'happy-providers' || 'happy-terminal' }}
 
 permissions:
     contents: read
@@ -79,7 +79,7 @@ jobs:
               if: ${{ !contains(github.ref_name, '-beta.') }}
               env:
                   # Keep Sandbox Runtime's home-directory mask away from the checkout.
-                  HOME: ${{ runner.temp }}/rig-test-home
+                  HOME: ${{ runner.temp }}/happy-terminal-test-home
               run: |
                   mkdir -p "$HOME"
                   pnpm exec tsx scripts/runReleasePackageValidation.ts test
@@ -144,7 +144,7 @@ jobs:
                   PLUGINS_CHANGED: ${{ steps.changed.outputs.plugins }}
                   PROVIDERS_CHANGED: ${{ steps.changed.outputs.providers }}
               run: |
-                  # happy-plugins is versioned before the build so the SDK Rig bundles carries the
+                  # happy-plugins is versioned before the build so the SDK Happy Terminal bundles carries the
                   # same canary version that is published.
                   if [[ "$PLUGINS_CHANGED" == "true" ]]; then
                       RELEASE_PACKAGE=happy-plugins pnpm exec tsx scripts/setCanaryVersion.ts
@@ -152,7 +152,7 @@ jobs:
                   if [[ "$PROVIDERS_CHANGED" == "true" ]]; then
                       RELEASE_PACKAGE=happy-providers pnpm exec tsx scripts/setCanaryVersion.ts
                   fi
-                  RELEASE_PACKAGE=rig pnpm exec tsx scripts/setCanaryVersion.ts
+                  RELEASE_PACKAGE=happy-terminal pnpm exec tsx scripts/setCanaryVersion.ts
 
             - name: Build the packages
               env:
@@ -167,13 +167,13 @@ jobs:
             - name: Run unit tests
               env:
                   # Keep Sandbox Runtime's home-directory mask away from the checkout.
-                  HOME: ${{ runner.temp }}/rig-test-home
+                  HOME: ${{ runner.temp }}/happy-terminal-test-home
                   PLUGINS_CHANGED: ${{ steps.changed.outputs.plugins }}
                   PROVIDERS_CHANGED: ${{ steps.changed.outputs.providers }}
               run: |
                   mkdir -p "$HOME"
                   pnpm run test:scripts
-                  pnpm --recursive --filter './packages/**' --filter '!@slopus/rig-dev' --filter '!@slopus/rig-gym-tests' --filter '!happy-plugins' --filter '!@slopus/happy-providers' --filter '!@slopus/rig-codemode-codex' run test
+                  pnpm --recursive --filter './packages/**' --filter '!@slopus/happy-terminal-gym-tests' --filter '!happy-plugins' --filter '!@slopus/happy-providers' --filter '!@slopus/rig-codemode-codex' run test
                   if [[ "$PLUGINS_CHANGED" == "true" ]]; then
                       pnpm --filter happy-plugins test
                   fi
@@ -193,4 +193,4 @@ jobs:
                   if [[ "$PROVIDERS_CHANGED" == "true" ]]; then
                       RELEASE_PACKAGE=happy-providers pnpm exec tsx scripts/publishPackage.ts
                   fi
-                  RELEASE_PACKAGE=rig pnpm exec tsx scripts/publishPackage.ts
+                  RELEASE_PACKAGE=happy-terminal pnpm exec tsx scripts/publishPackage.ts

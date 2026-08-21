@@ -105,7 +105,7 @@ export class MockInferenceServer {
                               type: "text" as const,
                               text: [
                                   "<title>Gym session</title>",
-                                  "<recap>The user worked with Rig in the Gym environment.</recap>",
+                                  "<recap>The user worked with Happy Agent in the Gym environment.</recap>",
                               ].join("\n"),
                           },
                       ],
@@ -155,7 +155,7 @@ export class MockInferenceServer {
 }
 
 function readTimeScale(): number {
-    const value = Number(process.env.RIG_GYM_TIME_SCALE ?? "1");
+    const value = Number(process.env.HAPPY_TERMINAL_GYM_TIME_SCALE ?? "1");
     return Number.isFinite(value) && value > 0 ? value : 1;
 }
 

@@ -13,7 +13,7 @@ import { grokSendCommandInputTool } from "./send_command_input.js";
  *
  * A reviewer gathers evidence and never edits, so this is the fixed subset of Grok's tools that only
  * inspect: the terminal, the file reader, the directory listing, the content search, and the seam
- * that types into a command the reviewer already started. It mirrors Rig v1 exactly, where only
+ * that types into a command the reviewer already started. It mirrors Happy Agent v1 exactly, where only
  * `read_file`, `grep`, `list_dir`, `run_terminal_command`, and `send_command_input` carried
  * `availableToPermissionReviewer: true`. Grok's `write`, `search_replace`,
  * `get_command_or_subagent_output`, and `kill_command_or_subagent` were not flagged and so are

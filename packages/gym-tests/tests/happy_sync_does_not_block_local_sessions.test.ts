@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { libsqlCommonJsScript } from "./libsqlScript.js";
 
 const running = new Set<Gym>();
@@ -43,10 +43,10 @@ describe("Happy mobile synchronization", () => {
             libsqlCommonJsScript(`
 const fs = require("node:fs");
 const copied = JSON.parse(
-    fs.readFileSync("/home/rig/.happy/agent/happy/access.key", "utf8"),
+    fs.readFileSync("/home/happy-terminal/.happy/agent/happy/access.key", "utf8"),
 );
-const mode = fs.statSync("/home/rig/.happy/agent/happy/access.key").mode & 0o777;
-const database = await openDatabase("/home/rig/.happy/agent/agent.sqlite", true);
+const mode = fs.statSync("/home/happy-terminal/.happy/agent/happy/access.key").mode & 0o777;
+const database = await openDatabase("/home/happy-terminal/.happy/agent/agent.sqlite", true);
 let sessions;
 let outbox;
 try {

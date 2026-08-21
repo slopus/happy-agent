@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const artifacts = resolve(
     import.meta.dirname,
@@ -41,7 +41,7 @@ describe("startup quota interactivity budget", () => {
         running.add(gym);
         const startup = await gym.terminal.snapshot();
         expect(startup.text).toContain("New session");
-        expect(startup.text).toContain("Ask Rig to do anything");
+        expect(startup.text).toContain("Ask Happy Terminal to do anything");
         expect(startup.text).not.toContain("Usage:");
 
         releaseProbe.resolve({ response: quotaResponse() });
@@ -60,7 +60,7 @@ describe("startup quota interactivity budget", () => {
 
         const startup = await gym.terminal.snapshot();
         expect(startup.text).toContain("New session");
-        expect(startup.text).toContain("Ask Rig to do anything");
+        expect(startup.text).toContain("Ask Happy Terminal to do anything");
         expect(startup.text).not.toContain("Usage:");
     }, 120_000);
 });
@@ -76,7 +76,7 @@ function createCodexGym(
     return createGym({
         environment: {
             NO_PROXY: "host.docker.internal",
-            RIG_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
+            HAPPY_TERMINAL_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
         },
         homeFiles: {
             ".codex/auth.json": JSON.stringify({

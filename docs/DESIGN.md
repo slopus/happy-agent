@@ -161,13 +161,13 @@ enlarge hit targets for fingers, and do not build a bottom tab bar.
 
 ### 2.1 The five surfaces
 
-| #   | Surface               | `displayMode` | Host header | Host gutter around you                                     | Typical width                 | Height ownership |
-| --- | --------------------- | ------------- | ----------- | ---------------------------------------------------------- | ----------------------------- | ---------------- |
-| 1   | Message card (inline) | `inline`      | 40 px       | 0, or 8 px + 1 px hairline when the app asked for a border | the chat message column       | **you**, 120–800 |
-| 2   | Workspace page        | `fullscreen`  | 56 px       | none, flush                                                | main region width             | the host         |
-| 3   | Modal card            | `fullscreen`  | 56 px       | none, flush                                                | `min(920px, window − 48) − 2` | the host         |
-| 4   | Fullscreen overlay    | `fullscreen`  | 56 px       | none, flush                                                | `window − 48 − 2`             | the host         |
-| 5   | Rig plugin page       | `fullscreen`  | none        | none, flush                                                | the whole allocated region    | the host         |
+| #   | Surface                 | `displayMode` | Host header | Host gutter around you                                     | Typical width                 | Height ownership |
+| --- | ----------------------- | ------------- | ----------- | ---------------------------------------------------------- | ----------------------------- | ---------------- |
+| 1   | Message card (inline)   | `inline`      | 40 px       | 0, or 8 px + 1 px hairline when the app asked for a border | the chat message column       | **you**, 120–800 |
+| 2   | Workspace page          | `fullscreen`  | 56 px       | none, flush                                                | main region width             | the host         |
+| 3   | Modal card              | `fullscreen`  | 56 px       | none, flush                                                | `min(920px, window − 48) − 2` | the host         |
+| 4   | Fullscreen overlay      | `fullscreen`  | 56 px       | none, flush                                                | `window − 48 − 2`             | the host         |
+| 5   | Happy Agent plugin page | `fullscreen`  | none        | none, flush                                                | the whole allocated region    | the host         |
 
 `hostContext.containerDimensions` reports the initial allocation as one of
 `{ width, height }`, `{ width, maxHeight }`, or `{ maxWidth, maxHeight }`. It
@@ -1407,7 +1407,7 @@ a:focus-visible {
 
 An external link must be opened through the host, not by the iframe — and only
 when the host offers it. `openLinks` is an optional host capability: the message
-and page hosts advertise it, the standalone Rig plugin page does not. Feature
+and page hosts advertise it, the standalone Happy Agent plugin page does not. Feature
 detect it, and when it is absent render the URL as selectable text rather than a
 link that does nothing:
 

@@ -82,7 +82,7 @@ const MAX_PERMISSION_REVIEW_ENTRIES = 60;
 const MAX_PERMISSION_REVIEW_MODEL_ID = 256;
 
 /**
- * The exact marker a truncated transcript entry ends with, byte-for-byte with Rig v1. Parity is the
+ * The exact marker a truncated transcript entry ends with, byte-for-byte with Happy Agent v1. Parity is the
  * priority here, so the marker text is fixed and the schema is what bends to fit it.
  */
 export const REVIEW_TRANSCRIPT_TRUNCATION_MARKER = "\n[...truncated...]";

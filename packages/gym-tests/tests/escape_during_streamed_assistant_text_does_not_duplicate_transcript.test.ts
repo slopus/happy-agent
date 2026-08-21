@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -64,8 +64,8 @@ describe("Escape during streamed assistant text", () => {
         expect(settled.text.indexOf(secondFragment)).toBeLessThan(
             settled.text.indexOf("Session interrupted"),
         );
-        if (process.env.RIG_GYM_PROOF_PATH !== undefined) {
-            await gym.terminal.screenshot(process.env.RIG_GYM_PROOF_PATH);
+        if (process.env.HAPPY_TERMINAL_GYM_PROOF_PATH !== undefined) {
+            await gym.terminal.screenshot(process.env.HAPPY_TERMINAL_GYM_PROOF_PATH);
         }
     }, 90_000);
 });

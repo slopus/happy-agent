@@ -6,7 +6,7 @@ defaults. `assembleClaudeComputeTools` returns them as one fixed array in Claude
 
 ## Why nothing here is shared
 
-A vendor tool is the provider's own surface, not a Rig abstraction wearing a vendor's name. Claude's
+A vendor tool is the provider's own surface, not a Happy Agent abstraction wearing a vendor's name. Claude's
 `Read` takes `file_path` and numbers its output `cat -n` style; Codex reads through `exec_command`
 and patches through `apply_patch`; Grok's `read_file` takes `target_file`. The names collide, the
 argument shapes disagree, and the models were trained on their own. So each vendor directory owns
@@ -26,9 +26,9 @@ the read authorization it has already earned.
 
 Three, all deliberate:
 
-- **No `secrets` argument on `Bash`.** Claude's descriptor and Rig's live `Bash` both have one; this
+- **No `secrets` argument on `Bash`.** Claude's descriptor and Happy Agent's live `Bash` both have one; this
   module has no secret resolver, so offering the field would be an offer it cannot keep. The
-  "Rig extension" sentence in the description covers `dangerouslyDisableSandbox` only.
+  "Happy Agent extension" sentence in the description covers `dangerouslyDisableSandbox` only.
 - **`Grep` does not claim to be ripgrep.** The search behind it is this module's own bounded
   file-content search, so the description states the limits it actually enforces — 100 entries by
   default, 40 000 characters, 400 characters per line — instead of ripgrep's, and drops the

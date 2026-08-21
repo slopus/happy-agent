@@ -29,7 +29,7 @@ a collection; `agentId` is threaded through on each call.
 
 ## Tools
 
-The fixed array matches Rig:
+The fixed array matches Happy Agent:
 
 - **`web_fetch`**
 - **`gemini_web_search`**

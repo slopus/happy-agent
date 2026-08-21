@@ -47,7 +47,7 @@ const VENDOR_ARGUMENTS: Readonly<
         ],
     },
     // `secrets` is deliberately absent: this module has no secret resolver. Every other Bash
-    // argument is the vendor's, plus Rig's own `tty`.
+    // argument is the vendor's, plus Happy Agent's own `tty`.
     Bash: {
         required: ["command"],
         optional: [
@@ -122,7 +122,7 @@ describe("Claude compute surface", () => {
                 sandbox_permissions: "require_escalated",
             }),
         ).toBe(false);
-        // The module has no secret resolver, so Rig's `secrets` argument is absent here too.
+        // The module has no secret resolver, so Happy Agent's `secrets` argument is absent here too.
         expect(Value.Check(tool("Bash").parameters!, { command: "ls", secrets: [] })).toBe(false);
         // Grok reads with `target_file`, Claude with `file_path`.
         expect(Value.Check(tool("Read").parameters!, { target_file: "a.ts" })).toBe(false);
@@ -151,7 +151,7 @@ describe("Claude compute surface", () => {
                 );
             }
         }
-        // Reading and stopping work Rig itself started is never reviewed, so neither needs one.
+        // Reading and stopping work Happy Agent itself started is never reviewed, so neither needs one.
         expect(tool("BashOutput").describeAutoPermissionAction).toBeUndefined();
         expect(tool("BashStop").describeAutoPermissionAction).toBeUndefined();
     });

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
-const rig = "node /app/packages/rig/dist/main.js";
+const rig = "node /app/packages/happy-terminal/dist/main.js";
 const running = new Set<Gym>();
 
 afterEach(async () => {
@@ -32,7 +32,7 @@ describe("session terminal presence", () => {
         await gym.terminal.waitForText("THE_SESSION_COMPLETED", 30_000);
 
         const whileConnected = await gym.runInContainer("node", [
-            "/app/packages/rig/dist/main.js",
+            "/app/packages/happy-terminal/dist/main.js",
             "monit",
         ]);
         expect(whileConnected.stdout).toMatch(/^Completed\s+/m);

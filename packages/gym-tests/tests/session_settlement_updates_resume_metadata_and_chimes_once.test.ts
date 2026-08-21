@@ -3,11 +3,11 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const artifacts = resolve(import.meta.dirname, "../../artifacts/session-metadata");
-const rig = "node /app/packages/rig/dist/main.js";
+const happyTerminalCommand = "node /app/packages/happy-terminal/dist/main.js";
 
 afterEach(async () => {
     await Promise.all([...running].map((gym) => gym.dispose()));
@@ -25,16 +25,16 @@ describe("settled session metadata", () => {
                 "bash",
                 "-lc",
                 [
-                    rig,
+                    happyTerminalCommand,
                     "echo INITIAL_TITLE_VIEW",
-                    `${rig} monit`,
+                    `${happyTerminalCommand} monit`,
                     "read -r _",
-                    `${rig} resume --last`,
+                    `${happyTerminalCommand} resume --last`,
                     "echo UPDATED_TITLE_VIEW",
-                    `${rig} monit`,
+                    `${happyTerminalCommand} monit`,
                     "read -r _",
                     "echo RESUME_PICKER_VIEW",
-                    `exec ${rig} resume`,
+                    `exec ${happyTerminalCommand} resume`,
                 ].join("; "),
             ],
             homeFiles: {
@@ -69,7 +69,7 @@ describe("settled session metadata", () => {
             .poll(() => metadataRequestCount(gym), { interval: 250, timeout: 75_000 })
             .toBe(2);
         expect(standaloneBellCount(rawOutput)).toBe(1);
-        expect((await gym.terminal.snapshot()).title).toBe("Rig - Gym session");
+        expect((await gym.terminal.snapshot()).title).toBe("Happy Terminal - Gym session");
 
         gym.terminal.press("ctrlD");
         await gym.terminal.waitUntil(
@@ -83,7 +83,7 @@ describe("settled session metadata", () => {
         expect(standaloneBellCount(rawOutput)).toBe(1);
 
         gym.terminal.press("enter");
-        await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
+        await gym.terminal.waitForText("Ask Happy Terminal to do anything", 30_000);
         expect(standaloneBellCount(rawOutput)).toBe(1);
         gym.terminal.type("Keep the current title unless it is clearly misleading.");
         gym.terminal.press("enter");
@@ -117,7 +117,7 @@ describe("settled session metadata", () => {
         const picker = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("Resume a session") &&
-                snapshot.text.includes("The user worked with Rig in the Gym environment."),
+                snapshot.text.includes("The user worked with Happy Agent in the Gym environment."),
             "the resume picker recap",
             30_000,
         );

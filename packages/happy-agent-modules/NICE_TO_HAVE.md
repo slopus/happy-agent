@@ -2,7 +2,7 @@
 
 This file records optional `@slopus/happy-agent-base` improvements that would
 make modules smaller, clearer, or harder to misuse. None of these are blockers
-for Rig v2, and module work must continue against the published Agent Base
+for Happy Agent v2, and module work must continue against the published Agent Base
 API.
 
 Do not use this list to add a compatibility layer inside a module. Implement
@@ -54,7 +54,7 @@ standardize the lifecycle and make premature publication difficult.
 ## Message acceptance result
 
 Caller-supplied message IDs and metadata in 0.0.7 provide the durable identity
-Rig needs. An acceptance result could make idempotent routing even clearer:
+Happy Agent needs. An acceptance result could make idempotent routing even clearer:
 
 ```ts
 type AgentMessageAcceptance = {
@@ -74,9 +74,9 @@ Agent Base 0.0.7 treats an omitted `serviceTier` (and the other optional
 selection fields) as “keep the current value.” It has no public message option
 that means “clear the current service tier,” while the provider request type
 accepts only `"priority"` or omission. A first-class nullable/resettable
-selection option would let Rig honor an explicit protocol `serviceTier: null`
+selection option would let Happy Agent honor an explicit protocol `serviceTier: null`
 without passing `null` to provider adapters or retaining a previous priority
-tier. Until then Rig rejects an explicit clear before creating a receipt or
+tier. Until then Happy Agent rejects an explicit clear before creating a receipt or
 dispatching the Agent Base message. The protocol keeps its nullable toggle
 shape for non-Agent Base paths.
 
@@ -101,7 +101,7 @@ on loop, turn, inference, and settlement hook payloads would reduce module
 bookkeeping and make event correlation more explicit.
 
 These identities should be persisted by Base and remain stable across process
-restart. They should not impose Rig's run protocol on other hosts.
+restart. They should not impose Happy Agent's run protocol on other hosts.
 
 ## Namespaced metadata helpers
 
@@ -165,7 +165,7 @@ should carry stable agent ID and immutable metadata and follow the same
 transaction/post-commit rules as other durable changes.
 
 Agent listing remains a Collaboration module responsibility, and agents are
-not deleted in the Rig v2 design.
+not deleted in the Happy Agent v2 design.
 
 ## Shared bounded-output utilities
 

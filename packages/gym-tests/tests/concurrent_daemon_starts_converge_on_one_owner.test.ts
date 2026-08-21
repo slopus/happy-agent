@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "CONCURRENT_DAEMON_STARTS_SHARED_ONE_OWNER";
@@ -35,7 +35,7 @@ const startDaemonConcurrentlyScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
 barrier="/workspace/start-daemon-now"
@@ -62,7 +62,7 @@ for index in $(seq 1 8); do
         while [[ ! -e "$barrier" ]]; do
             sleep 0.01
         done
-        rig daemon start >"/workspace/start-$index.log" 2>&1
+        happy-terminal daemon start >"/workspace/start-$index.log" 2>&1
     ) &
     client_pids="$client_pids $!"
 done
@@ -89,9 +89,9 @@ fi
 
 owner_pid="$(read_daemon_pid)"
 kill -0 "$owner_pid"
-rig daemon status
+happy-terminal daemon status
 echo "All concurrent clients reached one daemon"
-rig daemon stop
+happy-terminal daemon stop
 wait_for_exit "$owner_pid"
 echo ${COMPLETED_MARKER}
 sleep 60

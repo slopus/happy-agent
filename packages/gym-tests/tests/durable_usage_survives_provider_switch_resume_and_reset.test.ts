@@ -3,14 +3,14 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const artifacts = resolve(
     import.meta.dirname,
     "../../artifacts/integrated-critical-wave/clean-features",
 );
-const rig = "node /app/packages/rig/dist/main.js";
+const rig = "node /app/packages/happy-terminal/dist/main.js";
 
 afterEach(async () => {
     await Promise.all([...running].map((gym) => gym.dispose()));
@@ -67,7 +67,7 @@ describe("durable session usage", () => {
         await gym.terminal.waitUntil(
             (screen) =>
                 !screen.text.includes("Choose Reasoning") &&
-                screen.text.includes("Ask Rig to do anything"),
+                screen.text.includes("Ask Happy Terminal to do anything"),
             "Claude model selection",
             30_000,
         );
@@ -97,7 +97,7 @@ describe("durable session usage", () => {
 
         gym.terminal.press("ctrlD");
         await gym.terminal.waitForText("SESSION_USAGE_RESUMED", 30_000);
-        await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
+        await gym.terminal.waitForText("Ask Happy Terminal to do anything", 30_000);
         submit(gym, "/usage");
         const resumed = await gym.terminal.waitForText("Session work: 330 used", 30_000);
         await gym.terminal.screenshot(`${artifacts}/resume-exactly-once.png`);

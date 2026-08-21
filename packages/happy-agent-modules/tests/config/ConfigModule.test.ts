@@ -199,7 +199,7 @@ describe("ConfigModule", () => {
         }
     });
 
-    it("resolves the complete Rig-shaped configuration into bounded camelCase values", () => {
+    it("resolves the complete Happy Agent-shaped configuration into bounded camelCase values", () => {
         const parsed = parseHappyAgentConfigToml(
             [
                 "[defaults]",

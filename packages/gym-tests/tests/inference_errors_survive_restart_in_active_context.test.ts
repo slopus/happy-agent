@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { libsqlEsmScript } from "./libsqlScript.js";
 
 const running = new Set<Gym>();
@@ -34,11 +34,11 @@ describe("durable inference errors", () => {
                 "bash",
                 "-lc",
                 [
-                    "node /app/packages/rig/dist/main.js",
-                    "node /app/packages/rig/dist/main.js daemon stop",
+                    "node /app/packages/happy-terminal/dist/main.js",
+                    "node /app/packages/happy-terminal/dist/main.js daemon stop",
                     "node /workspace/inspect-inference-errors.mjs",
                     `echo ${RESUME_MARKER}`,
-                    "exec node /app/packages/rig/dist/main.js resume --last",
+                    "exec node /app/packages/happy-terminal/dist/main.js resume --last",
                 ].join("; "),
             ],
             files: {
@@ -77,7 +77,7 @@ describe("durable inference errors", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes(TERMINAL_ERROR) &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the terminal provider failure",
             30_000,
         );
@@ -91,7 +91,7 @@ describe("durable inference errors", () => {
                 return (
                     text.includes(RETRY_ERROR) &&
                     text.includes(TERMINAL_ERROR) &&
-                    text.includes("Ask Rig to do anything")
+                    text.includes("Ask Happy Terminal to do anything")
                 );
             },
             "both durable errors after restart",
@@ -124,7 +124,7 @@ describe("durable inference errors", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes(RECOVERED) &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "a successful inference using restored error context",
             30_000,
         );
@@ -138,7 +138,7 @@ function submit(gym: Gym, text: string): void {
 
 const inspectInferenceErrorsScript = libsqlEsmScript(
     String.raw`
-const database = await openDatabase("/home/rig/.happy/rig/sessions.sqlite", true);
+const database = await openDatabase("/home/happy-terminal/.happy/rig/sessions.sqlite", true);
 let persistence;
 try {
     const sessionId = (

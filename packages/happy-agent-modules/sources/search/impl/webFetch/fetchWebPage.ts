@@ -14,7 +14,7 @@ import { validateWebFetchUrl } from "./validateWebFetchUrl.js";
  */
 export async function fetchWebPage(input: FetchInput): Promise<FetchResult> {
     if (!validateWebFetchUrl(input.url)) {
-        throw new Error(`${input.url} is not a public web address Rig can fetch.`);
+        throw new Error(`${input.url} is not a public web address Happy Agent can fetch.`);
     }
     const response = await getWithPermittedRedirects(input.url);
     if ("type" in response) {

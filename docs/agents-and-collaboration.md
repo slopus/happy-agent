@@ -1,6 +1,6 @@
 # Agents and collaboration
 
-Rig runs many agents at once: the conversation the user is talking to, subagents
+Happy Agent runs many agents at once: the conversation the user is talking to, subagents
 it spawned, agents working in other workspaces, and agents the user connected by
 hand. This document describes how they are started, how they talk to each other,
 how work is scheduled in time, and what the human sees while it happens.
@@ -67,7 +67,7 @@ and `ultra` for work the user asked to run that way. `provider` is optional and
 is otherwise inferred from recent successful use, the current provider, or the
 first available match.
 
-**Context inheritance** is the `context` argument, a Rig extension:
+**Context inheritance** is the `context` argument, a Happy Agent extension:
 
 - `"task"` (default) — the child starts with only the delegated prompt. Prefer
   this; it keeps the child's context small and its task unambiguous.
@@ -123,7 +123,7 @@ Codex uses `followup_task` and Grok uses `followup_subagent` for the same thing.
 
 Subagent tools only reach your own children. To reach _any_ agent in the system —
 a delegated workspace session, another primary conversation, an agent on another
-machine — Rig uses agent IDs.
+machine — Happy Agent uses agent IDs.
 
 An agent ID is unguessable. There is no discovery and no listing by design: the
 user shares IDs by hand, or you obtain one from a tool that returns it, such as
@@ -278,13 +278,13 @@ to return to when it expires.
 
 The current presence is injected into every model, and when it changes mid-run the
 model receives a system notice with the new state and its instructions. Follow the
-active presence's instructions until Rig says they changed. In practice: under
+active presence's instructions until Happy Agent says they changed. In practice: under
 Away, never block on a human — ask if it is genuinely useful, note it in the
 Inbox, and carry on.
 
 ## Concurrency model
 
-Rig's concurrency is built from a few small lowercase functions, not from classes
+Happy Agent's concurrency is built from a few small lowercase functions, not from classes
 or ad-hoc promise chains:
 
 - `asyncLock` / `asyncQueue` — an object with `runInLock`. A lock already
@@ -320,7 +320,7 @@ fifteen minutes old.
 ### Identity across asynchronous boundaries
 
 Run IDs, message IDs, tool-call IDs, session IDs, and agent IDs stay stable across
-async boundaries, and Rig relies on that: durable waits are keyed by tool-call and
+async boundaries, and Happy Agent relies on that: durable waits are keyed by tool-call and
 batch identity so a restart resumes the same call, delegation notifications name
 the delegate's session ID and agent ID, and workspace creation reconciles to one
 entity across the local result, the response, live events, refresh, and reconnect.
@@ -336,7 +336,7 @@ mutation on its own; retry semantics belong to each provider.
 - **`get_agent_tree_usage`** — exact lifetime token usage for this session and
   every recursively linked descendant, including hidden subagents, delegated
   sessions, and finished ones, each counted once.
-- **`read_agent_history`** — read or search Rig's durable low-level inference
+- **`read_agent_history`** — read or search Happy Agent's durable low-level inference
   history for this agent or another agent in the tree (`target` accepts a task
   path, task name, or session ID; `/root` is the parent). Useful after a model
   change or when earlier context was summarized. Responses are simplified and

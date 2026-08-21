@@ -164,7 +164,7 @@ export function createMcpProtocolTools(
             returnType: mcpGetPromptResultSchema,
             requiresAutoOrFullAccess: true,
             describeAutoPermissionAction: ({ server, name }) =>
-                `loading prompt ${quoteVisibleExact(humanizeMcpName(name))} from ${quoteVisibleExact(humanizeMcpName(server))}. Access: the MCP server can return instructions from outside Rig’s local sandbox`,
+                `loading prompt ${quoteVisibleExact(humanizeMcpName(name))} from ${quoteVisibleExact(humanizeMcpName(server))}. Access: the MCP server can return instructions from outside Happy Agent’s local sandbox`,
             shouldReviewInAutoMode: () => true,
             execute: async (ctx, input: McpGetPromptInput) => {
                 assertServer(input.server);

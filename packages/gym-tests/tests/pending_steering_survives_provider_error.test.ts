@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { libsqlEsmScript } from "./libsqlScript.js";
 
 const running = new Set<Gym>();
@@ -50,7 +50,7 @@ describe("pending steering after a provider error", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("EXPECTED_PROVIDER_STEERING_ERROR") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the provider error to finish the run",
             30_000,
         );
@@ -107,7 +107,7 @@ if (action === "steer") {
     );
     process.stdout.write("steered\n");
 } else if (action === "inspect") {
-    const database = await openDatabase("/home/rig/.happy/rig/sessions.sqlite");
+    const database = await openDatabase("/home/happy-terminal/.happy/rig/sessions.sqlite");
     let output;
     try {
     const sessionId = (

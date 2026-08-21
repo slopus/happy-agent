@@ -64,7 +64,7 @@ import {
 import { type AutoReviewerCursor, autoReviewerCursorSchema } from "./AutoReviewTranscript.js";
 
 /**
- * The Auto-mode automatic permission reviewer, ported from Rig v1's guardian side agent into the v2
+ * The Auto-mode automatic permission reviewer, ported from Happy Agent v1's guardian side agent into the v2
  * agent stack.
  *
  * `AutoModule` is two things wearing one name. As a main-system module it records the durable review
@@ -91,7 +91,7 @@ import { type AutoReviewerCursor, autoReviewerCursorSchema } from "./AutoReviewT
  * for that module to bound reviews with, and never converts a cancellation into a verdict.
  */
 
-/** The wall-clock budget for one review, exactly as Rig v1. `PermissionsModule` bounds reviews by it. */
+/** The wall-clock budget for one review, exactly as Happy Agent v1. `PermissionsModule` bounds reviews by it. */
 export const AUTO_PERMISSION_REVIEW_BUDGET_MS = 90_000;
 
 /** A minimal validated shape for the only user-input event this module trusts as evidence. */

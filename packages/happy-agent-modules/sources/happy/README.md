@@ -110,7 +110,7 @@ is deliberately dull — create the remote session if there is none, send what t
 outbox owes, read what the phone said, publish what the session is and what it
 is waiting on — because that is what makes it safe to interrupt anywhere and
 pick up where it stopped. Nothing is republished unless it changed, and a
-version conflict is resolved by taking the server's version, putting Rig's own
+version conflict is resolved by taking the server's version, putting Happy Agent's own
 facts back on top, and trying again.
 
 An attachment arrives as its own message just before the words that go with it,

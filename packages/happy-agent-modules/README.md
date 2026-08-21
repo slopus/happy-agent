@@ -107,7 +107,7 @@ model-facing wrapper over the method a direct caller would use.
 - **Lifetimes.** Work that outlives the call that started it runs on its own named context derived
   from the application root, never on a tool call or request context that will be gone before it
   finishes.
-- **Isolation.** A module imports Rig from nowhere and reaches for no global. Where two capabilities
+- **Isolation.** A module imports Happy Agent from nowhere and reaches for no global. Where two capabilities
   must meet, one module takes the other: `ModelSwitchModule` takes `HistoryModule`, `WorkspacesModule`
   takes `ProjectsModule`, `TerminalsModule` takes both, `WorkflowsModule` takes `CollaborationModule`.
 

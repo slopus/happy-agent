@@ -30,7 +30,7 @@ describe("reading a message from Happy", () => {
         ).toEqual({ kind: "text", selection: {}, text: "bare" });
     });
 
-    it("recognizes Rig's own message coming back around", () => {
+    it("recognizes Happy Agent's own message coming back around", () => {
         expect(
             readHappyRemoteInput({
                 content: { text: "mine", type: "text" },

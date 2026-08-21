@@ -33,7 +33,7 @@ const CLAUDE_BASH_DESCRIPTION = `Executes a bash command and returns its output.
 - Use the \`gh\` CLI for GitHub operations.
 - Commit or push only when the user asks.
 
-Rig extension: \`dangerouslyDisableSandbox\` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode.
+Happy Agent extension: \`dangerouslyDisableSandbox\` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode.
 
 Output is truncated to the last ${String(MAX_CLAUDE_SHELL_OUTPUT_CHARACTERS)} characters.`;
 

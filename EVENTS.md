@@ -1,6 +1,6 @@
-# Rig event reference
+# Happy Agent event reference
 
-Rig emits session events for transcript changes, run lifecycle, configuration,
+Happy Agent emits session events for transcript changes, run lifecycle, configuration,
 interactive input, tasks, goals, subagents, and workflows. This document lists
 every event in the session protocol and every lower-level event carried by
 `agent_event`.
@@ -108,7 +108,7 @@ All four are live-only and carry the complete current state, so a client that
 reconnects reads what is there now instead of replaying past changes.
 
 `plugins_changed` reports each installed plugin's `name`, `description`,
-`folder`, the `directory` Rig installed it into, the `dataDirectory` it writes
+`folder`, the `directory` Happy Agent installed it into, the `dataDirectory` it writes
 to, and whether it is `running`. Installing a plugin starts it and uninstalling
 one stops it before its code is removed, so a client never has to poll or wait
 for a daemon restart to show the current set.
@@ -207,8 +207,8 @@ something. It writes nothing: the answer is folded from the durable lifecycle ev
 therefore clears the timeline with it, and no separate span table can disagree with the events.
 
 A scope is global, a project, a workspace, or a session; a session scope includes its subagents at
-any depth. A global scope covers every agent Rig knows about, across every project, and is
-deliberately unfiltered: it grows with everything Rig has ever run, so callers bound it with `since`
+any depth. A global scope covers every agent Happy Agent knows about, across every project, and is
+deliberately unfiltered: it grows with everything Happy Agent has ever run, so callers bound it with `since`
 when only recent work is wanted. The response carries the live-stream cursor it reflects, so a
 client can tell whether a later event is already included and then keep the chart current from the
 same global stream.
@@ -219,13 +219,6 @@ session that is no longer working, is reported as `interrupted` rather than `com
 
 ## Source of truth
 
-The TypeScript definitions remain authoritative:
-
-- Session event envelopes and payloads:
-  `packages/rig/sources/protocol/SessionProtocol.ts`
-- Agent loop events: `packages/rig/sources/agent/loop.ts`
-- Inference message stream events: `packages/rig/sources/providers/types.ts`
-- Durable global queue filter:
-  `packages/rig/sources/global-event/shouldPersistGlobalEventType.ts`
-- Timeline scopes, spans, and the fold: `packages/rig/sources/protocol/TimelineProtocol.ts` and
-  `packages/rig/sources/timeline/`
+The public contract is defined in `packages/happy-agent/API.md` and implemented by the TypeBox
+schemas under `packages/happy-agent-client/sources/protocol/`. The daemon's durable event journal
+is owned by `packages/happy-agent-modules/sources/events/`.

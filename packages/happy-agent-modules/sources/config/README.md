@@ -22,10 +22,10 @@ machine settings (credentials, provider
 selection, daemon settings, permission mode, and observation) are filtered
 before merging. Precedence is global → project → runtime.
 
-Missing files are valid and use bounded defaults. `happy.toml` uses the Rig
+Missing files are valid and use bounded defaults. `happy.toml` uses the Happy Agent
 spelling; resolved values use ergonomic camelCase names such as `modelId`,
 `providerId`, `permissionMode`, `compactCompletedTurns`, and
-`serviceTier`. The resolved snapshot includes all Rig-shaped sections:
+`serviceTier`. The resolved snapshot includes all Happy Agent-shaped sections:
 providers, MCP servers, Docker, network, observation, permissions, P2P,
 presence, sharing, theme, features, workspace sync/protection, and retention
 settings. Ordinary collaboration reads `settings.maxCollaborators` and
@@ -59,7 +59,7 @@ configuration and would otherwise be handed the version separately.
 Configuration is not only what the files say. This module owns the accounts too: `providers` is one
 registry holding every enabled provider, each constructing its client on first use so a credential
 is read when a session needs it rather than at startup, and `models` is the curated catalog filtered
-to what those accounts actually serve, with the configured default first. Rig never asks a vendor
+to what those accounts actually serve, with the configured default first. Happy Agent never asks a vendor
 which models exist — the list is source, and a configured provider entry decides which of them its
 own key serves.
 
@@ -76,7 +76,7 @@ including vendor-specific capabilities such as image generation and Claude execu
 A Bedrock account may name an AWS `profile`, including one backed by the standard
 `credential_process` setting in the AWS shared config. Optional `config_file` and
 `credentials_file` values select nonstandard AWS shared files. The account keeps the refreshable
-AWS credential provider, so process credentials are renewed without storing returned keys in Rig.
+AWS credential provider, so process credentials are renewed without storing returned keys in Happy Agent.
 When no authentication source is named, Bedrock tries its bearer-token environment variable first
 and then the ambient AWS credential chain.
 
@@ -85,7 +85,7 @@ where the agent starts, because a scripted account has to reach every module tha
 
 ### The Gemini key
 
-Gemini is the one vendor Rig reaches that is not an account a chat runs on: it answers over its own
+Gemini is the one vendor Happy Agent reaches that is not an account a chat runs on: it answers over its own
 HTTP API rather than through a configured chat provider. So it has no `[providers.gemini]` entry, no
 TOML section of its own, and nothing was added to the configuration schema for it. `geminiApiKey` is
 a getter that reads `GEMINI_API_KEY` from the environment, trims it, and answers with nothing when
@@ -111,7 +111,7 @@ settles. A module asks for the answer instead of being handed the path it would 
   on every call is what makes a policy edited mid-session take effect on the next decision. A file
   that is not there is an absent policy; any other read failure is raised, so a caller can refuse
   to judge against a policy it could only read half of.
-- `workspacesHome` — the folder managed workspaces are created under, `RIG_WORKSPACES_DIRECTORY`
+- `workspacesHome` — the folder managed workspaces are created under, `HAPPY_AGENT_WORKSPACES_DIRECTORY`
   when it names an absolute path and `~/Happy/Workspaces` (`~/happy/workspaces` off macOS)
   otherwise.
 - `workspaceSettings` — what a workspace folder does when it says nothing itself: what to sync,

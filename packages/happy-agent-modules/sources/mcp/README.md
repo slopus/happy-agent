@@ -33,7 +33,7 @@ decisions rather than heap state inside the module.
   discover and read server resources with bounded pages and bounded text/image output.
 - **`list_mcp_prompts`** and **`get_mcp_prompt`** — preserve the existing protocol surface for
   reusable prompts. Loading prompt content is reviewed in Auto mode because it can contain
-  instructions from outside Rig's local sandbox.
+  instructions from outside Happy Agent's local sandbox.
 
 Every MCP tool declares `requiresAutoOrFullAccess: true`. Direct and dynamic calls, plus prompt
 loading, always request Auto review; server-provided annotations such as `readOnlyHint` never
@@ -84,7 +84,7 @@ if the configured output budget cannot fit a complete identity and continuation.
 `fingerprintMcpServer` hashes the durable configured-server record (including workspace scope for a
 project entry), not a live transport. `createMcpTrustUserInputRequest` and
 `createProjectMcpSecurityNotice` retain the existing trust wording, while the trust store's file
-location and persistence remain in Rig.
+location and persistence remain in Happy Agent.
 
 ## External functions
 

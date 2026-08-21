@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const ARTIFACTS = resolve(
     import.meta.dirname,
@@ -50,11 +50,11 @@ async function screenshot(gym: Gym, name: string): Promise<void> {
 }
 
 const SUBAGENT_APP = String.raw`
-import { Agent, createNodeAgentContext } from "/app/packages/rig/dist/agent/index.js";
-import { CodingAssistantApp } from "/app/packages/rig/dist/app/index.js";
-import { NativeProcessManager } from "/app/packages/rig/dist/processes/index.js";
-import { defineModel, defineProvider } from "/app/packages/rig/dist/providers/types.js";
-import { ProcessTerminal, TUI } from "/app/packages/rig/node_modules/@earendil-works/pi-tui/dist/index.js";
+import { Agent, createNodeAgentContext } from "/app/packages/happy-terminal/dist/agent/index.js";
+import { CodingAssistantApp } from "/app/packages/happy-terminal/dist/app/index.js";
+import { NativeProcessManager } from "/app/packages/happy-terminal/dist/processes/index.js";
+import { defineModel, defineProvider } from "/app/packages/happy-terminal/dist/providers/types.js";
+import { ProcessTerminal, TUI } from "/app/packages/happy-terminal/node_modules/@earendil-works/pi-tui/dist/index.js";
 
 const model = defineModel({
     defaultThinkingLevel: "off",

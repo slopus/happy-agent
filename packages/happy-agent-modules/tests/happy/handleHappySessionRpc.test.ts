@@ -100,7 +100,7 @@ describe("carrying out what the phone asked", () => {
                 method: "communication",
                 params: "nonsense",
             }),
-        ).toEqual({ error: "Happy sent an answer Rig could not read." });
+        ).toEqual({ error: "Happy sent an answer Happy Agent could not read." });
     });
 
     it("refuses a method it does not have", async () => {

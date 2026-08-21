@@ -8,7 +8,7 @@ import {
     renderTerminalSnapshotPng,
     type Gym,
     type TerminalSnapshot,
-} from "@slopus/rig-gym";
+} from "@slopus/happy-terminal-gym";
 
 const ARTIFACTS = resolve(import.meta.dirname, "../../artifacts/startup-status-card");
 const running = new Set<Gym>();
@@ -28,10 +28,10 @@ describe("resolved startup status card usage windows", () => {
 
         const wide = await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("Rig 0.0.12 · New session") &&
+                snapshot.text.includes("Happy Terminal 0.0.12 · New session") &&
                 snapshot.text.includes("Usage: 5h 68% left · week 84% left") &&
                 snapshot.text.includes("Resets: 5h in 2h 14m · week in 4d 6h") &&
-                snapshot.text.includes("Ask Rig"),
+                snapshot.text.includes("Ask Happy Terminal"),
             "the complete two-window wide status card",
             30_000,
         );
@@ -44,7 +44,7 @@ describe("resolved startup status card usage windows", () => {
                 snapshot.rows.length === 40 &&
                 snapshot.text.includes("5h 68% left") &&
                 snapshot.text.includes("week 84% left") &&
-                snapshot.text.includes("Ask Rig"),
+                snapshot.text.includes("Ask Happy Terminal"),
             "both usage windows at nineteen columns",
             30_000,
         );
@@ -61,9 +61,9 @@ describe("resolved startup status card usage windows", () => {
 
         const partial = await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("Rig 0.0.12 · New session") &&
+                snapshot.text.includes("Happy Terminal 0.0.12 · New session") &&
                 snapshot.text.includes("Usage: 5h 41% left") &&
-                snapshot.text.includes("Ask Rig"),
+                snapshot.text.includes("Ask Happy Terminal"),
             "the complete partial usage status card",
             30_000,
         );
@@ -78,9 +78,9 @@ describe("resolved startup status card usage windows", () => {
 
         const unavailable = await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("Rig 0.0.12 · New session") &&
+                snapshot.text.includes("Happy Terminal 0.0.12 · New session") &&
                 snapshot.text.includes("Access: Full access") &&
-                snapshot.text.includes("Ask Rig"),
+                snapshot.text.includes("Ask Happy Terminal"),
             "the complete status card without usage data",
             30_000,
         );
@@ -111,11 +111,11 @@ async function screenshot(snapshot: TerminalSnapshot, name: string): Promise<voi
 }
 
 const STATUS_CARD_USAGE_APP = String.raw`
-import { Agent, createNodeAgentContext } from "/app/packages/rig/dist/agent/index.js";
-import { CodingAssistantApp } from "/app/packages/rig/dist/app/index.js";
-import { NativeProcessManager } from "/app/packages/rig/dist/processes/index.js";
-import { defineModel, defineProvider } from "/app/packages/rig/dist/providers/types.js";
-import { ProcessTerminal, TUI } from "/app/packages/rig/node_modules/@earendil-works/pi-tui/dist/index.js";
+import { Agent, createNodeAgentContext } from "/app/packages/happy-terminal/dist/agent/index.js";
+import { CodingAssistantApp } from "/app/packages/happy-terminal/dist/app/index.js";
+import { NativeProcessManager } from "/app/packages/happy-terminal/dist/processes/index.js";
+import { defineModel, defineProvider } from "/app/packages/happy-terminal/dist/providers/types.js";
+import { ProcessTerminal, TUI } from "/app/packages/happy-terminal/node_modules/@earendil-works/pi-tui/dist/index.js";
 
 const model = defineModel({
     defaultThinkingLevel: "high",

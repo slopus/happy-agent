@@ -319,7 +319,7 @@ describe("Happy message mapping", () => {
         expect(reopened[0]?.content.ev).toEqual({ t: "turn-start" });
     });
 
-    it("ignores a stream Rig replayed to repair itself", () => {
+    it("ignores a stream Happy Agent replayed to repair itself", () => {
         const mapper = new HappyMessageMapper();
         const recovered = mapper.map(
             event("provider.event", {

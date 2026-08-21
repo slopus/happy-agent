@@ -11,7 +11,7 @@ export interface McpToolContribution {
 
 /**
  * Merge MCP tools into one ordinary provider-neutral array.  A name collision quarantines the
- * whole contributing server while leaving unrelated servers available, matching Rig's existing
+ * whole contributing server while leaving unrelated servers available, matching Happy Agent's existing
  * behavior.
  */
 export function mergeMcpTools(

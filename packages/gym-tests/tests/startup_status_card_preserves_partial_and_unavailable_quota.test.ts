@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const artifacts = resolve(
     import.meta.dirname,
@@ -36,7 +36,7 @@ describe("partial and unavailable production startup quota", () => {
         const snapshot = await gym.terminal.waitUntil(
             (screen) =>
                 screen.text.includes("Usage: 5h 41% left") &&
-                screen.text.includes("Ask Rig to do anything"),
+                screen.text.includes("Ask Happy Terminal to do anything"),
             "the partial startup quota card",
             30_000,
         );
@@ -52,7 +52,7 @@ describe("partial and unavailable production startup quota", () => {
             (screen) =>
                 screen.text.includes("New session") &&
                 screen.text.includes("Access: Full access") &&
-                screen.text.includes("Ask Rig to do anything"),
+                screen.text.includes("Ask Happy Terminal to do anything"),
             "the startup card with unavailable quota",
             30_000,
         );
@@ -66,7 +66,7 @@ async function createCodexGym(quota: object): Promise<Gym> {
     return createGym({
         environment: {
             NO_PROXY: "host.docker.internal",
-            RIG_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
+            HAPPY_TERMINAL_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
         },
         homeFiles: {
             ".codex/auth.json": JSON.stringify({

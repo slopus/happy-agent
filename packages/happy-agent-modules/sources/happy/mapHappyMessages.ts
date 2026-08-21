@@ -121,7 +121,7 @@ interface ActiveTurn {
  * Turns one agent's durable event journal into the flat stream of messages Happy shows.
  *
  * Happy renders a conversation as turns: a turn opens, things happen inside it,
- * and it ends with how it ended and how long it took. Rig's journal says the
+ * and it ends with how it ended and how long it took. Happy Agent's journal says the
  * same thing in its own words, and this is the translation, one event at a time
  * and in order.
  *
@@ -196,7 +196,7 @@ export class HappyMessageMapper {
     #mapProviderEvent(event: AgentEvent): readonly HappySessionProtocolMessage[] {
         if (!Value.Check(providerEventSchema, event.payload)) return [];
         const payload = event.payload;
-        // A recovered stream is Rig repairing its own state, not the model speaking.
+        // A recovered stream is Happy Agent repairing its own state, not the model speaking.
         if (payload.recovered === true) return [];
         const streamed = payload.event.type;
         if (streamed === "block_start") {

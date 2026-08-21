@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -32,7 +32,7 @@ describe("Escape with an active composer draft", () => {
         gym.terminal.press("escape");
         const cleared = await gym.terminal.waitUntil(
             (snapshot) =>
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.text.includes("esc to interrupt"),
             "the first Escape to clear the draft without stopping inference",
             30_000,
@@ -45,7 +45,7 @@ describe("Escape with an active composer draft", () => {
             (snapshot) =>
                 snapshot.text.includes("Session interrupted") &&
                 !snapshot.text.includes("esc to interrupt") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the empty-composer Escape to stop inference",
             30_000,
         );
@@ -67,7 +67,7 @@ function agentRequests(gym: Gym) {
 }
 
 async function screenshot(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_SCREENSHOT_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_SCREENSHOT_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }

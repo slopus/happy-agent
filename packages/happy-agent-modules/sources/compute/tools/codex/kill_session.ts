@@ -29,7 +29,7 @@ export function codexKillSessionTool(compute: Compute) {
         ),
         // Process state cannot commit atomically with the tool result.
         durable: false,
-        // Ending work Rig itself started stays inside the machine the agent already has, so there
+        // Ending work Happy Agent itself started stays inside the machine the agent already has, so there
         // is nothing here for a reviewer to weigh.
         shouldReviewInAutoMode: () => false,
         execute: async (_ctx, { session_id }) => {

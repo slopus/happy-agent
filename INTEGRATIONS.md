@@ -1,86 +1,86 @@
 # Integration API
 
-Rig can expose integration-owned functions and skill instructions to a model
+Happy Agent can expose integration-owned functions and skill instructions to a model
 without installing their implementations or source files in the daemon.
 Requests are stored in SQLite before they are published, remain pending across
 daemon restarts, and are completed through a separate authenticated HTTP request.
 
 ## Happy mobile synchronization
 
-Happy synchronization is an explicit daemon feature. Rig's CLI starts
+Happy synchronization is an explicit daemon feature. Happy Agent's CLI starts
 `runLocalProtocolServer` with `happyIntegration: "enabled"`. Library embedders
 may pass `happyIntegration: "disabled"`; omission is also fail-closed and means
 disabled. The user-wide `[settings] happy_integration` config value is a second
 gate and defaults to `true`; setting it to `false` disables Happy even when the
 host application enables the feature. Repository `happy.toml` files cannot
-change this machine-level setting. In disabled mode Rig does not load the Happy
+change this machine-level setting. In disabled mode Happy Agent does not load the Happy
 module, search or copy credentials, register lifecycle hooks or reload handling,
 create sync state, or open Happy HTTP and socket connections. Config changes
 take effect after restarting the daemon.
 
 The daemon imports the newest valid Happy credentials from `~/.happy/access.key`
-into `~/.happy/rig/happy/access.key` at startup. `HAPPY_HOME_DIR` changes the source
-directory. `RIG_HAPPY_SERVER_URL`, then `HAPPY_SERVER_URL`, can override the
-server URL. `rig happy auth` performs Happy's QR authentication directly and
+into `~/.happy/agent/happy/access.key` at startup. `HAPPY_HOME_DIR` changes the source
+directory. `HAPPY_AGENT_HAPPY_SERVER_URL`, then `HAPPY_SERVER_URL`, can override the
+server URL. `happy-terminal happy auth` performs Happy's QR authentication directly and
 hot-reloads a running daemon without interrupting its sessions.
 
-Every accessed primary session synchronizes automatically. Rig persists the
+Every accessed primary session synchronizes automatically. Happy Agent persists the
 Happy session tag, encryption key, remote cursor, and a bounded outbound queue
 in its session database. Encrypted v3 HTTP messages are authoritative; the
 Happy socket only wakes synchronization. Stable message IDs make retries and
 daemon recovery idempotent. Mobile text and encrypted image attachments are
-submitted or steered through the same Rig session, tools, filesystem sandbox,
+submitted or steered through the same Happy Agent session, tools, filesystem sandbox,
 and permission context as terminal input. Happy model and reasoning selections
 are applied before an idle session starts its next turn. The mobile stop action
-invokes Rig's normal abort path, including active subprocess and subagent
+invokes Happy Agent's normal abort path, including active subprocess and subagent
 cleanup.
 
-Archiving a Rig session also archives its Happy projection. Rig immediately
+Archiving a Happy Agent session also archives its Happy projection. Happy Agent immediately
 sends Happy's `session-end` signal, publishes the encrypted `archived` lifecycle
 metadata, calls Happy's session archive endpoint, and tears down that session's
-socket and polling. Accessing the archived Rig session by ID does not reconnect
+socket and polling. Accessing the archived Happy Agent session by ID does not reconnect
 it. Restoring the session reconnects synchronization and publishes the
 `running` lifecycle state again.
 
-Rig publishes encrypted, versioned metadata with its client identity, actual
+Happy Agent publishes encrypted, versioned metadata with its client identity, actual
 provider, provider-qualified model IDs, reasoning levels, current model and
-reasoning selection, capabilities, title, Rig session status, tools, skills, MCP
+reasoning selection, capabilities, title, Happy Agent session status, tools, skills, MCP
 servers, and bounded activity counts for subagents, workflows, background
-processes, and tasks. Metadata is refreshed whenever the corresponding Rig
+processes, and tasks. Metadata is refreshed whenever the corresponding Happy Agent
 session event occurs. Secrets, prompts, raw tool schemas, process output, and
 conversation contents are deliberately excluded.
 
-The capability contract reports that Rig supports text, steering, images,
-model selection, reasoning selection, permission selection, and abort. Rig
+The capability contract reports that Happy Agent supports text, steering, images,
+model selection, reasoning selection, permission selection, and abort. Happy Agent
 publishes its native `auto`, `workspace_write`, `read_only`, and `full_access`
-mode IDs. Each mode includes a Rig-owned visible name and description plus a
+mode IDs. Each mode includes a Happy Agent-owned visible name and description plus a
 semantic `kind` (`default`, `read-only`, `safe-yolo`, or `yolo`) that Happy can
-use for its icon, color, and risk indication without owning Rig's security
+use for its icon, color, and risk indication without owning Happy Agent's security
 semantics. Happy's
 "resume" operation means launching a replacement native coding-agent CLI for
-a disconnected session; Rig sessions remain owned by the daemon and reconnect
+a disconnected session; Happy Agent sessions remain owned by the daemon and reconnect
 automatically, so that operation does not apply.
 
 Happy app implementations should use `metadata.client.id` for the client badge.
-Rig owns the provider and model presentation data: `metadata.providers` supplies
+Happy Agent owns the provider and model presentation data: `metadata.providers` supplies
 each provider's stable icon kind and human-readable name, and every model repeats
 that descriptor alongside its visible `name`. Happy only needs to map a provider
 `kind` such as `codex`, `claude`, `grok`, or `kimi` to an available icon; unknown
 kinds can use its generic provider icon. `metadata.models` contains the complete
-Rig catalog; each entry is identified by the pair `providerId` and `id` (`code`
+Happy Agent catalog; each entry is identified by the pair `providerId` and `id` (`code`
 is retained for Happy's existing selector), and includes `thinkingLevels` and
 `defaultThinkingLevel`. The selected pair is `currentModelProviderId` and
 `currentModelCode`. The relevant metadata extension is shaped as follows:
 
 Happy should likewise prefer `metadata.operatingModes` even when `flavor` is a
-known provider. The selected native Rig ID comes from `metadata.permissionMode`
+known provider. The selected native Happy Agent ID comes from `metadata.permissionMode`
 or `currentOperatingModeCode`; `kind` is presentation metadata and must not be
 sent back in place of `code`.
 
 ```json
 {
     "rigMetadataVersion": 1,
-    "client": { "id": "rig", "name": "Rig", "version": "0.0.30" },
+    "client": { "id": "rig", "name": "Happy Agent", "version": "0.0.30" },
     "provider": { "id": "codex", "kind": "codex", "name": "OpenAI Codex" },
     "providers": [
         { "id": "codex", "kind": "codex", "name": "OpenAI Codex" },
@@ -154,7 +154,7 @@ sent back in place of `code`.
         {
             "code": "full_access",
             "value": "Full access",
-            "description": "Removes Rig filesystem, shell, and network restrictions.",
+            "description": "Removes Happy Agent filesystem, shell, and network restrictions.",
             "kind": "yolo"
         }
     ],
@@ -181,39 +181,39 @@ sent back in place of `code`.
 ```
 
 When Happy sends a user text record, it may attach the selected values as
-`meta.model`, `meta.modelProviderId`, `meta.effort`, and `meta.permissionMode`. Rig also accepts
+`meta.model`, `meta.modelProviderId`, `meta.effort`, and `meta.permissionMode`. Happy Agent also accepts
 `meta.providerId`, `meta.reasoning`, and `meta.thinkingLevel` aliases. The
-permission mode is validated as a native Rig mode and applied through the
+permission mode is validated as a native Happy Agent mode and applied through the
 session's normal permission path, including subagent propagation and process
 shutdown when permissions are reduced. Model and reasoning selection applies
 before an idle turn. A selection attached to a steering message cannot replace
 the model of an already-running inference; the same persisted Happy selection
 applies to the next idle turn.
 
-A question Rig is waiting on — from `AskUserQuestion`, Codex's
+A question Happy Agent is waiting on — from `AskUserQuestion`, Codex's
 `request_user_input`, Grok's `ask_user_question`, or MCP elicitation — is
 published on Happy's agent-to-user communication channel, as `communications`
-in the encrypted agent state, keyed by the question's request id. Rig publishes
+in the encrypted agent state, keyed by the question's request id. Happy Agent publishes
 the `form` kind: a title for clients that cannot render the payload, and one
 entry per question with its options, `multiSelect`, and `allowCustom`, since
-Rig accepts any answer text and not only the labels it offered. Answering a
+Happy Agent accepts any answer text and not only the labels it offered. Answering a
 question anywhere moves it into `completedCommunications` with the answers, so
 another device settles the card it is still showing.
 
 Happy replies with the session RPC method `{happySessionId}:communication`,
 carrying the request id and either `status: "answered"` with answers keyed by
-question id, or `status: "cancelled"`. Rig cannot decline a single question, so
+question id, or `status: "cancelled"`. Happy Agent cannot decline a single question, so
 a dismissal — including one from a client that could not render the kind —
 aborts the run that asked it, which is what makes the waiting tool throw.
 
 Happy invokes abort through the standard encrypted session RPC method
-`{happySessionId}:abort`. Rig registers that method on every socket connection
+`{happySessionId}:abort`. Happy Agent registers that method on every socket connection
 and returns its normal encrypted abort result. Image attachments use Happy's
-existing encrypted file event followed by user text convention. Rig downloads
+existing encrypted file event followed by user text convention. Happy Agent downloads
 and decrypts every preceding image in memory and includes it in that text
 submission; it does not persist plaintext attachment bytes.
 
-Rig exposes `listFileTree` as its lazy file browser session RPC. It deliberately
+Happy Agent exposes `listFileTree` as its lazy file browser session RPC. It deliberately
 uses a new name because Happy's older unpaginated `listDirectory` helper has a
 different contract. `listFileTree` requires a POSIX-relative path (`""` is the
 root), returns names in UTF-8 byte order, and requires callers to follow
@@ -230,17 +230,17 @@ are visible but cannot be expanded through the tree API.
 The current Happy app also invokes `bash`, `readFile`, `writeFile`, and
 `ripgrep` for its legacy flat all-files list, Git status/diffs, file
 viewing/editing, and file search. Its all-files UI can move to `listFileTree`
-with a new paginated client operation and lazy expansion. Rig publishes the
+with a new paginated client operation and lazy expansion. Happy Agent publishes the
 exact RPC list in `capabilities.rpcMethods`. The older recursive
 `getDirectoryTree` helper is not advertised because an eager recursive tree
 cannot stay bounded on large workspaces.
 
-Native Rig sessions use the platform-specific ripgrep binary bundled with the
-Rig package, so Happy file search does not depend on `rg` being installed on the
+Native Happy Agent sessions use the platform-specific ripgrep binary bundled with the
+Happy Agent package, so Happy file search does not depend on `rg` being installed on the
 user's `PATH`. Docker and virtual filesystem sessions use the `rg` supplied by
 their controlled execution environment when the host bundle is not visible
 inside that environment.
-These run through the session's real Rig `AgentContext`; they therefore use the
+These run through the session's real Happy Agent `AgentContext`; they therefore use the
 same local-or-Docker filesystem, current permission mode, shell sandbox,
 network boundary, process accounting, output limits, and abort lifecycle as the
 TUI agent. File writes retain Happy's SHA-256 optimistic-concurrency contract.
@@ -285,16 +285,16 @@ CONNECT /projects/{projectId}/workspaces/{workspaceId}/proxy
 Authorization: Bearer <daemon token>
 ```
 
-After Rig answers `200 Connection Established`, the connection speaks the
+After Happy Agent answers `200 Connection Established`, the connection speaks the
 ordinary HTTP proxy protocol: absolute-form HTTP requests and nested
 `CONNECT host:port` requests both work, and request and response bodies stream
-without buffering. Rig removes proxy and hop-by-hop headers while preserving
+without buffering. Happy Agent removes proxy and hop-by-hop headers while preserving
 upstream `Authorization`.
 
 Putting the folder scope in this URL lets an Electron main process bind one
 ephemeral loopback proxy per project or workspace, pass its ordinary
 `http://127.0.0.1:<port>` URL to `session.setProxy()`, and pipe each accepted
-browser connection through the authenticated Rig tunnel. Chromium does not
+browser connection through the authenticated Happy Agent tunnel. Chromium does not
 preserve path, query, or arbitrary headers in its proxy server setting, so the
 loopback bridge owns that final URL-to-tunnel mapping.
 
@@ -323,7 +323,7 @@ project. Add `/workspaces/{workspaceId}` before `/file` to target a workspace:
 Use the hash returned by `GET` to replace the exact version that was read. Use
 `null` only when creating a file expected not to exist. A concurrent change
 returns HTTP 409. Paths are confined to the selected project or workspace;
-writes use Rig's workspace boundary and reject protected Git control files.
+writes use Happy Agent's workspace boundary and reject protected Git control files.
 File payloads are limited to 32 MB. File search follows the same scope at
 `GET .../files?query={query}&limit={limit}`. None of these operations requires
 or consults a Session.
@@ -340,8 +340,8 @@ optional exact system prompt:
 }
 ```
 
-When present, `systemPrompt` replaces Rig's assembled prompt; `null` restores
-Rig's normal prompt.
+When present, `systemPrompt` replaces Happy Agent's assembled prompt; `null` restores
+Happy Agent's normal prompt.
 
 Use `POST /messages` with either `"all": true` or a non-empty `sessionIds`
 array to submit the same configured message to multiple primary sessions. IDs

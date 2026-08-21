@@ -15,7 +15,7 @@ import { writeHappyJsonFile } from "./writeHappyJsonFile.js";
  * clients need to connect.
  *
  * A newer `access.key` in the Happy CLI home replaces this agent's copy, so
- * signing in with Happy anywhere on the machine signs Rig in too. Returns
+ * signing in with Happy anywhere on the machine signs Happy Agent in too. Returns
  * `undefined` when no usable credentials exist, which simply means Happy is not
  * connected.
  */

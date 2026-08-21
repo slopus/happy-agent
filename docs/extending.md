@@ -1,32 +1,32 @@
-# Extending Rig
+# Extending Happy Agent
 
-This guide is written for a coding agent running inside Rig that has been asked
-to extend Rig. Everything below describes behavior that actually ships; where
+This guide is written for a coding agent running inside Happy Agent that has been asked
+to extend Happy Agent. Everything below describes behavior that actually ships; where
 something is planned rather than implemented, it says so explicitly.
 
 There are five extension surfaces, ordered by how much they let you change:
 
-| Surface                        | What it adds                                                                            | Who writes it         |
-| ------------------------------ | --------------------------------------------------------------------------------------- | --------------------- |
-| **Plugins**                    | A JavaScript or TypeScript process that contributes MCP tools and local UI applications | You, inside Rig       |
-| **Skills**                     | Instructions a model loads on demand from a `SKILL.md` file                             | You or the user       |
-| **MCP servers**                | Tools, resources, and prompts from an external process or HTTP service                  | The user, in config   |
-| **Rig Connect / integrations** | External apps that read Rig's live state and drive it                                   | An application author |
-| **Subagents and workflows**    | Extra agents and deterministic multi-agent scripts, at runtime                          | You, per task         |
+| Surface                                | What it adds                                                                            | Who writes it           |
+| -------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------- |
+| **Plugins**                            | A JavaScript or TypeScript process that contributes MCP tools and local UI applications | You, inside Happy Agent |
+| **Skills**                             | Instructions a model loads on demand from a `SKILL.md` file                             | You or the user         |
+| **MCP servers**                        | Tools, resources, and prompts from an external process or HTTP service                  | The user, in config     |
+| **Happy Agent Connect / integrations** | External apps that read Happy Agent's live state and drive it                           | An application author   |
+| **Subagents and workflows**            | Extra agents and deterministic multi-agent scripts, at runtime                          | You, per task           |
 
 ---
 
 ## Plugins
 
 A local plugin is the general-purpose extension mechanism. It is ready-to-run
-JavaScript or TypeScript that Rig runs as its own sandboxed process, connected
+JavaScript or TypeScript that Happy Agent runs as its own sandboxed process, connected
 back to the daemon over a private Unix socket. From there it can create
 workspaces, send messages to agents, read provider usage, contribute MCP tools,
 and contribute a small local UI application.
 
 ### What a plugin folder contains
 
-Three files are enough. Rig does not require a `package.json`.
+Three files are enough. Happy Agent does not require a `package.json`.
 
 ```text
 project-counter/
@@ -45,7 +45,7 @@ rejected**:
     "name": "Project Counter",
     "author": "Acme Tools",
     "category": "developer-tools",
-    "description": "Reports how many projects Rig knows about.",
+    "description": "Reports how many projects Happy Agent knows about.",
     "main": "index.ts",
     "icon": "icon.png"
 }
@@ -65,7 +65,7 @@ rejected**:
 `category` is exactly one of `automation`, `collaboration`, `data`,
 `developer-tools`, `media`, `productivity`, `utilities`, or `other`.
 
-Additional rules Rig enforces when it reads the manifest:
+Additional rules Happy Agent enforces when it reads the manifest:
 
 - `main` and `icon` must be relative and must resolve **inside** the plugin
   folder.
@@ -80,7 +80,7 @@ makes the manifest invalid.
 
 ### The icon
 
-Every registered plugin must ship an original PNG icon. Rig bundles a skill for
+Every registered plugin must ship an original PNG icon. Happy Agent bundles a skill for
 producing one, `local-plugin-icon`.
 It triggers automatically when you create or edit a plugin, a `happy.plugin.json`,
 or its icon. Follow it: it defines the shared visual family (Jobs-era iPhone icon
@@ -91,7 +91,7 @@ relative path.
 
 ### The entry file
 
-Rig starts `main` with the same Node executable that runs Rig. Node strips
+Happy Agent starts `main` with the same Node executable that runs Happy Agent. Node strips
 erasable TypeScript syntax without a compile step or extra flag, so TypeScript
 may use top-level `await` and relative `.ts` imports. Constructs that require
 JavaScript generation are not supported. Use `.mjs` or a local
@@ -101,25 +101,25 @@ JavaScript generation are not supported. Use `.mjs` or a local
 import { happy } from "happy-plugins";
 
 const projects = await happy.projects.list();
-console.log(`Rig has ${projects.length} projects.`);
+console.log(`Happy Agent has ${projects.length} projects.`);
 
 await happy.ready("Ready.");
 
-// A service-style plugin stays alive until Rig shuts it down.
+// A service-style plugin stays alive until Happy Agent shuts it down.
 await new Promise<void>((resolve) => {
     process.once("SIGTERM", resolve);
     process.once("SIGINT", resolve);
 });
 ```
 
-Plugin code never opens a connection, finds credentials, or speaks Rig's
+Plugin code never opens a connection, finds credentials, or speaks Happy Agent's
 protocol. The `happy` singleton reads the socket path and token that the daemon
-injects and connects for you. Rig registers one ESM loader hook with `--import`
-to map `happy-plugins` and `happy-plugins/internal` to the SDK shipped with Rig;
+injects and connects for you. Happy Agent registers one ESM loader hook with `--import`
+to map `happy-plugins` and `happy-plugins/internal` to the SDK shipped with Happy Agent;
 the plugin does not vendor a runtime SDK.
 
-Rig provides only `happy-plugins` at runtime. Bundle every other third-party
-dependency into the plugin's own files; Rig does not copy `node_modules` when
+Happy Agent provides only `happy-plugins` at runtime. Bundle every other third-party
+dependency into the plugin's own files; Happy Agent does not copy `node_modules` when
 it installs a plugin.
 
 ### The SDK surface
@@ -164,7 +164,7 @@ await happy.mcp.startServer({
     tools: [
         defineMcpTool({
             name: "list_projects",
-            description: "List every local Rig project.",
+            description: "List every local Happy Agent project.",
             inputSchema: Type.Object({}, { additionalProperties: false }),
             async execute(_input, { signal }) {
                 signal.throwIfAborted();
@@ -180,7 +180,7 @@ await happy.ready("Ready.");
 await new Promise<void>(() => {});
 ```
 
-Rig offers the tool in ordinary sessions everywhere. The agent-facing name is
+Happy Agent offers the tool in ordinary sessions everywhere. The agent-facing name is
 stable and derived from the plugin name, server name, and tool name by the SDK's
 `createHappyMcpToolName`:
 
@@ -196,14 +196,14 @@ hand-writing it in a test.
 
 Plugin tool calls use the same permission path as configured MCP servers: they
 require Auto or Full access, and every Auto call is reviewed, because a plugin
-may act outside Rig's filesystem sandbox. Cancellation reaches the handler's
+may act outside Happy Agent's filesystem sandbox. Cancellation reaches the handler's
 `AbortSignal`, and disconnected, replaced, restarted, or uninstalled generations
 are retired immediately.
 
 #### Contributing a local application
 
 A plugin may register one or more static bundles plus typed actions through
-`happy.ui.startApplication`. Rig serves them to hosts (currently the Happy2
+`happy.ui.startApplication`. Happy Agent serves them to hosts (currently the Happy2
 Electron shell) which mount them instantly. Limits enforced by the daemon: 8
 applications per plugin, 32 actions and 64 resources per application, 256 KiB per
 resource, 1 MiB per decoded bundle, 64 concurrent actions, a 30-second action
@@ -212,11 +212,11 @@ PNG, SVG, WebP, CSS, HTML, and JavaScript.
 
 ### Where things live
 
-Plugin code and Rig's bounded log stay in Rig's managed home; everything the
+Plugin code and Happy Agent's bounded log stay in Happy Agent's managed home; everything the
 plugin writes at runtime goes to a folder a person can open.
 
 ```text
-~/.happy/rig/plugins/<folder>/          installed code, managed by Rig
+~/.happy/agent/plugins/<folder>/                   installed code, managed by Happy Agent
 ├── happy.plugin.json
 ├── icon.png
 ├── index.ts
@@ -232,14 +232,14 @@ runs of unsupported characters replaced by `-`.
 
 Overrides, all requiring absolute paths:
 
-| Variable                      | Effect                                             |
-| ----------------------------- | -------------------------------------------------- |
-| `RIG_HOME`                    | Moves Rig's managed home (default `~/.happy/rig`). |
-| `HAPPY_PLUGINS_DIRECTORY`     | Moves the installed-plugin root.                   |
-| `HAPPY_PLUGIN_DATA_DIRECTORY` | Moves the writable plugin-data root.               |
+| Variable                      | Effect                                     |
+| ----------------------------- | ------------------------------------------ |
+| `HAPPY_HOME_DIR`              | Moves Happy Agent's private `.happy` root. |
+| `HAPPY_PLUGINS_DIRECTORY`     | Moves the installed-plugin root.           |
+| `HAPPY_PLUGIN_DATA_DIRECTORY` | Moves the writable plugin-data root.       |
 
 The plugin process runs with its writable folder as the working directory, under
-Rig's existing command sandbox confined to that folder. Rig injects:
+Happy Agent's existing command sandbox confined to that folder. Happy Agent injects:
 
 | Variable                   | Meaning                                        |
 | -------------------------- | ---------------------------------------------- |
@@ -269,7 +269,7 @@ Installation is staged. The plugin is copied into a hidden folder and its
 manifest, icon, and main entry point are validated there. An invalid plugin is
 never installed and never replaces a working one. `.git`, `.runtime`,
 `node_modules`, and `plugin.log` are excluded from the copy, and the copy is
-bounded to 2,000 files and 32 MiB. Rig provides `happy-plugins` at runtime; all
+bounded to 2,000 files and 32 MiB. Happy Agent provides `happy-plugins` at runtime; all
 other third-party dependencies must be bundled into the plugin's own files.
 
 Every change publishes a live `plugins_changed` event carrying the whole current
@@ -281,7 +281,7 @@ that plugin's current log.
 
 ### Minimal walkthrough
 
-Building a plugin from inside Rig, end to end:
+Building a plugin from inside Happy Agent, end to end:
 
 1. Create the folder — `.context/project-counter/` is a good scratch location, or
    somewhere the user names.
@@ -291,7 +291,7 @@ Building a plugin from inside Rig, end to end:
 4. Generate `icon.png` using the bundled `local-plugin-icon` skill; verify it is
    a fully decodable square PNG no larger than 2048×2048 pixels or 4 MiB.
 5. Type-check and test the plugin, then call `plugin_install` with the absolute
-   path to the folder. Rig validates, copies, and starts it without compiling.
+   path to the folder. Happy Agent validates, copies, and starts it without compiling.
 6. Call `plugin_list` to confirm `status: "running"`, and `plugin_logs` if it is
    `failed` or `stopped` — startup diagnostics come back through the same tool.
 7. If it contributes MCP tools, they become available to sessions under the
@@ -318,7 +318,7 @@ tool reaches an active session.
 
 ### Trust
 
-Rig does not implement a permission model for plugins. Plugin code is relatively
+Happy Agent does not implement a permission model for plugins. Plugin code is relatively
 trusted and is not restricted by per-capability checks. What _is_ enforced is the
 process sandbox, the writable-folder confinement, the authenticated socket, and
 the ordinary MCP review path for tools a plugin contributes to a session.
@@ -328,15 +328,15 @@ the ordinary MCP review path for tools a plugin contributes to a session.
 ## Skills
 
 A skill is a set of instructions delivered through a `SKILL.md` file. It changes
-what a model knows how to do without changing any code. Rig follows Codex
+what a model knows how to do without changing any code. Happy Agent follows Codex
 behavior and scope here deliberately; it does not implement Claude Code's
 expanded skill runtime, and it does not interpret Claude or Pi skill trees.
 
 ### Where skills are discovered
 
-Rig searches these roots, in this order:
+Happy Agent searches these roots, in this order:
 
-1. **Builtin** — skills shipped inside Rig (currently `local-plugin-icon`).
+1. **Builtin** — skills shipped inside Happy Agent (currently `local-plugin-icon`).
    Read-only; never write here.
 2. **User** — `~/.codex/skills` and `~/.agents/skills`.
 3. **Project** — `.agents/skills` in every directory from the project root down
@@ -381,7 +381,7 @@ Validation, when a skill file is loaded:
 
 ### When a skill triggers
 
-Rig injects the catalog — name, description, and location — into the system
+Happy Agent injects the catalog — name, description, and location — into the system
 prompt. The model uses a skill when the user names it or the task clearly matches
 its description, reads the complete file before acting, and resolves relative
 paths in the skill against the directory containing that `SKILL.md`.
@@ -392,18 +392,18 @@ not add such fields expecting them to work.
 
 ## MCP servers
 
-MCP is how Rig consumes tools it did not write. Servers are configured in TOML,
+MCP is how Happy Agent consumes tools it did not write. Servers are configured in TOML,
 not installed.
 
 ### Configuration
 
 Config layers, resolved in this order:
 
-| Source    | File                                                                                                                            |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `global`  | `happy.toml` in Rig's config directory — `~/Happy/Config` on macOS, `~/happy/config` on Linux, or `RIG_CONFIGURATION_DIRECTORY` |
-| `runtime` | `~/.happy/rig/runtime.toml`                                                                                                     |
-| `project` | `happy.toml` in the project                                                                                                     |
+| Source    | File                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------- |
+| `global`  | `happy.toml` in Happy Agent's config directory — `~/Happy/Config` on macOS or `~/happy/config` on Linux |
+| `runtime` | `~/.happy/agent/runtime.toml`                                                                           |
+| `project` | `happy.toml` in the project                                                                             |
 
 Global and runtime are trusted layers. Project entries are separate: a project
 server with the same name as a trusted one does not override it — the trusted one
@@ -430,7 +430,7 @@ A streamable HTTP server:
 [mcp_servers.issues]
 url = "https://example.com/mcp"
 transport = "http"
-http_headers = { "X-Client" = "Rig" }
+http_headers = { "X-Client" = "Happy Agent" }
 bearer_token_env_var = "ISSUES_MCP_TOKEN"
 oauth_client_id_env_var = "MCP_CLIENT_ID"
 oauth_client_secret_env_var = "MCP_CLIENT_SECRET"
@@ -455,19 +455,19 @@ discovery lets a session use tools added after startup.
 These are product rules, enforced on the tool definitions themselves:
 
 - Every MCP tool sets `requiresAutoOrFullAccess: true`, because the server can
-  act outside Rig's local sandbox. MCP is unavailable in Read only and Workspace
+  act outside Happy Agent's local sandbox. MCP is unavailable in Read only and Workspace
   write.
 - Every direct and dynamic MCP tool invocation is reviewed in Auto
   (`shouldReviewInAutoMode: () => true`), and the approval text discloses the
   external boundary.
-- Rig-owned protocol operations that are intrinsically read-only skip review:
+- Happy Agent-owned protocol operations that are intrinsically read-only skip review:
   `list_mcp_tools`, `list_mcp_resources`, `list_mcp_resource_templates`,
   `read_mcp_resource`, and `list_mcp_prompts`. The operations that reach the
   server to do something — `call_mcp_tool` and `get_mcp_prompt` — are reviewed.
 - Server-supplied annotations such as `readOnlyHint` are untrusted metadata. They
   are never authorization evidence and never a reason to skip review.
 - MCP settings coming from a project require a one-time trust decision before the
-  server starts. The decision is fingerprinted and stored, and Rig asks again if
+  server starts. The decision is fingerprinted and stored, and Happy Agent asks again if
   the server configuration changes.
 - Stdio servers run as local processes with the daemon environment and are **not**
   restricted by the session filesystem sandbox. Only configure servers you trust.
@@ -490,15 +490,15 @@ surface.
 
 - **Project and workspace files** — `GET`/`PUT` `/projects/{id}/file` and
   `/projects/{id}/workspaces/{id}/file`, with SHA-256 optimistic concurrency, a
-  32 MB limit, and Rig's workspace boundary applied.
+  32 MB limit, and Happy Agent's workspace boundary applied.
 - **HTTP proxy** — `CONNECT /projects/{id}/proxy` (and the workspace-scoped form)
   tunnels ordinary HTTP through the authenticated daemon connection.
 - **Happy mobile synchronization** — a first-class daemon feature, gated by both
   the embedder's `happyIntegration` option and the user-wide
   `[settings] happy_integration` config value, both fail-closed.
-- **Remote terminals** — Rig's own libghostty-based terminal protocol. It is
+- **Remote terminals** — Happy Agent's own libghostty-based terminal protocol. It is
   deliberately unspecified for outside consumers right now: it exists to work
-  inside Happy and Rig.
+  inside Happy and Happy Agent.
 
 ### Planned, not implemented
 
@@ -512,8 +512,8 @@ Do not write code against these yet; they are directions rather than features:
 - **A wider plugin API.** The SDK surface grows as plugins ask for it. Extend it
   deliberately rather than reaching around it.
 
-Rig deliberately has **no** plugin marketplace, no plugin identifier scheme, no
-plugin permission model, and no separate Rig login flow. These are settled
+Happy Agent deliberately has **no** plugin marketplace, no plugin identifier scheme, no
+plugin permission model, and no separate Happy Agent login flow. These are settled
 non-goals, not gaps to fill.
 
 ---
@@ -545,7 +545,7 @@ agent-to-agent messaging, and workflow scripting — is in
   Define `shouldRunInFullAccessInAutoMode` only when a reviewed action must cross
   the sandbox; review alone must not imply elevation. Never dispatch permission
   behavior from a tool-name list, prefix, or provider key.
-- **Common tools are assembled once.** A capability that belongs to Rig rather
+- **Common tools are assembled once.** A capability that belongs to Happy Agent rather
   than a vendor goes through the shared common-tool entry point so any future
   model picks it up without per-provider work.
 - **TypeBox for all runtime validation.** Derive TypeScript types with `Static`;

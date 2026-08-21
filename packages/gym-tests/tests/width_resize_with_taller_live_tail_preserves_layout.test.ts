@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, type Gym } from "@slopus/rig-gym";
+import { captureScrollback, createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 describe("width resize with a changing live-tail height", () => {
     it("preserves history and queued rows when the popup grows and shrinks the painted tail", async () => {
@@ -36,7 +36,7 @@ describe("width resize with a changing live-tail height", () => {
             await gym.terminal.waitUntil(
                 (snapshot) =>
                     snapshot.text.includes("WIDTH_RESIZE_HISTORY_END") &&
-                    snapshot.text.includes("Ask Rig to do anything") &&
+                    snapshot.text.includes("Ask Happy Terminal to do anything") &&
                     snapshot.scroll.atBottom,
                 "overflowing width-resize history at the bottom",
                 30_000,
@@ -49,7 +49,7 @@ describe("width resize with a changing live-tail height", () => {
                 (snapshot) =>
                     snapshot.text.includes("Messages to be submitted after next tool call") &&
                     snapshot.text.includes(queuedPrompt) &&
-                    snapshot.text.includes("Ask Rig to do anything"),
+                    snapshot.text.includes("Ask Happy Terminal to do anything"),
                 "the queued prompt above the composer",
                 30_000,
             );
@@ -105,7 +105,8 @@ function assertHealthyLiveTail(
 ): void {
     const activeRow = rowContaining(snapshot.rows, "esc to interrupt");
     const composerRow = snapshot.rows.findIndex(
-        (row) => row.includes("Ask Rig to do anything") || row.trimStart().startsWith("› @"),
+        (row) =>
+            row.includes("Ask Happy Terminal to do anything") || row.trimStart().startsWith("› @"),
     );
     const footerRow = snapshot.rows.findIndex((row) => row.includes("gym off"));
 
@@ -123,7 +124,9 @@ function assertHealthyLiveTail(
     if (footerRow >= 0) expect(composerRow).toBeLessThan(footerRow);
     expect(
         snapshot.rows.filter(
-            (row) => row.includes("Ask Rig to do anything") || row.trimStart().startsWith("› @"),
+            (row) =>
+                row.includes("Ask Happy Terminal to do anything") ||
+                row.trimStart().startsWith("› @"),
         ),
     ).toHaveLength(1);
     expect(snapshot.scroll.offset + snapshot.scroll.visibleRows).toBe(snapshot.scroll.totalRows);

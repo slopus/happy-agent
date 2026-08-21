@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -16,7 +16,7 @@ describe("restricted non-git home project", () => {
             entrypoint: [
                 "/bin/sh",
                 "-lc",
-                "cd /home/rig && exec node /app/packages/rig/dist/main.js",
+                "cd /home/happy-terminal && exec node /app/packages/happy-terminal/dist/main.js",
             ],
             homeFiles: {
                 "README.md": "A home directory without a Git marker.\n",
@@ -46,7 +46,7 @@ describe("restricted non-git home project", () => {
             entrypoint: [
                 "/bin/sh",
                 "-lc",
-                "cd /home/rig/project && exec node /app/packages/rig/dist/main.js",
+                "cd /home/happy-terminal/project && exec node /app/packages/happy-terminal/dist/main.js",
             ],
             homeFiles: {
                 "project/README.md": "A project without a Git marker.\n",
@@ -82,7 +82,7 @@ describe("restricted non-git home project", () => {
             entrypoint: [
                 "/bin/sh",
                 "-lc",
-                "cd /home/rig/project && exec node /app/packages/rig/dist/main.js",
+                "cd /home/happy-terminal/project && exec node /app/packages/happy-terminal/dist/main.js",
             ],
             homeFiles: {
                 "project/.git": { content: "not usable Git metadata\n", mode: 0o000 },

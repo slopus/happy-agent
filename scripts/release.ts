@@ -37,13 +37,13 @@ Examples:
   pnpm release happy-plugins patch
   pnpm release happy-providers patch
 
-Rig is still on 0.x, so it does not take a major release yet. Until it promises
+Happy Terminal is still on 0.x, so it does not take a major release yet. Until it promises
 compatibility, a minor is how a feature ships and a patch is how a fix does.`;
 
 async function release(): Promise<void> {
     const arguments_ = process.argv.slice(2);
     const explicitPackage =
-        arguments_[0] === "rig" ||
+        arguments_[0] === "happy-terminal" ||
         arguments_[0] === "happy-agent-base" ||
         arguments_[0] === "happy-agent-client" ||
         arguments_[0] === "happy-agent-compute" ||
@@ -67,8 +67,8 @@ async function release(): Promise<void> {
 
     const initialManifest = readPackageManifest(releasePackage);
     const versionArguments = resolveReleaseVersionArguments(initialManifest.version, releaseInput);
-    if (versionArguments.beta && releasePackage.key !== "rig") {
-        throw new Error("Beta releases are only available for @slopus/rig.");
+    if (versionArguments.beta && releasePackage.key !== "happy-terminal") {
+        throw new Error("Beta releases are only available for @slopus/happy-terminal.");
     }
     assertReleaseBumpAllowed({ currentVersion: initialManifest.version, requested: releaseInput });
 
@@ -79,7 +79,7 @@ async function release(): Promise<void> {
         throw new Error("The working tree must be clean before creating a release.");
     }
 
-    if (releasePackage.key === "rig") {
+    if (releasePackage.key === "happy-terminal") {
         assertBundledHappyRuntimeDependencies(initialManifest);
     }
     const tagsAtHead = runCommand("git", ["tag", "--points-at", "HEAD"], {

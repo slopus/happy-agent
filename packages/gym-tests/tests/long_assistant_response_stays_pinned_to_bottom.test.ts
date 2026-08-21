@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -37,7 +37,7 @@ describe("long assistant response stays pinned to the bottom", () => {
         const firstTurn = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("PINNED_RESPONSE_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "long response and idle composer at the bottom",
             30_000,
@@ -63,7 +63,7 @@ describe("long assistant response stays pinned to the bottom", () => {
         const followUp = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("PINNED_FOLLOW_UP_ACCEPTED") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "follow-up response and idle composer at the bottom",
             30_000,

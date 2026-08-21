@@ -190,7 +190,7 @@ function allowedDecision(
 describe("permissions boundary contracts", () => {
     it("holds its bounds as module constants rather than as tunable construction arguments", () => {
         // The three bounds a host used to be able to set are the product's own decisions now, so
-        // what a test can assert about them is what they are, and that they are the values Rig v1
+        // what a test can assert about them is what they are, and that they are the values Happy Agent v1
         // enforced.
         expect(PERMISSION_REVIEW_TIMEOUT_MS).toBe(90_000);
         expect(PERMISSION_REFUSALS_BEFORE_STOPPING).toBe(3);

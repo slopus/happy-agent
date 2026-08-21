@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "MANAGED_WORKSPACE_PATHS_SURVIVED_DIRECTORY_CHANGE";
@@ -42,14 +42,14 @@ const exerciseWorkspaceDirectoryChangeScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
-export RIG_SERVER_DIRECTORY="/home/rig/.local/state/rig-workspace-directory-change"
-export RIG_SERVER_SOCKET_PATH="/tmp/rig-workspace-directory-change.sock"
+export HAPPY_TERMINAL_SERVER_DIRECTORY="/home/happy-terminal/.local/state/rig-workspace-directory-change"
+export HAPPY_TERMINAL_SERVER_SOCKET_PATH="/tmp/rig-workspace-directory-change.sock"
 first_root="/workspace/managed-first"
 second_root="/workspace/managed-second"
-registry_path="$RIG_SERVER_DIRECTORY/server.json"
+registry_path="$HAPPY_TERMINAL_SERVER_DIRECTORY/server.json"
 
 read_registered_pid() {
     node -e 'process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).pid))' "$registry_path"
@@ -69,21 +69,21 @@ wait_for_exit() {
 
 git -C /workspace init --initial-branch=main
 git -C /workspace config user.email gym@example.test
-git -C /workspace config user.name "Rig Gym"
+git -C /workspace config user.name "Happy Terminal Gym"
 printf 'managed workspace path fixture\n' > /workspace/README.md
 git -C /workspace add README.md
 git -C /workspace commit -m Initial
 
-RIG_WORKSPACES_DIRECTORY="$first_root" rig daemon start
+HAPPY_AGENT_WORKSPACES_DIRECTORY="$first_root" happy-terminal daemon start
 first_pid="$(read_registered_pid)"
-RIG_WORKSPACES_DIRECTORY="$first_root" node /workspace/workspace-directory-client.mjs create-old
-RIG_WORKSPACES_DIRECTORY="$first_root" rig daemon stop
+HAPPY_AGENT_WORKSPACES_DIRECTORY="$first_root" node /workspace/workspace-directory-client.mjs create-old
+HAPPY_AGENT_WORKSPACES_DIRECTORY="$first_root" happy-terminal daemon stop
 wait_for_exit "$first_pid"
 
-RIG_WORKSPACES_DIRECTORY="$second_root" rig daemon start
+HAPPY_AGENT_WORKSPACES_DIRECTORY="$second_root" happy-terminal daemon start
 second_pid="$(read_registered_pid)"
-RIG_WORKSPACES_DIRECTORY="$second_root" node /workspace/workspace-directory-client.mjs verify-change
-RIG_WORKSPACES_DIRECTORY="$second_root" rig daemon stop
+HAPPY_AGENT_WORKSPACES_DIRECTORY="$second_root" node /workspace/workspace-directory-client.mjs verify-change
+HAPPY_AGENT_WORKSPACES_DIRECTORY="$second_root" happy-terminal daemon stop
 wait_for_exit "$second_pid"
 
 echo "Persisted workspace path remained usable"
@@ -95,9 +95,9 @@ const workspaceDirectoryClientScript = String.raw`
 import { access, readFile, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 
-const serverDirectory = process.env.RIG_SERVER_DIRECTORY;
-const socketPath = process.env.RIG_SERVER_SOCKET_PATH;
-const workspaceRoot = process.env.RIG_WORKSPACES_DIRECTORY;
+const serverDirectory = process.env.HAPPY_TERMINAL_SERVER_DIRECTORY;
+const socketPath = process.env.HAPPY_TERMINAL_SERVER_SOCKET_PATH;
+const workspaceRoot = process.env.HAPPY_AGENT_WORKSPACES_DIRECTORY;
 if (serverDirectory === undefined || socketPath === undefined || workspaceRoot === undefined) {
     throw new Error("Workspace directory test environment is incomplete.");
 }

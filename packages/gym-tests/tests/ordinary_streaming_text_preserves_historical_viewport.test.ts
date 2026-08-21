@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, waitForTerminalOutput, type Gym } from "@slopus/rig-gym";
+import {
+    captureScrollback,
+    createGym,
+    waitForTerminalOutput,
+    type Gym,
+} from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -180,7 +185,7 @@ describe("ordinary streaming text while reading history", () => {
         const completed = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("ORDINARY_STREAM_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the completed ordinary response after returning to the bottom",
             30_000,
@@ -195,7 +200,7 @@ describe("ordinary streaming text while reading history", () => {
         const followUp = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("ORDINARY_FOLLOW_UP") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "a later healthy revision after streamed return-to-bottom",
             30_000,
@@ -272,7 +277,7 @@ function assertHistoricalAnchor(
 }
 
 function hostTerminalCopy(selectedRows: readonly string[]): string {
-    // Native selection and Cmd-C belong to the host terminal and send no input bytes to Rig.
+    // Native selection and Cmd-C belong to the host terminal and send no input bytes to Happy Terminal.
     return selectedRows.join("\n");
 }
 
@@ -296,7 +301,7 @@ async function waitForIdleText(gym: Gym, text: string): Promise<void> {
     await gym.terminal.waitUntil(
         (snapshot) =>
             snapshot.text.includes(text) &&
-            snapshot.text.includes("Ask Rig to do anything") &&
+            snapshot.text.includes("Ask Happy Terminal to do anything") &&
             snapshot.scroll.atBottom,
         `idle response containing ${text}`,
         30_000,
@@ -304,7 +309,7 @@ async function waitForIdleText(gym: Gym, text: string): Promise<void> {
 }
 
 async function writeProof(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_PROOF_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_PROOF_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(`${directory}/${name}`);
 }

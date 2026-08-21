@@ -463,7 +463,7 @@ function checkedSelection(
             candidate.id === selection.modelId && candidate.providerId === selection.providerId,
     );
     if (model === undefined) {
-        throw new Error("That model is not available in this Rig.");
+        throw new Error("That model is not available in this Happy Agent.");
     }
     if (!model.effortLevels.includes(selection.effort)) {
         throw new Error("That reasoning level is not available for this model.");

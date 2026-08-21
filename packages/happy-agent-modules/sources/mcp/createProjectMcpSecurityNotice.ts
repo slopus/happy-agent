@@ -15,7 +15,7 @@ export function createProjectMcpSecurityNotice(
     return [
         ...(hasProjectServer
             ? [
-                  "MCP server settings from this project need one-time trust before they start. Rig saves the decision and asks again if the server configuration changes.",
+                  "MCP server settings from this project need one-time trust before they start. Happy Agent saves the decision and asks again if the server configuration changes.",
               ]
             : []),
         ...(hasShadowedProjectServer

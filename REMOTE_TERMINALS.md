@@ -1,6 +1,6 @@
 # Remote terminals
 
-Rig exposes project- and workspace-scoped interactive terminals independently of agent runs and
+Happy Agent exposes project- and workspace-scoped interactive terminals independently of agent runs and
 chats. Every chat in the same project or managed workspace sees the same terminal collection and
 execution environment. Each terminal owns a real host PTY and one canonical Ghostty emulator in the
 daemon, both held by the
@@ -30,7 +30,7 @@ project's root checkout; workspace routes target one managed worktree.
 Create accepts `cols`, `rows`, `maxScrollback`, `cwd`, `shell`, `colorScheme` (`light` or `dark`),
 and an optional `command`. The working directory defaults to the project root or managed worktree,
 and a relative `cwd` resolves against it. Dimensions default to 80 columns, 24 rows, and 10,000
-scrollback rows; the color scheme defaults to dark. Without a command, Rig starts the environment's
+scrollback rows; the color scheme defaults to dark. Without a command, Happy Agent starts the environment's
 interactive shell. One project or workspace holds at most 32 terminals; reaching that limit
 discards a terminal that has already exited, and is refused when every terminal is still running.
 Archiving a project or workspace ends the terminals standing in its folder. The color scheme initializes the canonical emulator and
@@ -38,7 +38,7 @@ remains fixed for that terminal's lifetime. Lifecycle responses contain that sch
 stable terminal ID and epoch, dimensions, running or exited status, and the exit code when known.
 They do not contain terminal screen snapshots.
 
-Resize accepts `{ "cols": 100, "rows": 30 }`. Rig performs the request through the protocol's
+Resize accepts `{ "cols": 100, "rows": 30 }`. Happy Agent performs the request through the protocol's
 canonical resize operation: it drains parsing, resizes the PTY and server Ghostty state, broadcasts
 an output barrier and resize revision to every attachment, and only then releases post-resize output.
 

@@ -1,18 +1,18 @@
 import { fileURLToPath } from "node:url";
 
-const localRigPackageJson = JSON.stringify(
-    fileURLToPath(new URL("../../rig/package.json", import.meta.url)),
+const localHappyTerminalPackageJson = JSON.stringify(
+    fileURLToPath(new URL("../../happy-terminal/package.json", import.meta.url)),
 );
 
 const esmSetup = String.raw`
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 
-const rigPackageJson = existsSync("/app/packages/rig/package.json")
-    ? "/app/packages/rig/package.json"
-    : ${localRigPackageJson};
-const requireFromRig = createRequire(rigPackageJson);
-const { createClient } = requireFromRig("@libsql/client");
+const happyTerminalPackageJson = existsSync("/app/packages/happy-terminal/package.json")
+    ? "/app/packages/happy-terminal/package.json"
+    : ${localHappyTerminalPackageJson};
+const requireFromHappyTerminal = createRequire(happyTerminalPackageJson);
+const { createClient } = requireFromHappyTerminal("@libsql/client");
 
 async function openDatabase(path, readOnly = false) {
     const database = createClient({
@@ -33,11 +33,11 @@ const commonJsSetup = String.raw`
 const { existsSync } = require("node:fs");
 const { createRequire } = require("node:module");
 
-const rigPackageJson = existsSync("/app/packages/rig/package.json")
-    ? "/app/packages/rig/package.json"
-    : ${localRigPackageJson};
-const requireFromRig = createRequire(rigPackageJson);
-const { createClient } = requireFromRig("@libsql/client");
+const happyTerminalPackageJson = existsSync("/app/packages/happy-terminal/package.json")
+    ? "/app/packages/happy-terminal/package.json"
+    : ${localHappyTerminalPackageJson};
+const requireFromHappyTerminal = createRequire(happyTerminalPackageJson);
+const { createClient } = requireFromHappyTerminal("@libsql/client");
 
 async function openDatabase(path, readOnly = false) {
     const database = createClient({

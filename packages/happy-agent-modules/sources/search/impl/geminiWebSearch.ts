@@ -30,7 +30,7 @@ interface GeminiInteractionResponse {
 /**
  * Gemini grounding, over Google's own HTTP interface.
  *
- * Gemini is not one of the chat providers Rig runs conversations on, so this search does not go
+ * Gemini is not one of the chat providers Happy Agent runs conversations on, so this search does not go
  * through a configured account. It needs a Gemini API key and nothing else.
  */
 export async function geminiWebSearch(

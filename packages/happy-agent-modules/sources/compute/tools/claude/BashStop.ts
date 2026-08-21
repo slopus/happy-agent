@@ -32,7 +32,7 @@ export function claudeBashStopTool(compute: Compute) {
         ),
         // Process state cannot commit atomically with the tool result.
         durable: false,
-        // Ending work Rig itself started stays inside the machine the agent already has.
+        // Ending work Happy Agent itself started stays inside the machine the agent already has.
         shouldReviewInAutoMode: () => false,
         execute: async (_ctx, { bash_id }) => {
             const commandId = parseClaudeBashId(bash_id);

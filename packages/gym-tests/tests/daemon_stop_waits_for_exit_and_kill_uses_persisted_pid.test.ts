@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "DAEMON_STOP_AND_KILL_LIFECYCLE_COMPLETE";
@@ -38,7 +38,7 @@ const exerciseDaemonLifecycleScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
 find_daemon_pid() {
@@ -48,11 +48,11 @@ find_daemon_pid() {
 pid_file="/tmp/happy/agent/daemon.pid"
 observation_log="/tmp/happy/agent/observation/agent.log"
 
-rig daemon start
+happy-terminal daemon start
 graceful_pid="$(find_daemon_pid)"
 test -n "$graceful_pid"
 
-rig daemon stop
+happy-terminal daemon stop
 if kill -0 "$graceful_pid" 2>/dev/null; then
     echo "Graceful stop returned before daemon process $graceful_pid exited." >&2
     exit 1
@@ -64,7 +64,7 @@ grep -q "daemon:shutdown:start pid=$graceful_pid" "$observation_log"
 grep -q "daemon:shutdown:step:start pid=$graceful_pid step=agent-system" "$observation_log"
 echo "Shutdown steps were logged"
 
-rig daemon start
+happy-terminal daemon start
 persisted_pid="$(tr -d '[:space:]' < "$pid_file")"
 live_pid="$(find_daemon_pid)"
 if [[ "$persisted_pid" != "$live_pid" ]]; then
@@ -73,13 +73,13 @@ if [[ "$persisted_pid" != "$live_pid" ]]; then
 fi
 echo "Persisted daemon PID matched the live process"
 
-rig daemon kill
+happy-terminal daemon kill
 if kill -0 "$persisted_pid" 2>/dev/null; then
     echo "Daemon process $persisted_pid survived the kill command." >&2
     exit 1
 fi
 test ! -e "$pid_file"
-rig daemon status
+happy-terminal daemon status
 echo "Forced daemon kill completed"
 
 echo ${COMPLETED_MARKER}

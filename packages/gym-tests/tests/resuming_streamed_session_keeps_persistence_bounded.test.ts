@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { libsqlEsmScript } from "./libsqlScript.js";
 
 const artifacts = resolve(
@@ -33,11 +33,11 @@ describe("resuming a session with streamed response history", () => {
                 "bash",
                 "-lc",
                 [
-                    "node /app/packages/rig/dist/main.js",
-                    "node /app/packages/rig/dist/main.js daemon stop",
+                    "node /app/packages/happy-terminal/dist/main.js",
+                    "node /app/packages/happy-terminal/dist/main.js daemon stop",
                     "node /workspace/inspect-streamed-session.mjs",
                     `echo ${RESUME_MARKER}`,
-                    "exec node /app/packages/rig/dist/main.js resume --last",
+                    "exec node /app/packages/happy-terminal/dist/main.js resume --last",
                 ].join("; "),
             ],
             files: {
@@ -45,7 +45,7 @@ describe("resuming a session with streamed response history", () => {
             },
             environment: {
                 NO_PROXY: "host.docker.internal",
-                RIG_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
+                HAPPY_TERMINAL_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
             },
             homeFiles: {
                 ".codex/auth.json": JSON.stringify({
@@ -104,7 +104,7 @@ describe("resuming a session with streamed response history", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("STREAMED_HISTORY_COMPLETE") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the streamed response to complete",
             30_000,
         );
@@ -117,7 +117,7 @@ describe("resuming a session with streamed response history", () => {
                 const resumedText = snapshot.text.slice(marker);
                 return (
                     resumedText.includes("STREAMED_HISTORY_COMPLETE") &&
-                    resumedText.includes("Ask Rig to do anything")
+                    resumedText.includes("Ask Happy Terminal to do anything")
                 );
             },
             "the streamed transcript after daemon restart",
@@ -140,7 +140,7 @@ describe("resuming a session with streamed response history", () => {
         const healthy = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("FOLLOW_UP_AFTER_RESUME") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "a completed turn after resume",
             30_000,
         );
@@ -173,7 +173,7 @@ const transientTypes = new Set([
     "done",
     "error",
 ]);
-const database = await openDatabase("/home/rig/.happy/rig/sessions.sqlite", true);
+const database = await openDatabase("/home/happy-terminal/.happy/rig/sessions.sqlite", true);
 let result;
 try {
 const sessionId = (

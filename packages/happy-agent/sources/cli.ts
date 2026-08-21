@@ -6,7 +6,7 @@ import { isAgentDaemonCommand, runAgentDaemonCommand } from "./lifecycle/runAgen
 
 /**
  * The `happy-agent` command line: the Happy agent is its own daemon and owns its whole boot
- * sequence. Products such as Rig only invoke these commands instead of managing the process.
+ * sequence. Products such as Happy Terminal only invoke these commands instead of managing the process.
  */
 
 const USAGE = `Usage: happy-agent <command>

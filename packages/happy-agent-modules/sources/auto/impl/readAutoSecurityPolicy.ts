@@ -1,5 +1,5 @@
 /**
- * Assembles the user's security policy for one review, ported from Rig v1's
+ * Assembles the user's security policy for one review, ported from Happy Agent v1's
  * `createCodingAssistantAgent.ts` reviewer `readSecurityPolicy`. The global `SECURITY.md` and the
  * project-root `AGENTS_SECURITY.md` are read again before every review, so an edit made while a
  * session is open takes effect on the next review without restarting anything.

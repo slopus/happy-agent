@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -48,6 +48,6 @@ describe("temporary menus use a fullscreen terminal surface", () => {
         gym.terminal.type("Continue after closing the menu.");
         gym.terminal.press("enter");
         const continued = await gym.terminal.waitForText("SECOND_TURN_OK");
-        expect(continued.text).toContain("Ask Rig to do anything");
+        expect(continued.text).toContain("Ask Happy Terminal to do anything");
     });
 });

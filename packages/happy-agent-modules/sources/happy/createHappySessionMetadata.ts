@@ -40,7 +40,7 @@ export interface HappySessionMetadata {
         shell: boolean;
         steering: boolean;
     };
-    client: { id: "rig"; name: "Rig"; version: string };
+    client: { id: "rig"; name: "Happy Agent"; version: string };
     currentModelCode: string;
     currentModelProviderId: string;
     currentOperatingModeCode: string;
@@ -77,10 +77,10 @@ export interface HappySessionMetadata {
 }
 
 /**
- * Describes one Rig session in Happy's own terms.
+ * Describes one Happy Agent session in Happy's own terms.
  *
  * This is what makes the phone useful before anything is said: which model is
- * running, what else it could run, what the session may touch, and what Rig can
+ * running, what else it could run, what the session may touch, and what Happy Agent can
  * be asked to do for it. It is republished whenever any of that changes.
  */
 export function createHappySessionMetadata(options: {
@@ -127,7 +127,7 @@ export function createHappySessionMetadata(options: {
             shell: false,
             steering: true,
         },
-        client: { id: "rig", name: "Rig", version: options.version },
+        client: { id: "rig", name: "Happy Agent", version: options.version },
         currentModelCode: session.modelId,
         currentModelProviderId: session.providerId,
         currentOperatingModeCode: session.permissionMode,

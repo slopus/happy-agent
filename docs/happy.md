@@ -1,7 +1,7 @@
 # The Happy family
 
-Happy is a family of two products, built by the same authors as Rig, that put
-people in touch with the coding agents working for them. Both connect to Rig,
+Happy is a family of two products, built by the same authors as Happy Agent, that put
+people in touch with the coding agents working for them. Both connect to Happy Agent,
 and both can be the thing on the other end of a conversation you are having.
 
 - **Happy** is _end-to-end encrypted remote access to your coding agents_. A
@@ -16,18 +16,17 @@ and both can be the thing on the other end of a conversation you are having.
 
 They solve two halves of the same problem. Happy answers "my agent is working
 on my machine and I am not at my machine." Happy 2 answers "my team and our
-agents need one shared place to work." Rig is the coding-agent runtime
-underneath both: Happy synchronizes your live Rig sessions to your phone, and
-Happy 2 executes its agents as Rig sessions.
+agents need one shared place to work." Happy Agent is the coding-agent runtime
+underneath both: Happy synchronizes your live Happy Agent sessions to your phone, and
+Happy 2 executes its agents as Happy Agent sessions.
 
 A naming note, because the two products share a word. In this documentation,
 **Happy** always means the encrypted remote-access product, and **Happy 2**
 always means the collaborative desktop workspace. Happy 2 is started with
 `npx happy2` and keeps its state under `.happy2`, so its package names,
-configuration keys, and paths read `happy2`. Rig's own `happy_integration`
-setting and its `RIG_DISABLE_HAPPY_SYNC` environment variable belong to
-**Happy**, not to Happy 2 — and Happy 2 deliberately turns that integration off
-in the private Rig runtime it manages.
+configuration keys, and paths read `happy2`. Happy Agent's own `happy_integration`
+setting belongs to **Happy**, not to Happy 2 — and Happy 2 deliberately turns that
+integration off in the private Happy Agent runtime it manages.
 
 ---
 
@@ -99,34 +98,28 @@ that sessions exist, and roughly when they were active. They cannot see your
 prompts, the model's replies, your file contents, your tool calls, or your
 machine's name.
 
-## How Rig connects to Happy
+## How Happy Agent connects to Happy
 
-Rig speaks the Happy protocol natively. It does not wrap another CLI; a Rig
+Happy Agent speaks the Happy protocol natively. It does not wrap another CLI; a Happy Agent
 daemon registers itself as a machine and synchronizes its sessions directly.
 
-**Turning it on and off.** Happy integration is enabled by default for the
-normal Rig CLI. It is a machine-level decision: it can be switched off in the
-user-wide configuration file with `happy_integration = false` under
-`[settings]`, and it can be forced off for any Rig host by setting
-`RIG_DISABLE_HAPPY_SYNC=1`, which overrides the configuration file.
-Repository-level configuration cannot enable or disable it. Development builds
-of Rig disable the synchronization by default so that local builds do not appear
-as machines or mirror test sessions; `RIG_DISABLE_HAPPY_SYNC=0` opts a
-development run back in.
+**Turning it on and off.** Happy integration is enabled by default. It is a machine-level
+decision controlled by `happy_integration = false` under `[settings]` in the user-wide
+configuration file. Repository-level configuration cannot enable or disable it.
 
-**Credentials.** When the integration is enabled, the Rig daemon imports newer
+**Credentials.** When the integration is enabled, the Happy Agent daemon imports newer
 credentials from `~/.happy` at startup, so a machine already paired with the
-Happy CLI needs no extra step. To pair from Rig directly, `rig happy auth`
+Happy CLI needs no extra step. To pair from Happy Terminal directly, `happy-terminal happy auth`
 prints a QR code — a real PNG in terminals that support Kitty or iTerm2 image
 protocols, and a compact text QR everywhere else — which you scan with the
-Happy app. Rig keeps its copy of the access key, machine identity, and settings
+Happy app. Happy Agent keeps its copy of the access key, machine identity, and settings
 under its own home directory, separate from the CLI's `~/.happy`.
 
-**What Rig publishes.** Every primary Rig session you open is synchronized live.
-Rig registers itself as a Rig-kind machine and publishes its display name, host,
+**What Happy Agent publishes.** Every primary Happy Agent session you open is synchronized live.
+Happy Agent registers itself as a Happy Agent-kind machine and publishes its display name, host,
 platform, version, and the complete model catalog: each provider, each model,
 its available reasoning levels and default level, its service tiers, and its
-context window. It also publishes Rig's four permission modes with
+context window. It also publishes Happy Agent's four permission modes with
 human-readable names and descriptions, so the client can offer them. Session
 metadata carries the live activity of a session — the current activity state,
 running processes, queued and running subagents, task counts, and workflow
@@ -173,7 +166,7 @@ on that machine.
   <http://127.0.0.1:3000>. Node.js 24 or later is required.
 - Everything durable lives under `.happy2` in the directory where Happy 2 was
   started: the SQLite database, uploaded files, generated JWT keys and password
-  pepper, plugin state, agent workspaces, and Happy 2's private Rig runtime.
+  pepper, plugin state, agent workspaces, and Happy 2's private Happy Agent runtime.
 - The same React application runs in a browser and in an Electron desktop app.
 - `npx happy2 daemon start` and `daemon stop` run it in the background with a
   PID file and logs under `.happy2`; `npx happy2 service start` and
@@ -191,7 +184,7 @@ on that machine.
 | UI      | Reusable design system and component workbench                                        |
 | App     | The React product, shared by web and desktop                                          |
 | Web     | Browser entry point and production web build                                          |
-| Desktop | Electron app that supervises child processes and hosts the Rig surface                |
+| Desktop | Electron app that supervises child processes and can host the Happy Terminal surface  |
 
 The all-in-one executable starts the API on an ephemeral loopback port, serves
 the packaged single-page app on the configured public port, and proxies the API
@@ -200,34 +193,33 @@ server-sent events. All useful HTTP endpoints live under a `/v0` prefix; `/` is
 only a small status response. Server APIs use GET and POST only, and POST paths
 name explicit actions rather than CRUD verbs.
 
-## How Happy 2 uses Rig
+## How Happy 2 uses Happy Agent
 
-Happy 2 drives Rig in **two separate ways**. They are easy to confuse, so keep
+Happy 2 drives Happy Agent in **two separate ways**. They are easy to confuse, so keep
 them apart:
 
 1. **Server-side agent execution.** The Happy 2 server starts and owns a
-   private, bundled Rig daemon and creates one Rig session per agent
+   private, bundled Happy Agent daemon and creates one Happy Agent session per agent
    conversation. This is how an agent that is a member of a channel actually
    thinks and works.
-2. **The desktop Rig surface.** The Electron app connects to a Rig daemon _you_
-   already run yourself and shows its projects, sessions, transcripts, files,
-   and terminals inside Happy 2.
+2. **The desktop Happy Terminal surface.** The Electron app hosts Happy Terminal against a Happy
+   Agent daemon _you_ already run yourself and shows its projects, sessions, transcripts, files,
+   and terminals inside Happy Desktop.
 
-### 1. The private Rig runtime that executes agent turns
+### 1. The private Happy Agent runtime that executes agent turns
 
 An `[agents]` table configures this path — whether it is enabled, the daemon
-socket and token paths, the Rig command, and the default working directory for
-agent workspaces. Its defaults point at a private Rig runtime under
-`.happy2/rig`, with workspaces under `.happy2/workspaces`.
+socket and token paths, the Happy Agent command, and the default working directory for
+agent workspaces. Its defaults point at a private Happy Agent runtime under
+`.happy2/agent`, with workspaces under `.happy2/workspaces`.
 
 What follows from the implementation:
 
-- Happy 2 starts the Rig executable **installed with its own server package**,
-  never a global `rig` binary, with `RIG_HOME` pointing at `.happy2/rig`. That
-  home holds the runtime's configuration, settings, session state, socket, and
-  token.
-- Every Rig process Happy 2 starts receives `RIG_DISABLE_HAPPY_SYNC=1`, so this
-  private runtime never appears as a machine in Happy's encrypted mobile sync.
+- Happy 2 starts the Happy Agent executable **installed with its own server package**, never a
+  global `happy-terminal` binary, with `HAPPY_HOME_DIR` pointing at its private `.happy2` state.
+  That home holds the daemon's configuration, session state, socket, and token.
+- Its generated machine configuration disables Happy synchronization, so this private runtime
+  never appears as a machine in Happy's encrypted mobile sync.
 - The daemon mode defaults to _managed_: Happy 2 writes an exact internal
   runtime configuration (durable global event queue on, Happy integration off),
   hashes it, checks the running daemon's version, replaces the daemon when
@@ -238,14 +230,14 @@ What follows from the implementation:
   it, and enables the durable global event queue so it can follow one global
   event stream with a cursor and trim it periodically.
 
-**One Rig session per agent conversation.** When an agent must answer in a
-chat, Happy 2 resolves or creates a binding of (chat, agent) to a Rig session:
+**One Happy Agent session per agent conversation.** When an agent must answer in a
+chat, Happy 2 resolves or creates a binding of (chat, agent) to a Happy Agent session:
 
 - A per-agent sandbox directory pair is created under the configured agent
   working directory, and an OCI container (Docker or Podman) is created from
   that agent's image, with the workspace bind-mounted at `/workspace` and the
   agent home at `/home`.
-- The Rig session is created against that existing container with
+- The Happy Agent session is created against that existing container with
   `/workspace` as the working directory, the chat's model, and the agent's
   effort.
 - Child channels reuse their parent conversation's container and working
@@ -253,47 +245,46 @@ chat, Happy 2 resolves or creates a binding of (chat, agent) to a Rig session:
   match.
 - Sessions are created with the `full_access` permission mode. That is
   deliberate: the agent is already confined by a dedicated container sandbox,
-  so **full access here means "no extra Rig-side sandbox inside an already
+  so **full access here means "no extra Happy Agent-side sandbox inside an already
   sandboxed container", not "free rein on the user's machine".**
-- Per-agent and per-channel secrets are registered with Rig and reconciled onto
+- Per-agent and per-channel secrets are registered with Happy Agent and reconciled onto
   the session, so environment values are attached and detached as bindings
   change.
 
 **Turns.** Messages addressed to agents become durable turns that Happy 2
 drains one at a time per chat. A channel has a default agent and may address
 additional agent members; a direct message can only address its own agent.
-Happy 2 submits the prompt to Rig, streams the agent-loop events back out of the
+Happy 2 submits the prompt to Happy Agent, streams the agent-loop events back out of the
 global event stream, and turns them into Happy 2 messages, typing indicators,
 live activity (phase, tool names, subagents, background terminals, token
 counts), and a final reply. Steering delivers new user text into a running
-turn; stopping a run ends it in Rig and releases the worker lease.
+turn; stopping a run ends it in Happy Agent and releases the worker lease.
 
-**Terminals and previews.** Happy 2 can open Rig remote terminals inside the
+**Terminals and previews.** Happy 2 can open Happy Agent remote terminals inside the
 agent's container and attach them to the app over WebSocket. Optional
 port-sharing configuration publishes a range of container ports through a
 wildcard preview domain with per-share audiences.
 
-### 2. The desktop Rig surface
+### 2. The desktop Happy Terminal surface
 
-The Electron app also acts as a Rig client for the Rig you installed yourself:
+Happy Desktop can host `@slopus/happy-terminal` against the Happy Agent you installed yourself:
 
-- The main process discovers the `rig` command through your login-shell
-  environment, resolves the daemon socket and token, and refuses to connect
-  when the running daemon's version does not match the installed command.
-- It proxies that daemon connection to the renderer, which uses Rig's client
+- The main process can use the embedded package or the standalone `happy-terminal` command,
+  resolves the daemon socket and token, and refuses to connect when the protocol is incompatible.
+- It proxies that daemon connection to the renderer, which uses Happy Agent's client
   library to keep the transcript, session list, model catalog, inbox, provider
   usage, changed files, and terminals live.
-- This is a normal Rig daemon on your machine: your projects, your workspaces,
-  your credentials. It is _not_ the private Rig runtime described above.
+- This is a normal Happy Agent daemon on your machine: your projects, your workspaces,
+  your credentials. It is _not_ the private Happy Agent runtime described above.
 
-**Remote Rigs are in progress.** A prototype in the desktop main process
+**Remote Happy Agents are in progress.** A prototype in the desktop main process
 reaches another machine over OpenSSH: it asks the machine for its default
 daemon socket and token with one fixed command, forwards that Unix socket to a
 private local one, and then speaks the ordinary daemon protocol over it, so a
 remote daemon looks identical to a local one above the connection boundary. The
-intended destination is that a remote Rig is added by naming a machine the way
+intended destination is that a remote Happy Agent is added by naming a machine the way
 you already reach it over SSH, its projects appear in the sidebar beside local
-ones, Connect and Disconnect work on demand, a disconnected Rig degrades
+ones, Connect and Disconnect work on demand, a disconnected Happy Agent degrades
 cleanly, and no application code above the connection layer branches on remote
 versus local. Treat that polished experience as **planned**; the SSH transport
 exists today.
@@ -306,8 +297,8 @@ exists today.
 - **Documents** exist today as server-owned collaborative documents with a
   Documents tab, presence, attach and detach to chats, and an approval flow for
   write requests, exercised by a built-in documents plugin.
-- **Planned:** moving document ownership to the Rig instance rather than to
-  projects, so each connected Rig exposes its own Documents tab and local
+- **Planned:** moving document ownership to the Happy Agent instance rather than to
+  projects, so each connected Happy Agent exposes its own Documents tab and local
   collection stored in a defined folder on that machine, every saved document
   keeps a normalized Markdown file beside its collaborative state, a document
   can be attached to a session without being owned by it, and agent edits enter
@@ -320,11 +311,11 @@ exists today.
 
 ---
 
-# What an agent under Rig should know
+# What an agent under Happy Agent should know
 
 ## When your session is driven through Happy
 
-Your execution does not change. You are an ordinary local Rig session with your
+Your execution does not change. You are an ordinary local Happy Agent session with your
 normal permission mode, working directory, and sandbox. What changes is who is
 watching and who can interrupt:
 
@@ -357,7 +348,7 @@ different in ways that matter:
   You are not in the user's own repository checkout unless someone put it
   there.
 - **Your permission mode is `full_access` by design.** The container is the
-  security boundary, not Rig's sandbox. Being unsandboxed inside it is not an
+  security boundary, not Happy Agent's sandbox. Being unsandboxed inside it is not an
   invitation to act outside the task you were asked to do; behave as carefully
   as you would in Auto mode.
 - **Your conversation is a chat.** Your reply becomes a message in a channel or
@@ -368,16 +359,16 @@ different in ways that matter:
   running turn, and a reader can stop your run at any time. A stopped or steered
   turn is a normal outcome.
 - **Secrets are attached, not discoverable.** Agent- and channel-scoped secrets
-  are attached to your session. Use them through the mechanisms Rig exposes; do
+  are attached to your session. Use them through the mechanisms Happy Agent exposes; do
   not go looking for credential stores.
 - **Model and effort are chosen by the chat.** They are set and reconciled from
   the chat and agent configuration.
-- **Rig's bundled documentation may not be mounted.** Rig exposes these pages at
+- **Happy Agent's bundled documentation may not be mounted.** Happy Agent exposes these pages at
   `/happy/docs` only in containers it creates itself. Happy 2 supplies its own
   container, so that path is generally absent there; read documentation from
   the workspace or ask, instead of assuming the path exists.
 
-If instead you are an ordinary local Rig session that the Happy 2 **desktop
+If instead you are an ordinary local Happy Agent session that the Happy 2 **desktop
 app** is displaying, nothing about your execution changes either. Happy 2 is
 only a client watching the same daemon your terminal uses, so a person may be
 reading along, sending messages, switching your model, or stopping your run
@@ -385,11 +376,11 @@ from a window you never see.
 
 ## Related pages
 
-- [architecture.md](architecture.md) — how Rig itself is put together: daemon,
+- [architecture.md](architecture.md) — how Happy Agent itself is put together: daemon,
   protocol, sessions, providers, persistence.
 - [permissions-and-sandbox.md](permissions-and-sandbox.md) — the permission
   modes referenced above and how review and escalation actually work.
 - [agents-and-collaboration.md](agents-and-collaboration.md) — subagents,
   messaging between agents, scheduling, and durable waits.
 - [extending.md](extending.md) — plugins, skills, MCP servers, and building on
-  Rig from the inside.
+  Happy Agent from the inside.

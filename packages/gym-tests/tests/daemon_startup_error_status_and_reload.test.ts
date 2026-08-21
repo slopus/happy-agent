@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "DAEMON_STARTUP_ERROR_STATUS_AND_RELOAD_COMPLETE";
@@ -37,34 +37,34 @@ const exerciseDaemonStartupErrorScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
 # A file that is not a SQLite database keeps the daemon from starting.
-mkdir -p /home/rig/.happy/agent
-printf 'not a SQLite database' > /home/rig/.happy/agent/agent.sqlite
+mkdir -p /home/happy-terminal/.happy/agent
+printf 'not a SQLite database' > /home/happy-terminal/.happy/agent/agent.sqlite
 
-if rig daemon start; then
+if happy-terminal daemon start; then
     echo "Expected daemon start to fail." >&2
     exit 1
 fi
 echo START_FAILED_AS_EXPECTED
 
-rig daemon status
+happy-terminal daemon status
 
 # Repairing the database lets the same command start the daemon.
-rm /home/rig/.happy/agent/agent.sqlite
-rig daemon start
-rig daemon status
+rm /home/happy-terminal/.happy/agent/agent.sqlite
+happy-terminal daemon start
+happy-terminal daemon status
 
-rig daemon stop
+happy-terminal daemon stop
 for _ in $(seq 1 200); do
-    if ! rig daemon status | grep -q "Daemon is running"; then
+    if ! happy-terminal daemon status | grep -q "Daemon is running"; then
         break
     fi
     sleep 0.05
 done
-rig daemon status
+happy-terminal daemon status
 
 echo ${COMPLETED_MARKER}
 sleep 60

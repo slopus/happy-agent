@@ -2,7 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 /**
  * Turns the conversation into the budgeted transcript the guardian reviews, ported behavior-for-
- * behavior from Rig v1's `permissions/createAutoPermissionTranscript.ts`.
+ * behavior from Happy Agent v1's `permissions/createAutoPermissionTranscript.ts`.
  *
  * Two things matter for parity and are preserved exactly. First, classification: what counts as
  * trusted user authorization versus untrusted context. Ordinary human messages are trusted; agent
@@ -94,7 +94,7 @@ export const autoTranscriptMessageSchema = Type.Object(
         internal: Type.Optional(Type.Boolean()),
         /** Durable origin for non-human messages that use a user-role provider input shape. */
         provenance: Type.Optional(Type.Literal("agent")),
-        /** Whether Rig retried inference, continued after a local failure, or stopped. */
+        /** Whether Happy Agent retried inference, continued after a local failure, or stopped. */
         outcome: Type.Optional(
             Type.Union([
                 Type.Literal("retried"),

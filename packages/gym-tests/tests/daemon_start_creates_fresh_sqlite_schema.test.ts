@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { libsqlEsmScript } from "./libsqlScript.js";
 
 const running = new Set<Gym>();
@@ -33,7 +33,7 @@ describe("daemon startup with no database", () => {
 });
 
 const verifyFreshDatabaseScript = libsqlEsmScript(String.raw`
-const database = await openDatabase("/home/rig/.happy/agent/agent.sqlite", true);
+const database = await openDatabase("/home/happy-terminal/.happy/agent/agent.sqlite", true);
 try {
 const actualTables = (await database.execute(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -60,9 +60,9 @@ for (const obsolete of ["sessions", "session_messages", "happy_sessions"]) {
 const startWithFreshDatabaseScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
-test ! -e /home/rig/.happy/agent/agent.sqlite
-node /app/packages/rig/dist/main.js daemon start
-node /app/packages/rig/dist/main.js daemon status
+test ! -e /home/happy-terminal/.happy/agent/agent.sqlite
+node /app/packages/happy-terminal/dist/main.js daemon start
+node /app/packages/happy-terminal/dist/main.js daemon status
 node /workspace/verify-fresh-database.mjs
 echo ${SCHEMA_MARKER}
 sleep 60

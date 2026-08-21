@@ -16,5 +16,5 @@ export function describeMcpAutoPermissionAction(options: {
             serializedArguments = "[unavailable]";
         }
     }
-    return `calling ${quoteVisibleExact(humanizeMcpName(options.tool))} from ${quoteVisibleExact(humanizeMcpName(options.server))} with arguments ${quoteVisibleExact(serializedArguments)}. Access: the MCP server can perform actions outside Rig’s filesystem sandbox`;
+    return `calling ${quoteVisibleExact(humanizeMcpName(options.tool))} from ${quoteVisibleExact(humanizeMcpName(options.server))} with arguments ${quoteVisibleExact(serializedArguments)}. Access: the MCP server can perform actions outside Happy Agent’s filesystem sandbox`;
 }

@@ -8,7 +8,7 @@ const DAEMON_IMPLEMENTATION_PACKAGES = [
 ] as const;
 
 /**
- * Keeps Rig on the public client contract. The daemon implementation is downloaded as a release
+ * Keeps Happy Terminal on the public client contract. The daemon implementation is downloaded as a release
  * binary and local development resolves its source checkout without package dependencies.
  */
 export function assertBundledHappyRuntimeDependencies(manifest: PackageManifest): void {
@@ -19,10 +19,10 @@ export function assertBundledHappyRuntimeDependencies(manifest: PackageManifest)
     );
     if (implementationDependencies.length > 0) {
         throw new Error(
-            `Rig must not depend on Happy Agent implementation packages: ${implementationDependencies.join(", ")}.`,
+            `Happy Terminal must not depend on Happy Agent implementation packages: ${implementationDependencies.join(", ")}.`,
         );
     }
     if (manifest.dependencies?.["@slopus/happy-agent-client"] === undefined) {
-        throw new Error("Rig must depend on @slopus/happy-agent-client.");
+        throw new Error("Happy Terminal must depend on @slopus/happy-agent-client.");
     }
 }

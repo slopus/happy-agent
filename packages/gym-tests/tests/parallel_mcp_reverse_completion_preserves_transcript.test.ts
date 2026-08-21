@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { createGym, waitForFile, type Gym } from "@slopus/rig-gym";
+import { createGym, waitForFile, type Gym } from "@slopus/happy-terminal-gym";
 
 const artifacts = resolve(
     import.meta.dirname,
@@ -13,8 +13,8 @@ const running = new Set<Gym>();
 
 const MCP_SERVER = `
 import { access, writeFile } from "node:fs/promises";
-import { McpServer } from "/app/packages/rig/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js";
-import { StdioServerTransport } from "/app/packages/rig/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js";
+import { McpServer } from "/app/packages/happy-terminal/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js";
+import { StdioServerTransport } from "/app/packages/happy-terminal/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js";
 
 const mode = process.argv[2];
 const server = new McpServer({ name: mode + "-service", version: "1.0.0" });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -39,7 +39,7 @@ describe("filtering slash autocomplete does not replay transcript", () => {
         expect(filtered.scroll.topArrivalCount).toBe(baselineScroll.topArrivalCount);
 
         gym.terminal.press("ctrlC");
-        await gym.terminal.waitForText("Ask Rig to do anything");
+        await gym.terminal.waitForText("Ask Happy Terminal to do anything");
         gym.terminal.type("follow up after filtering");
         gym.terminal.press("enter");
         await gym.terminal.waitForText("SLASH_FOLLOW_UP_OK", 30_000);
@@ -53,7 +53,7 @@ describe("filtering slash autocomplete does not replay transcript", () => {
         const bottom = await gym.terminal.snapshot();
         expect(bottom.scroll.atBottom).toBe(true);
         expect(bottom.text).toContain("SLASH_FOLLOW_UP_OK");
-        expect(bottom.text).toContain("Ask Rig to do anything");
+        expect(bottom.text).toContain("Ask Happy Terminal to do anything");
         expect(bottom.text).toContain("gym off · /workspace");
         expect(bottom.text).not.toContain("�");
     }, 120_000);

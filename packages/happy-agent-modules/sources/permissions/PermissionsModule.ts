@@ -76,14 +76,14 @@ type ReviewOutcome =
           readonly reason: string;
       };
 /**
- * The wall-clock budget for one review, matching Rig v1 exactly (90 seconds). The reviewer may make
+ * The wall-clock budget for one review, matching Happy Agent v1 exactly (90 seconds). The reviewer may make
  * as many read-only tool calls as it wants inside this window; when the window closes the action is
  * treated as unproven rather than judged unsafe.
  */
 export const PERMISSION_REVIEW_TIMEOUT_MS = 90_000;
 
 /**
- * A review the caller's own lifetime cancelled. Rig v1 propagates this as "Permission review was
+ * A review the caller's own lifetime cancelled. Happy Agent v1 propagates this as "Permission review was
  * stopped." rather than converting it into a denial or an unproven outcome: a cancelled turn made no
  * judgement about the action, so it must not emit a permission event and must not move the refusal
  * circuit. It is a distinct type so the decision path can tell cancellation apart from a reviewer
@@ -130,7 +130,7 @@ const ANNOUNCE_TIMEOUT = Symbol("permission-announce-timeout");
  *
  * What it decides, per call:
  *
- * - A tool that declares it cannot be contained by Rig's sandbox is unavailable in Read only and
+ * - A tool that declares it cannot be contained by Happy Agent's sandbox is unavailable in Read only and
  *   Workspace write, and is refused without a review, since there is nothing to review.
  * - Outside Auto nothing is reviewed and nothing is elevated. The mode simply travels on the
  *   context, and the tools that act on the machine obey it.
@@ -351,7 +351,7 @@ export class PermissionsModule implements AgentModule {
         if (stopped !== undefined) return stopped;
         // A tool that cannot be contained by the mode is unavailable, not reviewed. This is a mode
         // constraint, not a review outcome, so — like every non-review path below — it never moves
-        // the refusal circuit. Rig v1's circuit advances only on prepared review decisions.
+        // the refusal circuit. Happy Agent v1's circuit advances only on prepared review decisions.
         if (
             tool.requiresAutoOrFullAccess === true &&
             (mode === "read_only" || mode === "workspace_write")
@@ -494,7 +494,7 @@ export class PermissionsModule implements AgentModule {
 
     /**
      * Let a reviewed call through, clearing only the consecutive streak while the circuit is live.
-     * Only a real review outcome reaches here, so only a real review outcome moves the circuit — Rig
+     * Only a real review outcome reaches here, so only a real review outcome moves the circuit — Happy Agent
      * v1 records an allowed review with `recordAllowed`, and non-review allows never touch it at all.
      */
     #allowReview(agentId: string, elevated = false): AgentBaseToolCallDecision | undefined {
@@ -511,7 +511,7 @@ export class PermissionsModule implements AgentModule {
 
     /**
      * A refused call that is not a review outcome: a tool-definition error, an out-of-mode tool, a
-     * throwing predicate. Rig v1's refusal circuit advances only on prepared review decisions, so
+     * throwing predicate. Happy Agent v1's refusal circuit advances only on prepared review decisions, so
      * these never move it — they are simply the error result the model is told this call produced.
      */
     #toolError(message: string): AgentBaseToolCallDecision {
@@ -529,7 +529,7 @@ export class PermissionsModule implements AgentModule {
     /**
      * Refuse a reviewed call, and end the turn when review refusals have piled up. This is reached
      * only for real review outcomes — a denial, a policy rejection, or an unproven review — so it is
-     * the only path that moves the refusal circuit, exactly as Rig v1's circuit advances only on
+     * the only path that moves the refusal circuit, exactly as Happy Agent v1's circuit advances only on
      * prepared review decisions. A turn that keeps collecting review refusals is going nowhere, and
      * nothing outside the agent is left to stop it, so it stops itself.
      */
@@ -598,7 +598,7 @@ export class PermissionsModule implements AgentModule {
      *
      * Cancellation is different from every other non-answer. The review runs on the caller's
      * lifetime: the abort controller passed to the reviewer is linked to `ctx.lifetime`, so a turn
-     * that is stopped cancels the in-flight review. That is not a verdict — Rig v1 propagates it as
+     * that is stopped cancels the in-flight review. That is not a verdict — Happy Agent v1 propagates it as
      * "Permission review was stopped." — so a cancelled review throws {@link
      * PermissionReviewCancelledError} rather than becoming a denial or an unproven outcome, and the
      * caller neither emits an event nor moves the refusal circuit for it. Cancellation is checked

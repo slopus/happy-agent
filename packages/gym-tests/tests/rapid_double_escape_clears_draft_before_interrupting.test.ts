@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -52,7 +52,7 @@ describe("rapid double Escape while inference is running", () => {
                 agentRequests(gym).length === 2 &&
                 snapshot.text.includes("esc to interrupt") &&
                 !snapshot.text.includes("Messages to be submitted after next tool call") &&
-                composerText(snapshot) === "Ask Rig to do anything",
+                composerText(snapshot) === "Ask Happy Terminal to do anything",
             "the first Escape to clear the draft and the second to continue pending steering",
             30_000,
         );
@@ -64,7 +64,7 @@ describe("rapid double Escape while inference is running", () => {
             (snapshot) =>
                 snapshot.text.includes("Session interrupted") &&
                 !snapshot.text.includes("esc to interrupt") &&
-                composerText(snapshot) === "Ask Rig to do anything",
+                composerText(snapshot) === "Ask Happy Terminal to do anything",
             "a later Escape without pending steering to stop",
             30_000,
         );
@@ -96,7 +96,7 @@ describe("rapid double Escape while inference is running", () => {
             (snapshot) =>
                 snapshot.text.includes("Session interrupted") &&
                 !snapshot.text.includes("esc to interrupt") &&
-                composerText(snapshot) === "Ask Rig to do anything",
+                composerText(snapshot) === "Ask Happy Terminal to do anything",
             "the first Escape to clear the draft and the second to stop",
             30_000,
         );
@@ -147,7 +147,7 @@ function composerText(snapshot: { rows: readonly string[] }): string | undefined
 }
 
 async function screenshot(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_SCREENSHOT_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_SCREENSHOT_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }

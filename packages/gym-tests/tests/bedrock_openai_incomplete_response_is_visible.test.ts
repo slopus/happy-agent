@@ -5,7 +5,7 @@ import {
     type Gym,
     type HttpResponseReplacement,
     type InterceptedHttpRequest,
-} from "@slopus/rig-gym";
+} from "@slopus/happy-terminal-gym";
 
 const INCOMPLETE_ERROR = "Incomplete response returned, reason: content_filter";
 const running = new Set<Gym>();
@@ -22,7 +22,7 @@ describe("Bedrock OpenAI response semantics", () => {
             entrypoint: [
                 "/bin/sh",
                 "-lc",
-                'sed -i "s|BEDROCK_GYM_ENDPOINT|$BEDROCK_GYM_ENDPOINT|" /home/rig/happy/config/happy.toml\nexec node /app/packages/rig/dist/main.js',
+                'sed -i "s|BEDROCK_GYM_ENDPOINT|$BEDROCK_GYM_ENDPOINT|" /home/happy-terminal/happy/config/happy.toml\nexec node /app/packages/happy-terminal/dist/main.js',
             ],
             environment: {
                 AWS_BEARER_TOKEN_BEDROCK: "gym-placeholder-token",
@@ -68,7 +68,7 @@ describe("Bedrock OpenAI response semantics", () => {
             entrypoint: [
                 "/bin/sh",
                 "-lc",
-                'sed -i "s|BEDROCK_GYM_ENDPOINT|$BEDROCK_GYM_ENDPOINT|" /home/rig/happy/config/happy.toml\nexec node /app/packages/rig/dist/main.js',
+                'sed -i "s|BEDROCK_GYM_ENDPOINT|$BEDROCK_GYM_ENDPOINT|" /home/happy-terminal/happy/config/happy.toml\nexec node /app/packages/happy-terminal/dist/main.js',
             ],
             environment: {
                 AWS_BEARER_TOKEN_BEDROCK: "gym-placeholder-token",

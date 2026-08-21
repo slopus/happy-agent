@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -149,7 +149,7 @@ describe("context notes in the terminal", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("Session interrupted") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the hard abort to settle without applying context",
             30_000,
         );

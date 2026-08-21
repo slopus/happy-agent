@@ -10,7 +10,7 @@ vi.mock("./inspectGymImage.js", () => ({
 const mockedInspectGymImage = vi.mocked(inspectGymImage);
 
 beforeEach(() => {
-    vi.stubEnv("RIG_GYM_SKIP_BUILD", "1");
+    vi.stubEnv("HAPPY_TERMINAL_GYM_SKIP_BUILD", "1");
     mockedInspectGymImage.mockReset();
 });
 
@@ -23,7 +23,7 @@ describe("buildGymImage", () => {
         const inspectionError = new Error("Gym image is missing.");
         mockedInspectGymImage.mockRejectedValue(inspectionError);
 
-        await expect(buildGymImage("rig-gym:missing-test", "/repository")).rejects.toBe(
+        await expect(buildGymImage("happy-terminal-gym:missing-test", "/repository")).rejects.toBe(
             inspectionError,
         );
         expect(mockedInspectGymImage).toHaveBeenCalledOnce();

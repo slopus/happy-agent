@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const tsxEntry = pathToFileURL(
@@ -15,9 +15,11 @@ const typeScriptHook = join(
     repositoryRoot,
     "packages/gym/sources/registerTypeScriptSourceHooks.mjs",
 );
-const runAppUrl = pathToFileURL(join(repositoryRoot, "packages/rig/sources/app/runApp.ts")).href;
+const runAppUrl = pathToFileURL(
+    join(repositoryRoot, "packages/happy-terminal/sources/app/runApp.ts"),
+).href;
 const failureReportingUrl = pathToFileURL(
-    join(repositoryRoot, "packages/rig/sources/installCliFailureReporting.ts"),
+    join(repositoryRoot, "packages/happy-terminal/sources/installCliFailureReporting.ts"),
 ).href;
 const running = new Set<Gym>();
 
@@ -44,12 +46,12 @@ describe("resume instructions after an abrupt exit", () => {
 
         await gym.runInContainer("touch", ["trigger-hangup"]);
         const exited = await gym.terminal.waitUntil(
-            (snapshot) => snapshot.text.includes("RIG_TUI_FINISHED"),
+            (snapshot) => snapshot.text.includes("HAPPY_TERMINAL_TUI_FINISHED"),
             "the TUI to exit after the hangup",
             30_000,
         );
 
-        expect(exited.text).toContain("Resume: rig resume ");
+        expect(exited.text).toContain("Resume: happy-terminal resume ");
     }, 60_000);
 
     it("reports the session when a rejection kills the process", async () => {
@@ -68,12 +70,12 @@ describe("resume instructions after an abrupt exit", () => {
 
         await gym.runInContainer("touch", ["trigger-rejection"]);
         const exited = await gym.terminal.waitUntil(
-            (snapshot) => snapshot.text.includes("RIG_TUI_FINISHED"),
+            (snapshot) => snapshot.text.includes("HAPPY_TERMINAL_TUI_FINISHED"),
             "the TUI to exit after the rejection",
             30_000,
         );
 
-        expect(exited.text).toContain("Resume: rig resume ");
+        expect(exited.text).toContain("Resume: happy-terminal resume ");
     }, 60_000);
 });
 
@@ -95,11 +97,11 @@ const timer = setInterval(() => {
 }, 10);
 
 await runApp(undefined, {
-    ...(process.env.RIG_MODEL === undefined ? {} : { modelId: process.env.RIG_MODEL }),
-    ...(process.env.RIG_PROVIDER === undefined ? {} : { providerId: process.env.RIG_PROVIDER }),
-    ...(process.env.RIG_PERMISSION_MODE === undefined
+    ...(process.env.HAPPY_TERMINAL_MODEL === undefined ? {} : { modelId: process.env.HAPPY_TERMINAL_MODEL }),
+    ...(process.env.HAPPY_TERMINAL_PROVIDER === undefined ? {} : { providerId: process.env.HAPPY_TERMINAL_PROVIDER }),
+    ...(process.env.HAPPY_TERMINAL_PERMISSION_MODE === undefined
         ? {}
-        : { permissionMode: process.env.RIG_PERMISSION_MODE }),
+        : { permissionMode: process.env.HAPPY_TERMINAL_PERMISSION_MODE }),
 });
 // The gym runs the daemon in this process, so the real entry point exits explicitly too.
 process.exit(0);
@@ -108,5 +110,5 @@ process.exit(0);
 
 const shellHarnessSource = String.raw`
 node --import ${JSON.stringify(tsxEntry)} --import ${JSON.stringify(typeScriptHook)} tui.mjs
-printf '\r\nRIG_TUI_FINISHED\r\n'
+printf '\r\nHAPPY_TERMINAL_TUI_FINISHED\r\n'
 `;

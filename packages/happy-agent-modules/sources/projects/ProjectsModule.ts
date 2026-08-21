@@ -1009,7 +1009,7 @@ export class ProjectsModule implements AgentModule {
     // credentials, probes, avatar bytes, and the background setup that carries a new project
     // through to a usable one. The catalog does it itself; nothing is handed to a host.
 
-    /** Where projects Rig cloned for someone live. */
+    /** Where projects Happy Agent cloned for someone live. */
     get managedProjectsDirectory(): string {
         return this.#git.normalizeFuturePath(this.#config.projectsHome);
     }
@@ -1126,7 +1126,7 @@ export class ProjectsModule implements AgentModule {
     /**
      * Finds the project a folder belongs to, importing the folder as a project if it is new.
      *
-     * `requestedProjectId` names that import. A project is a folder, so a folder Rig already knows
+     * `requestedProjectId` names that import. A project is a folder, so a folder Happy Agent already knows
      * keeps the identity it has and the request is simply answered with it; the requested identity
      * only takes effect for a folder that becomes a project now.
      */
@@ -1333,7 +1333,7 @@ export class ProjectsModule implements AgentModule {
 
     // --- Remote projects and credentials -----------------------------------------------------
 
-    /** Adds a project whose folder Rig has still to clone from a remote repository. */
+    /** Adds a project whose folder Happy Agent has still to clone from a remote repository. */
     async createRemote(
         ctx: Context,
         request: CreateRemoteProjectRequest,

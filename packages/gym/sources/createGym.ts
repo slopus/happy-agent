@@ -76,7 +76,7 @@ export async function createGym(options: GymOptions): Promise<Gym> {
             : new InterceptingHttpProxy(
                   options.httpProxy === true ? undefined : options.httpProxy.handler,
               );
-    const containerName = dockerRunner?.containerName ?? `rig-gym-${randomUUID()}`;
+    const containerName = dockerRunner?.containerName ?? `happy-terminal-gym-${randomUUID()}`;
     const sessionArguments = [
         ...(options.args ?? []),
         ...(options.mountWorkspaceIntoDockerSession === true
@@ -93,7 +93,7 @@ export async function createGym(options: GymOptions): Promise<Gym> {
         pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href,
         "--import",
         join(repositoryRoot, "packages/gym/sources/registerTypeScriptSourceHooks.mjs"),
-        join(repositoryRoot, "packages/rig/sources/main.ts"),
+        join(repositoryRoot, "packages/happy-terminal/sources/main.ts"),
     ];
     let ghostty: GhosttyTerminal | undefined;
     let gym: Gym | undefined;
@@ -125,25 +125,28 @@ export async function createGym(options: GymOptions): Promise<Gym> {
                       `HAPPY_GYM_TOKEN=${inference.token}`,
                       ...(options.contextWindow === undefined
                           ? []
-                          : ["--env", `RIG_GYM_CONTEXT_WINDOW=${options.contextWindow}`]),
+                          : [
+                                "--env",
+                                `HAPPY_TERMINAL_GYM_CONTEXT_WINDOW=${options.contextWindow}`,
+                            ]),
                       "--env",
-                      "RIG_GYM_OUTER_ISOLATION=docker",
+                      "HAPPY_TERMINAL_GYM_OUTER_ISOLATION=docker",
                       ...(options.providerOverrides === undefined
                           ? []
                           : [
                                 "--env",
-                                `RIG_GYM_PROVIDER_OVERRIDES=${options.providerOverrides.join(",")}`,
+                                `HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES=${options.providerOverrides.join(",")}`,
                             ]),
                       "--env",
-                      `RIG_MODEL=${modelId}`,
+                      `HAPPY_TERMINAL_MODEL=${modelId}`,
                       ...(options.permissionMode === "from_config"
                           ? []
                           : [
                                 "--env",
-                                `RIG_PERMISSION_MODE=${options.permissionMode ?? "full_access"}`,
+                                `HAPPY_TERMINAL_PERMISSION_MODE=${options.permissionMode ?? "full_access"}`,
                             ]),
                       "--env",
-                      `RIG_PROVIDER=${providerId}`,
+                      `HAPPY_TERMINAL_PROVIDER=${providerId}`,
                       ...environmentArguments(options.environment, httpProxy?.url),
                       ...(httpProxy === undefined
                           ? []
@@ -182,7 +185,11 @@ export async function createGym(options: GymOptions): Promise<Gym> {
                               dockerFixture?.containerRoot ?? "",
                               dockerFixture?.stateRoot ?? "",
                               options.entrypoint === undefined
-                                  ? ["node", "/app/packages/rig/dist/main.js", ...sessionArguments]
+                                  ? [
+                                        "node",
+                                        "/app/packages/happy-terminal/dist/main.js",
+                                        ...sessionArguments,
+                                    ]
                                   : [...options.entrypoint, ...sessionArguments],
                           ),
                       ],
@@ -223,7 +230,7 @@ export async function createGym(options: GymOptions): Promise<Gym> {
         gym = startedGym;
         await Promise.race([
             startedGym.terminal.waitForText(
-                options.startupText ?? "Ask Rig to do anything",
+                options.startupText ?? "Ask Happy Terminal to do anything",
                 options.timeoutMs ?? 20_000,
             ),
             startedGym.exit().then(async ({ exitCode, signal }) => {
@@ -294,28 +301,28 @@ function createLocalEnvironment(
     const environment = {
         HOME: homePath,
         PATH: process.env.PATH ?? "",
-        RIG_CONFIGURATION_DIRECTORY: join(homePath, "happy", "config"),
+        HAPPY_TERMINAL_CONFIGURATION_DIRECTORY: join(homePath, "happy", "config"),
         HAPPY_GYM_INFERENCE_URL: inference.localUrl,
         HAPPY_GYM_TOKEN: inference.token,
-        RIG_GYM_DISPLAY_WORKSPACE: "/workspace",
-        RIG_GYM_HOME_PATH: homePath,
-        RIG_GYM_IN_PROCESS_DAEMON: "1",
-        RIG_GYM_WORKSPACE_PATH: workspacePath,
-        RIG_GYM_RUNTIME: "just-bash",
-        RIG_SERVER_DIRECTORY: join(homePath, ".server"),
-        RIG_MODEL: options.modelId ?? defaultModelId(options.providerId ?? "gym"),
-        RIG_PROVIDER: options.providerId ?? "gym",
+        HAPPY_TERMINAL_GYM_DISPLAY_WORKSPACE: "/workspace",
+        HAPPY_TERMINAL_GYM_HOME_PATH: homePath,
+        HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON: "1",
+        HAPPY_TERMINAL_GYM_WORKSPACE_PATH: workspacePath,
+        HAPPY_TERMINAL_GYM_RUNTIME: "just-bash",
+        HAPPY_TERMINAL_SERVER_DIRECTORY: join(homePath, ".server"),
+        HAPPY_TERMINAL_MODEL: options.modelId ?? defaultModelId(options.providerId ?? "gym"),
+        HAPPY_TERMINAL_PROVIDER: options.providerId ?? "gym",
         TERM: "xterm-256color",
         ...(process.env.TMPDIR === undefined ? {} : { TMPDIR: process.env.TMPDIR }),
         ...(options.contextWindow === undefined
             ? {}
-            : { RIG_GYM_CONTEXT_WINDOW: String(options.contextWindow) }),
+            : { HAPPY_TERMINAL_GYM_CONTEXT_WINDOW: String(options.contextWindow) }),
         ...(options.permissionMode === "from_config"
             ? {}
-            : { RIG_PERMISSION_MODE: options.permissionMode ?? "full_access" }),
+            : { HAPPY_TERMINAL_PERMISSION_MODE: options.permissionMode ?? "full_access" }),
         ...(options.providerOverrides === undefined
             ? {}
-            : { RIG_GYM_PROVIDER_OVERRIDES: options.providerOverrides.join(",") }),
+            : { HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES: options.providerOverrides.join(",") }),
         ...localEnvironmentValues(options.environment, httpProxy?.localUrl),
     };
     if (httpProxy === undefined) return environment;

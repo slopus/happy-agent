@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -30,12 +30,12 @@ describe("text-only completion preserves composer height", () => {
             (snapshot) =>
                 snapshot.text.includes("TEXT_ONLY_HEIGHT_HANDOFF") &&
                 snapshot.text.includes("esc to interrupt") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the streamed text with its live activity row",
             30_000,
         );
         const activeComposerRow = active.rows.findIndex((row) =>
-            row.includes("Ask Rig to do anything"),
+            row.includes("Ask Happy Terminal to do anything"),
         );
         expect(activeComposerRow).toBeGreaterThan(0);
 
@@ -48,7 +48,7 @@ describe("text-only completion preserves composer height", () => {
             30_000,
         );
         const completedComposerRow = completed.rows.findIndex((row) =>
-            row.includes("Ask Rig to do anything"),
+            row.includes("Ask Happy Terminal to do anything"),
         );
         const completedResponseRow = completed.rows.findIndex((row) =>
             row.includes("TEXT_ONLY_HEIGHT_HANDOFF"),

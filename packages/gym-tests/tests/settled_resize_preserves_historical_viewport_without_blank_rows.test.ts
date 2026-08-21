@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -82,7 +82,7 @@ async function seedHistory(gym: Gym): Promise<void> {
     await gym.terminal.waitUntil(
         (snapshot) =>
             snapshot.text.includes("RESIZE HISTORY 119") &&
-            snapshot.text.includes("Ask Rig to do anything") &&
+            snapshot.text.includes("Ask Happy Terminal to do anything") &&
             snapshot.scroll.atBottom,
         "resize history and idle composer",
         30_000,

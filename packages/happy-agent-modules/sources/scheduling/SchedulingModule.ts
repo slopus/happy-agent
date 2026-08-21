@@ -198,7 +198,7 @@ export class SchedulingModule implements AgentModule {
     /**
      * End every wait this agent is holding, because something has arrived for it.
      *
-     * Rig calls this when a person submits or steers a message into a session: a queued message
+     * Happy Agent calls this when a person submits or steers a message into a session: a queued message
      * does not reach the agent's conversation until its current turn ends, and its current turn is
      * exactly what the wait is holding open.
      */

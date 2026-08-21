@@ -1,19 +1,19 @@
 {
-    "name": "@slopus/rig-gym-tests",
+    "name": "@slopus/happy-terminal-gym-tests",
     "private": true,
     "type": "module",
     "scripts": {
         "check": "tsc --noEmit",
-        "prepare:image": "pnpm --filter @slopus/rig-gym run build:image",
+        "prepare:image": "pnpm --filter @slopus/happy-terminal-gym run build:image",
         "test:gym": "pnpm run test:gym:fast",
         "test:gym:just-bash": "node runGymLane.ts local",
         "test:gym:api": "node --experimental-strip-types scripts/runHappyApiSuite.ts",
         "test:gym:fast": "node runGymLane.ts fast",
-        "test:gym:heavy": "pnpm run prepare:image && RIG_GYM_SKIP_BUILD=1 node runGymLane.ts heavy",
-        "test:gym:live:grok": "RIG_LIVE_TEST=1 vitest run tests/grok_4_6_real_inference_uses_terminal_and_tool.live.test.ts --testTimeout=300000",
+        "test:gym:heavy": "pnpm run prepare:image && HAPPY_TERMINAL_GYM_SKIP_BUILD=1 node runGymLane.ts heavy",
+        "test:gym:live:grok": "HAPPY_TERMINAL_LIVE_TEST=1 vitest run tests/grok_4_6_real_inference_uses_terminal_and_tool.live.test.ts --testTimeout=300000",
         "test:gym:slow": "node runGymLane.ts slow",
         "test:gym:full": "pnpm run test:gym:fast && pnpm run test:gym:slow && pnpm run test:gym:docker",
-        "test:gym:docker": "pnpm run prepare:image && RIG_GYM_SKIP_BUILD=1 node runGymLane.ts docker"
+        "test:gym:docker": "pnpm run prepare:image && HAPPY_TERMINAL_GYM_SKIP_BUILD=1 node runGymLane.ts docker"
     },
     "dependencies": {
         "@openai/codex": "0.145.0"
@@ -23,7 +23,7 @@
         "@slopus/happy-agent-gym": "workspace:*",
         "@slopus/happy-agent-modules": "workspace:*",
         "@slopus/happy-providers": "0.0.11",
-        "@slopus/rig-gym": "workspace:*",
+        "@slopus/happy-terminal-gym": "workspace:*",
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",
         "typescript": "^5.8.3",

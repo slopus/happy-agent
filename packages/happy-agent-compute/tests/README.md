@@ -13,7 +13,7 @@ HAPPY_AGENT_COMPUTE_LIVE_TEST=1 pnpm --filter @slopus/happy-agent-compute \
   exec vitest run tests/live
 ```
 
-The Docker image defaults to `rig-gym:local`. Override it with
+The Docker image defaults to `happy-terminal-gym:local`. Override it with
 `HAPPY_AGENT_COMPUTE_DOCKER_IMAGE`. The image must contain a POSIX shell and the commands used by
 the live cases. Managed containers receive the static Linux supervisor from the package; attached
 containers must already mount the matching installed NPM artifact read-only at
@@ -28,23 +28,23 @@ When the opt-in is absent, live cases are reported as skipped. When it is presen
 sandbox, Docker daemon, or Docker image throws from setup and fails the suite. A live prerequisite
 must never turn into a passing assertion.
 
-## Rig parity audit
+## Happy Agent parity audit
 
 Status meanings:
 
 - **Present**: compute exercises the same observable contract at an equal or stronger boundary.
-- **Weaker**: compute has coverage, but replaces a real boundary with a fake or omits material Rig
+- **Weaker**: compute has coverage, but replaces a real boundary with a fake or omits material Happy Agent
   cases.
-- **Missing**: no compute test establishes the Rig contract.
+- **Missing**: no compute test establishes the Happy Agent contract.
 - **Vacuous**: a nominal compute test can finish without executing its assertions.
-- **Out of scope**: the test belongs to Rig's agent loop, reviewer, UI, provider, or session layer;
+- **Out of scope**: the test belongs to Happy Agent's agent loop, reviewer, UI, provider, or session layer;
   it is listed so absence is explicit rather than accidental.
-- **Obsolete**: the Rig test targets the deleted ambient permission-revision model. The compute
+- **Obsolete**: the Happy Agent test targets the deleted ambient permission-revision model. The compute
   equivalent is the new immutable per-operation contract.
 
 ### Agent context, filesystem, sandbox, and network
 
-| Rig test                                                    | Compute equivalent                                                                 | Status                                                                                                                                                                                                       |
+| Happy Agent test                                            | Compute equivalent                                                                 | Status                                                                                                                                                                                                       |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `loadProjectManagedNetworkPolicy.test.ts`                   | `tests/network/toManagedNetworkPolicy.test.ts`, Docker loader test                 | Present for the compute-owned policy translation and Docker file framing                                                                                                                                     |
 | `assertCanWritePath.test.ts`                                | `tests/sandbox/assertCanWritePath.test.ts`, host/just-bash/Docker permission tests | Present; compute adds caller denials and grants                                                                                                                                                              |
@@ -66,7 +66,7 @@ Status meanings:
 
 ### Docker execution
 
-| Rig test                                        | Compute equivalent                                                   | Status                                                                                                                                      |
+| Happy Agent test                                | Compute equivalent                                                   | Status                                                                                                                                      |
 | ----------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DockerEnvironment.test.ts`                     | `tests/docker/DockerEnvironment.test.ts`, Docker disposal live cases | Present; compute adds missing-container errors and real managed/attached disposal                                                           |
 | `assertDockerReadPath.test.ts`                  | same-named Docker test                                               | Present; compute adds denied reads                                                                                                          |
@@ -97,18 +97,18 @@ those kernel claims.
 
 ### Processes
 
-| Rig test                       | Compute equivalent                            | Status                                                                                                 |
-| ------------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `BoundedOutputBuffer.test.ts`  | `tests/processes/BoundedOutputBuffer.test.ts` | Weaker; compute covers head/tail, offsets, and drain, but not Rig's exact partial-UTF-8 boundary cases |
-| `NativeProcessManager.test.ts` | same-named process test                       | Present                                                                                                |
-| `waitForProcessExit.test.ts`   | same-named process test                       | Present                                                                                                |
+| Happy Agent test               | Compute equivalent                            | Status                                                                                                         |
+| ------------------------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `BoundedOutputBuffer.test.ts`  | `tests/processes/BoundedOutputBuffer.test.ts` | Weaker; compute covers head/tail, offsets, and drain, but not Happy Agent's exact partial-UTF-8 boundary cases |
+| `NativeProcessManager.test.ts` | same-named process test                       | Present                                                                                                        |
+| `waitForProcessExit.test.ts`   | same-named process test                       | Present                                                                                                        |
 
 ### Permission subsystem
 
-The package owns the execution boundary after a permission decision. It does not own Rig's
+The package owns the execution boundary after a permission decision. It does not own Happy Agent's
 automatic reviewer, transcript construction, tool policy, terminal disclosure, or permission menu.
 
-| Rig test                                                                   | Compute equivalent                                      | Status                                                                                             |
+| Happy Agent test                                                           | Compute equivalent                                      | Status                                                                                             |
 | -------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `createPermissionContext.test.ts`, `assertPermissionRevision.ts` consumers | operation-scoped permission tests on all three backends | Obsolete; mutable revisions were deleted and replaced by immutable values passed to each operation |
 | `isProtectedPath.test.ts`                                                  | sandbox and backend grant/deny tests                    | Present behaviorally; no direct same-function unit test                                            |
@@ -128,7 +128,7 @@ automatic reviewer, transcript construction, tool policy, terminal disclosure, o
 
 ### Relevant gym coverage
 
-Gym proves the assembled Rig product through a real PTY. Compute tests cannot replace its agent,
+Gym proves the assembled Happy Agent product through a real PTY. Compute tests cannot replace its agent,
 session, and terminal assertions, but the backend contracts should have a lower-level equivalent.
 
 | Gym test                                                            | Compute equivalent                                          | Status                                                                                                              |
@@ -197,7 +197,7 @@ allowed egress, and denied egress.
 ## Live-test scope
 
 - The detailed concurrent project-policy, protected Git-hook, hostile custom-shell, and
-  restricted-profile contracts proven by Rig/gym do not all have package-level live equivalents.
+  restricted-profile contracts proven by Happy Agent/gym do not all have package-level live equivalents.
 - Old ambient permission-revision races are intentionally obsolete. Compute instead tests immutable
   operation snapshots; higher layers own stopping processes after a later permission reduction.
 - The Docker egress case runs only on a native Linux daemon. Docker Desktop is still covered for

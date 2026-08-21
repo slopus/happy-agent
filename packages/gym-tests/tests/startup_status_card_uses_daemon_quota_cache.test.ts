@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const artifacts = resolve(
     import.meta.dirname,
@@ -30,11 +30,11 @@ describe("production startup status quota", () => {
             entrypoint: [
                 "bash",
                 "-lc",
-                `node /app/packages/rig/dist/main.js; echo ${resumeMarker}; exec node /app/packages/rig/dist/main.js resume --last`,
+                `node /app/packages/happy-terminal/dist/main.js; echo ${resumeMarker}; exec node /app/packages/happy-terminal/dist/main.js resume --last`,
             ],
             environment: {
                 NO_PROXY: "host.docker.internal",
-                RIG_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
+                HAPPY_TERMINAL_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
             },
             homeFiles: { ".codex/auth.json": codexAuth() },
             httpProxy: {
@@ -58,7 +58,7 @@ describe("production startup status quota", () => {
             (snapshot) =>
                 snapshot.text.includes("New session") &&
                 snapshot.text.includes("Usage: 5h 68% left · week 84% left") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the fresh wide quota-bearing startup card",
             30_000,
         );
@@ -71,7 +71,7 @@ describe("production startup status quota", () => {
                 snapshot.text.includes("New session") &&
                 snapshot.text.includes("5h 68% left") &&
                 snapshot.text.includes("week 84% left") &&
-                snapshot.text.includes("Ask Rig"),
+                snapshot.text.includes("Ask Happy Terminal"),
             "the fresh nineteen-column quota-bearing startup card",
             30_000,
         );
@@ -87,7 +87,7 @@ describe("production startup status quota", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("STARTUP_QUOTA_REPLAY") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the response retained for resume",
             30_000,
         );
@@ -104,7 +104,7 @@ describe("production startup status quota", () => {
                     resumed.includes("Resumed") &&
                     resumed.includes("Usage: 5h 68% left · week 84% left") &&
                     resumed.includes("STARTUP_QUOTA_REPLAY") &&
-                    resumed.includes("Ask Rig to do anything")
+                    resumed.includes("Ask Happy Terminal to do anything")
                 );
             },
             "the resumed quota card before transcript replay",
@@ -124,7 +124,7 @@ describe("production startup status quota", () => {
                 snapshot.text.includes("Resumed") &&
                 snapshot.text.includes("5h 68% left") &&
                 snapshot.text.includes("week 84% left") &&
-                snapshot.text.includes("Ask Rig"),
+                snapshot.text.includes("Ask Happy Terminal"),
             "the resumed nineteen-column quota-bearing startup card",
             30_000,
         );

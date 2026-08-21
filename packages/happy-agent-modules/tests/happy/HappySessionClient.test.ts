@@ -347,7 +347,7 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
-    it("says nothing to the agent about Rig's own message coming back", async () => {
+    it("says nothing to the agent about Happy Agent's own message coming back", async () => {
         const server = fakeServer();
         const { calls, operations } = fakeOperations();
         server.deliver([
@@ -364,7 +364,7 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
-    it("drops a selection naming a permission mode Rig does not have", async () => {
+    it("drops a selection naming a permission mode Happy Agent does not have", async () => {
         const server = fakeServer();
         const { calls, operations } = fakeOperations();
         server.deliver([
@@ -413,7 +413,7 @@ describe("keeping one session in step with Happy", () => {
         };
         expect(published.expectedVersion).toBe(4);
         expect(decode(published.metadata)).toMatchObject({
-            client: { id: "rig", name: "Rig", version: "1.2.3" },
+            client: { id: "rig", name: "Happy Agent", version: "1.2.3" },
             currentModelCode: "gpt-5.6-sol",
         });
         await session.close();
@@ -432,7 +432,7 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
-    it("puts Rig's facts back on top of whatever was written first", async () => {
+    it("puts Happy Agent's facts back on top of whatever was written first", async () => {
         const socket = new FakeSocket();
         socket.acknowledgements = [
             { metadata: encode({ theirs: "kept" }), result: "version-mismatch", version: 9 },
@@ -570,7 +570,7 @@ describe("ending a session", () => {
         expect(server.posted("/v1/sessions/remote-1/archive")).toHaveLength(1);
     });
 
-    it("ends in Rig even when Happy refuses the archive", async () => {
+    it("ends in Happy Agent even when Happy refuses the archive", async () => {
         const socket = new FakeSocket();
         const server = fakeServer();
         const failing = {

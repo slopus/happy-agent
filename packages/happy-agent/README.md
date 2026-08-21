@@ -1,6 +1,6 @@
 # `@slopus/happy-agent`
 
-The standalone Happy agent daemon.
+The standalone Happy Agent daemon.
 
 All agent behavior lives in `@slopus/happy-agent-modules`: configuration, databases, storage
 locks, module composition, events, HTTP routing, Happy synchronization, files, Git, terminals, and
@@ -52,8 +52,8 @@ boundary.
 Releases are created from the manual **Release Happy Agent** GitHub Actions workflow on `main`.
 The workflow takes a semantic version without the leading `v` and Markdown release notes, runs the
 Happy Agent checks and tests, builds and smokes all four binaries, and only then publishes the
-GitHub Release and its `v<version>` tag. Rig's npm releases use the separate `rig-v<version>` tag
-namespace.
+GitHub Release and its `v<version>` tag. Happy Terminal's npm releases use the separate
+`happy-terminal-v<version>` tag namespace.
 
 ## Library
 
@@ -73,8 +73,8 @@ await daemon.close();
 
 A product that bundles this package names its own daemon entrypoint:
 `ensureAgentDaemon({ entrypoint })` spawns `node <entrypoint> run`, which is expected to run the
-CLI's `run` command. Rig ships the bundled CLI as `agent.js` beside its own bundle and passes that
-path.
+CLI's `run` command. Happy Terminal can ship the bundled CLI as `agent.js` beside its own bundle
+and pass that path.
 
 The runtime exposes starting health before Agent System restoration completes. Every request,
 including health, uses the bearer token persisted at the token path. The socket and token are

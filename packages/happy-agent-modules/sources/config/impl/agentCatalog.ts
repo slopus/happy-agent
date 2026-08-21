@@ -84,7 +84,7 @@ const EVERY_EFFORT: AgentModel["effortLevels"] = ["off", "low", "medium", "high"
 const ALL_BUT_OFF: AgentModel["effortLevels"] = ["low", "medium", "high", "xhigh", "max"];
 
 /**
- * The curated catalog. Rig never asks a vendor which models exist; the list is source, and a
+ * The curated catalog. Happy Agent never asks a vendor which models exist; the list is source, and a
  * configured provider entry decides which of these its own key serves.
  */
 const CATALOG: readonly CatalogAgentModel[] = [
@@ -198,7 +198,7 @@ async function createProvider(
 ): Promise<BaseProvider> {
     // Credential isolation means this provider may use only what its own configuration names.
     // Without it, each vendor's ambient discovery — its CLI's own login files and environment —
-    // is allowed to answer, which is how Rig reuses a Codex or Claude Code sign-in.
+    // is allowed to answer, which is how Happy Agent reuses a Codex or Claude Code sign-in.
     const ambient = provider.credentialIsolation !== true;
     const retries = retryLimit === undefined ? {} : { inferenceMaxRetries: retryLimit };
     const configured = async <T>(

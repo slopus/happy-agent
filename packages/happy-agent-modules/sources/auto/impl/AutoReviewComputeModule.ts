@@ -11,7 +11,7 @@ import type { ComputeModule } from "../../compute/index.js";
 /**
  * The private review system's inspection-only compute surface.
  *
- * Rig v1 exposed its reviewer a fixed, read-only slice of its coding tools — the file readers, the
+ * Happy Agent v1 exposed its reviewer a fixed, read-only slice of its coding tools — the file readers, the
  * directory and search tools, and the shell tools — so a review could gather evidence about local
  * state before deciding, exactly as Codex's guardian does. This module is the v2 equivalent: it
  * contributes that same fixed set and nothing else. There is no `write_file`, `edit_file`,
@@ -22,7 +22,7 @@ import type { ComputeModule } from "../../compute/index.js";
  * The array itself belongs to the compute module, which owns the machine the reviewer looks at and
  * the reviewer's own read bookkeeping. This module asks for it with the reviewer's own scope, so
  * the vendor of the reviewer's model route decides which fixed read-only array it receives — a
- * Claude review gets Claude's tools, a Codex review Codex's — exactly as Rig v1 gave its review
+ * Claude review gets Claude's tools, a Codex review Codex's — exactly as Happy Agent v1 gave its review
  * side agent its own provider's tools. Nothing here widens what came back, and nothing caches it:
  * each review is handed the array the compute module builds for that review.
  *

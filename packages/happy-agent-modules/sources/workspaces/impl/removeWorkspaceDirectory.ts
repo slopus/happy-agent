@@ -11,7 +11,7 @@ const VALID_STORAGE_KEY = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 /**
  * Deletes the folder an archived workspace was working in.
  *
- * Removal is the one place a durable record makes Rig delete something a person cannot get back,
+ * Removal is the one place a durable record makes Happy Agent delete something a person cannot get back,
  * so nothing here is taken on trust. The path must be exactly the managed path this workspace's
  * own storage identity describes; a symbolic link or anything that is not a directory is refused
  * outright; and a worktree is only removed through Git, from the project that still proves it

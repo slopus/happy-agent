@@ -548,7 +548,7 @@ export class GitModule implements AgentModule {
         return this.#credentials.authentication(projectId, creator);
     }
 
-    /** The credential Rig's own background Git work carries for a project. */
+    /** The credential Happy Agent's own background Git work carries for a project. */
     daemonAuthentication(
         projectId: string,
         creator: ProjectCreator,

@@ -67,7 +67,7 @@ function metadata(session: HappySessionSnapshot = snapshot()) {
     });
 }
 
-describe("describing a Rig session in Happy's own terms", () => {
+describe("describing a Happy Agent session in Happy's own terms", () => {
     it("says what the session is running on", () => {
         const published = metadata();
         expect(published.currentModelCode).toBe("gpt-5.6-sol");
@@ -100,7 +100,7 @@ describe("describing a Rig session in Happy's own terms", () => {
         expect(capabilities.steering).toBe(true);
         expect(capabilities.modelSelection).toBe(true);
         expect(capabilities.reasoningSelection).toBe(true);
-        // Rig's Happy connection has no file or shell surface of its own.
+        // Happy Agent's Happy connection has no file or shell surface of its own.
         expect(capabilities.files).toEqual({
             browse: false,
             read: false,
@@ -133,9 +133,9 @@ describe("describing a Rig session in Happy's own terms", () => {
         expect(published.project).toEqual({ id: "rig:session-1", kind: "regular", name: "rig" });
     });
 
-    it("says which Rig this is and which machine it runs on", () => {
+    it("says which Happy Agent this is and which machine it runs on", () => {
         const published = metadata();
-        expect(published.client).toEqual({ id: "rig", name: "Rig", version: "1.2.3" });
+        expect(published.client).toEqual({ id: "rig", name: "Happy Agent", version: "1.2.3" });
         expect(published.machineId).toBe("machine-1");
         expect(published.happyHomeDir).toBe("/home/steve/.rig/happy");
         expect(published.startedBy).toBe("daemon");

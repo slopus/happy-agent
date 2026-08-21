@@ -1,17 +1,17 @@
-# Rig architecture
+# Happy Agent architecture
 
-This document describes how Rig is put together: the processes it runs, the
+This document describes how Happy Agent is put together: the processes it runs, the
 protocol between them, how inference and tools work, what is stored on disk, and
-which package owns what. It is written for coding agents running inside Rig and
+which package owns what. It is written for coding agents running inside Happy Agent and
 for developers changing it.
 
-It describes the behavior that is actually implemented. Where Rig's stated
+It describes the behavior that is actually implemented. Where Happy Agent's stated
 direction runs ahead of what ships today, that is called out explicitly in
 [Where the product runs ahead of the code](#where-the-product-runs-ahead-of-the-code).
 
 ## 1. The core idea
 
-Rig is one local harness that recreates several first-party coding agents on
+Happy Agent is one local harness that recreates several first-party coding agents on
 top of a single runtime. GPT models receive Codex-shaped prompts and tools,
 Claude models receive Claude Code-shaped prompts and tools, and Grok receives the
 Grok Build prompt and tool contracts. Everything around inference — sessions,
@@ -19,7 +19,7 @@ permissions, sandboxing, persistence, subagents, MCP, the terminal — is shared
 
 Two consequences shape the whole system:
 
-- **There is no Rig account.** Rig authenticates as the user's existing
+- **There is no Happy Agent account.** Happy Agent authenticates as the user's existing
   installations do: it reads the credentials that Codex, Claude Code, and the
   Grok CLI already manage on the machine, plus a Bedrock bearer token from the
   environment when configured. The daemon only checks whether a credential is
@@ -29,19 +29,19 @@ Two consequences shape the whole system:
   second persistence path. Every provider is routed through the same
   `AgentContext`, `PermissionContext`, filesystem boundary, and shell sandbox.
 
-Rig builds on two Pi foundations: `@earendil-works/pi-tui` for terminal
-rendering, and Pi's design sensibility for a small core. Inference itself is
-implemented by the separately published, Node-only `@slopus/happy-providers`
-library.
+Happy Terminal uses `@earendil-works/pi-tui` for terminal rendering. Happy Agent's
+inference is implemented by the separately published, Node-only
+`@slopus/happy-providers` library.
 
 ## 2. Process architecture
 
-Rig runs as two processes on the local machine: a **terminal UI** (or a headless
-`rig exec` run) and a long-lived **local daemon**, the standalone Happy agent.
-Both ship in the same `@slopus/rig` package.
+Happy Agent is the long-lived headless daemon. Clients connect to it through the public API.
+Happy Terminal is the official TUI client, available through the `happy` CLI, its own
+`happy-terminal` and `rig` commands, Happy Desktop, or an embedded Node.js host. A standalone
+Happy Terminal installation also locates and starts a compatible Happy Agent release.
 
 ```text
-   rig / rig exec  (terminal UI, one per window)
+   happy / happy-terminal / rig / embedded host  (Happy Terminal, one per window)
             |
             |  HTTP + SSE over a unix socket, bearer token
             v
@@ -71,11 +71,11 @@ holds no agent logic; if it dies, the session keeps running.
 
 ### The terminal UI
 
-The CLI parses the command line and picks a mode: interactive app, headless
-`exec`, monitor, daemon control (`rig daemon start|stop|kill|status|reload`), or offline
-installation inspection (`rig inspect [--json]`). The daemon itself is the
-standalone `happy-agent` CLI, shipped beside the Rig bundle as `agent.js`; Rig
-invokes the same lifecycle instead of running any boot sequence of its own. Graceful stop waits for
+The standalone Happy Terminal CLI parses the command line and picks a mode: interactive app, headless
+`exec`, monitor, daemon control (`happy-terminal daemon start|stop|kill|status|reload`), or offline
+installation inspection (`happy-terminal inspect [--json]`). The daemon itself is the
+standalone `happy-agent` CLI. Development builds use this checkout, while published Happy Terminal
+installations select and verify a compatible Happy Agent release. Graceful stop waits for
 the daemon PID to exit; `kill` uses the persisted PID when a daemon cannot shut down cleanly.
 
 Inspection is the exception to the daemon-starting path below. It reads installation, CLI version,
@@ -114,7 +114,7 @@ surface without carrying daemon code.
 
 ### Remote terminals
 
-Separately from the agent protocol, Rig can remote a real terminal. Both ends run
+Separately from the agent protocol, Happy Agent can remote a real terminal. Both ends run
 libghostty: the daemon holds the canonical emulator and the client holds a
 replica, and the ordered terminal bytes themselves are the delta — there is no
 diffing step. Snapshot first, deltas afterwards. Reconnection, packet loss, and
@@ -139,8 +139,8 @@ The essentials:
   only then updates in-memory state. This is not optional.
 
 Because sessions live in the daemon and are persisted as they go, they survive a
-closed terminal and a daemon restart. `rig resume`, `rig fork`,
-`rig exec --resume`, and `--last` all reopen a stored session; headless runs are
+closed terminal and a daemon restart. `happy-terminal resume`, `happy-terminal fork`,
+`happy-terminal exec --resume`, and `--last` all reopen a stored session; headless runs are
 ordinary persisted sessions.
 
 Subagents are sessions too, with their transcripts saved and readable from the
@@ -171,9 +171,9 @@ invariants hold throughout and are relied on by the provider layer:
   inference, not a compaction.
 - No tool call is ever left open across an inference boundary.
 
-The conversation Rig keeps is richer than what goes to the model.
+The conversation Happy Agent keeps is richer than what goes to the model.
 `isExcludedFromModelContext` separates the durable transcript from the model
-context, so Rig can show a user things the provider never sees. Opaque provider
+context, so Happy Agent can show a user things the provider never sees. Opaque provider
 data — `vendor`, `responseItems`, `encryptedReasoning` — is persisted verbatim and
 passed back unchanged, which is what makes reasoning and parallel tool calls
 replay correctly.
@@ -181,24 +181,24 @@ replay correctly.
 ### Context and instructions
 
 The system prompt is assembled per model family — Claude, Codex, Grok — and
-extended by Rig with the environment description, project instructions, and the
-content of the project's `AGENTS.md` files. Rig discovers those files,
+extended by Happy Agent with the environment description, project instructions, and the
+content of the project's `AGENTS.md` files. Happy Agent discovers those files,
 fingerprints them, and re-delivers their content to the model when they change.
 
 ### Compaction
 
-Compaction is a message, not a side effect. Rig decides _when_; the provider
+Compaction is a message, not a side effect. Happy Agent decides _when_; the provider
 decides _how_.
 
 - The auto-compact threshold compares an estimate of the current context against
   provider-reported usage, using the model's `autoCompactWindow` from the
   catalog.
-- Rig refuses to compact a conversation with unanswered tool calls — in either
+- Happy Agent refuses to compact a conversation with unanswered tool calls — in either
   the summarized prefix or the retained tail — because that would hand the
   provider a broken history.
 - Compaction is requested from the provider session itself, which uses the
   vendor's **native** compaction wherever one exists and the vendor's own
-  compaction prompt where it does not. Rig never substitutes a generic summary.
+  compaction prompt where it does not. Happy Agent never substitutes a generic summary.
 - The result is a `CompactionMessage` in the transcript recording the IDs of the
   messages it replaces, the provider-shaped replacement context, and before/after
   statistics. The "after" size starts as a local estimate and is rewritten as
@@ -218,9 +218,9 @@ BaseProvider -> .session(id, options) -> BaseSession -> .run(request) -> Session
                                                      -> .destroy()
 ```
 
-Rig installs this package as a normal npm runtime dependency. The package is kept in the same
+Happy Agent installs this package as a normal npm runtime dependency. The package is kept in the same
 workspace for development, but it is built, versioned, tagged, and published independently rather
-than compiled into the Rig bundle.
+than compiled into the Happy Agent bundle.
 
 Providers are **stateful**: a session is created once and used for many turns, so
 connection reuse, prompt caching, sticky turn state, and native compaction are
@@ -235,7 +235,7 @@ session, credentials, native prompts, native tool definitions, and error parsing
 
 ### Fidelity
 
-The package's entire purpose is that a Rig request looks like the native
+The package's entire purpose is that a Happy Agent request looks like the native
 client's request, in this priority order: prompt-cache prefix stability, system
 prompts, tool definitions, message ordering. The caller supplies prompt and tool
 _content_; the package must reproduce the _envelope_ — field names and nesting,
@@ -256,14 +256,14 @@ built-in instance IDs. SDK or transport names never leak into a provider key.
 
 Configured provider entries are turned into executor provider definitions —
 `codexExecution`, `claudeExecution`, `grokExecution`,
-`configuredBedrockExecution` — and Rig reports which configured providers lack
+`configuredBedrockExecution` — and Happy Agent reports which configured providers lack
 local credentials. Users can declare any number
 of named instances (`[providers.work_codex]`) for separate accounts; a custom
 instance must state its `type`, and the section suffix becomes the provider ID.
 
 ### Model catalogs
 
-Catalogs are hardcoded in Rig: model ID, display name, thinking levels, default
+Catalogs are hardcoded in Happy Agent: model ID, display name, thinking levels, default
 thinking level, context window, and auto-compact window. The catalog a user sees
 combines that curated list with configuration and local credential presence. The
 daemon never
@@ -301,7 +301,7 @@ selection is still the user's or the caller's choice.
   schemas, and model guidance — one set each for Claude, Codex, and Grok. A
   Bedrock provider picks the Claude or Codex surface based on the model ID
   prefix.
-- **Common tools** belong to Rig itself and are identical for every model:
+- **Common tools** belong to Happy Agent itself and are identical for every model:
   scheduling (`wait`, `wait_until`, `schedule_message`), agent-tree usage,
   provider usage, plugin tools, and user-input cancellation. They are assembled
   in exactly one place, so a model added later picks them up with no
@@ -327,7 +327,7 @@ There is one permission model for every provider. The modes are **Read only**,
 Every tool definition owns its Auto behavior. `shouldReviewInAutoMode` is
 required; `shouldRunInFullAccessInAutoMode` is defined only for reviewed actions
 that genuinely must cross the sandbox; `requiresAutoOrFullAccess` marks tools such
-as MCP whose external boundary Rig cannot enforce locally. Review is automatic and
+as MCP whose external boundary Happy Agent cannot enforce locally. Review is automatic and
 never becomes a question to the user: it ends in allow or deny, it covers only the
 proposed action, and it never becomes a durable command policy. A denial that was
 never actually made — a timeout, an unavailable reviewer — must tell the agent the
@@ -350,10 +350,8 @@ Bubblewrap sandbox inside the container. Full details are in
 
 ## 7. Persistence
 
-Everything durable is one asynchronous SQLite database, by default
-`~/.happy/rig/sessions.sqlite`. `RIG_HOME` moves the state directory;
-`RIG_SERVER_DIRECTORY` moves the daemon's control files, log, and database
-directory.
+Everything durable is one asynchronous SQLite database under `~/.happy/agent` by default.
+`HAPPY_HOME_DIR` moves the `.happy` root.
 
 ### Rules
 
@@ -363,7 +361,7 @@ with `query`. Every operation takes the transaction first and awaits one when it
 needs it, which is a no-op inside an existing transaction, so each operation is
 a complete consistency boundary that still composes. Each connection serializes
 access through `asyncLock`; transaction-scoped work reuses its transaction
-without reacquiring the lock. A database failure is fatal by policy: Rig is
+without reacquiring the lock. A database failure is fatal by policy: Happy Agent is
 local, and continuing after one is not an option.
 
 ### What is stored
@@ -380,26 +378,27 @@ Secrets are stored as plaintext JSON in this database. The file is mode `0600`
 and its directory `0700`, which is access control, not encryption: replaced values
 may persist in SQLite pages and the WAL.
 
-Non-database state also under `~/.happy/rig` includes runtime settings, MCP trust
-decisions, Happy credentials, and binaries returned by web fetches. User
+Non-database daemon state under `~/.happy/agent` includes runtime settings, Happy credentials,
+logs, the socket, and the authentication token. Happy Terminal keeps its client-specific runtime
+settings under `~/.happy/happy-terminal`. User
 configuration is separate, in `~/Happy/Config/happy.toml` (macOS) or
 `~/happy/config/happy.toml` (Linux), with repository settings in `happy.toml`.
 
 ### Migrations
 
-Rig applies an ordered list of migration functions inside one immediate
+Happy Agent applies an ordered list of migration functions inside one immediate
 transaction, advancing `PRAGMA user_version` after each one and stamping
 `PRAGMA application_id`.
 
 - **Migrations are immutable.** Once a migration exists, its contents and version
-  never change, because a released Rig may already have applied it. Every
+  never change, because a released Happy Agent may already have applied it. Every
   subsequent schema change is a new file.
 - **Generations reset.** A database whose `application_id` does not match the
-  current Rig generation is dropped and rebuilt from the initial migration, which
+  current Happy Agent generation is dropped and rebuilt from the initial migration, which
   therefore contains the complete current schema with no backfill path. That is
   the early-stage policy: discard the old schema rather than carry compatibility
   code forward.
-- A database from a _newer_ schema version than the running Rig is an error, not
+- A database from a _newer_ schema version than the running Happy Agent is an error, not
   a downgrade.
 
 ## 8. Package layout
@@ -409,16 +408,17 @@ transaction, advancing `PRAGMA user_version` after each one and stamping
 
 | Package                        | What it is                                                                                                                                                                 |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/rig`                 | The published `@slopus/rig` CLI: terminal UI, headless `exec`, host services, protocols, persistence adapters, and the local daemon. Entry point `sources/main.ts`.        |
+| `packages/happy-agent`         | `@slopus/happy-agent` — the headless daemon executable and lifecycle used by every client.                                                                                 |
+| `packages/happy-terminal`      | `@slopus/happy-terminal` — the reusable TUI, standalone `happy-terminal` and `rig` commands, Happy Agent launcher, and Node.js embedding API.                              |
 | `packages/happy-agent-base`    | `@slopus/happy-agent-base` — the minimal durable agent loop, provider routing, persistence, and feature hooks.                                                             |
-| `packages/happy-agent-modules` | `@slopus/happy-agent-modules` — reusable agent tools, hooks, and product capabilities composed by Rig.                                                                     |
+| `packages/happy-agent-modules` | `@slopus/happy-agent-modules` — reusable agent tools, hooks, and product capabilities composed by Happy Agent.                                                             |
 | `packages/happy-providers`     | `@slopus/happy-providers` — the separately published, Node-only vendor library: stateful sessions, transports, retries, error parsing, credentials, and native compaction. |
 | `packages/happy-agent-client`  | `@slopus/happy-agent-client` — the typed request and SSE client for the public Happy Agent API.                                                                            |
 | `packages/ghostty-wasm`        | `@slopus/ghostty-wasm` — the Ghostty terminal emulator compiled to WebAssembly, usable from Node and the browser.                                                          |
 | `packages/ghostty-web`         | `@slopus/ghostty-web` — the client/server protocol for remoting a Ghostty-backed terminal: snapshot, VT replay, semantic-grid recovery, flow control, paged scrollback.    |
 | `packages/happy-plugins`       | The typed API available to TypeScript plugins running inside Happy, plus the development runner.                                                                           |
 | `packages/gym`                 | Private host-side end-to-end harness: PTY integration, fixtures, and the Docker image definition.                                                                          |
-| `packages/gym-tests`           | Private black-box terminal scenarios exercising the built Rig agent in fresh containers.                                                                                   |
+| `packages/gym-tests`           | Private black-box terminal scenarios exercising Happy Terminal and Happy Agent together in fresh containers.                                                               |
 
 Inside a package, code is organized by domain module (`git`, `fs`, `sandbox`,
 `docker`, `secrets`, `session`, `server`, `persistence`, …). A module's top level
@@ -434,7 +434,7 @@ stays readable in one place.
 - Golden-trace tests in `happy-providers` compare reconstructed requests against
   real captured vendor traffic; recorded-response tests replay real HTTP failures
   through the real transport. Both are deterministic and need no credentials.
-- Live tests are named `*.live.test.ts` and gated behind `RIG_LIVE_TEST=1`.
+- Live tests are named `*.live.test.ts` and gated behind `HAPPY_TERMINAL_LIVE_TEST=1`.
 - The **gym** (`pnpm test:gym`) runs the built CLI and daemon through a real PTY
   in a fresh Docker container. Only inference is mocked; the filesystem, shell,
   processes, daemon, tools, and terminal rendering are real, with `libghostty-vt`
@@ -448,7 +448,7 @@ fixing production code, and only then add lower-level tests.
 
 ## 10. Where the product runs ahead of the code
 
-Some of Rig's stated direction is ahead of what ships today. Where that gap
+Some of Happy Agent's stated direction is ahead of what ships today. Where that gap
 matters in practice, it is worth naming:
 
 - **Kimi Code.** A `kimi` provider using Moonshot's Chat Completions API is

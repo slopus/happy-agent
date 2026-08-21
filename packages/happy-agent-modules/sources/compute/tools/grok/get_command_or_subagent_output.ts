@@ -59,7 +59,7 @@ Usage notes:
         returnType: Type.Object({ results: Type.Array(taskOutputSchema) }),
         // A read consumes what it returns, so repeating one after a
         // restart would answer with nothing and lose the output the first call was carrying.
-        // Reading output of work Rig itself started stays inside the machine the agent already
+        // Reading output of work Happy Agent itself started stays inside the machine the agent already
         // has, so there is nothing here for a reviewer to weigh.
         durable: false,
         shouldReviewInAutoMode: () => false,

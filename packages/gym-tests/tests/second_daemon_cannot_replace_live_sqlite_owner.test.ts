@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const COMPLETED_MARKER = "SECOND_DAEMON_COULD_NOT_REPLACE_SQLITE_OWNER";
@@ -36,7 +36,7 @@ const verifyExclusiveDaemonScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
 rig() {
-    node /app/packages/rig/dist/main.js "$@"
+    node /app/packages/happy-terminal/dist/main.js "$@"
 }
 
 contender_log="/workspace/second-daemon.log"
@@ -57,7 +57,7 @@ wait_for_exit() {
     return 1
 }
 
-if ! rig daemon start; then
+if ! happy-terminal daemon start; then
     cat /tmp/happy/agent/daemon.log >&2 || true
     exit 1
 fi
@@ -82,7 +82,7 @@ fi
 
 test "$(read_daemon_pid)" = "$owner_pid"
 kill -0 "$owner_pid"
-status="$(rig daemon status)"
+status="$(happy-terminal daemon status)"
 printf '%s\n' "$status"
 if [[ "$status" != *"Daemon is running"* ]]; then
     echo "The original daemon stopped responding after the rejected start." >&2
@@ -90,7 +90,7 @@ if [[ "$status" != *"Daemon is running"* ]]; then
 fi
 
 echo "Second daemon was rejected"
-rig daemon stop
+happy-terminal daemon stop
 wait_for_exit "$owner_pid"
 echo ${COMPLETED_MARKER}
 sleep 60

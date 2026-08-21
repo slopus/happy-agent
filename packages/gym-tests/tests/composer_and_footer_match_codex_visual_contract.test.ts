@@ -5,7 +5,7 @@ import {
     type Gym,
     type TerminalCellSnapshot,
     type TerminalSnapshot,
-} from "@slopus/rig-gym";
+} from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -25,7 +25,7 @@ describe("Codex composer and footer visual contract", () => {
         gym.terminal.press("enter");
 
         const snapshot = await gym.terminal.waitForText("Visual contract captured.", 30_000);
-        const inputRow = rowContaining(snapshot, "Ask Rig to do anything");
+        const inputRow = rowContaining(snapshot, "Ask Happy Terminal to do anything");
         const surfaceRows = [inputRow - 1, inputRow + 1];
         for (const row of surfaceRows) {
             expect(cellsOnRow(snapshot, row)).toEqual(

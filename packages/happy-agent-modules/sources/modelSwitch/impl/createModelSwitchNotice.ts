@@ -21,11 +21,11 @@ export interface ModelSwitchNotice {
  *
  * It is the first thing in an otherwise empty context, so it has to say plainly that a
  * conversation happened, what was in it, and what to do about that before answering. The wording
- * follows Rig's own switch notice, including its insistence on investigating rather than being
+ * follows Happy Agent's own switch notice, including its insistence on investigating rather than being
  * handed something: a model told it received a handoff acts as though it already knows what was
  * decided.
  *
- * With a history to read from it carries what Rig's carries — an overview and both ends of the
+ * With a history to read from it carries what Happy Agent's carries — an overview and both ends of the
  * conversation, bounded. Without one it says so, which is the honest version of the same message.
  */
 export function createModelSwitchNotice(notice: ModelSwitchNotice): string {

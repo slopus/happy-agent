@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, type Gym } from "@slopus/rig-gym";
+import { captureScrollback, createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 describe("whitespace-only assistant segments", () => {
     it("adds no blank transcript rows and leaves the composer usable", async () => {
@@ -31,7 +31,7 @@ describe("whitespace-only assistant segments", () => {
                 (snapshot) =>
                     snapshot.text.includes("WHITESPACE_NORMAL_BEFORE") &&
                     snapshot.text.includes("WHITESPACE_NORMAL_AFTER") &&
-                    snapshot.text.includes("Ask Rig to do anything") &&
+                    snapshot.text.includes("Ask Happy Terminal to do anything") &&
                     snapshot.scroll.atBottom,
                 "normal content around empty assistant segments",
                 30_000,
@@ -41,7 +41,7 @@ describe("whitespace-only assistant segments", () => {
             expect(countOccurrences(settled.text, "WHITESPACE_NORMAL_AFTER")).toBe(1);
             const beforeRow = rowContaining(settled.rows, "WHITESPACE_NORMAL_BEFORE");
             const afterRow = rowContaining(settled.rows, "WHITESPACE_NORMAL_AFTER");
-            const composerRow = rowContaining(settled.rows, "Ask Rig to do anything");
+            const composerRow = rowContaining(settled.rows, "Ask Happy Terminal to do anything");
             expect(beforeRow).toBeLessThan(afterRow);
             expect(afterRow).toBeLessThan(composerRow);
             expect(
@@ -62,7 +62,7 @@ describe("whitespace-only assistant segments", () => {
             const followUp = await gym.terminal.waitUntil(
                 (snapshot) =>
                     snapshot.text.includes("WHITESPACE_FOLLOW_UP_OK") &&
-                    snapshot.text.includes("Ask Rig to do anything") &&
+                    snapshot.text.includes("Ask Happy Terminal to do anything") &&
                     snapshot.scroll.atBottom,
                 "a follow-up after whitespace-only content",
                 30_000,

@@ -7,7 +7,7 @@ protocol by importing this library:
 import { RemoteTerminalProtocolClient, GhosttyRemoteTerminalReplica } from "@slopus/ghostty-web";
 ```
 
-The implementation is isolated: it does not depend on Rig sessions or agent execution, and the
+The implementation is isolated: it does not depend on Happy Agent sessions or agent execution, and the
 Ghostty adapters use structural typing so any compatible emulator (WASM or native) can plug in.
 
 The protocol has two server-selected display modes:

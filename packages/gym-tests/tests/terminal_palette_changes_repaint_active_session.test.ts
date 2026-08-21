@@ -8,11 +8,11 @@ import {
     type TerminalCellSnapshot,
     type TerminalColorScheme,
     type TerminalSnapshot,
-} from "@slopus/rig-gym";
+} from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const prompt = "Keep this turn active while the terminal palette changes.";
-const composerPlaceholder = "Ask Rig to do anything";
+const composerPlaceholder = "Ask Happy Terminal to do anything";
 const terminalWidth = 100;
 
 afterEach(async () => {
@@ -193,8 +193,8 @@ async function captureProof(
     snapshot: TerminalSnapshot,
     colorScheme: TerminalColorScheme,
 ): Promise<void> {
-    const directory = process.env.RIG_LIVE_THEME_PROOF_DIR;
-    const label = process.env.RIG_LIVE_THEME_PROOF_LABEL;
+    const directory = process.env.HAPPY_TERMINAL_LIVE_THEME_PROOF_DIR;
+    const label = process.env.HAPPY_TERMINAL_LIVE_THEME_PROOF_LABEL;
     if (directory === undefined || label === undefined) return;
     await renderTerminalSnapshotPng(snapshot, resolve(directory, `${label}-${colorScheme}.png`));
     expect(snapshot.rows).toHaveLength(32);

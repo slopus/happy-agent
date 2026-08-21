@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const validPng32Base64 =
@@ -62,7 +62,7 @@ describe("image draft input history", () => {
         await gym.terminal.waitForText("[Image #1 PNG]", 30_000);
 
         gym.terminal.press("escape");
-        await waitForComposer(gym, "Ask Rig to do anything");
+        await waitForComposer(gym, "Ask Happy Terminal to do anything");
         gym.terminal.press("up");
         await waitForComposer(gym, `${prompt}[Image #1 PNG]`);
         gym.terminal.press("enter");
@@ -99,7 +99,7 @@ function composerText(snapshot: { rows: readonly string[] }): string | undefined
 }
 
 async function screenshot(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_SCREENSHOT_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_SCREENSHOT_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }

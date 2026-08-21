@@ -447,7 +447,7 @@ describe("MCP dynamic tools and protocol tools", () => {
                 } as never,
                 ctx,
             ),
-        ).toContain("outside Rig");
+        ).toContain("outside Happy Agent");
     });
 
     it("rejects unknown protocol servers before dispatch", async () => {

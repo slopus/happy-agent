@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveGymExecution } from "./resolveGymExecution.js";
 
 beforeEach(() => {
-    vi.stubEnv("RIG_GYM_EXECUTION", "");
+    vi.stubEnv("HAPPY_TERMINAL_GYM_EXECUTION", "");
 });
 
 afterEach(() => {
@@ -19,7 +19,7 @@ describe("resolveGymExecution", () => {
 
     it("uses Docker only when the gym or suite explicitly requests it", () => {
         expect(resolveGymExecution({ mode: "docker" })).toBe("docker");
-        vi.stubEnv("RIG_GYM_EXECUTION", "docker");
+        vi.stubEnv("HAPPY_TERMINAL_GYM_EXECUTION", "docker");
         expect(resolveGymExecution({})).toBe("docker");
     });
 
@@ -27,7 +27,7 @@ describe("resolveGymExecution", () => {
         expect(() => resolveGymExecution({ dockerSocket: true })).toThrow(
             'Gym option "dockerSocket" requires mode: "docker".',
         );
-        expect(() => resolveGymExecution({ image: "rig-gym:test" })).toThrow(
+        expect(() => resolveGymExecution({ image: "happy-terminal-gym:test" })).toThrow(
             'Gym option "image" requires mode: "docker".',
         );
     });

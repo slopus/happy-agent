@@ -136,11 +136,11 @@ describe("SystemPromptModule", () => {
         const unknown = await instructions(ctx, scopeOf("mystery/model", "gym"));
 
         expect(unknown).toContain("You are an expert coding assistant.");
-        expect(unknown.startsWith("You are Rig, built by Happy")).toBe(true);
+        expect(unknown.startsWith("You are Happy Agent, built by Happy")).toBe(true);
         expect(await instructions(ctx, scopeOf(undefined, undefined))).toBe(unknown);
     });
 
-    it("names Rig in every prompt and leaves no identity marker behind", async () => {
+    it("names Happy Agent in every prompt and leaves no identity marker behind", async () => {
         const { instructions } = await moduleWithCatalog();
         const [claudePrompt, codexPrompt] = await Promise.all([
             instructions(ctx, scopeOf("anthropic/opus-5", "claude")),
@@ -148,11 +148,11 @@ describe("SystemPromptModule", () => {
         ]);
 
         for (const prompt of [claudePrompt, codexPrompt]) {
-            expect(prompt.startsWith("You are Rig, built by Happy")).toBe(true);
+            expect(prompt.startsWith("You are Happy Agent, built by Happy")).toBe(true);
             expect(prompt).not.toContain("{{identity}}");
             expect(prompt).not.toContain("{{name}}");
         }
-        expect(codexPrompt).toContain("As Rig,");
+        expect(codexPrompt).toContain("As Happy Agent,");
     });
 
     it("appends the machine environment and every configured model route", async () => {

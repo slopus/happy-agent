@@ -300,11 +300,11 @@ describe("toolCallResource", () => {
                 id: "call-search",
                 name: "grok_x_search",
                 status: "completed",
-                arguments: { query: "Rig launch" },
+                arguments: { query: "Happy Agent launch" },
                 output: "Answer",
             }),
         ).toMatchObject({
-            presentation: { type: "search", target: "x", query: "Rig launch" },
+            presentation: { type: "search", target: "x", query: "Happy Agent launch" },
         });
     });
 });

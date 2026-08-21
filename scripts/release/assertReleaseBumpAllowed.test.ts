@@ -21,7 +21,7 @@ test("an explicit version inside 0.x is fine", () => {
     );
 });
 
-test("refuses a major bump while Rig is still 0.x", () => {
+test("refuses a major bump while Happy Terminal is still 0.x", () => {
     assert.throws(
         () => assertReleaseBumpAllowed({ currentVersion: "0.0.147", requested: "major" }),
         /not available.*Use 'minor' for new features/su,
@@ -42,9 +42,9 @@ test("refuses a premajor prerelease too", () => {
     );
 });
 
-// Reaching 1.0.0 is the point of the rule, not a permanent ban: once Rig is there, releasing
+// Reaching 1.0.0 is the point of the rule, not a permanent ban: once Happy Terminal is there, releasing
 // 2.0.0 is an ordinary decision again and this stops having an opinion.
-test("stops applying once Rig has left 0.x", () => {
+test("stops applying once Happy Terminal has left 0.x", () => {
     assert.doesNotThrow(() =>
         assertReleaseBumpAllowed({ currentVersion: "1.4.2", requested: "major" }),
     );

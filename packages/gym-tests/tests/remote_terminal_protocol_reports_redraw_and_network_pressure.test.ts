@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -158,13 +158,13 @@ const REMOTE_TERMINAL_BENCHMARK = String.raw`
 import { readFile } from "node:fs/promises";
 import { request } from "node:http";
 import { performance } from "node:perf_hooks";
-import { createGhosttyTerminal } from "/app/packages/rig/node_modules/@slopus/ghostty-wasm/dist/node.js";
+import { createGhosttyTerminal } from "/app/packages/happy-terminal/node_modules/@slopus/ghostty-wasm/dist/node.js";
 import {
     GhosttyRemoteTerminalReplica,
     RemoteTerminalProtocolClient,
-} from "/app/packages/rig/node_modules/@slopus/ghostty-web/dist/index.js";
-import WebSocket from "/app/packages/rig/node_modules/ws/wrapper.mjs";
-import { WebSocketDuplex, createNodeBinaryWebSocket } from "/app/packages/rig/node_modules/@slopus/happy-agent-modules/dist/transport/index.js";
+} from "/app/packages/happy-terminal/node_modules/@slopus/ghostty-web/dist/index.js";
+import WebSocket from "/app/packages/happy-terminal/node_modules/ws/wrapper.mjs";
+import { WebSocketDuplex, createNodeBinaryWebSocket } from "/app/packages/happy-terminal/node_modules/@slopus/happy-agent-modules/dist/transport/index.js";
 
 const directory = "/tmp/rig-" + process.getuid();
 const socketPath = directory + "/server.sock";

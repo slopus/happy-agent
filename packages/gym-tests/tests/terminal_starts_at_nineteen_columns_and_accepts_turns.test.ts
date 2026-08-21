@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -19,7 +19,7 @@ describe("terminal starts at nineteen columns and accepts turns", () => {
                 { content: [{ text: "NARROW_TWO", type: "text" }] },
             ],
             rows: 40,
-            startupText: "Ask Rig",
+            startupText: "Ask Happy Terminal",
         });
         running.add(gym);
 
@@ -63,14 +63,14 @@ async function waitForNarrowText(gym: Gym, value: string) {
         gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes(value) &&
-                snapshot.text.includes("Ask Rig") &&
+                snapshot.text.includes("Ask Happy Terminal") &&
                 snapshot.scroll.atBottom,
             `${value} and the narrow idle composer`,
             30_000,
         ),
         gym.exit().then(({ exitCode, signal }) => {
             throw new Error(
-                `Rig exited while waiting for ${value} (code ${exitCode}, signal ${String(signal)}).`,
+                `Happy Terminal exited while waiting for ${value} (code ${exitCode}, signal ${String(signal)}).`,
             );
         }),
     ]);
@@ -84,8 +84,8 @@ function assertHealthyNarrowTerminal(
     expect(snapshot.scroll).toMatchObject({ atBottom: true, visibleRows: 40 });
     expect(snapshot.cursor.x).toBeLessThan(19);
     expect(snapshot.cursor.y).toBeLessThan(40);
-    expect(snapshot.title).toContain("Rig");
-    expect(snapshot.text).toContain("Ask Rig");
+    expect(snapshot.title).toContain("Happy Terminal");
+    expect(snapshot.text).toContain("Ask Happy Terminal");
     expect(snapshot.text).toContain("gym off");
     expect(snapshot.text).not.toContain("\x1b[200~");
     expect(snapshot.text).not.toContain("\x1b[201~");

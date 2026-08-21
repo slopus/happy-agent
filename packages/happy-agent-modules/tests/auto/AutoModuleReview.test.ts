@@ -24,7 +24,7 @@ import type { ScriptedProvider, ScriptedTurn } from "../support/ScriptedProvider
 
 /**
  * End-to-end proof that a reviewable Auto action reaches the real `AutoModule` reviewer and that a
- * reviewer verdict allows or denies exactly as Rig v1 would.
+ * reviewer verdict allows or denies exactly as Happy Agent v1 would.
  *
  * The reviewer is not mocked here: `AutoModule` builds its own private `AgentSystemLocal`, creates a
  * reviewer agent, runs one real review inference through a scripted provider that answers with the

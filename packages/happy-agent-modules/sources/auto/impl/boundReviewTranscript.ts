@@ -7,7 +7,7 @@ import {
 } from "../../permissions/PermissionReviewer.js";
 
 /**
- * Bounds what one review reveals about its own work, ported behavior-for-behavior from Rig v1's
+ * Bounds what one review reveals about its own work, ported behavior-for-behavior from Happy Agent v1's
  * `createReviewTranscript`.
  *
  * A reviewer that investigates at length must not be able to grow the durable review record without

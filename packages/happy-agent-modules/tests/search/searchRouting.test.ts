@@ -101,7 +101,7 @@ describe("search routing", () => {
 describe("cited sources", () => {
     it("keeps followable citations and drops the rest", () => {
         const sources = boundedSources([
-            { title: "Rig", url: "https://example.test/rig" },
+            { title: "Happy Agent", url: "https://example.test/rig" },
             { title: "Duplicate", url: "https://example.test/rig" },
             { title: "Relative", url: "/rig" },
             { title: "Not a URL", url: "see the docs" },

@@ -12,7 +12,7 @@ no other roots: a skill is a file on the agent's own machine, so an agent with n
 skills and is given no skill tools.
 
 The catalog and skill documents are read live through `compute.fs`, bounded, and exposed through
-model instructions plus `list_skills` and `read_skill`. Both tools read inside Rig's own filesystem
+model instructions plus `list_skills` and `read_skill`. Both tools read inside Happy Agent's own filesystem
 boundary, so neither is reviewed in Auto. The module owns no database and no persistent index.
 Discovery skips dot-directories, `node_modules`, and malformed or unreadable skills without hiding
 the rest of the catalog; `list_skills` uses its returned cursor to continue a bounded page.

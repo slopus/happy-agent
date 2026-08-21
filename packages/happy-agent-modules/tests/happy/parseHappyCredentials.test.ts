@@ -37,7 +37,7 @@ describe("parseHappyCredentials", () => {
         expect(parsed.stored).toEqual({ secret, token: "happy-token" });
     });
 
-    it("ignores fields Happy added that Rig does not use", () => {
+    it("ignores fields Happy added that Happy Agent does not use", () => {
         const parsed = parseHappyCredentials({
             createdAt: 12,
             secret,
@@ -70,6 +70,6 @@ describe("parseHappyCredentials", () => {
     });
 
     it("rejects a file with no token", () => {
-        expect(() => parseHappyCredentials({ secret })).toThrow("format Rig understands");
+        expect(() => parseHappyCredentials({ secret })).toThrow("format Happy Agent understands");
     });
 });

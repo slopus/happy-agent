@@ -8,7 +8,7 @@ const REVIEWER_MODEL_CODEX_AUTO_REVIEW = "openai/codex-auto-review";
 const REVIEWER_MODEL_GPT_5_4 = "openai/gpt-5.4";
 
 /**
- * Picks the model that reviews Auto permission decisions, ported from Rig v1's
+ * Picks the model that reviews Auto permission decisions, ported from Happy Agent v1's
  * `reviewerModelForProvider.ts` and generalized to the v2 per-provider-route catalog.
  *
  * This is a pure function over a supplied catalog: it never reaches into a registry and never

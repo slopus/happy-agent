@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, type Gym } from "@slopus/rig-gym";
+import { captureScrollback, createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -34,7 +34,7 @@ describe("resize while reading scrollback", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("RESIZE_REBUILD_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the initial transcript at the bottom",
             30_000,
@@ -51,7 +51,7 @@ describe("resize while reading scrollback", () => {
             (snapshot) =>
                 snapshot.rows.length === 14 &&
                 snapshot.text.includes("RESIZE_REBUILD_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the source-backed transcript after the resize",
             30_000,
@@ -65,7 +65,7 @@ describe("resize while reading scrollback", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("RESIZE_REBUILD_FOLLOW_UP") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the follow-up message and answer",
             30_000,

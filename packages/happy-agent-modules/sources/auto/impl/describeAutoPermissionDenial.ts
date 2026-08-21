@@ -1,7 +1,7 @@
 import type { AutoPermissionReview } from "./parseAutoPermissionReview.js";
 
 /**
- * What the agent is told when Auto refuses an action, ported byte-for-byte from Rig v1's
+ * What the agent is told when Auto refuses an action, ported byte-for-byte from Happy Agent v1's
  * `permissions/describeAutoPermissionDenial.ts`.
  *
  * The refusal is addressed to the agent rather than to the user, because Auto decides on the

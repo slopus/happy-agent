@@ -3,7 +3,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 /**
  * MCP is deliberately described here without importing the SDK.  The SDK client, transports,
- * credentials, and configuration belong to Rig; this package only receives the small protocol
+ * credentials, and configuration belong to Happy Agent; this package only receives the small protocol
  * values it needs from an injected host.
  */
 
@@ -540,7 +540,7 @@ export type McpListPromptsInput = Static<typeof mcpListPromptsInputSchema>;
 export type McpGetPromptInput = Static<typeof mcpGetPromptInputSchema>;
 
 /**
- * The configuration is a Rig-owned value.  It is included only in the trust/fingerprint
+ * The configuration is a Happy Agent-owned value.  It is included only in the trust/fingerprint
  * boundary, never used to create a client or choose a process/path in this package.
  */
 const mcpCommonConfig = {

@@ -32,7 +32,7 @@ export interface HappyMachineClientOptions {
     readonly fetch?: typeof fetch;
     readonly operations: HappySpawnOperations;
     readonly models: () => readonly HappyModel[];
-    /** The session Happy should open, once Rig has published it. */
+    /** The session Happy should open, once Happy Agent has published it. */
     readonly remoteSessionId: (agentId: string) => Promise<string | undefined>;
     /** Only a test supplies this; left out, the client opens its own connection to Happy. */
     readonly socketFactory?: (url: string, options: Record<string, unknown>) => HappySocket;
@@ -73,7 +73,7 @@ const recordSchema = Type.Record(Type.String(), Type.Unknown());
  * This computer, as it appears in Happy.
  *
  * A machine is what a person picks before there is any session to pick: it says
- * this Rig is here, what it can run, and that it will start something new when
+ * this Happy Agent is here, what it can run, and that it will start something new when
  * asked. It keeps itself registered and reachable for as long as the daemon runs.
  */
 export class HappyMachineClient {
@@ -89,7 +89,7 @@ export class HappyMachineClient {
     constructor(options: HappyMachineClientOptions) {
         const machineId = options.configuration.machineId;
         if (machineId === undefined) {
-            throw new Error("Rig has no Happy machine identity to register.");
+            throw new Error("Happy Agent has no Happy machine identity to register.");
         }
         this.#machineId = machineId;
         this.#options = options;
@@ -152,7 +152,7 @@ export class HappyMachineClient {
         if (!response.ok) throw new Error(`Happy answered with HTTP ${String(response.status)}.`);
         const body: unknown = await response.json();
         if (!Value.Check(machineSchema, body)) {
-            throw new Error("Happy returned a machine Rig could not read.");
+            throw new Error("Happy returned a machine Happy Agent could not read.");
         }
         if (this.#closed) return;
         const remote = this.#decode(body.machine.metadata);
@@ -198,7 +198,10 @@ export class HappyMachineClient {
             !Value.Check(rpcRequestSchema, request) ||
             request.method !== `${this.#machineId}:spawn-happy-session`
         ) {
-            answer = { errorMessage: "Happy sent a request Rig does not serve.", type: "error" };
+            answer = {
+                errorMessage: "Happy sent a request Happy Agent does not serve.",
+                type: "error",
+            };
         } else {
             answer = await handleHappySpawnSession({
                 ctx: this.#options.context,
@@ -242,7 +245,7 @@ export class HappyMachineClient {
                 models: this.#options.models(),
                 version: this.#options.version,
             }),
-            // The name is the person's to choose, so Rig never writes over it.
+            // The name is the person's to choose, so Happy Agent never writes over it.
             ...(typeof this.#metadataBase.displayName === "string"
                 ? { displayName: this.#metadataBase.displayName }
                 : {}),

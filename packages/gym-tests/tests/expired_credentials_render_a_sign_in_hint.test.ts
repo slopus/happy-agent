@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -32,7 +32,7 @@ describe("expired credentials", () => {
         const screen = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("credentials have expired") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 !snapshot.text.includes("esc to interrupt"),
             "the expired credential notice",
         );
@@ -61,7 +61,7 @@ describe("expired credentials", () => {
         const screen = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("credentials have expired") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 !snapshot.text.includes("esc to interrupt"),
             "the expired credential notice for an unclassified error",
         );

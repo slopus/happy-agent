@@ -2,7 +2,12 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, waitForTerminalOutput, type Gym } from "@slopus/rig-gym";
+import {
+    captureScrollback,
+    createGym,
+    waitForTerminalOutput,
+    type Gym,
+} from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -69,7 +74,7 @@ describe("visible streamed reasoning while reading terminal history", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("REASONING_HISTORY_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "reasoning history at the bottom",
             30_000,
@@ -107,7 +112,7 @@ describe("visible streamed reasoning while reading terminal history", () => {
         const bottom = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("REASONING_ASSISTANT_COMPLETE") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the settled reasoning tail after returning to the bottom",
             30_000,
@@ -119,7 +124,7 @@ describe("visible streamed reasoning while reading terminal history", () => {
         const revised = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("REASONING_FOLLOW_UP") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "a later healthy revision after reasoning settlement",
             30_000,
@@ -145,7 +150,7 @@ function submit(gym: Gym, text: string): void {
 }
 
 async function screenshot(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_PROOF_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_PROOF_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }

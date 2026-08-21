@@ -22,11 +22,7 @@ import {
 } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
-import {
-    GitModule,
-    type GitCredentialRef,
-    type GitRepositoryFacts,
-} from "../git/index.js";
+import { GitModule, type GitCredentialRef, type GitRepositoryFacts } from "../git/index.js";
 import { ProjectRegistrationError, ProjectsModule, type Project } from "../projects/index.js";
 
 import { copyProjectFolder } from "./impl/copyProjectFolder.js";
@@ -762,7 +758,7 @@ export class WorkspacesModule implements AgentModule {
     async close(_ctx: Context): Promise<void> {
         this.#closed = true;
         for (const controller of this.#setupControllers.values()) {
-            controller.abort(new Error("Workspace setup stopped because Rig is closing."));
+            controller.abort(new Error("Workspace setup stopped because Happy Agent is closing."));
         }
         this.#setupControllers.clear();
         for (const timer of this.#syncTimers.values()) clearTimeout(timer);
@@ -1309,7 +1305,7 @@ export class WorkspacesModule implements AgentModule {
                 if (this.#closed) return;
             } catch (error) {
                 if (this.#closed) return;
-                // The archival is already durable, so a folder Rig could not remove is something
+                // The archival is already durable, so a folder Happy Agent could not remove is something
                 // to tell someone about rather than a failure to hand back.
                 ctx.log.warn(
                     { error, workspaceId },

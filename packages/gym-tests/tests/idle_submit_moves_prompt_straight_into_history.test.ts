@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 type TerminalSnapshot = Awaited<ReturnType<Gym["terminal"]["snapshot"]>>;
 
@@ -33,7 +33,7 @@ describe("idle submit", () => {
         });
 
         try {
-            await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
+            await gym.terminal.waitForText("Ask Happy Terminal to do anything", 30_000);
 
             gym.terminal.type(prompt);
             await gym.terminal.waitUntil(
@@ -95,7 +95,7 @@ describe("idle submit", () => {
         });
 
         try {
-            await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
+            await gym.terminal.waitForText("Ask Happy Terminal to do anything", 30_000);
 
             gym.terminal.type(prompt);
             await gym.terminal.waitForText(`› ${prompt}`, 30_000);
@@ -115,7 +115,7 @@ describe("idle submit", () => {
             const bounced = await gym.terminal.waitUntil(
                 (snapshot) =>
                     !snapshot.text.includes("esc to interrupt") &&
-                    !snapshot.text.includes("Ask Rig to do anything"),
+                    !snapshot.text.includes("Ask Happy Terminal to do anything"),
                 "the interrupted turn handing the prompt back to the composer",
                 30_000,
             );

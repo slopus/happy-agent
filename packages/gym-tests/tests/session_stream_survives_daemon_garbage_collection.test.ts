@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -16,7 +16,7 @@ describe("the active session event stream", () => {
             entrypoint: [
                 "bash",
                 "-lc",
-                "exec node /app/packages/rig/dist/main.js 2>/workspace/tui-inspector.log",
+                "exec node /app/packages/happy-terminal/dist/main.js 2>/workspace/tui-inspector.log",
             ],
             inference(request, callIndex) {
                 expect(callIndex).toBe(0);

@@ -72,14 +72,14 @@ const wrappedSchema = Type.Object(
  * Reads what one decrypted message from Happy actually is.
  *
  * The phone has said the same thing in more than one shape over the years, and
- * Rig has to understand all of them, so this accepts each and answers with the
+ * Happy Agent has to understand all of them, so this accepts each and answers with the
  * one thing they mean. Anything it does not recognize is answered as nothing at
  * all, because guessing at a message would put words in a person's mouth.
  */
 export function readHappyRemoteInput(value: unknown): HappyRemoteInput | undefined {
     if (!Value.Check(recordSchema, value)) return undefined;
     const outerMeta = Value.Check(metaSchema, value.meta) ? value.meta : undefined;
-    // Rig's own message coming back around; it says nothing new.
+    // Happy Agent's own message coming back around; it says nothing new.
     if (outerMeta?.sentFrom === HAPPY_SENT_FROM_RIG) return { kind: "echo" };
 
     if (Value.Check(plainTextSchema, value)) {

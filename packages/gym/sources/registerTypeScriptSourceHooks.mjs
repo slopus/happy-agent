@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 
-const distributionPrefix = "file:///app/packages/rig/dist/";
-const sourcePrefix = "file:///app/packages/rig/sources/";
+const distributionPrefix = "file:///app/packages/happy-terminal/dist/";
+const sourcePrefix = "file:///app/packages/happy-terminal/sources/";
 
 registerHooks({
     resolve(specifier, context, nextResolve) {
-        const fileSpecifier = specifier.startsWith("/app/packages/rig/dist/")
+        const fileSpecifier = specifier.startsWith("/app/packages/happy-terminal/dist/")
             ? new URL(`file://${specifier}`).href
             : specifier;
         if (fileSpecifier.startsWith(distributionPrefix) && fileSpecifier.endsWith(".js")) {

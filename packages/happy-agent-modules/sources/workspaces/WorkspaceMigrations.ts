@@ -75,7 +75,7 @@ export const workspaceMigrations = [
     ],
     [
         // A workspace is now a branch, a folder, a base, and a lifecycle rather than an opaque
-        // catalog row, and branch, storage key, path, and kind are all NOT NULL. Rig is early
+        // catalog row, and branch, storage key, path, and kind are all NOT NULL. Happy Agent is early
         // stage, so this discards the old table instead of carrying a column-by-column data
         // migration for rows that could not describe a real worktree anyway.
         "004-workspace-git-record",
@@ -147,7 +147,7 @@ export const workspaceMigrations = [
     [
         // A workspace belongs to the project it was cut from, not to an agent. The owning agent was
         // always the one identity the daemon had, so the column decided nothing and every read
-        // ignored it. Rig is early stage, so the generation is advanced and the catalog reset
+        // ignored it. Happy Agent is early stage, so the generation is advanced and the catalog reset
         // rather than rebuilding the table to drop a column SQLite cannot drop in place.
         "005-workspace-without-owner",
         async (_ctx: Context, database: AgentDatabase): Promise<void> => {

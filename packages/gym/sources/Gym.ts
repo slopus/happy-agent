@@ -85,7 +85,7 @@ export class Gym {
         const profileId = this.#containerName.slice(-8);
         const inProcessDaemon =
             this.#execution === "local" &&
-            this.#localEnvironment?.RIG_GYM_IN_PROCESS_DAEMON === "1";
+            this.#localEnvironment?.HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON === "1";
         this.#disposed = true;
         this.#disconnectTerminal();
         this.#pty.kill(inProcessDaemon ? "SIGKILL" : undefined);
@@ -110,7 +110,7 @@ export class Gym {
         } else if (
             this.#localEnvironment !== undefined &&
             this.#localRunnerArguments !== undefined &&
-            this.#localEnvironment.RIG_GYM_IN_PROCESS_DAEMON !== "1"
+            this.#localEnvironment.HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON !== "1"
         ) {
             const daemonStartedAt = performance.now();
             await execFileAsync(
@@ -180,11 +180,14 @@ export class Gym {
                 : args.map((argument) =>
                       argument
                           .replaceAll("/workspace", this.workspacePath)
-                          .replaceAll("/home/rig", this.#homePath ?? "/home/rig"),
+                          .replaceAll(
+                              "/home/happy-terminal",
+                              this.#homePath ?? "/home/happy-terminal",
+                          ),
                   );
         const localCommand = command
             .replaceAll("/workspace", this.workspacePath)
-            .replaceAll("/home/rig", this.#homePath ?? "/home/rig");
+            .replaceAll("/home/happy-terminal", this.#homePath ?? "/home/happy-terminal");
         const { stderr, stdout } = await execFileAsync(
             this.#execution === "docker" ? "docker" : localCommand,
             commandArguments,

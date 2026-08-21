@@ -15,7 +15,7 @@ const GROK_MODEL = "xai/grok-4.5";
  * `packages/happy-providers/sources/vendors/grok/tools/*.ts`.
  *
  * The module must not import the vendor descriptors, so the check they anchor is written out
- * here: property names and the required/optional split, never descriptions, which Rig's live
+ * here: property names and the required/optional split, never descriptions, which Happy Agent's live
  * tools deliberately reword. Anything this surface adds or leaves out is named explicitly, so a
  * schema quietly drifting back toward a shared shape fails rather than passes.
  */
@@ -27,7 +27,7 @@ const vendorSchemas: Readonly<
             readonly required: readonly string[];
             /** Vendor arguments this machine cannot honestly offer. */
             readonly omitted?: readonly string[];
-            /** Arguments Rig's live Grok tool adds on top of the vendor's. */
+            /** Arguments Happy Agent's live Grok tool adds on top of the vendor's. */
             readonly added?: readonly string[];
             /** Vendor-optional arguments this surface insists on. */
             readonly alsoRequired?: readonly string[];
@@ -70,14 +70,14 @@ const vendorSchemas: Readonly<
     run_terminal_command: {
         properties: ["command", "timeout", "description", "background"],
         required: ["command", "description"],
-        // Rig's own additions. `secrets` is deliberately not among them: this module has no
+        // Happy Agent's own additions. `secrets` is deliberately not among them: this module has no
         // secret resolver, so offering the argument would promise something it cannot do.
         added: ["tty", "sandbox_permissions"],
     },
     get_command_or_subagent_output: {
         properties: ["task_ids", "timeout_ms"],
         required: [],
-        // A call with no task IDs has nothing to answer, so Rig requires them and so do we.
+        // A call with no task IDs has nothing to answer, so Happy Agent requires them and so do we.
         alsoRequired: ["task_ids"],
     },
     kill_command_or_subagent: {
@@ -87,10 +87,10 @@ const vendorSchemas: Readonly<
 };
 
 /**
- * `send_command_input` has no vendor descriptor — Rig invented it — so its shape is checked
- * against `packages/rig/sources/tools/grok/send_command_input.ts` instead.
+ * `send_command_input` has no vendor descriptor — Happy Agent invented it — so its shape is checked
+ * against `packages/happy-agent-modules/sources/compute/tools/grok/send_command_input.ts` instead.
  */
-const rigOnlySchemas: Readonly<
+const happyAgentOnlySchemas: Readonly<
     Record<string, { readonly properties: readonly string[]; readonly required: readonly string[] }>
 > = {
     send_command_input: {
@@ -152,7 +152,7 @@ describe("Grok's compute tool surface", () => {
             expect(typeof tool.shouldReviewInAutoMode).toBe("function");
             expect(tool.requiresAutoOrFullAccess).toBeUndefined();
         }
-        // Everything but the three that only touch work Rig itself started can be reviewed.
+        // Everything but the three that only touch work Happy Agent itself started can be reviewed.
         for (const name of [
             "run_terminal_command",
             "read_file",
@@ -184,11 +184,13 @@ describe("Grok's compute tool surface", () => {
             expect(shape.properties, `${name} properties`).toEqual(expectedProperties);
             expect(shape.required, `${name} required`).toEqual(expectedRequired);
         }
-        for (const [name, rig] of Object.entries(rigOnlySchemas)) {
+        for (const [name, happyAgent] of Object.entries(happyAgentOnlySchemas)) {
             const tool = tools.find((candidate) => candidate.name === name);
             const shape = argumentShape(tool!);
-            expect(shape.properties, `${name} properties`).toEqual([...rig.properties].sort());
-            expect(shape.required, `${name} required`).toEqual([...rig.required].sort());
+            expect(shape.properties, `${name} properties`).toEqual(
+                [...happyAgent.properties].sort(),
+            );
+            expect(shape.required, `${name} required`).toEqual([...happyAgent.required].sort());
         }
     });
 

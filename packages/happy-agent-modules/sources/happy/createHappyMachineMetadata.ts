@@ -10,7 +10,7 @@ import type { HappyPublishedModel } from "./createHappySessionMetadata.js";
 /** What the phone knows about this computer before it opens any session on it. */
 export interface HappyMachineMetadata {
     capabilities: { newSession: boolean; resume: false; worktrees: false };
-    client: { id: "rig"; name: "Rig"; version: string };
+    client: { id: "rig"; name: "Happy Agent"; version: string };
     defaults: { effort: string; modelId: string; permissionMode: "auto"; providerId: string };
     displayName: string;
     happyHomeDir: string;
@@ -48,18 +48,19 @@ export function createHappyMachineMetadata(options: {
     version: string;
 }): HappyMachineMetadata {
     const defaultModel = options.models[0];
-    if (defaultModel === undefined) throw new Error("This Rig has no model to offer Happy.");
+    if (defaultModel === undefined)
+        throw new Error("This Happy Agent has no model to offer Happy.");
     const host = hostname();
     return {
         capabilities: { newSession: true, resume: false, worktrees: false },
-        client: { id: "rig", name: "Rig", version: options.version },
+        client: { id: "rig", name: "Happy Agent", version: options.version },
         defaults: {
             effort: defaultModel.defaultEffort,
             modelId: defaultModel.id,
             permissionMode: "auto",
             providerId: defaultModel.providerId,
         },
-        displayName: `${host} — Rig`,
+        displayName: `${host} — Happy Agent`,
         happyHomeDir: options.configuration.happyHome,
         homeDir: homedir(),
         host,

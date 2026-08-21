@@ -6,7 +6,7 @@ Observed on July 20, 2026.
 
 Codex completed an `exec_command` call successfully and rendered its output,
 including two large single-line JSON responses followed by the expected overlay
-log matches. Instead of continuing the turn, Rig then displayed:
+log matches. Instead of continuing the turn, Happy Agent then displayed:
 
 ```text
 Error Codex error: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 2c64043a-ad02-4fc3-8abc-9418cef802e7 in your message.

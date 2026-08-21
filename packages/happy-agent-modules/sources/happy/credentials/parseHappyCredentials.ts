@@ -19,7 +19,7 @@ export function parseHappyCredentials(value: unknown): {
     stored: StoredHappyCredentials;
 } {
     if (!Value.Check(happyCredentialsFileSchema, value)) {
-        throw new Error("The Happy credentials file is not in a format Rig understands.");
+        throw new Error("The Happy credentials file is not in a format Happy Agent understands.");
     }
     const parsed = Value.Cast(happyCredentialsFileSchema, value);
     if ((parsed.secret === undefined) === (parsed.encryption === undefined)) {

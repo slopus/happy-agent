@@ -12,7 +12,7 @@ afterEach(async () => {
 
 describe("MockInferenceServer", () => {
     it("scales simulated streaming delays without shortening behavioral delays", async () => {
-        vi.stubEnv("RIG_GYM_TIME_SCALE", "0.5");
+        vi.stubEnv("HAPPY_TERMINAL_GYM_TIME_SCALE", "0.5");
         const server = new MockInferenceServer([
             {
                 completionDelayMs: 800,
@@ -40,7 +40,7 @@ describe("MockInferenceServer", () => {
     });
 
     it("does not scale timing-shaped values inside model tool arguments", async () => {
-        vi.stubEnv("RIG_GYM_TIME_SCALE", "0.5");
+        vi.stubEnv("HAPPY_TERMINAL_GYM_TIME_SCALE", "0.5");
         const server = new MockInferenceServer([
             {
                 completionDelayMs: 800,

@@ -72,7 +72,7 @@ export async function handleHappySpawnSession(options: {
 }): Promise<HappySpawnResult> {
     try {
         if (!Value.Check(spawnRequestSchema, options.params)) {
-            throw new Error("Happy asked for a session Rig does not know how to start.");
+            throw new Error("Happy asked for a session Happy Agent does not know how to start.");
         }
         const request = options.params;
         options.signal?.throwIfAborted();
@@ -93,7 +93,7 @@ export async function handleHappySpawnSession(options: {
         }
         const permissionMode = request.permissionMode ?? "auto";
         if (!isAgentPermissionMode(permissionMode)) {
-            throw new Error("That permission mode is not one Rig has.");
+            throw new Error("That permission mode is not one Happy Agent has.");
         }
         const sessionId = createHappySpawnSessionId(options.machineId, request.clientRequestId);
         options.signal?.throwIfAborted();
@@ -119,7 +119,9 @@ export async function handleHappySpawnSession(options: {
     } catch (error) {
         return {
             errorMessage:
-                error instanceof Error ? error.message : "Rig could not start that session.",
+                error instanceof Error
+                    ? error.message
+                    : "Happy Agent could not start that session.",
             type: "error",
         };
     }
@@ -135,7 +137,7 @@ function chooseModel(
             (modelId === undefined || model.id === modelId) &&
             (providerId === undefined || model.providerId === providerId),
     );
-    if (wanted === undefined) throw new Error("That model is not available in this Rig.");
+    if (wanted === undefined) throw new Error("That model is not available in this Happy Agent.");
     return wanted;
 }
 

@@ -12,7 +12,7 @@ import { shouldAllowAutoPermissionReview } from "./shouldAllowAutoPermissionRevi
  * Turns a completed reviewer's raw final text into the v2 permission decision, applying the exact
  * v1 recovery, defaults, and independent allow-policy re-derivation.
  *
- * This is the pure core of what Rig v1's `reviewAutoPermission` did after the reviewer returned,
+ * This is the pure core of what Happy Agent v1's `reviewAutoPermission` did after the reviewer returned,
  * minus the parts that belong to `PermissionsModule` in v2: the timeout, the abort, and the
  * unavailable/unproven outcomes a review that never returned produces. Everything here is about a
  * review that *did* return text, so there are only two v2 outcomes:

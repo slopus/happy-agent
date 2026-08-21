@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 const artifacts = resolve(import.meta.dirname, "../../artifacts/session-usage");
@@ -23,7 +23,7 @@ describe("provider quota boundaries", () => {
             mode: "docker",
             environment: {
                 NO_PROXY: "host.docker.internal",
-                RIG_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
+                HAPPY_TERMINAL_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
             },
             homeFiles: {
                 ".codex/auth.json": JSON.stringify({
@@ -105,7 +105,7 @@ describe("provider quota boundaries", () => {
             mode: "docker",
             environment: {
                 NO_PROXY: "host.docker.internal",
-                RIG_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
+                HAPPY_TERMINAL_CODEX_BASE_URL: "{{HTTP_PROXY_URL}}/backend-api",
             },
             homeFiles: {
                 ".codex/auth.json": JSON.stringify({

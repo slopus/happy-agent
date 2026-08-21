@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -14,8 +14,8 @@ describe("named Claude OAuth-token accounts", () => {
         const responseMarker = "NAMED_CLAUDE_ACCOUNT_RESPONSE";
         const gym = await createGym({
             environment: {
-                RIG_GYM_PROVIDER_OVERRIDES: "work_claude",
-                RIG_PROVIDER: "work_claude",
+                HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES: "work_claude",
+                HAPPY_TERMINAL_PROVIDER: "work_claude",
             },
             homeFiles: {
                 "Happy/Config/happy.toml": [

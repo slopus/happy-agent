@@ -74,7 +74,7 @@ export const searchSourceSchema = Type.Object(
 /**
  * What a vendor search comes back with: the vendor's own written answer and the sources it
  * cited. A vendor searches, reads, and synthesizes on its own side, so the useful result is the
- * answer rather than a list of links Rig would have to read again.
+ * answer rather than a list of links Happy Agent would have to read again.
  */
 export const searchAnswerSchema = Type.Object(
     {

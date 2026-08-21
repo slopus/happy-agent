@@ -5,7 +5,7 @@ import {
     type Gym,
     type HttpResponseReplacement,
     type InterceptedHttpRequest,
-} from "@slopus/rig-gym";
+} from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -148,7 +148,7 @@ describe("compiled Claude SDK requests through an intercepting HTTP proxy", () =
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes(firstResponse) &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 !snapshot.text.includes("esc to interrupt"),
             "the first Claude turn to return to the idle composer",
             30_000,
@@ -172,7 +172,7 @@ describe("compiled Claude SDK requests through an intercepting HTTP proxy", () =
 
         const transcriptFiles = await gym.runInContainer("sh", [
             "-c",
-            "find /home/rig/.claude/projects -type f -print 2>/dev/null || true",
+            "find /home/happy-terminal/.claude/projects -type f -print 2>/dev/null || true",
         ]);
         expect(transcriptFiles.stdout).toBe("");
     }, 120_000);

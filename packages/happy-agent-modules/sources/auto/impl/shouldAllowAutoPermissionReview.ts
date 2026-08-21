@@ -2,7 +2,7 @@ import type { AutoPermissionReview } from "./parseAutoPermissionReview.js";
 
 /**
  * Re-derives the decision from risk and authorization so a reviewer cannot allow an action its own
- * classification does not support. Ported from Rig v1's
+ * classification does not support. Ported from Happy Agent v1's
  * `permissions/shouldAllowAutoPermissionReview.ts`.
  *
  * `AutoModule` applies this once when it converts raw guardian output into a v2 decision, and

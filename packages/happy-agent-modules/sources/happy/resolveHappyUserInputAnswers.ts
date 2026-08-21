@@ -17,10 +17,10 @@ const happyAnswerSchema = Type.Object(
 );
 
 /**
- * Turns what a person tapped on the phone into the answer Rig's question was waiting for.
+ * Turns what a person tapped on the phone into the answer Happy Agent's question was waiting for.
  *
  * Happy answers a form question with the labels that were chosen and, when the
- * person wrote something of their own, the words they wrote. Rig keeps the two
+ * person wrote something of their own, the words they wrote. Happy Agent keeps the two
  * apart: a chosen label must be one it actually offered, and anything else is
  * the person's own text. Sorting them out here is what lets someone answer from
  * the phone with something the agent never thought to offer.
@@ -50,7 +50,7 @@ function readAnswer(value: unknown, options: UserInputOptions | undefined): User
     for (const raw of value.options ?? []) {
         const label = raw.trim();
         if (label.length === 0 || chosen.includes(label) || written.includes(label)) continue;
-        // A label Rig never offered is not a selection; it is something the person said.
+        // A label Happy Agent never offered is not a selection; it is something the person said.
         if (offered.has(label)) chosen.push(label);
         else written.push(label);
     }

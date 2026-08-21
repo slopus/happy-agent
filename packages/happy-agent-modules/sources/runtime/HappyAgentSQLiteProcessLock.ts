@@ -22,7 +22,7 @@ export async function acquireHappyAgentSQLiteProcessLock(
     try {
         await client.execute("PRAGMA journal_mode = DELETE");
         await client.execute("PRAGMA busy_timeout = 0");
-        // Match legacy Rig's connection-pinned lock instead of using a detached transaction handle.
+        // Match legacy Happy Agent's connection-pinned lock instead of using a detached transaction handle.
         await client.execute("BEGIN IMMEDIATE");
         return sqliteProcessLock(client);
     } catch (error: unknown) {

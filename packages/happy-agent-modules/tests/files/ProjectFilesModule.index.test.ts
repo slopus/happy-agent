@@ -32,7 +32,7 @@ describe("ProjectFilesModule index", () => {
         const root = await workspace();
         await mkdir(join(root, "sources", "components"), { recursive: true });
         await writeFile(join(root, "sources", "components", "ChatComposer.tsx"), "export {};");
-        await writeFile(join(root, "README.md"), "Rig");
+        await writeFile(join(root, "README.md"), "Happy Agent");
         const files = createFiles();
 
         const result = await files.search(await fileRoot(root), { query: "chtcomp" });

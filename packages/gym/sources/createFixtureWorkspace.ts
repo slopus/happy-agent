@@ -9,7 +9,7 @@ export async function createFixtureWorkspace(
     files: Readonly<Record<string, GymFixture>> = {},
     directory?: string,
 ): Promise<string> {
-    const target = directory ?? (await mkdtemp(join(tmpdir(), "rig-gym-")));
+    const target = directory ?? (await mkdtemp(join(tmpdir(), "happy-terminal-gym-")));
     try {
         await mkdir(target, { recursive: true });
         await chmod(target, 0o777);

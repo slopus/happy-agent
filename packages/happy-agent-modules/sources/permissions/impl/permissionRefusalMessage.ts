@@ -36,7 +36,7 @@ export function missingPermissionActionRefusal(tool: string): string {
 /**
  * What the model is told when a tool's own Auto-mode predicate threw while deciding whether the call
  * needs review or elevation. A throwing predicate has not said the action is safe, so the call is
- * refused as a tool-definition error and never runs — matching Rig v1, which turns a throwing review
+ * refused as a tool-definition error and never runs — matching Happy Agent v1, which turns a throwing review
  * predicate into a tool error rather than treating it as "no review needed" or "not elevated". The
  * message is fixed so a predicate's internal failure cannot leak into model-facing text.
  */
@@ -57,7 +57,7 @@ export function permissionRequestRefusal(tool: string, reason: string): string {
 }
 
 /**
- * What the model is told when the reviewer decided this action must not happen. This is Rig v1's
+ * What the model is told when the reviewer decided this action must not happen. This is Happy Agent v1's
  * exact rejected wording (`describeAutoPermissionDenial`): a fixed sentence carrying only the action
  * and the reviewer's own normalized rationale. No provider error, path, or other detail is ever
  * interpolated, so a refusal cannot leak the reviewer's internal state to the model.
@@ -80,7 +80,7 @@ export function deniedRefusal(action: string, reason: string): string {
  * than a refusal, and the difference is what the model is meant to act on: nothing has judged the
  * action unsafe, so it is unproven, and the answer is to say so rather than to find another route.
  *
- * The wording is Rig v1's exact timed-out and unavailable text (`describeAutoPermissionDenial`) and
+ * The wording is Happy Agent v1's exact timed-out and unavailable text (`describeAutoPermissionDenial`) and
  * carries no reason string. A timeout or an unavailable reviewer is expressed entirely by the fixed
  * sentence, so the provider error that caused it is never surfaced to the model.
  */

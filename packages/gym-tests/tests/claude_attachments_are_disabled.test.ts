@@ -5,7 +5,7 @@ import {
     type Gym,
     type HttpResponseReplacement,
     type InterceptedHttpRequest,
-} from "@slopus/rig-gym";
+} from "@slopus/happy-terminal-gym";
 
 const MODEL = "claude-sonnet-5";
 const running = new Set<Gym>();
@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 describe("Claude SDK attachments", () => {
-    it("leaves dynamic context to Rig and preserves an append-only wire prefix", async () => {
+    it("leaves dynamic context to Happy Agent and preserves an append-only wire prefix", async () => {
         let responseIndex = 0;
         const gym = await createGym({
             mode: "docker",
@@ -66,7 +66,7 @@ describe("Claude SDK attachments", () => {
             await gym.terminal.waitUntil(
                 (snapshot) =>
                     snapshot.text.includes(`CLAUDE_ATTACHMENTS_RESPONSE_${turn}`) &&
-                    snapshot.text.includes("Ask Rig to do anything") &&
+                    snapshot.text.includes("Ask Happy Terminal to do anything") &&
                     !snapshot.text.includes("esc to interrupt"),
                 `Claude attachment turn ${turn} to return to the idle composer`,
                 30_000,

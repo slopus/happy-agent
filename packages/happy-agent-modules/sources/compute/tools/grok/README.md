@@ -20,13 +20,13 @@ for everything else.
 
 ## Where this surface departs from vendor truth
 
-- **`secrets` is absent** from `run_terminal_command`. Rig's live Grok tool has it; this module has
+- **`secrets` is absent** from `run_terminal_command`. Happy Agent's live Grok tool has it; this module has
   no secret resolver, so offering the argument would promise something it cannot do.
-- **No image tool.** Grok has no vendor descriptor for viewing a local image and Rig gives Grok
+- **No image tool.** Grok has no vendor descriptor for viewing a local image and Happy Agent gives Grok
   none, so this surface has none either. `read_file` reads text.
 - **`read_file` has no `pages` or `format`.** Those two arguments exist on the vendor descriptor
   for paging through PDFs, which this module cannot render.
-- **`task_ids` is required** on `get_command_or_subagent_output`, as it is in Rig. The vendor
+- **`task_ids` is required** on `get_command_or_subagent_output`, as it is in Happy Agent. The vendor
   descriptor makes it optional with an empty default, which is a call with nothing to answer.
 - **Subagents are not here.** `get_command_or_subagent_output` and `kill_command_or_subagent` keep
   Grok's names, because that is what the model calls, but this module runs commands only. Their

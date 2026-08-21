@@ -94,7 +94,7 @@ export async function normalizeProjectAvatar(
 }
 
 /**
- * Reads a response body without letting the far end decide how much memory Rig spends. The
+ * Reads a response body without letting the far end decide how much memory Happy Agent spends. The
  * declared length is checked first, and the stream is cut off the moment it exceeds the bound.
  */
 export async function readBoundedResponseBytes(

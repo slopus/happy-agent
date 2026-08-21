@@ -37,7 +37,9 @@ export async function readGitFileAtRevision(options: {
 function assertRevision(revision: string): void {
     if (revision.length === 0) throw new Error("A Git revision is required.");
     if (revision.startsWith("-") || revision.includes(":")) {
-        throw new Error("Rig cannot read a Git revision that starts with a dash or has a colon.");
+        throw new Error(
+            "Happy Agent cannot read a Git revision that starts with a dash or has a colon.",
+        );
     }
 }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -37,7 +37,7 @@ describe("available model guidance", () => {
         const modelMenu = await gym.terminal.waitForText("Choose Model", 30_000);
         expect(modelMenu.text).toContain("Opus 5 1M");
         gym.terminal.press("escape");
-        await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
+        await gym.terminal.waitForText("Ask Happy Terminal to do anything", 30_000);
 
         gym.terminal.type("Confirm the available model guidance.");
         gym.terminal.press("enter");
@@ -82,7 +82,7 @@ describe("available model guidance", () => {
         expect(modelMenu.text).not.toContain("Grok 4.5");
         expect(modelMenu.text).not.toContain("Composer 2.5");
         gym.terminal.press("escape");
-        await gym.terminal.waitForText("Ask Rig to do anything", 30_000);
+        await gym.terminal.waitForText("Ask Happy Terminal to do anything", 30_000);
 
         gym.terminal.type("Confirm disabled provider models are hidden.");
         gym.terminal.press("enter");

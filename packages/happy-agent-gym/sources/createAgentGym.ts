@@ -246,8 +246,8 @@ class AgentGymInstance implements AgentGym {
             compute: createGymCompute(),
             environment: {
                 GIT_CEILING_DIRECTORIES: resolve(this.#home.root, "..", ".."),
-                RIG_PROJECTS_DIRECTORY: join(this.#home.root, "projects"),
-                RIG_WORKSPACES_DIRECTORY: join(this.#home.root, "workspaces"),
+                HAPPY_AGENT_PROJECTS_DIRECTORY: join(this.#home.root, "projects"),
+                HAPPY_AGENT_WORKSPACES_DIRECTORY: join(this.#home.root, "workspaces"),
             },
             happyHome: this.#home.happyHome,
             inference: {

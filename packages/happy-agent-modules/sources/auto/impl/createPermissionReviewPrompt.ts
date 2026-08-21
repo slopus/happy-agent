@@ -3,7 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { PERMISSION_REVIEW_FOLLOWUP_REMINDER } from "./createPermissionReviewInstructions.js";
 
 /**
- * The exact per-review request wrapper, ported from Rig v1's `createPermissionReviewSideAgent.ts`.
+ * The exact per-review request wrapper, ported from Happy Agent v1's `createPermissionReviewSideAgent.ts`.
  *
  * The reviewer keeps its own history across reviews, so a later review sends only the conversation
  * the reviewer has not already seen. The first review omits the follow-up reminder and marks its

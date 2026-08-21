@@ -103,7 +103,7 @@ export const EVENTS_CAPACITY = 10_000;
  * The daemon's durable, bounded event journal.
  *
  * Provider `SessionEvent` values are stored verbatim. A separate `rigEvent` projection is attached
- * when Rig's current transcript reducer needs its indexed message shape; it is an adapter, never
+ * when Happy Agent's current transcript reducer needs its indexed message shape; it is an adapter, never
  * a replacement for the provider event.
  */
 export class EventsModule implements AgentModule<AnyAgentTool> {

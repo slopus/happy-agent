@@ -96,7 +96,7 @@ describe("MCP names and security-facing descriptions", () => {
         expect(description).toContain('"Delete Release"');
         expect(description).toContain('"Docs/Server"');
         expect(description).toContain("\\u{202e}");
-        expect(description).toContain("outside Rig");
+        expect(description).toContain("outside Happy Agent");
     });
 
     it("survives circular arguments while describing a permission action", () => {
@@ -171,7 +171,7 @@ describe("MCP trust records and project notices", () => {
             ...http,
             fingerprint: fingerprintMcpServer(http),
         });
-        expect(httpTrust.questions[0]?.question).toContain("your saved Rig preferences");
+        expect(httpTrust.questions[0]?.question).toContain("your saved Happy Agent preferences");
         expect(httpTrust.questions[0]?.options[0]?.description).toContain(
             'Connect to "https://example.test/mcp".',
         );

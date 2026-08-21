@@ -237,17 +237,17 @@ await happy.network.onTunnel((tunnel) => {
 
 Plain HTTP request and synthetic/replacement bodies are limited to 256 KiB. The handler may return
 `pass_through`, a full `response`, or a replacement `request`; omitted replacement fields retain
-their original values. Rig gives both body capture and the handler about five seconds. A streaming
+their original values. Happy Agent gives both body capture and the handler about five seconds. A streaming
 body that does not finish in that window stays on the normal streaming proxy path instead. A
 timeout, thrown error, disconnect, malformed result, or oversized body fails open to normal
-forwarding and is written to Rig's log.
+forwarding and is written to Happy Agent's log.
 
 Network policy always runs before plugin selection. Declaring a hostname never makes a blocked
 destination reachable, and a rewritten URL is checked against the allowlist again. When multiple
 running plugins declare one hostname, the lexicographically first plugin folder handles it. Later
 plugins receive the request with `mode: "observe"` and their return values are ignored.
 
-HTTPS interception is observation-only. Rig sees the CONNECT hostname but deliberately does not
+HTTPS interception is observation-only. Happy Agent sees the CONNECT hostname but deliberately does not
 mint certificates or unwrap TLS, so full HTTPS MITM is out of scope. `onTunnel` fires after an
 allowed tunnel closes with its hostname, port, and byte counts; it cannot inspect or modify HTTPS
 headers, bodies, or responses.
@@ -293,7 +293,7 @@ register contributions once during startup and keep their returned server handle
 
 ## Develop without Docker
 
-`happy-plugins` includes the same TypeBox schemas and Unix-socket client used by Rig plus an
+`happy-plugins` includes the same TypeBox schemas and Unix-socket client used by Happy Agent plus an
 in-memory fake Happy host. The one-command runner starts a TypeScript source plugin with that host,
 prints every request and registration, lists its MCP tools, and can call one:
 
@@ -317,7 +317,7 @@ A seed file uses the SDK's exported project, workspace, and session schemas:
     "projects": [
         {
             "id": "project-1",
-            "name": "Rig",
+            "name": "Happy Agent",
             "path": "/workspace/rig"
         }
     ],
@@ -332,7 +332,7 @@ For tests that need direct control, use the same host programmatically:
 import { createHappyPluginTestHost } from "happy-plugins";
 
 const host = await createHappyPluginTestHost({
-    projects: [{ id: "project-1", name: "Rig", path: "/workspace/rig" }],
+    projects: [{ id: "project-1", name: "Happy Agent", path: "/workspace/rig" }],
 });
 
 try {
@@ -344,7 +344,7 @@ try {
 ```
 
 `host.mcp.waitForTools()`, `host.mcp.listTools()`, and `host.mcp.callTool()` let a test observe and
-exercise model-visible MCP contributions without reaching into Rig internals.
+exercise model-visible MCP contributions without reaching into Happy Agent internals.
 `host.apps.callTool()` exercises app-visible tools, while `host.apps.storage` mirrors the bounded
 JSON storage extension. The development runner validates a colocated `happy.plugin.json` and all
 declared app bundles before it starts plugin code. Seed `providerUsage` to exercise
@@ -391,7 +391,7 @@ folder. That file retains the most recent 1 MiB rather than freezing at its earl
 resets when a new plugin process starts. Runtime socket state below `.runtime/` in the plugin's
 writable data folder should not be edited or distributed.
 
-Rig exposes the newest useful 16 KiB snapshot through `/plugins <name>`, the `plugin_logs` agent
+Happy Agent exposes the newest useful 16 KiB snapshot through `/plugins <name>`, the `plugin_logs` agent
 tool, and the local protocol, with `truncated` set when older retained output was
 omitted. A plugin is reported explicitly as running, stopped, or failed; logs are
 snapshots, not an unbounded stream or polling API.
@@ -436,7 +436,7 @@ await happy.compute.register(handlers, {
 await happy.ready("Ready.");
 ```
 
-Handlers can classify expected failures without making Rig treat every exception as provider
+Handlers can classify expected failures without making Happy Agent treat every exception as provider
 misbehavior:
 
 ```ts
@@ -446,8 +446,8 @@ throw new HappyComputeProviderError("invalid_request", "The requested file does 
 ```
 
 All provider-side compute error codes remain valid provider completions. The daemon-owned
-`preparing_compute` code is not available through `HappyComputeProviderError` because only Rig
-knows an instance's authoritative lifecycle. Rig preserves provider codes and derives `retryable`
+`preparing_compute` code is not available through `HappyComputeProviderError` because only Happy Agent
+knows an instance's authoritative lifecycle. Happy Agent preserves provider codes and derives `retryable`
 itself. `invalid_request`, `instance_not_found`, `provider_not_found`, and
 `capacity_exhausted` are consumer-attributable and do not affect provider health. Untyped handler
 exceptions become provider-attributable `invalid_response` failures.
@@ -526,13 +526,13 @@ error also carries the current `phase`, `startedAt`, `elapsedMs`, `lastProgressA
 `percent`, so polling consumers can explain long waits without operation-specific logic.
 
 The provider must acknowledge the background job within 30 seconds. Its handler, file
-copy/upload, and Rig's bounded `exec("true")` probe then share the registration's declared
+copy/upload, and Happy Agent's bounded `exec("true")` probe then share the registration's declared
 provisioning budget. The default is five minutes and the hard cap is 30 minutes. Provider progress
 does not extend that budget, and silence is informational rather than a second failure timer.
 Every handle follows one daemon-owned
 `unprovisioned -> provisioning -> ready -> unavailable -> failed | stopped` lifecycle.
 
-Rig publishes durable `compute_preparation` events for preparing, checkout, file copy,
+Happy Agent publishes durable `compute_preparation` events for preparing, checkout, file copy,
 verification, readiness, retryable failure, terminal failure, and provisioning cancellation. Every
 attempt publishes a final event whose state is `ready`, `unprovisioned`, `failed`, or `stopped`, so
 a subscriber never has to infer that preparation ended from a missing event. Each carries a
@@ -572,10 +572,10 @@ and terminally fails its materialized instances. Unprovisioned handles remain me
 provision after the plugin restarts with a new generation.
 
 Each instance is leased to the consumer plugin process generation that created it. When that
-consumer generation ends, Rig terminally stops its instances and asks the provider to clean them
+consumer generation ends, Happy Agent terminally stops its instances and asks the provider to clean them
 up. Provider notification is always best-effort and does not control the daemon-side transition.
 Concurrent consumer stop, reaping, and shutdown share one cleanup task and do not double-notify.
-Rig also reaps materialized instances after two hours of lifetime or 30 minutes without a call
+Happy Agent also reaps materialized instances after two hours of lifetime or 30 minutes without a call
 touching them, and best-effort-stops live instances during daemon shutdown. Unprovisioned handles
 have the separate two-hour creation lifetime above; the idle clock remains materialized-only.
 
@@ -583,7 +583,7 @@ Provisioning-budget expiry loudly fails the attempt and resets its handle to `un
 does not degrade provider health. This intentionally treats the aggregate background budget
 differently from ordinary read, write, exec, and stop deadline misses.
 
-Rig retains at most 256 oldest-first terminal tombstones per daemon: final state, human-readable
+Happy Agent retains at most 256 oldest-first terminal tombstones per daemon: final state, human-readable
 reason, creation time, and death time. Calls on a retained dead ID return `instance_failed` with
 `state: "failed" | "stopped"` and that reason. `instance_not_found` is reserved for IDs that never
 existed or whose tombstones were evicted.
@@ -954,7 +954,7 @@ provider or plan exists.
 ### MCP Apps
 
 Apps are static resources declared in `happy.plugin.json`; plugin code does not start or register
-them. Rig validates and snapshots each folder before starting the plugin:
+them. Happy Agent validates and snapshots each folder before starting the plugin:
 
 ```json
 "apps": [{
@@ -966,7 +966,7 @@ them. Rig validates and snapshots each folder before starting the plugin:
 }]
 ```
 
-Rig derives an official `ui://` URI and serves the page as
+Happy Agent derives an official `ui://` URI and serves the page as
 `text/html;profile=mcp-app`. The page uses the MCP Apps 2026-01-26 JSON-RPC bridge: `ui/initialize`,
 `ui/notifications/initialized`, `resources/read`, and `tools/call`. There is no injected global API.
 
@@ -1027,10 +1027,10 @@ await happy.mcp.startServer({
 await happy.ready("Ready.");
 ```
 
-Rig gives the tool a stable name derived from the plugin, server, and tool names and offers it in
+Happy Agent gives the tool a stable name derived from the plugin, server, and tool names and offers it in
 ordinary projects everywhere. Calls use the same MCP permission path as configured MCP servers:
 they require Auto or Full access and every Auto call is reviewed because a plugin may act outside
-Rig's filesystem sandbox. Cancellation reaches the handler's `AbortSignal`; disconnected,
+Happy Agent's filesystem sandbox. Cancellation reaches the handler's `AbortSignal`; disconnected,
 replaced, restarted, and uninstalled plugin generations are retired immediately.
 
 `createHappyMcpToolName(pluginName, serverName, toolName)` returns that exact stable agent-facing

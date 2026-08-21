@@ -1,7 +1,7 @@
 import { createServer, Socket } from "node:net";
 import { performance } from "node:perf_hooks";
 
-import { GhosttyTerminal } from "@slopus/rig-gym";
+import { GhosttyTerminal } from "@slopus/happy-terminal-gym";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {

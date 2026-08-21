@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -14,13 +14,13 @@ afterEach(async () => {
 });
 
 describe("installation inspection reports daemon health", () => {
-    it("answers rig inspect --json through the daemon API and exits cleanly", async () => {
+    it("answers happy-terminal inspect --json through the daemon API and exits cleanly", async () => {
         const repositoryRoot = resolve(import.meta.dirname, "../../..");
         const sourceHook = join(
             repositoryRoot,
             "packages/gym/sources/registerTypeScriptSourceHooks.mjs",
         );
-        const rigMain = join(repositoryRoot, "packages/rig/sources/main.ts");
+        const rigMain = join(repositoryRoot, "packages/happy-terminal/sources/main.ts");
         const tsxEntry = pathToFileURL(
             createRequire(join(repositoryRoot, "package.json")).resolve("tsx"),
         ).href;

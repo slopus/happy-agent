@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -65,7 +65,7 @@ async function submitAndWait(gym: Gym, prompt: string, expected: string): Promis
     await gym.terminal.waitUntil(
         (screen) =>
             screen.text.includes(expected) &&
-            screen.text.includes("Ask Rig to do anything") &&
+            screen.text.includes("Ask Happy Terminal to do anything") &&
             !screen.text.includes("esc to interrupt"),
         expected,
     );

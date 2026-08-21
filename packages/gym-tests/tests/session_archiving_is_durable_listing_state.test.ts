@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -64,15 +64,15 @@ describe("session archiving is durable listing state", () => {
 const exerciseSessionArchiveScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
-rig="node /app/packages/rig/dist/main.js"
+happy_terminal="node /app/packages/happy-terminal/dist/main.js"
 
-$rig daemon start
+$happy_terminal daemon start
 node /workspace/session-archive-client.mjs before
-$rig daemon stop
-while $rig daemon status | grep -q "Daemon is running"; do
+$happy_terminal daemon stop
+while $happy_terminal daemon status | grep -q "Daemon is running"; do
     sleep 0.05
 done
-$rig daemon start
+$happy_terminal daemon start
 node /workspace/session-archive-client.mjs after
 echo SESSION_ARCHIVING_VERIFIED
 read -r _

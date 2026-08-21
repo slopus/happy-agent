@@ -2,7 +2,7 @@ import type { AgentModel } from "@slopus/happy-agent-base";
 import type { ProviderModelCompatibilityType } from "@slopus/happy-providers";
 
 /**
- * Builds the private reviewer model catalog, ported from Rig v1's reviewer-model selection and its
+ * Builds the private reviewer model catalog, ported from Happy Agent v1's reviewer-model selection and its
  * `reviewerModelForProvider` catalog assumptions.
  *
  * This catalog is never returned by any public catalog route. It exists only so the private review

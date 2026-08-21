@@ -5,11 +5,11 @@ import { describe, it } from "node:test";
 import { resolveReleasePackage } from "./resolveReleasePackage.js";
 
 describe("resolveReleasePackage", () => {
-    it("keeps Rig as the default release target", () => {
+    it("keeps Happy Terminal as the default release target", () => {
         const target = resolveReleasePackage(undefined);
 
-        assert.equal(target.key, "rig");
-        assert.equal(target.tagPrefix, "rig-v");
+        assert.equal(target.key, "happy-terminal");
+        assert.equal(target.tagPrefix, "happy-terminal-v");
         assert.deepEqual(target.testArguments, [["run", "test:release"]]);
         const rootManifest = JSON.parse(
             readFileSync(new URL("../../package.json", import.meta.url), "utf8"),

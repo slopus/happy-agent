@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -13,8 +13,8 @@ describe("Claude typed inference errors", () => {
     it("renders exhausted tokens, ordinary rate limits, and unclassified failures distinctly", async () => {
         const gym = await createGym({
             environment: {
-                RIG_GYM_PROVIDER_OVERRIDES: "kirill_claude",
-                RIG_PROVIDER: "kirill_claude",
+                HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES: "kirill_claude",
+                HAPPY_TERMINAL_PROVIDER: "kirill_claude",
             },
             homeFiles: {
                 "Happy/Config/happy.toml": [
@@ -64,7 +64,7 @@ async function submitAndWait(gym: Gym, prompt: string, expected: string): Promis
     await gym.terminal.waitUntil(
         (screen) =>
             screen.text.includes(expected) &&
-            screen.text.includes("Ask Rig to do anything") &&
+            screen.text.includes("Ask Happy Terminal to do anything") &&
             !screen.text.includes("esc to interrupt"),
         expected,
     );

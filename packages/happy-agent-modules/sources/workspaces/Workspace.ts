@@ -21,7 +21,7 @@ export const MAX_WORKSPACE_COMMIT_LENGTH = 64;
 export const MAX_WORKSPACE_GIT_REF_LENGTH = 512;
 export const MAX_WORKSPACE_DIVERGENCE = 1_000_000;
 export const MAX_WORKSPACE_INITIALIZATION_ATTEMPT = 1_000_000;
-/** Human-readable failure detail kept for one workspace, matching Rig's durable error bound. */
+/** Human-readable failure detail kept for one workspace, matching Happy Agent's durable error bound. */
 export const MAX_WORKSPACE_ERROR_LENGTH = 500;
 export const MAX_WORKSPACE_EVENT_ID_LENGTH = 128;
 export const MAX_WORKSPACE_TIMESTAMP = Number.MAX_SAFE_INTEGER;
@@ -116,7 +116,7 @@ export const workspaceCommitSchema = Type.String({
     pattern: "^[0-9a-fA-F]+$",
 });
 
-/** Branch Rig manages for this workspace. It follows the workspace name. */
+/** Branch Happy Agent manages for this workspace. It follows the workspace name. */
 export const workspaceBranchSchema = Type.String({
     minLength: 1,
     maxLength: MAX_WORKSPACE_BRANCH_LENGTH,

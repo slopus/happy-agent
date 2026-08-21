@@ -23,7 +23,7 @@ export function projectGitCommandSecret(
             return { environment: lease.environment, release: lease.release };
         },
         description:
-            "Git access for this managed project through Rig's credential proxy. Select this only for commands that need the project origin.",
+            "Git access for this managed project through Happy Agent's credential proxy. Select this only for commands that need the project origin.",
         environment: {},
         environmentVariables: [
             "GCM_INTERACTIVE",

@@ -21,7 +21,7 @@ describe("dockerSandboxArguments", () => {
             "/workspace",
             "--bind",
             "/gyms/fixture/home",
-            "/home/rig",
+            "/home/happy-terminal",
             "--bind",
             "/gym-state/fixture/tmp",
             "/tmp",
@@ -29,7 +29,7 @@ describe("dockerSandboxArguments", () => {
             // directory is bound from container-local state instead.
             "--bind",
             "/gym-state/fixture/agent",
-            "/home/rig/.happy/agent",
+            "/home/happy-terminal/.happy/agent",
             "--tmpfs",
             "/gyms",
             "--tmpfs",

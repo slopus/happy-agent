@@ -13,7 +13,7 @@ import { selectedRecentCount } from "../ImageGeneration.js";
  * The one image tool, given to every model.
  *
  * The name is Codex's because the capability is: images are generated on Codex accounts, and Codex
- * models are trained against a built-in image tool Rig cannot redefine — the Responses API reserves
+ * models are trained against a built-in image tool Happy Agent cannot redefine — the Responses API reserves
  * both that tool and its `image_gen` namespace and rejects the whole request when a definition
  * under either differs from the built-in one. Prefixing the name keeps the request valid while the
  * model still recognizes the capability, and every other family reads the same guidance rather than
@@ -83,5 +83,5 @@ function describeImageGenerationAction(
         paths === undefined ? "" : ` and ${String(paths.length)} local image reference(s)`
     }${
         recent === undefined ? "" : ` and ${String(recent)} recent conversation image(s)`
-    } to Codex image generation. If an account definitively refuses the request, Rig may send the same data to another of ${String(module.accountCount)} configured Codex cloud account(s), including accounts with custom endpoints. Access: conversation data, local filesystem read/write, and external Codex APIs`;
+    } to Codex image generation. If an account definitively refuses the request, Happy Agent may send the same data to another of ${String(module.accountCount)} configured Codex cloud account(s), including accounts with custom endpoints. Access: conversation data, local filesystem read/write, and external Codex APIs`;
 }

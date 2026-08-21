@@ -3,7 +3,7 @@ import type { UserInputRequest } from "@slopus/happy-agent-modules";
 /**
  * Happy carries a question the agent asked on its own channel, apart from
  * permissions: a permission gates something the agent wants to do, while this
- * asks the person for something the agent does not know. Every Rig question is
+ * asks the person for something the agent does not know. Every Happy Agent question is
  * published as the `form` kind whatever tool asked it, so a phone that cannot
  * render one still shows it and lets the person dismiss it.
  */
@@ -97,7 +97,7 @@ export function createHappyAgentState(options: {
 /**
  * Builds the form the phone renders.
  *
- * Every question also accepts words the person writes themselves, because Rig
+ * Every question also accepts words the person writes themselves, because Happy Agent
  * takes any answer and not only the ones it thought to offer.
  */
 export function toHappyCommunication(

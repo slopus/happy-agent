@@ -2,7 +2,7 @@ packages:
     - "packages/*"
 
 # just-bash offers optional native xz and zstd codecs, but it refuses both unless a caller passes
-# `allowNativeCodecs`, which Rig never does. Skipping them keeps the workspace matching the
+# `allowNativeCodecs`, which Happy Agent never does. Skipping them keeps the workspace matching the
 # published package, which does not ship the native addons either.
 ignoredOptionalDependencies:
     - "@mongodb-js/zstd"

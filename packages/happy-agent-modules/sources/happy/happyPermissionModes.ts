@@ -4,7 +4,7 @@ import type { AgentPermissionMode } from "@slopus/happy-agent-base";
 export type HappyPermissionModeKind = "default" | "read-only" | "safe-yolo" | "yolo";
 
 /**
- * Rig's permission modes as the phone offers them.
+ * Happy Agent's permission modes as the phone offers them.
  *
  * The words are the ones a person reads on the mode picker, so they say what
  * the mode actually does rather than repeating its identifier.
@@ -30,7 +30,7 @@ export const HAPPY_PERMISSION_MODES = [
     },
     {
         code: "full_access",
-        description: "Removes Rig's filesystem, shell, and network restrictions.",
+        description: "Removes Happy Agent's filesystem, shell, and network restrictions.",
         kind: "yolo",
         value: "Full access",
     },

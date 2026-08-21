@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { libsqlCommonJsScript } from "./libsqlScript.js";
 
 const running = new Set<Gym>();
@@ -50,7 +50,7 @@ describe("immediate submit after Escape", () => {
             (snapshot) =>
                 snapshot.text.includes("Session interrupted") &&
                 snapshot.text.includes("IMMEDIATE_FOLLOWUP_DELIVERED") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 !snapshot.text.includes("Messages to be submitted after next tool call") &&
                 !snapshot.text.includes("There is no active run to steer") &&
                 !snapshot.text.includes("409"),
@@ -110,7 +110,7 @@ async function readSubmissionCounts(
     displayText: string,
 ): Promise<{ eventCount: number; messageCount: number }> {
     const script = libsqlCommonJsScript(`
-const database = await openDatabase("/home/rig/.server/sessions.sqlite");
+const database = await openDatabase("/home/happy-terminal/.server/sessions.sqlite");
 let result;
 try {
 const session = (
@@ -147,7 +147,7 @@ process.stdout.write(JSON.stringify(result));
 }
 
 async function screenshot(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_SCREENSHOT_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_SCREENSHOT_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }

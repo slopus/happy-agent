@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -53,7 +53,7 @@ async function waitForTextWhileRunning(gym: Gym, value: string) {
         gym.terminal.waitForText(value, 30_000),
         gym.exit().then(({ exitCode, signal }) => {
             throw new Error(
-                `Rig exited while waiting for ${value} (code ${exitCode}, signal ${String(signal)}).`,
+                `Happy Terminal exited while waiting for ${value} (code ${exitCode}, signal ${String(signal)}).`,
             );
         }),
     ]);
@@ -67,8 +67,8 @@ function assertHealthyTinyTerminal(
     expect(snapshot.scroll).toMatchObject({ atBottom: true, visibleRows: 40 });
     expect(snapshot.cursor.x).toBeLessThan(19);
     expect(snapshot.cursor.y).toBeLessThan(40);
-    expect(snapshot.title).toContain("Rig");
-    expect(snapshot.text).toContain("Ask Rig");
+    expect(snapshot.title).toContain("Happy Terminal");
+    expect(snapshot.text).toContain("Ask Happy Terminal");
     expect(snapshot.text).toContain("gym off");
     expect(snapshot.text).not.toContain("�");
 }

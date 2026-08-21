@@ -28,7 +28,7 @@ durable tool call runs again, finds its own row still waiting, and re-enters the
 whatever time is left.
 
 Three things end a wait: its time arrives, the turn is aborted, or a message arrives for the agent.
-The last one comes from `interruptWaits`, which Rig calls when a person submits or steers into a
+The last one comes from `interruptWaits`, which Happy Agent calls when a person submits or steers into a
 session — a queued message does not reach the conversation until the current turn ends, and the
 wait is what is holding that turn open. `messageAccepted` ends any wait still standing once the
 message really is in the conversation. The result is `elapsed` or `interrupted` and always reports

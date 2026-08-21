@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -46,7 +46,7 @@ describe("user scrollback position is preserved while delayed output arrives", (
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("HISTORICAL_RESPONSE_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "initial history and idle composer at the bottom",
             30_000,
@@ -91,7 +91,7 @@ describe("user scrollback position is preserved while delayed output arrives", (
         const liveOutput = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("DELAYED_OUTPUT_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "delayed response and idle composer after returning to the bottom",
             30_000,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { captureScrollback, createGym, type Gym } from "@slopus/rig-gym";
+import { captureScrollback, createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -25,7 +25,7 @@ describe("vertical resize", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("VERTICAL_RESIZE_REPLY") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the short session at the initial compact height",
             30_000,
@@ -52,7 +52,7 @@ describe("vertical resize", () => {
         const followUp = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("VERTICAL_RESIZE_FOLLOW_UP") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "a follow-up turn after vertical resizes",
             30_000,
@@ -84,7 +84,7 @@ describe("vertical resize", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("LONG_VERTICAL_RESIZE_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "the overflowing session at the initial compact height",
             30_000,
@@ -103,7 +103,7 @@ describe("vertical resize", () => {
         const followUp = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("LONG_VERTICAL_RESIZE_FOLLOW_UP") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "a follow-up turn after the overflowing session resize",
             30_000,
@@ -142,7 +142,7 @@ async function settleVerticalResize(
         (snapshot) =>
             snapshot.rows.length === rows &&
             !snapshot.text.includes(marker) &&
-            snapshot.text.includes("Ask Rig to do anything") &&
+            snapshot.text.includes("Ask Happy Terminal to do anything") &&
             snapshot.scroll.atBottom,
         `the ${rows}-row layout to return to an empty composer`,
         30_000,
@@ -150,7 +150,7 @@ async function settleVerticalResize(
 }
 
 function composerRow(rows: readonly string[]): number {
-    return rows.findIndex((row) => row.includes("Ask Rig to do anything"));
+    return rows.findIndex((row) => row.includes("Ask Happy Terminal to do anything"));
 }
 
 function maximumBlankRunBeforeComposer(rows: readonly string[]): number {

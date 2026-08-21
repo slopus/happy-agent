@@ -1,10 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { createGym, type Gym } from "@slopus/rig-gym";
+import { createGym, type Gym } from "@slopus/happy-terminal-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
-const LIVE = process.env.RIG_LIVE_TEST === "1";
+const LIVE = process.env.HAPPY_TERMINAL_LIVE_TEST === "1";
 const running = new Set<Gym>();
 const TOOL_OUTPUT = "GROK_46_REAL_TOOL";
 const FINAL_RESPONSE = `${TOOL_OUTPUT}_COMPLETE`;
@@ -66,7 +66,7 @@ describe.skipIf(!LIVE)("Grok 4.6 real inference Gym", () => {
                 screen.text.includes(`• Ran echo ${TOOL_OUTPUT}`) &&
                 screen.text.includes(`└ ${TOOL_OUTPUT}`) &&
                 screen.text.includes(FINAL_RESPONSE) &&
-                screen.text.includes("Ask Rig to do anything"),
+                screen.text.includes("Ask Happy Terminal to do anything"),
             "a real Grok 4.6 tool call and completed terminal response",
             240_000,
         );

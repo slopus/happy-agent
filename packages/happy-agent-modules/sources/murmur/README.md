@@ -102,7 +102,7 @@ together.
 
 ## Deliberately not here
 
-- **Folder sharing.** Legacy Rig shared folders over the same identity. The snapshot a client
+- **Folder sharing.** Legacy Happy Agent shared folders over the same identity. The snapshot a client
   reads still has a `folderShares` field, and the host answers with an empty list.
 - **Onboarding.** Enabling sharing is a configuration decision and naming the person is
   `bindProfile`. There is no state machine and no `/v0/onboarding/murmur`.

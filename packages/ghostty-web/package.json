@@ -30,7 +30,7 @@
         "test": "vitest run"
     },
     "devDependencies": {
-        "@slopus/rig-gym": "workspace:*",
+        "@slopus/happy-terminal-gym": "workspace:*",
         "@types/node": "^24.0.10",
         "typescript": "^5.8.3",
         "vitest": "^3.2.4"

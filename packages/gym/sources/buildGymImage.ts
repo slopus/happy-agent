@@ -24,10 +24,10 @@ export function buildGymImage(image: string, repositoryRoot: string): Promise<st
                 { cwd: repositoryRoot, maxBuffer: 100 * 1024 * 1024 },
             ).then(({ stdout }) => stdout.trim());
         const pending =
-            process.env.RIG_GYM_REBUILD === "1"
+            process.env.HAPPY_TERMINAL_GYM_REBUILD === "1"
                 ? buildImage()
                 : inspectGymImage(image, repositoryRoot).catch((error: unknown) => {
-                      if (process.env.RIG_GYM_SKIP_BUILD === "1") {
+                      if (process.env.HAPPY_TERMINAL_GYM_SKIP_BUILD === "1") {
                           throw error;
                       }
                       return buildImage();

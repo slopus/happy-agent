@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { captureScrollback, createGym, type Gym } from "@slopus/rig-gym";
+import { captureScrollback, createGym, type Gym } from "@slopus/happy-terminal-gym";
 
 const runningGyms = new Set<Gym>();
 const runningServers = new Set<CodexRetryFixture>();
@@ -44,7 +44,7 @@ describe("Codex retry configuration", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("CODEX_RETRY_SESSION_READY") &&
-                snapshot.text.includes("Ask Rig to do anything"),
+                snapshot.text.includes("Ask Happy Terminal to do anything"),
             "the initial Codex turn to settle",
             30_000,
         );

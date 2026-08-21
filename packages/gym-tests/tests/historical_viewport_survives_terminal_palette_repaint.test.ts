@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createGym, waitForTerminalOutput, type Gym } from "@slopus/rig-gym";
+import { createGym, waitForTerminalOutput, type Gym } from "@slopus/happy-terminal-gym";
 
 const running = new Set<Gym>();
 
@@ -40,7 +40,7 @@ describe("terminal palette repaint while reading history", () => {
         await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("PALETTE_HISTORY_END") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "palette history at the bottom",
             30_000,
@@ -94,7 +94,7 @@ describe("terminal palette repaint while reading history", () => {
         const bottom = await gym.terminal.waitUntil(
             (snapshot) =>
                 snapshot.text.includes("PALETTE_ACTIVE_TURN_COMPLETE") &&
-                snapshot.text.includes("Ask Rig to do anything") &&
+                snapshot.text.includes("Ask Happy Terminal to do anything") &&
                 snapshot.scroll.atBottom,
             "current live tail after palette repaint",
             30_000,
@@ -141,7 +141,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value?: T) => void } {
 }
 
 async function writeProof(gym: Gym, name: string): Promise<void> {
-    const directory = process.env.RIG_GYM_PROOF_DIR;
+    const directory = process.env.HAPPY_TERMINAL_GYM_PROOF_DIR;
     if (directory === undefined) return;
     await gym.terminal.screenshot(resolve(directory, name));
 }
