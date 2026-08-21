@@ -535,7 +535,7 @@ async function applyAction(
             await applyWatch(gym, gitWorkspaceId);
             break;
         case "external":
-            await applyExternal(action, gym, model);
+            await applyExternal(action, gym, workspaceId, model);
             break;
         case "restart":
             await gym.restart();
@@ -662,6 +662,7 @@ async function applyWrite(
         throw new Error(`Current write unexpectedly has no record for ${action.path}.`);
     }
 
+    const journalBefore = await journal(gym.client);
     const response = await client.writeFile(workspaceId, {
         content: bytes.toString("base64"),
         expectedHash,
@@ -672,6 +673,7 @@ async function applyWrite(
     const revisions = before?.revisions ?? [];
     revisions.push(Buffer.from(bytes));
     model.files.set(action.path, { bytes: Buffer.from(bytes), revisions });
+    await waitForFileUpdate(gym, workspaceId, action.path, journalBefore);
 }
 
 async function applyRace(
@@ -684,6 +686,7 @@ async function applyRace(
     const before = model.files.get(action.path);
     if (before === undefined) throw new Error(`Cannot race-write missing ${action.path}.`);
     const expectedHash = hash(before.bytes);
+    const journalBefore = await journal(gym.client);
     const [left, right] = await Promise.allSettled([
         gym.client.writeFile(workspaceId, {
             content: Buffer.from(action.left).toString("base64"),
@@ -717,6 +720,7 @@ async function applyRace(
     const revisions = before.revisions;
     revisions.push(Buffer.from(winnerBytes));
     model.files.set(action.path, { bytes: winnerBytes, revisions });
+    await waitForFileUpdate(gym, workspaceId, action.path, journalBefore);
 }
 
 async function applyConfinement(
@@ -867,11 +871,15 @@ async function applyWatch(gym: AgentGym, workspaceId: string): Promise<void> {
 async function applyExternal(
     action: Extract<FileAction, { kind: "external" }>,
     gym: AgentGym,
+    workspaceId: string,
     model: FileModel,
 ): Promise<void> {
     const bytes = Buffer.from(action.content, "utf8");
     const existing = model.files.get(action.path);
-    await mkdir(join(gym.workspacePath, dirname(action.path)), { recursive: true });
+    const relativeDirectory = dirname(action.path);
+    await mkdir(join(gym.workspacePath, relativeDirectory), { recursive: true });
+    await gym.client.getFileTree(workspaceId, { limit: 1, path: relativeDirectory });
+    const journalBefore = await journal(gym.client);
     await writeFs(join(gym.workspacePath, action.path), bytes);
     if (existing === undefined) {
         model.files.set(action.path, { bytes, revisions: [Buffer.from(bytes)] });
@@ -881,9 +889,10 @@ async function applyExternal(
         existing.revisions.push(Buffer.from(bytes));
         existing.bytes = Buffer.from(bytes);
     }
-    const response = await gym.client.readFile(await rootWorkspaceId(gym), action.path);
+    const response = await gym.client.readFile(workspaceId, action.path);
     expect(Buffer.from(response.content, "base64")).toEqual(bytes);
     expect(response.hash).toBe(hash(bytes));
+    await waitForFileUpdate(gym, workspaceId, action.path, journalBefore);
 }
 
 async function assertInvariants(
@@ -968,6 +977,28 @@ async function expectJournalUnchanged(client: ClientLike, before: JournalSnapsho
     const after = await journal(client);
     expect(after.cursors).toEqual(before.cursors);
     expect((await client.getHealth()).ready).toBe(true);
+}
+
+async function waitForFileUpdate(
+    gym: AgentGym,
+    workspaceId: string,
+    path: string,
+    before: JournalSnapshot,
+): Promise<void> {
+    const previousCursors = new Set(before.cursors);
+    const event = await gym.waitForEvent((candidate) => {
+        if (previousCursors.has(candidate.cursor) || candidate.type !== "files.updated") {
+            return false;
+        }
+        return (
+            candidate.payload.workspaceId === workspaceId &&
+            (candidate.payload.paths === null || candidate.payload.paths.includes(path))
+        );
+    }, `files.updated for ${workspaceId}:${path}`);
+    expect(event).toMatchObject({
+        type: "files.updated",
+        payload: { workspaceId },
+    });
 }
 
 async function journal(client: ClientLike): Promise<JournalSnapshot> {
