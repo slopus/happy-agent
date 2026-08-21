@@ -16,6 +16,7 @@ import {
 } from "./daemonToken.js";
 import { getDaemonIdentity, type AgentDaemonIdentity } from "./getDaemonIdentity.js";
 import { getHappyDaemonPaths, type HappyDaemonPaths } from "./getHappyDaemonPaths.js";
+import { resolveAgentDaemonProcessCommand } from "./resolveAgentDaemonProcessCommand.js";
 import { rotateDaemonLog } from "./rotateDaemonLog.js";
 import { stopLocalProtocolServer } from "./stopLocalProtocolServer.js";
 
@@ -33,9 +34,9 @@ export interface EnsureAgentDaemonOptions {
     confirmRestart?: (request: AgentDaemonRestartRequest) => Promise<boolean>;
     onStatus?: (message: string) => void;
     /**
-     * The script a replacement daemon process runs, spawned as `node <entrypoint> run`. Defaults
-     * to the current executable script, which is correct when the caller is the `happy-agent`
-     * CLI itself; a product that embeds this lifecycle names its own daemon entrypoint here.
+     * The script a replacement daemon process runs. Defaults to the current executable script;
+     * a product that embeds this lifecycle names its own daemon entrypoint here. A compiled
+     * Happy Agent binary relaunches itself directly.
      */
     entrypoint?: string;
     /** Test-only: run the daemon inside the calling process instead of spawning one. */
@@ -179,8 +180,8 @@ async function spawnAgentDaemon(
     paths: HappyDaemonPaths,
     entrypoint: string | undefined,
 ): Promise<ChildProcess> {
-    const script = entrypoint ?? process.argv[1];
-    if (script === undefined) {
+    const command = resolveAgentDaemonProcessCommand(entrypoint);
+    if (command === undefined) {
         throw new AgentDaemonError("Cannot locate the Happy agent daemon entrypoint.");
     }
 
@@ -188,7 +189,7 @@ async function spawnAgentDaemon(
     const log = await open(paths.logPath, "a", 0o600);
     try {
         await log.chmod(0o600);
-        const child = spawn(process.execPath, [...process.execArgv, script, "run"], {
+        const child = spawn(command.executable, command.arguments, {
             detached: true,
             env: process.env,
             stdio: ["ignore", log.fd, log.fd],

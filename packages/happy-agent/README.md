@@ -25,10 +25,24 @@ happy-agent reload   # stop the running daemon, then start a fresh one
 happy-agent run      # run the daemon in the foreground of this process
 ```
 
-`start` spawns a detached `node <cli> run` process, redirects its output to the rotated daemon
-log, and waits until health reports ready. A running daemon whose reported version does not match
-the CLI is replaced. All state lives under the Happy home (`~/.happy` or `HAPPY_HOME_DIR`), in its
-`agent/` directory: `server.sock`, `token`, and `daemon.log`.
+`start` spawns a detached runtime process, redirects its output to the rotated daemon log, and
+waits until health reports ready. The Node-compatible package runs `node <cli> run`; a standalone
+binary relaunches itself. A running daemon whose reported version does not match the CLI is
+replaced. All state lives under the Happy home (`~/.happy` or `HAPPY_HOME_DIR`), in its `agent/`
+directory: `server.sock`, `token`, and `daemon.log`.
+
+## Standalone binaries
+
+The repository can compile Happy Agent into one Bun executable for the current platform:
+
+```sh
+pnpm build:bun
+```
+
+`pnpm build:bun:all` produces macOS and Linux binaries for arm64 and x64 under
+`packages/happy-agent/dist/bin/`. The normal TypeScript package stays Node-compatible; native
+libraries, WebAssembly, workers, and provider executables are adapted only at the binary build
+boundary.
 
 ## Library
 

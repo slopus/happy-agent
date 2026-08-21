@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+declare const HAPPY_AGENT_BUILD_VERSION: string | undefined;
+
 /**
  * Reads the version of the package this module ships inside.
  *
@@ -9,6 +11,7 @@ import { readFileSync } from "node:fs";
  * executable actually launched the daemon.
  */
 export function readPackageVersion(): string {
+    if (typeof HAPPY_AGENT_BUILD_VERSION === "string") return HAPPY_AGENT_BUILD_VERSION;
     try {
         const contents = readFileSync(new URL("../package.json", import.meta.url), "utf8");
         const manifest = JSON.parse(contents) as { version?: unknown };

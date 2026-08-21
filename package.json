@@ -4,6 +4,8 @@
     "type": "module",
     "scripts": {
         "build": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm --filter @slopus/rig build",
+        "build:bun": "pnpm build && pnpm --filter @slopus/happy-agent build:bun",
+        "build:bun:all": "pnpm build && pnpm --filter @slopus/happy-agent build:bun:all",
         "build:gym": "pnpm --filter @slopus/rig-gym run build:image",
         "check": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm run check:root && pnpm --recursive --filter './packages/**' run check",
         "check:root": "tsc --noEmit -p tsconfig.json",
