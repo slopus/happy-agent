@@ -11,24 +11,27 @@ import {
 } from "@slopus/happy-providers";
 import type { Context } from "@steve.kite/stdlib";
 
+export type ScriptedTurn = SessionEvent[] | ((ctx: Context) => SessionStream);
+
 /** A fake session answering each run with the next scripted event batch, recording every request. */
 export class ScriptedSession extends BaseSession {
     readonly requests: SessionRunRequest[] = [];
     readonly options: SessionOptions;
 
-    readonly #script: SessionEvent[][];
+    readonly #script: ScriptedTurn[];
 
-    constructor(id: string, script: SessionEvent[][], options: SessionOptions) {
+    constructor(id: string, script: ScriptedTurn[], options: SessionOptions) {
         super(id);
         this.#script = script;
         this.options = options;
     }
 
-    run(_ctx: Context, request: SessionRunRequest): SessionStream {
+    run(ctx: Context, request: SessionRunRequest): SessionStream {
         this.requests.push(request);
-        const events = this.#script.shift() ?? [];
+        const turn = this.#script.shift() ?? [];
+        if (typeof turn === "function") return turn(ctx);
         return (async function* () {
-            yield* events;
+            yield* turn;
         })();
     }
 
@@ -47,9 +50,9 @@ export class ScriptedProvider extends BaseProvider {
 
     readonly sessions: ScriptedSession[] = [];
 
-    readonly #script: SessionEvent[][];
+    readonly #script: ScriptedTurn[];
 
-    constructor(script: SessionEvent[][]) {
+    constructor(script: ScriptedTurn[]) {
         super();
         this.#script = script;
     }

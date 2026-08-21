@@ -42,6 +42,12 @@
 - A per-agent FIFO queue needs the abort signal checked twice: once before queueing and again when
   the queue releases the review. A review whose turn was stopped while it waited must never reach
   the reviewer.
+- Once a review reaches the private system, retain and await the private system's reviewer-agent
+  abort before discarding the stopped session. A fire-and-forget abort lets cancellation escape
+  past cleanup and leaves the next review to discover and delete the stale session while holding
+  its FIFO slot. Check the request signal again after installing its listener too: a signal aborted
+  during evidence or instruction preparation will not replay its abort event for a listener added
+  later, and that stopped review must never be sent.
 - The `messageOrigin` marker is no longer this module's file. Collaboration, goal, history and
   scheduling all stamp or read it, so it now lives at the package's `sources/impl/messageOrigin.ts`
   as a shared, module-neutral utility and is exported from the package index rather than from

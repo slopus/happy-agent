@@ -20,7 +20,7 @@ import type { PermissionReviewRequest } from "../../sources/permissions/Permissi
 import { autoWorld } from "../support/autoWorld.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
-import type { ScriptedProvider } from "../support/ScriptedProvider.js";
+import type { ScriptedProvider, ScriptedTurn } from "../support/ScriptedProvider.js";
 
 /**
  * End-to-end proof that a reviewable Auto action reaches the real `AutoModule` reviewer and that a
@@ -101,7 +101,7 @@ class GatedSystemPromptModule extends SystemPromptModule {
  * live model route the way the base inference hook would.
  */
 async function reviewWorld(
-    script: SessionEvent[][],
+    script: ScriptedTurn[],
     options: {
         readonly rememberRoute?: boolean;
         readonly recreateIdentity?: boolean;
@@ -396,6 +396,84 @@ describe("AutoModule reviewer", () => {
         worlds.push(world);
 
         await expect(review()).rejects.toThrow("Permission review was stopped.");
+        expect(world.provider.sessions.every((session) => session.requests.length === 0)).toBe(
+            true,
+        );
+    });
+
+    it("aborts the private reviewer agent when an in-flight review is stopped", async () => {
+        let markStarted!: () => void;
+        let markAborted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
+        const aborted = new Promise<void>((resolve) => {
+            markAborted = resolve;
+        });
+        const blockingTurn: ScriptedTurn = () => {
+            let finish!: () => void;
+            const pending = new Promise<IteratorResult<SessionEvent>>((resolve) => {
+                finish = () => resolve({ done: true, value: undefined });
+            });
+            const stream: AsyncIterableIterator<SessionEvent> = {
+                [Symbol.asyncIterator]: () => stream,
+                next: () => {
+                    markStarted();
+                    return pending;
+                },
+                return: () => {
+                    markAborted();
+                    finish();
+                    return Promise.resolve({ done: true, value: undefined });
+                },
+            };
+            return stream;
+        };
+        const controller = new AbortController();
+        const verdict = taggedVerdict({
+            outcome: "allow",
+            risk_level: "low",
+            user_authorization: "high",
+        });
+        const { world, review } = await reviewWorld([blockingTurn, verdictTurn(verdict)], {
+            signals: [controller.signal, new AbortController().signal],
+        });
+        worlds.push(world);
+
+        const first = review();
+        await started;
+        controller.abort();
+
+        await expect(first).rejects.toThrow("Permission review was stopped.");
+        await expect(aborted).resolves.toBeUndefined();
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+    });
+
+    it("does not start the private reviewer when the review stops during preparation", async () => {
+        let markPreparing!: () => void;
+        let releasePreparation!: () => void;
+        const preparing = new Promise<void>((resolve) => {
+            markPreparing = resolve;
+        });
+        const preparationGate = new Promise<void>((resolve) => {
+            releasePreparation = resolve;
+        });
+        const controller = new AbortController();
+        const { world, review } = await reviewWorld([], {
+            signal: controller.signal,
+            gate: async () => {
+                markPreparing();
+                await preparationGate;
+            },
+        });
+        worlds.push(world);
+
+        const pending = review();
+        await preparing;
+        controller.abort();
+        releasePreparation();
+
+        await expect(pending).rejects.toThrow("Permission review was stopped.");
         expect(world.provider.sessions.every((session) => session.requests.length === 0)).toBe(
             true,
         );

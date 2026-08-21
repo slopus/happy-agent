@@ -15,7 +15,7 @@ import {
     type SessionTool,
     type SessionUsage,
 } from "@slopus/happy-providers";
-import type { Context } from "@steve.kite/stdlib";
+import { withLifetime, type Context } from "@steve.kite/stdlib";
 
 /** The model every terminal gym session runs on unless a scenario names another. */
 const GYM_MODEL: AgentModel = {
@@ -71,7 +71,10 @@ export function createGymInferenceFromEnvironment(
                 providers.add(
                     providerId,
                     async (selection) => {
-                        const provider = await real.providers.resolve(selection.id, selection.model);
+                        const provider = await real.providers.resolve(
+                            selection.id,
+                            selection.model,
+                        );
                         if (provider === null) {
                             throw new Error(`Provider "${selection.id}" is not registered.`);
                         }
@@ -173,8 +176,14 @@ class GymHttpSession extends BaseSession {
 
     run(ctx: Context, request: SessionRunRequest): SessionStream {
         const session = this;
-        return (async function* () {
-            const reply = await session.#post(ctx, {
+        const controller = new AbortController();
+        const lifetime =
+            ctx.lifetime === undefined
+                ? controller.signal
+                : AbortSignal.any([ctx.lifetime, controller.signal]);
+        const runContext = withLifetime(ctx, lifetime);
+        const iterator = (async function* () {
+            const reply = await session.#post(runContext, {
                 context: {
                     messages: request.context.messages,
                     systemPrompt: session.#systemPrompt(request),
@@ -191,8 +200,9 @@ class GymHttpSession extends BaseSession {
                 providerId: session.#options.providerId,
                 providerSessionGeneration: 0,
             });
-            yield* streamReply(ctx, reply);
+            yield* streamReply(runContext, reply);
         })();
+        return abortWhenClosed(iterator, controller);
     }
 
     async compact(ctx: Context, options: SessionCompactionOptions): Promise<SessionCompaction> {
@@ -242,9 +252,7 @@ class GymHttpSession extends BaseSession {
         const runtimeModel =
             `# Runtime model\nModel ID: ${request.model ?? GYM_MODEL.id}\n` +
             `Provider ID: ${this.#options.providerId}`;
-        return [runtimeModel, this.#instructions]
-            .filter((part) => part.length > 0)
-            .join("\n\n");
+        return [runtimeModel, this.#instructions].filter((part) => part.length > 0).join("\n\n");
     }
 
     async #post(ctx: Context, body: unknown): Promise<GymWireResponse> {
@@ -269,6 +277,35 @@ class GymHttpSession extends BaseSession {
         }
         return (await response.json()) as GymWireResponse;
     }
+}
+
+/** Closing Agent Base's stream cancels the deterministic provider work still behind it. */
+function abortWhenClosed(
+    iterator: AsyncGenerator<SessionEvent>,
+    controller: AbortController,
+): AsyncIterableIterator<SessionEvent> {
+    const stream: AsyncIterableIterator<SessionEvent> = {
+        [Symbol.asyncIterator]: () => stream,
+        next: async () => {
+            try {
+                const result = await iterator.next();
+                if (result.done) controller.abort();
+                return result;
+            } catch (error: unknown) {
+                controller.abort();
+                throw error;
+            }
+        },
+        return: async () => {
+            controller.abort();
+            return await iterator.return(undefined);
+        },
+        throw: async (error?: unknown) => {
+            controller.abort();
+            return await iterator.throw(error);
+        },
+    };
+    return stream;
 }
 
 // --- Reply translation ---------------------------------------------------------------------

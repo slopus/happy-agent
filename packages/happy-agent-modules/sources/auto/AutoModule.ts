@@ -458,19 +458,41 @@ export class AutoModule implements AgentModule {
         };
 
         const reviewerAgent = this.#reviewers.get(mainAgentId);
+        if (reviewerAgent === undefined) {
+            throw new Error("The automatic permission reviewer agent is not available.");
+        }
+        let abortingReviewer: Promise<void> | undefined;
+        const abortReviewer = (): Promise<void> => {
+            abortingReviewer ??= system
+                .abort(this.#privateDbContext(), reviewerId)
+                .catch(() => undefined);
+            return abortingReviewer;
+        };
         const onAbort = (): void => {
-            void system.abort(this.#privateDbContext(), reviewerId).catch(() => undefined);
+            void abortReviewer();
         };
         request.signal.addEventListener("abort", onAbort, { once: true });
         try {
+            // Adding an event listener to an already-aborted signal does not call it. The review
+            // may have been stopped while evidence or instructions were being prepared, so check
+            // again after installing the listener and before handing any work to the reviewer.
+            if (request.signal.aborted) {
+                await abortReviewer();
+                throw new Error("Permission review was stopped.");
+            }
             await system.send(this.#privateDbContext(), reviewerId, message, {
                 permissionMode: "read_only",
                 provider: route.providerId,
                 model: route.modelId,
                 effort: route.effort,
             });
-            await reviewerAgent?.waitForIdle();
+            await reviewerAgent.waitForIdle();
+            // Keep cancellation inside this cleanup boundary. Checking only after the `try`
+            // would throw past `#discardReviewer`, leaving the stopped reviewer session to be
+            // discovered and deleted by the next review while it holds that review's FIFO slot.
+            if (request.signal.aborted) throw new Error("Permission review was stopped.");
         } catch (error: unknown) {
+            if (request.signal.aborted) await abortReviewer();
             await this.#discardReviewer(system, mainAgentId, reviewerId, generation);
             if (request.signal.aborted) throw new Error("Permission review was stopped.");
             throw error;
@@ -487,7 +509,11 @@ export class AutoModule implements AgentModule {
             providerId: route.providerId,
         });
 
-        if (request.signal.aborted) throw new Error("Permission review was stopped.");
+        if (request.signal.aborted) {
+            await abortReviewer();
+            await this.#discardReviewer(system, mainAgentId, reviewerId, generation);
+            throw new Error("Permission review was stopped.");
+        }
         if (capture.doneState !== "normal") {
             // A completed-but-not-normal run is a v1 rejection with an unreadable answer; the
             // reviewer is discarded so the next review starts over from the whole transcript.

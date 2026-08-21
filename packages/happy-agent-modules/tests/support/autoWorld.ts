@@ -3,15 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { AgentModel, AgentStorage } from "@slopus/happy-agent-base";
-import type { SessionEvent } from "@slopus/happy-providers";
-
 import { ComputeModule, type HostComputeProvider } from "../../sources/compute/index.js";
 import { ConfigModule } from "../../sources/config/index.js";
 import { SystemPromptModule } from "../../sources/systemPrompt/index.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
 import { agentWorld } from "./agentWorld.js";
 import { providersOf } from "./fixtures.js";
-import { ScriptedProvider } from "./ScriptedProvider.js";
+import { ScriptedProvider, type ScriptedTurn } from "./ScriptedProvider.js";
 
 /**
  * The one account and model an automatic review runs on in these tests.
@@ -55,7 +53,7 @@ export interface AutoWorld {
  * security policy writes the file configuration reads, and a test that wants project instructions
  * writes the `AGENTS.md` the system-prompt module reads off the machine.
  */
-export async function autoWorld(script: SessionEvent[][] = []): Promise<AutoWorld> {
+export async function autoWorld(script: ScriptedTurn[] = []): Promise<AutoWorld> {
     // A root of its own rather than a temporary directory directly: the working folder is derived
     // as a sibling of the Happy home, so a home made straight in `tmpdir()` would put every test's
     // working folder at the same shared path.
