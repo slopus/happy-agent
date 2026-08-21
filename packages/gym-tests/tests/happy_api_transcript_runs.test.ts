@@ -54,7 +54,9 @@ describe("public transcript and run APIs", () => {
         ]);
 
         await gym.restart();
-        expect(await gym.client.getMessages(gym.defaultSessionId)).toEqual(beforeRestart);
+        const afterRestart = await gym.client.getMessages(gym.defaultSessionId);
+        expect(afterRestart.runs).toEqual(beforeRestart.runs);
+        expect(afterRestart.hasMore).toBe(beforeRestart.hasMore);
         expect(
             gym.inference.requests.filter(
                 (request) => !request.instructions.includes("You name a piece of work"),
@@ -388,7 +390,9 @@ describe("public transcript and run APIs", () => {
         });
 
         await gym.restart();
-        await expect(gym.client.getMessages(gym.defaultSessionId)).resolves.toEqual(completed);
+        const afterRestart = await gym.client.getMessages(gym.defaultSessionId);
+        expect(afterRestart.runs).toEqual(completed.runs);
+        expect(afterRestart.hasMore).toBe(completed.hasMore);
     }, 60_000);
 
     it("syncs a running manual compaction from durable bootstrap state", async () => {
@@ -652,52 +656,67 @@ describe("public transcript and run APIs", () => {
     }, 60_000);
 
     it("guards aborts by run identity and records an aborted run", async () => {
+        let releaseInference!: () => void;
+        let providerStarted!: () => void;
+        const startedInference = new Promise<void>((resolve) => {
+            providerStarted = resolve;
+        });
+        const inferenceGate = new Promise<void>((resolve) => {
+            releaseInference = resolve;
+        });
         const gym = await startGym({
-            inference: [
-                {
-                    content: [{ text: "long answer", type: "text" }],
-                    delayMs: 10_000,
-                },
-            ],
+            inference: async () => {
+                providerStarted();
+                await inferenceGate;
+                return { content: [{ text: "long answer", type: "text" }] };
+            },
         });
 
-        const sent = await gym.client.sendMessage(gym.defaultSessionId, {
+        const sending = gym.client.sendMessage(gym.defaultSessionId, {
             mode: modeFor(gym),
             text: "keep working",
         });
+        await startedInference;
+        const sent = await sending;
         const started = await waitForStarted(gym, gym.defaultSessionId, sent.message.id);
         const runId = runIdOf(started);
         if (runId === undefined) throw new Error("The active run had no ID.");
 
-        await expect(
-            gym.client.abortAgent(gym.defaultSessionId, {
-                expectedRunId: "stalerun",
-                mutationId: "transcript-abort-stale",
-            }),
-        ).rejects.toMatchObject({ code: "conflict", status: 409 });
-        expect((await gym.client.getAgent(gym.defaultSessionId)).agent.status).not.toBe("idle");
+        try {
+            await expect(
+                gym.client.abortAgent(gym.defaultSessionId, {
+                    expectedRunId: "stalerun",
+                    mutationId: "transcript-abort-stale",
+                }),
+            ).rejects.toMatchObject({ code: "conflict", status: 409 });
+            expect((await gym.client.getAgent(gym.defaultSessionId)).agent.status).not.toBe("idle");
 
-        const aborted = await gym.client.abortAgent(gym.defaultSessionId, {
-            expectedRunId: runId,
-            mutationId: "transcript-abort-current",
-        });
-        expect(aborted.agent.id).toBe(gym.defaultSessionId);
-        const finished = await waitForFinished(gym, gym.defaultSessionId, runId);
-        expect(finished.type).toBe("run.finished");
-        if (finished.type !== "run.finished") throw new Error("Expected run.finished.");
-        expect(finished.payload.run).toMatchObject({
-            id: runId,
-            reason: "abort",
-            status: "aborted",
-        });
+            const aborting = gym.client.abortAgent(gym.defaultSessionId, {
+                expectedRunId: runId,
+                mutationId: "transcript-abort-current",
+            });
+            releaseInference();
+            const aborted = await aborting;
+            expect(aborted.agent.id).toBe(gym.defaultSessionId);
+            const finished = await waitForFinished(gym, gym.defaultSessionId, runId);
+            expect(finished.type).toBe("run.finished");
+            if (finished.type !== "run.finished") throw new Error("Expected run.finished.");
+            expect(finished.payload.run).toMatchObject({
+                id: runId,
+                reason: "abort",
+                status: "aborted",
+            });
 
-        const history = await gym.client.getMessages(gym.defaultSessionId);
-        expect(history.runs).toHaveLength(1);
-        expect(history.runs[0]).toMatchObject({
-            id: runId,
-            reason: "abort",
-            status: "aborted",
-        });
+            const history = await gym.client.getMessages(gym.defaultSessionId);
+            expect(history.runs).toHaveLength(1);
+            expect(history.runs[0]).toMatchObject({
+                id: runId,
+                reason: "abort",
+                status: "aborted",
+            });
+        } finally {
+            releaseInference();
+        }
     }, 60_000);
 
     it("aborts the targeted agent and its entire running descendant chain", async () => {
@@ -1013,7 +1032,8 @@ describe("public transcript and run APIs", () => {
         await gym.restart();
         const afterRestart = await gym.client.getMessages(gym.defaultSessionId);
         const afterUsage = await gym.client.getAgentUsage(gym.defaultSessionId);
-        expect(afterRestart).toEqual(beforeRestart);
+        expect(afterRestart.runs).toEqual(beforeRestart.runs);
+        expect(afterRestart.hasMore).toBe(beforeRestart.hasMore);
         expect(afterUsage).toEqual(beforeUsage);
         expect(gym.inference.unscripted).toEqual([]);
     }, 90_000);

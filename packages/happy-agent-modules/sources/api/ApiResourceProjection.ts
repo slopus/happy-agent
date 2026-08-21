@@ -304,13 +304,13 @@ export async function agentResource(
         readonly pendingQuestionId?: string | null;
         readonly runningProcesses?: number;
         readonly runningSubagents?: number;
+        readonly working?: boolean;
     } = {},
 ): Promise<Record<string, unknown> | undefined> {
     const config = await agents.config(ctx, agentId);
     if (config === undefined) return undefined;
     const parentAgentId = await agents.parentOf(ctx, agentId);
     const children = await agents.childOf(ctx, agentId);
-    const activeRunId = events.activeRunId(agentId);
     const latestEvent = await events.latestAgentEvent(ctx, agentId);
     const metadata = config.metadata ?? {};
     const createdAt = config.provenance?.createdAt ?? 0;
@@ -327,7 +327,7 @@ export async function agentResource(
         parentAgentId,
         title: typeof metadata.title === "string" ? metadata.title : null,
         titleStatus: typeof metadata.title === "string" ? "ready" : "idle",
-        status: activeRunId === undefined ? "idle" : "working",
+        status: state.working === true ? "working" : "idle",
         subagents: { total: children.length, running: state.runningSubagents ?? 0 },
         processes: { running: state.runningProcesses ?? 0 },
         pendingQuestionId: state.pendingQuestionId ?? null,

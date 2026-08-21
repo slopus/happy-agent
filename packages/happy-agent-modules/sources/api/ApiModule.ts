@@ -40,8 +40,11 @@ import {
     ProjectFilesModule,
 } from "../files/index.js";
 import { GitModule } from "../git/index.js";
-import { HistoryModule } from "../history/index.js";
-import type { HistoryPendingMessage } from "../history/index.js";
+import {
+    HistoryModule,
+    type HistoryPendingMessage,
+    type HistoryRunState,
+} from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import {
     PermissionsModule,
@@ -140,6 +143,7 @@ const MAX_ANNOUNCED_AGENT_CREATIONS = 10_000;
 interface AcceptedMessageBatch {
     readonly kind: "send" | "steering";
     readonly runId: string;
+    readonly startedAt: number;
     readonly messages: {
         /** An internal message still starts its run, but never enters `acceptedMessageIds`. */
         readonly hidden: boolean;
@@ -200,11 +204,6 @@ export class ApiModule implements AgentModule {
     readonly #unsubscribe: (() => void)[] = [];
     readonly #streams = new Set<SseWriter>();
     readonly #shutdownListeners = new Set<() => void | Promise<void>>();
-    readonly #loopStarts = new Map<
-        string,
-        { readonly runId: string; readonly startedAt: number }
-    >();
-    readonly #activeRuns = new Map<string, Record<string, unknown>>();
     readonly #announcedPendingMessages = new Set<string>();
     readonly #apiPendingMessageIds = new Set<string>();
     readonly #announcedAgentCreations = new Set<string>();
@@ -267,9 +266,6 @@ export class ApiModule implements AgentModule {
         this.#subscribeToModules(ctx);
         await this.prepare();
         return {
-            agentRestoredTransact: async (hookCtx, _scope, agent) => {
-                await this.#restoreActiveRun(hookCtx, agent.id);
-            },
             metadataChangedTransact: async (hookCtx, scope, change) => {
                 const archivedAt = change.update["archivedAt"];
                 if (
@@ -286,30 +282,6 @@ export class ApiModule implements AgentModule {
             },
         };
     };
-
-    /** Rehydrate the public run projection before Agent Base resumes a process-interrupted turn. */
-    async #restoreActiveRun(ctx: Context, agentId: string): Promise<void> {
-        const runId = this.#events.activeRunId(agentId);
-        if (runId === undefined) return;
-        const page = await this.#history.runs(ctx, agentId, { limit: 1 });
-        const run = page.runs.find((candidate) => candidate.id === runId);
-        if (run === undefined || run.status !== "running") {
-            throw new Error("The active agent run is missing from durable history.");
-        }
-        const summary = await this.#usage.readRun(ctx, agentId, runId);
-        const restored = {
-            id: run.id,
-            status: "running",
-            reason: null,
-            startedAt: run.startedAt,
-            endedAt: null,
-            usage: summary.usage,
-            costUsd: summary.costUsd,
-        };
-        afterCommit(ctx, () => {
-            this.#activeRuns.set(agentId, restored);
-        });
-    }
 
     get ready(): boolean {
         return this.#ready;
@@ -702,7 +674,7 @@ export class ApiModule implements AgentModule {
                     }
                     this.#journal.append("message.created", {
                         agentId,
-                        runId: message.runId ?? this.#activeRuns.get(agentId)?.["id"] ?? null,
+                        runId: message.runId ?? null,
                         message: messageResource(message),
                     });
                 }
@@ -923,7 +895,7 @@ export class ApiModule implements AgentModule {
     async #convertUserInputEvent(ctx: Context, event: UserInputEvent): Promise<void> {
         const question = questionResource(
             event.request,
-            this.#events.activeRunId(event.request.askingAgentId),
+            await this.#activeRunId(ctx, event.request.askingAgentId),
         );
         if (event.type === "user_input_requested") {
             this.#journal.append("question.created", { question }, event.at);
@@ -956,32 +928,46 @@ export class ApiModule implements AgentModule {
     #enqueueAgentEvent(ctx: Context, event: AgentEvent): void {
         const key = event.agentId ?? "\u0000daemon";
         const mutationId = this.#mutationIds.getStore();
+        const queued = this.#queueAgentWork(
+            ctx,
+            key,
+            mutationId,
+            async () => await this.#convertAgentEvent(ctx, event),
+        );
+        void queued.catch((error: unknown) => {
+            ctx.log.error(
+                "The API could not convert an agent event.",
+                { agentId: event.agentId, eventType: event.type },
+                error,
+            );
+        });
+    }
+
+    #queueAgentWork(
+        ctx: Context,
+        key: string,
+        mutationId: string | undefined,
+        work: () => Promise<void>,
+    ): Promise<void> {
         const previous = this.#agentEventChains.get(key) ?? Promise.resolve();
-        const next = previous
-            .then(
-                async () =>
-                    await this.#backgroundScope.runInAsyncScope(async () => {
-                        const convert = async () => await this.#convertAgentEvent(ctx, event);
-                        if (mutationId === undefined) {
-                            await convert();
-                        } else {
-                            await this.#mutationIds.run(mutationId, convert);
-                        }
-                    }),
-            )
-            .catch((error: unknown) => {
-                ctx.log.error(
-                    "The API could not convert an agent event.",
-                    { agentId: event.agentId, eventType: event.type },
-                    error,
-                );
-            });
-        this.#agentEventChains.set(key, next);
-        void next.finally(() => {
-            if (this.#agentEventChains.get(key) === next) {
+        const result = previous.then(
+            async () =>
+                await this.#backgroundScope.runInAsyncScope(async () => {
+                    if (mutationId === undefined) {
+                        await work();
+                    } else {
+                        await this.#mutationIds.run(mutationId, work);
+                    }
+                }),
+        );
+        const settled = result.catch(() => undefined);
+        this.#agentEventChains.set(key, settled);
+        void settled.finally(() => {
+            if (this.#agentEventChains.get(key) === settled) {
                 this.#agentEventChains.delete(key);
             }
         });
+        return result;
     }
 
     async #convertAgentEvent(ctx: Context, event: AgentEvent): Promise<void> {
@@ -990,7 +976,7 @@ export class ApiModule implements AgentModule {
         const payload = recordValue(event.payload);
         if (event.type !== "message.accepted" && this.#acceptedMessageBatches.has(agentId)) {
             await this.#waitForPendingMessageAnnouncements(agentId);
-            this.#flushAcceptedMessages(agentId);
+            await this.#flushAcceptedMessages(ctx, agentId);
         }
         if (event.type === "agent.created") {
             await this.#announceCreatedAgent(ctx, agentId);
@@ -1005,13 +991,32 @@ export class ApiModule implements AgentModule {
             if (!Value.Check(compactionSchema, compaction)) {
                 throw new Error("The durable compaction event is invalid.");
             }
-            this.#convertCompactionMessageEvent(event, compaction as Compaction);
+            const previous = payload?.["previous"];
+            if (
+                event.type === "compaction.message-updated" &&
+                !Value.Check(compactionSchema, previous)
+            ) {
+                throw new Error("The prior durable compaction state is invalid.");
+            }
+            await this.#convertCompactionMessageEvent(
+                ctx,
+                event,
+                compaction as Compaction,
+                Value.Check(compactionSchema, previous) ? (previous as Compaction) : undefined,
+            );
+            const status =
+                (compaction as Compaction).trigger !== "manual"
+                    ? undefined
+                    : (compaction as Compaction).status === "running"
+                      ? "working"
+                      : "idle";
+            await this.#appendAgentUpdate(ctx, event, {
+                ...(status === undefined ? {} : { status }),
+                updatedAt: event.occurredAt,
+            });
+            return;
         }
         if (event.type === "loop.started") {
-            const runId = stringValue(payload?.["runId"]) ?? stringValue(payload?.["loopId"]);
-            if (runId !== undefined) {
-                this.#loopStarts.set(agentId, { runId, startedAt: event.occurredAt });
-            }
             await this.#appendAgentUpdate(ctx, event, {
                 status: "working",
                 updatedAt: event.occurredAt,
@@ -1028,10 +1033,12 @@ export class ApiModule implements AgentModule {
             return;
         }
         if (event.type === "loop.settled") {
-            this.#flushAcceptedMessages(agentId);
+            await this.#flushAcceptedMessages(ctx, agentId);
             this.#streamingAssistantBlocks.delete(agentId);
             this.#streamingDeltaOffsets.delete(agentId);
-            const run = this.#activeRuns.get(agentId);
+            const runId = stringValue(payload?.["runId"]);
+            const run =
+                runId === undefined ? undefined : await this.#history.run(ctx, agentId, runId);
             if (run === undefined) {
                 await this.#appendAgentUpdate(ctx, event, {
                     status: "idle",
@@ -1040,17 +1047,16 @@ export class ApiModule implements AgentModule {
                 await this.#refreshParentSubagents(ctx, agentId);
                 return;
             }
-            const stopReason = stringValue(payload?.["stopReason"]);
-            const errorText = stringValue(payload?.["error"]);
-            const failed = errorText !== undefined || stopReason === "error";
-            const aborted = stopReason === "aborted";
-            const finished = {
-                ...run,
-                status: failed ? "failed" : aborted ? "aborted" : "completed",
-                reason: failed ? "error" : aborted ? "abort" : "completed",
-                endedAt: event.occurredAt,
-            };
-            this.#activeRuns.delete(agentId);
+            if (run.status === "running") {
+                await this.#appendAgentUpdate(ctx, event, {
+                    status: "working",
+                    updatedAt: event.occurredAt,
+                });
+                await this.#refreshParentSubagents(ctx, agentId);
+                return;
+            }
+            const errorText =
+                stringValue(payload?.["error"]) ?? stringValue(payload?.["errorMessage"]);
             if (errorText !== undefined) {
                 // History records the failure as the run's error message; clients watching live
                 // hear about it the same way they hear about any message coming into being.
@@ -1058,9 +1064,9 @@ export class ApiModule implements AgentModule {
                     "message.created",
                     {
                         agentId,
-                        runId: run["id"],
+                        runId: run.id,
                         message: {
-                            id: `${run["id"] as string}-error`,
+                            id: `${run.id}-error`,
                             role: "service",
                             createdAt: event.occurredAt,
                             content: [{ type: "text", text: errorText }],
@@ -1069,7 +1075,11 @@ export class ApiModule implements AgentModule {
                     event.occurredAt,
                 );
             }
-            this.#journal.append("run.finished", { agentId, run: finished }, event.occurredAt);
+            this.#journal.append(
+                "run.finished",
+                { agentId, run: await this.#runResource(ctx, run) },
+                event.occurredAt,
+            );
             await this.#appendAgentUpdate(ctx, event, {
                 status: "idle",
                 updatedAt: event.occurredAt,
@@ -1098,9 +1108,6 @@ export class ApiModule implements AgentModule {
         if (event.type === "provider.event" || event.type === "tool.completed") {
             await this.#convertProviderMessageEvent(ctx, event, payload);
         }
-        if (event.type === "inference.completed") {
-            this.#recordRunUsage(agentId, payload);
-        }
         const status = statusForAgentEvent(event.type, payload);
         await this.#appendAgentUpdate(ctx, event, {
             ...(status === undefined ? {} : { status }),
@@ -1108,23 +1115,26 @@ export class ApiModule implements AgentModule {
         });
     }
 
-    #convertCompactionMessageEvent(event: AgentEvent, compaction: Compaction): void {
+    async #convertCompactionMessageEvent(
+        ctx: Context,
+        event: AgentEvent,
+        compaction: Compaction,
+        previous: Compaction | undefined,
+    ): Promise<void> {
         const message = messageResource(this.#compactions.historyMessage(compaction));
         if (event.type === "compaction.message-created") {
             if (compaction.trigger === "manual") {
-                const run = {
-                    id: compaction.runId,
-                    status: "running",
-                    reason: null,
-                    startedAt: compaction.startedAt,
-                    endedAt: null,
-                    usage: {},
-                    costUsd: null,
-                };
-                this.#activeRuns.set(compaction.agentId, run);
+                const run = await this.#history.run(ctx, compaction.agentId, compaction.runId);
+                if (run === undefined) {
+                    throw new Error("The manual compaction run is missing from durable history.");
+                }
                 this.#journal.append(
                     "run.started",
-                    { agentId: compaction.agentId, run, acceptedMessageIds: [] },
+                    {
+                        agentId: compaction.agentId,
+                        run: startedRunResource(run),
+                        acceptedMessageIds: [],
+                    },
                     event.occurredAt,
                 );
             }
@@ -1148,25 +1158,40 @@ export class ApiModule implements AgentModule {
             },
             event.occurredAt,
         );
+        if (
+            compaction.trigger === "manual" &&
+            previous?.status === "running" &&
+            compaction.status !== "running"
+        ) {
+            const run = await this.#history.run(ctx, compaction.agentId, compaction.runId);
+            if (run === undefined || run.status === "running") {
+                throw new Error("The terminal manual compaction run is not settled in history.");
+            }
+            this.#journal.append(
+                "run.finished",
+                { agentId: compaction.agentId, run: await this.#runResource(ctx, run) },
+                event.occurredAt,
+            );
+        }
     }
 
-    #recordRunUsage(agentId: string, payload: Readonly<Record<string, unknown>> | undefined): void {
-        const run = this.#activeRuns.get(agentId);
-        const provider = stringValue(payload?.["provider"]);
-        const model = stringValue(payload?.["model"]);
-        const tokens = recordValue(payload?.["tokens"]);
-        if (run === undefined || provider === undefined || model === undefined) return;
-        const usage = structuredClone(recordValue(run["usage"]) ?? {});
-        const providerUsage = structuredClone(recordValue(usage[provider]) ?? {});
-        const current = recordValue(providerUsage[model]) ?? {};
-        providerUsage[model] = {
-            input: numericValue(current["input"]) + numericValue(tokens?.["input"]),
-            output: numericValue(current["output"]) + numericValue(tokens?.["output"]),
-            cacheRead: numericValue(current["cacheRead"]) + numericValue(tokens?.["cacheRead"]),
-            cacheWrite: numericValue(current["cacheWrite"]) + numericValue(tokens?.["cacheWrite"]),
+    async #runResource(ctx: Context, run: HistoryRunState): Promise<Record<string, unknown>> {
+        const summary = await this.#usage.readRun(ctx, run.agentId, run.id);
+        return {
+            id: run.id,
+            status: run.status,
+            reason: run.reason,
+            startedAt: run.startedAt,
+            endedAt: run.endedAt,
+            usage: summary.usage,
+            costUsd: summary.costUsd,
         };
-        usage[provider] = providerUsage;
-        this.#activeRuns.set(agentId, { ...run, usage });
+    }
+
+    async #activeRunId(ctx: Context, agentId: string): Promise<string | undefined> {
+        return (
+            this.#events.activeRunId(agentId) ?? (await this.#history.runningRun(ctx, agentId))?.id
+        );
     }
 
     async #convertProviderMessageEvent(
@@ -1182,12 +1207,10 @@ export class ApiModule implements AgentModule {
         if (agentId === undefined || underlyingRunId === undefined || type === undefined) {
             return;
         }
-        const candidateRunId =
-            (this.#activeRuns.get(agentId)?.["id"] as string | undefined) ?? underlyingRunId;
         const streaming = this.#streamingAssistantBlocks.get(agentId);
         const { messageId, runId } = apiAssistantIdentityForProviderEvent(
             type,
-            candidateRunId,
+            underlyingRunId,
             streaming,
         );
         const metadata = {
@@ -1411,7 +1434,6 @@ export class ApiModule implements AgentModule {
         }
         const projected = messageResource(message);
         const role = projected["role"];
-        const current = this.#activeRuns.get(agentId);
         const fromUser = role === "user";
         const hidden = messageHiddenFromUser(message);
         if (!fromUser) {
@@ -1420,7 +1442,7 @@ export class ApiModule implements AgentModule {
                 "message.created",
                 {
                     agentId,
-                    runId: current?.["id"] ?? runId,
+                    runId,
                     message: projected,
                 },
                 event.occurredAt,
@@ -1449,11 +1471,12 @@ export class ApiModule implements AgentModule {
             existing !== undefined &&
             (existing.kind !== acceptedKind || existing.runId !== runId)
         ) {
-            this.#flushAcceptedMessages(agentId);
+            await this.#flushAcceptedMessages(ctx, agentId);
         }
-        const batch = this.#acceptedMessageBatches.get(agentId) ?? {
+        const batch: AcceptedMessageBatch = this.#acceptedMessageBatches.get(agentId) ?? {
             kind: acceptedKind,
             runId,
+            startedAt: message.at ?? event.occurredAt,
             messages: [],
         };
         batch.messages.push({
@@ -1465,24 +1488,44 @@ export class ApiModule implements AgentModule {
             ...(message.mutationId === undefined ? {} : { mutationId: message.mutationId }),
         });
         this.#acceptedMessageBatches.set(agentId, batch);
+        this.#scheduleAcceptedMessageFlush(ctx, agentId, batch);
+    }
+
+    #scheduleAcceptedMessageFlush(
+        ctx: Context,
+        agentId: string,
+        batch: AcceptedMessageBatch,
+    ): void {
         setImmediate(() => {
-            if (this.#acceptedMessageBatches.get(agentId) === batch) {
-                this.#flushAcceptedMessages(agentId);
-            }
+            if (this.#closed || this.#acceptedMessageBatches.get(agentId) !== batch) return;
+            const queued = this.#queueAgentWork(ctx, agentId, undefined, async () => {
+                if (this.#acceptedMessageBatches.get(agentId) !== batch) return;
+                await this.#waitForPendingMessageAnnouncements(agentId);
+                await this.#flushAcceptedMessages(ctx, agentId);
+            });
+            void queued.catch((error: unknown) => {
+                ctx.log.error(
+                    "The API could not flush accepted messages.",
+                    { agentId, runId: batch.runId },
+                    error,
+                );
+            });
         });
     }
 
-    #flushAcceptedMessages(agentId: string): void {
+    async #flushAcceptedMessages(ctx: Context, agentId: string): Promise<void> {
         const batch = this.#acceptedMessageBatches.get(agentId);
         if (batch === undefined || batch.messages.length === 0) return;
         if (batch.messages.some((message) => this.#announcedPendingMessages.has(message.id))) {
             return;
         }
-        this.#acceptedMessageBatches.delete(agentId);
+        const previous =
+            batch.kind === "steering"
+                ? await this.#history.previousRun(ctx, agentId, batch.runId)
+                : undefined;
+        if (this.#acceptedMessageBatches.get(agentId) !== batch) return;
         const first = batch.messages[0] as AcceptedMessageBatch["messages"][number];
         const occurredAt = batch.messages.at(-1)?.occurredAt ?? first.occurredAt;
-        const current = this.#activeRuns.get(agentId);
-        const start = this.#loopStarts.get(agentId);
         const mutationIds = new Set(
             batch.messages.flatMap((message) =>
                 message.mutationId === undefined ? [] : [message.mutationId],
@@ -1498,25 +1541,16 @@ export class ApiModule implements AgentModule {
                 });
             }
         };
-        const startedRun: Record<string, unknown> = {
-            id: batch.runId,
-            status: "running",
-            reason: null,
-            startedAt: start?.startedAt ?? first.occurredAt,
-            endedAt: null,
-            usage: {},
-            costUsd: null,
-        };
+        const startedRun = startedRunResource({ id: batch.runId, startedAt: batch.startedAt });
         const acceptedMessageIds = batch.messages.flatMap((message) =>
             message.hidden ? [] : [message.id],
         );
-        if (batch.kind === "steering" && current !== undefined) {
-            const finishedRun = {
-                ...current,
-                status: "aborted",
-                reason: "steering",
-                endedAt: occurredAt,
-            };
+        const finishedRun =
+            batch.kind === "steering" && previous?.reason === "steering"
+                ? await this.#runResource(ctx, previous)
+                : undefined;
+        this.#acceptedMessageBatches.delete(agentId);
+        if (finishedRun !== undefined) {
             append(
                 "run.boundary",
                 {
@@ -1528,25 +1562,8 @@ export class ApiModule implements AgentModule {
                 occurredAt,
             );
         } else {
-            if (current !== undefined) {
-                append(
-                    "run.finished",
-                    {
-                        agentId,
-                        run: {
-                            ...current,
-                            status: "completed",
-                            reason: "completed",
-                            endedAt: occurredAt,
-                        },
-                    },
-                    occurredAt,
-                );
-            }
             append("run.started", { agentId, run: startedRun, acceptedMessageIds }, occurredAt);
         }
-        this.#activeRuns.set(agentId, startedRun);
-        this.#loopStarts.delete(agentId);
         append(
             "agent.updated",
             {
@@ -1604,10 +1621,12 @@ export class ApiModule implements AgentModule {
         const parentAgentId = await agents.parentOf(ctx, childAgentId);
         if (parentAgentId === null) return;
         const children = await agents.childOf(ctx, parentAgentId);
+        const running = await Promise.all(
+            children.map(async (agentId) => await this.#activeRunId(ctx, agentId)),
+        );
         const subagents = {
             total: children.length,
-            running: children.filter((agentId) => this.#events.activeRunId(agentId) !== undefined)
-                .length,
+            running: running.filter((runId) => runId !== undefined).length,
         };
         const parent = await agents.config(ctx, parentAgentId);
         if (parent === undefined || sameJsonValue(parent.metadata?.["subagents"], subagents)) {
@@ -1708,15 +1727,13 @@ export class ApiModule implements AgentModule {
                     question:
                         pending === undefined
                             ? null
-                            : questionResource(pending, this.#events.activeRunId(agentId)),
+                            : questionResource(pending, await this.#activeRunId(ctx, agentId)),
                 });
                 return true;
             }
             if (operation === "abort" && request.method === "POST") {
                 const body = await bodyAs(request, abortBodySchema, "agent abort");
-                const active =
-                    (this.#activeRuns.get(agentId)?.["id"] as string | undefined) ??
-                    this.#events.activeRunId(agentId);
+                const active = await this.#activeRunId(ctx, agentId);
                 if (
                     body.expectedRunId !== undefined &&
                     active !== undefined &&
@@ -1737,7 +1754,7 @@ export class ApiModule implements AgentModule {
             }
             if (operation === "compact" && request.method === "POST") {
                 await this.#requireAgentResource(ctx, agentId);
-                if (this.#events.activeRunId(agentId) !== undefined) {
+                if ((await this.#activeRunId(ctx, agentId)) !== undefined) {
                     throw new ApiError(
                         409,
                         "conflict",
@@ -1758,22 +1775,13 @@ export class ApiModule implements AgentModule {
                     }
                     throw error;
                 }
+                const run = await this.#history.run(ctx, agentId, compaction.runId);
+                if (run === undefined) {
+                    throw new Error("The manual compaction response has no durable run.");
+                }
                 sendJson(response, 202, {
                     agent: await this.#requireAgentResource(ctx, agentId),
-                    run: {
-                        id: compaction.runId,
-                        status: compaction.status,
-                        reason:
-                            compaction.status === "running"
-                                ? null
-                                : compaction.status === "completed"
-                                  ? "completed"
-                                  : "error",
-                        startedAt: compaction.startedAt,
-                        endedAt: compaction.status === "running" ? null : compaction.completedAt,
-                        usage: {},
-                        costUsd: null,
-                    },
+                    run: await this.#runResource(ctx, run),
                     message: messageResource(this.#compactions.historyMessage(compaction)),
                     cursor,
                 });
@@ -1934,9 +1942,10 @@ export class ApiModule implements AgentModule {
             const body = await bodyAs(request, questionAnswerBodySchema, "question answer");
             const requestRow = await this.#userInput.get(ctx, agentId, questionId);
             if (requestRow === undefined) throw notFound("The question was not found.");
+            const questionRunId = await this.#activeRunId(ctx, agentId);
             if (requestRow.status !== "pending") {
                 throw new ApiError(409, "conflict", "The question has already been resolved.", {
-                    question: questionResource(requestRow, this.#events.activeRunId(agentId)),
+                    question: questionResource(requestRow, questionRunId),
                 });
             }
             const expectedQuestionIds = requestRow.questions?.map((question) => question.id) ?? [
@@ -1976,7 +1985,7 @@ export class ApiModule implements AgentModule {
                     ),
             );
             sendJson(response, 200, {
-                question: questionResource(answered, this.#events.activeRunId(agentId)),
+                question: questionResource(answered, questionRunId),
             });
             return true;
         }
@@ -2110,7 +2119,7 @@ export class ApiModule implements AgentModule {
             });
             this.#announcedPendingMessages.delete(id);
             this.#finishPendingMessageAnnouncement(id);
-            this.#flushAcceptedMessages(agentId);
+            await this.#flushAcceptedMessages(ctx, agentId);
             sendJson(response, 202, { message, cursor });
         });
     }
@@ -2246,22 +2255,24 @@ export class ApiModule implements AgentModule {
         orderKey?: string | null,
     ): Promise<Record<string, unknown> | undefined> {
         const children = await this.#agentSystem().childOf(ctx, agentId);
-        const [processes, questions, runningSubagents] = await Promise.all([
+        const [processes, questions, runningSubagents, activeRunId] = await Promise.all([
             this.#compute.listProcesses(ctx, agentId),
             this.#userInput.listPage(ctx, agentId, {
                 askingAgentId: agentId,
                 status: "pending",
                 limit: 1,
             }),
-            Promise.all(children.map(async (childId) => this.#events.activeRunId(childId))).then(
-                (runIds) => runIds.filter((runId) => runId !== undefined).length,
-            ),
+            Promise.all(
+                children.map(async (childId) => await this.#activeRunId(ctx, childId)),
+            ).then((runIds) => runIds.filter((runId) => runId !== undefined).length),
+            this.#activeRunId(ctx, agentId),
         ]);
         return await agentResource(ctx, this.#agentSystem(), this.#events, agentId, workspaceId, {
             ...(orderKey === undefined ? {} : { orderKey }),
             pendingQuestionId: questions.requests[0]?.id ?? null,
             runningProcesses: processes.filter((process) => process.status === "running").length,
             runningSubagents,
+            working: activeRunId !== undefined,
         });
     }
 
@@ -4050,6 +4061,20 @@ function statusForAgentEvent(
     return undefined;
 }
 
+function startedRunResource(
+    run: Pick<HistoryRunState, "id" | "startedAt">,
+): Record<string, unknown> {
+    return {
+        id: run.id,
+        status: "running",
+        reason: null,
+        startedAt: run.startedAt,
+        endedAt: null,
+        usage: {},
+        costUsd: null,
+    };
+}
+
 function apiAssistantMessageId(runId: string): string {
     return `a${createHash("sha256").update(runId).digest("hex").slice(0, 24)}`;
 }
@@ -4092,8 +4117,4 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
 
 function stringValue(value: unknown): string | undefined {
     return typeof value === "string" ? value : undefined;
-}
-
-function numericValue(value: unknown): number {
-    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }

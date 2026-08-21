@@ -87,14 +87,12 @@ describe("active run recovery after a daemon restart", () => {
             },
         });
         if (finished.type !== "run.finished") throw new Error("The run did not finish.");
-        expect(finished.payload.run.usage.gym?.["gym/model"]).toMatchObject({
-            cacheRead: 70,
-            cacheWrite: 5,
-            input: expect.any(Number),
-            output: expect.any(Number),
+        expect(finished.payload.run.usage.gym?.["gym/model"]).toEqual({
+            cacheRead: 770,
+            cacheWrite: 55,
+            input: 1_200,
+            output: 120,
         });
-        expect(finished.payload.run.usage.gym?.["gym/model"]?.input).toBeGreaterThanOrEqual(200);
-        expect(finished.payload.run.usage.gym?.["gym/model"]?.output).toBeGreaterThanOrEqual(20);
         expect(agentRequests()).toHaveLength(2);
 
         const history = await gym.client.getMessages(gym.defaultSessionId);

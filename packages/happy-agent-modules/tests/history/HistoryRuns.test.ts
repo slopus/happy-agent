@@ -125,6 +125,148 @@ async function finishInference(
 }
 
 describe("HistoryModule run history", () => {
+    it("reads exact current and previous run state without depending on run messages", async () => {
+        const world = await setup("history-runs-exact-state");
+        try {
+            await world.history.queuePending(world.database.context, pending("message-a", 100));
+            await acceptBatch(world, [accepted("message-a", "send")]);
+
+            expect(await world.history.runningRun(world.database.context, "agent-a")).toEqual({
+                id: "message-a",
+                agentId: "agent-a",
+                status: "running",
+                reason: null,
+                startedAt: 100,
+                endedAt: null,
+            });
+            expect(await world.history.run(world.database.context, "agent-a", "message-a")).toEqual(
+                await world.history.runningRun(world.database.context, "agent-a"),
+            );
+            expect(
+                await world.history.previousRun(world.database.context, "agent-a", "message-a"),
+            ).toBeUndefined();
+
+            await finishInference(world, "inference-a", "first answer");
+            await world.history.queuePending(
+                world.database.context,
+                pending("message-b", 200, "steer"),
+            );
+            await acceptBatch(world, [accepted("message-b", "steering")]);
+
+            expect(
+                await world.history.previousRun(world.database.context, "agent-a", "message-b"),
+            ).toEqual({
+                id: "message-a",
+                agentId: "agent-a",
+                status: "aborted",
+                reason: "steering",
+                startedAt: 100,
+                endedAt: 200,
+            });
+            expect(await world.history.runningRun(world.database.context, "agent-a")).toMatchObject(
+                {
+                    id: "message-b",
+                    status: "running",
+                    startedAt: 200,
+                },
+            );
+        } finally {
+            world.database.close();
+        }
+    });
+
+    it("reads a message-less maintenance run inside its creating transaction", async () => {
+        const world = await setup("history-runs-empty-maintenance-state");
+        try {
+            await world.database.context.inTx(async (txCtx) => {
+                await world.history.beginMaintenanceRun(txCtx, "agent-a", "maintenance-a", 300);
+                expect(await world.history.runningRun(txCtx, "agent-a")).toEqual({
+                    id: "maintenance-a",
+                    agentId: "agent-a",
+                    status: "running",
+                    reason: null,
+                    startedAt: 300,
+                    endedAt: null,
+                });
+            });
+
+            expect((await world.history.runs(world.database.context, "agent-a")).runs).toEqual([]);
+            expect(
+                await world.history.run(world.database.context, "agent-a", "maintenance-a"),
+            ).toMatchObject({ id: "maintenance-a", status: "running" });
+
+            await world.history.finishMaintenanceRun(
+                world.database.context,
+                "agent-a",
+                "maintenance-a",
+                "completed",
+                400,
+            );
+            expect(
+                await world.history.runningRun(world.database.context, "agent-a"),
+            ).toBeUndefined();
+            expect(
+                await world.history.run(world.database.context, "agent-a", "maintenance-a"),
+            ).toMatchObject({
+                id: "maintenance-a",
+                status: "completed",
+                reason: "completed",
+                endedAt: 400,
+            });
+        } finally {
+            world.database.close();
+        }
+    });
+
+    it("keeps a successfully settled run open until durable steering is accepted", async () => {
+        const world = await setup("history-runs-pending-steering-boundary");
+        try {
+            await world.history.queuePending(world.database.context, pending("message-a", 100));
+            await acceptBatch(world, [accepted("message-a", "send")]);
+            await finishInference(world, "inference-a", "first answer");
+            await world.history.queuePending(
+                world.database.context,
+                pending("message-b", 200, "steer"),
+            );
+
+            await world.historyHooks.afterAgentSettledTransact?.(
+                world.database.context,
+                world.scope,
+                { loopId: "loop-a", settlementId: "settlement-a" },
+            );
+            await world.eventHooks.afterAgentSettledTransact?.(
+                world.database.context,
+                world.scope,
+                { loopId: "loop-a", settlementId: "settlement-a" },
+            );
+            expect(await world.history.runningRun(world.database.context, "agent-a")).toMatchObject(
+                {
+                    id: "message-a",
+                    status: "running",
+                    reason: null,
+                },
+            );
+
+            await acceptBatch(world, [accepted("message-b", "steering")]);
+            expect(
+                await world.history.previousRun(world.database.context, "agent-a", "message-b"),
+            ).toMatchObject({
+                id: "message-a",
+                status: "aborted",
+                reason: "steering",
+                endedAt: 200,
+            });
+            expect(await world.history.runningRun(world.database.context, "agent-a")).toMatchObject(
+                {
+                    id: "message-b",
+                    status: "running",
+                },
+            );
+        } finally {
+            world.database.close();
+        }
+    });
+
     it("records a settlement failure when the provider throws before completing inference", async () => {
         const world = await setup("history-runs-settlement-error");
         try {

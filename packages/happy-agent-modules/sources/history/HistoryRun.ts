@@ -50,8 +50,8 @@ export const historyPendingMessageSchema = Type.Object(
 
 export type HistoryPendingMessage = Static<typeof historyPendingMessageSchema>;
 
-/** Metadata and complete messages for one accepted run. */
-export const historyRunSchema = Type.Object(
+/** Durable lifecycle metadata for one exact run, independent of whether it has messages. */
+export const historyRunStateSchema = Type.Object(
     {
         id: historyRecordIdSchema,
         agentId: historyAgentIdSchema,
@@ -59,6 +59,16 @@ export const historyRunSchema = Type.Object(
         reason: historyRunReasonSchema,
         startedAt: historyTimestampSchema,
         endedAt: Type.Union([historyTimestampSchema, Type.Null()]),
+    },
+    { additionalProperties: false },
+);
+
+export type HistoryRunState = Static<typeof historyRunStateSchema>;
+
+/** Metadata and complete messages for one accepted run. */
+export const historyRunSchema = Type.Object(
+    {
+        ...historyRunStateSchema.properties,
         messages: Type.Array(historyMessageSchema, {
             maxItems: MAX_HISTORY_MESSAGES_PER_RUN,
         }),

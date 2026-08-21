@@ -233,21 +233,41 @@ describe("public run boundary matrix", () => {
     }, 30_000);
 
     it("RB-13 rejects a stale abort guard while leaving the active run alive", async () => {
+        let releaseInference!: () => void;
+        let providerStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            providerStarted = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+            releaseInference = resolve;
+        });
         const gym = await startGym({
-            inference: [{ content: [{ text: "long", type: "text" }], delayMs: 1_000 }],
+            inference: async () => {
+                providerStarted();
+                await gate;
+                return { content: [{ text: "long", type: "text" }] };
+            },
         });
-        const accepted = await gym.send("stale abort", { wait: false });
-        await expect(
-            gym.client.abortAgent(gym.defaultSessionId, {
-                expectedRunId: "stalerun",
-                mutationId: "rb-13-stale",
-            }),
-        ).rejects.toMatchObject({ code: "conflict", status: 409 });
-        expect((await gym.client.getAgent(gym.defaultSessionId)).agent.status).not.toBe("idle");
-        await gym.client.abortAgent(gym.defaultSessionId, {
-            expectedRunId: accepted.runId,
-            mutationId: "rb-13-current",
-        });
+        const accepting = gym.send("stale abort", { wait: false });
+        await started;
+        const accepted = await accepting;
+        try {
+            await expect(
+                gym.client.abortAgent(gym.defaultSessionId, {
+                    expectedRunId: "stalerun",
+                    mutationId: "rb-13-stale",
+                }),
+            ).rejects.toMatchObject({ code: "conflict", status: 409 });
+            expect((await gym.client.getAgent(gym.defaultSessionId)).agent.status).not.toBe("idle");
+            const aborting = gym.client.abortAgent(gym.defaultSessionId, {
+                expectedRunId: accepted.runId,
+                mutationId: "rb-13-current",
+            });
+            releaseInference();
+            await aborting;
+        } finally {
+            releaseInference();
+        }
     }, 30_000);
 
     it("RB-14 emits abort completion after the original run started", async () => {
@@ -396,7 +416,7 @@ describe("public run boundary matrix", () => {
         const lifecycle = await lifecycleFor(gym);
         expect(new Set(lifecycle.map((event) => event.cursor)).size).toBe(lifecycle.length);
         expect(lifecycle.map((event) => event.cursor)).toEqual(
-            [...lifecycle.map((event) => event.cursor)].sort(),
+            lifecycle.map((event) => event.cursor).sort(),
         );
     });
 

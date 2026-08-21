@@ -82,6 +82,7 @@ import {
     historyPendingMessageSchema,
     historyRunReasonSchema,
     historyRunSchema,
+    historyRunStateSchema,
     historyRunStatusSchema,
     historyRunsPageSchema,
     historyRunsQuerySchema,
@@ -90,6 +91,7 @@ import {
     MAX_HISTORY_RUNS_PER_PAGE,
     type HistoryPendingMessage,
     type HistoryRun,
+    type HistoryRunState,
     type HistoryRunsPage,
     type HistoryRunsQuery,
 } from "./HistoryRun.js";
@@ -721,6 +723,78 @@ export class HistoryModule implements AgentModule {
                 throw new Error("The history module produced an invalid run page.");
             }
             return page;
+        });
+    }
+
+    /** Read one exact run's lifecycle state, including a run that has no messages. */
+    async run(ctx: Context, agentId: string, runId: string): Promise<HistoryRunState | undefined> {
+        if (
+            !Value.Check(historyAgentIdSchema, agentId) ||
+            !Value.Check(historyRecordIdSchema, runId)
+        ) {
+            throw new Error("The history module received an invalid run lookup.");
+        }
+        return await this.#direct(ctx, async (txCtx) => {
+            const rows = await agentDatabaseRows<HistoryRunRow>(
+                txCtx.db,
+                sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+                    FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                    WHERE agent_id = ${agentId} AND run_id = ${runId}
+                    LIMIT 1`,
+            );
+            return rows[0] === undefined ? undefined : runStateFromRow(rows[0]);
+        });
+    }
+
+    /** Read the one run an agent is durably working on, including standalone maintenance. */
+    async runningRun(ctx: Context, agentId: string): Promise<HistoryRunState | undefined> {
+        if (!Value.Check(historyAgentIdSchema, agentId)) {
+            throw new Error("The history module received an invalid running-run lookup.");
+        }
+        return await this.#direct(ctx, async (txCtx) => {
+            const rows = await agentDatabaseRows<HistoryRunRow>(
+                txCtx.db,
+                sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+                    FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                    WHERE agent_id = ${agentId} AND status = 'running'
+                    ORDER BY sequence DESC
+                    LIMIT 2`,
+            );
+            if (rows.length > 1) {
+                throw new Error("The history module found multiple running runs for one agent.");
+            }
+            return rows[0] === undefined ? undefined : runStateFromRow(rows[0]);
+        });
+    }
+
+    /** Read the run immediately preceding one exact run in the agent's durable sequence. */
+    async previousRun(
+        ctx: Context,
+        agentId: string,
+        runId: string,
+    ): Promise<HistoryRunState | undefined> {
+        if (
+            !Value.Check(historyAgentIdSchema, agentId) ||
+            !Value.Check(historyRecordIdSchema, runId)
+        ) {
+            throw new Error("The history module received an invalid previous-run lookup.");
+        }
+        return await this.#direct(ctx, async (txCtx) => {
+            const rows = await agentDatabaseRows<HistoryRunRow>(
+                txCtx.db,
+                sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+                    FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                    WHERE agent_id = ${agentId}
+                      AND sequence < (
+                          SELECT sequence
+                          FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                          WHERE agent_id = ${agentId} AND run_id = ${runId}
+                          LIMIT 1
+                      )
+                    ORDER BY sequence DESC
+                    LIMIT 1`,
+            );
+            return rows[0] === undefined ? undefined : runStateFromRow(rows[0]);
         });
     }
 
@@ -1663,7 +1737,7 @@ export class HistoryModule implements AgentModule {
             if (settlement.error !== undefined) {
                 await this.#recordSettlementFailure(ctx, scope, settlement.error);
                 await this.#finishRun(ctx, scope.agent.id, "failed", "error", Date.now());
-            } else {
+            } else if (!(await hasPendingSteering(ctx.db, scope.agent.id))) {
                 await this.#finishRun(ctx, scope.agent.id, "completed", "completed", Date.now());
             }
         },
@@ -1940,6 +2014,22 @@ async function readPendingMessages(
     return rows.map((row) => parsePendingRow(row, agentId));
 }
 
+/** Whether successful settlement must remain open for the user's next steering boundary. */
+async function hasPendingSteering(
+    database: AgentDatabaseFacade<AgentDatabase>,
+    agentId: string,
+): Promise<boolean> {
+    const rows = await agentDatabaseRows<{ found: number | string }>(
+        database,
+        sql`SELECT 1 AS found
+            FROM ${sql.raw(HISTORY_PENDING_TABLE)}
+            WHERE agent_id = ${agentId}
+              AND json_extract(message_json, '$.delivery') = 'steer'
+            LIMIT 1`,
+    );
+    return rows.length > 0;
+}
+
 async function resolveRunAnchor(
     database: AgentDatabaseFacade<AgentDatabase>,
     agentId: string,
@@ -2067,7 +2157,7 @@ async function readRunMessages(
     return rows.map(toHistoryRecord);
 }
 
-function runFromRow(row: HistoryRunRow, messages: HistoryMessage[]): HistoryRun {
+function runStateFromRow(row: HistoryRunRow): HistoryRunState {
     const sequence = toSafeInteger(row.sequence, "history run sequence");
     const startedAt = toSafeInteger(row.started_at, "history run start");
     const endedAt = row.ended_at === null ? null : toSafeInteger(row.ended_at, "history run end");
@@ -2080,15 +2170,22 @@ function runFromRow(row: HistoryRunRow, messages: HistoryMessage[]): HistoryRun 
     ) {
         throw new Error("The history module found invalid run metadata.");
     }
-    const run: HistoryRun = {
+    const run: HistoryRunState = {
         id: row.run_id,
         agentId: row.agent_id,
         status: row.status as HistoryRun["status"],
         reason: row.reason as HistoryRun["reason"],
         startedAt,
         endedAt,
-        messages,
     };
+    if (!Value.Check(historyRunStateSchema, run)) {
+        throw new Error("The history module produced invalid run state.");
+    }
+    return run;
+}
+
+function runFromRow(row: HistoryRunRow, messages: HistoryMessage[]): HistoryRun {
+    const run: HistoryRun = { ...runStateFromRow(row), messages };
     if (!Value.Check(historyRunSchema, run)) {
         throw new Error("The history module produced an invalid history run.");
     }
