@@ -1,0 +1,303 @@
+name: Release Happy Terminal
+run-name: Release Happy Terminal v${{ inputs.version }}
+
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: Semantic version without the leading v
+                required: true
+                type: string
+            release_notes:
+                description: Markdown change notes for the GitHub Release
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+concurrency:
+    group: release-happy-terminal
+    cancel-in-progress: false
+
+env:
+    RELEASE_PACKAGE: happy-terminal
+    RELEASE_TAG: happy-terminal-v${{ inputs.version }}
+    RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+    build:
+        name: Verify and build the npm package
+        runs-on: ubuntu-24.04
+        timeout-minutes: 45
+
+        steps:
+            - name: Check out main
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+
+            - name: Validate release inputs
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_NOTES: ${{ inputs.release_notes }}
+              run: |
+                  if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+                      echo "Happy Terminal releases must be dispatched from main." >&2
+                      exit 1
+                  fi
+                  if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+                      echo "Version must be semantic and must not include the leading v." >&2
+                      exit 1
+                  fi
+                  if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
+                      echo "Release notes must not be blank." >&2
+                      exit 1
+                  fi
+                  git fetch origin main --tags
+                  if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+                      echo "Happy Terminal releases must start from the current main branch." >&2
+                      exit 1
+                  fi
+                  if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
+                      echo "Tag $RELEASE_TAG already exists." >&2
+                      exit 1
+                  fi
+                  if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+                      echo "Release $RELEASE_TAG already exists." >&2
+                      exit 1
+                  fi
+
+            - name: Set up pnpm
+              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+            - name: Set up Node.js
+              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Apply the requested package version
+              run: pnpm exec tsx scripts/setReleaseVersion.ts
+
+            - name: Run type checks
+              run: pnpm --filter @slopus/happy-terminal check
+
+            - name: Run unit tests
+              env:
+                  HOME: ${{ runner.temp }}/happy-terminal-test-home
+              run: |
+                  mkdir -p "$HOME"
+                  pnpm --filter @slopus/happy-terminal test
+
+            - name: Build Happy Terminal
+              run: pnpm --filter @slopus/happy-terminal build
+
+            - name: Prove inline Node.js embedding in a real terminal
+              run: >-
+                  pnpm --filter @slopus/happy-terminal-gym-tests exec vitest run
+                  tests/node_project_embeds_happy_terminal_inline.test.ts
+
+            - name: Pack the exact npm artifact
+              shell: bash
+              run: |
+                  mkdir -p release-assets
+                  pnpm --filter @slopus/happy-terminal pack \
+                      --pack-destination "$GITHUB_WORKSPACE/release-assets"
+                  tarball="$(find release-assets -maxdepth 1 -name '*.tgz' -print -quit)"
+                  if [[ -z "$tarball" ]]; then
+                      echo "Happy Terminal did not produce an npm tarball." >&2
+                      exit 1
+                  fi
+                  shasum -a 256 "$tarball" > "$tarball.sha256"
+                  cp packages/happy-terminal/package.json release-assets/package.json
+
+            - name: Smoke test the packed package
+              shell: bash
+              run: |
+                  tarball="$(find release-assets -maxdepth 1 -name '*.tgz' -print -quit)"
+                  smoke_root="$RUNNER_TEMP/happy-terminal-smoke"
+                  mkdir -p "$smoke_root"
+                  pnpm --dir "$smoke_root" add "$GITHUB_WORKSPACE/$tarball"
+
+                  package_version="$(node -p "require('$smoke_root/node_modules/@slopus/happy-terminal/package.json').version")"
+                  test "$package_version" = "$RELEASE_VERSION"
+                  test "$("$smoke_root/node_modules/.bin/happy-terminal" --version)" = "Happy Terminal $RELEASE_VERSION"
+                  test "$("$smoke_root/node_modules/.bin/rig" --version)" = "Happy Terminal $RELEASE_VERSION"
+
+                  cd "$smoke_root"
+                  node --input-type=module <<'NODE'
+                  const terminal = await import("@slopus/happy-terminal");
+                  if (typeof terminal.runHappyTerminal !== "function") {
+                      throw new Error("The packed package does not export runHappyTerminal.");
+                  }
+                  NODE
+
+            - name: Upload the npm artifact
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: happy-terminal-npm-${{ inputs.version }}
+                  path: release-assets/*
+                  if-no-files-found: error
+                  retention-days: 7
+
+    publish:
+        name: Publish npm and GitHub releases
+        needs: build
+        runs-on: ubuntu-24.04
+        environment: npm
+        timeout-minutes: 20
+        permissions:
+            contents: write
+            id-token: write
+
+        steps:
+            - name: Check out the verified commit
+              uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+
+            - name: Download the verified npm artifact
+              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+              with:
+                  name: happy-terminal-npm-${{ inputs.version }}
+                  path: release-assets
+
+            - name: Set up pnpm
+              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+            - name: Set up Node.js
+              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+                  registry-url: https://registry.npmjs.org
+
+            - name: Install an npm that speaks trusted publishing
+              run: |
+                  pnpm add --global npm@11.18.0
+                  npm_cli="$(pnpm root --global)/npm/bin/npm-cli.js"
+                  test "$(node "$npm_cli" --version)" = "11.18.0"
+                  echo "NPM_CLI=$npm_cli" >> "$GITHUB_ENV"
+
+            - name: Confirm the release target and npm package
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  git fetch origin main --tags
+                  if [[ "$(git rev-parse "$GITHUB_SHA")" != "$(git rev-parse origin/main)" ]]; then
+                      echo "Main changed while Happy Terminal was building. Rerun the release from current main." >&2
+                      exit 1
+                  fi
+                  if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
+                      echo "Tag $RELEASE_TAG was created while this release was building." >&2
+                      exit 1
+                  fi
+                  if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+                      echo "Release $RELEASE_TAG was created while this release was building." >&2
+                      exit 1
+                  fi
+                  if ! node "$NPM_CLI" view @slopus/happy-terminal name \
+                      --registry https://registry.npmjs.org/ >/dev/null 2>&1; then
+                      echo "npm requires @slopus/happy-terminal to exist before trusted publishing can be configured." >&2
+                      echo "Publish a one-time placeholder as an npm owner, then configure release-happy-terminal.yml as its trusted publisher." >&2
+                      echo "No release tag was created." >&2
+                      exit 1
+                  fi
+                  if node "$NPM_CLI" view "@slopus/happy-terminal@$RELEASE_VERSION" version \
+                      --registry https://registry.npmjs.org/ >/dev/null 2>&1; then
+                      echo "@slopus/happy-terminal@$RELEASE_VERSION is already published." >&2
+                      exit 1
+                  fi
+
+            - name: Persist the verified package version on main
+              shell: bash
+              run: |
+                  artifact_version="$(node -p "require('./release-assets/package.json').version")"
+                  if [[ "$artifact_version" != "$RELEASE_VERSION" ]]; then
+                      echo "The verified manifest contains $artifact_version instead of $RELEASE_VERSION." >&2
+                      exit 1
+                  fi
+
+                  cp release-assets/package.json packages/happy-terminal/package.json
+                  if git diff --quiet -- packages/happy-terminal/package.json; then
+                      release_commit="$(git rev-parse HEAD)"
+                  else
+                      git config user.name "github-actions[bot]"
+                      git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                      git add packages/happy-terminal/package.json
+                      git commit -m "Release Happy Terminal v$RELEASE_VERSION"
+                      git push origin HEAD:main
+                      release_commit="$(git rev-parse HEAD)"
+                  fi
+                  echo "RELEASE_COMMIT=$release_commit" >> "$GITHUB_ENV"
+
+            - name: Create the release tag and draft
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_NOTES: ${{ inputs.release_notes }}
+              run: |
+                  mkdir -p .release
+                  printf '%s\n' "$RELEASE_NOTES" > .release/notes.md
+                  arguments=(
+                      "$RELEASE_TAG"
+                      --draft
+                      --target "$RELEASE_COMMIT"
+                      --title "Happy Terminal v$RELEASE_VERSION"
+                      --notes-file .release/notes.md
+                  )
+                  if [[ "$RELEASE_VERSION" == *-* ]]; then
+                      arguments+=(--prerelease)
+                  fi
+                  gh release create "${arguments[@]}"
+
+            - name: Publish with npm trusted publishing
+              shell: bash
+              run: |
+                  tarball="$(find release-assets -maxdepth 1 -name '*.tgz' -print -quit)"
+                  if [[ -z "$tarball" ]]; then
+                      echo "The verified npm tarball is missing." >&2
+                      exit 1
+                  fi
+
+                  distribution_tag=latest
+                  if [[ "$RELEASE_VERSION" == *-* ]]; then
+                      prerelease="${RELEASE_VERSION#*-}"
+                      distribution_tag="${prerelease%%.*}"
+                  fi
+
+                  node "$NPM_CLI" publish "$tarball" \
+                      --access public \
+                      --tag "$distribution_tag" \
+                      --provenance \
+                      --registry https://registry.npmjs.org/
+
+            - name: Verify npm and publish the GitHub Release
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  published_version=""
+                  for attempt in {1..30}; do
+                      published_version="$(node "$NPM_CLI" view "@slopus/happy-terminal@$RELEASE_VERSION" version \
+                          --registry https://registry.npmjs.org/ 2>/dev/null || true)"
+                      if [[ "$published_version" == "$RELEASE_VERSION" ]]; then
+                          break
+                      fi
+                      sleep 2
+                  done
+                  if [[ "$published_version" != "$RELEASE_VERSION" ]]; then
+                      echo "npm did not report @slopus/happy-terminal@$RELEASE_VERSION after publication." >&2
+                      exit 1
+                  fi
+
+                  gh release edit "$RELEASE_TAG" --draft=false
+                  release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+                  printf 'Published [Happy Terminal v%s](%s) and `@slopus/happy-terminal@%s`.\n' \
+                      "$RELEASE_VERSION" "$release_url" "$RELEASE_VERSION" >> "$GITHUB_STEP_SUMMARY"

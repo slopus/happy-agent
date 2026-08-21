@@ -1,5 +1,4 @@
 import { readPackageManifest } from "./release/readPackageManifest.js";
-import { assertBundledHappyRuntimeDependencies } from "./release/assertBundledHappyRuntimeDependencies.js";
 import { assertReleaseBumpAllowed } from "./release/assertReleaseBumpAllowed.js";
 import { assertRegistryLatestMatchesManifest } from "./release/assertRegistryLatestMatchesManifest.js";
 import { resolveReleasePackage } from "./release/resolveReleasePackage.js";
@@ -18,8 +17,6 @@ const VERSION_BUMPS = new Set([
 ]);
 const SEMANTIC_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const USAGE = `Usage:
-  pnpm release <version>
-  pnpm release beta
   pnpm release happy-agent-base <version>
   pnpm release happy-agent-client <version>
   pnpm release happy-agent-compute <version>
@@ -27,21 +24,21 @@ const USAGE = `Usage:
   pnpm release happy-providers <version>
 
 Examples:
-  pnpm release minor            a release with new features in it
-  pnpm release patch            a release that only fixes things
-  pnpm release beta             the next quick beta, with typechecks but no tests
-  pnpm release 0.4.0            that same choice, spelled out
   pnpm release happy-agent-base patch
   pnpm release happy-agent-client patch
   pnpm release happy-agent-compute patch
   pnpm release happy-plugins patch
   pnpm release happy-providers patch
 
-Happy Terminal is still on 0.x, so it does not take a major release yet. Until it promises
-compatibility, a minor is how a feature ships and a patch is how a fix does.`;
+Happy Terminal releases use the Release Happy Terminal GitHub Actions workflow, which requires
+an explicit version and Markdown release notes.`;
 
 async function release(): Promise<void> {
     const arguments_ = process.argv.slice(2);
+    if (arguments_.length === 1 && (arguments_[0] === "--help" || arguments_[0] === "-h")) {
+        console.log(USAGE);
+        return;
+    }
     const explicitPackage =
         arguments_[0] === "happy-terminal" ||
         arguments_[0] === "happy-agent-base" ||
@@ -50,11 +47,12 @@ async function release(): Promise<void> {
         arguments_[0] === "happy-plugins" ||
         arguments_[0] === "happy-providers";
     const releasePackage = resolveReleasePackage(explicitPackage ? arguments_.shift() : undefined);
-    const releaseInput = arguments_[0];
-    if (releaseInput === "--help" || releaseInput === "-h") {
-        console.log(USAGE);
-        return;
+    if (releasePackage.key === "happy-terminal") {
+        throw new Error(
+            "Happy Terminal releases must use the Release Happy Terminal GitHub Actions workflow.",
+        );
     }
+    const releaseInput = arguments_[0];
     if (
         releaseInput === undefined ||
         arguments_.length !== 1 ||
@@ -67,7 +65,7 @@ async function release(): Promise<void> {
 
     const initialManifest = readPackageManifest(releasePackage);
     const versionArguments = resolveReleaseVersionArguments(initialManifest.version, releaseInput);
-    if (versionArguments.beta && releasePackage.key !== "happy-terminal") {
+    if (versionArguments.beta) {
         throw new Error("Beta releases are only available for @slopus/happy-terminal.");
     }
     assertReleaseBumpAllowed({ currentVersion: initialManifest.version, requested: releaseInput });
@@ -79,9 +77,6 @@ async function release(): Promise<void> {
         throw new Error("The working tree must be clean before creating a release.");
     }
 
-    if (releasePackage.key === "happy-terminal") {
-        assertBundledHappyRuntimeDependencies(initialManifest);
-    }
     const tagsAtHead = runCommand("git", ["tag", "--points-at", "HEAD"], {
         captureOutput: true,
     }).stdout.split("\n");

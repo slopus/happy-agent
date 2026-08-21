@@ -143,49 +143,22 @@ work into history without making the composer jump.
 
 ## Publishing
 
-From a clean, current `main` branch, publish a release with new features in it:
+Happy Terminal releases are dispatched manually through the `Release Happy Terminal`
+GitHub Actions workflow from `main`. The action requires an explicit semantic version and
+Markdown change notes. It applies that version to an ephemeral checkout, typechecks, tests,
+builds, packs, and smoke-tests the exact npm tarball before it creates any tag.
 
-```sh
-pnpm release minor
-```
-
-or one that only fixes things:
-
-```sh
-pnpm release patch
-```
-
-Both are ordinary releases; pick by what is in it rather than by how large it
-feels. An exact version such as `pnpm release 0.4.0` says the same thing
-explicitly, and there are `pnpm release:minor` and `pnpm release:patch`
-shorthands.
-
-Happy Terminal is still on `0.x` and takes no major release, which the command refuses. A
-major version is a promise about compatibility, and Happy Terminal deliberately changes its
-own schemas, protocol, and configuration instead of carrying migrations for
-them. Leaving `0.x` is a decision about the product rather than about one
-release, so it is made by changing the rule in
-`scripts/release/assertReleaseBumpAllowed.ts` rather than by passing a flag.
-
-The command runs type checks and tests, builds the package, creates the release
-commit and tag, previews the package contents, and pushes the release to `main`.
-Pushing a tag named `happy-terminal-v<package version>` starts the `Publish package` GitHub
-Actions workflow, which repeats the validation and publishes `@slopus/happy-terminal` to
-npm.
+After those gates pass, the action commits the requested package version to `main`, creates
+`happy-terminal-v<version>` on that exact commit and opens a draft GitHub Release. It publishes
+the verified tarball as `@slopus/happy-terminal` through npm Trusted Publishing, verifies the
+registry, and then makes the GitHub Release public. Prereleases use their own npm channel, such
+as `beta`; stable releases move `latest`.
 
 ### Beta releases
 
-Publish the next beta when a change should reach early adopters quickly:
-
-```sh
-pnpm release beta
-```
-
-From a stable version this creates the next patch as `-beta.0`; each later beta
-increments that suffix. Beta releases run type checks and build the package but
-skip tests both locally and in the publish workflow. They use npm's `beta`
-distribution tag and never move `latest`. Install or advance to the newest beta
-with:
+Dispatch the workflow with the next explicit beta version when a change should reach early
+adopters quickly. Beta releases use npm's `beta` distribution tag and never move `latest`.
+Install or advance to the newest beta with:
 
 ```sh
 happy-terminal upgrade
@@ -210,27 +183,26 @@ prerelease keeps it out of the way: npm excludes prereleases from ranges that do
 not ask for them, so no ordinary install resolves a canary, and publishing one
 never moves `latest`. Nothing needs versioning by hand; the workflow sets it.
 
-If the local release is interrupted before the tag is pushed, rerun the command
-with the exact version to resume safely. If the GitHub Actions job fails, fix the
-configuration or transient failure and rerun that job instead of creating a new
-tag.
+If the action fails before creating the tag, fix the issue and rerun the same version. Once a
+tag exists, never move or reuse it; advance to the next release version if publication failed.
 
 ### One-time publishing setup
 
-The publish workflow uses npm Trusted Publishing, so it does not need a
+The release workflow uses npm Trusted Publishing, so it does not need a
 long-lived npm token or a contributor's npm account:
 
-1. In the GitHub repository settings, create an environment named `npm`. Under
-   deployment branches and tags, select only matching tags and add `happy-terminal-v*`. Do not
-   add required reviewers if every collaborator with permission to create tags
-   should be able to release.
-2. In the npm settings for `@slopus/happy-terminal`, add a GitHub Actions trusted publisher
-   for organization `slopus`, repository `happy-terminal`, workflow `publish.yml`, and
-   environment `npm`. Allow the `npm publish` action.
-3. Do not create an `NPM_TOKEN` GitHub secret. The workflow requests a short-lived
+1. npm requires a package to exist before a trusted publisher can be attached. An npm owner
+   must therefore publish a one-time placeholder version to initialize the
+   `@slopus/happy-terminal` name. Do not create a release tag for the placeholder.
+2. In the GitHub repository settings, create an environment named `npm` and allow deployments
+   from `main`.
+3. In the npm settings for `@slopus/happy-terminal`, add a GitHub Actions trusted publisher
+   for organization `slopus`, repository `happy-agent`, workflow
+   `release-happy-terminal.yml`, and environment `npm`. Allow the `npm publish` action.
+4. Do not create an `NPM_TOKEN` GitHub secret. The workflow requests a short-lived
    OIDC credential for each run and npm automatically records provenance for the
    public package.
 
-Anyone with GitHub write access can then run `pnpm release <version>` from an
-up-to-date `main` branch without receiving npm access. Keep tag creation limited
-to trusted collaborators; creating a matching tag is authorization to publish.
+Anyone with GitHub Actions write access can then dispatch the release from an up-to-date
+`main` branch without receiving npm access. The workflow, rather than a local release command,
+owns tag creation.
