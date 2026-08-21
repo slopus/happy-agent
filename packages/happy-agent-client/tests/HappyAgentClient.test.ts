@@ -118,6 +118,17 @@ describe("HappyAgentClient", () => {
         expect(request?.method).toBe("GET");
     });
 
+    it("enters daemon draining through its dedicated lifecycle route", async () => {
+        const response = { draining: true as const, pid: 12345 };
+        const { fetch, requests } = stubFetch(() => json(response, 202));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.drain()).resolves.toEqual(response);
+        expect(requests[0]?.url).toBe("http://agent.local/v0/drain");
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.body).toBeNull();
+    });
+
     it("leaves out query parameters the caller did not name", async () => {
         const { fetch, requests } = stubFetch(() => json({ workspaces: [] }));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });

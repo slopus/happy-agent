@@ -55,7 +55,8 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   class. Common codes: `invalid_request` (400), `unauthorized` (401), `not_found` (404),
   `conflict` (409, the generic `If-Match` and state conflicts), `cursor_unavailable` (the
   events `409`), `hash_mismatch` (the file-write `409`), `not_initialized` (a workspace still
-  building), `too_large` (413), `unsupported` (501), `internal` (500).
+  building), `draining` (503, the daemon no longer admits mutations), `too_large` (413),
+  `unsupported` (501), `internal` (500).
 
 An error body may carry additional fields alongside `error` and `code` when the endpoint
 documents them. Unexpected internal failures return `500` with a generic message; internal
@@ -172,6 +173,15 @@ The list shrinks as handlers complete. Once no handlers remain, the daemon close
 exits the process without waiting for unrelated computations that still hold the Node.js event
 loop open.
 
+Draining is a separate phase before shutdown. A draining daemon remains healthy and ready for
+reads, keeps `status` equal to `"ready"` for protocol-22 compatibility, and sets `draining` to
+`true`. `drainWaitingFor` names the stable drain handlers that have not reached a safe edge yet;
+each row includes the exact number of operations still holding that component open. Agent-system
+rows also carry a bounded view of the individual agents and stages still running. The list shrinks
+as handlers finish and an empty list means the daemon is drained. Draining does not stop the
+daemon by itself. The daemon remains in read-only draining mode until a caller asks it to shut
+down.
+
 Response — `200`:
 
 ```json
@@ -180,6 +190,18 @@ Response — `200`:
     "ready": true,
     "status": "ready",
     "version": { "protocol": 22, "daemon": "1.2.3" },
+    "draining": true,
+    "drainWaitingFor": [
+        { "name": "api-mutations", "count": 1 },
+        {
+            "name": "agent-system",
+            "count": 2,
+            "agents": [
+                { "id": "abc123", "stage": "inference" },
+                { "id": "def456", "stage": "tools" }
+            ]
+        }
+    ],
     "shuttingDown": true,
     "waitingFor": ["agent-system", "main-database"]
 }
@@ -192,6 +214,16 @@ Fields:
 - `status` — `"starting"` or `"ready"`; the human-readable form of `ready`.
 - `version` — one identity object. `protocol` is the wire protocol number, the client's
   compatibility check; `daemon` is the product version string, for display and diagnostics.
+- `draining` — optional for protocol-22 compatibility; `true` after draining begins and `false`
+  otherwise. It remains `true` after the drain finishes, until the daemon exits.
+- `drainWaitingFor` — optional for protocol-22 compatibility; structured progress for drain
+  handlers that have not reached a safe edge. It is empty before draining, after draining
+  completes, and when no draining support is installed. Every row carries a stable extensible
+  `name` and an exact positive `count`. The `agent-system` and `auto-agent-system` rows also carry
+  `agents`, sorted by ID and capped at 100 entries, each with `id` and the durable Base stage
+  (`"inference"`, `"tools"`, `"compaction"`, or `"settlement"`). When more agents are waiting than
+  fit, `truncated` is `true` while `count` remains exact. Non-agent rows omit `agents` and
+  `truncated`.
 - `shuttingDown` — optional for protocol-22 compatibility; `true` while graceful shutdown is in
   progress and `false` otherwise.
 - `waitingFor` — optional for protocol-22 compatibility; the stable names of graceful-shutdown
@@ -485,6 +517,42 @@ Request: `{ "policy": "<text>" }`
 
 Response — `200`: `{ "policy": "<text>" }` — the document as persisted. Recording the change
 also emits a `config.updated` event.
+
+### `POST /v0/drain`
+
+Puts the daemon into draining mode. The transition is permanent for this daemon process and the
+endpoint is idempotent, so a caller may safely retry after losing the response. The response is
+sent after draining mode has been published but before the drain necessarily finishes. Callers
+poll health until `drainWaitingFor` is empty, then call `POST /v0/shutdown` when they want the
+process to exit.
+
+Response — `202`:
+
+```json
+{ "draining": true, "pid": 12345 }
+```
+
+From the instant draining begins, the daemon admits no new mutation except shutdown. Reads,
+health, event pulls and streams remain available. A repeated drain request is accepted as an
+idempotent retry. Every other HTTP mutation and every new terminal WebSocket or workspace proxy
+attachment is rejected with `503` and
+`{ "error": "Happy Agent is draining and no longer accepts mutations.", "code": "draining" }`.
+A mutation already admitted before the transition is allowed to finish. Existing terminal and
+proxy attachments remain admitted and may continue. The `"api-mutations"` progress row reports
+the exact number of admitted HTTP mutations still in flight.
+
+Draining never cancels agent work. An inference already in flight finishes. If its response owes
+a tool batch that has not started, the batch remains durable for the next daemon process. A tool
+batch already running finishes and commits, but no following inference starts. Queue and steering
+messages remain durable and do not reactivate a drained agent loop.
+
+Drain completion waits only for admitted HTTP mutations, the main agent system, and the automatic
+review agent system. It does not cancel or wait for terminal processes, background shell commands,
+existing proxy streams, workspace setup, or other long-lived runtime services; ordinary graceful
+shutdown owns those lifetimes after the drain is complete.
+
+A daemon started without drain support answers `403` with
+`{ "error": "Daemon draining is not enabled." }`.
 
 ### `POST /v0/shutdown`
 

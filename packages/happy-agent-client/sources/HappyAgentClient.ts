@@ -24,6 +24,7 @@ import type { AgentBootstrapResponse, DesktopBootstrapResponse } from "./protoco
 import type {
     ConfigPatch,
     ConfigResponse,
+    DrainResponse,
     GreetingResponse,
     HealthResponse,
     InspectorStartedResponse,
@@ -254,6 +255,11 @@ export class HappyAgentClient {
             json: { policy },
             signal: options.signal,
         });
+    }
+
+    /** `POST /v0/drain` — permanently enters this daemon process's read-only drain mode. */
+    async drain(options: RequestOptions = {}): Promise<DrainResponse> {
+        return await this.#json({ method: "POST", path: "v0/drain", signal: options.signal });
     }
 
     /** `POST /v0/shutdown` — asks the daemon to shut down; it answers first. */

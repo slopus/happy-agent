@@ -25,12 +25,43 @@ export const daemonVersionSchema = Type.Object({
 });
 export type DaemonVersion = Static<typeof daemonVersionSchema>;
 
+/** A live agent still moving toward its draining edge. */
+export const drainWaitingAgentSchema = Type.Object({
+    /** Stable agent identity. */
+    id: Type.String(),
+    /** The durable Agent Base stage the agent is currently finishing. */
+    stage: Type.Union([
+        Type.Literal("inference"),
+        Type.Literal("tools"),
+        Type.Literal("compaction"),
+        Type.Literal("settlement"),
+    ]),
+});
+export type DrainWaitingAgent = Static<typeof drainWaitingAgentSchema>;
+
+/** One runtime component whose admitted work has not finished draining. */
+export const drainWaitingForSchema = Type.Object({
+    /** Stable, extensible component name. */
+    name: Type.String(),
+    /** Exact number of operations still holding this component open. */
+    count: Type.Integer({ minimum: 1 }),
+    /** Bounded, ID-sorted details for an agent-system component. */
+    agents: Type.Optional(Type.Array(drainWaitingAgentSchema, { maxItems: 100 })),
+    /** Present only when more agents are waiting than fit in `agents`. */
+    truncated: Type.Optional(Type.Literal(true)),
+});
+export type DrainWaitingFor = Static<typeof drainWaitingForSchema>;
+
 /** `GET /v0/health` */
 export const healthResponseSchema = Type.Object({
     /** Always `true`; a daemon that cannot answer does not answer. */
     healthy: Type.Boolean(),
     /** `false` while the agent system is still loading. */
     ready: Type.Boolean(),
+    /** `true` after this daemon process has entered its sticky draining mode. */
+    draining: Type.Optional(Type.Boolean()),
+    /** Structured progress for components that have not reached a safe draining edge. */
+    drainWaitingFor: Type.Optional(Type.Array(drainWaitingForSchema)),
     /** `true` while the daemon is completing its graceful-shutdown handlers. */
     shuttingDown: Type.Optional(Type.Boolean()),
     status: Type.Union([Type.Literal("starting"), Type.Literal("ready")]),
@@ -232,6 +263,15 @@ export type InstructionsResponse = Static<typeof instructionsResponseSchema>;
 /** `GET` and `PUT /v0/config/security` */
 export const securityPolicyResponseSchema = Type.Object({ policy: Type.String() });
 export type SecurityPolicyResponse = Static<typeof securityPolicyResponseSchema>;
+
+/** `POST /v0/drain` */
+export const drainResponseSchema = Type.Object({
+    /** Always `true` once the daemon has published its sticky draining mode. */
+    draining: Type.Literal(true),
+    /** The daemon's process ID, so a later stop can confirm the same process exited. */
+    pid: Type.Integer(),
+});
+export type DrainResponse = Static<typeof drainResponseSchema>;
 
 /** `POST /v0/shutdown` */
 export const shutdownResponseSchema = Type.Object({
