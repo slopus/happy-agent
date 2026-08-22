@@ -28,6 +28,14 @@ export interface HappyMachineMetadata {
     providers: readonly HappyProviderDescriptor[];
     rigMetadataVersion: 1;
     rigOnly: true;
+    /**
+     * The machine Happy CLI registered for this same computer.
+     *
+     * Happy gives each daemon its own machine, so one computer with both arrives as two. This
+     * names the other half of the pair, so the phone can offer the computer once and choose the
+     * daemon underneath by itself. Absent when this daemon is the only one here.
+     */
+    siblingMachineId?: string;
     sessionCreation: {
         idempotencyKey: "clientRequestId";
         pendingRetryAfterMs: number;
@@ -45,6 +53,7 @@ export interface HappyMachineMetadata {
 export function createHappyMachineMetadata(options: {
     configuration: HappyConnectionConfiguration;
     models: readonly HappyModel[];
+    siblingMachineId?: string;
     version: string;
 }): HappyMachineMetadata {
     const defaultModel = options.models[0];
@@ -91,6 +100,9 @@ export function createHappyMachineMetadata(options: {
         ),
         rigMetadataVersion: 1,
         rigOnly: true,
+        ...(options.siblingMachineId === undefined
+            ? {}
+            : { siblingMachineId: options.siblingMachineId }),
         sessionCreation: {
             idempotencyKey: "clientRequestId",
             pendingRetryAfterMs: HAPPY_SPAWN_RETRY_MS,

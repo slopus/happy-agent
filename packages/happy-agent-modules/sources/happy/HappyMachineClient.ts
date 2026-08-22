@@ -3,7 +3,11 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { connectHappySocket } from "./connectHappySocket.js";
-import { createHappyMachineMetadata } from "./createHappyMachineMetadata.js";
+import {
+    createHappyMachineMetadata,
+    type HappyMachineMetadata,
+} from "./createHappyMachineMetadata.js";
+import { readHappyCliMachineId } from "./credentials/readHappyCliMachineId.js";
 import {
     decryptHappyPayload,
     encryptHappyPayload,
@@ -108,6 +112,7 @@ export class HappyMachineClient {
     #keepAliveTimer: NodeJS.Timeout | undefined;
     #metadataBase: Record<string, unknown> = {};
     #retryTimer: NodeJS.Timeout | undefined;
+    #siblingMachineId: string | undefined;
     #socket: HappySocket | undefined;
     #connectionKey = "";
     /**
@@ -187,11 +192,10 @@ export class HappyMachineClient {
     }
 
     async #registerAndConnect(): Promise<void> {
-        const metadata = createHappyMachineMetadata({
-            configuration: this.#options.configuration,
-            models: this.#options.models(),
-            version: this.#options.version,
-        });
+        // Happy CLI may have been installed since this daemon last registered, so who this
+        // machine is paired with is read again every time the pairing is published.
+        this.#siblingMachineId = await readHappyCliMachineId(this.#options.configuration.happyHome);
+        const metadata = this.#metadata();
         const encryption = this.#options.configuration.credentials.encryption;
         const dataEncryptionKey =
             encryption.type === "dataKey"
@@ -353,15 +357,22 @@ export class HappyMachineClient {
         return undefined;
     }
 
+    #metadata(): HappyMachineMetadata {
+        return createHappyMachineMetadata({
+            configuration: this.#options.configuration,
+            models: this.#options.models(),
+            ...(this.#siblingMachineId === undefined
+                ? {}
+                : { siblingMachineId: this.#siblingMachineId }),
+            version: this.#options.version,
+        });
+    }
+
     #syncMetadata(socket: HappySocket, generation: number, version: number, attempt: number): void {
         if (!this.#isCurrent(generation) || attempt >= 3) return;
         const metadata = {
             ...this.#metadataBase,
-            ...createHappyMachineMetadata({
-                configuration: this.#options.configuration,
-                models: this.#options.models(),
-                version: this.#options.version,
-            }),
+            ...this.#metadata(),
             // The name is the person's to choose, so Happy Agent never writes over it.
             ...(typeof this.#metadataBase.displayName === "string"
                 ? { displayName: this.#metadataBase.displayName }
