@@ -23,6 +23,12 @@ digest. A completed version directory and `config.json` each become visible thro
 rename. `install.lock` serializes first-run downloads across Happy Terminal processes; the staged install and
 atomic config replacement remain safe even if a process exits midway.
 
+Released installations check GitHub for a newer Agent without blocking terminal startup and cache a
+successful lookup in `~/.happy/dist/latest.json` for 20 hours. Source checkouts and daemons that do
+not match the selected managed binary are never offered a release update. `happy-terminal upgrade`
+downloads and selects the newest verified release, then crosses the existing `reload` boundary to
+drain, stop, and restart the daemon.
+
 The standalone daemon atomically records its process ID at `~/.happy/agent/daemon.pid`. Graceful
 `stop` waits for both the Unix socket and that exact process to exit. `happy-terminal daemon kill` reads the
 same owner-only file, sends `SIGKILL`, waits for exit, and removes the stale record. `status` reports

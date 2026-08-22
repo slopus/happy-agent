@@ -52,11 +52,11 @@ async function runMain(appCtx: Context, argv: readonly string[]): Promise<0 | 2 
     }
     if (command === "upgrade") {
         if (commandArgs.length !== 0) {
-            throw new HappyTerminalUserError("Happy Terminal upgrade does not take arguments.", {
+            throw new HappyTerminalUserError("Happy Agent upgrade does not take arguments.", {
                 hint: "Usage: happy-terminal upgrade",
             });
         }
-        await runUpgradeCommand();
+        await runUpgradeCommand({ ctx: appCtx, log: console.log });
         return;
     }
     const options: RunAppOptions = {

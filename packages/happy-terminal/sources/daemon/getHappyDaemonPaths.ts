@@ -13,6 +13,7 @@ export interface HappyDaemonPaths {
     readonly pidPath: string;
     readonly socketPath: string;
     readonly tokenPath: string;
+    readonly updateCachePath: string;
     readonly versionsDirectory: string;
 }
 
@@ -34,6 +35,7 @@ export function getHappyDaemonPaths(
         pidPath: join(agentDirectory, "daemon.pid"),
         socketPath: join(agentDirectory, "server.sock"),
         tokenPath: join(agentDirectory, "token"),
+        updateCachePath: join(distDirectory, "latest.json"),
         versionsDirectory: join(distDirectory, "version"),
     };
 }

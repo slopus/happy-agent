@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ensureHappyAgentBinary } from "../ensureHappyAgentBinary.js";
+import { detectHappyAgentUpdate } from "../detectHappyAgentUpdate.js";
+import { ensureHappyAgentBinary, upgradeHappyAgentBinary } from "../ensureHappyAgentBinary.js";
 import { resolveLocalHappyAgentSources } from "../ensureLocalProtocolServer.js";
 import { getHappyDaemonPaths, happyAgentBinaryPath } from "../getHappyDaemonPaths.js";
 
@@ -115,6 +116,107 @@ describe("ensureHappyAgentBinary", () => {
             code: "ENOENT",
         });
     });
+
+    it("downloads and selects a newer release without removing the previous version", async () => {
+        const paths = await temporaryPaths();
+        const archive = Buffer.from("release archive");
+        await ensureHappyAgentBinary({
+            arch: "arm64",
+            extractArchive: fakeExtract,
+            fetch: releaseFetch(archive),
+            paths,
+            platform: "darwin",
+        });
+
+        const upgraded = await upgradeHappyAgentBinary({
+            arch: "arm64",
+            extractArchive: fakeExtract,
+            fetch: releaseFetch(archive, 0, undefined, "1.2.4"),
+            paths,
+            platform: "darwin",
+        });
+
+        expect(upgraded).toEqual({
+            path: happyAgentBinaryPath(paths, "1.2.4"),
+            version: "1.2.4",
+        });
+        expect(JSON.parse(await readFile(paths.binaryConfigPath, "utf8"))).toEqual({
+            downloadedVersions: ["1.2.3", "1.2.4"],
+            selectedVersion: "1.2.4",
+        });
+        expect(await readdir(paths.versionsDirectory)).toEqual(["1.2.3", "1.2.4"]);
+    });
+
+    it("never replaces a selected release with an older latest release", async () => {
+        const paths = await temporaryPaths();
+        const archive = Buffer.from("release archive");
+        const installed = await upgradeHappyAgentBinary({
+            arch: "arm64",
+            extractArchive: fakeExtract,
+            fetch: releaseFetch(archive, 0, undefined, "2.0.0"),
+            paths,
+            platform: "darwin",
+        });
+        const fetch_ = releaseFetch(archive, 0, undefined, "1.9.0");
+
+        await expect(
+            upgradeHappyAgentBinary({
+                arch: "arm64",
+                extractArchive: fakeExtract,
+                fetch: fetch_,
+                paths,
+                platform: "darwin",
+            }),
+        ).resolves.toEqual(installed);
+        expect(fetch_).toHaveBeenCalledOnce();
+        expect(await readdir(paths.versionsDirectory)).toEqual(["2.0.0"]);
+    });
+
+    it("detects a newer release and reuses the bounded lookup cache", async () => {
+        const paths = await temporaryPaths();
+        const archive = Buffer.from("release archive");
+        await ensureHappyAgentBinary({
+            arch: "arm64",
+            extractArchive: fakeExtract,
+            fetch: releaseFetch(archive),
+            paths,
+            platform: "darwin",
+        });
+        const fetch_ = releaseFetch(archive, 0, undefined, "1.2.4");
+
+        await expect(
+            detectHappyAgentUpdate({
+                currentVersion: "1.2.3",
+                fetch: fetch_,
+                now: 1_700_000_000_000,
+                paths,
+            }),
+        ).resolves.toEqual({ currentVersion: "1.2.3", latestVersion: "1.2.4" });
+        expect(fetch_).toHaveBeenCalledOnce();
+
+        const cachedFetch = vi.fn<typeof fetch>(() => {
+            throw new Error("A fresh update cache must not query GitHub.");
+        });
+        await expect(
+            detectHappyAgentUpdate({
+                currentVersion: "1.2.3",
+                fetch: cachedFetch,
+                now: 1_700_000_000_001,
+                paths,
+            }),
+        ).resolves.toEqual({ currentVersion: "1.2.3", latestVersion: "1.2.4" });
+        expect(cachedFetch).not.toHaveBeenCalled();
+    });
+
+    it("does not check releases for a daemon outside the selected managed binary", async () => {
+        const paths = await temporaryPaths();
+        const fetch_ = vi.fn<typeof fetch>();
+
+        await expect(
+            detectHappyAgentUpdate({ currentVersion: "development", fetch: fetch_, paths }),
+        ).resolves.toBeUndefined();
+        expect(fetch_).not.toHaveBeenCalled();
+    });
 });
 
 describe("resolveLocalHappyAgentSources", () => {
@@ -152,6 +254,7 @@ function releaseFetch(
     archive: Buffer,
     delayMs = 0,
     digest = createHash("sha256").update(archive).digest("hex"),
+    version = "1.2.3",
 ) {
     return vi.fn<typeof fetch>(async (input) => {
         if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -164,25 +267,25 @@ function releaseFetch(
                         digest: `sha256:${digest}`,
                         name: url.includes("never")
                             ? "never"
-                            : "happy-agent-1.2.3-darwin-arm64.tar.gz",
+                            : `happy-agent-${version}-darwin-arm64.tar.gz`,
                         size: archive.length,
                     },
                     {
                         browser_download_url: "https://downloads.example/happy-agent.tar.gz",
                         digest: `sha256:${digest}`,
-                        name: "happy-agent-1.2.3-linux-x64.tar.gz",
+                        name: `happy-agent-${version}-linux-x64.tar.gz`,
                         size: archive.length,
                     },
                     {
                         browser_download_url: "https://downloads.example/happy-agent.tar.gz",
                         digest: `sha256:${digest}`,
-                        name: "happy-agent-1.2.3-linux-arm64.tar.gz",
+                        name: `happy-agent-${version}-linux-arm64.tar.gz`,
                         size: archive.length,
                     },
                 ],
                 draft: false,
                 prerelease: false,
-                tag_name: "v1.2.3",
+                tag_name: `v${version}`,
             });
         }
         return new Response(archive, { status: 200 });

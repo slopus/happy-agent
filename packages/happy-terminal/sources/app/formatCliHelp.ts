@@ -13,7 +13,7 @@ export function formatCliHelp(): string {
         "Run Happy Terminal without a command to start an interactive session.",
         "Use 'happy-terminal desktop' to build and launch the Happy desktop app.",
         "Use 'happy-terminal inspect --json' to inspect this installation without starting the daemon.",
-        "Use 'happy-terminal upgrade' to update Happy Terminal.",
+        "Use 'happy-terminal upgrade' to update Happy Agent and restart its daemon.",
         "",
         "Options:",
         "  -h, --help       Show this help.",

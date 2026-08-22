@@ -1,83 +1,100 @@
-import { EventEmitter } from "node:events";
-import type { ChildProcess, spawn } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
+import { getHappyDaemonPaths } from "../daemon/index.js";
 import { runUpgradeCommand } from "./runUpgradeCommand.js";
 
 describe("runUpgradeCommand", () => {
-    it("installs the newest Happy Terminal beta globally with npm", async () => {
-        const child = new EventEmitter() as ChildProcess;
-        const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
-
-        const upgrading = runUpgradeCommand({ installedVersion: "0.0.165-beta.0", spawnProcess });
-        child.emit("exit", 0);
-        await upgrading;
-
-        expect(spawnProcess).toHaveBeenCalledWith(
-            "npm",
-            ["install", "-g", "@slopus/happy-terminal@beta"],
-            {
-                stdio: "inherit",
-            },
-        );
-    });
-
-    it("keeps a canary installation on the newest canary", async () => {
-        const child = new EventEmitter() as ChildProcess;
-        const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
-
-        const upgrading = runUpgradeCommand({
-            installedVersion: "0.0.166-canary.42.abcdef0",
-            spawnProcess,
+    it("downloads a newer Happy Agent release before reloading the daemon", async () => {
+        const order: string[] = [];
+        const log = vi.fn((line: string) => order.push(line));
+        const selectedBinary = vi.fn(async () => ({ path: "/agent/1.2.3", version: "1.2.3" }));
+        const upgradeBinary = vi.fn(async (options) => {
+            options.onStatus?.("Downloading Happy Agent 1.2.4.");
+            order.push("selected 1.2.4");
+            return { path: "/agent/1.2.4", version: "1.2.4" };
         });
-        child.emit("exit", 0);
-        await upgrading;
-
-        expect(spawnProcess).toHaveBeenCalledWith(
-            "npm",
-            ["install", "-g", "@slopus/happy-terminal@canary"],
-            {
-                stdio: "inherit",
-            },
-        );
-    });
-
-    it("reports a failed npm install as a user-facing upgrade error", async () => {
-        const child = new EventEmitter() as ChildProcess;
-        const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
-
-        const upgrading = runUpgradeCommand({ spawnProcess });
-        child.emit("exit", 1);
-
-        await expect(upgrading).rejects.toThrow("Happy Terminal could not upgrade itself.");
-    });
-
-    it("uses the npm command shim on Windows", async () => {
-        const child = new EventEmitter() as ChildProcess;
-        const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
-
-        const upgrading = runUpgradeCommand({
-            installedVersion: "0.0.165-beta.0",
-            platform: "win32",
-            spawnProcess,
+        const reloadDaemon = vi.fn(async () => {
+            order.push("reloaded");
         });
-        child.emit("exit", 0);
-        await upgrading;
 
-        expect(spawnProcess).toHaveBeenCalledWith(
-            "npm.cmd",
-            ["install", "-g", "@slopus/happy-terminal@beta"],
-            { stdio: "inherit" },
-        );
+        await runUpgradeCommand({
+            isReleaseInstallation: () => true,
+            log,
+            reloadDaemon,
+            runningVersion: async () => "1.2.3",
+            selectedBinary,
+            upgradeBinary,
+        });
+
+        expect(order).toEqual([
+            "Downloading Happy Agent 1.2.4.",
+            "selected 1.2.4",
+            "Restarting with Happy Agent 1.2.4.",
+            "reloaded",
+        ]);
+        expect(upgradeBinary).toHaveBeenCalledWith({
+            onStatus: log,
+            paths: getHappyDaemonPaths(),
+        });
+        expect(reloadDaemon).toHaveBeenCalledOnce();
     });
 
-    it("reports npm startup failures as user-facing upgrade errors", async () => {
-        const child = new EventEmitter() as ChildProcess;
-        const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
+    it("does not restart an already-current Happy Agent", async () => {
+        const log = vi.fn();
+        const reloadDaemon = vi.fn();
 
-        const upgrading = runUpgradeCommand({ spawnProcess });
-        child.emit("error", new Error("npm was not found"));
+        await runUpgradeCommand({
+            isReleaseInstallation: () => true,
+            log,
+            reloadDaemon,
+            runningVersion: async () => "1.2.3",
+            selectedBinary: async () => ({ path: "/agent/1.2.3", version: "1.2.3" }),
+            upgradeBinary: async () => ({ path: "/agent/1.2.3", version: "1.2.3" }),
+        });
 
-        await expect(upgrading).rejects.toThrow("Happy Terminal could not upgrade itself.");
+        expect(log).toHaveBeenLastCalledWith("Happy Agent 1.2.3 is already up to date.");
+        expect(reloadDaemon).not.toHaveBeenCalled();
+    });
+
+    it("retries the reload when the binary was selected but the old daemon kept running", async () => {
+        const log = vi.fn();
+        const reloadDaemon = vi.fn();
+
+        await runUpgradeCommand({
+            isReleaseInstallation: () => true,
+            log,
+            reloadDaemon,
+            runningVersion: async () => "1.2.2",
+            selectedBinary: async () => ({ path: "/agent/1.2.3", version: "1.2.3" }),
+            upgradeBinary: async () => ({ path: "/agent/1.2.3", version: "1.2.3" }),
+        });
+
+        expect(log).toHaveBeenLastCalledWith("Restarting with Happy Agent 1.2.3.");
+        expect(reloadDaemon).toHaveBeenCalledOnce();
+    });
+
+    it("refuses to replace a local source checkout", async () => {
+        const upgradeBinary = vi.fn();
+
+        await expect(
+            runUpgradeCommand({
+                isReleaseInstallation: () => false,
+                upgradeBinary,
+            }),
+        ).rejects.toThrow("A local Happy Agent source checkout cannot self-upgrade.");
+        expect(upgradeBinary).not.toHaveBeenCalled();
+    });
+
+    it("reports download and reload failures as user-facing upgrade errors", async () => {
+        await expect(
+            runUpgradeCommand({
+                isReleaseInstallation: () => true,
+                runningVersion: async () => undefined,
+                selectedBinary: async () => undefined,
+                upgradeBinary: async () => {
+                    throw new Error("GitHub is unavailable");
+                },
+            }),
+        ).rejects.toThrow("Happy Agent could not be upgraded.");
     });
 });

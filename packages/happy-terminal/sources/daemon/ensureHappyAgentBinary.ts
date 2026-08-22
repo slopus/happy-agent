@@ -20,6 +20,7 @@ import {
     happyAgentBinaryPath,
     type HappyDaemonPaths,
 } from "./getHappyDaemonPaths.js";
+import { isNewerSemanticVersion } from "./isNewerSemanticVersion.js";
 
 const HAPPY_AGENT_LATEST_RELEASE_URL =
     "https://api.github.com/repos/slopus/happy-agent/releases/latest";
@@ -78,6 +79,10 @@ export interface EnsureHappyAgentBinaryOptions {
     platform?: NodeJS.Platform;
 }
 
+export interface UpgradeHappyAgentBinaryOptions extends EnsureHappyAgentBinaryOptions {
+    signal?: AbortSignal;
+}
+
 /** Returns the selected installed release, downloading one only for an empty installation. */
 export async function ensureHappyAgentBinary(
     options: EnsureHappyAgentBinaryOptions = {},
@@ -86,22 +91,45 @@ export async function ensureHappyAgentBinary(
     const selected = await selectedHappyAgentBinary(paths);
     if (selected !== undefined) return selected;
 
+    return await installLatestHappyAgentBinary(options, true);
+}
+
+/** Downloads and selects the newest published Happy Agent release. */
+export async function upgradeHappyAgentBinary(
+    options: UpgradeHappyAgentBinaryOptions = {},
+): Promise<HappyAgentBinary> {
+    return await installLatestHappyAgentBinary(options, false);
+}
+
+async function installLatestHappyAgentBinary(
+    options: UpgradeHappyAgentBinaryOptions,
+    useSelectionInstalledWhileWaiting: boolean,
+): Promise<HappyAgentBinary> {
+    const paths = options.paths ?? getHappyDaemonPaths();
+
     await mkdir(paths.distDirectory, { mode: 0o700, recursive: true });
     await mkdir(paths.versionsDirectory, { mode: 0o700, recursive: true });
     await chmod(paths.distDirectory, 0o700);
     await chmod(paths.versionsDirectory, 0o700);
     const lock = await acquireInstallLock(paths.installLockPath, options.onStatus);
     try {
-        const installedWhileWaiting = await selectedHappyAgentBinary(paths);
-        if (installedWhileWaiting !== undefined) return installedWhileWaiting;
-
+        const selectedBeforeLookup = await selectedHappyAgentBinary(paths);
+        if (useSelectionInstalledWhileWaiting) {
+            if (selectedBeforeLookup !== undefined) return selectedBeforeLookup;
+        }
         const target = releaseTarget(
             options.platform ?? process.platform,
             options.arch ?? process.arch,
         );
         options.onStatus?.("Checking for the latest Happy Agent release.");
-        const release = await fetchLatestRelease(options.fetch ?? globalThis.fetch);
+        const release = await fetchLatestRelease(options.fetch ?? globalThis.fetch, options.signal);
         const version = releaseVersion(release);
+        if (
+            selectedBeforeLookup !== undefined &&
+            !isNewerSemanticVersion(version, selectedBeforeLookup.version)
+        ) {
+            return selectedBeforeLookup;
+        }
         const assetName = `happy-agent-${version}-${target}.tar.gz`;
         const asset = release.assets.find((candidate) => candidate.name === assetName);
         if (asset === undefined) {
@@ -131,6 +159,15 @@ export async function ensureHappyAgentBinary(
     }
 }
 
+/** Reads the latest published version without downloading its release asset. */
+export async function latestHappyAgentReleaseVersion(
+    options: Pick<UpgradeHappyAgentBinaryOptions, "fetch" | "signal"> = {},
+): Promise<string> {
+    return releaseVersion(
+        await fetchLatestRelease(options.fetch ?? globalThis.fetch, options.signal),
+    );
+}
+
 function releaseTarget(platform: NodeJS.Platform, arch: NodeJS.Architecture): string {
     if ((platform !== "darwin" && platform !== "linux") || (arch !== "arm64" && arch !== "x64")) {
         throw new Error(`Happy Agent does not publish a binary for ${platform}-${arch}.`);
@@ -138,14 +175,20 @@ function releaseTarget(platform: NodeJS.Platform, arch: NodeJS.Architecture): st
     return `${platform}-${arch}`;
 }
 
-async function fetchLatestRelease(fetch_: typeof globalThis.fetch): Promise<Release> {
+async function fetchLatestRelease(
+    fetch_: typeof globalThis.fetch,
+    signal: AbortSignal | undefined,
+): Promise<Release> {
     const response = await fetch_(HAPPY_AGENT_LATEST_RELEASE_URL, {
         headers: {
             accept: "application/vnd.github+json",
             "user-agent": "Happy Terminal Happy Agent downloader",
             "x-github-api-version": "2022-11-28",
         },
-        signal: AbortSignal.timeout(RELEASE_LOOKUP_TIMEOUT_MS),
+        signal:
+            signal === undefined
+                ? AbortSignal.timeout(RELEASE_LOOKUP_TIMEOUT_MS)
+                : AbortSignal.any([signal, AbortSignal.timeout(RELEASE_LOOKUP_TIMEOUT_MS)]),
     });
     if (!response.ok) {
         throw new Error(

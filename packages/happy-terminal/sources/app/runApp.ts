@@ -12,6 +12,11 @@ import {
     RemoteAgent,
 } from "../client/index.js";
 import {
+    detectHappyAgentUpdate,
+    resolveLocalHappyAgentSources,
+    type HappyAgentUpdate,
+} from "../daemon/index.js";
+import {
     createProjectConfigSecurityNotice,
     loadConfig,
     updateRuntimePreferences,
@@ -33,6 +38,7 @@ import { createStopOnceHandler } from "./createStopOnceHandler.js";
 import { humanizePermissionMode } from "./humanizePermissionMode.js";
 import { humanizeProviderId } from "./humanizeProviderId.js";
 import { humanizeReasoningLevel } from "./humanizeReasoningLevel.js";
+import { formatHappyAgentUpdateNotice } from "./formatHappyAgentUpdateNotice.js";
 import { installResumeInstructions } from "./installResumeInstructions.js";
 import { installTerminalCrashCleanup } from "./installTerminalCrashCleanup.js";
 import { providerQuotaToStartupStatusUsage } from "./providerQuotaToStartupStatusUsage.js";
@@ -113,11 +119,20 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
     }
 
     let exitReason: AppExitReason = "exit";
+    const agentUpdateController = new AbortController();
     const opened = await (async () => {
         try {
             const localServer = await ensureLocalProtocolServer({
                 onStatus: (message) => startup.setStatus(message),
             });
+            const agentUpdate =
+                resolveLocalHappyAgentSources() === undefined
+                    ? detectHappyAgentUpdate({
+                          currentVersion: localServer.health.version.daemon,
+                          paths: localServer.paths,
+                          signal: agentUpdateController.signal,
+                      }).catch(() => undefined)
+                    : undefined;
             let agentId = options.resumeSessionId;
             if (options.sessionSelection !== undefined) {
                 agentId = await resolveStartupSessionId({
@@ -167,16 +182,19 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
                 eventCursor: history.cursor < bootstrap.cursor ? history.cursor : bootstrap.cursor,
                 history,
                 localServer,
+                agentUpdate,
                 pendingQuestion: pendingQuestion.question,
                 resumed,
                 workspace: workspaceResponse.workspace,
             };
         } catch (error) {
+            agentUpdateController.abort();
             await restoreAfterFailure(startup, terminalCrashCleanup);
             throw error;
         }
     })();
     if (opened === undefined) {
+        agentUpdateController.abort();
         startup.stop();
         await terminalCrashCleanup.restoreAndDrain();
         terminalCrashCleanup.uninstall();
@@ -251,8 +269,12 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             loadedConfig.sources.local.values,
             basename(loadedConfig.sources.local.path),
         );
+        const agentUpdate = await alreadyResolved(opened.agentUpdate);
         const initialNotices = [
             ...(projectConfigNotice === undefined ? [] : [projectConfigNotice]),
+            ...(agentUpdate === undefined
+                ? []
+                : [formatHappyAgentUpdateNotice(agentUpdate, options.commandName ?? "happy")]),
             ...(options.debug === true
                 ? [
                       {
@@ -447,6 +469,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             process.off("SIGINT", stop);
             process.off("SIGTERM", stop);
             process.off("SIGHUP", stop);
+            agentUpdateController.abort();
             followController.abort();
             await events.close();
             terminal.write("\x1b[?1004l");
@@ -455,6 +478,7 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             else resumeInstructions.report();
         }
     } catch (error) {
+        agentUpdateController.abort();
         await terminalCrashCleanup.restoreAndDrain();
         terminalCrashCleanup.uninstall();
         throw error;
@@ -462,6 +486,16 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
     return exitReason === "reload"
         ? { action: "reload", sessionId: opened.agent.id }
         : { action: "exit" };
+}
+
+const UNRESOLVED = Symbol("unresolved");
+
+async function alreadyResolved(
+    promise: Promise<HappyAgentUpdate | undefined> | undefined,
+): Promise<HappyAgentUpdate | undefined> {
+    if (promise === undefined) return undefined;
+    const result = await Promise.race([promise, Promise.resolve(UNRESOLVED)]);
+    return result === UNRESOLVED ? undefined : result;
 }
 
 async function followAgentEvents(options: {

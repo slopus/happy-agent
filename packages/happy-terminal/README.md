@@ -20,14 +20,25 @@ rig
 
 The separate Happy CLI also integrates Happy Terminal and exposes it through `happy`.
 
+Released installations check for a newer Happy Agent in the background. When one is available,
+the terminal shows the host command to run, such as `happy upgrade` or
+`happy-terminal upgrade`. The standalone command downloads and verifies the newest Agent release,
+selects it, and gracefully reloads the daemon onto it. A local source checkout continues to run its
+sources and must be updated through the checkout instead.
+
 ## Embed in a Node.js application
 
 ```ts
-import { runHappyTerminal } from "@slopus/happy-terminal";
+import { runHappyTerminal, upgradeHappyAgent } from "@slopus/happy-terminal";
 
-await runHappyTerminal({
-    cwd: process.cwd(),
-});
+if (process.argv[2] === "upgrade") {
+    await upgradeHappyAgent();
+} else {
+    await runHappyTerminal({
+        commandName: "my-command",
+        cwd: process.cwd(),
+    });
+}
 ```
 
 `runHappyTerminal()` uses the current process's stdin and stdout, takes over the terminal until the
@@ -51,7 +62,9 @@ active. Happy Terminal requires Node.js 24 or newer.
 
 The embedding options type is exported as `RunHappyTerminalOptions`. Happy Agent API types belong
 to `@slopus/happy-agent-client`; embedding the TUI does not create a second API contract. The
-package version helper is available from `@slopus/happy-terminal/package-version`.
+package version helper is available from `@slopus/happy-terminal/package-version`. Embedding hosts
+that provide a custom `commandName` should route that command's `upgrade` entry point through
+`upgradeHappyAgent()` so the suggestion shown by the terminal is actionable.
 
 ## Happy Agent daemon
 
