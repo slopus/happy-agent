@@ -17,6 +17,8 @@ export const MAX_USAGE_GROUPS = 500;
  * that grows rather than a page that is bounded.
  */
 export const MAX_USAGE_GROUP_COUNT = Number.MAX_SAFE_INTEGER;
+/** How many rolling windows one read may report, so a caller cannot widen the query itself. */
+export const MAX_USAGE_WINDOWS = 8;
 /**
  * How many agents one subtree snapshot may describe.
  *

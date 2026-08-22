@@ -159,8 +159,9 @@ async function insertRawRecord(
     await agentDatabaseRun(
         database.database,
         sql`INSERT INTO happy_agent_usage_records
-            (record_id, agent_id, finished_at, kind, record_json)
-            VALUES (${record.id}, ${record.agentId}, ${record.finishedAt}, ${record.kind}, ${JSON.stringify(record)})`,
+            (record_id, agent_id, run_id, finished_at, kind, record_json)
+            VALUES (${record.id}, ${record.agentId}, ${record.runId ?? null},
+                    ${record.finishedAt}, ${record.kind}, ${JSON.stringify(record)})`,
     );
 }
 
@@ -476,6 +477,26 @@ describe("UsageModule edge cases", () => {
         });
     });
 
+    it("rejects semantically invalid persisted duration from run and window reads", async () => {
+        await withUsageDatabase("usage-invalid-token-duration", async (database) => {
+            const invalid = inferenceRecord("invalid-token-duration", "agent-1", 20, {
+                runId: "run-1",
+                durationMs: 999,
+            });
+            await insertRawRecord(database, invalid);
+            const module = await startedModule(database.context, fakeAgents({ "agent-1": {} }));
+            /*
+             * Summing tokens in SQL must enforce the same invariant that parsing every scoped
+             * record used to. A row that contradicts itself is not a trustworthy source of
+             * tokens either, so neither the run nor the installation-wide windows may spend it.
+             */
+            await expect(
+                module.readRun(database.context, "agent-1", "run-1"),
+            ).rejects.toThrow("duration");
+            await expect(module.readWindowUsage(database.context, [0])).rejects.toThrow("duration");
+        });
+    });
+
     it("aggregates and pages past more distinct groups than one page can hold", async () => {
         await withUsageDatabase("usage-many-groups", async (database) => {
             const store = new UsageDatabase();
@@ -539,25 +560,28 @@ describe("UsageModule edge cases", () => {
             }
             const module = await startedModule(database.context, fakeAgents({ "agent-1": {} }));
 
-            const hour = await module.readWindowUsage(database.context, now - hourMs);
-            expect(hour["provider-main"]?.["anthropic/opus-5"]).toEqual({
+            // Both windows come from one read, so each must still describe only its own span.
+            const [hour, week] = await module.readWindowUsage(database.context, [
+                now - hourMs,
+                now - 7 * dayMs,
+            ]);
+            expect(hour?.["provider-main"]?.["anthropic/opus-5"]).toEqual({
                 input: 600,
                 output: 600,
                 cacheRead: 0,
                 cacheWrite: 0,
             });
             // The older model started outside this window, so it must not be counted in it.
-            expect(hour["provider-main"]?.["anthropic/fable-5"]).toBeUndefined();
+            expect(hour?.["provider-main"]?.["anthropic/fable-5"]).toBeUndefined();
 
             // The week still knows about the older model: nothing evicted it.
-            const week = await module.readWindowUsage(database.context, now - 7 * dayMs);
-            expect(week["provider-main"]?.["anthropic/fable-5"]).toEqual({
+            expect(week?.["provider-main"]?.["anthropic/fable-5"]).toEqual({
                 input: 7,
                 output: 3,
                 cacheRead: 0,
                 cacheWrite: 0,
             });
-            expect(week["provider-main"]?.["anthropic/opus-5"]?.input).toBe(600);
+            expect(week?.["provider-main"]?.["anthropic/opus-5"]?.input).toBe(600);
         });
     });
 

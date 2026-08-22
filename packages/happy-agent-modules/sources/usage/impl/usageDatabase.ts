@@ -40,6 +40,7 @@ const MODEL = sql`json_extract(record_json, '$.model')`;
 const EFFORT = sql`json_extract(record_json, '$.effort')`;
 const TIER = sql`json_extract(record_json, '$.tier')`;
 const STARTED_AT = sql`json_extract(record_json, '$.startedAt')`;
+const FINISHED_AT = sql`json_extract(record_json, '$.finishedAt')`;
 const DURATION_MS = sql`json_extract(record_json, '$.durationMs')`;
 /** A turn carries no token counts, so its contribution to a token sum is zero. */
 const INPUT_TOKENS = sql`COALESCE(json_extract(record_json, '$.tokens.input'), 0)`;
@@ -63,10 +64,15 @@ const USAGE_SUM_COLUMNS = sql`
  * to perform rides along on the very same scan: a row whose measured duration disagrees with its
  * own timestamps fails the read instead of quietly becoming part of a trusted number. A record
  * that is not valid JSON fails the read too, because reading its fields is what the scan does.
+ *
+ * Every field compared here comes out of the record itself. Comparing the record's duration
+ * against the indexed `finished_at` column instead would let a row whose column and document
+ * disagree pass a check about the document.
  */
 const USAGE_INTEGRITY_COLUMNS = sql`
     COUNT(*) FILTER (WHERE ${STARTED_AT} IS NULL OR ${DURATION_MS} IS NULL
-                        OR ${DURATION_MS} != finished_at - ${STARTED_AT}) AS inconsistent_duration`;
+                        OR ${FINISHED_AT} IS NULL
+                        OR ${DURATION_MS} != ${FINISHED_AT} - ${STARTED_AT}) AS inconsistent_duration`;
 
 type UsageTotals = Pick<
     UsageSummary,
@@ -214,45 +220,98 @@ export class UsageDatabase {
      * in it and is left out, exactly as the lifetime model totals leave it out.
      */
     async #tokensByModel(ctx: Context, scope: SQL): Promise<UsageRunBreakdown> {
-        const rows = await agentDatabaseRows<{
-            provider: string;
-            model: string;
-            input_tokens: number | string;
-            output_tokens: number | string;
-            cache_read_tokens: number | string;
-            cache_write_tokens: number | string;
-        }>(
+        const [usage] = await this.#tokensByModelWindows(ctx, scope, [undefined]);
+        if (usage === undefined) throw new Error("Usage database returned no model breakdown.");
+        return usage;
+    }
+
+    /**
+     * The same breakdown for several start cutoffs at once.
+     *
+     * Every cutoff is answered from one pass, because each is a suffix of the same history and
+     * scanning it once per window would repeat the same work with only the boundary moved. A
+     * cutoff of `undefined` means the whole scope. The integrity of the rows being summed is
+     * counted on that same pass, so a total is never built out of a record that contradicts
+     * itself.
+     */
+    async #tokensByModelWindows(
+        ctx: Context,
+        scope: SQL,
+        cutoffs: readonly (number | undefined)[],
+    ): Promise<UsageRunBreakdown[]> {
+        const sums = cutoffs.flatMap((cutoff, index) =>
+            [
+                [INPUT_TOKENS, "input"],
+                [OUTPUT_TOKENS, "output"],
+                [CACHE_READ_TOKENS, "cache_read"],
+                [CACHE_WRITE_TOKENS, "cache_write"],
+            ].map(([value, name]) =>
+                cutoff === undefined
+                    ? sql`COALESCE(SUM(${value as SQL}), 0) AS ${sql.raw(`${String(name)}_${index}`)}`
+                    : sql`COALESCE(SUM(${value as SQL}) FILTER (WHERE ${STARTED_AT} >= ${cutoff}), 0)
+                              AS ${sql.raw(`${String(name)}_${index}`)}`,
+            ),
+        );
+        const rows = await agentDatabaseRows<Record<string, number | string | null>>(
             ctx.db,
             sql`SELECT ${PROVIDER} AS provider, ${MODEL} AS model,
-                       SUM(${INPUT_TOKENS}) AS input_tokens,
-                       SUM(${OUTPUT_TOKENS}) AS output_tokens,
-                       SUM(${CACHE_READ_TOKENS}) AS cache_read_tokens,
-                       SUM(${CACHE_WRITE_TOKENS}) AS cache_write_tokens
+                       ${sql.join(sums, sql`, `)},
+                       ${USAGE_INTEGRITY_COLUMNS}
                 FROM ${sql.raw(RECORDS_TABLE)}
                 ${scope} AND kind = 'inference' AND ${MODEL} IS NOT NULL
                 GROUP BY provider, model
                 ORDER BY provider, model`,
         );
-        const usage: UsageRunBreakdown = {};
+        const breakdowns = cutoffs.map<UsageRunBreakdown>(() => ({}));
         for (const row of rows) {
-            const models = usage[row.provider] ?? {};
-            models[row.model] = {
-                input: Number(row.input_tokens),
-                output: Number(row.output_tokens),
-                cacheRead: Number(row.cache_read_tokens),
-                cacheWrite: Number(row.cache_write_tokens),
-            };
-            usage[row.provider] = models;
+            if (Number(row["inconsistent_duration"] ?? 0) > 0) {
+                throw new Error(
+                    "Usage storage holds a record whose duration contradicts its span.",
+                );
+            }
+            const provider = String(row["provider"]);
+            const model = String(row["model"]);
+            const value = (name: string, index: number): number =>
+                Number(row[`${name}_${index}`] ?? 0);
+            cutoffs.forEach((_cutoff, index) => {
+                const tokens = {
+                    input: value("input", index),
+                    output: value("output", index),
+                    cacheRead: value("cache_read", index),
+                    cacheWrite: value("cache_write", index),
+                };
+                // A model that spent nothing inside this window does not belong to it.
+                if (Object.values(tokens).every((count) => count === 0)) return;
+                const breakdown = breakdowns[index] as UsageRunBreakdown;
+                const models = breakdown[provider] ?? {};
+                models[model] = tokens;
+                breakdown[provider] = models;
+            });
         }
-        if (!Value.Check(usageRunBreakdownSchema, usage)) {
-            throw new Error("Usage database returned an invalid model breakdown.");
+        for (const breakdown of breakdowns) {
+            if (!Value.Check(usageRunBreakdownSchema, breakdown)) {
+                throw new Error("Usage database returned an invalid model breakdown.");
+            }
         }
-        return structuredClone(usage);
+        return structuredClone(breakdowns);
     }
 
-    /** Inference tokens per provider and model for everything started at or after one instant. */
-    async windowUsage(ctx: Context, since: number): Promise<UsageRunBreakdown> {
-        return await this.#tokensByModel(ctx, sql`WHERE ${STARTED_AT} >= ${since}`);
+    /**
+     * Inference tokens per provider and model for several rolling windows.
+     *
+     * The windows are answered together because the widest of them contains all the others.
+     */
+    async windowUsage(
+        ctx: Context,
+        cutoffs: readonly number[],
+    ): Promise<UsageRunBreakdown[]> {
+        if (cutoffs.length === 0) return [];
+        const widest = Math.min(...cutoffs);
+        return await this.#tokensByModelWindows(
+            ctx,
+            sql`WHERE ${STARTED_AT} >= ${widest}`,
+            cutoffs,
+        );
     }
 
     /** Running totals over a scope, summed by the database rather than by reading records. */

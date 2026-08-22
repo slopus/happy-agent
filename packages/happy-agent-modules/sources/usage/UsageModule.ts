@@ -33,6 +33,7 @@ import {
     MAX_USAGE_TREE_SESSIONS,
     MAX_USAGE_TREE_TITLE_LENGTH,
     MAX_USAGE_TOKEN_COUNT,
+    MAX_USAGE_WINDOWS,
     usageAggregateQuerySchema,
     usageAgentIdSchema,
     usageAgentTreeSchema,
@@ -340,19 +341,29 @@ export class UsageModule implements AgentModule {
     }
 
     /**
-     * Read provider/model inference totals for everything started at or after one instant,
-     * across the whole collection.
+     * Read provider/model inference totals for several rolling windows, across the whole
+     * collection, in the order the cutoffs were given.
      *
-     * The window is summed by the database over the complete durable history, so it answers for
-     * every agent that ever ran rather than for whatever detail a bounded page still holds. Only
-     * host code may ask, because the answer spans every agent in the collection.
+     * Each window is summed by the database over the complete durable history, so it answers for
+     * every agent that ever ran rather than for whatever detail a bounded page still holds. They
+     * are read together because the widest window contains the rest, and asking one at a time
+     * would scan the same history once per window. Only host code may ask, because the answer
+     * spans every agent in the collection.
      */
-    async readWindowUsage(ctx: Context, since: number): Promise<UsageRunBreakdown> {
+    async readWindowUsage(
+        ctx: Context,
+        cutoffs: readonly number[],
+    ): Promise<UsageRunBreakdown[]> {
         this.#assertAgentAccess(ctx, undefined);
-        if (!Value.Check(usageTimestampSchema, since)) {
-            throw new Error("Usage window start is invalid.");
+        if (cutoffs.length > MAX_USAGE_WINDOWS) {
+            throw new Error(`Usage cannot report more than ${MAX_USAGE_WINDOWS} windows at once.`);
         }
-        return await new UsageDatabase().windowUsage(ctx, since);
+        for (const cutoff of cutoffs) {
+            if (!Value.Check(usageTimestampSchema, cutoff)) {
+                throw new Error("Usage window start is invalid.");
+            }
+        }
+        return await new UsageDatabase().windowUsage(ctx, cutoffs);
     }
 
     /** Read lifetime provider/model inference totals for one agent. */

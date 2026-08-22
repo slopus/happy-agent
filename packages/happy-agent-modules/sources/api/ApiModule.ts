@@ -3761,14 +3761,13 @@ export class ApiModule implements AgentModule {
         );
         // Each window is summed by the database over the complete durable history, so a window
         // reports everything that actually ran inside it rather than whatever a bounded page held.
-        const [hour, day, week, month] = await Promise.all(
-            [
-                60 * 60 * 1_000,
-                24 * 60 * 60 * 1_000,
-                7 * 24 * 60 * 60 * 1_000,
-                30 * 24 * 60 * 60 * 1_000,
-            ].map(async (durationMs) => await this.#usage.readWindowUsage(ctx, now - durationMs)),
-        );
+        // The four are read together: the month contains the rest, so they cost one pass.
+        const [hour, day, week, month] = await this.#usage.readWindowUsage(ctx, [
+            now - 60 * 60 * 1_000,
+            now - 24 * 60 * 60 * 1_000,
+            now - 7 * 24 * 60 * 60 * 1_000,
+            now - 30 * 24 * 60 * 60 * 1_000,
+        ]);
         return { providers, hour, day, week, month };
     }
 

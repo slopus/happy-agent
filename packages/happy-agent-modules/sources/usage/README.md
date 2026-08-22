@@ -153,10 +153,14 @@ yesterday no matter how busy today was.
 A record is one JSON document in `record_json`, and it stays that way. Because history is
 unbounded, every total is summed by the database — reaching into that document with
 `json_extract` — rather than by reading records into memory. The check that per-row parsing used
-to perform rides along on the same scan: a row whose duration contradicts its own timestamps fails
-the read instead of becoming part of a trusted number, and so does a record that is no longer
-valid JSON, because reading its fields is what the scan does. The cost of that choice is a scan
-per read, since the sums are computed from a document rather than from indexed columns.
+to perform rides along on the same scan, on every path that sums records: a row whose duration
+contradicts its own timestamps fails the read instead of becoming part of a trusted number, and so
+does a record that is no longer valid JSON, because reading its fields is what the scan does.
+Every field in that comparison is read from the record itself rather than from the indexed
+`finished_at` column, so a row whose column and document disagree cannot pass a check about the
+document. The cost of the whole choice is a scan per read, since the sums are computed from a
+document rather than from indexed columns; reads that answer several windows do it in one scan
+rather than one per window.
 
 - `record(ctx, UsageRecord)` inserts one record (`usage_inference_record` or `usage_turn_record`),
   keyed by Base's `inferenceId` or `turnId` and attributed by
@@ -165,10 +169,13 @@ per read, since the sums are computed from a document rather than from indexed c
 - `read(ctx, agentId, { cursor, limit })` returns a bounded `UsagePage` (`records`, `cursor`,
   `totalRecords`, `nextCursor?`), capped at `USAGE_PAGE_SIZE` (50) per page. `totalRecords` counts
   everything the agent ever recorded, so a caller can page through the complete history.
-- `windowUsage(ctx, since)` sums provider/model inference tokens for everything started at or
-  after one instant, across the whole collection. This is what the installation-wide hour, day,
-  week, and month windows are built from. The breakdown is keyed by model, so inference the
-  provider never attributed to one is left out, exactly as the lifetime model totals leave it out.
+- `windowUsage(ctx, cutoffs)` sums provider/model inference tokens for several rolling windows
+  across the whole collection, in the order the cutoffs were given, capped at `MAX_USAGE_WINDOWS`
+  (8). This is what the installation-wide hour, day, week, and month windows are built from, and
+  they are answered in one pass: the widest window contains the rest, so each narrower one is a
+  conditional sum over the same scan rather than another scan. The breakdown is keyed by model, so
+  inference the provider never attributed to one is left out, exactly as the lifetime model totals
+  leave it out.
 - `modelUsage(ctx, agentId)` reads lifetime provider/model input, output, cache-read, and
   cache-write totals; `totalTokensByAgent(ctx)` sums those durable counters in one pass for an
   agent-tree snapshot.
