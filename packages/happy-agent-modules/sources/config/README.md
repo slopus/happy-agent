@@ -9,7 +9,6 @@ and exposes one deeply frozen snapshot.
 ├── .happy/
 │   └── agent/
 │       ├── agent.sqlite
-│       ├── provider-state.json
 │       └── runtime.toml
 └── Happy/
     └── Config/
@@ -22,6 +21,12 @@ The project layer is `happy.toml` in the current working directory. Project
 machine settings (credentials, provider
 selection, daemon settings, permission mode, and observation) are filtered
 before merging. Precedence is global → project → runtime.
+
+`runtime.toml` is generated and daemon-owned. Startup rewrites its known values canonically, and
+runtime mutations replace it atomically; comments and unknown fields are intentionally not
+preserved. Provider records merge field-by-field across layers, so a runtime `auto_enable` or
+`enabled` value does not erase credentials, model filters, or endpoints from the global provider
+record.
 
 Missing files are valid and use bounded defaults. `happy.toml` uses the Happy Agent
 spelling; resolved values use ergonomic camelCase names such as `modelId`,
@@ -64,6 +69,12 @@ discovery or an explicit user enable. `models` is the live curated catalog filte
 while `offeredModels` is the stable complete set the agent systems can accept after a later enable.
 Happy Agent never asks a vendor which models exist — the list is source, and a configured provider
 entry decides which of them its own key serves.
+
+When a scan first detects credentials, configuration writes `auto_enable = true` into that
+provider's generated runtime table. The value remains true across later missing scans. A person may
+set it to false to prevent automatic use; a provider with no `auto_enable` value receives the true
+default only when credentials are newly detected. Explicit `enabled` values and API enable/disable
+mutations take precedence and are persisted in the same runtime provider table.
 
 A module that needs to reach a vendor takes this module and asks it, instead of being handed a
 registry or building a second one that would sign in again. `bedrockSearchModels` answers the same

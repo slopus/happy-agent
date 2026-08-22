@@ -161,7 +161,6 @@ describe("ConfigModule edge coverage", () => {
                 logPath: join(root, ".happy", "agent", "observation", "agent.log"),
                 observationHome: join(root, ".happy", "agent", "observation"),
                 pidPath: join(root, ".happy", "agent", "daemon.pid"),
-                providerStatePath: join(root, ".happy", "agent", "provider-state.json"),
                 publicHome: join(root, "Happy"),
                 runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),
                 securityPath: join(root, "Happy", "Config", "SECURITY.md"),
@@ -783,7 +782,7 @@ describe("ConfigModule edge coverage", () => {
             });
         });
 
-        it("lets a later provider entry clear an earlier explicit enable", async () => {
+        it("lets a runtime provider state field preserve an earlier explicit enable", async () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
@@ -793,13 +792,13 @@ describe("ConfigModule edge coverage", () => {
             await writeLayer(
                 root,
                 ".happy/agent/runtime.toml",
-                '[providers.codex]\ninclude_models = ["openai/gpt-5.6-luna"]\n',
+                "[providers.codex]\nauto_enable = true\n",
             );
 
             const config = await ConfigModule.load(join(root, ".happy"));
 
-            expect(config.configuration.values.providers.codex?.enabled).toBe(false);
-            expect(config.configuredProviderOverride("codex")).toBeUndefined();
+            expect(config.configuration.values.providers.codex?.enabled).toBe(true);
+            expect(config.configuredProviderOverride("codex")).toBe(true);
         });
 
         it("resets a secondary P2P identity when a later layer makes the rig primary", async () => {

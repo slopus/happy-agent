@@ -1,4 +1,5 @@
-import { chmod, mkdir, open, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -11,8 +12,8 @@ import type {
 import type { ProviderUsage } from "@slopus/happy-providers";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { Context } from "@steve.kite/stdlib";
-import { parse, TomlDate, type TomlTable, type TomlValue } from "smol-toml";
+import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
+import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol-toml";
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { getManagedWorkspacesDirectory } from "../impl/managedWorkspacesDirectory.js";
@@ -148,6 +149,7 @@ const settingsInputSchema = Type.Object(
     { additionalProperties: false },
 );
 const providerCommonInput = {
+    auto_enable: Type.Optional(Type.Boolean()),
     credential_isolation: Type.Optional(Type.Literal(true)),
     enabled: Type.Optional(Type.Boolean()),
     exclude_models: Type.Optional(boundedStringArraySchema),
@@ -459,6 +461,7 @@ const partialValuesSchema = Type.Object(
 );
 
 const providerRecordBase = {
+    autoEnable: Type.Optional(Type.Boolean()),
     credentialIsolation: Type.Optional(Type.Literal(true)),
     enabled: Type.Boolean(),
     excludeModels: Type.Optional(boundedStringArraySchema),
@@ -817,7 +820,6 @@ const pathSchemaSet = Type.Object(
         logPath: pathSchema,
         observationHome: pathSchema,
         pidPath: pathSchema,
-        providerStatePath: pathSchema,
         publicHome: pathSchema,
         runtimeConfigPath: pathSchema,
         securityPath: pathSchema,
@@ -989,6 +991,12 @@ export interface ConfigModuleLoadOptions {
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 
+/** Daemon-owned provider fields persisted together in generated runtime.toml. */
+export interface RuntimeProviderStateUpdate {
+    readonly autoEnable?: boolean;
+    readonly enabled?: boolean;
+}
+
 /**
  * The resolved Happy Agent configuration and filesystem layout. It is loaded before the agent
  * system and passed to every module that needs configuration.
@@ -1001,6 +1009,8 @@ export class ConfigModule implements AgentModule {
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
     readonly #providerLifetime = new AbortController();
     readonly #providerEnabled = new Map<string, boolean>();
+    readonly #runtimeLock: AsyncLock = asyncLock({ reentry: "allow" });
+    #runtimeValues: PartialValues;
     #providerEnablement: ProviderEnablement | undefined;
     readonly #catalogNotices: string[] = [];
     #projectsHome: string | undefined;
@@ -1013,10 +1023,12 @@ export class ConfigModule implements AgentModule {
 
     private constructor(
         configuration: HappyAgentConfiguration,
+        runtimeValues: PartialValues,
         scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined,
         environment: Readonly<NodeJS.ProcessEnv>,
     ) {
         this.configuration = configuration;
+        this.#runtimeValues = structuredClone(runtimeValues);
         this.#scripted = scripted;
         this.#environment = environment;
         for (const id of Object.keys(configuration.values.providers)) {
@@ -1143,20 +1155,77 @@ export class ConfigModule implements AgentModule {
     configuredProviderOverride(providerId: string): boolean | undefined {
         let explicitDefault: boolean | undefined;
         let explicitProvider: boolean | undefined;
-        for (const name of ["global", "runtime"] as const) {
-            const values = this.configuration.sources[name].values;
+        const sources = [
+            this.configuration.sources.global.values,
+            normalizeSourceValues(this.#runtimeValues),
+        ];
+        for (const values of sources) {
             if (typeof values.providerDefaultEnable === "boolean") {
                 explicitDefault = values.providerDefaultEnable;
             }
             const providers = values.providers as
                 | Record<string, { readonly enabled?: unknown }>
                 | undefined;
-            if (providers !== undefined && Object.hasOwn(providers, providerId)) {
-                const enabled = providers[providerId]?.enabled;
-                explicitProvider = typeof enabled === "boolean" ? enabled : undefined;
-            }
+            const enabled = providers?.[providerId]?.enabled;
+            if (typeof enabled === "boolean") explicitProvider = enabled;
         }
         return explicitProvider ?? explicitDefault;
+    }
+
+    /** The generated auto-enable setting, or nothing before a provider has been detected. */
+    providerAutoEnable(providerId: string): boolean | undefined {
+        const runtimeProvider = this.#runtimeValues.providers?.[providerId] as
+            | { readonly auto_enable?: unknown }
+            | undefined;
+        if (typeof runtimeProvider?.auto_enable === "boolean") return runtimeProvider.auto_enable;
+        return this.configuration.values.providers[providerId]?.autoEnable;
+    }
+
+    /** Canonically rewrite the daemon-owned runtime configuration. */
+    async writeRuntimeConfiguration(ctx: Context): Promise<void> {
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            await writeRuntimeConfigurationFile(
+                this.configuration.paths.runtimeConfigPath,
+                this.#runtimeValues,
+            );
+        });
+    }
+
+    /** Atomically merge daemon provider state into generated runtime.toml. */
+    async updateRuntimeProviderStates(
+        ctx: Context,
+        updates: Readonly<Record<string, RuntimeProviderStateUpdate>>,
+    ): Promise<void> {
+        const entries = Object.entries(updates);
+        for (const [providerId] of entries) {
+            if (!this.#providerEnabled.has(providerId)) {
+                throw new Error(`Provider "${providerId}" is not configured.`);
+            }
+        }
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const next = structuredClone(this.#runtimeValues);
+            const providers = (next.providers ?? {}) as Record<string, Record<string, unknown>>;
+            next.providers = providers as NonNullable<PartialValues["providers"]>;
+            for (const [providerId, update] of entries) {
+                const provider = { ...(providers[providerId] ?? {}) };
+                if (
+                    !["bedrock", "claude", "codex", "grok"].includes(providerId) &&
+                    provider["type"] === undefined
+                ) {
+                    const type = this.configuration.values.providers[providerId]?.type;
+                    const compatibility = type ?? this.#providerSource().typeOf(providerId);
+                    provider["type"] = compatibility === "gym" ? "codex" : compatibility;
+                }
+                if (update.autoEnable !== undefined) provider["auto_enable"] = update.autoEnable;
+                if (update.enabled !== undefined) provider["enabled"] = update.enabled;
+                providers[providerId] = provider;
+            }
+            if (!Value.Check(partialValuesSchema, next)) {
+                throw new Error("The generated runtime configuration is invalid.");
+            }
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+        });
     }
 
     /** Resolve an account without consulting its live gate, for bounded scans and verification. */
@@ -1543,6 +1612,7 @@ export class ConfigModule implements AgentModule {
         }
         return new ConfigModule(
             deepFreeze(configuration),
+            runtime.values,
             options.inference,
             Object.freeze({ ...options.environment }),
         );
@@ -1566,6 +1636,38 @@ async function writeUserFileIfMissing(path: string, contents: string): Promise<v
         await rm(path, { force: true }).catch(() => undefined);
         throw error;
     }
+}
+
+/** Replace generated runtime.toml atomically; comments and unknown fields are intentionally gone. */
+async function writeRuntimeConfigurationFile(path: string, values: PartialValues): Promise<void> {
+    if (!Value.Check(partialValuesSchema, values)) {
+        throw new Error("The generated runtime configuration is invalid.");
+    }
+    const encoded = stringify(runtimeConfigurationTable(values));
+    const contents = encoded.length === 0 || encoded.endsWith("\n") ? encoded : `${encoded}\n`;
+    if (Buffer.byteLength(contents, "utf8") > MAX_CONFIG_FILE_BYTES) {
+        throw new Error(`Configuration exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`);
+    }
+    await mkdir(dirname(path), { mode: 0o700, recursive: true });
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+        await writeFile(temporary, contents, { flag: "wx", mode: 0o600 });
+        await rename(temporary, path);
+    } finally {
+        await rm(temporary, { force: true }).catch(() => undefined);
+    }
+}
+
+function runtimeConfigurationTable(values: PartialValues): TomlTable {
+    const { provider_default_enable: defaultEnable, providers, ...rest } = values;
+    const providerTable = {
+        ...(defaultEnable === undefined ? {} : { default_enable: defaultEnable }),
+        ...(providers ?? {}),
+    };
+    return {
+        ...(rest as TomlTable),
+        ...(Object.keys(providerTable).length === 0 ? {} : { providers: providerTable }),
+    };
 }
 
 /** Scripted accounts, for a test that runs the whole product without a vendor credential. */
@@ -1797,7 +1899,6 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         logPath: join(observationHome, "agent.log"),
         observationHome,
         pidPath: join(agentHome, "daemon.pid"),
-        providerStatePath: join(agentHome, "provider-state.json"),
         publicHome,
         runtimeConfigPath: join(agentHome, "runtime.toml"),
         securityPath: join(configHome, "SECURITY.md"),
@@ -1852,12 +1953,17 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (partial.providers !== undefined) {
             for (const [id, provider] of Object.entries(partial.providers)) {
                 const normalized = normalizeProvider(id, provider as Record<string, unknown>);
+                const current = merged.providers[id];
+                const sameType = current?.type === normalized.type;
                 merged.providers[id] = {
+                    ...(sameType ? current : {}),
                     ...normalized,
-                    enabled: provider.enabled ?? merged.providerDefaultEnable,
+                    enabled:
+                        provider.enabled ??
+                        (sameType ? current!.enabled : merged.providerDefaultEnable),
                 } as Static<typeof providerSchema>;
-                if (provider.enabled === undefined) explicitProviderEnabled.delete(id);
-                else explicitProviderEnabled.add(id);
+                if (!sameType) explicitProviderEnabled.delete(id);
+                if (provider.enabled !== undefined) explicitProviderEnabled.add(id);
             }
         }
         if (partial.settings !== undefined) {
@@ -2269,6 +2375,7 @@ function normalizeProvider(id: string, value: Record<string, unknown>): Record<s
 
 function normalizeProviderCommon(value: Record<string, unknown>): Record<string, unknown> {
     return {
+        ...(value["auto_enable"] === undefined ? {} : { autoEnable: value["auto_enable"] }),
         ...(value["credential_isolation"] === true ? { credentialIsolation: true } : {}),
         ...(value["enabled"] === undefined ? {} : { enabled: value["enabled"] }),
         ...(value["exclude_models"] === undefined

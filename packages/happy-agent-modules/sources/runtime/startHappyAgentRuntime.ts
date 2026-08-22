@@ -283,6 +283,7 @@ export async function startHappyAgentRuntime(
     try {
         await mkdir(paths.agentHome, { mode: 0o700, recursive: true });
         await chmod(paths.agentHome, 0o700);
+        await config.writeRuntimeConfiguration(ctx.named("runtime-configuration"));
         try {
             await mkdir(paths.publicHome, { mode: 0o755, recursive: true });
             await mkdir(paths.generatedPath, { mode: 0o755, recursive: true });

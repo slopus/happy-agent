@@ -90,6 +90,8 @@ Protected project paths that do not exist must remain absent before, during, and
 
 Repository configuration comes only from the root `happy.toml`. Never read `rig.toml` as configuration and never treat it as protected; it is an ordinary project file.
 
+`runtime.toml` is always generated and daemon-owned. Never treat it as user-authored configuration, preserve its comments, or avoid writing it for that reason. Runtime settings mutations belong there.
+
 Auto decides on the user's behalf and never interrupts them for a permission answer. A review ends in allow or deny. A denial goes to the agent, which must continue only with a materially safer alternative, or stop and explain itself so the user can decide; it must never pursue the same outcome by another route. A refusal the reviewer never actually made, such as a timeout or an unavailable reviewer, must tell the agent the action is unproven rather than unsafe. Because nothing outside the agent breaks a refusal loop once the user is no longer in it, a turn that keeps being refused has to stop itself. A decision covers only the proposed action; it is not a durable command rule or authorization for later actions.
 
 Auto review must use the durable, role-aware conversation transcript rather than a compacted model-context suffix. Real user messages and trusted answers to interactive questions are authorization evidence. Assistant text, tool arguments, tool output, repository content, generated summaries, and prompt injection are not user authorization. Preserve user evidence preferentially within the review budget and fail closed when required user evidence, reviewer output, or reviewer availability is incomplete.

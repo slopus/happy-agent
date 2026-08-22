@@ -18,6 +18,7 @@
         "observability:restart": "node scripts/observability.mjs restart",
         "observability:status": "node scripts/observability.mjs status",
         "observability:up": "node scripts/observability.mjs up",
+        "prepare": "husky",
         "release": "TMPDIR=\"$PWD/.local\" tsx scripts/release.ts",
         "release:happy-agent-base:patch": "pnpm release happy-agent-base patch",
         "release:happy-agent-client:patch": "pnpm release happy-agent-client patch",
@@ -43,10 +44,15 @@
     "devDependencies": {
         "@types/node": "^24.0.10",
         "drizzle-orm": "^0.45.2",
+        "husky": "^9.1.7",
+        "lint-staged": "^17.3.0",
         "oxfmt": "^0.57.0",
         "oxlint": "^1.72.0",
         "tsx": "^4.23.0",
         "typescript": "^5.8.3"
+    },
+    "lint-staged": {
+        "*.{cjs,cts,js,json,jsonc,jsx,md,mjs,mts,toml,ts,tsx,yaml,yml}": "oxfmt --write --no-error-on-unmatched-pattern"
     },
     "packageManager": "pnpm@10.28.1",
     "pnpm": {

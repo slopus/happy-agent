@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -49,6 +49,12 @@ describe("ProviderScanModule", () => {
             remembered: true,
         });
         expect(config.isProviderEnabled("codex")).toBe(true);
+        await expect(
+            readFile(config.configuration.paths.runtimeConfigPath, "utf8"),
+        ).resolves.toContain("auto_enable = true");
+        await expect(
+            readFile(join(config.configuration.paths.agentHome, "provider-state.json"), "utf8"),
+        ).rejects.toMatchObject({ code: "ENOENT" });
 
         const isolated = await testConfigRootedAt(root, isolatedProvidersToml());
         const restarted = new ProviderScanModule(isolated);
@@ -96,12 +102,82 @@ describe("ProviderScanModule", () => {
         });
     });
 
+    it("keeps a remembered provider disabled until its startup scan completes", async () => {
+        const installationRoot = await root();
+        const happyHome = join(installationRoot, "happy");
+        await mkdir(join(happyHome, "agent"), { recursive: true });
+        await writeFile(
+            join(happyHome, "agent", "runtime.toml"),
+            '[providers.gym]\ntype = "codex"\nauto_enable = true\n',
+        );
+        const started = deferred<void>();
+        const release = deferred<void>();
+        const providers = new AgentProviders();
+        providers.add(
+            "gym",
+            async () => {
+                started.resolve(undefined);
+                await release.promise;
+                return new PassingProvider();
+            },
+            "gym",
+        );
+        const model = { ...MODEL, id: "gym/cheap", name: "Gym cheap", providerId: "gym" };
+        const config = await ConfigModule.load(happyHome, {
+            inference: { models: [model], providers },
+        });
+        const scan = new ProviderScanModule(config);
+
+        const opening = scan.open(createRootContext());
+        await started.promise;
+        expect(config.isProviderEnabled("gym")).toBe(false);
+        release.resolve(undefined);
+
+        await expect(opening).resolves.toMatchObject({
+            providers: [
+                {
+                    credentials: "available",
+                    enabled: true,
+                    enablement: "scan",
+                    providerId: "gym",
+                    remembered: true,
+                },
+            ],
+        });
+        expect(config.isProviderEnabled("gym")).toBe(true);
+    });
+
+    it("preserves auto_enable false instead of auto-enabling detected credentials", async () => {
+        const installationRoot = await root();
+        const happyHome = join(installationRoot, "happy");
+        const runtimePath = join(happyHome, "agent", "runtime.toml");
+        await mkdir(join(happyHome, "agent"), { recursive: true });
+        await writeFile(runtimePath, "[providers.codex]\nauto_enable = false\n");
+        const config = await ConfigModule.load(happyHome, { inference: inference() });
+
+        const result = await new ProviderScanModule(config).open(createRootContext());
+
+        expect(result.providers).toContainEqual({
+            credentials: "available",
+            enabled: false,
+            enablement: "explicit",
+            providerId: "codex",
+            remembered: false,
+        });
+        await expect(
+            readFile(config.configuration.paths.runtimeConfigPath, "utf8"),
+        ).resolves.not.toContain("auto_enable = true");
+    });
+
     it("persists live overrides and successful inference verification", async () => {
         const { config, root: installationRoot } = await scriptedConfig();
         const scan = new ProviderScanModule(config);
         await scan.open(createRootContext());
         await scan.setOverrides(createRootContext(), { codex: { enabled: false } });
         expect(config.isProviderEnabled("codex")).toBe(false);
+        await expect(
+            readFile(config.configuration.paths.runtimeConfigPath, "utf8"),
+        ).resolves.toEqual(expect.stringContaining("enabled = false"));
 
         const verification = await scan.verify(createRootContext(), "codex", "inference");
         expect(verification).toMatchObject({
@@ -172,7 +248,7 @@ describe("ProviderScanModule", () => {
         const { config } = await scriptedConfig();
         const scan = new ProviderScanModule(config);
         await scan.open(createRootContext());
-        const statePath = config.configuration.paths.providerStatePath;
+        const statePath = config.configuration.paths.runtimeConfigPath;
         await rm(statePath);
         await mkdir(statePath);
 

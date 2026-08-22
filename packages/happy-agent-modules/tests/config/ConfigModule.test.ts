@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { GrokProvider, GrokSessionCredential } from "@slopus/happy-providers";
+import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -53,6 +54,18 @@ describe("ConfigModule", () => {
         expect(source).toContain("# [settings]");
         expect(source).toContain("# max_collaborators = 5");
         expect(source).toContain("# max_collaboration_depth = 3");
+    });
+
+    it("always generates runtime.toml even when it has no settings yet", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-runtime-empty-"));
+        temporaryDirectories.push(root);
+        const config = await ConfigModule.load(join(root, ".happy"));
+
+        await config.writeRuntimeConfiguration(createRootContext());
+
+        await expect(readFile(config.configuration.paths.runtimeConfigPath, "utf8")).resolves.toBe(
+            "\n",
+        );
     });
 
     it("merges global happy.toml with runtime.toml, with runtime winning", async () => {
@@ -223,6 +236,7 @@ describe("ConfigModule", () => {
                 "default_enable = false",
                 "[providers.codex]",
                 'api_key = "secret"',
+                "auto_enable = true",
                 'include_models = ["openai/gpt-5.6-sol"]',
                 "",
                 "[providers.bedrock]",
@@ -249,14 +263,17 @@ describe("ConfigModule", () => {
                     profile: "work-bedrock",
                     region: "us-east-1",
                 },
-                codex: { include_models: ["openai/gpt-5.6-sol"] },
+                codex: {
+                    auto_enable: true,
+                    include_models: ["openai/gpt-5.6-sol"],
+                },
             },
         });
         // The parser intentionally retains TOML spelling; only the resolved snapshot is ergonomic.
         expect(parsed.unknownSettings).toEqual([]);
     });
 
-    it("replaces provider records by layer and applies default enablement", async () => {
+    it("merges provider records by layer and applies default enablement", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-providers-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
@@ -273,16 +290,46 @@ describe("ConfigModule", () => {
         );
         await writeFile(
             join(happyHome, "agent", "runtime.toml"),
-            ["[providers]", "[providers.codex]", 'include_models = ["runtime-model"]'].join("\n"),
+            [
+                "[providers]",
+                "[providers.codex]",
+                "auto_enable = true",
+                'include_models = ["runtime-model"]',
+            ].join("\n"),
         );
 
         const configuration = (await ConfigModule.load(happyHome)).configuration;
         expect(configuration.values.providers.codex).toMatchObject({
             enabled: false,
+            autoEnable: true,
             includeModels: ["runtime-model"],
+            apiKey: "secret",
             type: "codex",
         });
-        expect(configuration.values.providers.codex).not.toHaveProperty("apiKey");
+    });
+
+    it("rewrites daemon runtime state without losing other runtime settings", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-runtime-state-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        await mkdir(join(happyHome, "agent"), { recursive: true });
+        await writeFile(
+            join(happyHome, "agent", "runtime.toml"),
+            "[settings]\nshow_usage = true\n",
+        );
+        const config = await ConfigModule.load(happyHome);
+
+        await config.updateRuntimeProviderStates(createRootContext(), {
+            codex: { autoEnable: true, enabled: false },
+        });
+
+        const source = await readFile(config.configuration.paths.runtimeConfigPath, "utf8");
+        const parsed = parseHappyAgentConfigToml(source);
+        expect(parsed.values.settings).toMatchObject({ show_usage: true });
+        expect(parsed.values.providers?.codex).toMatchObject({
+            auto_enable: true,
+            enabled: false,
+        });
     });
 
     it("uses the ambient Grok CLI session without an explicit auth file", async () => {

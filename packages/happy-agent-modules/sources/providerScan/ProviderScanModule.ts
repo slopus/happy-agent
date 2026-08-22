@@ -1,6 +1,3 @@
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-
 import { createId } from "@paralleldrive/cuid2";
 import type {
     ProviderCredentialStatus,
@@ -11,31 +8,12 @@ import type {
 } from "@slopus/happy-agent-client";
 import type { AgentModel, AgentModule } from "@slopus/happy-agent-base";
 import type { BaseSession, SessionReasoningEffort } from "@slopus/happy-providers";
-import { Type, type Static } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
 import { asyncLock, detach, withLifetime, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
 
-const MAX_STATE_BYTES = 64 * 1024;
 const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
 const VERIFICATION_TIMEOUT_MS = 30_000;
-
-const providerStateSchema = Type.Object(
-    {
-        overrides: Type.Record(Type.String({ minLength: 1, maxLength: 256 }), Type.Boolean(), {
-            maxProperties: 64,
-        }),
-        remembered: Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
-            maxItems: 64,
-            uniqueItems: true,
-        }),
-        version: Type.Literal(1),
-    },
-    { additionalProperties: false },
-);
-
-type ProviderState = Static<typeof providerStateSchema>;
 
 /** Owns provider discovery, durable user overrides, and bounded account verification. */
 export class ProviderScanModule implements AgentModule {
@@ -44,7 +22,6 @@ export class ProviderScanModule implements AgentModule {
     readonly #config: ConfigModule;
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #remembered = new Set<string>();
-    readonly #overrides = new Map<string, boolean>();
     readonly #verifications = new Map<string, Set<AbortController>>();
     #loaded = false;
     #owner: Context | undefined;
@@ -82,12 +59,12 @@ export class ProviderScanModule implements AgentModule {
         const changes = Object.entries(providers);
         for (const [providerId] of changes) this.#assertProvider(providerId);
         await this.#lock.runInLock(ctx, async () => {
-            const nextOverrides = new Map(this.#overrides);
-            for (const [providerId, value] of changes) {
-                nextOverrides.set(providerId, value.enabled);
-            }
-            await this.#writeState(nextOverrides, this.#remembered);
-            replaceMap(this.#overrides, nextOverrides);
+            await this.#config.updateRuntimeProviderStates(
+                ctx,
+                Object.fromEntries(
+                    changes.map(([providerId, value]) => [providerId, { enabled: value.enabled }]),
+                ),
+            );
             for (const [providerId, value] of changes) {
                 this.#config.setProviderEnabled(providerId, value.enabled);
                 if (!value.enabled) this.#abortVerifications(providerId);
@@ -175,21 +152,11 @@ export class ProviderScanModule implements AgentModule {
         if (this.#loaded) return;
         await this.#lock.runInLock(ctx, async () => {
             if (this.#loaded) return;
-            const state = await readState(this.#config.configuration.paths.providerStatePath);
-            if (state !== null) {
-                for (const providerId of state.remembered) {
-                    if (this.#config.providerIds.includes(providerId)) {
-                        this.#remembered.add(providerId);
-                    }
-                }
-                for (const [providerId, enabled] of Object.entries(state.overrides)) {
-                    if (this.#config.providerIds.includes(providerId)) {
-                        this.#overrides.set(providerId, enabled);
-                    }
-                }
-            }
             // Automatic discoveries remain off until this process completes its startup scan.
             for (const providerId of this.#config.providerIds) {
+                if (this.#config.providerAutoEnable(providerId) === true) {
+                    this.#remembered.add(providerId);
+                }
                 this.#config.setProviderEnabled(providerId, this.#explicit(providerId) ?? false);
             }
             this.#loaded = true;
@@ -207,15 +174,20 @@ export class ProviderScanModule implements AgentModule {
         );
         return await this.#lock.runInLock(ctx, async () => {
             const nextRemembered = new Set(this.#remembered);
-            let changed = false;
+            const updates: Record<string, { readonly autoEnable: true }> = {};
             for (const outcome of outcomes) {
                 if (outcome.credentials !== "available" || nextRemembered.has(outcome.providerId)) {
                     continue;
                 }
+                // `auto_enable = false` is a durable human decision. Only a provider without an
+                // auto-enable setting receives the true default on first detection.
+                if (this.#config.providerAutoEnable(outcome.providerId) !== undefined) continue;
                 nextRemembered.add(outcome.providerId);
-                changed = true;
+                updates[outcome.providerId] = { autoEnable: true };
             }
-            if (changed) await this.#writeState(this.#overrides, nextRemembered);
+            if (Object.keys(updates).length > 0) {
+                await this.#config.updateRuntimeProviderStates(ctx, updates);
+            }
             replaceSet(this.#remembered, nextRemembered);
             for (const providerId of this.#config.providerIds) this.#applyEffective(providerId);
             const providers = outcomes.map(({ credentials, providerId }) =>
@@ -247,35 +219,43 @@ export class ProviderScanModule implements AgentModule {
 
     #scanResult(providerId: string, credentials: ProviderCredentialStatus): ProviderScanResult {
         const explicit = this.#explicit(providerId);
+        const autoEnable = this.#config.providerAutoEnable(providerId);
         const remembered = this.#remembered.has(providerId);
         return {
             credentials,
             enabled: this.#config.isProviderEnabled(providerId),
-            enablement: explicit !== undefined ? "explicit" : remembered ? "scan" : "default",
+            enablement:
+                explicit !== undefined || autoEnable === false
+                    ? "explicit"
+                    : remembered
+                      ? "scan"
+                      : "default",
             providerId,
             remembered,
         };
     }
 
     #explicit(providerId: string): boolean | undefined {
-        return (
-            this.#overrides.get(providerId) ?? this.#config.configuredProviderOverride(providerId)
-        );
+        return this.#config.configuredProviderOverride(providerId);
     }
 
     #applyEffective(providerId: string): void {
         this.#config.setProviderEnabled(
             providerId,
-            this.#explicit(providerId) ?? this.#remembered.has(providerId),
+            this.#explicit(providerId) ?? this.#config.providerAutoEnable(providerId) === true,
         );
     }
 
     async #remember(ctx: Context, providerId: string): Promise<void> {
         await this.#lock.runInLock(ctx, async () => {
-            if (!this.#remembered.has(providerId)) {
-                const nextRemembered = new Set(this.#remembered).add(providerId);
-                await this.#writeState(this.#overrides, nextRemembered);
-                replaceSet(this.#remembered, nextRemembered);
+            if (
+                !this.#remembered.has(providerId) &&
+                this.#config.providerAutoEnable(providerId) !== false
+            ) {
+                await this.#config.updateRuntimeProviderStates(ctx, {
+                    [providerId]: { autoEnable: true },
+                });
+                this.#remembered.add(providerId);
             }
             this.#applyEffective(providerId);
         });
@@ -337,19 +317,6 @@ export class ProviderScanModule implements AgentModule {
             controller.abort(new Error(`Provider "${providerId}" was disabled.`));
         }
     }
-
-    async #writeState(
-        overrides: ReadonlyMap<string, boolean>,
-        remembered: ReadonlySet<string>,
-    ): Promise<void> {
-        await writeState(this.#config.configuration.paths.providerStatePath, {
-            overrides: Object.fromEntries(
-                [...overrides].sort(([left], [right]) => left.localeCompare(right)),
-            ),
-            remembered: [...remembered].sort((left, right) => left.localeCompare(right)),
-            version: 1,
-        });
-    }
 }
 
 export class ProviderNotFoundError extends Error {
@@ -396,41 +363,7 @@ function rejectWhenAborted(signal: AbortSignal): Promise<never> {
     });
 }
 
-function replaceMap<K, V>(target: Map<K, V>, source: ReadonlyMap<K, V>): void {
-    target.clear();
-    for (const [key, value] of source) target.set(key, value);
-}
-
 function replaceSet<T>(target: Set<T>, source: ReadonlySet<T>): void {
     target.clear();
     for (const value of source) target.add(value);
-}
-
-async function readState(path: string): Promise<ProviderState | null> {
-    let file: Awaited<ReturnType<typeof open>> | undefined;
-    try {
-        file = await open(path, "r");
-        if ((await file.stat()).size > MAX_STATE_BYTES) return null;
-        const value = JSON.parse(await file.readFile("utf8")) as unknown;
-        return Value.Check(providerStateSchema, value) ? value : null;
-    } catch (error: unknown) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-        return null;
-    } finally {
-        await file?.close().catch(() => undefined);
-    }
-}
-
-async function writeState(path: string, state: ProviderState): Promise<void> {
-    if (!Value.Check(providerStateSchema, state)) {
-        throw new Error("The provider scan state is invalid.");
-    }
-    await mkdir(dirname(path), { mode: 0o700, recursive: true });
-    const temporary = `${path}.${createId()}.tmp`;
-    try {
-        await writeFile(temporary, `${JSON.stringify(state)}\n`, { flag: "wx", mode: 0o600 });
-        await rename(temporary, path);
-    } finally {
-        await rm(temporary, { force: true }).catch(() => undefined);
-    }
 }

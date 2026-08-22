@@ -93,6 +93,9 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 
 # [providers.codex]
 # type = "codex"
+# A new local credential detection writes auto_enable = true to generated runtime.toml.
+# Set auto_enable = false to prevent automatic use.
+# auto_enable = false
 # enabled = true
 # auth_file = "/absolute/path/to/auth.json"
 # base_url = "https://api.openai.com/v1"
