@@ -66,17 +66,13 @@ export async function agentBasePendingStateOf(
  * owner starting up needs answered — which identities are worth resuming — and the one it needs
  * again before declaring an identity finished.
  *
- * Two things count. A pending record means a run was under way and has not erased it because the
- * process died. A conversation whose last record is a consumed message, a tool result, or a
- * failure note is also owed a response and remains discoverable after a restart.
+ * Only the pending record counts. Conversation shape is deliberately not a liveness signal: a
+ * completed response may legitimately leave any role at the tail, while scheduling work records
+ * its pending state atomically with the durable change that made the work due.
  */
 export async function agentBaseStoreOwesWork(
     ctx: Context,
     persistence: AgentPersistence,
 ): Promise<boolean> {
-    if ((await agentBasePendingStateOf(ctx, persistence)) !== undefined) return true;
-    const records = await persistence.load(ctx);
-    const last = records[records.length - 1];
-    if (last === undefined) return false;
-    return last.type === "user" || last.type === "tool" || last.type === "system";
+    return (await agentBasePendingStateOf(ctx, persistence)) !== undefined;
 }

@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
     AGENT_BASE_PENDING_KEY,
     AgentBase,
+    agentBasePendingStateOf,
     agentEffort,
     agentHistoryKV,
     agentKV,
@@ -2293,10 +2294,9 @@ describe("AgentBase compaction", () => {
     });
 
     it("runs inference preparation compaction before opening the provider request", async () => {
+        const persistence = new InMemoryPersistence();
         const provider = new ScriptedProvider([
-            [
-                { type: "done", state: "normal", tokens: { input: 500, output: 40 } },
-            ],
+            [{ type: "done", state: "normal", tokens: { input: 500, output: 40 } }],
             textTurn("answered after compaction"),
         ]);
         const original = provider.session.bind(provider);
@@ -2308,11 +2308,15 @@ describe("AgentBase compaction", () => {
             return session;
         };
         let observedInferences = 0;
+        let pendingAfterCompaction: unknown;
         const hooks = {
             prepareInference: (_hookCtx: Context, preparation: AgentBaseTurnStart) =>
                 preparation.contextTokens === undefined || preparation.contextTokens < 540
                     ? undefined
                     : [{ type: "compact" as const }],
+            afterCompaction: async (hookCtx: Context) => {
+                pendingAfterCompaction = await agentBasePendingStateOf(hookCtx, persistence);
+            },
             beforeInference: () => {
                 observedInferences += 1;
             },
@@ -2321,7 +2325,7 @@ describe("AgentBase compaction", () => {
             id: "test-agent",
             providers: providersOf(provider),
             provider: "scripted",
-            persistence: new InMemoryPersistence(),
+            persistence,
             hooks,
         });
 
@@ -2334,10 +2338,11 @@ describe("AgentBase compaction", () => {
         expect(session?.compactions).toHaveLength(1);
         expect(session?.compactions[0]?.context.messages.at(-1)).toEqual(user("more"));
         expect(session?.requests).toHaveLength(2);
-        expect(session?.requests[1]?.context.messages).toEqual([
-            compactionMessage,
-            user("more"),
-        ]);
+        expect(session?.requests[1]?.context.messages).toEqual([compactionMessage, user("more")]);
+        expect(pendingAfterCompaction).toMatchObject({
+            stage: "inference",
+            inferenceId: expect.any(String),
+        });
         expect(observedInferences).toBe(2);
         await agent.close();
     });

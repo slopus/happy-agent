@@ -330,9 +330,10 @@ export interface AgentBaseOptions {
  *
  * ## Recovery
  *
- * Whether a restart owes a response is decided by the last durable record: a consumed message, a
- * tool result, or a failure note is owed an answer, while a replacement written by a compaction
- * is not a question and gets none.
+ * Only the durable pending record decides whether a restarted agent is active. Once active, the
+ * stage and the durable conversation decide what resumes. A consumed message, tool result, or
+ * failure note is owed an answer. A standalone compaction replacement is not, while an automatic
+ * compaction atomically preserves the inference identity of the response already owed after it.
  *
  * ## Abort
  *
@@ -472,10 +473,10 @@ export class AgentBase {
     /** The in-flight or finished load of the durable state; cleared at the start of every turn. */
     #loaded: Promise<void> | undefined;
     /**
-     * The kind of the last durable record, which says what the conversation is waiting for far
-     * more precisely than the message it ends on: a consumed message, a tool result or the note
-     * a failed turn leaves behind is owed a response, while a replacement written by a
-     * compaction is owed nothing at all.
+     * The kind of the last durable record, used only after the pending record has established
+     * that the agent is active. A consumed message, tool result, or failure note is owed a
+     * response. A compaction is owed one only when the pending inference identity says the active
+     * turn was already committed to continue across that replacement.
      */
     #lastRecordType: AgentRecord["type"] | undefined;
     /**
@@ -2275,7 +2276,7 @@ export class AgentBase {
             let needsInference = resumed.length > 0;
             // A requested compaction runs before this turn's first inference, so the model
             // always receives a settled conversation — never one still owing tool results.
-            await this.#runCompaction(ctx, abort.signal);
+            await this.#runCompaction(ctx, abort.signal, needsInference);
             if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             // An inference is needed without any injection when tool results from a resumed batch
             // end the context, or — checked once, against the freshly loaded durable state —
@@ -2294,10 +2295,8 @@ export class AgentBase {
             // successful response clears it; a turn that ends while it is set has failed and
             // surfaces it to the context as a system message.
             let pendingError: string | undefined;
-            let preparedContextTokens:
-                | number
-                | undefined
-                | typeof UNPREPARED_CONTEXT = UNPREPARED_CONTEXT;
+            let preparedContextTokens: number | undefined | typeof UNPREPARED_CONTEXT =
+                UNPREPARED_CONTEXT;
             while (true) {
                 if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 // An abort during the tool batch ends the turn here, before the next inference.
@@ -2317,7 +2316,7 @@ export class AgentBase {
                 // A hook may request compaction after the response that dispatched the tool
                 // batch. Its results are settled now, so replace the measured context before
                 // another inference iteration or newly queued input can enter it.
-                await this.#runCompaction(ctx, abort.signal);
+                await this.#runCompaction(ctx, abort.signal, needsInference);
                 if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 await this.#finishAdmittedQueueWrites();
                 // A message accepted through an outer transaction becomes visible only after
@@ -2585,17 +2584,23 @@ export class AgentBase {
      * Whether this agent is picking up a run that was cut off rather than starting a fresh one,
      * and so owes an inference nobody asked for again.
      *
-     * What is outstanding is read from the conversation: a tail that is a consumed message, a
-     * tool result, or the note a failed turn left behind is owed an answer. The pending record
-     * adds the knowledge that the interrupted run reached the model: a listener shown the
-     * beginning of a block that will now never arrive is told to drop it. Only finished blocks
-     * are persisted, so the conversation is intact and it is the view being corrected.
+     * Liveness comes only from the inherited pending record. Within that active run, a consumed
+     * message, tool result, or failure note is owed an answer. A compaction replacement is owed
+     * one only when its transaction preserved the inference identity of the active continuation.
+     * A listener shown the beginning of a block that will now never arrive is told to drop it.
+     * Only finished blocks are persisted, so the conversation is intact and it is the view being
+     * corrected.
      */
     async #resumesInterruptedRun(ctx: Context): Promise<boolean> {
+        const continuedAfterCompaction =
+            this.#lastRecordType === "compaction" &&
+            this.#inherited?.stage === "inference" &&
+            this.#inherited.inferenceId !== undefined;
         const owed =
             this.#lastRecordType === "user" ||
             this.#lastRecordType === "tool" ||
-            this.#lastRecordType === "system";
+            this.#lastRecordType === "system" ||
+            continuedAfterCompaction;
         if (owed && this.#inherited?.stage === "inference") {
             await this.#emit(ctx, { type: "block_reset" });
         }
@@ -2655,15 +2660,23 @@ export class AgentBase {
      * promise for every caller awaiting it. A provider failure rejects them and leaves history
      * untouched.
      */
-    async #runCompaction(ctx: Context, signal: AbortSignal): Promise<void> {
+    async #runCompaction(
+        ctx: Context,
+        signal: AbortSignal,
+        continueWithInference: boolean,
+    ): Promise<void> {
         if (this.#compaction === undefined) return;
         await this.#span(ctx, "agent.compaction", {}, (compactionCtx) =>
-            this.#compactHistory(compactionCtx, signal),
+            this.#compactHistory(compactionCtx, signal, continueWithInference),
         );
     }
 
     /** The compaction itself, on the context of the span it belongs to. */
-    async #compactHistory(ctx: Context, signal: AbortSignal): Promise<void> {
+    async #compactHistory(
+        ctx: Context,
+        signal: AbortSignal,
+        continueWithInference: boolean,
+    ): Promise<void> {
         const pending = this.#compaction;
         if (pending === undefined) return;
         try {
@@ -2694,6 +2707,10 @@ export class AgentBase {
                 ...(this.#model === undefined ? {} : { model: this.#model }),
             });
             if (result.status === "failed") {
+                await this.#preserveCompactionContinuation(
+                    ctx,
+                    continueWithInference && !signal.aborted,
+                );
                 await this.#invokeHook(ctx, this.#hooks.afterCompaction, {
                     ...compactionStart,
                     result,
@@ -2721,6 +2738,14 @@ export class AgentBase {
                             type: "compaction",
                             messages: result.context.messages,
                         });
+                        if (continueWithInference) {
+                            // The replacement and the response it still owes are one durable
+                            // transition. Reserving the inference identity here distinguishes an
+                            // active automatic compaction from standalone maintenance even if the
+                            // process stops before the provider request can open.
+                            this.#inferenceId ??= createId();
+                            await this.#recordPending(txCtx, "inference", true);
+                        }
                     });
                     this.#rotateHistoryKV();
                     this.#messages = [...result.context.messages];
@@ -2730,6 +2755,12 @@ export class AgentBase {
                 // again until the next response measures the replacement.
                 await this.#recordContextTokens(ctx, undefined);
             }
+            if (result.status !== "completed") {
+                await this.#preserveCompactionContinuation(
+                    ctx,
+                    continueWithInference && !signal.aborted,
+                );
+            }
             await this.#invokeHook(ctx, this.#hooks.afterCompaction, {
                 ...compactionStart,
                 result,
@@ -2737,9 +2768,20 @@ export class AgentBase {
             this.#compaction = undefined;
             pending.resolve();
         } catch (error: unknown) {
+            await this.#preserveCompactionContinuation(
+                ctx,
+                continueWithInference && !signal.aborted,
+            );
             this.#compaction = undefined;
             pending.reject(error);
         }
+    }
+
+    /** Keep a response owed when an automatic compaction did not reach its replacement commit. */
+    async #preserveCompactionContinuation(ctx: Context, shouldContinue: boolean): Promise<void> {
+        if (!shouldContinue) return;
+        this.#inferenceId ??= createId();
+        await this.#enterStage(ctx, "inference");
     }
 
     /**

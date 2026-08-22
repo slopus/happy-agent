@@ -144,8 +144,10 @@ system notice. Notices are durable and append only after pending tool results an
 settled, immediately before the inference that should see them.
 `prepareInference` runs after queued input has joined the conversation and immediately before a
 possible provider request. It may return only `{ type: "compact" }`; the replacement runs before
-the durable inference stage opens, then preparation is evaluated against the replacement. A
-failed attempt is not repeated on the unchanged provider measurement before that request.
+the durable inference stage opens, then preparation is evaluated against the replacement. The
+replacement and its still-owed inference continuation update the pending record atomically, so a
+restart between them continues the active turn. A failed attempt is not repeated on the unchanged
+provider measurement before that request.
 Compaction exposes `beforeCompaction`, transactional `historyErasedTransact`, and
 `afterCompaction` hooks. The middle hook runs after the old records and history KV are cleared but
 before replacement history is appended, so its writes and the replacement commit or roll back

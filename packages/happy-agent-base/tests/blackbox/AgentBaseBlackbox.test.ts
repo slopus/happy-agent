@@ -1,6 +1,7 @@
 import type {
     SessionAssistantBlock,
     SessionEvent,
+    SessionMessage,
     SessionToolCallBlock,
     SessionToolResultMessage,
 } from "@slopus/happy-providers";
@@ -959,8 +960,13 @@ describe("AgentBase black-box persistence and restart behavior", () => {
                 messages: [user("a summary of everything so far")],
             },
         ]);
+        persistence.values.set(AGENT_BASE_PENDING_KEY, {
+            stage: "compaction",
+            loopId: "l12345678901234567890124",
+            turnId: "t12345678901234567890124",
+        });
         const provider = new ScriptedProvider([textTurn("unwanted")]);
-        const agent = await AgentBase.create(ctx, {
+        const agent = await AgentBase.load(ctx, {
             id: "restart-on-compaction",
             providers: providersOf(provider),
             provider: "scripted",
@@ -972,6 +978,49 @@ describe("AgentBase black-box persistence and restart behavior", () => {
 
         expect(provider.sessions).toHaveLength(0);
         expect(persistence.records).toHaveLength(1);
+        expect(persistence.values.has(AGENT_BASE_PENDING_KEY)).toBe(false);
+        await agent.close();
+    });
+
+    it("continues an interrupted inference after a completed compaction", async () => {
+        // Automatic compaction replaces the transcript immediately before the provider request
+        // that was already owed. If the process stops after that replacement, the durable
+        // inference identity distinguishes this active continuation from an idle maintenance
+        // compaction, whose replacement must still receive no unsolicited answer.
+        const compacted: SessionMessage = {
+            role: "compaction",
+            content: "summary of the active turn",
+            encryptedContent: null,
+        };
+        const persistence = new InMemoryPersistence([
+            {
+                type: "compaction",
+                messages: [compacted],
+            },
+        ]);
+        persistence.values.set(AGENT_BASE_PENDING_KEY, {
+            stage: "inference",
+            loopId: "l12345678901234567890123",
+            turnId: "t12345678901234567890123",
+            inferenceId: "i12345678901234567890123",
+        });
+        const provider = new ScriptedProvider([textTurn("continued after compaction")]);
+        const agent = await AgentBase.load(ctx, {
+            id: "restart-after-active-compaction",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+        });
+
+        agent.start();
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.requests[0]?.context.messages).toEqual([compacted]);
+        expect(persistence.records.at(-1)).toEqual({
+            type: "block",
+            block: { type: "text", text: "continued after compaction" },
+        });
+        expect(persistence.values.has(AGENT_BASE_PENDING_KEY)).toBe(false);
         await agent.close();
     });
 

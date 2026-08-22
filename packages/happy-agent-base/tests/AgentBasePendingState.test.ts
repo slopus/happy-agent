@@ -36,6 +36,18 @@ function deferred(): Deferred {
  * work nobody finished, and its absence is what "settled" means.
  */
 describe("durable pending state", () => {
+    it("is the only durable fact that makes an agent active", async () => {
+        const persistence = new InMemoryPersistence([userRecord("completed empty response")]);
+
+        expect(await agentBaseStoreOwesWork(ctx, persistence)).toBe(false);
+
+        persistence.values.set(AGENT_BASE_PENDING_KEY, {
+            stage: "inference",
+            loopId: LOOP_ID,
+        });
+        expect(await agentBaseStoreOwesWork(ctx, persistence)).toBe(true);
+    });
+
     it("records outstanding work while running and erases it once settled", async () => {
         const persistence = new InMemoryPersistence();
         const stages: (string | undefined)[] = [];
