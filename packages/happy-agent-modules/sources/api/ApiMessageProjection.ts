@@ -5,6 +5,7 @@ import {
     MAX_HISTORY_RECORDED_TOOL_OUTPUT_LENGTH,
     type HistoryBlock,
     type HistoryMessage,
+    type HistoryToolPresentation,
 } from "../history/index.js";
 import { toolCallResource, type MessageResourceOptions } from "./ApiToolPresentation.js";
 
@@ -95,6 +96,7 @@ export function messageResource(
 export function providerMessageContent(
     value: unknown,
     reviewedCalls: ReadonlyMap<string, ReviewedHistoryToolCall> = new Map(),
+    resultPresentations: ReadonlyMap<string, HistoryToolPresentation> = new Map(),
 ): readonly Record<string, unknown>[] | undefined {
     if (!Value.Check(providerContentSchema, value)) return undefined;
     const results = new Map<string, Static<typeof providerToolResultBlockSchema>>();
@@ -124,6 +126,7 @@ export function providerMessageContent(
         const callId = call.id ?? call.callId ?? "unknown";
         const result = results.get(callId);
         const reviewed = reviewedCalls.get(callId);
+        const presentation = resultPresentations.get(callId);
         return [
             toolCallResource(
                 {
@@ -137,6 +140,7 @@ export function providerMessageContent(
                               : "completed",
                     arguments: call.arguments ?? {},
                     ...(result === undefined ? {} : { output: providerToolOutput(result) }),
+                    ...(result === undefined || presentation === undefined ? {} : { presentation }),
                     ...(reviewed === undefined
                         ? {}
                         : { elevated: reviewed.elevated, review: reviewed.review }),
@@ -195,6 +199,9 @@ function historyBlocks(
                               : "completed",
                     arguments: block.arguments,
                     ...(result === undefined ? {} : { output: result.output ?? "" }),
+                    ...(result?.presentation === undefined
+                        ? {}
+                        : { presentation: result.presentation }),
                     ...(block.elevated === undefined || block.review === undefined
                         ? {}
                         : { elevated: block.elevated, review: block.review }),
@@ -219,6 +226,19 @@ export function reviewedToolCalls(
         }
     }
     return reviewed;
+}
+
+/** Result-derived presentations from a durable assistant message, by provider call identity. */
+export function toolResultPresentations(
+    message: HistoryMessage | undefined,
+): ReadonlyMap<string, HistoryToolPresentation> {
+    const presentations = new Map<string, HistoryToolPresentation>();
+    for (const block of message?.blocks ?? []) {
+        if (block.type === "tool_result" && block.presentation !== undefined) {
+            presentations.set(block.callId, block.presentation);
+        }
+    }
+    return presentations;
 }
 
 function providerToolOutput(result: Static<typeof providerToolResultBlockSchema>): string {

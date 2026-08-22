@@ -121,30 +121,100 @@ describe("Claude's Read", () => {
 describe("Claude's Write and Edit", () => {
     it("overwrites a file without a prior read", async () => {
         const { compute, tool, call } = await machine();
-        compute.write("/workspace/app.ts", "const a = 1;");
+        compute.write("/workspace/app.ts", "const a = 1;\nconst b = 2;\n");
 
         const result = await tool("Write").execute(
             ctx,
-            { file_path: "/workspace/app.ts", content: "const a = 2;" },
+            { file_path: "/workspace/app.ts", content: "const a = 2;\n" },
             call,
         );
 
         expect(result.created).toBe(false);
-        expect(compute.files.get("/workspace/app.ts")?.content).toBe("const a = 2;");
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe("const a = 2;\n");
+        expect(result.presentation).toEqual({
+            type: "file_diff",
+            files: [
+                {
+                    path: "/workspace/app.ts",
+                    kind: "update",
+                    added: 1,
+                    deleted: 2,
+                    hunks: [
+                        {
+                            oldStart: 1,
+                            newStart: 1,
+                            lines: [
+                                { kind: "delete", text: "const a = 1;" },
+                                { kind: "delete", text: "const b = 2;" },
+                                { kind: "add", text: "const a = 2;" },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
     });
 
     it("edits a file without a prior read when the exact text matches", async () => {
         const { compute, tool, call } = await machine();
-        compute.write("/workspace/app.ts", "const a = 1;");
+        compute.write("/workspace/app.ts", "first\nconst a = 1;\nlast\n");
 
         const result = await tool("Edit").execute(
             ctx,
-            { file_path: "/workspace/app.ts", old_string: "a = 1", new_string: "a = 2" },
+            {
+                file_path: "/workspace/app.ts",
+                old_string: "const a = 1;",
+                new_string: "const a = 2;\nconst b = 3;",
+            },
             call,
         );
 
         expect(result.replacements).toBe(1);
-        expect(compute.files.get("/workspace/app.ts")?.content).toBe("const a = 2;");
+        expect(compute.files.get("/workspace/app.ts")?.content).toBe(
+            "first\nconst a = 2;\nconst b = 3;\nlast\n",
+        );
+        expect(result.presentation).toEqual({
+            type: "file_diff",
+            files: [
+                {
+                    path: "/workspace/app.ts",
+                    kind: "update",
+                    added: 2,
+                    deleted: 1,
+                    hunks: [
+                        {
+                            oldStart: 2,
+                            newStart: 2,
+                            lines: [
+                                { kind: "delete", text: "const a = 1;" },
+                                { kind: "add", text: "const a = 2;" },
+                                { kind: "add", text: "const b = 3;" },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+    });
+
+    it("keeps exact totals when a replace-all diff exceeds the presentation line budget", async () => {
+        const { compute, tool, call } = await machine();
+        compute.write("/workspace/large.txt", Array.from({ length: 600 }, () => "old").join("\n"));
+
+        const result = await tool("Edit").execute(
+            ctx,
+            {
+                file_path: "/workspace/large.txt",
+                old_string: "old",
+                new_string: "new",
+                replace_all: true,
+            },
+            call,
+        );
+
+        const [diff] = result.presentation.files;
+        expect(diff).toMatchObject({ added: 600, deleted: 600, omittedLines: 700 });
+        expect(diff.hunks.flatMap((hunk: { lines: unknown[] }) => hunk.lines)).toHaveLength(500);
     });
 
     it("creates a new file without any prior read", async () => {
@@ -158,6 +228,24 @@ describe("Claude's Write and Edit", () => {
 
         expect(result.created).toBe(true);
         expect(compute.files.get("/workspace/new.ts")?.content).toBe("export const x = 1;");
+        expect(result.presentation).toEqual({
+            type: "file_diff",
+            files: [
+                {
+                    path: "/workspace/new.ts",
+                    kind: "add",
+                    added: 1,
+                    deleted: 0,
+                    hunks: [
+                        {
+                            oldStart: 0,
+                            newStart: 1,
+                            lines: [{ kind: "add", text: "export const x = 1;" }],
+                        },
+                    ],
+                },
+            ],
+        });
         expect(modelText(tool("Write"), result)).toBe(
             "File created successfully at: /workspace/new.ts",
         );

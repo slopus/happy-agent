@@ -16,6 +16,19 @@ export {
     type HostComputeProvider,
 } from "./ComputeModule.js";
 export {
+    computeFileDiffHunkSchema,
+    computeFileDiffLineSchema,
+    computeFileDiffPresentationSchema,
+    computeFileDiffSchema,
+    MAX_COMPUTE_FILE_DIFF_PRESENTATION_FILES,
+    MAX_COMPUTE_FILE_DIFF_PRESENTATION_LINES,
+    MAX_COMPUTE_FILE_DIFF_PRESENTATION_TEXT_CHARACTERS,
+    type ComputeFileDiff,
+    type ComputeFileDiffHunk,
+    type ComputeFileDiffLine,
+    type ComputeFileDiffPresentation,
+} from "./ComputeToolPresentation.js";
+export {
     computeProcessChangesSchema,
     computeProcessEventListenerSchema,
     computeProcessEventSchema,

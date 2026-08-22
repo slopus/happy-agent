@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { Compute } from "../../Compute.js";
+import { computeFileDiffPresentationSchema } from "../../ComputeToolPresentation.js";
 import { describeComputePathAction } from "../../impl/describeComputePathAction.js";
 import type { FileReadLog } from "../../../impl/FileReadLog.js";
 import { shouldReviewComputePath } from "../../impl/shouldReviewComputePath.js";
@@ -37,6 +38,7 @@ export function claudeWriteTool(compute: Compute, reads: FileReadLog) {
                 path: Type.String(),
                 created: Type.Boolean(),
                 characters: Type.Integer(),
+                presentation: computeFileDiffPresentationSchema,
             },
             exact,
         ),

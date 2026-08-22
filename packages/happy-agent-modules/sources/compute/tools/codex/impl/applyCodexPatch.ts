@@ -1,10 +1,16 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import type { Compute, ComputePermissions } from "../../../Compute.js";
+import type {
+    ComputeFileDiffHunk,
+    ComputeFileDiffPresentation,
+} from "../../../ComputeToolPresentation.js";
+import { BoundedFileDiffCollector } from "../../../impl/BoundedFileDiffCollector.js";
 import { computePermissionsForContext } from "../../../impl/computePermissionsForContext.js";
 import { deleteComputeFile } from "../../../impl/deleteComputeFile.js";
 import type { FileReadLog } from "../../../../impl/FileReadLog.js";
 import { moveComputeFile } from "../../../impl/moveComputeFile.js";
+import { iterateDiffContentLines } from "../../../impl/iterateDiffContentLines.js";
 import { resolveComputePath } from "../../../impl/resolveComputePath.js";
 import { writeComputeTextFile } from "../../../impl/writeComputeTextFile.js";
 import { parseCodexPatch, type CodexPatchHunk } from "./parseCodexPatch.js";
@@ -20,12 +26,18 @@ export interface CodexPatchChange {
 export interface CodexPatchResult {
     readonly changes: CodexPatchChange[];
     readonly summary: string;
+    readonly presentation: ComputeFileDiffPresentation;
 }
 
 /** One file as the patch will leave it, before anything has been written. */
 interface SimulatedFile {
     content: string;
     exists: boolean;
+}
+
+interface AppliedPatchHunks {
+    readonly content: string;
+    readonly hunks: ComputeFileDiffHunk[];
 }
 
 /** One change decided during the dry run and carried out afterwards. */
@@ -85,6 +97,7 @@ export async function applyCodexPatch(
         compute.fs.home,
     );
     const operations = parseCodexPatch(options.patch);
+    const fileDiffs = new BoundedFileDiffCollector();
     const simulated = new Map<string, SimulatedFile>();
     const planned: PlannedChange[] = [];
     const summaries: string[] = [];
@@ -100,6 +113,7 @@ export async function applyCodexPatch(
             file.content = operation.lines.join("\n");
             file.exists = true;
             planned.push({ kind: "add", path, content: file.content });
+            fileDiffs.addWholeFile(operation.path, "add", operation.lines);
             summaries.push(`A ${operation.path}`);
             continue;
         }
@@ -109,9 +123,15 @@ export async function applyCodexPatch(
                 throw new Error(`This patch deletes a file that does not exist: ${path}`);
             }
             await reads.assertRead(ctx, compute.fs, permissions, path);
+            const deletedContent = file.content;
             file.content = "";
             file.exists = false;
             planned.push({ kind: "delete", path });
+            fileDiffs.addWholeFile(
+                operation.path,
+                "delete",
+                iterateDiffContentLines(deletedContent),
+            );
             summaries.push(`D ${operation.path}`);
             continue;
         }
@@ -123,14 +143,16 @@ export async function applyCodexPatch(
         if (!provenByContext) {
             await reads.assertRead(ctx, compute.fs, permissions, path);
         }
-        const updated = applyCodexPatchHunks(file.content, operation.hunks, path);
+        const sourceContent = file.content;
+        const updated = applyCodexPatchHunks(sourceContent, operation.hunks, path);
 
         if (operation.moveTo === undefined) {
-            if (updated === file.content) {
+            if (updated.content === file.content) {
                 throw new Error(`This update changes nothing in ${path}.`);
             }
-            file.content = updated;
-            planned.push({ kind: "update", path, content: updated, provenByContext });
+            file.content = updated.content;
+            planned.push({ kind: "update", path, content: updated.content, provenByContext });
+            fileDiffs.add({ kind: "update", path: operation.path, hunks: updated.hunks });
             summaries.push(`M ${operation.path}`);
             continue;
         }
@@ -143,19 +165,21 @@ export async function applyCodexPatch(
         if (target.exists) {
             throw new Error(`This patch moves a file onto one that already exists: ${destination}`);
         }
-        const contentChanged = updated !== file.content;
+        const contentChanged = updated.content !== file.content;
         file.content = "";
         file.exists = false;
-        target.content = updated;
+        target.content = updated.content;
         target.exists = true;
         planned.push({
             kind: "move",
             path,
             destination,
-            content: updated,
+            content: updated.content,
             contentChanged,
             provenByContext,
         });
+        fileDiffs.addWholeFile(operation.path, "delete", iterateDiffContentLines(sourceContent));
+        fileDiffs.addWholeFile(operation.moveTo, "add", iterateDiffContentLines(updated.content));
         summaries.push(`M ${operation.path}`);
     }
 
@@ -197,6 +221,7 @@ export async function applyCodexPatch(
     return {
         changes,
         summary: ["Success. Updated the following files:", ...summaries].join("\n"),
+        presentation: fileDiffs.finish(),
     };
 }
 
@@ -236,16 +261,23 @@ function applyCodexPatchHunks(
     content: string,
     hunks: readonly CodexPatchHunk[],
     path: string,
-): string {
+): AppliedPatchHunks {
     const document = splitDocument(content);
     const lines = [...document.lines];
+    const diffHunks: ComputeFileDiffHunk[] = [];
     let cursor = 0;
+    let priorLineDelta = 0;
     for (const hunk of hunks) {
         const remove: string[] = [];
         const add: string[] = [];
+        const diffLines: ComputeFileDiffHunk["lines"][number][] = [];
         for (const line of hunk.lines) {
             if (line.marker !== "+") remove.push(line.text);
             if (line.marker !== "-") add.push(line.text);
+            diffLines.push({
+                kind: line.marker === "+" ? "add" : line.marker === "-" ? "delete" : "context",
+                text: line.text,
+            });
         }
         let searchFrom = cursor;
         if (hunk.anchor !== undefined) {
@@ -264,10 +296,19 @@ function applyCodexPatchHunks(
         if (at < 0) {
             throw new Error(`This patch hunk does not match anything in ${path}.`);
         }
+        diffHunks.push({
+            lines: diffLines,
+            newStart: Math.max(1, at + 1),
+            oldStart: Math.max(1, at - priorLineDelta + 1),
+        });
         lines.splice(at, remove.length, ...add);
         cursor = at + add.length;
+        priorLineDelta += add.length - remove.length;
     }
-    return joinDocument(lines, document.eol, document.hasFinalNewline);
+    return {
+        content: joinDocument(lines, document.eol, document.hasFinalNewline),
+        hunks: diffHunks,
+    };
 }
 
 /**

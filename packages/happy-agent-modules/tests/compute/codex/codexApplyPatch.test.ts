@@ -55,7 +55,45 @@ describe("codex apply_patch", () => {
         );
         expect(result.changes).toEqual([{ kind: "add", path: "/workspace/sources/greet.ts" }]);
         expect(result.summary).toBe("Success. Updated the following files:\nA sources/greet.ts");
+        expect(result.presentation).toEqual({
+            type: "file_diff",
+            files: [
+                {
+                    path: "sources/greet.ts",
+                    kind: "add",
+                    added: 3,
+                    deleted: 0,
+                    hunks: [
+                        {
+                            oldStart: 0,
+                            newStart: 1,
+                            lines: [
+                                { kind: "add", text: "export function greet() {" },
+                                { kind: "add", text: '    return "hello";' },
+                                { kind: "add", text: "}" },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
         expect(tool("apply_patch").toLLM(result)).toEqual([{ type: "text", text: result.summary }]);
+    });
+
+    it("reports how many changed files were omitted from a bounded presentation", async () => {
+        const toolset = await machine();
+        const sections = Array.from({ length: 21 }, (_value, index) => [
+            `*** Add File: file-${String(index)}.txt`,
+            `+line ${String(index)}`,
+        ]).flat();
+
+        const result = await toolset
+            .tool("apply_patch")
+            .execute(ctx, { patch: patch(...sections) }, toolset.call);
+
+        expect(result.changes).toHaveLength(21);
+        expect(result.presentation.files).toHaveLength(20);
+        expect(result.presentation.omittedFiles).toBe(1);
     });
 
     it("refuses to add a file that is already there", async () => {
@@ -95,6 +133,27 @@ describe("codex apply_patch", () => {
         );
         expect(result.changes).toEqual([{ kind: "update", path: "/workspace/sources/count.ts" }]);
         expect(result.summary).toContain("M sources/count.ts");
+        expect(result.presentation).toEqual({
+            type: "file_diff",
+            files: [
+                {
+                    path: "sources/count.ts",
+                    kind: "update",
+                    added: 1,
+                    deleted: 1,
+                    hunks: [
+                        {
+                            oldStart: 2,
+                            newStart: 2,
+                            lines: [
+                                { kind: "delete", text: "    return 1;" },
+                                { kind: "add", text: "    return 2;" },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
     });
 
     it("keeps unchanged context lines exactly where they were", async () => {
@@ -148,6 +207,24 @@ describe("codex apply_patch", () => {
         expect(toolset.compute.files.has("/workspace/old.ts")).toBe(false);
         expect(result.changes).toEqual([{ kind: "delete", path: "/workspace/old.ts" }]);
         expect(result.summary).toContain("D old.ts");
+        expect(result.presentation).toEqual({
+            type: "file_diff",
+            files: [
+                {
+                    path: "old.ts",
+                    kind: "delete",
+                    added: 0,
+                    deleted: 1,
+                    hunks: [
+                        {
+                            oldStart: 1,
+                            newStart: 0,
+                            lines: [{ kind: "delete", text: "gone soon" }],
+                        },
+                    ],
+                },
+            ],
+        });
     });
 
     it("moves a file and applies the change it carries", async () => {
@@ -179,6 +256,37 @@ describe("codex apply_patch", () => {
                 moved_to: "/workspace/sources/renamed.ts",
             },
         ]);
+        expect(result.presentation).toEqual({
+            type: "file_diff",
+            files: [
+                {
+                    path: "sources/util.ts",
+                    kind: "delete",
+                    added: 0,
+                    deleted: 1,
+                    hunks: [
+                        {
+                            oldStart: 1,
+                            newStart: 0,
+                            lines: [{ kind: "delete", text: "export const NAME = 'old';" }],
+                        },
+                    ],
+                },
+                {
+                    path: "sources/renamed.ts",
+                    kind: "add",
+                    added: 1,
+                    deleted: 0,
+                    hunks: [
+                        {
+                            oldStart: 0,
+                            newStart: 1,
+                            lines: [{ kind: "add", text: "export const NAME = 'new';" }],
+                        },
+                    ],
+                },
+            ],
+        });
     });
 
     it("refuses a move onto a file that already exists", async () => {

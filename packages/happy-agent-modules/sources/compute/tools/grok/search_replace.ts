@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { Compute } from "../../Compute.js";
+import { computeFileDiffPresentationSchema } from "../../ComputeToolPresentation.js";
 import { describeComputePathAction } from "../../impl/describeComputePathAction.js";
 import { editComputeText } from "../../impl/editComputeText.js";
 import type { FileReadLog } from "../../../impl/FileReadLog.js";
@@ -33,7 +34,14 @@ export function grokSearchReplaceTool(compute: Compute, reads: FileReadLog) {
             },
             { additionalProperties: false },
         ),
-        returnType: Type.Object({ path: Type.String(), replacements: Type.Integer() }),
+        returnType: Type.Object(
+            {
+                path: Type.String(),
+                replacements: Type.Integer(),
+                presentation: computeFileDiffPresentationSchema,
+            },
+            { additionalProperties: false },
+        ),
         // The filesystem write cannot commit atomically with the tool result, and a repeated edit
         // would match different text the second time.
         durable: false,

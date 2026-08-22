@@ -3,6 +3,7 @@ import type {
     AgentBaseInference,
     AgentBasePersistedEvent,
     AgentBaseSettlement,
+    AgentBaseToolOutcome,
     AgentBaseTurn,
     AgentModule,
     AgentModuleHooks,
@@ -54,12 +55,14 @@ import {
     historyToolArgumentsSchema,
     historyToolCallBlockSchema,
     historyToolResultBlockSchema,
+    historyToolPresentationSchema,
     historyToolArgumentsWithinByteLimit,
     MAX_HISTORY_TOOL_OUTPUT_LENGTH,
     type HistoryBlock,
     type HistoryMessage,
     type HistoryMessageInput,
     type HistoryMessageMode,
+    type HistoryToolPresentation,
 } from "./HistoryMessage.js";
 import {
     historyPageSchema,
@@ -111,6 +114,11 @@ type HistoryToolArguments = Static<typeof historyToolArgumentsSchema>;
 
 const PENDING_BLOCKS_KEY = "pending_blocks";
 const TOOL_NAME_KEY = "tool_name";
+const TOOL_PRESENTATION_KEY = "tool_presentation";
+const toolOutcomePresentationSchema = Type.Object(
+    { presentation: historyToolPresentationSchema },
+    { additionalProperties: true },
+);
 const pendingBlocksSchema = Type.Array(historyBlockSchema, { maxItems: 2_048 });
 const happyMessageMetadataSchema = Type.Object(
     { remoteMessageId: historyRemoteMessageIdSchema },
@@ -968,6 +976,17 @@ export class HistoryModule implements AgentModule {
     ): Promise<void> {
         const storedName = await scope.runKV.read(ctx, TOOL_NAME_KEY);
         const toolName = typeof storedName === "string" ? storedName : "unknown tool";
+        const storedPresentation =
+            result.isError === true
+                ? undefined
+                : await scope.runKV.read(ctx, TOOL_PRESENTATION_KEY);
+        if (
+            storedPresentation !== undefined &&
+            !Value.Check(historyToolPresentationSchema, storedPresentation)
+        ) {
+            throw new Error("History module received an invalid tool presentation.");
+        }
+        const presentation = storedPresentation as HistoryToolPresentation | undefined;
         const output = renderOutput(result.content, MAX_HISTORY_RECORDED_TOOL_OUTPUT_LENGTH);
         const toolResultBlock: HistoryBlock = {
             type: "tool_result",
@@ -976,6 +995,7 @@ export class HistoryModule implements AgentModule {
             output,
             toolName,
             ...(result.isError === true ? { isError: true } : {}),
+            ...(presentation === undefined ? {} : { presentation }),
         };
         if (!Value.Check(historyToolResultBlockSchema, toolResultBlock)) {
             throw new Error("History module received an invalid tool result.");
@@ -1672,6 +1692,31 @@ export class HistoryModule implements AgentModule {
                 throw new Error("History module received an invalid tool call.");
             }
             await scope.runKV.write(ctx, TOOL_NAME_KEY, call.name);
+        },
+
+        /**
+         * Keep a successful tool result's bounded presentation in this call's durable run KV.
+         * The transactional result hook below then records it beside the result itself. If the
+         * process stops between these hooks, the call-scoped value survives for result recovery;
+         * failed results deliberately ignore it.
+         */
+        afterToolCall: async (
+            ctx: Context,
+            scope: AgentModuleScope,
+            outcome: AgentBaseToolOutcome,
+        ): Promise<void> => {
+            if (
+                outcome.isError ||
+                outcome.result === undefined ||
+                !Value.Check(toolOutcomePresentationSchema, outcome.result)
+            ) {
+                return;
+            }
+            await scope.runKV.write(
+                ctx,
+                TOOL_PRESENTATION_KEY,
+                structuredClone(outcome.result.presentation),
+            );
         },
 
         /** Record each tool result in the same transaction as the result in Agent Base history. */

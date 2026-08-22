@@ -3,6 +3,7 @@ import { defineAgentTool } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
 import type { Compute } from "../../Compute.js";
+import { computeFileDiffPresentationSchema } from "../../ComputeToolPresentation.js";
 import type { FileReadLog } from "../../../impl/FileReadLog.js";
 import { isPathInside, resolveComputePath } from "../../impl/resolveComputePath.js";
 import { shouldReviewComputePath } from "../../impl/shouldReviewComputePath.js";
@@ -39,6 +40,7 @@ const applyPatchResultSchema = Type.Object(
             ),
         ),
         summary: Type.String(),
+        presentation: computeFileDiffPresentationSchema,
     },
     { additionalProperties: false },
 );

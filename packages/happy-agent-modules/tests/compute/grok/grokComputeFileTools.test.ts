@@ -73,6 +73,24 @@ describe("Grok's compute file tools", () => {
             path: "/workspace/sources/new.ts",
             created: true,
             characters: 20,
+            presentation: {
+                type: "file_diff",
+                files: [
+                    {
+                        path: "/workspace/sources/new.ts",
+                        kind: "add",
+                        added: 1,
+                        deleted: 0,
+                        hunks: [
+                            {
+                                oldStart: 0,
+                                newStart: 1,
+                                lines: [{ kind: "add", text: "export const A = 1;" }],
+                            },
+                        ],
+                    },
+                ],
+            },
         });
         // Writing counts as reading: the agent now knows exactly what the file holds.
         const edited = await tool("search_replace").execute(ctx, {
@@ -81,7 +99,31 @@ describe("Grok's compute file tools", () => {
             new_string: "A = 2",
         });
 
-        expect(edited).toEqual({ path: "/workspace/sources/new.ts", replacements: 1 });
+        expect(edited).toEqual({
+            path: "/workspace/sources/new.ts",
+            replacements: 1,
+            presentation: {
+                type: "file_diff",
+                files: [
+                    {
+                        path: "/workspace/sources/new.ts",
+                        kind: "update",
+                        added: 1,
+                        deleted: 1,
+                        hunks: [
+                            {
+                                oldStart: 1,
+                                newStart: 1,
+                                lines: [
+                                    { kind: "delete", text: "A = 1" },
+                                    { kind: "add", text: "A = 2" },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        });
         expect(compute.files.get("/workspace/sources/new.ts")?.content).toContain("A = 2");
     });
 

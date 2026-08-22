@@ -1,7 +1,11 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import { MAX_HISTORY_TOOL_OUTPUT_LENGTH } from "../history/index.js";
+import {
+    historyToolPresentationSchema,
+    MAX_HISTORY_TOOL_OUTPUT_LENGTH,
+    type HistoryToolPresentation,
+} from "../history/index.js";
 import type { ToolPermissionReview } from "../permissions/index.js";
 
 const presentationTextSchema = Type.String({ maxLength: MAX_HISTORY_TOOL_OUTPUT_LENGTH });
@@ -46,6 +50,7 @@ const toolPresentationSchema = Type.Union([
         },
         { additionalProperties: false },
     ),
+    historyToolPresentationSchema,
     Type.Object(
         {
             type: Type.Literal("search"),
@@ -70,6 +75,7 @@ export interface ToolCallProjection {
     readonly status: ToolCallStatus;
     readonly arguments?: unknown;
     readonly output?: string;
+    readonly presentation?: HistoryToolPresentation;
     readonly elevated?: boolean;
     readonly review?: ToolPermissionReview;
 }
@@ -132,6 +138,10 @@ export function toolCallResource(
 }
 
 function presentationForToolCall(call: ToolCallProjection): ToolPresentation | undefined {
+    if (call.status === "completed" && call.presentation !== undefined) {
+        const presentation = checked(historyToolPresentationSchema, call.presentation);
+        if (presentation !== undefined) return presentation;
+    }
     if (call.name === "exec_command") {
         const args = checked(codexExecArgumentsSchema, call.arguments);
         if (args !== undefined) return execPresentation(args.cmd, call);

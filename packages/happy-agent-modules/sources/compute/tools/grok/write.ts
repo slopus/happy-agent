@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { Compute } from "../../Compute.js";
+import { computeFileDiffPresentationSchema } from "../../ComputeToolPresentation.js";
 import { describeComputePathAction } from "../../impl/describeComputePathAction.js";
 import type { FileReadLog } from "../../../impl/FileReadLog.js";
 import { shouldReviewComputePath } from "../../impl/shouldReviewComputePath.js";
@@ -25,11 +26,15 @@ export function grokWriteTool(compute: Compute, reads: FileReadLog) {
             },
             { additionalProperties: false },
         ),
-        returnType: Type.Object({
-            path: Type.String(),
-            created: Type.Boolean(),
-            characters: Type.Integer(),
-        }),
+        returnType: Type.Object(
+            {
+                path: Type.String(),
+                created: Type.Boolean(),
+                characters: Type.Integer(),
+                presentation: computeFileDiffPresentationSchema,
+            },
+            { additionalProperties: false },
+        ),
         // The filesystem write cannot commit atomically with the tool result.
         durable: false,
         describeAutoPermissionAction: ({ file_path }) =>

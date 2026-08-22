@@ -1790,13 +1790,14 @@ The daemon uses the same tool-call projection for live `message.updated` events 
 including `status`, raw data, and `presentation` — is identical on both paths and remains so after
 a daemon restart. `omitToolData` is applied only after this shared projection.
 
-The daemon currently emits three presentation types from these exact tool names when their
+The daemon currently emits four presentation types from these exact tool names when their
 expected arguments are present:
 
 | Presentation   | Tool calls                                                                                                             |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `exploration`  | `Read`, `read_file`, `view_image`, `list_dir`, `Glob`, `Grep`, `grep`                                                  |
 | `exec_command` | `exec_command`, `Bash`, `run_terminal_command`                                                                         |
+| `file_diff`    | `Edit`, `Write`, `apply_patch`, `search_replace`, `write`                                                              |
 | `search`       | `bedrock_web_search`, `claude_web_search`, `codex_web_search`, `gemini_web_search`, `grok_web_search`, `grok_x_search` |
 
 **`exploration`** — one normalized directory listing, file read, or code search. The daemon
@@ -1819,6 +1820,47 @@ also carries the same bounded `output` as the raw result.
 { "type": "exec_command", "command": "pnpm test", "output": "42 passed" }
 ```
 
+**`file_diff`** — the files and lines changed by a successful compute file-edit call. This
+presentation is outcome-derived, so it is absent while the call is running and appears when the
+call completes.
+
+```json
+{
+    "type": "file_diff",
+    "files": [
+        {
+            "path": "sources/auth/login.ts",
+            "kind": "update",
+            "added": 1,
+            "deleted": 1,
+            "hunks": [
+                {
+                    "oldStart": 12,
+                    "newStart": 12,
+                    "lines": [
+                        { "kind": "delete", "text": "return legacyLogin(user);" },
+                        { "kind": "add", "text": "return login(user);" }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+```
+
+Each file is
+`{ "path", "kind": "add" | "delete" | "update", "added", "deleted", "hunks", "language"?, "omittedLines"? }`.
+`added` and `deleted` are totals for the complete file diff, including lines omitted from `hunks`.
+Each hunk is `{ "oldStart", "newStart", "lines" }`; starts are one-based when that side exists
+and zero for the absent side of a whole-file add or delete. Each line is
+`{ "kind": "context" | "add" | "delete", "text" }`. A move is represented as a delete at its
+old path and an add at its new path.
+
+The daemon retains at most 20 files and 500 diff lines shared across all retained files. Paths and
+line text are each truncated to 2,000 Unicode characters. `omittedFiles` reports files beyond the
+file limit, and each file's `omittedLines` reports lines beyond the shared line limit. Empty arrays
+and zero totals are valid.
+
 **`search`** — a web or X search, carrying the normalized `query` and a `target` of `"web"` or
 `"x"`.
 
@@ -1830,10 +1872,9 @@ also carries the same bounded `output` as the raw result.
 }
 ```
 
-Other calls, including file-edit and background-terminal-input calls, currently carry no
-presentation and keep their raw data. The presentation set may grow; a client that meets an
-unknown presentation type falls back to rendering the block's raw data, exactly as if the
-presentation were absent.
+Other calls, including background-terminal-input calls, currently carry no presentation and keep
+their raw data. The presentation set may grow; a client that meets an unknown presentation type
+falls back to rendering the block's raw data, exactly as if the presentation were absent.
 
 ### `POST /v0/agents/:agentId/send`
 

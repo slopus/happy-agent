@@ -1,7 +1,9 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import type { Compute } from "../Compute.js";
+import type { ComputeFileDiffPresentation } from "../ComputeToolPresentation.js";
 import { computePermissionsForContext } from "./computePermissionsForContext.js";
+import { createWholeFileDiff } from "./createTextEditFileDiff.js";
 import type { FileReadLog } from "../../impl/FileReadLog.js";
 import { parentComputePath, resolveComputePath } from "./resolveComputePath.js";
 
@@ -11,6 +13,7 @@ export interface ComputeTextFileWrite {
     /** The file did not exist before this call. */
     readonly created: boolean;
     readonly characters: number;
+    readonly presentation: ComputeFileDiffPresentation;
 }
 
 /**
@@ -40,9 +43,18 @@ export async function writeComputeTextFile(
         await reads.assertRead(ctx, compute.fs, permissions, filePath);
     }
     const existed = await compute.fs.exists(permissions, filePath);
+    const previousContent = existed ? await compute.fs.readFile(permissions, filePath) : undefined;
     const parent = parentComputePath(filePath);
     if (parent !== filePath) await compute.fs.mkdir(permissions, parent, { recursive: true });
     await compute.fs.writeFile(permissions, filePath, options.content);
     await reads.record(ctx, filePath, (await compute.fs.stat(permissions, filePath)).mtimeMs);
-    return { path: filePath, created: !existed, characters: options.content.length };
+    return {
+        path: filePath,
+        created: !existed,
+        characters: options.content.length,
+        presentation: {
+            type: "file_diff",
+            files: [createWholeFileDiff(filePath, previousContent, options.content)],
+        },
+    };
 }

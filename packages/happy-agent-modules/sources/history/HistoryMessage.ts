@@ -40,6 +40,9 @@ export const MAX_HISTORY_QUERY_LENGTH = 100_000;
 export const MAX_HISTORY_MODE_VALUE_LENGTH = 256;
 export const MAX_HISTORY_MUTATION_ID_LENGTH = 1_024;
 export const MAX_HISTORY_REMOTE_MESSAGE_ID_LENGTH = 1_024;
+const MAX_HISTORY_FILE_DIFF_FILES = 20;
+const MAX_HISTORY_FILE_DIFF_LINES = 500;
+const MAX_HISTORY_FILE_DIFF_TEXT_LENGTH = 4_000;
 
 const boundedIdentifier = (maxLength: number) =>
     Type.String({
@@ -195,6 +198,51 @@ export const historyToolCallBlockSchema = Type.Object(
     { additionalProperties: false },
 );
 
+const historyFileDiffCountSchema = Type.Integer({
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER,
+});
+const historyFileDiffTextSchema = Type.String({ maxLength: MAX_HISTORY_FILE_DIFF_TEXT_LENGTH });
+const historyFileDiffLineSchema = Type.Object(
+    {
+        kind: Type.Union([Type.Literal("context"), Type.Literal("add"), Type.Literal("delete")]),
+        text: historyFileDiffTextSchema,
+    },
+    { additionalProperties: false },
+);
+const historyFileDiffHunkSchema = Type.Object(
+    {
+        oldStart: historyFileDiffCountSchema,
+        newStart: historyFileDiffCountSchema,
+        lines: Type.Array(historyFileDiffLineSchema, { maxItems: MAX_HISTORY_FILE_DIFF_LINES }),
+    },
+    { additionalProperties: false },
+);
+const historyFileDiffSchema = Type.Object(
+    {
+        path: historyFileDiffTextSchema,
+        kind: Type.Union([Type.Literal("add"), Type.Literal("delete"), Type.Literal("update")]),
+        added: historyFileDiffCountSchema,
+        deleted: historyFileDiffCountSchema,
+        hunks: Type.Array(historyFileDiffHunkSchema, { maxItems: MAX_HISTORY_FILE_DIFF_LINES }),
+        language: Type.Optional(Type.String({ maxLength: 256 })),
+        omittedLines: Type.Optional(historyFileDiffCountSchema),
+    },
+    { additionalProperties: false },
+);
+
+/** A bounded result-derived presentation retained with durable tool history. */
+export const historyToolPresentationSchema = Type.Object(
+    {
+        type: Type.Literal("file_diff"),
+        files: Type.Array(historyFileDiffSchema, { maxItems: MAX_HISTORY_FILE_DIFF_FILES }),
+        omittedFiles: Type.Optional(historyFileDiffCountSchema),
+    },
+    { additionalProperties: false },
+);
+
+export type HistoryToolPresentation = Static<typeof historyToolPresentationSchema>;
+
 /**
  * What a tool answered, summarized and already bounded by whoever recorded it. Lifecycle
  * recording always supplies a one-line display summary; direct host records may omit it.
@@ -209,6 +257,8 @@ export const historyToolResultBlockSchema = Type.Object(
         /** What the model was shown, as text. */
         output: Type.Optional(Type.String({ maxLength: MAX_HISTORY_TOOL_OUTPUT_LENGTH })),
         isError: Type.Optional(Type.Boolean()),
+        /** A bounded structured result presentation supplied by the tool's owning module. */
+        presentation: Type.Optional(historyToolPresentationSchema),
     },
     { additionalProperties: false },
 );

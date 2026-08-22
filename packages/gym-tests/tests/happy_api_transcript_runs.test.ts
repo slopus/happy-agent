@@ -901,6 +901,102 @@ describe("public transcript and run APIs", () => {
         expect(toolCallFrom(await gym.client.getMessages(gym.defaultSessionId))).toEqual(fullTool);
     }, 60_000);
 
+    it("projects compute file diffs identically in live events and durable history", async () => {
+        let agentCall = 0;
+        const gym = await startGym({
+            files: { "notes.txt": "old line\n" },
+            inference: (request) => {
+                if (request.sessionId.startsWith("naming:")) {
+                    return {
+                        content: [
+                            {
+                                text: "<title>File diff presentation</title><slug>file-diff-presentation</slug>",
+                                type: "text",
+                            },
+                        ],
+                    };
+                }
+                const call = agentCall;
+                agentCall += 1;
+                return call === 0
+                    ? {
+                          content: [
+                              {
+                                  arguments: {
+                                      patch: [
+                                          "*** Begin Patch",
+                                          "*** Update File: notes.txt",
+                                          "@@",
+                                          "-old line",
+                                          "+new line",
+                                          "*** End Patch",
+                                          "",
+                                      ].join("\n"),
+                                  },
+                                  callId: "transcript-file-diff",
+                                  name: "apply_patch",
+                                  type: "tool_call",
+                              },
+                          ],
+                      }
+                    : { content: [{ text: "updated", type: "text" }] };
+            },
+        });
+
+        const sent = await gym.send("update the note", {
+            id: "transcriptfilediff",
+            permissionMode: "full_access",
+        });
+        await waitForFinished(gym, gym.defaultSessionId, sent.runId);
+
+        await expect(gym.readFile("notes.txt")).resolves.toBe("new line\n");
+        const full = await gym.client.getMessages(gym.defaultSessionId);
+        const omitted = await gym.client.getMessages(gym.defaultSessionId, {
+            omitToolData: true,
+        });
+        const fullTool = toolCallFrom(full);
+        const liveTool = completedToolCallFromEvents(await gym.events(), gym.defaultSessionId);
+
+        expect(fullTool).toMatchObject({
+            type: "tool_call",
+            id: "transcript-file-diff",
+            name: "apply_patch",
+            status: "completed",
+            presentation: {
+                type: "file_diff",
+                files: [
+                    {
+                        path: "notes.txt",
+                        kind: "update",
+                        added: 1,
+                        deleted: 1,
+                        hunks: [
+                            {
+                                oldStart: 1,
+                                newStart: 1,
+                                lines: [
+                                    { kind: "delete", text: "old line" },
+                                    { kind: "add", text: "new line" },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        });
+        expect(liveTool).toEqual(fullTool);
+        expect(toolCallFrom(omitted)).toEqual({
+            type: "tool_call",
+            id: "transcript-file-diff",
+            name: "apply_patch",
+            status: "completed",
+            presentation: fullTool.presentation,
+        });
+
+        await gym.restart();
+        expect(toolCallFrom(await gym.client.getMessages(gym.defaultSessionId))).toEqual(fullTool);
+    }, 60_000);
+
     it("recovers message deltas, deletes reset content, omits tool data, and records a compaction run", async () => {
         const gym = await startGym({
             inference: [

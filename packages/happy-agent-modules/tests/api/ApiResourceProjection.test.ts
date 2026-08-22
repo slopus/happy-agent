@@ -1,4 +1,5 @@
 import { Value } from "@sinclair/typebox/value";
+import { toolPresentationSchema } from "@slopus/happy-agent-client";
 import { describe, expect, it } from "vitest";
 
 import { eventIdSchema } from "../../sources/events/index.js";
@@ -8,6 +9,7 @@ import {
     messageResource,
     providerMessageContent,
     reviewedToolCalls,
+    toolResultPresentations,
 } from "../../sources/api/ApiMessageProjection.js";
 import { toolCallResource } from "../../sources/api/ApiToolPresentation.js";
 
@@ -218,6 +220,86 @@ describe("messageResource", () => {
         ]);
 
         expect(live).toEqual(historical.content);
+    });
+
+    it("uses the durable file diff for identical live and historical completed calls", () => {
+        const presentation = {
+            type: "file_diff" as const,
+            files: [
+                {
+                    path: "sources/auth.ts",
+                    kind: "update" as const,
+                    added: 1,
+                    deleted: 1,
+                    hunks: [
+                        {
+                            oldStart: 4,
+                            newStart: 4,
+                            lines: [
+                                { kind: "delete" as const, text: "return oldAuth();" },
+                                { kind: "add" as const, text: "return auth();" },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+        const historyMessage = {
+            at: 100,
+            blocks: [
+                {
+                    type: "tool_call" as const,
+                    callId: "call-edit",
+                    name: "apply_patch",
+                    arguments: { patch: "*** Begin Patch\n..." },
+                },
+                {
+                    type: "tool_result" as const,
+                    callId: "call-edit",
+                    toolName: "apply_patch",
+                    output: "Success. Updated the following files:\nM sources/auth.ts",
+                    presentation,
+                },
+            ],
+            recordId: "message-edit",
+            role: "assistant" as const,
+        };
+        expect(Value.Check(toolPresentationSchema, presentation)).toBe(true);
+        const historical = messageResource(historyMessage);
+        const live = providerMessageContent(
+            [
+                {
+                    type: "toolCall",
+                    id: "call-edit",
+                    name: "apply_patch",
+                    arguments: { patch: "*** Begin Patch\n..." },
+                },
+                {
+                    type: "tool_result",
+                    toolCallId: "call-edit",
+                    rendered: [
+                        {
+                            type: "text",
+                            text: "Success. Updated the following files:\nM sources/auth.ts",
+                        },
+                    ],
+                },
+            ],
+            reviewedToolCalls(historyMessage),
+            toolResultPresentations(historyMessage),
+        );
+
+        expect(live).toEqual(historical.content);
+        expect(historical.content).toMatchObject([{ status: "completed", presentation }]);
+        expect(messageResource(historyMessage, { omitToolData: true }).content).toEqual([
+            {
+                type: "tool_call",
+                id: "call-edit",
+                name: "apply_patch",
+                status: "completed",
+                presentation,
+            },
+        ]);
     });
 
     it("omits raw data only after projecting a presentation", () => {

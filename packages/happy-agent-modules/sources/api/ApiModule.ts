@@ -100,6 +100,7 @@ import {
     messageResource,
     providerMessageContent,
     reviewedToolCalls,
+    toolResultPresentations,
 } from "./ApiMessageProjection.js";
 import {
     agentResource,
@@ -1472,7 +1473,11 @@ export class ApiModule implements AgentModule {
         }
         const partial = recordValue(rigEvent?.["partial"]);
         const historical = await this.#history.assistantMessage(ctx, agentId, runId);
-        const content = providerMessageContent(partial?.["content"], reviewedToolCalls(historical));
+        const content = providerMessageContent(
+            partial?.["content"],
+            reviewedToolCalls(historical),
+            toolResultPresentations(historical),
+        );
         if (content === undefined) return;
         if (streaming !== undefined && streaming.messageId === messageId) {
             streaming.current = [...content];

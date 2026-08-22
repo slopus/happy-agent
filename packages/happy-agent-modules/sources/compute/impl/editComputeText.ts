@@ -1,7 +1,9 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import type { Compute } from "../Compute.js";
+import type { ComputeFileDiffPresentation } from "../ComputeToolPresentation.js";
 import { computePermissionsForContext } from "./computePermissionsForContext.js";
+import { createTextEditFileDiff } from "./createTextEditFileDiff.js";
 import type { FileReadLog } from "../../impl/FileReadLog.js";
 import { resolveComputePath } from "./resolveComputePath.js";
 
@@ -9,6 +11,7 @@ import { resolveComputePath } from "./resolveComputePath.js";
 export interface ComputeTextEdit {
     readonly path: string;
     readonly replacements: number;
+    readonly presentation: ComputeFileDiffPresentation;
 }
 
 /**
@@ -37,7 +40,8 @@ export async function editComputeText(
     const filePath = resolveComputePath(options.path, compute.cwd, compute.fs.home);
     await reads.assertRead(ctx, compute.fs, permissions, filePath);
     const content = await compute.fs.readFile(permissions, filePath);
-    const occurrences = countOccurrences(content, options.oldText);
+    const occurrenceStarts = findOccurrences(content, options.oldText);
+    const occurrences = occurrenceStarts.length;
     if (occurrences === 0) throw new Error(`This text does not appear in ${filePath}.`);
     if (occurrences > 1 && options.replaceAll !== true) {
         throw new Error(
@@ -48,20 +52,35 @@ export async function editComputeText(
         options.replaceAll === true
             ? content.replaceAll(options.oldText, options.newText)
             : content.replace(options.oldText, options.newText);
+    const replacements = (
+        options.replaceAll === true ? occurrenceStarts : occurrenceStarts.slice(0, 1)
+    ).map((start) => ({
+        start,
+        oldText: options.oldText,
+        newText: options.newText,
+    }));
+    const presentation: ComputeFileDiffPresentation = {
+        type: "file_diff",
+        files: [createTextEditFileDiff(filePath, content, replacements)],
+    };
     await compute.fs.writeFile(permissions, filePath, updated);
     // The file on disk is now what this agent expects, so a following edit is not stale.
     await reads.record(ctx, filePath, (await compute.fs.stat(permissions, filePath)).mtimeMs);
-    return { path: filePath, replacements: options.replaceAll === true ? occurrences : 1 };
+    return {
+        path: filePath,
+        replacements: options.replaceAll === true ? occurrences : 1,
+        presentation,
+    };
 }
 
-/** How many times the text appears, counted without overlapping itself. */
-function countOccurrences(content: string, text: string): number {
-    if (text.length === 0) return 0;
-    let count = 0;
+/** Every non-overlapping occurrence, in source order. */
+function findOccurrences(content: string, text: string): number[] {
+    if (text.length === 0) return [];
+    const starts: number[] = [];
     let index = content.indexOf(text);
     while (index >= 0) {
-        count += 1;
+        starts.push(index);
         index = content.indexOf(text, index + text.length);
     }
-    return count;
+    return starts;
 }

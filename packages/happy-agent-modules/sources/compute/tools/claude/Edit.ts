@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import type { Compute } from "../../Compute.js";
+import { computeFileDiffPresentationSchema } from "../../ComputeToolPresentation.js";
 import { describeComputePathAction } from "../../impl/describeComputePathAction.js";
 import { editComputeText } from "../../impl/editComputeText.js";
 import type { FileReadLog } from "../../../impl/FileReadLog.js";
@@ -46,6 +47,7 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
             {
                 path: Type.String(),
                 replacements: Type.Integer(),
+                presentation: computeFileDiffPresentationSchema,
             },
             exact,
         ),
