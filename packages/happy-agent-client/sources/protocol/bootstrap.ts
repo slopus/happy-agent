@@ -1,9 +1,10 @@
 /** Bootstrap: one request that gets a desktop client on screen instantly. */
 
-import type { AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
+import type { Agent, AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
 import type { EventCursor } from "./common.js";
 import type { DaemonConfig, OnboardingState } from "./daemon.js";
 import type { UserMessage } from "./messages.js";
+import type { BackgroundProcess } from "./processes.js";
 import type { Profile } from "./profile.js";
 import type { Project } from "./projects.js";
 import type { AgentUsageResponse } from "./usage.js";
@@ -20,6 +21,10 @@ export interface AgentBootstrapResponse
     extends AgentDraftResponse, AgentModeResponse, AgentResponse, AgentUsageResponse {
     /** Queued and steering messages not yet accepted by inference, oldest first. */
     pending: UserMessage[];
+    /** Full background-process activity, newest first. Absent on older compatible daemons. */
+    processes?: BackgroundProcess[];
+    /** Full child-agent activity, newest first. Absent on older compatible daemons. */
+    subagents?: Agent[];
     cursor: EventCursor;
 }
 

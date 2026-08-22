@@ -12,19 +12,31 @@ emits ordered `connected`, `state_lost`, `disconnected`, and `event` items. A st
 carries the fresh cursor from which authoritative snapshots can be reloaded. Resource caching,
 version reconciliation, and optimistic mutations remain decisions for the live view built on top.
 
-`HappyReducer` is the small stateful layer over that feed. Construct it with a client, register
-update listeners, and start it when the application wants live synchronization. `getState()` and
-`subscribe()` expose a read-only Zustand-style external store suitable for
-`useSyncExternalStore`: the snapshot reference changes only when state changes. Every update
-listener registered with `subscribeUpdates()` receives every original ordered SSE item—connection
-changes, state loss, and ordinary events—after it has been reduced, together with that immutable
-snapshot. The initial state contains only `connection`, with `"connecting"`,
-`"connected"`, and `"disconnected"` values. Stopping is synchronous, immediately makes the
-reducer disconnected, and ignores any late update while stream cleanup finishes internally. A
-later start resumes from the last cursor the reducer observed.
+`HappyReducer` is the stateful layer over that feed. Construct it with a client, register update
+listeners, and start it when the application wants live synchronization. `getState()` and
+`subscribe()` expose a read-only Zustand-style external store suitable for `useSyncExternalStore`:
+the snapshot reference changes only when state changes, and unchanged agent children retain their
+references. Every listener registered with `subscribeUpdates()` receives every original ordered
+SSE item—connection changes, state loss, and ordinary events—after reduction, together with the
+current snapshot.
+
+State contains `connection` and an `agents` record keyed by Agent ID. Calling `agentVisible(id)`
+registers visible interest and returns an idempotent cleanup that lowers the agent to background
+priority. One agent bootstrap supplies its draft, last-used provider/model, context occupancy,
+processes, and direct subagents; the reducer calls the separate activity endpoint only when an
+older compatible daemon omits the additive activity fields. At most three agents sync at once;
+visible agents are selected before tracked background agents. The reducer opens SSE first,
+retains a bounded 60-second event window, and reconciles each field against its private cursor
+before reapplying events received during snapshot loading. A stream gap or broken
+resource-version chain marks affected agents dirty and queues an authoritative refresh. Failed
+reads retry with exponential backoff.
+
+Stopping is synchronous: it immediately makes the reducer disconnected, aborts snapshot reads,
+and ignores late results. A later start resumes the SSE cursor and refreshes every tracked agent.
 
 ```ts
 const reducer = new HappyReducer(client);
+const hideAgent = reducer.agentVisible(agentId);
 const removeUpdateSubscription = reducer.subscribeUpdates((update, state) => {
     console.log(update.kind, state.connection);
 });
@@ -35,6 +47,7 @@ const removeStateSubscription = reducer.subscribe((state, previousState) => {
 reducer.start();
 console.log(reducer.getState());
 reducer.stop();
+hideAgent();
 removeUpdateSubscription();
 removeStateSubscription();
 ```

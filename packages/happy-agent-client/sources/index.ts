@@ -7,7 +7,12 @@ export type {
     HappyReducerUnsubscribe,
     HappyReducerUpdateListener,
 } from "./HappyReducer.js";
-export type { HappyReducerConnection, HappyReducerState } from "./HappyReducerState.js";
+export type {
+    HappyReducerAgentModel,
+    HappyReducerAgentState,
+    HappyReducerConnection,
+    HappyReducerState,
+} from "./HappyReducerState.js";
 export { HappyAgentApiError } from "./HappyAgentApiError.js";
 export type { ApiErrorBody } from "./HappyAgentApiError.js";
 export { EventStreamProtocolError, readEventStream } from "./readEventStream.js";

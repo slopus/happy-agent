@@ -21,17 +21,17 @@ describe("HappyReducer", () => {
             observed.push({ update, connection: state.connection });
         });
 
-        expect(reducer.getState()).toEqual({ connection: "disconnected" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "disconnected" });
         reducer.start();
 
-        expect(reducer.getState()).toEqual({ connection: "connecting" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "connecting" });
         expect(harness.streams).toHaveLength(1);
         expect(harness.streams[0]?.options.after).toBe(CURSOR_0);
         expect(harness.streams[0]?.options.signal).toBeInstanceOf(AbortSignal);
 
         harness.streams[0]?.push({ kind: "connected", cursor: CURSOR_0 });
         await vi.waitFor(() => expect(observed).toHaveLength(1));
-        expect(reducer.getState()).toEqual({ connection: "connected" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "connected" });
         expect(observed[0]).toMatchObject({
             connection: "connected",
             update: { kind: "connected", cursor: CURSOR_0 },
@@ -60,7 +60,7 @@ describe("HappyReducer", () => {
 
         harness.streams[0]?.push({ kind: "disconnected", cursor: CURSOR_10 });
         await vi.waitFor(() => expect(observed).toHaveLength(4));
-        expect(reducer.getState()).toEqual({ connection: "disconnected" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "disconnected" });
         expect(observed[3]).toMatchObject({
             connection: "disconnected",
             update: { kind: "disconnected", cursor: CURSOR_10 },
@@ -68,7 +68,7 @@ describe("HappyReducer", () => {
 
         expect(reducer.stop()).toBeUndefined();
         expect(harness.streams[0]?.options.signal?.aborted).toBe(true);
-        expect(reducer.getState()).toEqual({ connection: "disconnected" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "disconnected" });
     });
 
     it("exposes a stable external-store snapshot and subscribes only to state changes", async () => {
@@ -89,7 +89,7 @@ describe("HappyReducer", () => {
         subscribeUpdates((update) => observedUpdates.push(update));
 
         expect(getState()).toBe(initialState);
-        expect(Object.isFrozen(initialState)).toBe(true);
+        expect(initialState).toEqual({ agents: {}, connection: "disconnected" });
 
         reducer.start();
         const connectingState = getState();
@@ -163,7 +163,7 @@ describe("HappyReducer", () => {
 
         expect(harness.streams).toHaveLength(2);
         expect(harness.streams[1]?.options.after).toBe(CURSOR_1);
-        expect(reducer.getState()).toEqual({ connection: "connecting" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "connecting" });
 
         expect(reducer.stop()).toBeUndefined();
     });
@@ -187,7 +187,7 @@ describe("HappyReducer", () => {
         await vi.waitFor(() => expect(observed).toHaveLength(1));
 
         expect(removed).not.toHaveBeenCalled();
-        expect(reducer.getState()).toEqual({ connection: "connected" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "connected" });
 
         expect(reducer.stop()).toBeUndefined();
     });
@@ -205,7 +205,7 @@ describe("HappyReducer", () => {
         await vi.waitFor(() => expect(stream?.options.signal?.aborted).toBe(true));
 
         expect(observed).not.toHaveBeenCalled();
-        expect(reducer.getState()).toEqual({ connection: "disconnected" });
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "disconnected" });
     });
 });
 

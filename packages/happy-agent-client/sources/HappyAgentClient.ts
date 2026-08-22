@@ -814,7 +814,7 @@ export class HappyAgentClient {
         });
     }
 
-    /** `GET /v0/agents/:agentId/bootstrap` — mode, usage, pending messages, and cursor. */
+    /** `GET /v0/agents/:agentId/bootstrap` — current agent state, activity, and cursor. */
     async getAgentBootstrap(
         agentId: Cuid2,
         options: RequestOptions = {},

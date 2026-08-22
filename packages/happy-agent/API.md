@@ -2814,12 +2814,12 @@ back with its last cursor — landing in either the resumed or the gap case abov
 ### `GET /v0/agents/:agentId/bootstrap`
 
 One bounded snapshot for opening a conversation. It composes the exact agent object plus the
-`mode`, `context`, and `usage` fields from the focused agent endpoints with every durable queue or
-steering message that inference has not accepted yet. It also captures the event cursor before
-reading, so a client can render the snapshot and follow every concurrent change without a
-snapshot-to-stream gap. Accepted messages, including compaction messages, come from the pageable
-history endpoint. The current slash-command catalog is included directly so autocomplete is ready
-with the rest of the composer.
+`mode`, `context`, and `usage` fields from the focused agent endpoints, the agent's complete
+background-process and subagent activity, and every durable queue or steering message that
+inference has not accepted yet. It also captures the event cursor before reading, so a client can
+render the snapshot and follow every concurrent change without a snapshot-to-stream gap. Accepted
+messages, including compaction messages, come from the pageable history endpoint. The current
+slash-command catalog is included directly so autocomplete is ready with the rest of the composer.
 
 Response — `200`:
 
@@ -2868,6 +2868,12 @@ Response — `200`:
             "runId": null
         }
     ],
+    "processes": [
+        /* full background-process objects, newest first */
+    ],
+    "subagents": [
+        /* full child-agent objects, newest first */
+    ],
     "slashCommands": [
         {
             "name": "compact",
@@ -2885,6 +2891,10 @@ Response — `200`:
 - `mode` — exactly the focused mode response; `null` on a fresh agent.
 - `context`, `usage` — exactly the focused usage response fields.
 - `pending` — every not-yet-accepted `queue` and `steer` message, oldest first and never paged.
+- `processes` — the complete background-process list from the focused activity response, newest
+  first. This additive field may be absent when talking to an older compatible daemon.
+- `subagents` — the complete child-agent list from the focused activity response, newest first.
+  This additive field may be absent when talking to an older compatible daemon.
 - `slashCommands` — exactly the complete catalog from the focused agent response.
 - `cursor` — the event cursor captured before the snapshot reads. Open the global event stream
   from it; duplicate facts are harmless, while no concurrent fact can disappear.
