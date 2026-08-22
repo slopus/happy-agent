@@ -13,6 +13,14 @@ export interface HappyMachineMetadata {
     client: { id: "rig"; name: "Happy Agent"; version: string };
     defaults: { effort: string; modelId: string; permissionMode: "auto"; providerId: string };
     displayName: string;
+    /**
+     * The version of the daemon speaking for this machine, which here is Happy Agent's own.
+     *
+     * The phone requires this of every machine, and rejects the whole metadata document without
+     * it — leaving a machine with no models, no name and no way to start anything. The name says
+     * CLI because Happy CLI was the only daemon when it was chosen.
+     */
+    happyCliVersion: string;
     happyHomeDir: string;
     homeDir: string;
     host: string;
@@ -70,6 +78,7 @@ export function createHappyMachineMetadata(options: {
             providerId: defaultModel.providerId,
         },
         displayName: `${host} — Happy Agent`,
+        happyCliVersion: options.version,
         happyHomeDir: options.configuration.happyHome,
         homeDir: homedir(),
         host,
