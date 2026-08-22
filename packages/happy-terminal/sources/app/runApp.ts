@@ -517,7 +517,12 @@ async function followAgentEvents(options: {
         onGap: async () => {
             options.app.applyAgentSnapshot(await options.agent.resync());
         },
-        onEvent: (event) => {
+        onEvent: async (event) => {
+            if (event.type === "config.updated") {
+                // Catalog refresh is ancillary to the ordered conversation stream. A transient
+                // read failure leaves the previous catalog in place for the next event or resync.
+                await options.agent.reconcileModelCatalog().catch(() => undefined);
+            }
             const pendingSteer =
                 event.type === "message.created" &&
                 event.payload.message.role === "user" &&

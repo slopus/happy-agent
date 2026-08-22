@@ -83,7 +83,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
 
     #agent: ApiAgent;
     readonly #client: HappyAgentClient;
-    readonly #config: DaemonConfig;
+    #config: DaemonConfig;
     readonly #events: HappyAgentEventHub;
     #history: MessageHistoryResponse;
     #draft: AgentDraftSnapshot;
@@ -507,13 +507,20 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
     /** Reloads the authoritative agent and transcript after an event-stream gap. */
     async resync(): Promise<AgentSnapshot> {
         if (this.#resyncing !== undefined) return await this.#resyncing;
-        const resyncing = this.#refresh().then(() => this.snapshot());
+        const resyncing = Promise.all([this.#refresh(), this.reconcileModelCatalog()]).then(() =>
+            this.snapshot(),
+        );
         this.#resyncing = resyncing;
         try {
             return await resyncing;
         } finally {
             if (this.#resyncing === resyncing) this.#resyncing = undefined;
         }
+    }
+
+    /** Replaces the model/provider catalog after the daemon announces a config change. */
+    async reconcileModelCatalog(): Promise<void> {
+        this.#config = (await this.#client.getConfig()).config;
     }
 
     /** Applies one global API event and returns a renderable message when it carried one. */
