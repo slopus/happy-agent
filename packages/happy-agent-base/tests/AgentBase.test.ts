@@ -1635,7 +1635,7 @@ describe("AgentBase per-message settings", () => {
         await agent.close();
     });
 
-    it("switches provider compatibly: history kept, fresh session on the new provider", async () => {
+    it("resets when switching between Claude SDK and Bedrock", async () => {
         const claudeProvider = new ScriptedProvider([textTurn("from claude")]);
         const bedrockProvider = new ScriptedProvider([textTurn("from bedrock")]);
         const providers = new AgentProviders();
@@ -1651,7 +1651,7 @@ describe("AgentBase per-message settings", () => {
             hooks: {
                 modelChanged: (_hookCtx, change) => {
                     changes.push(change);
-                    return system("should not appear");
+                    return system("Claude SDK and Bedrock use separate histories.");
                 },
             },
         });
@@ -1661,9 +1661,6 @@ describe("AgentBase per-message settings", () => {
         await agent.send(ctx, user("switch"), { provider: "bedrock" });
         await agent.waitForIdle();
 
-        // A claude-family model may move from a claude provider to a bedrock provider without
-        // a reset, but the session is provider-bound, so the old one is destroyed and the new
-        // provider serves the kept history.
         expect(changes).toEqual([
             {
                 previousModel: "anthropic/claude-x",
@@ -1671,40 +1668,107 @@ describe("AgentBase per-message settings", () => {
                 previousProvider: "claude",
                 provider: "bedrock",
                 providers,
-                wasReset: false,
+                wasReset: true,
             },
         ]);
         expect(claudeProvider.sessions[0]?.destroyed).toBe(true);
         expect(bedrockProvider.sessions[0]?.requests[0]?.context.messages).toEqual([
-            user("hello"),
-            { role: "assistant", content: [{ type: "text", text: "from claude" }] },
+            system("Claude SDK and Bedrock use separate histories."),
             user("switch"),
         ]);
         await agent.close();
     });
 
-    it("resets when switching to a different provider of the same type", async () => {
-        const firstProvider = new ScriptedProvider([textTurn("first")]);
-        const secondProvider = new ScriptedProvider([textTurn("second")]);
+    it.each([
+        ["claude", "anthropic/claude-x"],
+        ["codex", "openai/gpt-x"],
+        ["grok", "xai/grok-x"],
+        ["bedrock", "anthropic/claude-x"],
+    ] as const)(
+        "keeps history when switching between named %s providers",
+        async (providerType, model) => {
+            const firstProvider = new ScriptedProvider([textTurn("first")]);
+            const secondProvider = new ScriptedProvider([textTurn("second")]);
+            const providers = new AgentProviders();
+            providers.add("personal", firstProvider, providerType);
+            providers.add("work", secondProvider, providerType);
+            const agent = await AgentBase.create(ctx, {
+                id: "test-agent",
+                providers,
+                provider: "personal",
+                model,
+                persistence: new InMemoryPersistence(),
+            });
+
+            await agent.send(ctx, user("hello"));
+            await agent.waitForIdle();
+            await agent.send(ctx, user("switch"), { provider: "work" });
+            await agent.waitForIdle();
+
+            expect(firstProvider.sessions[0]?.destroyed).toBe(true);
+            expect(secondProvider.sessions[0]?.requests[0]?.context.messages).toEqual([
+                user("hello"),
+                { role: "assistant", content: [{ type: "text", text: "first" }] },
+                user("switch"),
+            ]);
+            await agent.close();
+        },
+    );
+
+    it("keeps Bedrock GPT history when named providers resolve to the same region", async () => {
+        const firstProvider = Object.assign(new ScriptedProvider([textTurn("first")]), {
+            region: "us-east-1",
+        });
+        const secondProvider = Object.assign(new ScriptedProvider([textTurn("second")]), {
+            region: "us-east-1",
+        });
         const providers = new AgentProviders();
-        providers.add("claude-a", firstProvider, "claude");
-        providers.add("claude-b", secondProvider, "claude");
+        providers.add("personal", firstProvider, "bedrock");
+        providers.add("work", secondProvider, "bedrock");
         const agent = await AgentBase.create(ctx, {
             id: "test-agent",
             providers,
-            provider: "claude-a",
-            model: "anthropic/claude-x",
+            provider: "personal",
+            model: "openai/gpt-x",
             persistence: new InMemoryPersistence(),
         });
 
         await agent.send(ctx, user("hello"));
         await agent.waitForIdle();
-        await agent.send(ctx, user("switch"), { provider: "claude-b" });
+        await agent.send(ctx, user("switch"), { provider: "work" });
         await agent.waitForIdle();
 
-        // Same compatibility type but a different registry entry — for example another
-        // credential — cannot continue the conversation.
-        expect(firstProvider.sessions[0]?.destroyed).toBe(true);
+        expect(secondProvider.sessions[0]?.requests[0]?.context.messages).toEqual([
+            user("hello"),
+            { role: "assistant", content: [{ type: "text", text: "first" }] },
+            user("switch"),
+        ]);
+        await agent.close();
+    });
+
+    it("resets Bedrock GPT history when the region changes", async () => {
+        const firstProvider = Object.assign(new ScriptedProvider([textTurn("first")]), {
+            region: "us-east-1",
+        });
+        const secondProvider = Object.assign(new ScriptedProvider([textTurn("second")]), {
+            region: "eu-west-1",
+        });
+        const providers = new AgentProviders();
+        providers.add("personal", firstProvider, "bedrock");
+        providers.add("work", secondProvider, "bedrock");
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers,
+            provider: "personal",
+            model: "openai/gpt-x",
+            persistence: new InMemoryPersistence(),
+        });
+
+        await agent.send(ctx, user("hello"));
+        await agent.waitForIdle();
+        await agent.send(ctx, user("switch"), { provider: "work" });
+        await agent.waitForIdle();
+
         expect(secondProvider.sessions[0]?.requests[0]?.context.messages).toEqual([user("switch")]);
         await agent.close();
     });

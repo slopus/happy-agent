@@ -2996,21 +2996,32 @@ export class AgentBase {
                 if (this.#model !== undefined && model !== undefined) {
                     const previousType = this.#providers.typeOf(this.#providerId);
                     const nextType = this.#providers.typeOf(provider);
-                    reset =
-                        previousType === null ||
-                        nextType === null ||
-                        !areProviderModelsCompatible(
-                            {
-                                modelId: this.#model,
-                                providerId: this.#providerId,
-                                providerType: previousType,
-                            },
-                            {
-                                modelId: model,
-                                providerId: provider,
-                                providerType: nextType,
-                            },
-                        );
+                    if (previousType === null || nextType === null || previousType !== nextType) {
+                        reset = true;
+                    } else {
+                        const [previousKey, nextKey] = await Promise.all([
+                            this.#providers.contextCompatibilityKeyOf(
+                                this.#providerId,
+                                this.#model,
+                            ),
+                            this.#providers.contextCompatibilityKeyOf(provider, model),
+                        ]);
+                        reset =
+                            previousKey === null ||
+                            nextKey === null ||
+                            !areProviderModelsCompatible(
+                                {
+                                    modelId: this.#model,
+                                    providerId: previousKey,
+                                    providerType: previousType,
+                                },
+                                {
+                                    modelId: model,
+                                    providerId: nextKey,
+                                    providerType: nextType,
+                                },
+                            );
+                    }
                 } else {
                     // A selection without a model on either side cannot be judged compatible.
                     reset = model !== this.#model;

@@ -99,4 +99,49 @@ describe("AgentProviders", () => {
             providers.add("codex", provider(), "codex");
         }).toThrowError('Provider "codex" is already registered.');
     });
+
+    it("groups named native accounts by provider type", async () => {
+        const providers = new AgentProviders();
+        providers.add("personal-claude", provider(), "claude");
+        providers.add("work-codex", provider(), "codex");
+        providers.add("team-grok", provider(), "grok");
+
+        await expect(
+            providers.contextCompatibilityKeyOf("personal-claude", "anthropic/opus"),
+        ).resolves.toBe("claude");
+        await expect(providers.contextCompatibilityKeyOf("work-codex", "openai/sol")).resolves.toBe(
+            "codex",
+        );
+        await expect(providers.contextCompatibilityKeyOf("team-grok", "xai/build")).resolves.toBe(
+            "grok",
+        );
+    });
+
+    it("groups Bedrock GPT by resolved region and other Bedrock models together", async () => {
+        const providers = new AgentProviders();
+        providers.add(
+            "work-bedrock",
+            Object.assign(provider(), { region: " us-west-2 " }),
+            "bedrock",
+        );
+
+        await expect(
+            providers.contextCompatibilityKeyOf("work-bedrock", "openai/sol"),
+        ).resolves.toBe("bedrock:us-west-2");
+        await expect(
+            providers.contextCompatibilityKeyOf("work-bedrock", "anthropic/opus"),
+        ).resolves.toBe("bedrock");
+    });
+
+    it("isolates Bedrock GPT accounts whose resolved region is unavailable", async () => {
+        const providers = new AgentProviders();
+        providers.add("work-bedrock", provider(), "bedrock");
+
+        await expect(
+            providers.contextCompatibilityKeyOf("work-bedrock", "openai/sol"),
+        ).resolves.toBe("bedrock-provider:work-bedrock");
+        await expect(
+            providers.contextCompatibilityKeyOf("missing", "openai/sol"),
+        ).resolves.toBeNull();
+    });
 });

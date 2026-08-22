@@ -1,4 +1,8 @@
-import type { BaseProvider, ProviderModelCompatibilityType } from "@slopus/happy-providers";
+import {
+    providerModelFamily,
+    type BaseProvider,
+    type ProviderModelCompatibilityType,
+} from "@slopus/happy-providers";
 
 /** The serializable provider/model selection a provider source resolves. */
 export interface AgentProviderSelection {
@@ -50,6 +54,26 @@ export class AgentProviders {
             : entry.source;
     }
 
+    /**
+     * Stable context-sharing key for one provider/model route, or null when the route is absent.
+     *
+     * Native providers share their transcript format across named accounts of the same type.
+     * Bedrock models do too, except GPT continuation state is region-bound. A missing Bedrock GPT
+     * region fails closed to the registration ID instead of merging accounts speculatively.
+     */
+    async contextCompatibilityKeyOf(id: string, model: string | undefined): Promise<string | null> {
+        const entry = this.#providers.get(id);
+        if (entry === undefined) return null;
+        if (entry.type !== "bedrock" || providerModelFamily(model ?? "") !== "codex") {
+            return entry.type;
+        }
+
+        const provider = await this.resolve(id, model);
+        if (provider === null) return null;
+        const region = providerRegion(provider);
+        return region === undefined ? `bedrock-provider:${id}` : `bedrock:${region}`;
+    }
+
     /** The compatibility type the provider at `id` was registered with, or null when absent. */
     typeOf(id: string): ProviderModelCompatibilityType | null {
         return this.#providers.get(id)?.type ?? null;
@@ -59,4 +83,11 @@ export class AgentProviders {
     get ids(): readonly string[] {
         return [...this.#providers.keys()];
     }
+}
+
+/** The public Bedrock GPT providers expose their fully resolved region. */
+function providerRegion(provider: BaseProvider): string | undefined {
+    if (!("region" in provider) || typeof provider.region !== "string") return undefined;
+    const region = provider.region.trim();
+    return region.length === 0 ? undefined : region;
 }
