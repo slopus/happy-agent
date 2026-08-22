@@ -28,6 +28,7 @@ import type { AgentKV } from "./AgentKV.js";
 import type { AgentMetadata } from "./AgentMetadata.js";
 import type { AgentMessageAcceptance } from "./AgentMessageAcceptance.js";
 import type { AnyAgentTool } from "./AgentTool.js";
+import type { AgentBasePendingStage } from "./AgentBasePending.js";
 
 /**
  * Everything `AgentBase` is constructed with, except its hooks: an agent's behavior comes from
@@ -134,6 +135,11 @@ export class Agent<
         return this.#base.active;
     }
 
+    /** The durable stage this agent is finishing while a drain is pending. */
+    get drainStage(): AgentBasePendingStage | undefined {
+        return this.#base.drainStage;
+    }
+
     /**
      * The module this agent runs under `name`, when it has one. An individual module holds the
      * state of the single agent it was built for, so this is how that agent's owner reaches what
@@ -178,6 +184,11 @@ export class Agent<
     /** Start the loop without a new message, continuing a turn an earlier run left unfinished. */
     start(): void {
         this.#base.start();
+    }
+
+    /** Stop the loop at its next durable edge without cancelling its current operation. */
+    drain(): Promise<void> {
+        return this.#base.drain();
     }
 
     /** Wait until the agent has nothing left to do, including work it accepted but never began. */

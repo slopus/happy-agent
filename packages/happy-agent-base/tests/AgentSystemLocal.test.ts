@@ -427,6 +427,165 @@ describe("AgentSystemLocal", () => {
         await resumed.close(ctx);
     });
 
+    it("drains after inference without dispatching its returned tools or queued messages", async () => {
+        const managerPersistence = new InMemoryPersistence();
+        const agentPersistence = new InMemoryPersistence();
+        let inferenceFinished!: () => void;
+        const finished = new Promise<void>((resolve) => {
+            inferenceFinished = resolve;
+        });
+        let releaseInference!: () => void;
+        const released = new Promise<void>((resolve) => {
+            releaseInference = resolve;
+        });
+        let toolCalls = 0;
+        const gate: AgentModule = {
+            name: "drain-inference-gate",
+            beforeStart: () => ({
+                tools: () => [
+                    defineAgentTool({
+                        name: "drain_tool",
+                        returnType: Type.Object({}),
+                        shouldReviewInAutoMode: () => false,
+                        execute: async () => {
+                            toolCalls += 1;
+                            return {};
+                        },
+                        toLLM: () => [],
+                    }),
+                ],
+                afterInference: async () => {
+                    inferenceFinished();
+                    await released;
+                },
+            }),
+        };
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "call-1", name: "drain_tool" },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("must not start"),
+        ]);
+        const system = await AgentSystemLocal.create(
+            ctx,
+            new InMemoryAgentStorage({
+                acquireLock: inMemoryStorageLock(),
+                kv: managerKV(managerPersistence),
+                persistence: () => agentPersistence,
+            }),
+            {
+                modules: [gate],
+                providers: providersOf(provider),
+                provider: "scripted",
+                models: [],
+            },
+        );
+        const agent = await system.create(ctx, {}, { id: "draininferenceagent" });
+        await agent.send(ctx, user("run the tool"));
+        await finished;
+
+        const draining = system.drain();
+        expect(system.drainProgress()).toEqual({
+            agents: [{ id: "draininferenceagent", stage: "inference" }],
+            count: 1,
+        });
+        expect(system.drainProgress(0)).toEqual({ agents: [], count: 1, truncated: true });
+        expect(system.drain()).toBe(draining);
+        await agent.steer(ctx, user("keep this queued"));
+        releaseInference();
+        await draining;
+
+        expect(system.drainProgress()).toEqual({ agents: [], count: 0 });
+        expect(toolCalls).toBe(0);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(agent.active).toBe(true);
+        expect([...agentPersistence.values.keys()]).toContainEqual(
+            expect.stringMatching(/^steering\./),
+        );
+        agent.start();
+        await Promise.resolve();
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        await system.close(ctx);
+    });
+
+    it("drains a running tool batch and reports it without starting follow-up inference", async () => {
+        const managerPersistence = new InMemoryPersistence();
+        const agentPersistence = new InMemoryPersistence();
+        let toolStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            toolStarted = resolve;
+        });
+        let finishTool!: () => void;
+        const finished = new Promise<void>((resolve) => {
+            finishTool = resolve;
+        });
+        let completed = false;
+        const toolModule: AgentModule = {
+            name: "drain-running-tool",
+            beforeStart: () => ({
+                tools: () => [
+                    defineAgentTool({
+                        name: "drain_running_tool",
+                        returnType: Type.Object({}),
+                        shouldReviewInAutoMode: () => false,
+                        execute: async () => {
+                            toolStarted();
+                            await finished;
+                            completed = true;
+                            return {};
+                        },
+                        toLLM: () => [{ type: "text", text: "finished" }],
+                    }),
+                ],
+            }),
+        };
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "call-1", name: "drain_running_tool" },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("must not start"),
+        ]);
+        const system = await AgentSystemLocal.create(
+            ctx,
+            new InMemoryAgentStorage({
+                acquireLock: inMemoryStorageLock(),
+                kv: managerKV(managerPersistence),
+                persistence: () => agentPersistence,
+            }),
+            {
+                modules: [toolModule],
+                providers: providersOf(provider),
+                provider: "scripted",
+                models: [],
+            },
+        );
+        const agent = await system.create(ctx, {}, { id: "draintoolagent" });
+        await agent.send(ctx, user("run the tool"));
+        await started;
+
+        let drained = false;
+        const draining = system.drain().then(() => {
+            drained = true;
+        });
+        expect(system.drainProgress()).toEqual({
+            agents: [{ id: "draintoolagent", stage: "tools" }],
+            count: 1,
+        });
+        await Promise.resolve();
+        expect(drained).toBe(false);
+        finishTool();
+        await draining;
+
+        expect(completed).toBe(true);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(agentPersistence.records).toContainEqual(expect.objectContaining({ type: "tool" }));
+        await system.close(ctx);
+    });
+
     it("waits for an in-flight tool without starting its follow-up inference", async () => {
         const coordinator = new GracefulShutdown();
         const shutdownCtx = withShutdown(
@@ -502,9 +661,7 @@ describe("AgentSystemLocal", () => {
 
         expect(completed).toBe(true);
         expect(provider.sessions[0]?.requests).toHaveLength(1);
-        expect(agentPersistence.records).toContainEqual(
-            expect.objectContaining({ type: "tool" }),
-        );
+        expect(agentPersistence.records).toContainEqual(expect.objectContaining({ type: "tool" }));
     });
 
     it("caches the resolved agent and its store, and tells modules which agent they serve", async () => {

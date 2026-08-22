@@ -560,6 +560,12 @@ export class AgentBase {
     #turnRequested = false;
     /** The run loop while it is running; the field is cleared once it has actually stopped. */
     #runPromise: Promise<void> | undefined;
+    /** Sticky for this instance: once requested, no later operation starts another run. */
+    #draining = false;
+    /** The shared barrier that resolves when the current run reaches a durable edge. */
+    #drainPromise: Promise<void> | undefined;
+    /** Whether the shared drain barrier has reached its edge. */
+    #drainFinished = false;
     /** The barrier: true from the moment close is called, and nothing new is admitted after it. */
     #closed = false;
     /** The one shutdown every closing caller shares, so a session is never destroyed twice. */
@@ -822,6 +828,14 @@ export class AgentBase {
      */
     get active(): boolean {
         return this.#pending !== undefined;
+    }
+
+    /** The durable stage still running while this agent is moving toward its drain edge. */
+    get drainStage(): AgentBasePendingStage | undefined {
+        if (!this.#draining || this.#drainFinished) return undefined;
+        return (
+            this.#pending?.stage ?? (this.#settlementId === undefined ? "inference" : "settlement")
+        );
     }
 
     /**
@@ -1412,6 +1426,29 @@ export class AgentBase {
     }
 
     /**
+     * Stop this loop at its next durable edge without cancelling its current operation. The mode
+     * is sticky: later queue writes remain durable but cannot start another run in this process.
+     */
+    drain(): Promise<void> {
+        this.#draining = true;
+        this.#drainPromise ??= this.#finishDrain();
+        return this.#drainPromise;
+    }
+
+    /** Wait for operations already handed to this agent and the run they may have started. */
+    async #finishDrain(): Promise<void> {
+        try {
+            await Promise.resolve();
+            while (this.#admitted.size > 0 || this.#runPromise !== undefined) {
+                await Promise.allSettled(this.#admitted);
+                await this.#runPromise?.catch(() => undefined);
+            }
+        } finally {
+            this.#drainFinished = true;
+        }
+    }
+
+    /**
      * Wait until the agent has nothing left to do. That includes work it has taken on but not yet
      * started: an operation whose caller did not wait for it is registered from the moment it is
      * called, so a message asked for and abandoned is still something this waits for, rather than
@@ -1616,7 +1653,7 @@ export class AgentBase {
         // Graceful shutdown stops at the next operation boundary. Do not abort a tool that is
         // already running; the coordinator's timeout and the daemon's hard exit bound one that
         // never returns.
-        if (!fromInsideOwnLoop && !this.#gracefulShutdownRequested()) {
+        if (!fromInsideOwnLoop && !this.#stopAtSafeEdgeRequested()) {
             this.#closeController.abort();
         }
         // The barrier is published before any of the shutdown runs. Destroying the provider
@@ -1686,7 +1723,7 @@ export class AgentBase {
      * next pass, so this never starts a second one.
      */
     #startRun(): void {
-        if (this.#runPromise !== undefined) return;
+        if (this.#runPromise !== undefined || this.#draining) return;
         // The loop is a lifetime of its own, so it marks itself rather than inheriting whatever
         // happened to start it — a tool of another agent, most often, which will be long gone.
         this.#runPromise = outsideAgentDatabaseOperation(() =>
@@ -1697,7 +1734,7 @@ export class AgentBase {
                     // A request that arrived while the loop was settling would otherwise be stranded:
                     // the loop had stopped checking, and the caller's own `#startRun` saw a run still
                     // in flight. Waiters re-check the field, so they pick this continuation up.
-                    if (this.#turnRequested && !this.#closed) {
+                    if (this.#turnRequested && !this.#closed && !this.#draining) {
                         this.#startRun();
                         return;
                     }
@@ -1722,7 +1759,7 @@ export class AgentBase {
 
     /** The run itself, on the context of the span the whole of it belongs to. */
     async #runTurns(ctx: Context): Promise<void> {
-        if (this.#gracefulShutdownRequested()) return;
+        if (this.#stopAtSafeEdgeRequested()) return;
         if (this.#pending?.stage === "settlement") {
             // A prior implementation could advance to settlement while a dispatched tool was
             // still open. Never repeat that conclusion on restore: load the real history, settle
@@ -1783,7 +1820,7 @@ export class AgentBase {
      */
     async #runLoops(ctx: Context): Promise<"blocked" | "settling" | "shutdown"> {
         do {
-            if (this.#gracefulShutdownRequested()) return "shutdown";
+            if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             this.#loopId ??= createId();
             const loop: AgentBaseLoop = { loopId: this.#loopId };
             setAgentSpanAttributes(ctx, { "agent.loop.id": loop.loopId });
@@ -1803,7 +1840,7 @@ export class AgentBase {
                     : (hookCtx) => this.#hooks.beforeAgentLoopTransact?.(hookCtx, loop),
             );
             await this.#invokeHook(ctx, this.#hooks.beforeAgentLoop, loop);
-            if (this.#gracefulShutdownRequested()) return "shutdown";
+            if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             do {
                 const outcome = await this.#span(
                     ctx,
@@ -1826,6 +1863,7 @@ export class AgentBase {
                     : (hookCtx) => this.#hooks.afterAgentLoopTransact?.(hookCtx, loop),
             );
             await this.#applyActions(ctx, this.#hooks.afterAgentLoop, abort.signal, loop);
+            if (this.#stopAtSafeEdgeRequested()) return "shutdown";
         } while (this.#turnRequested && (!this.#closed || this.#hasNoticeWorkToFinish()));
         return "settling";
     }
@@ -1890,7 +1928,7 @@ export class AgentBase {
                 : (hookCtx) => this.#hooks.beforeTurnTransact?.(hookCtx, turnStart),
         );
         await this.#applyActions(ctx, this.#hooks.beforeTurn, abort.signal, turnStart);
-        if (this.#gracefulShutdownRequested()) return "shutdown";
+        if (this.#stopAtSafeEdgeRequested()) return "shutdown";
         if ((await this.#runInference(ctx, abort)) === "shutdown") return "shutdown";
         if (this.#durableWorkBlocked) return "blocked";
         const turn = {
@@ -1914,6 +1952,7 @@ export class AgentBase {
             throw error;
         }
         await this.#applyActions(ctx, this.#hooks.afterTurn, abort.signal, turn);
+        if (this.#stopAtSafeEdgeRequested()) return "shutdown";
         if (!this.#turnRequested || (this.#closed && !this.#hasNoticeWorkToFinish())) {
             return "stop";
         }
@@ -2189,10 +2228,7 @@ export class AgentBase {
      * until nothing is owed an answer. Every failure is caught here and surfaced to the
      * conversation, so a turn ends with a complete context whatever went wrong.
      */
-    async #runInference(
-        ctx: Context,
-        abort: AbortController,
-    ): Promise<"complete" | "shutdown"> {
+    async #runInference(ctx: Context, abort: AbortController): Promise<"complete" | "shutdown"> {
         // One shared promise for the turn's scope keeps races from piling up listeners on the
         // signal, and a scope that was aborted before this point settles it immediately: a
         // listener added afterwards would never hear the event that already happened.
@@ -2202,7 +2238,7 @@ export class AgentBase {
                   abort.signal.addEventListener("abort", () => resolve(ABORTED), { once: true });
               });
         try {
-            if (this.#gracefulShutdownRequested()) return "shutdown";
+            if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             await this.#ensureLoaded(ctx);
             // Resume a tool batch that was dispatched but cut off before its results landed, so
             // the interrupted results reach the main store before any queued message.
@@ -2217,6 +2253,7 @@ export class AgentBase {
                 if ((await Promise.race([this.#settled(), abortPromise])) === ABORTED) {
                     return "complete";
                 }
+                if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 // A batch that was never committed has certainly not run — the commit precedes
                 // every execution — so it is dispatched as the fresh batch it never got to be,
                 // rather than resumed, which would refuse the non-durable calls.
@@ -2229,15 +2266,15 @@ export class AgentBase {
                         abortPromise,
                     )
                 ) {
-                    return this.#gracefulShutdownRequested() ? "shutdown" : "complete";
+                    return this.#stopAtSafeEdgeRequested() ? "shutdown" : "complete";
                 }
-                if (this.#gracefulShutdownRequested()) return "shutdown";
+                if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             }
             let needsInference = resumed.length > 0;
             // A requested compaction runs before this turn's first inference, so the model
             // always receives a settled conversation — never one still owing tool results.
             await this.#runCompaction(ctx, abort.signal);
-            if (this.#gracefulShutdownRequested()) return "shutdown";
+            if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             // An inference is needed without any injection when tool results from a resumed batch
             // end the context, or — checked once, against the freshly loaded durable state —
             // when a cut-off run left its trailing user or tool message unanswered. Afterwards
@@ -2256,7 +2293,7 @@ export class AgentBase {
             // surfaces it to the context as a system message.
             let pendingError: string | undefined;
             while (true) {
-                if (this.#gracefulShutdownRequested()) return "shutdown";
+                if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 // An abort during the tool batch ends the turn here, before the next inference.
                 // A cancellation arriving when the turn has nothing left to do cancels nothing:
                 // the last response already reported its own terminal event, and a second one
@@ -2275,6 +2312,7 @@ export class AgentBase {
                 // batch. Its results are settled now, so replace the measured context before
                 // another inference iteration or newly queued input can enter it.
                 await this.#runCompaction(ctx, abort.signal);
+                if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 await this.#finishAdmittedQueueWrites();
                 // A message accepted through an outer transaction becomes visible only after
                 // that transaction commits. Merge those durable queue entries here, at the same
@@ -2282,6 +2320,7 @@ export class AgentBase {
                 // steering committed during a tool batch reaches the next inference without
                 // rebuilding unrelated conversation or tool state in the middle of the turn.
                 if (this.#committedQueueDirty) await this.#refreshCommittedQueues(ctx);
+                if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 let injected = await this.#consumeQueue(
                     ctx,
                     this.#steering,
@@ -2296,7 +2335,7 @@ export class AgentBase {
                 await this.#consumeInjections(ctx);
                 // Nothing to answer — a start() on an idle history, or the queues ran dry.
                 if (!this.#noticeAwaitingResponse && !injected && !needsInference) break;
-                if (this.#gracefulShutdownRequested()) return "shutdown";
+                if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 const response = await this.#span(ctx, "agent.inference", {}, (inferenceCtx) =>
                     this.#requestInference(inferenceCtx, abortPromise),
                 );
@@ -2322,7 +2361,7 @@ export class AgentBase {
                     }
                 }
                 if (state === "tool_call") {
-                    if (this.#gracefulShutdownRequested()) return "shutdown";
+                    if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                     const calls = content.filter(
                         (block): block is SessionToolCallBlock =>
                             block.type === "tool_call" && block.server !== true,
@@ -2336,7 +2375,7 @@ export class AgentBase {
                         abortPromise,
                     );
                     if (closedDuringTools) break;
-                    if (this.#gracefulShutdownRequested()) return "shutdown";
+                    if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                     needsInference = true;
                     continue;
                 }
@@ -2381,12 +2420,12 @@ export class AgentBase {
             this.#clearTurnRequestIfNoPendingInput();
         }
         this.#turnAborted = abort.signal.aborted;
-        return this.#gracefulShutdownRequested() ? "shutdown" : "complete";
+        return this.#stopAtSafeEdgeRequested() ? "shutdown" : "complete";
     }
 
-    /** Whether the stdlib coordinator carried by this agent has begun graceful shutdown. */
-    #gracefulShutdownRequested(): boolean {
-        return shutdown.get(this.#ctx)?.shuttingDown === true;
+    /** Whether a sticky drain or the stdlib coordinator has asked for the next durable edge. */
+    #stopAtSafeEdgeRequested(): boolean {
+        return this.#draining || shutdown.get(this.#ctx)?.shuttingDown === true;
     }
 
     /**
@@ -2446,6 +2485,10 @@ export class AgentBase {
                 : (hookCtx) => this.#hooks.beforeInferenceTransact?.(hookCtx, inferenceStart),
         );
         await this.#invokeHook(ctx, this.#hooks.beforeInference, inferenceStart);
+        // Explicit drain takes the earliest pre-request edge. Preserve the stdlib coordinator's
+        // established behavior: once its inference hook has begun, graceful shutdown lets that
+        // operation proceed through the provider request before stopping.
+        if (this.#draining) return undefined;
         const stream = session.run(this.#workContext(ctx), {
             context: {
                 instructions,

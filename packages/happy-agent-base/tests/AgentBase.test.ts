@@ -2136,6 +2136,55 @@ describe("AgentBase compaction", () => {
         context: { instructions: "", messages },
     });
 
+    it("finishes a running compaction before reaching its drain edge", async () => {
+        const provider = new ScriptedProvider([textTurn("first"), textTurn("must not start")]);
+        const original = provider.session.bind(provider);
+        provider.session = async (id, options) => {
+            const session = await original(id, options);
+            (session as ScriptedSession).compactionResults = [completed([compactionMessage])];
+            return session;
+        };
+        let compactionStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            compactionStarted = resolve;
+        });
+        let finishCompaction!: () => void;
+        const finished = new Promise<void>((resolve) => {
+            finishCompaction = resolve;
+        });
+        const persistence = new InMemoryPersistence();
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            hooks: {
+                beforeCompaction: async () => {
+                    compactionStarted();
+                    await finished;
+                },
+            },
+        });
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+        await agent.compact(ctx);
+        await started;
+
+        const draining = agent.drain();
+        expect(agent.drainStage).toBe("compaction");
+        finishCompaction();
+        await draining;
+
+        expect(agent.drainStage).toBeUndefined();
+        expect(provider.sessions[0]?.compactions).toHaveLength(1);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(persistence.records).toContainEqual({
+            type: "compaction",
+            messages: [compactionMessage],
+        });
+        await agent.close();
+    });
+
     it("runs a compaction requested after inference before the next tool continuation", async () => {
         const provider = new ScriptedProvider([
             [
@@ -2897,6 +2946,40 @@ describe("AgentBase inference errors", () => {
 });
 
 describe("AgentBase lifecycle hooks", () => {
+    it("finishes a running settlement transaction before reaching its drain edge", async () => {
+        let settlementStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            settlementStarted = resolve;
+        });
+        let finishSettlement!: () => void;
+        const finished = new Promise<void>((resolve) => {
+            finishSettlement = resolve;
+        });
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(new ScriptedProvider([textTurn("answer")])),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks: {
+                afterAgentSettledTransact: async () => {
+                    settlementStarted();
+                    await finished;
+                },
+            },
+        });
+        await agent.send(ctx, user("go"));
+        await started;
+
+        const draining = agent.drain();
+        expect(agent.drainStage).toBe("settlement");
+        finishSettlement();
+        await draining;
+
+        expect(agent.active).toBe(false);
+        expect(agent.drainStage).toBeUndefined();
+        await agent.close();
+    });
+
     it("fires the lifecycle hooks in order around a turn", async () => {
         const order: string[] = [];
         const provider = new ScriptedProvider([textTurn("answer")]);

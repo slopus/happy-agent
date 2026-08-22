@@ -2,8 +2,13 @@
 
 // Agent instances and the collection that creates, resolves, and stores them.
 export { Agent, type AgentOptions } from "./Agent.js";
-export { type AgentSystem } from "./AgentSystem.js";
-export { type AgentCreateOptions, type AgentInitialContext } from "./AgentSystem.js";
+export {
+    type AgentSystem,
+    type AgentCreateOptions,
+    type AgentInitialContext,
+    type AgentSystemDrainAgent,
+    type AgentSystemDrainProgress,
+} from "./AgentSystem.js";
 export { AgentSystemLocal, type AgentSystemLocalOptions } from "./AgentSystemLocal.js";
 export { AgentSystemRef } from "./AgentSystemRef.js";
 export { AgentRef } from "./AgentRef.js";

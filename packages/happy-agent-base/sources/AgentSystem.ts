@@ -10,6 +10,25 @@ import type { AgentMessageAcceptance } from "./AgentMessageAcceptance.js";
 import type { AgentModel } from "./AgentModel.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
 import type { AnyAgentTool } from "./AgentTool.js";
+import type { AgentBasePendingStage } from "./AgentBasePending.js";
+
+/** One agent that has not reached its requested draining edge yet. */
+export interface AgentSystemDrainAgent {
+    /** Stable agent identity. */
+    readonly id: string;
+    /** The durable Base stage the agent is currently finishing. */
+    readonly stage: AgentBasePendingStage;
+}
+
+/** Bounded live progress for an agent system moving toward its draining edge. */
+export interface AgentSystemDrainProgress {
+    /** Exact number of agents still running toward an edge. */
+    readonly count: number;
+    /** ID-sorted detail, bounded by the requested limit. */
+    readonly agents: readonly AgentSystemDrainAgent[];
+    /** Present only when more agents are waiting than fit in `agents`. */
+    readonly truncated?: true;
+}
 
 /** Conversation state installed atomically before a newly created agent starts. */
 export interface AgentInitialContext {
@@ -48,6 +67,12 @@ export interface AgentSystem<Database extends AgentDatabase = AgentDatabase> {
 
     /** Stop every agent and release this system's exclusive ownership of its durable store. */
     close(ctx: Context): Promise<void>;
+
+    /** Stop every live loop at its next durable edge without cancelling its current operation. */
+    drain(): Promise<void>;
+
+    /** Report the agents that have not reached their requested draining edge yet. */
+    drainProgress(limit?: number): AgentSystemDrainProgress;
 
     /**
      * Create an agent with a generated or caller-supplied cuid2 identity. Configuration,

@@ -44,7 +44,7 @@ import type { AgentModel } from "./AgentModel.js";
 import type { AgentProviders } from "./AgentProviders.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
 import type { AgentStorage, AgentStorageLock } from "./AgentStorage.js";
-import type { AgentCreateOptions, AgentSystem } from "./AgentSystem.js";
+import type { AgentCreateOptions, AgentSystem, AgentSystemDrainProgress } from "./AgentSystem.js";
 import { withAgentSystem } from "./AgentSystemContext.js";
 import { AgentSystemRef } from "./AgentSystemRef.js";
 import type { AnyAgentTool } from "./AgentTool.js";
@@ -157,6 +157,12 @@ export class AgentSystemLocal<
     readonly #lifecycleObservations = new Set<Promise<void>>();
     /** Post-commit closes and replacement resets that must finish before an ID is reused. */
     readonly #transitions = new Map<string, Promise<void>>();
+    /** Agents still moving toward a requested safe drain edge. */
+    readonly #drainingAgents = new Map<Agent<AnyAgentTool, Database>, Promise<void>>();
+    /** Sticky for this system lifetime: a drained collection never starts another loop. */
+    #draining = false;
+    /** The shared completion barrier for the sticky drain. */
+    #drainPromise: Promise<void> | undefined;
     /** No agent operation is admitted until every module has finished its beforeStart hook. */
     #lifecycle: "initializing" | "open" | "closing" | "closed" = "initializing";
     /** The shared shutdown, including release of the hard storage lock. */
@@ -263,6 +269,56 @@ export class AgentSystemLocal<
             );
         }
         await closing;
+    }
+
+    /**
+     * Ask every live agent to stop at its next durable edge without cancelling current work.
+     * The mode is sticky: agents published by an operation already in flight are drained before
+     * they can start, and repeated callers join the same barrier.
+     */
+    drain(): Promise<void> {
+        if (this.#drainPromise === undefined) {
+            this.#draining = true;
+            for (const agent of this.#agents.values()) this.#beginAgentDrain(agent);
+            this.#drainPromise = this.#finishDrain();
+        }
+        return this.#drainPromise;
+    }
+
+    /** A bounded, ID-sorted view of agents that have not reached their drain edge yet. */
+    drainProgress(limit = 100): AgentSystemDrainProgress {
+        const waitingAgents = this.#drainingAgents.size;
+        const boundedLimit = Math.max(0, Math.floor(limit));
+        const agents = [...this.#drainingAgents.keys()]
+            .map((agent) => ({
+                id: agent.id,
+                stage: agent.drainStage ?? ("inference" as const),
+            }))
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .slice(0, boundedLimit);
+        return {
+            agents,
+            count: waitingAgents,
+            ...(waitingAgents > agents.length ? { truncated: true as const } : {}),
+        };
+    }
+
+    /** Wait for every agent that was already running to reach its durable edge. */
+    async #finishDrain(): Promise<void> {
+        while (this.#drainingAgents.size > 0) {
+            await Promise.allSettled(this.#drainingAgents.values());
+        }
+    }
+
+    /** Put one live agent into the collection's sticky drain exactly once. */
+    #beginAgentDrain(agent: Agent<AnyAgentTool, Database>): void {
+        if (this.#drainingAgents.has(agent)) return;
+        const draining = agent.drain();
+        this.#drainingAgents.set(agent, draining);
+        void draining.then(
+            () => this.#drainingAgents.delete(agent),
+            () => this.#drainingAgents.delete(agent),
+        );
     }
 
     /** Make this collection one named stdlib shutdown barrier when its context carries one. */
@@ -669,7 +725,11 @@ export class AgentSystemLocal<
             throw new Error(`Agent "${agent.id}" already has a live instance.`);
         }
         this.#agents.set(agent.id, agent);
-        if (start) agent.start();
+        if (this.#draining) {
+            this.#beginAgentDrain(agent);
+        } else if (start) {
+            agent.start();
+        }
     }
 
     /**
