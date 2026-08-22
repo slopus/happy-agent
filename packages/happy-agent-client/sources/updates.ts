@@ -1,4 +1,4 @@
-import type { EventCursor } from "./protocol/common.js";
+import type { Cuid2, EventCursor, Timestamp } from "./protocol/common.js";
 import type { EventStreamFrame, EventStreamOptions, HappyAgentEvent } from "./protocol/events.js";
 import { EventStreamProtocolError } from "./readEventStream.js";
 
@@ -17,6 +17,15 @@ export interface HappyAgentUpdatesOptions {
 /** One item from the client's reconnecting event feed. */
 export type HappyAgentUpdate =
     | { kind: "connected"; cursor: EventCursor }
+    | {
+          kind: "daemon_started";
+          cursor: EventCursor;
+          daemonId: Cuid2;
+          daemonStartedAt: Timestamp;
+          /** `true` when this replaces a daemon already observed by this iterator. */
+          replaced: boolean;
+      }
+    | { kind: "draining"; cursor: EventCursor; daemonId?: Cuid2 }
     | { kind: "state_lost"; cursor: EventCursor }
     | { kind: "disconnected"; cursor?: EventCursor }
     | { kind: "event"; event: HappyAgentEvent; cursor: EventCursor };
@@ -37,7 +46,8 @@ export async function* reconnectingUpdates(
     options: HappyAgentUpdatesOptions = {},
 ): AsyncGenerator<HappyAgentUpdate> {
     let cursor = options.after;
-    let connection: "initial" | "connected" | "disconnected" = "initial";
+    let connection: "initial" | "connected" | "draining" | "disconnected" = "initial";
+    let daemonId: Cuid2 | undefined;
     let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
 
     while (!isAborted(options.signal)) {
@@ -66,7 +76,32 @@ export async function* reconnectingUpdates(
 
                     connection = "connected";
                     yield { kind: "connected", cursor };
+                    if (
+                        frame.hello.daemonId !== undefined &&
+                        frame.hello.daemonStartedAt !== undefined &&
+                        frame.hello.daemonId !== daemonId
+                    ) {
+                        const replaced = daemonId !== undefined;
+                        daemonId = frame.hello.daemonId;
+                        yield {
+                            kind: "daemon_started",
+                            cursor,
+                            daemonId,
+                            daemonStartedAt: frame.hello.daemonStartedAt,
+                            replaced,
+                        };
+                    }
                     if (stateLost) yield { kind: "state_lost", cursor };
+                    if (frame.hello.draining === true) {
+                        connection = "draining";
+                        yield {
+                            kind: "draining",
+                            cursor,
+                            ...(frame.hello.daemonId === undefined
+                                ? {}
+                                : { daemonId: frame.hello.daemonId }),
+                        };
+                    }
                     continue;
                 }
 
@@ -80,6 +115,14 @@ export async function* reconnectingUpdates(
                 cursor = frame.cursor;
                 acceptedEvent = true;
                 yield { kind: "event", event: frame.event, cursor };
+                if (frame.event.type === "daemon.draining" && connection !== "draining") {
+                    connection = "draining";
+                    yield {
+                        kind: "draining",
+                        cursor,
+                        daemonId: frame.event.payload.daemonId,
+                    };
+                }
             }
         } catch {
             if (isAborted(options.signal)) return;

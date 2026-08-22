@@ -2576,6 +2576,20 @@ refetches that one resource instead of guessing. Because versions are UUIDv7, an
 of a resource can also be compared directly: the greater `version` is the newer copy, which is
 how a bootstrap snapshot and an event stream reconcile.
 
+**Daemon lifecycle**
+
+- `daemon.draining` — this daemon process entered its sticky read-only draining phase. It is
+  emitted exactly once, before any drain handler starts.
+    - `daemonId` (ID string) — the identity minted for this daemon process.
+    - `draining` — always `true`.
+
+Daemon start is connection metadata rather than a journal event. A restarted daemon owns a new
+in-memory journal, so a startup event inside that journal could be skipped by the very cursor gap
+that a client needs it to explain. The SSE `hello` frame therefore carries the daemon identity and
+start time on every connection. A reconnecting client emits one `daemon_started` update when it
+first sees an identity and again only when that identity changes; the latter means it reconnected
+to a different daemon process.
+
 **Projects**
 
 - `project.created` — a project was registered or a clone began.
@@ -2794,13 +2808,24 @@ The stream opens with a `hello` frame before anything else:
 
 ```
 event: hello
-data: {"cursor":"01991f3a-...","gap":false,"resumed":true,"connectedAt":1755400000000}
+data: {"cursor":"01991f3a-...","gap":false,"resumed":true,"connectedAt":1755400000000,"daemonId":"d4e5f6g7","daemonStartedAt":1755399990000,"draining":false}
 ```
 
 - `resumed` — the supplied cursor was honored; everything since it follows, in order.
 - `gap` — **the supplied cursor was lost to the journal window.** The stream is live from now,
   but events between the cursor and now are gone: the client must resync its snapshots, exactly
   as with a pull `409`. The stream stays usable while it does.
+- `daemonId` — one CUID2 minted when this daemon process starts and repeated by every stream it
+  accepts. A changed value after reconnect means the client reached a different process.
+- `daemonStartedAt` — when that process started, in epoch milliseconds.
+- `draining` — whether the process has entered its sticky draining phase. This closes the race
+  where draining began while the client was disconnected and its `daemon.draining` event is no
+  longer replayable.
+
+`daemonId`, `daemonStartedAt`, and `draining` are additive and may be absent on older compatible
+protocol-22 daemons. `HappyAgentClient.updates()` emits `daemon_started` once for each distinct
+`daemonId` it observes. It emits `draining` after either a draining hello or a live
+`daemon.draining` event, while continuing to pass the underlying journal event through normally.
 
 After `hello`, every event is one SSE frame: the SSE `id:` field carries the event's `cursor`
 (feeding `Last-Event-ID`), the `event:` field is the event's `type`, and `data:` is the

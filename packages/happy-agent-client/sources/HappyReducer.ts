@@ -188,6 +188,15 @@ export class HappyReducer {
             this.#agentSyncConnected = true;
             this.#setConnection("connected");
             this.#drainAgentSyncQueue();
+        } else if (update.kind === "daemon_started") {
+            if (update.replaced) {
+                this.#recentEvents.invalidate();
+                this.#markAllAgentsDirty();
+            }
+        } else if (update.kind === "draining") {
+            this.#agentSyncConnected = true;
+            this.#setConnection("draining");
+            this.#drainAgentSyncQueue();
         } else if (update.kind === "disconnected") {
             this.#agentSyncConnected = false;
             this.#setConnection("disconnected");
@@ -195,6 +204,7 @@ export class HappyReducer {
             this.#recentEvents.invalidate();
             this.#markAllAgentsDirty();
         } else {
+            if (update.event.type === "daemon.draining") this.#setConnection("draining");
             this.#recentEvents.remember(update.event, Date.now());
             this.#applyAgentEvent(update.event);
         }

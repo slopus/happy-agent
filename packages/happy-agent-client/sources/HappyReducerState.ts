@@ -6,7 +6,7 @@ import type { Question } from "./protocol/questions.js";
 import type { AgentContextUsage } from "./protocol/usage.js";
 
 /** The reducer's current relationship to the daemon update stream. */
-export type HappyReducerConnection = "connecting" | "connected" | "disconnected";
+export type HappyReducerConnection = "connecting" | "connected" | "draining" | "disconnected";
 
 /** The provider and model used by the agent's most recently submitted message. */
 export interface HappyReducerAgentModel {

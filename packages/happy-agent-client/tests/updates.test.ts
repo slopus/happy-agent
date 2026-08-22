@@ -10,6 +10,8 @@ const CURSOR_3 = "01900000-0000-7000-8000-000000000003";
 const CURSOR_4 = "01900000-0000-7000-8000-000000000004";
 const CURSOR_9 = "01900000-0000-7000-8000-000000000009";
 const CURSOR_10 = "01900000-0000-7000-8000-000000000010";
+const DAEMON_A = "daemon-a";
+const DAEMON_B = "daemon-b";
 
 afterEach(() => {
     vi.useRealTimers();
@@ -195,6 +197,151 @@ describe("HappyAgentClient updates", () => {
         await expect(updates.next()).resolves.toEqual({ done: true, value: undefined });
     });
 
+    it("announces each daemon instance once and identifies a replacement after reconnect", async () => {
+        vi.useFakeTimers();
+        const responses = [
+            sseResponse(
+                hello(CURSOR_0, false, true, {
+                    daemonId: DAEMON_A,
+                    daemonStartedAt: 10,
+                }),
+            ),
+            sseResponse(
+                hello(CURSOR_0, false, true, {
+                    daemonId: DAEMON_A,
+                    daemonStartedAt: 10,
+                }),
+            ),
+            sseResponse(
+                hello(CURSOR_9, true, false, {
+                    daemonId: DAEMON_B,
+                    daemonStartedAt: 20,
+                }),
+            ),
+        ];
+        const fetch: typeof globalThis.fetch = async () => {
+            const response = responses.shift();
+            if (response === undefined) throw new Error("Unexpected reconnect.");
+            return response;
+        };
+        const controller = new AbortController();
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+        const updates = client.updates({ after: CURSOR_0, signal: controller.signal });
+
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { kind: "connected", cursor: CURSOR_0 },
+        });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: {
+                cursor: CURSOR_0,
+                daemonId: DAEMON_A,
+                daemonStartedAt: 10,
+                kind: "daemon_started",
+                replaced: false,
+            },
+        });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { kind: "disconnected", cursor: CURSOR_0 },
+        });
+
+        const sameDaemon = updates.next();
+        await vi.advanceTimersByTimeAsync(100);
+        await expect(sameDaemon).resolves.toEqual({
+            done: false,
+            value: { kind: "connected", cursor: CURSOR_0 },
+        });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { kind: "disconnected", cursor: CURSOR_0 },
+        });
+
+        const replacement = updates.next();
+        await vi.advanceTimersByTimeAsync(200);
+        await expect(replacement).resolves.toEqual({
+            done: false,
+            value: { kind: "connected", cursor: CURSOR_9 },
+        });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: {
+                cursor: CURSOR_9,
+                daemonId: DAEMON_B,
+                daemonStartedAt: 20,
+                kind: "daemon_started",
+                replaced: true,
+            },
+        });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { kind: "state_lost", cursor: CURSOR_9 },
+        });
+
+        controller.abort();
+        await expect(updates.next()).resolves.toEqual({ done: true, value: undefined });
+    });
+
+    it("announces draining from both a live event and a reconnect hello", async () => {
+        vi.useFakeTimers();
+        const responses = [
+            sseResponse(
+                hello(CURSOR_0, false, true, {
+                    daemonId: DAEMON_A,
+                    daemonStartedAt: 10,
+                    draining: false,
+                }),
+                daemonDraining(CURSOR_1, DAEMON_A),
+            ),
+            sseResponse(
+                hello(CURSOR_1, false, true, {
+                    daemonId: DAEMON_A,
+                    daemonStartedAt: 10,
+                    draining: true,
+                }),
+            ),
+        ];
+        const fetch: typeof globalThis.fetch = async () => {
+            const response = responses.shift();
+            if (response === undefined) throw new Error("Unexpected reconnect.");
+            return response;
+        };
+        const controller = new AbortController();
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+        const updates = client.updates({ after: CURSOR_0, signal: controller.signal });
+
+        await expect(updates.next()).resolves.toMatchObject({ value: { kind: "connected" } });
+        await expect(updates.next()).resolves.toMatchObject({
+            value: { daemonId: DAEMON_A, kind: "daemon_started" },
+        });
+        await expect(updates.next()).resolves.toMatchObject({
+            value: {
+                cursor: CURSOR_1,
+                event: { type: "daemon.draining" },
+                kind: "event",
+            },
+        });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { cursor: CURSOR_1, daemonId: DAEMON_A, kind: "draining" },
+        });
+        await expect(updates.next()).resolves.toMatchObject({
+            value: { kind: "disconnected" },
+        });
+
+        const reconnected = updates.next();
+        await vi.advanceTimersByTimeAsync(100);
+        await expect(reconnected).resolves.toMatchObject({ value: { kind: "connected" } });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { cursor: CURSOR_1, daemonId: DAEMON_A, kind: "draining" },
+        });
+
+        controller.abort();
+        await expect(updates.next()).resolves.toEqual({ done: true, value: undefined });
+    });
+
     it("stops an in-flight reconnect delay as soon as the caller aborts", async () => {
         vi.useFakeTimers();
         let attempts = 0;
@@ -219,8 +366,17 @@ describe("HappyAgentClient updates", () => {
     });
 });
 
-function hello(cursor: string, gap: boolean, resumed: boolean): string {
-    return `event: hello\ndata: ${JSON.stringify({ connectedAt: 1, cursor, gap, resumed })}\n\n`;
+function hello(
+    cursor: string,
+    gap: boolean,
+    resumed: boolean,
+    daemon: {
+        daemonId: string;
+        daemonStartedAt: number;
+        draining?: boolean;
+    } | null = null,
+): string {
+    return `event: hello\ndata: ${JSON.stringify({ connectedAt: 1, cursor, gap, resumed, ...daemon })}\n\n`;
 }
 
 function update(cursor: string): string {
@@ -231,6 +387,16 @@ function update(cursor: string): string {
         type: "config.updated",
     };
     return `id: ${cursor}\nevent: config.updated\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function daemonDraining(cursor: string, daemonId: string): string {
+    const event: HappyAgentEvent = {
+        cursor,
+        occurredAt: 1,
+        payload: { daemonId, draining: true },
+        type: "daemon.draining",
+    };
+    return `id: ${cursor}\nevent: daemon.draining\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
 function sseResponse(...frames: string[]): Response {

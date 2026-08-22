@@ -134,6 +134,69 @@ describe("HappyReducer", () => {
         reducer.stop();
     });
 
+    it("tracks draining without hiding daemon-start or journal updates", async () => {
+        const harness = reducerHarness();
+        const reducer = new HappyReducer(harness.client);
+        const observed: Array<{
+            update: HappyAgentUpdate;
+            connection: string;
+        }> = [];
+        reducer.subscribeUpdates((update, state) => {
+            observed.push({ update, connection: state.connection });
+        });
+
+        reducer.start();
+        const stream = harness.streams[0];
+        stream?.push({ kind: "connected", cursor: CURSOR_0 });
+        stream?.push({
+            cursor: CURSOR_0,
+            daemonId: "daemon-a",
+            daemonStartedAt: 1,
+            kind: "daemon_started",
+            replaced: false,
+        });
+        await vi.waitFor(() => expect(observed).toHaveLength(2));
+        const connectedState = reducer.getState();
+        expect(connectedState.connection).toBe("connected");
+        expect(observed[1]).toMatchObject({
+            connection: "connected",
+            update: { kind: "daemon_started", replaced: false },
+        });
+
+        stream?.push({
+            kind: "event",
+            cursor: CURSOR_1,
+            event: {
+                cursor: CURSOR_1,
+                occurredAt: 2,
+                payload: { daemonId: "daemon-a", draining: true },
+                type: "daemon.draining",
+            },
+        });
+        await vi.waitFor(() => expect(observed).toHaveLength(3));
+        const drainingState = reducer.getState();
+        expect(drainingState).not.toBe(connectedState);
+        expect(drainingState.connection).toBe("draining");
+        expect(observed[2]).toMatchObject({
+            connection: "draining",
+            update: { event: { type: "daemon.draining" }, kind: "event" },
+        });
+
+        stream?.push({
+            cursor: CURSOR_1,
+            daemonId: "daemon-a",
+            kind: "draining",
+        });
+        await vi.waitFor(() => expect(observed).toHaveLength(4));
+        expect(reducer.getState()).toBe(drainingState);
+        expect(observed[3]).toMatchObject({
+            connection: "draining",
+            update: { kind: "draining" },
+        });
+
+        reducer.stop();
+    });
+
     it("starts once and resumes a later start from the last observed cursor", async () => {
         const harness = reducerHarness();
         const reducer = new HappyReducer(harness.client, { after: CURSOR_0 });

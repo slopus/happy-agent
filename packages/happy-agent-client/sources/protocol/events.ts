@@ -50,6 +50,12 @@ export interface MutationEcho {
     mutationId?: string;
 }
 
+/** This daemon process entered its sticky read-only drain phase. */
+export interface DaemonDrainingPayload {
+    daemonId: Cuid2;
+    draining: true;
+}
+
 export type ProjectCreatedPayload = MutationEcho & { project: Project };
 export type ProjectUpdatedPayload = ResourceUpdate<Project> & { projectId: Cuid2 };
 
@@ -189,6 +195,7 @@ export interface EventEnvelope<TType extends string, TPayload> {
 
 /** Every event the specification names today. */
 export type HappyAgentEvent =
+    | EventEnvelope<"daemon.draining", DaemonDrainingPayload>
     | EventEnvelope<"project.created", ProjectCreatedPayload>
     | EventEnvelope<"project.updated", ProjectUpdatedPayload>
     | EventEnvelope<"workspace.created", WorkspaceCreatedPayload>
@@ -252,6 +259,12 @@ export interface EventStreamHello {
     /** The supplied cursor was honored; everything since it follows, in order. */
     resumed: boolean;
     connectedAt: Timestamp;
+    /** This daemon process's identity. Absent on older compatible daemons. */
+    daemonId?: Cuid2;
+    /** When this daemon process started. Absent on older compatible daemons. */
+    daemonStartedAt?: Timestamp;
+    /** Whether this daemon process is draining. Absent on older compatible daemons. */
+    draining?: boolean;
 }
 
 /** One frame read off `GET /v0/events/stream`. */
