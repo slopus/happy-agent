@@ -129,6 +129,52 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.body).toBeNull();
     });
 
+    it("changes a provider's explicit runtime enablement", async () => {
+        const response = { config: {} };
+        const { fetch, requests } = stubFetch(() => json(response));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(
+            client.patchConfig({ providers: { codex: { enabled: false } } }),
+        ).resolves.toEqual(response);
+        expect(requests[0]?.url).toBe("http://agent.local/v0/config");
+        expect(requests[0]?.method).toBe("PATCH");
+        expect(requests[0]?.body).toBe(
+            JSON.stringify({ providers: { codex: { enabled: false } } }),
+        );
+    });
+
+    it("runs the provider scan without a request body", async () => {
+        const response = { completedAt: 1, providers: [] };
+        const { fetch, requests } = stubFetch(() => json(response));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.scanProviders()).resolves.toEqual(response);
+        expect(requests[0]?.url).toBe("http://agent.local/v0/providers/scan");
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.body).toBeNull();
+    });
+
+    it("requests provider verification at the selected strength", async () => {
+        const response = {
+            checkedAt: 1,
+            modelId: "openai/gpt-5.6-luna",
+            performedLevel: "inference" as const,
+            providerId: "codex/team",
+            requestedLevel: "authentication" as const,
+            status: "passed" as const,
+        };
+        const { fetch, requests } = stubFetch(() => json(response));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(
+            client.verifyProvider("codex/team", { level: "authentication" }),
+        ).resolves.toEqual(response);
+        expect(requests[0]?.url).toBe("http://agent.local/v0/providers/codex%2Fteam/verify");
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.body).toBe(JSON.stringify({ level: "authentication" }));
+    });
+
     it("leaves out query parameters the caller did not name", async () => {
         const { fetch, requests } = stubFetch(() => json({ workspaces: [] }));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });

@@ -2,7 +2,13 @@
 
 import { type Static, Type } from "@sinclair/typebox";
 
-import { effortSchema, Nullable, permissionModeSchema, serviceTierSchema } from "./common.js";
+import {
+    effortSchema,
+    Nullable,
+    permissionModeSchema,
+    serviceTierSchema,
+    timestampSchema,
+} from "./common.js";
 
 /**
  * The wire protocol this client was built for.
@@ -249,12 +255,80 @@ export const configPatchSchema = Type.Partial(
         network: Type.Partial(networkConfigSchema),
         p2p: Type.Partial(p2pConfigSchema),
         permissions: Type.Partial(permissionsConfigSchema),
+        providers: Type.Record(
+            Type.String(),
+            Type.Object({
+                /** An explicit durable override which takes precedence over provider scans. */
+                enabled: Type.Boolean(),
+            }),
+        ),
         settings: Type.Partial(daemonSettingsSchema),
         theme: Type.Partial(themeConfigSchema),
         workspace: Type.Partial(workspaceConfigSchema),
     }),
 );
 export type ConfigPatch = Static<typeof configPatchSchema>;
+
+/** What local credential discovery found during this scan. */
+export const providerCredentialStatusSchema = Type.Union([
+    Type.Literal("available"),
+    Type.Literal("missing"),
+    Type.Literal("error"),
+]);
+export type ProviderCredentialStatus = Static<typeof providerCredentialStatusSchema>;
+
+/** Why a provider has its current effective enabled state. */
+export const providerEnablementSchema = Type.Union([
+    Type.Literal("explicit"),
+    Type.Literal("scan"),
+    Type.Literal("default"),
+]);
+export type ProviderEnablement = Static<typeof providerEnablementSchema>;
+
+/** One provider's result from the completed system credential scan. */
+export const providerScanResultSchema = Type.Object({
+    credentials: providerCredentialStatusSchema,
+    enabled: Type.Boolean(),
+    enablement: providerEnablementSchema,
+    providerId: Type.String(),
+    /** Whether this or an earlier scan found the provider configured. */
+    remembered: Type.Boolean(),
+});
+export type ProviderScanResult = Static<typeof providerScanResultSchema>;
+
+/** `POST /v0/providers/scan` */
+export const providerScanResponseSchema = Type.Object({
+    completedAt: timestampSchema,
+    providers: Type.Array(providerScanResultSchema),
+});
+export type ProviderScanResponse = Static<typeof providerScanResponseSchema>;
+
+/** The strength of a provider verification request. */
+export const providerVerificationLevelSchema = Type.Union([
+    Type.Literal("credentials"),
+    Type.Literal("authentication"),
+    Type.Literal("inference"),
+]);
+export type ProviderVerificationLevel = Static<typeof providerVerificationLevelSchema>;
+
+/** `POST /v0/providers/:providerId/verify` */
+export const providerVerificationRequestSchema = Type.Object({
+    level: providerVerificationLevelSchema,
+});
+export type ProviderVerificationRequest = Static<typeof providerVerificationRequestSchema>;
+
+/** The outcome of a completed provider verification. */
+export const providerVerificationResponseSchema = Type.Object({
+    checkedAt: timestampSchema,
+    /** The model used for inference verification; `null` for credential and auth-only checks. */
+    modelId: Nullable(Type.String()),
+    /** The check that actually ran after any authentication fallback. */
+    performedLevel: providerVerificationLevelSchema,
+    providerId: Type.String(),
+    requestedLevel: providerVerificationLevelSchema,
+    status: Type.Union([Type.Literal("passed"), Type.Literal("failed")]),
+});
+export type ProviderVerificationResponse = Static<typeof providerVerificationResponseSchema>;
 
 /** `GET` and `PUT /v0/config/instructions` */
 export const instructionsResponseSchema = Type.Object({ instructions: Type.String() });

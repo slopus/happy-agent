@@ -475,6 +475,9 @@ Requests a runtime settings change. The body is validated against the mutable su
 
 ```json
 {
+    "providers": {
+        "codex": { "enabled": false }
+    },
     "p2p": { "name": "my-machine" },
     "settings": {
         "inferenceMaxRetries": 3
@@ -482,9 +485,96 @@ Requests a runtime settings change. The body is validated against the mutable su
 }
 ```
 
+A provider `enabled` value written through this route is an explicit, durable user override.
+Both `true` and `false` take precedence over provider scans. Enabling takes effect for new work
+immediately. Disabling takes effect immediately and aborts every in-flight inference and
+compaction using that provider, including internal inference, while leaving the affected agents
+available for a later message on an enabled provider. The response is the same sanitized effective
+configuration shape as `GET /v0/config`, after the change has taken effect, and the change emits a
+`config.updated` event.
+
 A daemon that does not support runtime reconfiguration answers `409` with
-`{ "error": "This daemon cannot change its settings at runtime." }`. Configuration is otherwise
-changed by editing the configuration files and restarting the daemon.
+`{ "error": "This daemon cannot change its settings at runtime." }`. Settings outside the
+daemon's mutable subset are changed by editing the configuration files and restarting the daemon.
+
+### `POST /v0/providers/scan`
+
+Runs the system provider scan. The automatic startup scan and this route perform bounded local
+credential discovery only: they do not make an inference request or require network access. A call
+made while a scan is already running joins that scan and receives the same completed result.
+
+Providers are disabled by default until the startup scan completes. An explicit provider setting
+from configuration or `PATCH /v0/config` always wins. Otherwise, finding credentials enables the
+provider and records that positive discovery durably. Once any scan has found a provider configured,
+a later missing credential or scan error does not automatically disable it. An explicit user
+disable still does. Scan results never include tokens, credential-file paths, environment values,
+or raw provider errors.
+
+Response — `200`:
+
+```json
+{
+    "completedAt": 1755400000000,
+    "providers": [
+        {
+            "providerId": "codex",
+            "credentials": "available",
+            "remembered": true,
+            "enabled": true,
+            "enablement": "scan"
+        },
+        {
+            "providerId": "grok",
+            "credentials": "missing",
+            "remembered": false,
+            "enabled": false,
+            "enablement": "default"
+        }
+    ]
+}
+```
+
+`providers` is sorted by provider ID. `credentials` is `"available"`, `"missing"`, or `"error"`
+for this scan. `remembered` says whether this or an earlier scan has found the provider configured.
+`enablement` is `"explicit"` when a user setting controls the provider, `"scan"` when current or
+remembered discovery enables it, and `"default"` when the disabled default applies.
+
+### `POST /v0/providers/:providerId/verify`
+
+Performs one bounded provider verification without changing an explicit enable or disable. The
+request chooses the strength of verification:
+
+```json
+{ "level": "authentication" }
+```
+
+- `"credentials"` performs the same local credential discovery as a scan.
+- `"authentication"` makes the least expensive provider-specific authenticated request available.
+  When the provider has no authentication-only request, it falls back to the inference check.
+- `"inference"` makes a minimal request using a curated inexpensive model for that provider.
+
+A successful verification records the provider as discovered and applies normal scan enablement,
+unless an explicit user setting controls it. A failed verification does not erase an earlier
+positive discovery and does not automatically disable the provider. Verification failure is a
+normal `200` result; an unknown provider ID returns `404`.
+
+Response — `200`:
+
+```json
+{
+    "providerId": "codex",
+    "requestedLevel": "authentication",
+    "performedLevel": "inference",
+    "status": "passed",
+    "checkedAt": 1755400000000,
+    "modelId": "openai/gpt-5.6-luna"
+}
+```
+
+`performedLevel` reports the check that actually ran. `modelId` is the model used for an inference
+check and is `null` otherwise. `status` is `"passed"` or `"failed"`. The response never carries
+credential material, credential-file paths, environment values, model output, or raw provider
+errors.
 
 ### `GET /v0/config/instructions`
 

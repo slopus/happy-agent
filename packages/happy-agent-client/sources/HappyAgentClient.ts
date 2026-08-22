@@ -32,6 +32,9 @@ import type {
     InstructionsResponse,
     OnboardingCompletedResponse,
     OnboardingState,
+    ProviderScanResponse,
+    ProviderVerificationRequest,
+    ProviderVerificationResponse,
     SecurityPolicyResponse,
     ShutdownResponse,
 } from "./protocol/daemon.js";
@@ -209,6 +212,29 @@ export class HappyAgentClient {
             method: "PATCH",
             path: "v0/config",
             json: patch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/providers/scan` — runs or joins bounded local credential discovery. */
+    async scanProviders(options: RequestOptions = {}): Promise<ProviderScanResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/providers/scan",
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/providers/:providerId/verify` — checks credentials, auth, or inference. */
+    async verifyProvider(
+        providerId: string,
+        request: ProviderVerificationRequest,
+        options: RequestOptions = {},
+    ): Promise<ProviderVerificationResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/providers/${encodeURIComponent(providerId)}/verify`,
+            json: request,
             signal: options.signal,
         });
     }
