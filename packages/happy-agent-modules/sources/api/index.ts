@@ -17,6 +17,9 @@ export {
 } from "./ApiEventJournal.js";
 export {
     ApiModule,
+    type ApiDrainAgentProgress,
+    type ApiDrainProgress,
+    type ApiDrainSource,
     type ApiSocketRejection,
     type PreparedTerminalSocket,
     type PreparedWorkspaceProxySocket,

@@ -254,6 +254,128 @@ describe("Happy Agent platform API", () => {
         TEST_TIMEOUT_MS,
     );
 
+    it(
+        "drains at the inference edge, stays read-only, and stops only when asked",
+        async () => {
+            let inferenceStarted!: () => void;
+            const started = new Promise<void>((resolve) => {
+                inferenceStarted = resolve;
+            });
+            let finishInference!: () => void;
+            const inferenceFinished = new Promise<void>((resolve) => {
+                finishInference = resolve;
+            });
+            let projectId = "";
+            const gym = await createAgentGym({
+                inference: async (request) => {
+                    if (request.tools.length === 0) {
+                        return {
+                            content: [{ text: "<title>Daemon draining</title>", type: "text" }],
+                        };
+                    }
+                    inferenceStarted();
+                    await inferenceFinished;
+                    return {
+                        content: [
+                            {
+                                arguments: {
+                                    name: "Must remain uncreated while draining",
+                                    projectRef: projectId,
+                                },
+                                callId: "drain_edge_workspace",
+                                name: "create_workspace",
+                                type: "tool_call",
+                            },
+                        ],
+                    };
+                },
+                timeoutMs: 15_000,
+            });
+            running.add(gym);
+            const project = (await gym.client.listProjects()).projects.find((candidate) =>
+                candidate.agents.some((agent) => agent.id === gym.defaultSessionId),
+            );
+            expect(project).toBeDefined();
+            if (project === undefined)
+                throw new Error("The gym did not register its root project.");
+            projectId = project.id;
+
+            try {
+                await gym.send("Return a workspace tool call after the drain starts.", {
+                    wait: false,
+                });
+                await started;
+
+                await expect(gym.client.drain()).resolves.toMatchObject({
+                    draining: true,
+                    pid: expect.any(Number),
+                });
+                await expect(gym.client.drain()).resolves.toMatchObject({ draining: true });
+
+                const draining = await gym.waitUntil(async () => {
+                    const current = await gym.client.getHealth();
+                    return current.drainWaitingFor?.some(
+                        (item) =>
+                            item.name === "agent-system" &&
+                            item.agents?.some(
+                                (agent) =>
+                                    agent.id === gym.defaultSessionId &&
+                                    agent.stage === "inference",
+                            ) === true,
+                    ) === true
+                        ? current
+                        : undefined;
+                }, "the daemon to report its in-flight inference");
+                expect(draining).toMatchObject({
+                    draining: true,
+                    healthy: true,
+                    ready: true,
+                    status: "ready",
+                });
+                await expect(gym.client.getGreeting()).resolves.toEqual({
+                    text: "Welcome to Happy Agent!",
+                });
+                await expect(
+                    gym.client.putInstructions("This mutation must be rejected.\n"),
+                ).rejects.toMatchObject({
+                    code: "draining",
+                    status: 503,
+                });
+            } finally {
+                finishInference();
+            }
+
+            const drained = await gym.waitUntil(async () => {
+                const current = await gym.client.getHealth();
+                return current.draining === true && current.drainWaitingFor?.length === 0
+                    ? current
+                    : undefined;
+            }, "the daemon to finish draining");
+            expect(drained).toMatchObject({
+                draining: true,
+                ready: true,
+                status: "ready",
+            });
+            expect(
+                (
+                    await gym.client.listWorkspaces({
+                        includeArchived: true,
+                        projectId,
+                    })
+                ).workspaces.some(
+                    (workspace) => workspace.name === "Must remain uncreated while draining",
+                ),
+            ).toBe(false);
+            expect(
+                gym.inference.requests.filter((request) => request.tools.length > 0),
+            ).toHaveLength(1);
+
+            await expect(gym.client.shutdown()).resolves.toMatchObject({ shuttingDown: true });
+            await expect(gym.daemon.closed).resolves.toBeUndefined();
+        },
+        TEST_TIMEOUT_MS,
+    );
+
     it("removes its isolated root when disposed", async () => {
         const gym = await start();
         const root = gym.happyHome;

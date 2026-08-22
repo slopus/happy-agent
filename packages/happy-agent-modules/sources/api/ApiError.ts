@@ -3,6 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 export const apiErrorCodeSchema = Type.Union([
     Type.Literal("conflict"),
     Type.Literal("cursor_unavailable"),
+    Type.Literal("draining"),
     Type.Literal("hash_mismatch"),
     Type.Literal("internal"),
     Type.Literal("invalid_request"),

@@ -3,7 +3,7 @@ import { once } from "node:events";
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { HappyAgentClient } from "@slopus/happy-agent-client";
+import { HappyAgentApiError, type HappyAgentClient } from "@slopus/happy-agent-client";
 
 const mocks = vi.hoisted(() => ({
     waitForSocketRemoval: vi.fn(),
@@ -20,6 +20,8 @@ describe("stopLocalProtocolServer", () => {
             await import("../sources/lifecycle/stopLocalProtocolServer.js");
         mocks.waitForSocketRemoval.mockResolvedValue(true);
         const client = {
+            drain: vi.fn().mockResolvedValue({ draining: true, pid: 2_147_483_647 }),
+            getHealth: vi.fn().mockResolvedValue(drainedHealth()),
             shutdown: vi.fn().mockResolvedValue({
                 pid: 2_147_483_647,
                 shuttingDown: true,
@@ -51,6 +53,8 @@ describe("stopLocalProtocolServer", () => {
         try {
             await once(child.stdout!, "data");
             const client = {
+                drain: vi.fn().mockResolvedValue({ draining: true, pid: child.pid }),
+                getHealth: vi.fn().mockResolvedValue(drainedHealth()),
                 shutdown: vi.fn().mockResolvedValue({
                     pid: child.pid,
                     shuttingDown: true,
@@ -65,4 +69,82 @@ describe("stopLocalProtocolServer", () => {
             if (!exited) await once(child, "exit");
         }
     });
+
+    it("reports changing drain progress and shuts down only after it is empty", async () => {
+        vi.resetModules();
+        const { stopLocalProtocolServer } =
+            await import("../sources/lifecycle/stopLocalProtocolServer.js");
+        mocks.waitForSocketRemoval.mockResolvedValue(true);
+        const drain = vi.fn().mockResolvedValue({ draining: true, pid: 2_147_483_647 });
+        const getHealth = vi
+            .fn()
+            .mockResolvedValueOnce(
+                drainedHealth([
+                    {
+                        name: "agent-system",
+                        count: 1,
+                        agents: [{ id: "agent123", stage: "tools" }],
+                    },
+                ]),
+            )
+            .mockResolvedValueOnce(drainedHealth());
+        const shutdown = vi.fn().mockResolvedValue({
+            pid: 2_147_483_647,
+            shuttingDown: true,
+        });
+        const client = { drain, getHealth, shutdown } as unknown as HappyAgentClient;
+        const progress: string[] = [];
+
+        await stopLocalProtocolServer(client, "/tmp/rig/server.sock", {
+            onDrainProgress: (message) => progress.push(message),
+        });
+
+        expect(progress).toEqual([
+            "Draining: 1 agent (agent123: tool calls).",
+            "Daemon drain is complete.",
+        ]);
+        expect(drain.mock.invocationCallOrder[0]).toBeLessThan(
+            getHealth.mock.invocationCallOrder[0] as number,
+        );
+        expect(getHealth.mock.invocationCallOrder.at(-1)).toBeLessThan(
+            shutdown.mock.invocationCallOrder[0] as number,
+        );
+    });
+
+    it("falls back to direct shutdown for an older daemon without drain support", async () => {
+        vi.resetModules();
+        const { stopLocalProtocolServer } =
+            await import("../sources/lifecycle/stopLocalProtocolServer.js");
+        mocks.waitForSocketRemoval.mockResolvedValue(true);
+        const shutdown = vi.fn().mockResolvedValue({
+            pid: 2_147_483_647,
+            shuttingDown: true,
+        });
+        const client = {
+            drain: vi
+                .fn()
+                .mockRejectedValue(new HappyAgentApiError(404, "Not found.", "not_found", null)),
+            getHealth: vi.fn(),
+            shutdown,
+        } as unknown as HappyAgentClient;
+        const progress: string[] = [];
+
+        await stopLocalProtocolServer(client, "/tmp/rig/server.sock", {
+            onDrainProgress: (message) => progress.push(message),
+        });
+
+        expect(progress).toEqual(["This daemon does not support draining; stopping it directly."]);
+        expect(shutdown).toHaveBeenCalledOnce();
+    });
 });
+
+function drainedHealth(drainWaitingFor: readonly Record<string, unknown>[] = []) {
+    return {
+        healthy: true,
+        ready: true,
+        status: "ready" as const,
+        version: { daemon: "test", protocol: 22 },
+        draining: true,
+        drainWaitingFor,
+    };
+}

@@ -6,7 +6,7 @@ import { isDaemonProcessRunning, killDaemonFromPidFile, readDaemonPid } from "./
 import { readDaemonTokenIfPresent } from "./daemonToken.js";
 import { ensureAgentDaemon } from "./ensureAgentDaemon.js";
 import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
-import { stopLocalProtocolServer } from "./stopLocalProtocolServer.js";
+import { formatDrainProgress, stopLocalProtocolServer } from "./stopLocalProtocolServer.js";
 
 export type AgentDaemonCommand = "kill" | "reload" | "start" | "stop" | "status";
 
@@ -65,7 +65,7 @@ export async function runAgentDaemonCommand(
     const connection = await connectToExistingDaemon();
     if (command === "reload") {
         if (connection !== undefined) {
-            await stopLocalProtocolServer(connection.client, paths);
+            await stopLocalProtocolServer(connection.client, paths, { onDrainProgress: log });
         } else {
             await assertNoUnresponsiveDaemon(paths.pidPath);
         }
@@ -97,8 +97,15 @@ export async function runAgentDaemonCommand(
             log(`Daemon log: ${paths.logPath}`);
             return;
         }
-        log(`Daemon is running at ${paths.socketPath}`);
+        log(
+            connection.health.draining === true
+                ? `Daemon is draining at ${paths.socketPath}`
+                : `Daemon is running at ${paths.socketPath}`,
+        );
         log(`Daemon PID: ${String(pid ?? "unknown")}`);
+        if (connection.health.draining === true) {
+            log(formatDrainProgress(connection.health.drainWaitingFor ?? []));
+        }
         log(`Daemon log: ${paths.logPath}`);
         log(`Shutdown log: ${paths.observationLogPath}`);
         return;
@@ -110,7 +117,7 @@ export async function runAgentDaemonCommand(
         return;
     }
     log("Daemon is stopping.");
-    await stopLocalProtocolServer(connection.client, paths);
+    await stopLocalProtocolServer(connection.client, paths, { onDrainProgress: log });
     log("Daemon stopped.");
 }
 

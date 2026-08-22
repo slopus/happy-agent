@@ -166,6 +166,8 @@ export interface HappyAgentRuntime {
         readonly schemaVersion: number;
     };
     readonly background: (name: string, work: (ctx: Context) => Promise<void>) => void;
+    /** Stop main work and then private permission reviews at their next durable edges. */
+    drain(): Promise<void>;
     /** Begin the named stdlib shutdown while transports remain available. */
     shutdown(): Promise<GracefulShutdownReport>;
     /** Finish shutdown and dispose the API after its transport has closed. */
@@ -557,6 +559,29 @@ export async function startHappyAgentRuntime(
             steeringMode: "all",
         });
         system = agentSystem;
+        let mainDraining: Promise<void> | undefined;
+        const drainMain = (): Promise<void> => {
+            mainDraining ??= agentSystem.drain();
+            return mainDraining;
+        };
+        let draining: Promise<void> | undefined;
+        const drain = (): Promise<void> => {
+            draining ??= (async () => {
+                // A main tool may be waiting on an auto review. Keep reviewers operational until
+                // every main inference/tool batch has reached its edge, then drain reviewers.
+                await drainMain();
+                await autoModule.drain();
+            })();
+            return draining;
+        };
+        apiModule.onDrain("agent-system", {
+            start: drainMain,
+            progress: () => agentSystem.drainProgress(),
+        });
+        apiModule.onDrain("auto-agent-system", {
+            start: drain,
+            progress: () => autoModule.drainProgress(),
+        });
         registerShutdown("titles", async () => await titles.close());
         registerShutdown("happy", async () => await happy.stop());
 
@@ -601,6 +626,7 @@ export async function startHappyAgentRuntime(
             configuration,
             ctx,
             database: main.database,
+            drain,
             git,
             installation: {
                 epoch: installation.epoch,

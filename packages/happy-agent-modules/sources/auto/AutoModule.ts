@@ -17,6 +17,7 @@ import {
     type AgentModuleScope,
     type AgentModuleSystemScope,
     type AgentStorage,
+    type AgentSystemDrainProgress,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import type {
@@ -221,6 +222,16 @@ export class AutoModule implements AgentModule {
         });
         return this.#hooks;
     };
+
+    /** Stop private reviewer loops at their next durable edge without cancelling a review. */
+    drain(): Promise<void> {
+        return this.#requireSystem().drain();
+    }
+
+    /** Report private reviewers that have not reached their drain edge yet. */
+    drainProgress(): AgentSystemDrainProgress {
+        return this.#system?.drainProgress() ?? { agents: [], count: 0 };
+    }
 
     readonly close = async (ctx: Context): Promise<void> => {
         if (this.#closePromise === undefined) {

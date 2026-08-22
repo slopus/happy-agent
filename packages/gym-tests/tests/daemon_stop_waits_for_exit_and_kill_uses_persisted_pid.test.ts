@@ -26,6 +26,7 @@ describe("daemon stop and forced termination", () => {
         running.add(gym);
 
         const screen = await gym.terminal.snapshot();
+        expect(screen.text).toContain("Daemon drain is complete");
         expect(screen.text).toContain("Graceful stop waited for process exit");
         expect(screen.text).toContain("Persisted daemon PID matched the live process");
         expect(screen.text).toContain("Shutdown steps were logged");
@@ -48,11 +49,11 @@ find_daemon_pid() {
 pid_file="/tmp/happy/agent/daemon.pid"
 observation_log="/tmp/happy/agent/observation/agent.log"
 
-happy-terminal daemon start
+rig daemon start
 graceful_pid="$(find_daemon_pid)"
 test -n "$graceful_pid"
 
-happy-terminal daemon stop
+rig daemon stop
 if kill -0 "$graceful_pid" 2>/dev/null; then
     echo "Graceful stop returned before daemon process $graceful_pid exited." >&2
     exit 1
@@ -61,10 +62,10 @@ test ! -e "$pid_file"
 echo "Graceful stop waited for process exit"
 
 grep -q "daemon:shutdown:start pid=$graceful_pid" "$observation_log"
-grep -q "daemon:shutdown:step:start pid=$graceful_pid step=agent-system" "$observation_log"
+grep -q "daemon:shutdown:step:start pid=$graceful_pid step=graceful-runtime" "$observation_log"
 echo "Shutdown steps were logged"
 
-happy-terminal daemon start
+rig daemon start
 persisted_pid="$(tr -d '[:space:]' < "$pid_file")"
 live_pid="$(find_daemon_pid)"
 if [[ "$persisted_pid" != "$live_pid" ]]; then
@@ -73,13 +74,13 @@ if [[ "$persisted_pid" != "$live_pid" ]]; then
 fi
 echo "Persisted daemon PID matched the live process"
 
-happy-terminal daemon kill
+rig daemon kill
 if kill -0 "$persisted_pid" 2>/dev/null; then
     echo "Daemon process $persisted_pid survived the kill command." >&2
     exit 1
 fi
 test ! -e "$pid_file"
-happy-terminal daemon status
+rig daemon status
 echo "Forced daemon kill completed"
 
 echo ${COMPLETED_MARKER}

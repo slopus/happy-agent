@@ -1,16 +1,16 @@
 import { lstat } from "node:fs/promises";
 
-import type { HappyAgentClient } from "@slopus/happy-agent-client";
+import {
+    HappyAgentApiError,
+    type DrainWaitingAgent,
+    type DrainWaitingFor,
+    type HappyAgentClient,
+} from "@slopus/happy-agent-client";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 
 import { HappyTerminalUserError } from "../HappyTerminalUserError.js";
 import { isTargetProcessAlive, waitForProcessExit } from "../processes/index.js";
-import {
-    killDaemonFromPidFile,
-    killDaemonProcess,
-    readDaemonPid,
-    removeDaemonPid,
-} from "./daemonPid.js";
+import { killDaemonFromPidFile, readDaemonPid } from "./daemonPid.js";
 import {
     ensureLocalProtocolServer,
     observeLocalProtocolServer,
@@ -18,7 +18,7 @@ import {
 import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
 
 const DAEMON_SHUTDOWN_TIMEOUT_MS = 30_000;
-const DAEMON_RELOAD_GRACE_TIMEOUT_MS = 5_000;
+const DRAIN_POLL_INTERVAL_MS = 100;
 
 export type DaemonCommand = "kill" | "reload" | "start" | "status" | "stop";
 
@@ -51,10 +51,7 @@ export async function runDaemonCommand(
     const observed = await observeLocalProtocolServer(paths);
     if (command === "reload") {
         if (observed !== undefined) {
-            await stopLocalProtocolServer(ctx, observed.client, paths, {
-                forceAfterMs: DAEMON_RELOAD_GRACE_TIMEOUT_MS,
-                onForce: log,
-            });
+            await stopLocalProtocolServer(ctx, observed.client, paths, log);
         } else await assertNoUnresponsiveDaemon(paths.pidPath);
         const connection = await ensureLocalProtocolServer();
         log(`Daemon is running at ${connection.paths.socketPath}`);
@@ -73,8 +70,15 @@ export async function runDaemonCommand(
                 log("Daemon is not running.");
             }
         } else if (observed.health.ready) {
-            log(`Daemon is running at ${paths.socketPath}`);
+            log(
+                observed.health.draining === true
+                    ? `Daemon is draining at ${paths.socketPath}`
+                    : `Daemon is running at ${paths.socketPath}`,
+            );
             log(`Daemon PID: ${String(pid ?? "unknown")}`);
+            if (observed.health.draining === true) {
+                log(formatDrainProgress(observed.health.drainWaitingFor ?? []));
+            }
         } else {
             log(`Daemon is starting at ${paths.socketPath}`);
             log(`Daemon PID: ${String(pid ?? "unknown")}`);
@@ -90,7 +94,7 @@ export async function runDaemonCommand(
         return;
     }
     log("Daemon is stopping.");
-    await stopLocalProtocolServer(ctx, observed.client, paths);
+    await stopLocalProtocolServer(ctx, observed.client, paths, log);
     log("Daemon stopped.");
 }
 
@@ -98,29 +102,23 @@ async function stopLocalProtocolServer(
     ctx: Context,
     client: HappyAgentClient,
     paths: ReturnType<typeof getHappyDaemonPaths>,
-    options: {
-        readonly forceAfterMs?: number;
-        readonly onForce?: (message: string) => void;
-    } = {},
+    report: (message: string) => void,
 ): Promise<void> {
     let pid = await readDaemonPid(paths.pidPath);
+    await drainLocalProtocolServer(client, report);
     let requestError: unknown;
     try {
         pid = (await client.shutdown()).pid;
     } catch (error) {
         requestError = error;
     }
-    const timeoutMs = options.forceAfterMs ?? DAEMON_SHUTDOWN_TIMEOUT_MS;
-    const stopped = await waitForDaemonShutdown(ctx, paths.socketPath, pid, timeoutMs);
+    const stopped = await waitForDaemonShutdown(
+        ctx,
+        paths.socketPath,
+        pid,
+        DAEMON_SHUTDOWN_TIMEOUT_MS,
+    );
     if (stopped.socketRemoved && stopped.processExited) return;
-    if (options.forceAfterMs !== undefined && pid !== undefined) {
-        options.onForce?.(
-            `Daemon did not stop gracefully; forcing process ${String(pid)} to exit.`,
-        );
-        if (!stopped.processExited) await killDaemonProcess(ctx, pid);
-        await removeDaemonPid(paths.pidPath, pid);
-        return;
-    }
     if (requestError !== undefined) {
         throw new Error(
             `Could not stop the existing local daemon: ${requestError instanceof Error ? requestError.message : String(requestError)}`,
@@ -134,6 +132,60 @@ async function stopLocalProtocolServer(
             `Daemon process ${String(pid)} did not exit after releasing its socket. Run 'happy daemon kill' to force it to stop.`,
         );
     }
+}
+
+async function drainLocalProtocolServer(
+    client: HappyAgentClient,
+    report: (message: string) => void,
+): Promise<void> {
+    try {
+        await client.drain();
+    } catch (error: unknown) {
+        if (error instanceof HappyAgentApiError && (error.status === 403 || error.status === 404)) {
+            report("This daemon does not support draining; stopping it directly.");
+            return;
+        }
+        throw error;
+    }
+    let previous: string | undefined;
+    for (;;) {
+        const health = await client.getHealth();
+        const waiting = health.drainWaitingFor ?? [];
+        const current = JSON.stringify(waiting);
+        if (current !== previous) {
+            report(formatDrainProgress(waiting));
+            previous = current;
+        }
+        if (waiting.length === 0) return;
+        await new Promise((resolve) => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
+    }
+}
+
+function formatDrainProgress(waiting: readonly DrainWaitingFor[]): string {
+    if (waiting.length === 0) return "Daemon drain is complete.";
+    return `Draining: ${waiting.map(formatDrainWait).join("; ")}.`;
+}
+
+function formatDrainWait(wait: DrainWaitingFor): string {
+    const noun =
+        wait.name === "api-mutations"
+            ? plural(wait.count, "API mutation")
+            : wait.name === "agent-system"
+              ? plural(wait.count, "agent")
+              : wait.name === "auto-agent-system"
+                ? plural(wait.count, "permission reviewer")
+                : `${String(wait.count)} ${wait.name.replaceAll("-", " ")}`;
+    if (wait.agents === undefined || wait.agents.length === 0) return noun;
+    const agents = wait.agents.map((agent) => `${agent.id}: ${stageLabel(agent.stage)}`).join(", ");
+    return `${noun} (${agents}${wait.truncated === true ? ", …" : ""})`;
+}
+
+function stageLabel(stage: DrainWaitingAgent["stage"]): string {
+    return stage === "tools" ? "tool calls" : stage;
+}
+
+function plural(count: number, noun: string): string {
+    return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 async function waitForDaemonShutdown(

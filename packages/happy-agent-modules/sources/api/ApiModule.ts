@@ -185,6 +185,30 @@ export type PreparedWorkspaceProxySocket =
     | { readonly handled: true; readonly rejection: ApiSocketRejection }
     | { readonly handled: true };
 
+export interface ApiDrainAgentProgress {
+    readonly id: string;
+    readonly stage: "compaction" | "inference" | "settlement" | "tools";
+}
+
+export interface ApiDrainProgress {
+    /** Exact number of operations still holding this component open. */
+    readonly count: number;
+    /** Agent detail is sorted and capped by the API before it crosses the wire. */
+    readonly agents?: readonly ApiDrainAgentProgress[];
+    readonly truncated?: true;
+}
+
+export interface ApiDrainSource {
+    /** Publish the component's sticky drain and resolve when it reaches its safe edge. */
+    readonly start: () => Promise<void>;
+    /** Read the component's current structured progress without waiting. */
+    readonly progress: () => ApiDrainProgress;
+}
+
+interface ApiRunningDrain {
+    finished: boolean;
+}
+
 /**
  * The daemon's complete application protocol boundary.
  *
@@ -236,6 +260,10 @@ export class ApiModule implements AgentModule {
     readonly #unsubscribe: (() => void)[] = [];
     readonly #streams = new Set<SseWriter>();
     readonly #shutdownListeners = new Set<() => void | Promise<void>>();
+    readonly #drainSources = new Map<string, ApiDrainSource>();
+    readonly #runningDrains = new Map<string, ApiRunningDrain>();
+    /** HTTP mutations admitted before draining published its read-only boundary. */
+    readonly #apiMutations = new Set<symbol>();
     readonly #announcedPendingMessages = new Set<string>();
     readonly #apiPendingMessageIds = new Set<string>();
     readonly #announcedAgentCreations = new Set<string>();
@@ -251,6 +279,7 @@ export class ApiModule implements AgentModule {
 
     #agents: AgentSystemRef | undefined;
     #ready = false;
+    #draining = false;
     #closed = false;
     #token: string | undefined;
     #preparePromise: Promise<void> | undefined;
@@ -348,6 +377,19 @@ export class ApiModule implements AgentModule {
         };
     }
 
+    /** Register one stable component that the daemon-level drain waits for and reports. */
+    onDrain(name: string, source: ApiDrainSource): () => void {
+        if (name.length === 0) throw new Error("A drain source must have a name.");
+        if (this.#draining) throw new Error("The daemon has already started draining.");
+        if (this.#drainSources.has(name)) {
+            throw new Error(`A drain source named "${name}" is already registered.`);
+        }
+        this.#drainSources.set(name, source);
+        return () => {
+            if (this.#drainSources.get(name) === source) this.#drainSources.delete(name);
+        };
+    }
+
     async markReady(): Promise<void> {
         if (this.#closed) throw new Error("The API module is already closed.");
         this.#ready = true;
@@ -359,6 +401,9 @@ export class ApiModule implements AgentModule {
         this.#ready = false;
         for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
         this.#shutdownListeners.clear();
+        this.#drainSources.clear();
+        this.#runningDrains.clear();
+        this.#apiMutations.clear();
         const streamDone = [...this.#streams].map((stream) => stream.done);
         for (const stream of this.#streams) stream.close();
         await Promise.all(streamDone);
@@ -386,6 +431,7 @@ export class ApiModule implements AgentModule {
         response: ServerResponse,
     ): Promise<void> {
         setCommonHeaders(response);
+        let finishMutation: (() => void) | undefined;
         try {
             this.#authenticate(request);
             const url = requestUrl(request);
@@ -395,6 +441,16 @@ export class ApiModule implements AgentModule {
             }
             if (!this.#ready) {
                 throw new ApiError(503, "not_initialized", "Happy Agent is still starting.");
+            }
+            if (this.#isMutation(request, url)) {
+                if (this.#draining) {
+                    throw new ApiError(
+                        503,
+                        "draining",
+                        "Happy Agent is draining and no longer accepts mutations.",
+                    );
+                }
+                finishMutation = this.#admitMutation();
             }
             if (request.method === "GET" && url.pathname === "/") {
                 sendJson(response, 200, { text: "Welcome to Happy Agent!" });
@@ -573,6 +629,15 @@ export class ApiModule implements AgentModule {
                 this.#handleEventStream(request, response, url);
                 return;
             }
+            if (request.method === "POST" && url.pathname === "/v0/drain") {
+                if (this.#drainSources.size === 0) {
+                    sendJson(response, 403, { error: "Daemon draining is not enabled." });
+                    return;
+                }
+                this.#beginDrain(ctx);
+                sendJson(response, 202, { draining: true, pid: process.pid });
+                return;
+            }
             if (request.method === "POST" && url.pathname === "/v0/shutdown") {
                 ctx.log.info(`daemon:shutdown:request pid=${String(process.pid)} source=api`);
                 sendJson(response, 202, { shuttingDown: true, pid: process.pid });
@@ -599,6 +664,8 @@ export class ApiModule implements AgentModule {
             throw notFound("The requested endpoint does not exist.");
         } catch (error: unknown) {
             this.#sendError(ctx, response, error);
+        } finally {
+            finishMutation?.();
         }
     }
 
@@ -3771,11 +3838,100 @@ export class ApiModule implements AgentModule {
         return join(this.#config.configuration.paths.agentHome, "onboarding-v0");
     }
 
+    /** Reads remain available while drain and shutdown control requests bypass admission. */
+    #isMutation(request: IncomingMessage, url: URL): boolean {
+        if (request.method === "GET") return false;
+        if (request.method !== "POST") return true;
+        return url.pathname !== "/v0/drain" && url.pathname !== "/v0/shutdown";
+    }
+
+    /** Admit one HTTP mutation synchronously and return its exact-once release. */
+    #admitMutation(): () => void {
+        const admission = Symbol("api-mutation");
+        this.#apiMutations.add(admission);
+        let finished = false;
+        return () => {
+            if (finished) return;
+            finished = true;
+            this.#apiMutations.delete(admission);
+        };
+    }
+
+    /** Publish sticky draining before starting every registered component. */
+    #beginDrain(ctx: Context): void {
+        if (this.#draining) return;
+        this.#draining = true;
+        for (const [name, source] of this.#drainSources) {
+            const running: ApiRunningDrain = { finished: false };
+            this.#runningDrains.set(name, running);
+            let work: Promise<void>;
+            try {
+                work = source.start();
+            } catch (error: unknown) {
+                work = Promise.reject(error);
+            }
+            void work.then(
+                () => {
+                    running.finished = true;
+                },
+                (error: unknown) => {
+                    ctx.log.error(`The daemon drain source "${name}" failed.`, {}, error);
+                },
+            );
+        }
+    }
+
+    /** Build bounded, stable progress without allowing optional reporting to break health. */
+    #drainWaitingFor(ctx?: Context): Record<string, unknown>[] {
+        if (!this.#draining) return [];
+        const waiting: Record<string, unknown>[] = [];
+        if (this.#apiMutations.size > 0) {
+            waiting.push({ name: "api-mutations", count: this.#apiMutations.size });
+        }
+        for (const [name, source] of this.#drainSources) {
+            const running = this.#runningDrains.get(name);
+            if (running === undefined) continue;
+            let progress: ApiDrainProgress;
+            try {
+                progress = source.progress();
+            } catch (error: unknown) {
+                ctx?.log.warn(
+                    `The daemon drain source "${name}" could not report progress.`,
+                    {},
+                    error,
+                );
+                progress = { count: 0 };
+            }
+            const reportedCount =
+                Number.isSafeInteger(progress.count) && progress.count > 0 ? progress.count : 0;
+            const count = reportedCount > 0 ? reportedCount : running.finished ? 0 : 1;
+            if (count === 0) continue;
+            const suppliedAgents = progress.agents;
+            const agents =
+                suppliedAgents === undefined
+                    ? undefined
+                    : [...suppliedAgents]
+                          .sort((left, right) => left.id.localeCompare(right.id))
+                          .slice(0, 100);
+            waiting.push({
+                name,
+                count,
+                ...(agents === undefined ? {} : { agents }),
+                ...(progress.truncated === true || (suppliedAgents?.length ?? 0) > 100
+                    ? { truncated: true }
+                    : {}),
+            });
+        }
+        return waiting;
+    }
+
     #health(ctx: Context): Record<string, unknown> {
         const gracefulShutdown = shutdown.get(ctx);
         return {
             healthy: true,
             ready: this.#ready,
+            draining: this.#draining,
+            drainWaitingFor: this.#drainWaitingFor(ctx),
             shuttingDown: gracefulShutdown?.shuttingDown ?? false,
             status: this.#ready ? "ready" : "starting",
             version: {
@@ -3924,6 +4080,13 @@ export class ApiModule implements AgentModule {
     #assertSocketReady(): void {
         if (!this.#ready) {
             throw new ApiError(503, "not_initialized", "Happy Agent is still starting.");
+        }
+        if (this.#draining) {
+            throw new ApiError(
+                503,
+                "draining",
+                "Happy Agent is draining and no longer accepts mutations.",
+            );
         }
         if (this.#config.configuration.values.features.workspaces === false) {
             throw new ApiError(503, "unsupported", "Workspaces are disabled in this daemon.");

@@ -4,6 +4,11 @@
   its detached context. It must register as `auto-agent-system`, distinct from the main
   `agent-system`, so both store locks remain visible and awaited instead of one named handler
   replacing the other.
+- Daemon draining stops the main agent system before it drains this private reviewer system. A
+  main tool already running may still be waiting for an automatic permission review; keeping the
+  reviewer available until the main system reaches its edge lets that admitted tool finish instead
+  of deadlocking both drains. Once the main system is drained, no new tool can begin a review, so
+  the private system can reach its own edge without cancellation.
 
 - The history module now records who actually sent each incoming message: an accepted message is
   archived as `role: "user"` only when its metadata carries the positive `messageOrigin: "user"`
