@@ -320,7 +320,7 @@ describe("the public agent catalog API", () => {
     it("excludes subagents from owner lists and makes all catalog mutations read-only for them", async () => {
         const gym = await startGym({
             inference: (request) =>
-                request.callIndex === 0
+                request.callIndex === 1
                     ? {
                           content: [
                               {

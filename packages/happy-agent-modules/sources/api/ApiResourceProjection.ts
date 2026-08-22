@@ -321,10 +321,15 @@ export async function agentResource(
     const version =
         latestEvent?.cursor ??
         apiResourceVersion(updatedAt, numericMetadata(metadata["version"]) ?? 1, agentId);
+    const archivedAt = numericMetadata(metadata["archivedAt"]) ?? null;
+    const managedByAnotherAgent = parentAgentId !== null;
     return {
         id: agentId,
         workspaceId,
         parentAgentId,
+        userVisible: state.orderKey != null,
+        managedByAnotherAgent,
+        canSendMessages: !managedByAnotherAgent && archivedAt === null,
         title: typeof metadata.title === "string" ? metadata.title : null,
         titleStatus: typeof metadata.title === "string" ? "ready" : "idle",
         status: state.working === true ? "working" : "idle",
@@ -337,7 +342,7 @@ export async function agentResource(
         version,
         createdAt,
         updatedAt,
-        archivedAt: numericMetadata(metadata["archivedAt"]) ?? null,
+        archivedAt,
     };
 }
 

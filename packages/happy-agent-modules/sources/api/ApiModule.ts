@@ -1188,10 +1188,14 @@ export class ApiModule implements AgentModule {
                     event.occurredAt,
                 );
             }
+            const canSendMessages = Object.hasOwn(update, "archivedAt")
+                ? (await this.#agentSystem().parentOf(ctx, agentId)) === null &&
+                  update["archivedAt"] === null
+                : undefined;
             await this.#appendAgentUpdate(
                 ctx,
                 event,
-                agentMetadataChanges(update, event.occurredAt),
+                agentMetadataChanges(update, event.occurredAt, canSendMessages),
             );
             return;
         }
@@ -1759,6 +1763,27 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             const ownership = await this.#resolveWorkspaceScope(ctx, body.workspaceId);
+            const managedByAnotherAgent = body.parentAgentId !== undefined;
+            if (body.parentAgentId !== undefined) {
+                if ((await agents.config(ctx, body.parentAgentId)) === undefined) {
+                    throw notFound("The managing agent was not found.");
+                }
+                const parentWorkspaceId = await this.#workspaceIdForAgent(ctx, body.parentAgentId);
+                if (parentWorkspaceId === undefined) {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "The managing agent does not belong to a workspace.",
+                    );
+                }
+                if (parentWorkspaceId === body.workspaceId) {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "A managed root agent must run in a different workspace from its parent.",
+                    );
+                }
+            }
             const baseEnvironment = currentAgentEnvironment();
             const now = Date.now();
             const config: AgentConfig = {
@@ -1776,18 +1801,44 @@ export class ApiModule implements AgentModule {
                     compute: { cwd: ownership.root },
                 },
             };
-            const created = await this.#withMutationId(body.mutationId, async () => {
-                const agent = await agents.create(ctx, config, {
-                    ...(body.id === undefined ? {} : { id: body.id }),
-                    parent: null,
-                });
-                if (ownership.childWorkspaceId === undefined) {
-                    await this.#projects.attachAgent(ctx, ownership.projectId, agent.id);
-                } else {
-                    await this.#workspaces.attachAgent(ctx, ownership.childWorkspaceId, agent.id);
-                }
-                return agent;
-            });
+            const created = await this.#withMutationId(
+                body.mutationId,
+                async () =>
+                    await ctx.inTx(async (txCtx) => {
+                        const agent = await agents.create(txCtx, config, {
+                            ...(body.id === undefined ? {} : { id: body.id }),
+                            parent: body.parentAgentId ?? null,
+                        });
+                        if (ownership.childWorkspaceId === undefined) {
+                            if (managedByAnotherAgent) {
+                                await this.#projects.attachManagedRootAgent(
+                                    txCtx,
+                                    ownership.projectId,
+                                    agent.id,
+                                );
+                            } else {
+                                await this.#projects.attachAgent(
+                                    txCtx,
+                                    ownership.projectId,
+                                    agent.id,
+                                );
+                            }
+                        } else if (managedByAnotherAgent) {
+                            await this.#workspaces.attachManagedRootAgent(
+                                txCtx,
+                                ownership.childWorkspaceId,
+                                agent.id,
+                            );
+                        } else {
+                            await this.#workspaces.attachAgent(
+                                txCtx,
+                                ownership.childWorkspaceId,
+                                agent.id,
+                            );
+                        }
+                        return agent;
+                    }),
+            );
             const agent = await this.#requireAgentResource(ctx, created.id);
             if (!this.#announcedAgentCreations.has(created.id)) {
                 boundedAdd(
@@ -1900,7 +1951,7 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (operation === "read" && request.method === "POST") {
-                await this.#assertTopLevelAgent(ctx, agentId);
+                await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, emptyMutationBodySchema, "read marker");
                 await this.#withMutationId(
                     body.mutationId,
@@ -1916,7 +1967,7 @@ export class ApiModule implements AgentModule {
                 (operation === "archive" || operation === "unarchive") &&
                 request.method === "POST"
             ) {
-                await this.#assertTopLevelAgent(ctx, agentId, true);
+                await this.#assertUserControlledAgent(ctx, agentId, true);
                 const body = await bodyAs(request, emptyMutationBodySchema, "agent archival");
                 const config = await this.#agentSystem().config(ctx, agentId);
                 if (config === undefined) throw notFound("The agent was not found.");
@@ -1942,7 +1993,7 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (operation === "reorder" && request.method === "POST") {
-                await this.#assertTopLevelAgent(ctx, agentId);
+                await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, reorderBodySchema, "agent reorder");
                 const before = await this.#requireAgentResource(ctx, agentId);
                 const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
@@ -1988,7 +2039,7 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (operation === "draft" && request.method === "PUT") {
-                await this.#assertTopLevelAgent(ctx, agentId);
+                await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, draftBodySchema, "agent draft");
                 const config = await this.#agentSystem().config(ctx, agentId);
                 if (config === undefined) throw notFound("The agent was not found.");
@@ -2193,7 +2244,7 @@ export class ApiModule implements AgentModule {
         response: ServerResponse,
         agentId: string,
     ): Promise<void> {
-        await this.#assertTopLevelAgent(ctx, agentId);
+        await this.#assertUserControlledAgent(ctx, agentId);
         const body = await bodyAs(request, messageSendBodySchema, "agent message");
         const id = body.id ?? createId();
         await this.#serializeMessageSend(id, async () => {
@@ -2445,6 +2496,9 @@ export class ApiModule implements AgentModule {
     }
 
     async #requireAgentResource(ctx: Context, agentId: string): Promise<Record<string, unknown>> {
+        if ((await this.#agentSystem().config(ctx, agentId)) === undefined) {
+            throw notFound("The agent was not found.");
+        }
         const workspaceId = await this.#workspaceIdForAgent(ctx, agentId);
         if (workspaceId === undefined) throw notFound("The agent was not found.");
         const resource = await this.#buildAgentResource(
@@ -2517,7 +2571,7 @@ export class ApiModule implements AgentModule {
         throw new Error("The agent ancestry exceeds the supported depth.");
     }
 
-    async #assertTopLevelAgent(
+    async #assertUserControlledAgent(
         ctx: Context,
         agentId: string,
         allowArchived = false,
@@ -2527,7 +2581,11 @@ export class ApiModule implements AgentModule {
             throw notFound("The agent was not found.");
         }
         if ((await agents.parentOf(ctx, agentId)) !== null) {
-            throw new ApiError(409, "conflict", "Subagents are read-only through this API.");
+            throw new ApiError(
+                409,
+                "conflict",
+                "Agents managed by another agent are read-only through this API.",
+            );
         }
         const config = await agents.config(ctx, agentId);
         if (!allowArchived && typeof config?.metadata?.["archivedAt"] === "number") {
@@ -4343,6 +4401,7 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 function agentMetadataChanges(
     update: Readonly<Record<string, unknown>>,
     occurredAt: number,
+    canSendMessages?: boolean,
 ): Record<string, unknown> {
     const changes: Record<string, unknown> = { updatedAt: occurredAt };
     for (const key of [
@@ -4359,6 +4418,7 @@ function agentMetadataChanges(
     if (Object.hasOwn(update, "title")) {
         changes["titleStatus"] = typeof update["title"] === "string" ? "ready" : "idle";
     }
+    if (canSendMessages !== undefined) changes["canSendMessages"] = canSendMessages;
     return changes;
 }
 

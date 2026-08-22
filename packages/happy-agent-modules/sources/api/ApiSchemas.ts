@@ -145,6 +145,7 @@ export const agentCreateBodySchema = Type.Object(
     {
         id: Type.Optional(apiIdSchema),
         mutationId: Type.Optional(mutationIdSchema),
+        parentAgentId: Type.Optional(apiIdSchema),
         title: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
         workspaceId: apiIdSchema,
     },

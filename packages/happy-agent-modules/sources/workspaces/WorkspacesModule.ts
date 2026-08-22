@@ -1713,11 +1713,29 @@ export class WorkspacesModule implements AgentModule {
         return structuredClone(raw);
     }
 
-    /** Permanently places an agent in one workspace. Repeating the same attachment is idempotent. */
+    /** Permanently places one user-controlled root agent in a workspace. */
     async attachAgent(
         ctx: Context,
         workspaceId: string,
         agentId: string,
+    ): Promise<WorkspaceAgentAssociation> {
+        return await this.#attachAgent(ctx, workspaceId, agentId, false);
+    }
+
+    /** Permanently places one agent whose Agent Base parent belongs to another workspace. */
+    async attachManagedRootAgent(
+        ctx: Context,
+        workspaceId: string,
+        agentId: string,
+    ): Promise<WorkspaceAgentAssociation> {
+        return await this.#attachAgent(ctx, workspaceId, agentId, true);
+    }
+
+    async #attachAgent(
+        ctx: Context,
+        workspaceId: string,
+        agentId: string,
+        managedByAnotherAgent: boolean,
     ): Promise<WorkspaceAgentAssociation> {
         this.#assertEnabled();
         const input = { workspaceId, agentId };
@@ -1732,8 +1750,14 @@ export class WorkspacesModule implements AgentModule {
                 "The workspaces module was asked to attach an agent before it started.",
             );
         }
-        if ((await agents.parentOf(ctx, agentId)) !== null) {
+        const parentAgentId = await agents.parentOf(ctx, agentId);
+        if (!managedByAnotherAgent && parentAgentId !== null) {
             throw new Error("Only a top-level agent can be attached to a workspace.");
+        }
+        if (managedByAnotherAgent && parentAgentId === null) {
+            throw new Error(
+                "Only an agent managed by another agent can be attached as a managed workspace root.",
+            );
         }
         return await this.#agentAssociationLocks.runInLock(
             ctx,

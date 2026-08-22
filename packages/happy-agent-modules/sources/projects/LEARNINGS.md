@@ -117,3 +117,11 @@ emits the exact previous and current owner snapshots in one transaction. Repeate
 no-op reorder leave both the association and owner untouched. Agent archival keeps the permanent
 association and its fractional key, but it does change the active embedded list, so archive and
 unarchive advance the owner and emit the same exact version chain.
+
+## A catalog root can still have an Agent Base parent
+
+An agent managing work in another workspace needs a top-level row in that destination's catalog
+without losing the Agent Base ancestry that lets its parent supervise it. The ordinary attachment
+method still accepts only parentless agents, so ordinary subagents cannot become visible by
+accident. Cross-workspace managed roots use a separate explicit attachment method after the API
+has verified that the parent belongs to a different workspace.

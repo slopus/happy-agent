@@ -299,6 +299,35 @@ describe("ProjectsModule", () => {
         }
     });
 
+    it("attaches a managed catalog root only through the explicit managed boundary", async () => {
+        const database = await migratedProjectDatabase("projects-managed-root-agent-test");
+        try {
+            const projects = await projectsModule();
+            projects.beforeStart(database.context, {
+                parentOf: async (_ctx: unknown, agentId: string) =>
+                    agentId === "managed-agent" ? "parent-agent" : null,
+            } as never);
+            const project = await projects.create(database.context, {
+                repositoryRef: "/tmp/projects/managed-root-agent",
+                name: "Managed root agent",
+            });
+
+            await expect(
+                projects.attachAgent(database.context, project.id, "managed-agent"),
+            ).rejects.toThrow("Only a root agent can be attached to a project.");
+            await expect(
+                projects.attachManagedRootAgent(database.context, project.id, "root-agent"),
+            ).rejects.toThrow("Only an agent managed by another agent");
+
+            await projects.attachManagedRootAgent(database.context, project.id, "managed-agent");
+            expect(await projects.listAgentIds(database.context, project.id)).toEqual([
+                "managed-agent",
+            ]);
+        } finally {
+            database.close();
+        }
+    });
+
     it("finds a project by its folder and refuses anything that is not a path", async () => {
         const database = await migratedProjectDatabase("projects-by-path-test");
         try {

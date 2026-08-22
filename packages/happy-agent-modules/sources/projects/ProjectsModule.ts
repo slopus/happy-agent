@@ -288,19 +288,36 @@ export class ProjectsModule implements AgentModule {
         return structuredClone(project);
     }
 
-    /**
-     * Attaches one root agent to this project. The association is permanent so an archived agent
-     * remains visible in its original project; Agent Base owns whether that agent is archived.
-     */
+    /** Attaches one user-controlled root agent to this project. */
     async attachAgent(ctx: Context, projectId: string, agentId: string): Promise<void> {
+        await this.#attachAgent(ctx, projectId, agentId, false);
+    }
+
+    /** Attaches one agent whose Agent Base parent belongs to another workspace. */
+    async attachManagedRootAgent(ctx: Context, projectId: string, agentId: string): Promise<void> {
+        await this.#attachAgent(ctx, projectId, agentId, true);
+    }
+
+    async #attachAgent(
+        ctx: Context,
+        projectId: string,
+        agentId: string,
+        managedByAnotherAgent: boolean,
+    ): Promise<void> {
         const attachment = { projectId, agentId };
         this.#assertInput(projectAgentAttachmentSchema, attachment, "agent attachment");
         const agents = this.#agents;
         if (agents === undefined) {
             throw new Error("The projects module was asked to attach an agent before it started.");
         }
-        if ((await agents.parentOf(ctx, agentId)) !== null) {
+        const parentAgentId = await agents.parentOf(ctx, agentId);
+        if (!managedByAnotherAgent && parentAgentId !== null) {
             throw new Error("Only a root agent can be attached to a project.");
+        }
+        if (managedByAnotherAgent && parentAgentId === null) {
+            throw new Error(
+                "Only an agent managed by another agent can be attached as a managed project root.",
+            );
         }
         await this.#agentAssociationLocks.runInLock(
             ctx,

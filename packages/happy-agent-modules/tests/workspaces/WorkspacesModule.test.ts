@@ -266,6 +266,45 @@ describe("WorkspacesModule", () => {
         }
     });
 
+    it("attaches a managed catalog root only through the explicit managed boundary", async () => {
+        const { workspaces } = await temporaryWorkspacesCatalog();
+        const database = workspaceDatabase("workspace-managed-root-agent-test");
+        await database.ready;
+        try {
+            workspaces.beforeStart(database.context, {
+                parentOf: async (_ctx: unknown, agentId: string) =>
+                    agentId === "managed-agent" ? "parent-agent" : null,
+            } as never);
+            const workspace = await workspaces.reserve(database.context, {
+                id: "workspace-1",
+                projectRef: "acme",
+                name: "Managed root agent",
+            });
+
+            await expect(
+                workspaces.attachAgent(database.context, workspace.workspace.id, "managed-agent"),
+            ).rejects.toThrow("Only a top-level agent can be attached to a workspace.");
+            await expect(
+                workspaces.attachManagedRootAgent(
+                    database.context,
+                    workspace.workspace.id,
+                    "root-agent",
+                ),
+            ).rejects.toThrow("Only an agent managed by another agent");
+
+            await workspaces.attachManagedRootAgent(
+                database.context,
+                workspace.workspace.id,
+                "managed-agent",
+            );
+            expect(await workspaces.listAgentIds(database.context, workspace.workspace.id)).toEqual(
+                ["managed-agent"],
+            );
+        } finally {
+            database.close();
+        }
+    });
+
     it("places workspaces under an implicit project root and orders only siblings", async () => {
         const { workspaces } = await temporaryWorkspacesCatalog();
         const database = workspaceDatabase("workspace-hierarchy-test");
