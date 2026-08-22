@@ -120,11 +120,17 @@ person who archived a workspace does not get it handed back because a folder wou
 
 ## Tools it provides to the model
 
+- **`create_child_workspace`** — `{ name, baseRef? }`. Creates a named workspace directly below the
+  workspace that owns the calling agent. An agent attached to a project creates below that
+  project's root workspace; an agent attached to a nested workspace creates below that exact
+  workspace. An explicit `baseRef` overrides the normal parent-branch default. The returned
+  `parentId` preserves that relationship for flat-list clients.
 - **`create_workspace`** — `{ projectRef, name, baseRef? }`. Reserves one workspace owned by the
   calling agent. `projectRef` is required: a workspace belongs to a project, and there is no
   fallback project to put an unclaimed one in. The tool passes its call ID as the operation ID, so
-  a retried call after a crash resolves to the same workspace rather than a second one. The input stays minimal on purpose: `name` is a title a person would recognise,
-  not a slug or a path, and the module derives the storage key and branch from it.
+  a retried call after a crash resolves to the same workspace rather than a second one. The input
+  stays minimal on purpose: `name` is a title a person would recognise, not a slug or a path, and
+  the module derives the storage key and branch from it.
 - **`rename_workspace`** — `{ workspaceId, name }`. Renames an owned workspace, marks the name as
   configured, and moves the Git branch with it.
 - **`list_workspaces`** — `{ projectRef?, includeArchived?, cursor?, limit? }`. A page of the
@@ -142,14 +148,15 @@ There is deliberately no model tool for `recordInitialization`, `markReady`, `ma
 `completeArchive`, `applyGitFacts`, or `applyProbe`. Those are lifecycle transitions driven by what
 Git actually did; a model guessing at them would be inventing state.
 
-Governing principles across all six tools:
+Governing principles across all seven tools:
 
 - Read, create, and rename tools use `shouldReviewInAutoMode: () => false`. Archive uses
   `shouldReviewInAutoMode: () => true` and discloses its destructive filesystem effects to the Auto
   reviewer. It does not declare `shouldRunInFullAccessInAutoMode`; review does not grant
   unsandboxed execution.
-- `create_workspace`, `rename_workspace`, and `archive_workspace` are durable transactional tools.
-  The three read tools are non-durable because a current read does not need replay.
+- `create_child_workspace`, `create_workspace`, `rename_workspace`, and `archive_workspace` are
+  durable transactional tools. The three read tools are non-durable because a current read does
+  not need replay.
 - Every result the store returns is re-validated against its schema and cross-checked against a
   fresh authoritative read before it is trusted. The store's `changed` flag must agree with an
   actual before/after comparison, and a changed row must have advanced its `version`; a mismatch
@@ -172,6 +179,9 @@ explicitly on every call, not bound to the instance.
 
 Building a workspace:
 
+- `createChildWorkspace(ctx, agentId, name, baseRef?, operationId?)` — creates a named child beneath
+  the workspace that owns `agentId`, using an explicit base when supplied and the operation ID as
+  its durable identity.
 - `createWorkspace(ctx, agentId, projectId, request, creatorSessionId?, options?)` — the whole
   operation a person asks for. It reserves the workspace against a live snapshot of the project's
   refs and managed directory, then starts the checkout in the background, so the caller is not held

@@ -13,6 +13,7 @@ import {
     type CreateWorkspaceRequest,
     type Workspace,
 } from "../../sources/workspaces/index.js";
+import { createChildWorkspaceTool } from "../../sources/workspaces/tools/create_child_workspace.js";
 import { createWorkspaceTool } from "../../sources/workspaces/tools/create_workspace.js";
 import {
     cleanupRoots,
@@ -28,6 +29,86 @@ import { moduleDatabase } from "../support/moduleDatabase.js";
 afterEach(cleanupRoots);
 
 describe("nested workspace provisioning", () => {
+    it("creates a named child of the calling agent's current workspace", async () => {
+        const repository = join(await createRoot("workspace-child-tool-project-"), "project");
+        await mkdir(repository);
+        await writeFile(join(repository, "project.txt"), "project\n", "utf8");
+        const world = await createWorld("workspace-child-tool");
+        try {
+            const agents = { parentOf: async () => null } as never;
+            world.projects.beforeStart(world.database.context, agents);
+            world.workspaces.beforeStart(world.database.context, agents);
+            const project = await world.projects.create(world.database.context, {
+                id: "project-a",
+                repositoryRef: world.git.normalizeProjectCwd(repository),
+                name: "Project",
+            });
+            await readyProject(world, project.id);
+            await world.projects.attachAgent(world.database.context, project.id, "agent-a");
+            await world.workspaces.open(world.database.context);
+
+            const childTool = createChildWorkspaceTool(world.workspaces, "agent-a");
+            const child = await world.database.context.inTx(
+                async (txCtx) =>
+                    await childTool.execute(txCtx, { name: "Child workspace", baseRef: "main" }, {
+                        id: "call_workspace_child",
+                        providerCallId: "provider-call-child",
+                    } as never),
+            );
+            expect(child).toMatchObject({
+                id: "call_workspace_child",
+                projectRef: project.id,
+                parentId: project.id,
+                name: "Child workspace",
+                nameConfigured: true,
+                baseRef: "main",
+                creatorSessionId: "agent-a",
+            });
+            const readyChild = await waitForWorkspace(world, child.id, "ready");
+            await expect(
+                world.database.context.inTx(
+                    async (txCtx) =>
+                        await childTool.execute(
+                            txCtx,
+                            { name: "Child workspace", baseRef: "main" },
+                            {
+                                id: "call_workspace_child",
+                                providerCallId: "provider-call-child-retry",
+                            } as never,
+                        ),
+                ),
+            ).resolves.toMatchObject({ id: readyChild.id, parentId: project.id, status: "ready" });
+            expect(
+                (await world.workspaces.list(world.database.context)).filter(
+                    (workspace) => workspace.id === readyChild.id,
+                ),
+            ).toHaveLength(1);
+
+            await world.workspaces.attachAgent(world.database.context, readyChild.id, "agent-b");
+            const grandchildTool = createChildWorkspaceTool(world.workspaces, "agent-b");
+            const grandchild = await world.database.context.inTx(
+                async (txCtx) =>
+                    await grandchildTool.execute(txCtx, { name: "Grandchild workspace" }, {
+                        id: "call_workspace_grandchild",
+                        providerCallId: "provider-call-grandchild",
+                    } as never),
+            );
+            expect(grandchild).toMatchObject({
+                id: "call_workspace_grandchild",
+                projectRef: project.id,
+                parentId: readyChild.id,
+                name: "Grandchild workspace",
+                nameConfigured: true,
+                creatorSessionId: "agent-b",
+            });
+            await expect(waitForWorkspace(world, grandchild.id, "ready")).resolves.toMatchObject({
+                parentId: readyChild.id,
+            });
+        } finally {
+            await world.close();
+        }
+    }, 20_000);
+
     it("provisions a workspace created by the transactional agent tool after commit", async () => {
         const repository = join(await createRoot("workspace-tool-project-"), "project");
         await mkdir(repository);

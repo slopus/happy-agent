@@ -214,6 +214,11 @@ export {
     type WorkspaceTransactionChange,
 } from "./WorkspaceStore.js";
 export { archiveWorkspaceInputSchema, archiveWorkspaceTool } from "./tools/archive_workspace.js";
+export {
+    createChildWorkspaceInputSchema,
+    createChildWorkspaceTool,
+    type CreateChildWorkspaceInput,
+} from "./tools/create_child_workspace.js";
 export { createWorkspaceTool } from "./tools/create_workspace.js";
 export { branchMetadataInputSchema, getBranchMetadataTool } from "./tools/get_branch_metadata.js";
 export {

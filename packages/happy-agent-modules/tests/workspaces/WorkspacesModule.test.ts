@@ -81,6 +81,7 @@ describe("WorkspacesModule", () => {
             } as never);
 
             expect(tools?.map((tool) => tool.name)).toEqual([
+                "create_child_workspace",
                 "create_workspace",
                 "list_workspaces",
                 "get_workspace",

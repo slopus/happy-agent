@@ -17,3 +17,12 @@ without losing the Agent Base ancestry that lets its parent supervise it. The or
 method still accepts only parentless agents, so ordinary subagents cannot become visible by
 accident. Cross-workspace managed roots use a separate explicit attachment method after the API
 has verified that the parent belongs to a different workspace.
+
+## Child creation follows the caller's workspace
+
+The `create_child_workspace` tool requires a human-readable name and accepts the same optional
+`baseRef` choice as `create_workspace`, but resolves the parent from the workspace that owns its
+calling agent. A project-owned agent therefore creates below the project root, while an agent owned
+by a nested workspace creates at that exact depth. Without `baseRef`, a nested child inherits its
+parent's branch. The child returns its explicit `parentId`, so the ordinary flat API list preserves
+the complete tree without a second hierarchy representation.

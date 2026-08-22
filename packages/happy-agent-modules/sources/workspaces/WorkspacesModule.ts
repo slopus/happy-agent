@@ -140,6 +140,7 @@ import {
 } from "./WorkspaceStore.js";
 import { requirePromise } from "./workspaceRuntime.js";
 import { archiveWorkspaceTool } from "./tools/archive_workspace.js";
+import { createChildWorkspaceTool } from "./tools/create_child_workspace.js";
 import { createWorkspaceTool } from "./tools/create_workspace.js";
 import { getBranchMetadataTool } from "./tools/get_branch_metadata.js";
 import { getWorkspaceTool } from "./tools/get_workspace.js";
@@ -256,6 +257,7 @@ export class WorkspacesModule implements AgentModule {
             // hands inside the task it was given, and stays in the workspace it was started in.
             if ((await agents.parentOf(ctx, scope.agent.id)) !== null) return [];
             return [
+                createChildWorkspaceTool(this, scope.agent.id),
                 createWorkspaceTool(this, scope.agent.id),
                 listWorkspacesTool(this, scope.agent.id),
                 getWorkspaceTool(this, scope.agent.id),
@@ -769,6 +771,57 @@ export class WorkspacesModule implements AgentModule {
         while (this.#tasks.size > 0) {
             await Promise.allSettled(this.#tasks);
         }
+    }
+
+    /**
+     * Creates a named child directly below the workspace that owns the calling agent.
+     * Root-workspace agents are owned by their project, whose shared ID is the root workspace ID.
+     */
+    async createChildWorkspace(
+        ctx: Context,
+        agentId: string,
+        name: string,
+        baseRef?: string,
+        operationId?: string,
+    ): Promise<Workspace> {
+        this.#assertEnabled();
+        this.#assertInput(workspaceAgentLookupSchema, { agentId }, "agent lookup");
+
+        const currentWorkspaceId = await this.workspaceForAgent(ctx, agentId);
+        let projectId: string;
+        let parentId: string;
+        if (currentWorkspaceId === undefined) {
+            const project = await this.#projects.projectForAgent(ctx, agentId);
+            if (project === undefined) {
+                throw new Error("The calling agent does not belong to a workspace.");
+            }
+            projectId = project.id;
+            parentId = project.id;
+        } else {
+            const current = await this.get(ctx, currentWorkspaceId);
+            if (current === undefined) {
+                throw new Error("The calling agent's workspace was not found.");
+            }
+            projectId = current.projectRef;
+            parentId = current.id;
+        }
+
+        const workspace = await this.createWorkspace(
+            ctx,
+            projectId,
+            {
+                name,
+                nameConfigured: true,
+                parentId,
+                ...(baseRef === undefined ? {} : { baseRef }),
+            },
+            agentId,
+            operationId === undefined ? {} : { operationId },
+        );
+        if (workspace === undefined) {
+            throw new Error("The calling agent's project was not found.");
+        }
+        return workspace;
     }
 
     /**
