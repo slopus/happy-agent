@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-terminal",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "description": "Happy Terminal, the embeddable terminal client for Happy Agent.",
     "keywords": [
         "coding-agent",
