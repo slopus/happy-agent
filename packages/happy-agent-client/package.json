@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-client",
-    "version": "0.0.22",
+    "version": "0.0.23",
     "description": "Typed client for the Happy agent HTTP API.",
     "license": "MIT",
     "repository": {
