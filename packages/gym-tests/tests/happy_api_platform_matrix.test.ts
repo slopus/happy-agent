@@ -457,10 +457,12 @@ describe("Happy Agent platform API matrix", () => {
     );
 
     it(
-        "platform-028 opens a fresh event stream with an honest hello",
+        "platform-028 identifies stable and replacement daemons in each honest hello",
         async () => {
             const gym = await start(gyms);
             const stream = gym.stream();
+            let daemonId = "";
+            let daemonStartedAt = 0;
             try {
                 await stream.opened();
                 const hello = stream.frames.find((frame) => frame.event === "hello");
@@ -469,9 +471,48 @@ describe("Happy Agent platform API matrix", () => {
                     gap: false,
                     resumed: false,
                     cursor: expect.any(String),
+                    daemonId: expect.any(String),
+                    daemonStartedAt: expect.any(Number),
+                    draining: false,
                 });
+                const helloData = hello?.data as
+                    | { readonly daemonId?: unknown; readonly daemonStartedAt?: unknown }
+                    | undefined;
+                if (
+                    typeof helloData?.daemonId !== "string" ||
+                    typeof helloData.daemonStartedAt !== "number"
+                ) {
+                    throw new Error("The event stream hello did not identify the daemon.");
+                }
+                daemonId = helloData.daemonId;
+                daemonStartedAt = helloData.daemonStartedAt;
             } finally {
                 stream.close();
+            }
+
+            const reconnect = gym.stream();
+            try {
+                await reconnect.opened();
+                const hello = reconnect.frames.find((frame) => frame.event === "hello");
+                expect(hello?.data).toMatchObject({ daemonId, daemonStartedAt });
+            } finally {
+                reconnect.close();
+            }
+
+            await gym.restart();
+            const replacement = gym.stream();
+            try {
+                await replacement.opened();
+                const hello = replacement.frames.find((frame) => frame.event === "hello");
+                expect(hello?.data).toMatchObject({
+                    daemonId: expect.any(String),
+                    daemonStartedAt: expect.any(Number),
+                    draining: false,
+                });
+                const helloData = hello?.data as { readonly daemonId?: unknown } | undefined;
+                expect(helloData?.daemonId).not.toBe(daemonId);
+            } finally {
+                replacement.close();
             }
         },
         TEST_TIMEOUT_MS,

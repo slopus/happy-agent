@@ -85,10 +85,7 @@ import {
     type SseWriter,
     WebSocketDuplex,
 } from "../transport/index.js";
-import {
-    UsageModule,
-    type UsageCurrentContext,
-} from "../usage/index.js";
+import { UsageModule, type UsageCurrentContext } from "../usage/index.js";
 import { UserInputModule, type UserInputEvent } from "../userInput/index.js";
 import {
     WorkspaceInputError,
@@ -234,6 +231,8 @@ export class ApiModule implements AgentModule {
     readonly #profile: ProfileModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
+    readonly #daemonId = createId();
+    readonly #daemonStartedAt = Date.now();
     readonly #mutationIds = new AsyncLocalStorage<string>();
     readonly #backgroundScope = new AsyncResource("happy-agent-api");
     /** Agents whose usage-driven metadata refresh is already scheduled. */
@@ -2808,6 +2807,9 @@ export class ApiModule implements AgentModule {
                     gap,
                     resumed: after !== undefined && !gap,
                     connectedAt: Date.now(),
+                    daemonId: this.#daemonId,
+                    daemonStartedAt: this.#daemonStartedAt,
+                    draining: this.#draining,
                 })}\n\n`,
             )
         ) {
@@ -3823,6 +3825,10 @@ export class ApiModule implements AgentModule {
     #beginDrain(ctx: Context): void {
         if (this.#draining) return;
         this.#draining = true;
+        this.#journal.append("daemon.draining", {
+            daemonId: this.#daemonId,
+            draining: true,
+        });
         for (const [name, source] of this.#drainSources) {
             const running: ApiRunningDrain = { finished: false };
             this.#runningDrains.set(name, running);

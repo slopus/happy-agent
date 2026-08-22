@@ -292,6 +292,19 @@ describe("Happy Agent platform API", () => {
                 timeoutMs: 15_000,
             });
             running.add(gym);
+            const stream = gym.stream();
+            await stream.opened();
+            const hello = stream.frames.find((frame) => frame.event === "hello");
+            const helloData = hello?.data as { readonly daemonId?: unknown } | undefined;
+            expect(helloData).toMatchObject({
+                daemonId: expect.any(String),
+                daemonStartedAt: expect.any(Number),
+                draining: false,
+            });
+            const daemonId = helloData?.daemonId;
+            if (typeof daemonId !== "string") {
+                throw new Error("The event stream hello did not identify the daemon.");
+            }
             const project = (await gym.client.listProjects()).projects.find((candidate) =>
                 candidate.agents.some((agent) => agent.id === gym.defaultSessionId),
             );
@@ -311,6 +324,29 @@ describe("Happy Agent platform API", () => {
                     pid: expect.any(Number),
                 });
                 await expect(gym.client.drain()).resolves.toMatchObject({ draining: true });
+                const drainFrame = await stream.waitFor(
+                    (frame) => frame.event === "daemon.draining",
+                    "the ordered daemon drain event",
+                );
+                expect(drainFrame.id).toEqual(expect.any(String));
+                expect(clientFrameEvent(drainFrame)).toMatchObject({
+                    payload: { daemonId, draining: true },
+                    type: "daemon.draining",
+                });
+
+                const stickyStream = gym.stream();
+                try {
+                    await stickyStream.opened();
+                    const stickyHello = stickyStream.frames.find(
+                        (frame) => frame.event === "hello",
+                    );
+                    expect(stickyHello?.data).toMatchObject({
+                        daemonId,
+                        draining: true,
+                    });
+                } finally {
+                    stickyStream.close();
+                }
 
                 const draining = await gym.waitUntil(async () => {
                     const current = await gym.client.getHealth();
@@ -343,6 +379,7 @@ describe("Happy Agent platform API", () => {
                 });
             } finally {
                 finishInference();
+                stream.close();
             }
 
             const drained = await gym.waitUntil(async () => {
