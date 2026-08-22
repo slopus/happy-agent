@@ -110,12 +110,14 @@ The other versioned resources (agents, terminals, questions, processes) change m
 on the daemon's own initiative, so their mutations do not use `If-Match`; their versions exist for
 event chaining and newer-copy comparison.
 
-The `agents` arrays embedded in projects and workspaces contain independently versioned agent
-resources. An owner's version covers the active membership and order of that series; each embedded
-agent's version covers its own state. Creating, reordering, archiving, or unarchiving an agent
-changes the visible owner series and advances the owner, while the permanent owner association and
-fractional key survive archival. Other agent-only state changes use `agent.updated` without
-advancing the owner. Clients merge nested agents by their own versions.
+The `agents` arrays embedded in projects and workspaces contain independently versioned,
+user-visible root-agent resources. An owner's version covers the active membership and order of
+that series; each embedded agent's version covers its own state. Creating, reordering, archiving,
+or unarchiving an agent changes the visible owner series and advances the owner, while the
+permanent owner association and fractional key survive archival. Other agent-only state changes
+use `agent.updated` without advancing the owner. Clients merge nested agents by their own versions.
+Ordinary subagents are absent. A root managed by an agent in another workspace is included and
+identifies that exceptional ancestry through its agent capability flags.
 
 ### `mutationId`
 
@@ -711,7 +713,7 @@ Every project route answers with the same shape:
         "defaultWorkspaceCompute": { "type": "host" }
     },
     "agents": [
-        /* active top-level agents owned by this project, in order */
+        /* active user-visible root agents owned by this project, in order */
     ],
     "orderKey": "00000000000000000001",
     "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
@@ -751,9 +753,10 @@ Fields:
   bytes to fetch.
 - `settings` — per-project settings; `defaultWorkspaceCompute` chooses where new workspaces
   run (`{ "type": "host" }` or `{ "type": "docker", "image": "..." }`).
-- `agents` — active top-level agents owned by the project, in `orderKey` order. Because the
-  project is also its root workspace, `GET /v0/workspaces/:projectId` exposes this same series.
-  Archived agents and subagents are excluded.
+- `agents` — active user-visible root agents owned by the project, in `orderKey` order. Because
+  the project is also its root workspace, `GET /v0/workspaces/:projectId` exposes this same
+  series. Archived agents and ordinary hidden subagents are excluded. A user-visible root managed
+  by an agent in another workspace is included.
 - `orderKey` — an opaque sort key; clients order projects by comparing these strings.
 - `version` — the UUIDv7 concurrency version; see “Resource versions and `If-Match`” in the
   basics.
@@ -937,7 +940,7 @@ workspace route.
     },
     "creatorAgentId": "a1b2c3d4",
     "agents": [
-        /* active top-level agents owned by this workspace, in order */
+        /* active user-visible root agents owned by this workspace, in order */
     ],
     "orderKey": "5",
     "version": "01991f3a-5d2b-7000-8000-4b1c3d5e6f70",
@@ -969,9 +972,10 @@ Fields:
 - `git` — the same working-tree summary as on the project, for this workspace's checkout.
 - `creatorAgentId` — the agent that created this workspace, when one did; `null` when a
   person created it directly.
-- `agents` — active top-level agents owned by this workspace, in `orderKey` order. The root
-  workspace exposes the project-owned root-agent series; every child workspace has its own
-  independent series. Archived agents and subagents are excluded.
+- `agents` — active user-visible root agents owned by this workspace, in `orderKey` order. The
+  root workspace exposes the project-owned root-agent series; every child workspace has its own
+  independent series. Archived agents and ordinary hidden subagents are excluded. A user-visible
+  root managed by an agent in another workspace is included.
 - `orderKey`, `version`, timestamps — as on the project. `orderKey` orders a workspace among
   its siblings under the same parent.
 
@@ -1306,12 +1310,24 @@ An agent does not hold a model, effort, or permission mode of its own. Those are
 every message sent. The last submitted selection is current composer state rather than catalog
 state, so it has its own `mode` endpoint and is composed into the agent bootstrap response.
 
-An agent is either a top-level conversation or a **subagent** — one spawned by another agent to
-help with its task, carrying `parentAgentId`. Subagents are driven entirely by their parent:
-they cannot be sent messages, have no place in the list order, no mutable draft, and no archival — they
-are read-only through this API, observed via `GET` and events, and they end when their work
-ends. `send`, `reorder`, `archive`, `unarchive`, `read`, and `PUT draft` on a subagent answer
-`409`.
+Agent Base ancestry and user visibility are separate facts. An agent with `parentAgentId` is
+managed by another agent. Ordinarily that makes it a hidden **subagent**: it has no place in a
+project or workspace list, no mutable draft, no archival, and cannot be sent messages by the user.
+It remains readable through `GET`, activity, and events.
+
+There is one user-visible managed form. An agent may create a root agent in a workspace different
+from its own while remaining that new agent's Agent Base parent. The child is explicitly attached
+to the destination workspace's ordered root-agent series and is visible there, but it remains
+managed by its parent and still cannot receive user messages. The parent must belong to another
+workspace; a same-workspace child remains an ordinary hidden subagent.
+
+Every agent therefore reports three independent capability facts: `userVisible`,
+`managedByAnotherAgent`, and `canSendMessages`. New protocol-22 daemons always emit all three;
+the fields are optional on the wire so clients remain compatible with older protocol-22 daemons.
+When omitted, clients may use the old behavior as a fallback: `parentAgentId === null` was visible
+and sendable, while a non-null parent was hidden and not sendable. `send`, `reorder`, `archive`,
+`unarchive`, `read`, and `PUT draft` on any agent managed by another agent answer `409`, including
+a user-visible managed root.
 
 Agents accept the optional `mutationId` from the basics — except `send`, whose message is
 named by the client-supplied `id` instead — and carry a `version` like every
@@ -1326,6 +1342,9 @@ guarding the whole row. The version exists for event chaining and newer-copy com
     "id": "a1b2c3d4",
     "workspaceId": "k2h4j5l6",
     "parentAgentId": null,
+    "userVisible": true,
+    "managedByAnotherAgent": false,
+    "canSendMessages": true,
     "title": "Fix the login redirect loop",
     "titleStatus": "ready",
     "status": "idle",
@@ -1347,7 +1366,17 @@ Fields:
 - `id` — stable agent identifier.
 - `workspaceId` — the workspace the agent runs in. This is where its shell commands execute
   and its file edits land.
-- `parentAgentId` — `null` for a top-level agent; for a subagent, the agent that spawned it.
+- `parentAgentId` — `null` when no agent manages this one; otherwise the agent that spawned and
+  manages it. A user-visible managed root and an ordinary hidden subagent both retain this
+  ancestry.
+- `userVisible` — optional additive flag, always emitted by current daemons. `true` when the agent
+  is explicitly attached to a project or workspace root-agent series. Ordinary subagents are
+  `false`; a managed root in another workspace is `true`.
+- `managedByAnotherAgent` — optional additive flag, always emitted by current daemons. `true` when
+  `parentAgentId` is non-null.
+- `canSendMessages` — optional additive flag, always emitted by current daemons. `true` exactly
+  when the user-facing `send` route accepts a message for this agent. It is `false` for ordinary
+  subagents, user-visible managed roots, and archived agents.
 - `title`, `titleStatus` — a generated human-readable title for the conversation.
   `titleStatus` is `"idle"` while none has been generated yet and `"ready"` once one has.
 - `status` — what the agent is doing right now, granularly:
@@ -1373,8 +1402,8 @@ Fields:
 - `unread` — set when the agent finished work the user has not looked at: why (`reason`) and
   since when. `null` when there is nothing unread. Cleared by `POST /v0/agents/:agentId/read`.
 - `orderKey` — an opaque owner-local sort key, as on projects and workspaces; the list order is
-  manual and moved with `reorder`. It is `null` on a subagent because subagents do not appear in an
-  owner list.
+  manual and moved with `reorder`. It is non-null for every user-visible root, including one
+  managed from another workspace, and `null` for an ordinary hidden subagent.
 - `lastCursor` — the newest event cursor for this agent, so a client can open an event stream
   from exactly where the snapshot left off.
 - `createdAt`, `updatedAt`, `archivedAt` — lifecycle timestamps; `archivedAt` is `null` while
@@ -1389,25 +1418,33 @@ Request:
 ```json
 {
     "workspaceId": "k2h4j5l6",
+    "parentAgentId": "p9q8r7s6",
     "title": "Fix the login redirect loop",
     "id": "a1b2c3d4"
 }
 ```
 
 - `workspaceId` — required; the workspace the agent will run in. Must be active.
+- `parentAgentId` — optional additive field. When omitted, creation makes an ordinary
+  user-controlled root agent. When present, it must name an existing agent in a different
+  workspace. Creation retains that Agent Base parent while attaching the new agent as a
+  user-visible managed root in `workspaceId`; its `canSendMessages` is `false`.
 - `title` — optional. A titled agent keeps it: `titleStatus` is `"ready"` from birth and the
   daemon never generates one over it. Untitled, the daemon generates a title from the
   conversation once there is enough to summarize.
 - `id` — optional client-supplied ID. Creating with the ID of an agent that already exists
   returns that agent unchanged, making creation safely retryable.
 
-Creation always makes a top-level agent; subagents are spawned by their parents, never through
-this endpoint.
+Creation always makes a user-visible root in the destination workspace. Without `parentAgentId`
+it is also a root in Agent Base ancestry. With `parentAgentId` it is the exceptional managed root
+whose parent belongs to another workspace. Ordinary hidden subagents are still spawned by their
+parents rather than through this endpoint.
 
-Response — `201`: `{ "agent": { ... }, "slashCommands": [ ... ] }`. Creation is complete when it answers: the agent
-exists, is `"idle"`, and is ready to receive a message. The owning project and its same-ID root
-workspace, or the owning child workspace, also advance and emit their update with the new ordered
-`agents` series.
+Response — `201`: `{ "agent": { ... }, "slashCommands": [ ... ] }`. Creation is complete when it
+answers: the agent exists, is `"idle"`, and is ready for work. A user-controlled root may receive
+a user message; a managed root receives work from its parent. The owning project and its same-ID
+root workspace, or the owning child workspace, also advance and emit their update with the new
+ordered `agents` series.
 
 ### `GET /v0/agents/:agentId`
 

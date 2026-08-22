@@ -783,7 +783,7 @@ export class HappyAgentClient {
 
     // Agents
 
-    /** `POST /v0/agents` — creation always makes a top-level agent. */
+    /** `POST /v0/agents` — creation always makes a user-visible workspace root. */
     async createAgent(
         request: CreateAgentRequest,
         options: RequestOptions = {},

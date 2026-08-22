@@ -169,6 +169,27 @@ describe("HappyAgentClient", () => {
         );
     });
 
+    it("creates a user-visible agent with a different-workspace managing parent", async () => {
+        const { fetch, requests } = stubFetch(() => json({ agent: {}, slashCommands: [] }, 201));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await client.createAgent({
+            id: "managedroot1",
+            parentAgentId: "parentagent1",
+            title: "Managed root",
+            workspaceId: "workspace2",
+        });
+
+        expect(requests[0]?.body).toBe(
+            JSON.stringify({
+                id: "managedroot1",
+                parentAgentId: "parentagent1",
+                title: "Managed root",
+                workspaceId: "workspace2",
+            }),
+        );
+    });
+
     it("sends the version a guarded mutation was made against as If-Match", async () => {
         const { fetch, requests } = stubFetch(() => json({ project: {} }));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });

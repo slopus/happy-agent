@@ -21,8 +21,21 @@ of course, look into its own database and find the IDs itself when it wants to
 
 ## Subagents
 
-Subagents are the agents that are not human-visible: they are spawned and
-driven by another agent rather than by a person in a UI.
+Subagents are spawned and driven by another agent rather than by a person in a
+UI. Ordinarily they are not human-visible and do not occur in a project or
+workspace's agent list.
+
+There is one deliberate exception. An agent may create a workspace and then
+create an agent rooted in that other workspace while retaining Agent Base
+ancestry. That agent is a user-visible root of the new workspace, even though
+its `parentAgentId` records that another agent manages it. The parent must be in
+a different workspace. It appears in the new workspace's agent list, is marked
+as user-visible and managed by another agent, and does not accept messages from
+the user. Ordinary subagents remain hidden exactly as before.
+
+User visibility, management by another agent, and whether the user may send a
+message are separate explicit facts. A UI must not infer one from another or
+from list membership.
 
 ## Model
 
@@ -38,3 +51,7 @@ models.
   continues with its full context.
 - Agents can reach each other by unguessable Agent ID, shared by the user by
   hand — with Rig able to find the IDs in its own database when needed.
+- Ordinary subagents remain absent from project and workspace agent lists. A
+  managed root whose parent belongs to another workspace is visible in its own
+  workspace, reports that it is user-visible and agent-managed, and reports
+  that the user cannot send it messages.

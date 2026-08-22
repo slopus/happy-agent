@@ -30,12 +30,18 @@ before tests encode either answer. Test agents never edit `API.md`.
 The direct product direction to preserve is:
 
 A project is the root workspace of its file tree. Projects and workspaces each
-own their own ordered series of top-level agents in the same way. A project ID
-is its root-workspace ID; a child workspace owns a separate series. There is no
-global agent-list endpoint. Workspace parent and child relationships describe
-files, checkouts, and branches only. Subagent ancestry belongs only to Agent
-Base. Only user steering emits `run.boundary`; queued and incoming messages,
-notifications, and compaction do not.
+own their own ordered series of user-visible root agents in the same way. A
+project ID is its root-workspace ID; a child workspace owns a separate series.
+There is no global agent-list endpoint. Workspace parent and child relationships
+describe files, checkouts, and branches only. Subagent ancestry belongs only to
+Agent Base. Ordinary subagents occur in no owner series. A root agent explicitly
+created in a workspace different from its parent agent's workspace is the one
+exception: it remains a child in Agent Base ancestry while appearing as a
+user-visible, agent-managed root in the destination workspace's series, and the
+user cannot send it messages. Visibility, agent management, and user messaging
+capability are separate explicit agent facts. Only user steering emits
+`run.boundary`; queued and incoming messages, notifications, and compaction do
+not.
 
 The gym must prove both ordinary success and deliberate failure. A project is
 registered or cloned, workspaces are created and nested, ordering and archival
@@ -142,9 +148,12 @@ After every action, including every rejection, the gym proves:
 
 - IDs are unique; project ID equals root-workspace ID.
 - The workspace graph is rooted, acyclic, and project-local; workspace
-  hierarchy and agent ancestry never cross.
-- Every active top-level agent occurs in exactly one owner-local ordered
-  series; subagents occur in none.
+  hierarchy and agent ancestry remain independent. An ancestry edge crosses
+  workspaces only for a user-visible managed root.
+- Every active user-visible root agent occurs in exactly one owner-local
+  ordered series. Ordinary subagents occur in none. A visible managed root may
+  have a parent only when that parent belongs to another workspace, and its
+  visibility, management, and user-messaging flags describe that state.
 - Successful mutations agree across response, ordered events, mutation echo,
   resource versions, fresh reads, and real effects.
 - Rejections change no version, event replica, bytes, catalog, process, or
@@ -237,8 +246,11 @@ leaked resources. Source-text counting is not evidence.
 - Every documented route and event family has black-box success coverage, and
   every documented conflict, unavailable state, authorization boundary, size
   limit, and invalid-operation family has deterministic failure coverage.
-- Projects and workspaces expose their own ordered top-level-agent series while
-  workspace nesting remains purely the file and checkout hierarchy.
+- Projects and workspaces expose their own ordered user-visible-root-agent
+  series while workspace nesting remains purely the file and checkout
+  hierarchy. Ordinary subagents stay hidden; a root managed from another
+  workspace remains visible in its destination owner series and explicitly
+  refuses user messages.
 - Project registration, workspace creation, file access, Git watching,
   terminals, processes, messages, steering, and both levels of network proxy
   are proven by their real observable effects.

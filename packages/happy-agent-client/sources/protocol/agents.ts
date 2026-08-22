@@ -38,8 +38,14 @@ export interface Agent {
     id: Cuid2;
     /** The workspace the agent runs in; its commands and edits land there. */
     workspaceId: Cuid2;
-    /** `null` for a top-level agent; for a subagent, the agent that spawned it. */
+    /** `null` when no agent manages this one; otherwise the managing parent. */
     parentAgentId: Cuid2 | null;
+    /** Whether this agent belongs to a project or workspace's visible root-agent series. */
+    userVisible?: boolean;
+    /** Whether another agent owns this agent's Agent Base ancestry. */
+    managedByAnotherAgent?: boolean;
+    /** Whether the user-facing send route accepts messages for this agent. */
+    canSendMessages?: boolean;
     title: string | null;
     /** `"idle"` while no title has been generated yet. */
     titleStatus: "idle" | "ready";
@@ -51,7 +57,7 @@ export interface Agent {
     /** The open question when the run is waiting on the person. */
     pendingQuestionId: Cuid2 | null;
     unread: AgentUnread | null;
-    /** Owner-local order for a top-level agent; `null` on a subagent. */
+    /** Owner-local order for a user-visible root; `null` on an ordinary hidden subagent. */
     orderKey: string | null;
     /** The newest event cursor for this agent, so a stream opens where this left off. */
     lastCursor: EventCursor;
@@ -109,10 +115,12 @@ export interface AgentActivityResponse {
     processes: BackgroundProcess[];
 }
 
-/** `POST /v0/agents` — creation always makes a top-level agent. */
+/** `POST /v0/agents` — creation always makes a user-visible workspace root. */
 export interface CreateAgentRequest {
     /** The workspace the agent will run in. Must be active. */
     workspaceId: Cuid2;
+    /** Retains this different-workspace parent while creating a visible managed root. */
+    parentAgentId?: Cuid2;
     /** A titled agent keeps its title; the daemon never generates one over it. */
     title?: string;
     /** Optional client-supplied ID, which makes creation safely retryable. */
