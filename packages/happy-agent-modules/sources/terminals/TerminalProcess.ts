@@ -6,6 +6,10 @@
  * only exists when the program on the far end believes it is talking to a terminal.
  */
 export interface TerminalProcess {
+    /**
+     * End the process now. This is a kill, not a hangup: closing a terminal is immediate, and
+     * nothing waits on a shell deciding whether to take the hint.
+     */
     kill(): Promise<void> | void;
     /**
      * Start receiving output. Whatever the process wrote before the first listener arrived is

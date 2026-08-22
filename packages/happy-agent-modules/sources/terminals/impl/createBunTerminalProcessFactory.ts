@@ -77,11 +77,7 @@ export function createBunTerminalProcessFactory(
                 kill() {
                     if (exited) return;
                     try {
-                        if (paused) {
-                            paused = false;
-                            subprocess.kill("SIGCONT");
-                        }
-                        subprocess.kill();
+                        subprocess.kill("SIGKILL");
                     } catch {
                         // The child may have exited between the state check and the signal.
                     }

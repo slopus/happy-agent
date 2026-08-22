@@ -41,7 +41,7 @@ export function createHostTerminalProcessFactory(
             });
             const process: TerminalProcess = {
                 kill() {
-                    pty.kill();
+                    pty.kill("SIGKILL");
                 },
                 onData(listener) {
                     listening = listener;

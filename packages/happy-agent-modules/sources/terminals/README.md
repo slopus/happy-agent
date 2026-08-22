@@ -18,17 +18,17 @@ nobody can attach to.
 The module has no model-facing tools. A terminal is a place a person works, not a capability an
 agent calls, and everything below is a host operation.
 
-| Method                                            | What it does                                                     |
-| ------------------------------------------------- | ---------------------------------------------------------------- |
-| `create(ctx, agentId, scope, input)`              | Opens one terminal in the folder that scope names.               |
-| `list(ctx, agentId, scope)`                       | Every terminal open on that folder, running and finished.        |
-| `get(ctx, agentId, scope, terminalId)`            | One terminal's record.                                           |
-| `session(ctx, agentId, scope, terminalId)`        | The live terminal, for a caller about to attach a stream.        |
-| `attach(ctx, agentId, scope, terminalId, stream)` | Attaches one duplex stream, returning the call that detaches it. |
-| `resize(ctx, agentId, scope, terminalId, input)`  | Resizes the process, the canonical emulator, and every replica.  |
-| `stop(ctx, agentId, scope, terminalId)`           | Ends the process. The record stays, holding the exit code.       |
-| `closeScope(scope)` / `closeProject(projectId)`   | Ends a folder's terminals when the folder itself goes away.      |
-| `close()`                                         | Ends everything and opens nothing more.                          |
+| Method                                            | What it does                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------- |
+| `create(ctx, agentId, scope, input)`              | Opens one terminal in the folder that scope names.                  |
+| `list(ctx, agentId, scope)`                       | Every terminal open on that folder, running and finished.           |
+| `get(ctx, agentId, scope, terminalId)`            | One terminal's record.                                              |
+| `session(ctx, agentId, scope, terminalId)`        | The live terminal, for a caller about to attach a stream.           |
+| `attach(ctx, agentId, scope, terminalId, stream)` | Attaches one duplex stream, returning the call that detaches it.    |
+| `resize(ctx, agentId, scope, terminalId, input)`  | Resizes the process, the canonical emulator, and every replica.     |
+| `stop(ctx, agentId, scope, terminalId)`           | Kills the process at once. The record stays, holding the exit code. |
+| `closeScope(scope)` / `closeProject(projectId)`   | Ends a folder's terminals when the folder itself goes away.         |
+| `close()`                                         | Ends everything and opens nothing more.                             |
 
 A scope is `{ projectId }` or `{ projectId, workspaceId }`. A project and its workspaces are
 separate collections, because they are separate folders.

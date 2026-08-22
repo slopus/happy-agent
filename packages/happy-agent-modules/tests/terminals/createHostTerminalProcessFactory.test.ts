@@ -50,4 +50,26 @@ describe("createHostTerminalProcessFactory", () => {
         expect(pty.resize).not.toHaveBeenCalled();
         expect(pty.write).not.toHaveBeenCalled();
     });
+
+    it("kills the native PTY outright rather than hanging it up", async () => {
+        const pty = {
+            kill: vi.fn(),
+            onData: vi.fn(() => ({ dispose: vi.fn() })),
+            onExit: vi.fn(() => ({ dispose: vi.fn() })),
+            pause: vi.fn(),
+            resize: vi.fn(),
+            resume: vi.fn(),
+            write: vi.fn(),
+        };
+        nodePty.spawn.mockReturnValue(pty);
+        const process = await createHostTerminalProcessFactory({ SHELL: "/bin/sh" }).start({
+            cols: 80,
+            cwd: "/workspace",
+            rows: 24,
+        });
+
+        await process.kill();
+
+        expect(pty.kill).toHaveBeenCalledWith("SIGKILL");
+    });
 });

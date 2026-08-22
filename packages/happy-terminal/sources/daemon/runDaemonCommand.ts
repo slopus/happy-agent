@@ -19,6 +19,11 @@ import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
 
 const DAEMON_SHUTDOWN_TIMEOUT_MS = 30_000;
 const DRAIN_POLL_INTERVAL_MS = 100;
+/**
+ * Agent work owns the drain for as long as it needs, but an HTTP mutation finishes in moments.
+ * One that does not is a daemon bug, and it must not leave a stop waiting forever.
+ */
+const DRAIN_MUTATION_TIMEOUT_MS = 30_000;
 
 export type DaemonCommand = "kill" | "reload" | "start" | "status" | "stop";
 
@@ -148,17 +153,35 @@ async function drainLocalProtocolServer(
         throw error;
     }
     let previous: string | undefined;
+    let stalledSince: number | undefined;
     for (;;) {
         const health = await client.getHealth();
         const waiting = health.drainWaitingFor ?? [];
         const current = JSON.stringify(waiting);
-        if (current !== previous) {
+        const changed = current !== previous;
+        if (changed) {
             report(formatDrainProgress(waiting));
             previous = current;
         }
         if (waiting.length === 0) return;
+        if (waiting.every((wait) => wait.name === "api-mutations")) {
+            if (changed || stalledSince === undefined) stalledSince = Date.now();
+            if (Date.now() - stalledSince >= DRAIN_MUTATION_TIMEOUT_MS) {
+                report(formatDrainGaveUp(waiting));
+                return;
+            }
+        } else {
+            stalledSince = undefined;
+        }
         await new Promise((resolve) => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
     }
+}
+
+function formatDrainGaveUp(waiting: readonly DrainWaitingFor[]): string {
+    return (
+        `Stopping anyway: ${waiting.map(formatDrainWait).join("; ")} did not finish within ` +
+        `${String(Math.round(DRAIN_MUTATION_TIMEOUT_MS / 1000))} seconds.`
+    );
 }
 
 function formatDrainProgress(waiting: readonly DrainWaitingFor[]): string {

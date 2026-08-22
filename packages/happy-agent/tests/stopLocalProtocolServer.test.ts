@@ -13,6 +13,8 @@ vi.mock("../sources/lifecycle/waitForSocketRemoval.js", () => ({
     waitForSocketRemoval: mocks.waitForSocketRemoval,
 }));
 
+const DRAIN_POLL_INTERVAL_MS = 100;
+
 describe("stopLocalProtocolServer", () => {
     it("waits thirty seconds for the old daemon to release its socket", async () => {
         vi.resetModules();
@@ -109,6 +111,121 @@ describe("stopLocalProtocolServer", () => {
         expect(getHealth.mock.invocationCallOrder.at(-1)).toBeLessThan(
             shutdown.mock.invocationCallOrder[0] as number,
         );
+    });
+
+    it("stops a daemon whose admitted API mutations never finish", async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        try {
+            const { stopLocalProtocolServer } =
+                await import("../sources/lifecycle/stopLocalProtocolServer.js");
+            mocks.waitForSocketRemoval.mockResolvedValue(true);
+            const shutdown = vi.fn().mockResolvedValue({
+                pid: 2_147_483_647,
+                shuttingDown: true,
+            });
+            const client = {
+                drain: vi.fn().mockResolvedValue({ draining: true, pid: 2_147_483_647 }),
+                getHealth: vi
+                    .fn()
+                    .mockResolvedValue(drainedHealth([{ name: "api-mutations", count: 4 }])),
+                shutdown,
+            } as unknown as HappyAgentClient;
+            const progress: string[] = [];
+
+            const stopping = stopLocalProtocolServer(client, "/tmp/rig/server.sock", {
+                onDrainProgress: (message) => progress.push(message),
+            });
+            await vi.advanceTimersByTimeAsync(31_000);
+
+            await expect(stopping).resolves.toBeUndefined();
+            expect(progress).toEqual([
+                "Draining: 4 API mutations.",
+                "Stopping anyway: 4 API mutations did not finish within 30 seconds.",
+            ]);
+            expect(shutdown).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps waiting while admitted API mutations are still finishing", async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        try {
+            const { stopLocalProtocolServer } =
+                await import("../sources/lifecycle/stopLocalProtocolServer.js");
+            mocks.waitForSocketRemoval.mockResolvedValue(true);
+            let remaining = 4;
+            const client = {
+                drain: vi.fn().mockResolvedValue({ draining: true, pid: 2_147_483_647 }),
+                getHealth: vi.fn(() =>
+                    Promise.resolve(
+                        drainedHealth(
+                            remaining === 0 ? [] : [{ name: "api-mutations", count: remaining }],
+                        ),
+                    ),
+                ),
+                shutdown: vi.fn().mockResolvedValue({
+                    pid: 2_147_483_647,
+                    shuttingDown: true,
+                }),
+            } as unknown as HappyAgentClient;
+            const progress: string[] = [];
+
+            const stopping = stopLocalProtocolServer(client, "/tmp/rig/server.sock", {
+                onDrainProgress: (message) => progress.push(message),
+            });
+            await vi.advanceTimersByTimeAsync(25_000);
+            remaining = 3;
+            await vi.advanceTimersByTimeAsync(25_000);
+            remaining = 0;
+            await vi.advanceTimersByTimeAsync(DRAIN_POLL_INTERVAL_MS);
+
+            await expect(stopping).resolves.toBeUndefined();
+            expect(progress).toEqual([
+                "Draining: 4 API mutations.",
+                "Draining: 3 API mutations.",
+                "Daemon drain is complete.",
+            ]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps waiting while agent work still holds the drain open", async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        try {
+            const { stopLocalProtocolServer } =
+                await import("../sources/lifecycle/stopLocalProtocolServer.js");
+            mocks.waitForSocketRemoval.mockResolvedValue(true);
+            const shutdown = vi.fn().mockResolvedValue({
+                pid: 2_147_483_647,
+                shuttingDown: true,
+            });
+            const working = drainedHealth([
+                { name: "agent-system", count: 1, agents: [{ id: "agent123", stage: "tools" }] },
+                { name: "api-mutations", count: 1 },
+            ]);
+            const getHealth = vi.fn().mockResolvedValue(working);
+            const client = {
+                drain: vi.fn().mockResolvedValue({ draining: true, pid: 2_147_483_647 }),
+                getHealth,
+                shutdown,
+            } as unknown as HappyAgentClient;
+
+            const stopping = stopLocalProtocolServer(client, "/tmp/rig/server.sock");
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(shutdown).not.toHaveBeenCalled();
+
+            getHealth.mockResolvedValue(drainedHealth());
+            await vi.advanceTimersByTimeAsync(DRAIN_POLL_INTERVAL_MS);
+            await expect(stopping).resolves.toBeUndefined();
+            expect(shutdown).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("falls back to direct shutdown for an older daemon without drain support", async () => {

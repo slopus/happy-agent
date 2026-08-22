@@ -22,6 +22,9 @@ import {
 import type { TerminalProcess, TerminalProcessFactory } from "../TerminalProcess.js";
 import { GhosttyTerminalState } from "./GhosttyTerminalState.js";
 
+/** How long a killed terminal process has to be reaped before stopping gives up out loud. */
+const TERMINAL_EXIT_TIMEOUT_MS = 2_000;
+
 /**
  * One live terminal: a process, the canonical emulator it writes into, and the protocol that keeps
  * every attached replica in step with that emulator.
@@ -160,7 +163,9 @@ export class TerminalSession {
     }
 
     async dispose(): Promise<void> {
-        await this.stop();
+        // A process that outlives even the kill must not keep a folder, a workspace, or a
+        // shutting-down daemon waiting; the emulator and its state still go away here.
+        await this.stop().catch(() => undefined);
         this.#driver.close();
         this.#state.close();
     }
@@ -183,10 +188,36 @@ export class TerminalSession {
         return this.terminal();
     }
 
+    /**
+     * Close the terminal at once: the process is killed outright rather than asked to leave, so
+     * a shell that would have sat on a hangup cannot hold this request — or, through it, a daemon
+     * drain — open. Waiting here is only for the kill to be reaped.
+     */
     async stop(): Promise<Terminal> {
         if (this.#status === "running") await this.#process.kill();
-        await this.#exited;
+        if (!(await this.#exitedWithin(TERMINAL_EXIT_TIMEOUT_MS))) {
+            throw new TerminalError(
+                "unavailable",
+                "The terminal process did not exit after it was killed.",
+            );
+        }
         return this.terminal();
+    }
+
+    /** Whether the kill has been reaped in time, without holding the event loop open. */
+    async #exitedWithin(milliseconds: number): Promise<boolean> {
+        let timer: NodeJS.Timeout | undefined;
+        try {
+            return await Promise.race([
+                this.#exited.then(() => true),
+                new Promise<boolean>((resolve) => {
+                    timer = setTimeout(() => resolve(false), milliseconds);
+                    timer.unref();
+                }),
+            ]);
+        } finally {
+            if (timer !== undefined) clearTimeout(timer);
+        }
     }
 
     terminal(): Terminal {

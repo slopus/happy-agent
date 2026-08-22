@@ -1,7 +1,7 @@
 import { PassThrough } from "node:stream";
 
 import type { Context } from "@steve.kite/stdlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
 import { projectMigrations, ProjectsModule } from "../../sources/projects/index.js";
@@ -233,6 +233,46 @@ describe("TerminalsModule", () => {
         expect(factory.processes[0]?.killed).toBe(true);
     });
 
+    it("closes a terminal at once, without waiting on the process to agree", async () => {
+        const { ctx, factory, module, project } = await createWorld("terminals-instant-stop");
+        const scope = { projectId: project.id };
+        const created = await module.create(ctx, scope, {});
+
+        vi.useFakeTimers();
+        try {
+            await expect(module.stop(ctx, scope, created.id)).resolves.toMatchObject({
+                status: "exited",
+            });
+            // Nothing was waited out: no timer ever had to fire for the terminal to be gone.
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+        expect(factory.processes[0]?.killed).toBe(true);
+    });
+
+    it("gives up out loud on a terminal process nothing can end", async () => {
+        const { ctx, factory, module, project } = await createWorld("terminals-immortal-stop");
+        const scope = { projectId: project.id };
+        const created = await module.create(ctx, scope, {});
+        const process = factory.processes[0] as FakeProcess;
+        process.ignoresKill = true;
+
+        vi.useFakeTimers();
+        try {
+            const stopping = expect(module.stop(ctx, scope, created.id)).rejects.toMatchObject({
+                code: "unavailable",
+            });
+            await vi.advanceTimersByTimeAsync(2_000);
+
+            await stopping;
+        } finally {
+            vi.useRealTimers();
+        }
+        // Let the folder close without sitting through the timeout a second time.
+        process.exitWith(null);
+    });
+
     it("attaches a stream and detaches it again", async () => {
         const { ctx, module, project } = await createWorld("terminals-attach");
         const scope = { projectId: project.id };
@@ -358,6 +398,8 @@ async function createWorld(name: string): Promise<World> {
 /** A process that never exists: the module's own behavior, with no shell in the way. */
 class FakeProcess implements TerminalProcess {
     killed = false;
+    /** A process nothing on this machine can end, which stop must give up on rather than hang. */
+    ignoresKill = false;
     readonly sizes: [number, number][] = [];
     readonly written: string[] = [];
     #listener: ((data: Uint8Array) => void) | undefined;
@@ -372,6 +414,7 @@ class FakeProcess implements TerminalProcess {
 
     kill(): void {
         this.killed = true;
+        if (this.ignoresKill) return;
         this.exitWith(null);
     }
 

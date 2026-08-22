@@ -152,6 +152,7 @@ const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 const MAX_ANNOUNCED_PENDING_MESSAGES = 10_000;
 const MAX_ANNOUNCED_AGENT_CREATIONS = 10_000;
 const MAX_ANNOUNCED_TERMINAL_RUNS = 10_000;
+const DRAIN_MUTATION_LOG_INTERVAL_MS = 5_000;
 
 interface AcceptedMessageBatch {
     readonly kind: "send" | "steering";
@@ -211,6 +212,13 @@ interface ApiRunningDrain {
     finished: boolean;
 }
 
+/** What one admitted HTTP mutation is, for the log that explains a drain that will not finish. */
+interface ApiAdmittedMutation {
+    readonly method: string;
+    readonly path: string;
+    readonly startedAt: number;
+}
+
 /**
  * The daemon's complete application protocol boundary.
  *
@@ -268,7 +276,7 @@ export class ApiModule implements AgentModule {
     readonly #drainSources = new Map<string, ApiDrainSource>();
     readonly #runningDrains = new Map<string, ApiRunningDrain>();
     /** HTTP mutations admitted before draining published its read-only boundary. */
-    readonly #apiMutations = new Set<symbol>();
+    readonly #apiMutations = new Map<symbol, ApiAdmittedMutation>();
     readonly #announcedPendingMessages = new Set<string>();
     readonly #apiPendingMessageIds = new Set<string>();
     readonly #announcedAgentCreations = new Set<string>();
@@ -285,6 +293,7 @@ export class ApiModule implements AgentModule {
     #agents: AgentSystemRef | undefined;
     #ready = false;
     #draining = false;
+    #drainMutationsLoggedAt = 0;
     #closed = false;
     #token: string | undefined;
     #preparePromise: Promise<void> | undefined;
@@ -457,7 +466,7 @@ export class ApiModule implements AgentModule {
                         "Happy Agent is draining and no longer accepts mutations.",
                     );
                 }
-                finishMutation = this.#admitMutation();
+                finishMutation = this.#admitMutation(request, url);
             }
             if (request.method === "GET" && url.pathname === "/") {
                 sendJson(response, 200, { text: "Welcome to Happy Agent!" });
@@ -3868,9 +3877,13 @@ export class ApiModule implements AgentModule {
     }
 
     /** Admit one HTTP mutation synchronously and return its exact-once release. */
-    #admitMutation(): () => void {
+    #admitMutation(request: IncomingMessage, url: URL): () => void {
         const admission = Symbol("api-mutation");
-        this.#apiMutations.add(admission);
+        this.#apiMutations.set(admission, {
+            method: request.method ?? "UNKNOWN",
+            path: url.pathname,
+            startedAt: Date.now(),
+        });
         let finished = false;
         return () => {
             if (finished) return;
@@ -3913,6 +3926,7 @@ export class ApiModule implements AgentModule {
         const waiting: Record<string, unknown>[] = [];
         if (this.#apiMutations.size > 0) {
             waiting.push({ name: "api-mutations", count: this.#apiMutations.size });
+            this.#reportDrainMutations(ctx);
         }
         for (const [name, source] of this.#drainSources) {
             const running = this.#runningDrains.get(name);
@@ -3949,6 +3963,32 @@ export class ApiModule implements AgentModule {
             });
         }
         return waiting;
+    }
+
+    /**
+     * Name the requests holding the drain open. A mutation that never finishes keeps the daemon
+     * draining forever, and the count alone does not say which request to go and look at.
+     */
+    #reportDrainMutations(ctx: Context | undefined): void {
+        const now = Date.now();
+        if (
+            ctx === undefined ||
+            now - this.#drainMutationsLoggedAt < DRAIN_MUTATION_LOG_INTERVAL_MS
+        ) {
+            return;
+        }
+        this.#drainMutationsLoggedAt = now;
+        const oldest = [...this.#apiMutations.values()]
+            .sort((left, right) => left.startedAt - right.startedAt)
+            .slice(0, 5)
+            .map(
+                (mutation) =>
+                    `${mutation.method} ${mutation.path} age=${String(
+                        Math.round((now - mutation.startedAt) / 1000),
+                    )}s`,
+            )
+            .join(", ");
+        ctx.log.info(`daemon:drain:waiting mutations=${String(this.#apiMutations.size)} ${oldest}`);
     }
 
     #health(ctx: Context): Record<string, unknown> {
