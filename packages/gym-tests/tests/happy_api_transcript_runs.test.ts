@@ -67,6 +67,7 @@ describe("public transcript and run APIs", () => {
     it("keeps queued messages pending, accepts them in order, and pages whole runs", async () => {
         let releaseFirst!: () => void;
         let providerStarted!: () => void;
+        let agentCalls = 0;
         const firstProviderStarted = new Promise<void>((resolve) => {
             providerStarted = resolve;
         });
@@ -75,7 +76,10 @@ describe("public transcript and run APIs", () => {
         });
         const gym = await startGym({
             inference: async (request) => {
-                if (request.callIndex === 0) {
+                if (request.sessionId.startsWith("naming:")) return namingTurn();
+                const call = agentCalls;
+                agentCalls += 1;
+                if (call === 0) {
                     providerStarted();
                     await firstProviderGate;
                     return {
@@ -522,9 +526,24 @@ describe("public transcript and run APIs", () => {
         ).toBe("failed");
     }, 60_000);
 
-    it("automatically compacts before the measured context reaches the model limit", async () => {
+    it("automatically compacts once before the next turn reaches inference", async () => {
         const gym = await startGym({
             models: [contextWindowModel()],
+            compaction: (request) => ({
+                status: "completed",
+                preservedMessages: [],
+                usage: {
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    input: 245_000,
+                    output: 10_000,
+                    totalTokens: 255_000,
+                },
+                context: {
+                    ...request.context,
+                    messages: request.context.messages.slice(-1),
+                },
+            }),
             inference: (request) =>
                 request.sessionId.startsWith("naming:")
                     ? namingTurn()
@@ -540,14 +559,14 @@ describe("public transcript and run APIs", () => {
                       },
         });
 
-        const sent = await gym.send("approach the context limit");
+        await gym.send("approach the context limit");
+        expect(gym.inference.compactions).toHaveLength(0);
+
+        const sent = await gym.send("continue after reaching the context limit");
         await gym.waitUntil(
             () => (gym.inference.compactions.length === 1 ? true : undefined),
             "automatic context compaction",
         );
-        await expect(gym.client.getAgentUsage(gym.defaultSessionId)).resolves.toMatchObject({
-            context: null,
-        });
         const automatic = await gym.waitUntil(async () => {
             const history = await gym.client.getMessages(gym.defaultSessionId);
             const latest = compactionsFrom(history).at(-1);
@@ -562,12 +581,29 @@ describe("public transcript and run APIs", () => {
                 trigger: "automatic",
             },
         });
+        await waitForFinished(gym, gym.defaultSessionId, sent.runId);
+        expect(gym.inference.compactions[0]?.messages.at(-1)).toMatchObject({
+            content: [{ text: "continue after reaching the context limit", type: "text" }],
+            role: "user",
+        });
+        const requests = gym.inference.requests.filter(
+            (request) => !request.sessionId.startsWith("naming:"),
+        );
+        expect(requests).toHaveLength(2);
+        expect(requests[1]?.messages).toMatchObject([
+            {
+                content: [{ text: "continue after reaching the context limit", type: "text" }],
+                role: "user",
+            },
+        ]);
+        expect(gym.inference.compactions).toHaveLength(1);
         expect(gym.inference.unscripted).toEqual([]);
     }, 60_000);
 
     it("groups concurrent steering acceptances into one successor boundary", async () => {
         let releaseFirst!: () => void;
         let providerStarted!: () => void;
+        let agentCalls = 0;
         const firstProviderStarted = new Promise<void>((resolve) => {
             providerStarted = resolve;
         });
@@ -576,7 +612,10 @@ describe("public transcript and run APIs", () => {
         });
         const gym = await startGym({
             inference: async (request) => {
-                if (request.callIndex === 0) {
+                if (request.sessionId.startsWith("naming:")) return namingTurn();
+                const call = agentCalls;
+                agentCalls += 1;
+                if (call === 0) {
                     providerStarted();
                     await firstProviderGate;
                     return { content: [{ text: "obsolete answer", type: "text" }] };
@@ -656,19 +695,18 @@ describe("public transcript and run APIs", () => {
     }, 60_000);
 
     it("guards aborts by run identity and records an aborted run", async () => {
-        let releaseInference!: () => void;
         let providerStarted!: () => void;
         const startedInference = new Promise<void>((resolve) => {
             providerStarted = resolve;
         });
-        const inferenceGate = new Promise<void>((resolve) => {
-            releaseInference = resolve;
-        });
         const gym = await startGym({
-            inference: async () => {
+            inference: (request) => {
+                if (request.sessionId.startsWith("naming:")) return namingTurn();
                 providerStarted();
-                await inferenceGate;
-                return { content: [{ text: "long answer", type: "text" }] };
+                return {
+                    content: [{ text: "long answer", type: "text" }],
+                    delayMs: 8_000,
+                };
             },
         });
 
@@ -682,41 +720,35 @@ describe("public transcript and run APIs", () => {
         const runId = runIdOf(started);
         if (runId === undefined) throw new Error("The active run had no ID.");
 
-        try {
-            await expect(
-                gym.client.abortAgent(gym.defaultSessionId, {
-                    expectedRunId: "stalerun",
-                    mutationId: "transcript-abort-stale",
-                }),
-            ).rejects.toMatchObject({ code: "conflict", status: 409 });
-            expect((await gym.client.getAgent(gym.defaultSessionId)).agent.status).not.toBe("idle");
+        await expect(
+            gym.client.abortAgent(gym.defaultSessionId, {
+                expectedRunId: "stalerun",
+                mutationId: "transcript-abort-stale",
+            }),
+        ).rejects.toMatchObject({ code: "conflict", status: 409 });
+        expect((await gym.client.getAgent(gym.defaultSessionId)).agent.status).not.toBe("idle");
 
-            const aborting = gym.client.abortAgent(gym.defaultSessionId, {
-                expectedRunId: runId,
-                mutationId: "transcript-abort-current",
-            });
-            releaseInference();
-            const aborted = await aborting;
-            expect(aborted.agent.id).toBe(gym.defaultSessionId);
-            const finished = await waitForFinished(gym, gym.defaultSessionId, runId);
-            expect(finished.type).toBe("run.finished");
-            if (finished.type !== "run.finished") throw new Error("Expected run.finished.");
-            expect(finished.payload.run).toMatchObject({
-                id: runId,
-                reason: "abort",
-                status: "aborted",
-            });
+        const aborted = await gym.client.abortAgent(gym.defaultSessionId, {
+            expectedRunId: runId,
+            mutationId: "transcript-abort-current",
+        });
+        expect(aborted.agent.id).toBe(gym.defaultSessionId);
+        const finished = await waitForFinished(gym, gym.defaultSessionId, runId);
+        expect(finished.type).toBe("run.finished");
+        if (finished.type !== "run.finished") throw new Error("Expected run.finished.");
+        expect(finished.payload.run).toMatchObject({
+            id: runId,
+            reason: "abort",
+            status: "aborted",
+        });
 
-            const history = await gym.client.getMessages(gym.defaultSessionId);
-            expect(history.runs).toHaveLength(1);
-            expect(history.runs[0]).toMatchObject({
-                id: runId,
-                reason: "abort",
-                status: "aborted",
-            });
-        } finally {
-            releaseInference();
-        }
+        const history = await gym.client.getMessages(gym.defaultSessionId);
+        expect(history.runs).toHaveLength(1);
+        expect(history.runs[0]).toMatchObject({
+            id: runId,
+            reason: "abort",
+            status: "aborted",
+        });
     }, 60_000);
 
     it("aborts the targeted agent and its entire running descendant chain", async () => {
@@ -806,6 +838,7 @@ describe("public transcript and run APIs", () => {
                 (agent) => agent.status === "working",
             );
             if (grandchild === undefined) return undefined;
+            if (childAgentId !== child.id || grandchildAgentId !== grandchild.id) return undefined;
             return { child, grandchild };
         }, "the complete descendant chain to be working");
         expect(childAgentId).toBe(descendants.child.id);
@@ -998,55 +1031,63 @@ describe("public transcript and run APIs", () => {
     }, 60_000);
 
     it("recovers message deltas, deletes reset content, omits tool data, and records a compaction run", async () => {
+        let agentCalls = 0;
         const gym = await startGym({
-            inference: [
-                {
-                    events: [
-                        { type: "block_start" },
-                        { type: "text_start" },
-                        { delta: "discarded", type: "text_delta" },
-                        { type: "block_reset" },
-                        { type: "block_start" },
-                        { type: "text_start" },
-                        { delta: "fresh", type: "text_delta" },
-                        { type: "text_end" },
-                        { type: "block_stop" },
-                        {
-                            type: "token_usage",
-                            usage: {
-                                cacheRead: 1,
-                                cacheWrite: 2,
-                                input: 17,
-                                output: 19,
-                                totalTokens: 39,
+            inference: (request) => {
+                if (request.sessionId.startsWith("naming:")) return namingTurn();
+                const call = agentCalls;
+                agentCalls += 1;
+                if (call === 0) {
+                    return {
+                        events: [
+                            { type: "block_start" },
+                            { type: "text_start" },
+                            { delta: "discarded", type: "text_delta" },
+                            { type: "block_reset" },
+                            { type: "block_start" },
+                            { type: "text_start" },
+                            { delta: "fresh", type: "text_delta" },
+                            { type: "text_end" },
+                            { type: "block_stop" },
+                            {
+                                type: "token_usage",
+                                usage: {
+                                    cacheRead: 1,
+                                    cacheWrite: 2,
+                                    input: 17,
+                                    output: 19,
+                                    totalTokens: 39,
+                                },
                             },
+                            {
+                                state: "normal",
+                                tokens: { input: 17, output: 19 },
+                                type: "done",
+                            },
+                        ],
+                    };
+                }
+                if (call === 1) {
+                    return {
+                        content: [
+                            {
+                                arguments: { cmd: "printf tool-result" },
+                                callId: "transcript-tool-result",
+                                name: "exec_command",
+                                type: "tool_call",
+                            },
+                        ],
+                        usage: {
+                            cacheRead: 0,
+                            cacheWrite: 0,
+                            input: 23,
+                            output: 11,
+                            totalTokens: 34,
                         },
-                        {
-                            state: "normal",
-                            tokens: { input: 17, output: 19 },
-                            type: "done",
-                        },
-                    ],
-                },
-                {
-                    content: [
-                        {
-                            arguments: { cmd: "printf tool-result" },
-                            callId: "transcript-tool-result",
-                            name: "exec_command",
-                            type: "tool_call",
-                        },
-                    ],
-                    usage: {
-                        cacheRead: 0,
-                        cacheWrite: 0,
-                        input: 23,
-                        output: 11,
-                        totalTokens: 34,
-                    },
-                },
-                { content: [{ text: "final answer", type: "text" }] },
-            ],
+                    };
+                }
+                return { content: [{ text: "final answer", type: "text" }] };
+            },
         });
 
         const stream = gym.stream();

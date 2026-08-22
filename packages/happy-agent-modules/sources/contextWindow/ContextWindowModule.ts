@@ -1,45 +1,27 @@
 import type {
-    AgentBaseInference,
-    AgentBaseTurnStart,
     AgentModule,
-    AgentModuleAction,
     AgentModuleHooks,
+    AgentModuleInferencePreparationAction,
     AgentModuleScope,
-    AgentSystemRef,
 } from "@slopus/happy-agent-base";
-import type { Context } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
 
-/** Schedules compaction before another inference can exceed the model's curated context limit. */
+/** Checks the curated context limit at the safe boundary before every provider inference. */
 export class ContextWindowModule implements AgentModule {
     readonly name = "contextWindow";
 
     constructor(private readonly config: ConfigModule) {}
 
-    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => ({
-        beforeTurn: (
-            _ctx: Context,
-            scope: AgentModuleScope,
-            turn: AgentBaseTurnStart,
-        ): readonly AgentModuleAction[] | undefined =>
-            this.#compactionAction(scope, turn.contextTokens),
-        afterInference: async (
-            ctx: Context,
-            scope: AgentModuleScope,
-            inference: AgentBaseInference,
-        ): Promise<void> => {
-            if (inference.tokens === undefined) return;
-            const contextTokens = inference.tokens.input + inference.tokens.output;
-            if (this.#compactionAction(scope, contextTokens) === undefined) return;
-            await agents.compact(ctx, scope.agent.id);
-        },
+    readonly beforeStart = (): AgentModuleHooks => ({
+        prepareInference: (_ctx, scope, preparation) =>
+            this.#compactionAction(scope, preparation.contextTokens),
     });
 
     #compactionAction(
         scope: AgentModuleScope,
         contextTokens: number | undefined,
-    ): readonly AgentModuleAction[] | undefined {
+    ): readonly AgentModuleInferencePreparationAction[] | undefined {
         if (contextTokens === undefined || scope.agent.model === undefined) return undefined;
         const context = this.config.modelContext(scope.agent.provider, scope.agent.model);
         if (context === undefined || contextTokens < context.autoCompactWindow) return undefined;

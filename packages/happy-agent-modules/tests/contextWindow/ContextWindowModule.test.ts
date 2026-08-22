@@ -1,10 +1,8 @@
 import type {
-    AgentBaseInference,
     AgentModuleScope,
-    AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { ConfigModule } from "../../sources/config/index.js";
 import { ContextWindowModule } from "../../sources/contextWindow/index.js";
@@ -19,34 +17,28 @@ const scope = {
 } as AgentModuleScope;
 
 describe("ContextWindowModule", () => {
-    it("checks restored turns and every measured inference against the model threshold", async () => {
+    it("checks the persisted context only while preparing inference", async () => {
         const config = {
             modelContext: () => ({ autoCompactWindow: 750, contextWindow: 1_000 }),
         } as unknown as ConfigModule;
-        const compact = vi.fn(() => Promise.resolve());
-        const agents = { compact } as unknown as AgentSystemRef;
-        const hooks = await new ContextWindowModule(config).beforeStart?.(ctx, agents);
+        const hooks = await new ContextWindowModule(config).beforeStart?.();
         if (hooks === undefined) throw new Error("The context-window hooks did not start.");
 
+        expect(hooks.beforeTurn).toBeUndefined();
+        expect(hooks.afterInference).toBeUndefined();
         expect(
-            await hooks.beforeTurn?.(ctx, scope, {
+            await hooks.prepareInference?.(ctx, scope, {
                 contextTokens: 800,
                 loopId: "loop-1",
                 turnId: "turn-1",
             }),
         ).toEqual([{ type: "compact" }]);
-
-        const inference: AgentBaseInference = {
-            contextTokens: 700,
-            inferenceId: "inference-1",
-            loopId: "loop-1",
-            state: "tool_call",
-            tokens: { input: 700, output: 50 },
-            turnId: "turn-1",
-        };
-        await hooks.afterInference?.(ctx, scope, inference);
-
-        expect(compact).toHaveBeenCalledOnce();
-        expect(compact).toHaveBeenCalledWith(ctx, "agent-1");
+        expect(
+            await hooks.prepareInference?.(ctx, scope, {
+                contextTokens: 749,
+                loopId: "loop-1",
+                turnId: "turn-2",
+            }),
+        ).toBeUndefined();
     });
 });
