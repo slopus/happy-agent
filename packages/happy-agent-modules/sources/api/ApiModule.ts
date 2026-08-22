@@ -88,7 +88,6 @@ import {
 import {
     UsageModule,
     type UsageCurrentContext,
-    type UsageInferenceRecord,
 } from "../usage/index.js";
 import { UserInputModule, type UserInputEvent } from "../userInput/index.js";
 import {
@@ -3745,7 +3744,6 @@ export class ApiModule implements AgentModule {
 
     async #daemonUsage(ctx: Context): Promise<Record<string, unknown>> {
         const now = Date.now();
-        const records = await this.#allUsageRecords(ctx);
         const accountUsage = new Map(
             this.#providerUsage.list().map((entry) => [entry.providerId, entry]),
         );
@@ -3761,58 +3759,17 @@ export class ApiModule implements AgentModule {
                 };
             },
         );
-        return {
-            providers,
-            hour: usageRecordsSince(records, now - 60 * 60 * 1_000),
-            day: usageRecordsSince(records, now - 24 * 60 * 60 * 1_000),
-            week: usageRecordsSince(records, now - 7 * 24 * 60 * 60 * 1_000),
-            month: usageRecordsSince(records, now - 30 * 24 * 60 * 60 * 1_000),
-        };
-    }
-
-    async #allUsageRecords(ctx: Context): Promise<readonly UsageInferenceRecord[]> {
-        const agents = this.#agentSystem();
-        const roots = new Set<string>();
-        const [projects, workspaces] = await Promise.all([
-            this.#allProjects(ctx, true),
-            this.#allWorkspaces(ctx, undefined, true),
-        ]);
-        for (const project of projects) {
-            for (const id of await this.#projects.listAgentIds(ctx, project.id)) roots.add(id);
-        }
-        for (const workspace of workspaces) {
-            for (const id of await this.#workspaces.listAgentIds(ctx, workspace.id)) roots.add(id);
-        }
-        const all = new Set<string>();
-        const pending = [...roots];
-        while (pending.length > 0) {
-            if (all.size >= 10_000) {
-                throw new ApiError(
-                    413,
-                    "too_large",
-                    "The agent collection is too large to aggregate usage.",
-                );
-            }
-            const id = pending.shift() as string;
-            if (all.has(id)) continue;
-            all.add(id);
-            pending.push(...(await agents.childOf(ctx, id)));
-        }
-        const records: UsageInferenceRecord[] = [];
-        for (const agentId of all) {
-            let cursor: number | undefined = 0;
-            while (cursor !== undefined) {
-                const page = await this.#usage.readPage(ctx, agentId, {
-                    cursor,
-                    limit: 50,
-                });
-                for (const record of page.records) {
-                    if (record.kind === "inference") records.push(record);
-                }
-                cursor = page.nextCursor;
-            }
-        }
-        return records;
+        // Each window is summed by the database over the complete durable history, so a window
+        // reports everything that actually ran inside it rather than whatever a bounded page held.
+        const [hour, day, week, month] = await Promise.all(
+            [
+                60 * 60 * 1_000,
+                24 * 60 * 60 * 1_000,
+                7 * 24 * 60 * 60 * 1_000,
+                30 * 24 * 60 * 60 * 1_000,
+            ].map(async (durationMs) => await this.#usage.readWindowUsage(ctx, now - durationMs)),
+        );
+        return { providers, hour, day, week, month };
     }
 
     async #usageForAgentTree(
@@ -4392,28 +4349,6 @@ export class MutationAwareApiEventJournal extends ApiEventJournal {
             occurredAt,
         );
     }
-}
-
-function usageRecordsSince(
-    records: readonly UsageInferenceRecord[],
-    since: number,
-): Record<string, Record<string, ApiUsageTokens>> {
-    const output: Record<string, Record<string, ApiUsageTokens>> = {};
-    for (const record of records) {
-        if (record.startedAt < since || record.model === undefined) continue;
-        const provider = (output[record.provider] ??= {});
-        const tokens = (provider[record.model] ??= {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-        });
-        tokens.input += record.tokens.input;
-        tokens.output += record.tokens.output;
-        tokens.cacheRead += record.tokens.cacheRead ?? 0;
-        tokens.cacheWrite += record.tokens.cacheWrite ?? 0;
-    }
-    return output;
 }
 
 function requireIfMatch(

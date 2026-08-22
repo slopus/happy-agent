@@ -2,7 +2,8 @@
 
 Advisory token and timing accounting for one agent, and for the collection it belongs to. It
 answers "how much has this agent cost so far" without becoming a quota system: the module owns
-one bounded record table, and a failure to record a number never fails a turn or an inference.
+one durable record table it never prunes, and a failure to record a number never fails a turn or
+an inference.
 Lifecycle records join Agent Base's existing completion transactions instead of opening their own.
 
 ```ts
@@ -85,6 +86,10 @@ model a cost was actually spent on live on the records and are read through `rea
   `agentId` (via `contextAgentId`) doesn't match `agentId`.
 - `readPage(ctx, agentId, query?)` — one bounded page of raw `UsageRecord`s (`cursor`, `limit`),
   for a host that needs provider/model detail rather than totals.
+- `readWindowUsage(ctx, since)` — provider-then-model inference totals for everything started at
+  or after one instant, across the whole collection. Only host code may ask, because the answer
+  spans every agent. `ApiModule` builds the `GET /v0/usage` hour, day, week, and month windows
+  from it.
 - `readRun(ctx, agentId, runId)` — the bounded provider-then-model inference usage attributed to
   one exact run, including cache reads and writes. `costUsd` is `null` because the current provider
   contract does not report monetary cost; the module never estimates one.
@@ -137,13 +142,33 @@ bounded lookup index. Migration `004-usage-current-context` adds one current-con
 a `null` payload is a durable invalidation tombstone. Migration `005-usage-model-totals` adds the
 lifetime per-agent/provider/model counters that survive pruning of recent detail.
 
+Lifetime totals and the agent-tree snapshot read the model counters. The installation-wide time
+windows read the records, because a counter has no time dimension and cannot answer what happened
+in the last hour.
+
+Records are kept forever. Nothing is evicted to make room, because a window that quietly drops the
+oldest work reports the wrong number: a model used yesterday must still appear in a reading about
+yesterday no matter how busy today was.
+
+A record is one JSON document in `record_json`, and it stays that way. Because history is
+unbounded, every total is summed by the database — reaching into that document with
+`json_extract` — rather than by reading records into memory. The check that per-row parsing used
+to perform rides along on the same scan: a row whose duration contradicts its own timestamps fails
+the read instead of becoming part of a trusted number, and so does a record that is no longer
+valid JSON, because reading its fields is what the scan does. The cost of that choice is a scan
+per read, since the sums are computed from a document rather than from indexed columns.
+
 - `record(ctx, UsageRecord)` inserts one record (`usage_inference_record` or `usage_turn_record`),
   keyed by Base's `inferenceId` or `turnId` and attributed by
   `agentId`/`provider`/`model?`/`effort?`/`tier?`. An attributed inference increments its model
-  totals in the same transaction before old detail is pruned.
+  totals in the same transaction.
 - `read(ctx, agentId, { cursor, limit })` returns a bounded `UsagePage` (`records`, `cursor`,
-  `totalRecords`, `nextCursor?`), capped at `USAGE_PAGE_SIZE` (50) per page and `MAX_USAGE_RECORDS`
-  (500) records overall.
+  `totalRecords`, `nextCursor?`), capped at `USAGE_PAGE_SIZE` (50) per page. `totalRecords` counts
+  everything the agent ever recorded, so a caller can page through the complete history.
+- `windowUsage(ctx, since)` sums provider/model inference tokens for everything started at or
+  after one instant, across the whole collection. This is what the installation-wide hour, day,
+  week, and month windows are built from. The breakdown is keyed by model, so inference the
+  provider never attributed to one is left out, exactly as the lifetime model totals leave it out.
 - `modelUsage(ctx, agentId)` reads lifetime provider/model input, output, cache-read, and
   cache-write totals; `totalTokensByAgent(ctx)` sums those durable counters in one pass for an
   agent-tree snapshot.
@@ -155,7 +180,7 @@ lifetime per-agent/provider/model counters that survive pruning of recent detail
   disappears after a reset/compaction writes an invalidation until a later response measures the
   new context. Updating this row and recording the turn share Agent Base's completion transaction.
 - `reset(ctx, agentId | null)` deletes matching records, contexts, and lifetime model totals and
-  reports how many recent records were removed.
+  reports how many records were removed.
 - The host transaction is the single read/decide/write boundary every mutation runs inside, and
   stdlib `afterCommit(ctx, callback)` registers post-commit event delivery inside that same
   transaction.

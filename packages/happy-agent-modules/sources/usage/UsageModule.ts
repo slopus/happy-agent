@@ -29,7 +29,6 @@ import {
 } from "./UsageEvent.js";
 import {
     MAX_USAGE_DURATION_MS,
-    MAX_USAGE_RECORDS,
     MAX_USAGE_TREE_PATH_LENGTH,
     MAX_USAGE_TREE_SESSIONS,
     MAX_USAGE_TREE_TITLE_LENGTH,
@@ -338,6 +337,22 @@ export class UsageModule implements AgentModule {
             throw new Error("Usage store returned invalid run usage.");
         }
         return cloneValue(summary);
+    }
+
+    /**
+     * Read provider/model inference totals for everything started at or after one instant,
+     * across the whole collection.
+     *
+     * The window is summed by the database over the complete durable history, so it answers for
+     * every agent that ever ran rather than for whatever detail a bounded page still holds. Only
+     * host code may ask, because the answer spans every agent in the collection.
+     */
+    async readWindowUsage(ctx: Context, since: number): Promise<UsageRunBreakdown> {
+        this.#assertAgentAccess(ctx, undefined);
+        if (!Value.Check(usageTimestampSchema, since)) {
+            throw new Error("Usage window start is invalid.");
+        }
+        return await new UsageDatabase().windowUsage(ctx, since);
     }
 
     /** Read lifetime provider/model inference totals for one agent. */
@@ -1134,11 +1149,7 @@ function assertUsagePage(page: UsagePage, agentId: string, cursor: number, limit
     if (page.agentId !== agentId || page.cursor !== cursor) {
         throw new Error("Usage store returned a page for the wrong agent or cursor.");
     }
-    if (
-        page.records.length > limit ||
-        page.totalRecords > MAX_USAGE_RECORDS ||
-        page.cursor > page.totalRecords
-    ) {
+    if (page.records.length > limit || page.cursor > page.totalRecords) {
         throw new Error("Usage store returned a page outside its configured bounds.");
     }
     if (page.records.length > 0 && page.cursor >= page.totalRecords) {
@@ -1180,8 +1191,7 @@ function assertUsageSummary(
         summary.groups.length > maxGroups ||
         summary.totalGroups < summary.groups.length ||
         summary.cursor > summary.totalGroups ||
-        (summary.groups.length > 0 && summary.cursor >= summary.totalGroups) ||
-        summary.inferenceCount + summary.turnCount > MAX_USAGE_RECORDS
+        (summary.groups.length > 0 && summary.cursor >= summary.totalGroups)
     ) {
         throw new Error("Usage store returned a summary for the wrong scope or page.");
     }
@@ -1198,9 +1208,6 @@ function assertUsageSummary(
             throw new Error("Usage store returned duplicate aggregate groups.");
         }
         keys.add(key);
-        if (group.inferenceCount + group.turnCount > MAX_USAGE_RECORDS) {
-            throw new Error("Usage aggregate counts exceed the configured record bound.");
-        }
         if (group.totalTokens !== group.inputTokens + group.outputTokens) {
             throw new Error("Usage aggregate token totals are inconsistent.");
         }

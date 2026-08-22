@@ -12,7 +12,6 @@ import { EventsModule } from "../../sources/events/EventsModule.js";
 import {
     MAX_USAGE_GROUPS,
     MAX_USAGE_OUTPUT_CHARACTERS,
-    MAX_USAGE_RECORDS,
     MAX_USAGE_TREE_PATH_LENGTH,
     MAX_USAGE_TREE_SESSIONS,
     type UsageAgentTree,
@@ -426,10 +425,11 @@ describe("UsageModule edge cases", () => {
         });
     });
 
-    it("retains exactly the newest bounded records and exposes precise page cursors", async () => {
+    it("keeps every record forever and exposes precise page cursors", async () => {
         await withUsageDatabase("usage-retention-and-cursors", async (database) => {
             const store = new UsageDatabase();
-            for (let index = 0; index <= MAX_USAGE_RECORDS; index++) {
+            const total = 501;
+            for (let index = 0; index < total; index++) {
                 await store.record(
                     database.context,
                     inferenceRecord(`record-${index}`, "agent-1", index + 10),
@@ -438,7 +438,8 @@ describe("UsageModule edge cases", () => {
             const module = await startedModule(database.context, fakeAgents({ "agent-1": {} }));
             const first = await module.readPage(database.context, "agent-1", { limit: 7 });
             expect(first.records).toHaveLength(7);
-            expect(first.records[0]?.id).toBe("record-1");
+            // Nothing was evicted, so the oldest record is still the very first one written.
+            expect(first.records[0]?.id).toBe("record-0");
             expect(first.nextCursor).toBe(7);
             if (first.nextCursor === undefined) throw new Error("Expected a continuation cursor");
             const second = await module.readPage(database.context, "agent-1", {
@@ -446,20 +447,20 @@ describe("UsageModule edge cases", () => {
                 limit: 7,
             });
             expect(second.cursor).toBe(7);
-            expect(second.records[0]?.id).toBe("record-8");
+            expect(second.records[0]?.id).toBe("record-7");
             expect(second.nextCursor).toBe(14);
             const final = await module.readPage(database.context, "agent-1", {
-                cursor: 497,
+                cursor: total - 3,
                 limit: 7,
             });
             expect(final.records).toHaveLength(3);
             expect(final.nextCursor).toBeUndefined();
-            expect(final.totalRecords).toBe(MAX_USAGE_RECORDS);
+            expect(final.totalRecords).toBe(total);
             await expect(module.readAgentModelUsage(database.context, "agent-1")).resolves.toEqual({
                 "provider-main": {
                     "model-main": {
-                        input: 3 * (MAX_USAGE_RECORDS + 1),
-                        output: 2 * (MAX_USAGE_RECORDS + 1),
+                        input: 3 * total,
+                        output: 2 * total,
                         cacheRead: 0,
                         cacheWrite: 0,
                     },
@@ -467,7 +468,96 @@ describe("UsageModule edge cases", () => {
             });
             await expect(
                 module.readAgentTreeUsage(database.context, "agent-1"),
-            ).resolves.toMatchObject({ totalTokens: 5 * (MAX_USAGE_RECORDS + 1) });
+            ).resolves.toMatchObject({ totalTokens: 5 * total });
+            // The aggregate counts every record rather than the newest page of them.
+            await expect(
+                module.read(database.context, "agent-1"),
+            ).resolves.toMatchObject({ inferenceCount: total });
+        });
+    });
+
+    it("aggregates and pages past more distinct groups than one page can hold", async () => {
+        await withUsageDatabase("usage-many-groups", async (database) => {
+            const store = new UsageDatabase();
+            // More combinations than the old record cap allowed to exist at once, so the group
+            // collection is larger than any single page of it.
+            const total = 520;
+            for (let index = 0; index < total; index++) {
+                await store.record(
+                    database.context,
+                    inferenceRecord(`record-${index}`, "agent-1", index + 10, {
+                        model: `model-${String(index).padStart(4, "0")}`,
+                    }),
+                );
+            }
+            const module = await startedModule(database.context, fakeAgents({ "agent-1": {} }));
+            const first = await module.read(database.context, "agent-1");
+            expect(first.totalGroups).toBe(total);
+            expect(first.groups).toHaveLength(USAGE_GROUP_PAGE_SIZE);
+
+            // Walk every page; the groups must come out complete, in order, and never repeated.
+            const seen: string[] = [];
+            let cursor: number | undefined = 0;
+            while (cursor !== undefined) {
+                const page = await module.read(database.context, "agent-1", { cursor });
+                for (const group of page.groups) seen.push(group.model ?? "");
+                cursor = page.nextCursor;
+            }
+            expect(seen).toHaveLength(total);
+            expect(new Set(seen).size).toBe(total);
+            expect(seen[0]).toBe("model-0000");
+            expect(seen[total - 1]).toBe(`model-${String(total - 1).padStart(4, "0")}`);
+        });
+    });
+
+    it("reports an older model in a window that busier recent models cannot evict", async () => {
+        await withUsageDatabase("usage-windows-keep-older-models", async (database) => {
+            const store = new UsageDatabase();
+            const now = 1_800_000_000_000;
+            const hourMs = 60 * 60 * 1_000;
+            const dayMs = 24 * hourMs;
+            // One older run, then far more recent traffic than the store ever used to retain.
+            const older = now - 2 * dayMs;
+            await store.record(
+                database.context,
+                inferenceRecord("older-fable", "agent-1", older + 10, {
+                    startedAt: older,
+                    model: "anthropic/fable-5",
+                    tokens: { input: 7, output: 3 },
+                }),
+            );
+            for (let index = 0; index < 600; index++) {
+                const startedAt = now - 1_000;
+                await store.record(
+                    database.context,
+                    inferenceRecord(`recent-${index}`, "agent-1", startedAt + 10, {
+                        startedAt,
+                        model: "anthropic/opus-5",
+                        tokens: { input: 1, output: 1 },
+                    }),
+                );
+            }
+            const module = await startedModule(database.context, fakeAgents({ "agent-1": {} }));
+
+            const hour = await module.readWindowUsage(database.context, now - hourMs);
+            expect(hour["provider-main"]?.["anthropic/opus-5"]).toEqual({
+                input: 600,
+                output: 600,
+                cacheRead: 0,
+                cacheWrite: 0,
+            });
+            // The older model started outside this window, so it must not be counted in it.
+            expect(hour["provider-main"]?.["anthropic/fable-5"]).toBeUndefined();
+
+            // The week still knows about the older model: nothing evicted it.
+            const week = await module.readWindowUsage(database.context, now - 7 * dayMs);
+            expect(week["provider-main"]?.["anthropic/fable-5"]).toEqual({
+                input: 7,
+                output: 3,
+                cacheRead: 0,
+                cacheWrite: 0,
+            });
+            expect(week["provider-main"]?.["anthropic/opus-5"]?.input).toBe(600);
         });
     });
 

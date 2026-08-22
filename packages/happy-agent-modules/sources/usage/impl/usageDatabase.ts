@@ -1,10 +1,9 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import {
-    MAX_USAGE_RECORDS,
     usageAggregateQuerySchema,
     usageCurrentContextSchema,
     usagePageQuerySchema,
@@ -15,6 +14,7 @@ import {
     usageSummarySchema,
     type UsageAggregateQuery,
     type UsageCurrentContext,
+    type UsageGroup,
     type UsagePage,
     type UsagePageQuery,
     type UsageRecord,
@@ -28,38 +28,86 @@ const RECORDS_TABLE = "happy_agent_usage_records";
 const CONTEXTS_TABLE = "happy_agent_usage_contexts";
 const MODEL_TOTALS_TABLE = "happy_agent_usage_model_totals";
 
+/**
+ * The record's own fields, read out of the stored JSON.
+ *
+ * Records keep the shape they have always had: one JSON document per row. Totals are summed by
+ * the database rather than by reading every record into memory, because history is unbounded, so
+ * the sums reach into that document instead of into columns beside it.
+ */
+const PROVIDER = sql`json_extract(record_json, '$.provider')`;
+const MODEL = sql`json_extract(record_json, '$.model')`;
+const EFFORT = sql`json_extract(record_json, '$.effort')`;
+const TIER = sql`json_extract(record_json, '$.tier')`;
+const STARTED_AT = sql`json_extract(record_json, '$.startedAt')`;
+const DURATION_MS = sql`json_extract(record_json, '$.durationMs')`;
+/** A turn carries no token counts, so its contribution to a token sum is zero. */
+const INPUT_TOKENS = sql`COALESCE(json_extract(record_json, '$.tokens.input'), 0)`;
+const OUTPUT_TOKENS = sql`COALESCE(json_extract(record_json, '$.tokens.output'), 0)`;
+const CACHE_READ_TOKENS = sql`COALESCE(json_extract(record_json, '$.tokens.cacheRead'), 0)`;
+const CACHE_WRITE_TOKENS = sql`COALESCE(json_extract(record_json, '$.tokens.cacheWrite'), 0)`;
+
+/** The running totals every scoped read reports, summed by the database. */
+const USAGE_SUM_COLUMNS = sql`
+    COUNT(*) FILTER (WHERE kind = 'inference') AS inference_count,
+    COUNT(*) FILTER (WHERE kind = 'turn') AS turn_count,
+    COALESCE(SUM(${INPUT_TOKENS}), 0) AS input_tokens,
+    COALESCE(SUM(${OUTPUT_TOKENS}), 0) AS output_tokens,
+    COALESCE(SUM(${DURATION_MS}) FILTER (WHERE kind = 'inference'), 0) AS inference_duration_ms,
+    COALESCE(SUM(${DURATION_MS}) FILTER (WHERE kind = 'turn'), 0) AS turn_duration_ms`;
+
+/**
+ * The invariant every row must still hold for a total over it to be trustworthy.
+ *
+ * Totals are summed by the database rather than parsed row by row, so the check that parsing used
+ * to perform rides along on the very same scan: a row whose measured duration disagrees with its
+ * own timestamps fails the read instead of quietly becoming part of a trusted number. A record
+ * that is not valid JSON fails the read too, because reading its fields is what the scan does.
+ */
+const USAGE_INTEGRITY_COLUMNS = sql`
+    COUNT(*) FILTER (WHERE ${STARTED_AT} IS NULL OR ${DURATION_MS} IS NULL
+                        OR ${DURATION_MS} != finished_at - ${STARTED_AT}) AS inconsistent_duration`;
+
+type UsageTotals = Pick<
+    UsageSummary,
+    | "inferenceCount"
+    | "turnCount"
+    | "inputTokens"
+    | "outputTokens"
+    | "totalTokens"
+    | "inferenceDurationMs"
+    | "turnDurationMs"
+    | "totalDurationMs"
+>;
+
+/** Turn one summed row into the totals shape, deriving the two totals that are pure sums. */
+function usageTotals(row: Record<string, number | string | null>): UsageTotals {
+    const value = (name: string): number => Number(row[name] ?? 0);
+    const inputTokens = value("input_tokens");
+    const outputTokens = value("output_tokens");
+    const inferenceDurationMs = value("inference_duration_ms");
+    const turnDurationMs = value("turn_duration_ms");
+    return {
+        inferenceCount: value("inference_count"),
+        turnCount: value("turn_count"),
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        inferenceDurationMs,
+        turnDurationMs,
+        totalDurationMs: inferenceDurationMs + turnDurationMs,
+    };
+}
+
 export class UsageDatabase {
     async run(ctx: Context, agentId: string, runId: string): Promise<UsageRunSummary> {
         if (!Value.Check(usageRunIdSchema, runId)) {
             throw new Error("Usage run ID is invalid.");
         }
-        const rows = await agentDatabaseRows<{ record_json: string }>(
-            ctx.db,
-            sql`SELECT record_json
-                FROM ${sql.raw(RECORDS_TABLE)}
-                WHERE agent_id = ${agentId} AND run_id = ${runId} AND kind = 'inference'
-                ORDER BY finished_at, record_id
-                LIMIT ${MAX_USAGE_RECORDS}`,
+        const usage = await this.#tokensByModel(
+            ctx,
+            sql`WHERE agent_id = ${agentId} AND run_id = ${runId}`,
         );
-        const usage: UsageRunSummary["usage"] = {};
-        for (const row of rows) {
-            const record = this.#parseRecord(row.record_json);
-            if (record.kind !== "inference" || record.model === undefined) continue;
-            const models = usage[record.provider] ?? {};
-            const previous = models[record.model] ?? {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-            };
-            models[record.model] = {
-                input: previous.input + record.tokens.input,
-                output: previous.output + record.tokens.output,
-                cacheRead: previous.cacheRead + (record.tokens.cacheRead ?? 0),
-                cacheWrite: previous.cacheWrite + (record.tokens.cacheWrite ?? 0),
-            };
-            usage[record.provider] = models;
-        }
         const summary: UsageRunSummary = {
             agentId,
             runId,
@@ -132,7 +180,7 @@ export class UsageDatabase {
             agentId,
             records,
             cursor,
-            totalRecords: Math.min(MAX_USAGE_RECORDS, totalRecords),
+            totalRecords,
             ...(cursor + records.length < totalRecords
                 ? { nextCursor: cursor + records.length }
                 : {}),
@@ -158,6 +206,118 @@ export class UsageDatabase {
         return totals;
     }
 
+    /**
+     * Inference tokens per provider and model over some scope.
+     *
+     * The scope must already be a non-empty `WHERE` clause, because this narrows it further. The
+     * breakdown is keyed by model, so inference the provider never attributed to one has no place
+     * in it and is left out, exactly as the lifetime model totals leave it out.
+     */
+    async #tokensByModel(ctx: Context, scope: SQL): Promise<UsageRunBreakdown> {
+        const rows = await agentDatabaseRows<{
+            provider: string;
+            model: string;
+            input_tokens: number | string;
+            output_tokens: number | string;
+            cache_read_tokens: number | string;
+            cache_write_tokens: number | string;
+        }>(
+            ctx.db,
+            sql`SELECT ${PROVIDER} AS provider, ${MODEL} AS model,
+                       SUM(${INPUT_TOKENS}) AS input_tokens,
+                       SUM(${OUTPUT_TOKENS}) AS output_tokens,
+                       SUM(${CACHE_READ_TOKENS}) AS cache_read_tokens,
+                       SUM(${CACHE_WRITE_TOKENS}) AS cache_write_tokens
+                FROM ${sql.raw(RECORDS_TABLE)}
+                ${scope} AND kind = 'inference' AND ${MODEL} IS NOT NULL
+                GROUP BY provider, model
+                ORDER BY provider, model`,
+        );
+        const usage: UsageRunBreakdown = {};
+        for (const row of rows) {
+            const models = usage[row.provider] ?? {};
+            models[row.model] = {
+                input: Number(row.input_tokens),
+                output: Number(row.output_tokens),
+                cacheRead: Number(row.cache_read_tokens),
+                cacheWrite: Number(row.cache_write_tokens),
+            };
+            usage[row.provider] = models;
+        }
+        if (!Value.Check(usageRunBreakdownSchema, usage)) {
+            throw new Error("Usage database returned an invalid model breakdown.");
+        }
+        return structuredClone(usage);
+    }
+
+    /** Inference tokens per provider and model for everything started at or after one instant. */
+    async windowUsage(ctx: Context, since: number): Promise<UsageRunBreakdown> {
+        return await this.#tokensByModel(ctx, sql`WHERE ${STARTED_AT} >= ${since}`);
+    }
+
+    /** Running totals over a scope, summed by the database rather than by reading records. */
+    async #totals(ctx: Context, scope: SQL): Promise<UsageTotals> {
+        const rows = await agentDatabaseRows<Record<string, number | string | null>>(
+            ctx.db,
+            sql`SELECT ${USAGE_SUM_COLUMNS}, ${USAGE_INTEGRITY_COLUMNS}
+                FROM ${sql.raw(RECORDS_TABLE)}
+                ${scope}`,
+        );
+        const row = rows[0] ?? {};
+        if (Number(row["inconsistent_duration"] ?? 0) > 0) {
+            throw new Error("Usage storage holds a record whose duration contradicts its span.");
+        }
+        return usageTotals(row);
+    }
+
+    /** How many provider/model/effort/tier groups a scope has, for paging. */
+    async #groupCount(ctx: Context, scope: SQL): Promise<number> {
+        const rows = await agentDatabaseRows<{ count: number | string }>(
+            ctx.db,
+            sql`SELECT COUNT(*) AS count FROM (
+                    SELECT 1 FROM ${sql.raw(RECORDS_TABLE)}
+                    ${scope}
+                    GROUP BY ${PROVIDER}, ${MODEL}, ${EFFORT}, ${TIER}
+                )`,
+        );
+        return Number(rows[0]?.count ?? 0);
+    }
+
+    /** One ordered page of provider/model/effort/tier groups. */
+    async #groups(
+        ctx: Context,
+        scope: SQL,
+        cursor: number,
+        maxGroups: number,
+    ): Promise<UsageSummary["groups"]> {
+        const rows = await agentDatabaseRows<
+            Record<string, number | string | null> & {
+                provider: string;
+                model: string | null;
+                effort: string | null;
+                tier: string | null;
+            }
+        >(
+            ctx.db,
+            sql`SELECT ${PROVIDER} AS provider, ${MODEL} AS model,
+                       ${EFFORT} AS effort, ${TIER} AS tier, ${USAGE_SUM_COLUMNS}
+                FROM ${sql.raw(RECORDS_TABLE)}
+                ${scope}
+                GROUP BY provider, model, effort, tier
+                ORDER BY provider, model, effort, tier
+                LIMIT ${maxGroups} OFFSET ${cursor}`,
+        );
+        return rows.map((row) => ({
+            provider: row.provider,
+            ...(row.model === null ? {} : { model: row.model }),
+            ...(row.effort === null
+                ? {}
+                : { effort: row.effort as NonNullable<UsageGroup["effort"]> }),
+            ...(row.tier === null ? {} : { tier: row.tier as NonNullable<UsageGroup["tier"]> }),
+            ...usageTotals(row),
+        }));
+    }
+
     async aggregate(
         ctx: Context,
         query: UsageAggregateQuery,
@@ -166,96 +326,28 @@ export class UsageDatabase {
         if (!Value.Check(usageAggregateQuerySchema, query)) {
             throw new Error("Usage aggregate query is invalid.");
         }
-        const rows = await agentDatabaseRows<{ record_json: string }>(
-            ctx.db,
+        // History is kept forever, so every total is summed by the database. Reading the records
+        // themselves would grow without bound while answering a question about their sums.
+        const scope =
             query.agentId === undefined
-                ? sql`SELECT record_json
-                      FROM ${sql.raw(RECORDS_TABLE)}
-                      ORDER BY finished_at, record_id
-                      LIMIT ${MAX_USAGE_RECORDS}`
-                : sql`SELECT record_json
-                      FROM ${sql.raw(RECORDS_TABLE)}
-                      WHERE agent_id = ${query.agentId}
-                      ORDER BY finished_at, record_id
-                      LIMIT ${MAX_USAGE_RECORDS}`,
-        );
-        const records = rows.map((row) => this.#parseRecord(row.record_json));
-        const groups = new Map<string, UsageSummary["groups"][number]>();
-        for (const record of records) {
-            const key = JSON.stringify([
-                record.provider,
-                record.model ?? null,
-                record.effort ?? null,
-                record.tier ?? null,
-            ]);
-            const previous = groups.get(key);
-            const next =
-                previous === undefined
-                    ? {
-                          provider: record.provider,
-                          ...(record.model === undefined ? {} : { model: record.model }),
-                          ...(record.effort === undefined ? {} : { effort: record.effort }),
-                          ...(record.tier === undefined ? {} : { tier: record.tier }),
-                          inferenceCount: 0,
-                          turnCount: 0,
-                          inputTokens: 0,
-                          outputTokens: 0,
-                          totalTokens: 0,
-                          inferenceDurationMs: 0,
-                          turnDurationMs: 0,
-                          totalDurationMs: 0,
-                      }
-                    : { ...previous };
-            if (record.kind === "inference") {
-                next.inferenceCount += 1;
-                next.inputTokens += record.tokens.input;
-                next.outputTokens += record.tokens.output;
-                next.totalTokens += record.tokens.input + record.tokens.output;
-                next.inferenceDurationMs += record.durationMs;
-            } else {
-                next.turnCount += 1;
-                next.turnDurationMs += record.durationMs;
-            }
-            next.totalDurationMs = next.inferenceDurationMs + next.turnDurationMs;
-            groups.set(key, next);
-        }
-        const allGroups = [...groups.values()];
+                ? sql`` // The whole collection.
+                : sql`WHERE agent_id = ${query.agentId}`;
         const cursor = query.cursor ?? 0;
-        const page = allGroups.slice(cursor, cursor + maxGroups);
-        const currentContext = await this.currentContext(ctx, query.agentId);
+        const [totals, groupCount, groupRows, currentContext] = await Promise.all([
+            this.#totals(ctx, scope),
+            this.#groupCount(ctx, scope),
+            this.#groups(ctx, scope, cursor, maxGroups),
+            this.currentContext(ctx, query.agentId),
+        ]);
         const summary: UsageSummary = {
             ...(query.agentId === undefined ? {} : { agentId: query.agentId }),
             cursor,
-            totalGroups: allGroups.length,
-            inferenceCount: records.filter((record) => record.kind === "inference").length,
-            turnCount: records.filter((record) => record.kind === "turn").length,
-            inputTokens: records.reduce(
-                (sum, record) => sum + (record.kind === "inference" ? record.tokens.input : 0),
-                0,
-            ),
-            outputTokens: records.reduce(
-                (sum, record) => sum + (record.kind === "inference" ? record.tokens.output : 0),
-                0,
-            ),
-            totalTokens: records.reduce(
-                (sum, record) =>
-                    sum +
-                    (record.kind === "inference" ? record.tokens.input + record.tokens.output : 0),
-                0,
-            ),
-            inferenceDurationMs: records.reduce(
-                (sum, record) => sum + (record.kind === "inference" ? record.durationMs : 0),
-                0,
-            ),
-            turnDurationMs: records.reduce(
-                (sum, record) => sum + (record.kind === "turn" ? record.durationMs : 0),
-                0,
-            ),
-            totalDurationMs: records.reduce((sum, record) => sum + record.durationMs, 0),
+            totalGroups: groupCount,
+            ...totals,
             ...(currentContext === undefined ? {} : { currentContext }),
-            groups: page,
-            ...(cursor + page.length < allGroups.length
-                ? { nextCursor: cursor + page.length }
+            groups: groupRows,
+            ...(cursor + groupRows.length < groupCount
+                ? { nextCursor: cursor + groupRows.length }
                 : {}),
         };
         if (!Value.Check(usageSummarySchema, summary)) {
@@ -288,15 +380,6 @@ export class UsageDatabase {
                         cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens`,
             );
         }
-        await agentDatabaseRun(
-            ctx.db,
-            sql`DELETE FROM ${sql.raw(RECORDS_TABLE)}
-                WHERE record_id IN (
-                    SELECT record_id FROM ${sql.raw(RECORDS_TABLE)}
-                    ORDER BY finished_at DESC, record_id DESC
-                    LIMIT 9223372036854775807 OFFSET ${MAX_USAGE_RECORDS}
-                )`,
-        );
         if (record.kind === "turn") {
             return await this.#writeCurrentContext(
                 ctx,
@@ -351,7 +434,7 @@ export class UsageDatabase {
                 : sql`SELECT COUNT(*) AS count FROM ${sql.raw(RECORDS_TABLE)}
                       WHERE agent_id = ${agentId}`,
         );
-        const count = Math.min(MAX_USAGE_RECORDS, Number(rows[0]?.count ?? 0));
+        const count = Number(rows[0]?.count ?? 0);
         await agentDatabaseRun(
             ctx.db,
             agentId === null

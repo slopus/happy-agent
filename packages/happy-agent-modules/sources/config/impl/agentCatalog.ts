@@ -16,6 +16,7 @@ import {
     loadCodexCredential,
     resolveClaudeCodeExecutablePath,
     type BaseProvider,
+    type ProviderUsage,
 } from "@slopus/happy-providers";
 import type { HappyAgentConfigValues, HappyAgentConfiguration } from "../ConfigModule.js";
 
@@ -199,14 +200,18 @@ export function agentModelContext(modelId: string): AgentModelContext | undefine
  * One registry holding every enabled provider, each constructing its client on first use so a
  * credential is read when a session needs it rather than at startup.
  */
-export function agentProviders(configuration: HappyAgentConfiguration): AgentProviders {
+export function agentProviders(
+    configuration: HappyAgentConfiguration,
+    onAccountUsage?: (usage: ProviderUsage) => void,
+): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
     for (const [id, provider] of Object.entries(configuration.values.providers)) {
         if (provider.enabled === false) continue;
         providers.add(
             id,
-            async ({ model: selected }) => await createProvider(id, provider, selected, retryLimit),
+            async ({ model: selected }) =>
+                await createProvider(id, provider, selected, retryLimit, onAccountUsage),
             provider.type,
         );
     }
@@ -218,6 +223,7 @@ async function createProvider(
     provider: ConfiguredProvider,
     selectedModel: string | undefined,
     retryLimit: number | undefined,
+    onAccountUsage?: (usage: ProviderUsage) => void,
 ): Promise<BaseProvider> {
     // Credential isolation means this provider may use only what its own configuration names.
     // Without it, each vendor's ambient discovery — its CLI's own login files and environment —
@@ -286,6 +292,15 @@ async function createProvider(
             // Bun cannot use the SDK's runtime require.resolve from its compiled filesystem.
             // The standalone build adapts this resolver to materialize its embedded executable.
             pathToClaudeCodeExecutable: provider.executable ?? resolveClaudeCodeExecutablePath(),
+            // Every Claude response already carries the account's own limiter reading, so the
+            // account is measured by the work it does. The vendor names the reading after its own
+            // vendor key; this account is whichever configured provider actually spent the tokens.
+            ...(onAccountUsage === undefined
+                ? {}
+                : {
+                      onAccountUsage: (usage: ProviderUsage) =>
+                          onAccountUsage({ ...usage, providerId: id }),
+                  }),
             ...retries,
         });
     }

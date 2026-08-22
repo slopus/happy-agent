@@ -8,6 +8,7 @@ import type {
     AgentModuleHooks,
     AgentProviders,
 } from "@slopus/happy-agent-base";
+import type { ProviderUsage } from "@slopus/happy-providers";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
@@ -1002,6 +1003,7 @@ export class ConfigModule implements AgentModule {
     readonly #catalogNotices: string[] = [];
     #projectsHome: string | undefined;
     #providers: AgentProviders | undefined;
+    readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
     #resolvedScripted: ConfigInferenceOverride | undefined;
     #workspacesHome: string | undefined;
 
@@ -1086,10 +1088,35 @@ export class ConfigModule implements AgentModule {
      */
     get providers(): AgentProviders {
         this.#providers ??= providerRegistryUntil(
-            this.#resolveScripted()?.providers ?? agentProviders(this.configuration),
+            this.#resolveScripted()?.providers ??
+                agentProviders(this.configuration, (usage) => this.#reportAccountUsage(usage)),
             this.#providerLifetime.signal,
         );
         return this.#providers;
+    }
+
+    /**
+     * Watch account-usage readings the vendors report during ordinary inference.
+     *
+     * A vendor that measures the account on every response has already answered the question its
+     * usage API is asked, so the reading arrives as a side effect of real work instead of costing
+     * a separate request against an endpoint that is itself rate limited. Returns the function
+     * that ends the subscription.
+     */
+    onProviderAccountUsage(listener: (usage: ProviderUsage) => void): () => void {
+        this.#accountUsageListeners.add(listener);
+        return () => this.#accountUsageListeners.delete(listener);
+    }
+
+    /** Usage is bookkeeping beside the run, so a listener that throws never breaks inference. */
+    #reportAccountUsage(usage: ProviderUsage): void {
+        for (const listener of this.#accountUsageListeners) {
+            try {
+                listener(usage);
+            } catch {
+                // A usage listener never decides whether inference continues.
+            }
+        }
     }
 
     /** Cancel every provider request owned by this daemon without coupling agents to its lifetime. */

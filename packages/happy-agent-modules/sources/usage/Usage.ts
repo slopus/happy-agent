@@ -1,8 +1,22 @@
 import { Type, type Static } from "@sinclair/typebox";
 
 /** Bounds applied at every UsageModule storage and presentation boundary. */
-export const MAX_USAGE_RECORDS = 500;
+/**
+ * How many records one read may count.
+ *
+ * Usage history is kept forever, so this is a sanity bound on a counter rather than a retention
+ * limit: nothing is ever deleted to satisfy it, and a read that would exceed it is a bug.
+ */
+export const MAX_USAGE_RECORD_COUNT = Number.MAX_SAFE_INTEGER;
+/** How many groups one page may hold. */
 export const MAX_USAGE_GROUPS = 500;
+/**
+ * How many distinct provider/model/effort/tier groups may exist behind those pages.
+ *
+ * Every combination an installation ever ran keeps its group forever, so this counts a collection
+ * that grows rather than a page that is bounded.
+ */
+export const MAX_USAGE_GROUP_COUNT = Number.MAX_SAFE_INTEGER;
 /**
  * How many agents one subtree snapshot may describe.
  *
@@ -23,7 +37,7 @@ export const MAX_USAGE_TOKEN_COUNT = 1_000_000_000;
 export const MAX_USAGE_DURATION_MS = 31_536_000_000;
 export const MAX_USAGE_TIMESTAMP = Number.MAX_SAFE_INTEGER;
 export const MAX_USAGE_TOTAL_TOKENS = Number.MAX_SAFE_INTEGER;
-export const MAX_USAGE_TOTAL_DURATION_MS = MAX_USAGE_RECORDS * MAX_USAGE_DURATION_MS;
+export const MAX_USAGE_TOTAL_DURATION_MS = Number.MAX_SAFE_INTEGER;
 
 export const usageIdSchema = Type.String({
     minLength: 1,
@@ -200,7 +214,7 @@ export type UsageCurrentContext = Static<typeof usageCurrentContextSchema>;
 /** A bounded page of raw records, used by host readers that need event detail. */
 export const usagePageQuerySchema = Type.Object(
     {
-        cursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS })),
+        cursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_USAGE_PAGE_SIZE })),
     },
     { additionalProperties: false },
@@ -210,9 +224,9 @@ export const usagePageSchema = Type.Object(
     {
         agentId: usageAgentIdSchema,
         records: Type.Array(usageRecordSchema, { maxItems: MAX_USAGE_PAGE_SIZE }),
-        cursor: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS }),
-        totalRecords: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS }),
-        nextCursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS })),
+        cursor: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT }),
+        totalRecords: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT }),
+        nextCursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT })),
     },
     { additionalProperties: false },
 );
@@ -227,8 +241,8 @@ export const usageGroupSchema = Type.Object(
         model: Type.Optional(usageModelSchema),
         effort: Type.Optional(usageEffortSchema),
         tier: Type.Optional(usageTierSchema),
-        inferenceCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS }),
-        turnCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS }),
+        inferenceCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT }),
+        turnCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT }),
         inputTokens: Type.Integer({
             minimum: 0,
             maximum: MAX_USAGE_TOTAL_TOKENS,
@@ -260,7 +274,7 @@ export const usageGroupSchema = Type.Object(
 export const usageAggregateQuerySchema = Type.Object(
     {
         agentId: Type.Optional(usageAgentIdSchema),
-        cursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_GROUPS })),
+        cursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_GROUP_COUNT })),
         maxGroups: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_USAGE_GROUPS })),
     },
     { additionalProperties: false },
@@ -328,13 +342,15 @@ export type UsageAgentTree = Static<typeof usageAgentTreeSchema>;
 export const usageSummarySchema = Type.Object(
     {
         agentId: Type.Optional(usageAgentIdSchema),
-        cursor: Type.Integer({ minimum: 0, maximum: MAX_USAGE_GROUPS }),
+        // History is unbounded, so the number of distinct groups is too. Only one page of them is
+        // ever returned; MAX_USAGE_GROUPS bounds that page, not the collection behind it.
+        cursor: Type.Integer({ minimum: 0, maximum: MAX_USAGE_GROUP_COUNT }),
         totalGroups: Type.Integer({
             minimum: 0,
-            maximum: MAX_USAGE_GROUPS,
+            maximum: MAX_USAGE_GROUP_COUNT,
         }),
-        inferenceCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS }),
-        turnCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORDS }),
+        inferenceCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT }),
+        turnCount: Type.Integer({ minimum: 0, maximum: MAX_USAGE_RECORD_COUNT }),
         inputTokens: Type.Integer({
             minimum: 0,
             maximum: MAX_USAGE_TOTAL_TOKENS,
@@ -361,7 +377,7 @@ export const usageSummarySchema = Type.Object(
         }),
         currentContext: Type.Optional(usageCurrentContextSchema),
         groups: Type.Array(usageGroupSchema, { maxItems: MAX_USAGE_GROUPS }),
-        nextCursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_GROUPS })),
+        nextCursor: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_USAGE_GROUP_COUNT })),
     },
     { additionalProperties: false },
 );
