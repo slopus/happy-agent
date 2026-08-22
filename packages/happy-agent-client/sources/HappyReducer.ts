@@ -337,10 +337,22 @@ export class HappyReducer {
                 };
             }
 
+            const streamCursor = this.#cursor;
+            const questionCursor =
+                streamCursor !== undefined && streamCursor > bootstrap.cursor
+                    ? streamCursor
+                    : bootstrap.cursor;
+            const { question } = await this.#client.getPendingQuestion(agentId, {
+                signal: controller.signal,
+            });
+            if (controller.signal.aborted || this.#agentSyncs.get(agentId) !== controller) return;
+
             let replica = createHappyReducerAgentReplica(
                 bootstrap,
                 activity,
                 activityCursors,
+                question,
+                questionCursor,
                 this.#agentReplicas.get(agentId),
             );
             let dirty = false;

@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { HappyReducer } from "../sources/HappyReducer.js";
 import type { HappyAgentClient } from "../sources/HappyAgentClient.js";
-import type { Agent, AgentActivityResponse } from "../sources/protocol/agents.js";
+import type { Agent, AgentActivityResponse, AgentStatus } from "../sources/protocol/agents.js";
 import type { AgentBootstrapResponse } from "../sources/protocol/bootstrap.js";
 import type { Cuid2, EventCursor, MessageMode } from "../sources/protocol/common.js";
 import type { HappyAgentEvent } from "../sources/protocol/events.js";
-import type { UserMessage } from "../sources/protocol/messages.js";
+import type { Run, UserMessage } from "../sources/protocol/messages.js";
 import type { BackgroundProcess } from "../sources/protocol/processes.js";
+import type { PendingQuestionResponse, Question } from "../sources/protocol/questions.js";
 import type { HappyAgentUpdate } from "../sources/updates.js";
 
 const AGENT_A = "agent-a";
@@ -27,6 +28,10 @@ const CURSOR_5 = "01900000-0000-7000-8000-000000000005";
 const CURSOR_6 = "01900000-0000-7000-8000-000000000006";
 const CURSOR_7 = "01900000-0000-7000-8000-000000000007";
 const CURSOR_8 = "01900000-0000-7000-8000-000000000008";
+const CURSOR_9 = "01900000-0000-7000-8000-000000000009";
+const CURSOR_10 = "01900000-0000-7000-8000-000000000010";
+const CURSOR_11 = "01900000-0000-7000-8000-000000000011";
+const CURSOR_12 = "01900000-0000-7000-8000-000000000012";
 
 const MODE_A: MessageMode = {
     effort: "medium",
@@ -50,6 +55,8 @@ describe("HappyReducer agent synchronization", () => {
         const reducer = new HappyReducer(harness.client);
         const child = agent(CHILD_A, { parentAgentId: AGENT_A, version: CURSOR_2 });
         const process = backgroundProcess(PROCESS_A, AGENT_A, CURSOR_2);
+        const pending = userMessage("message-pending", MODE_A);
+        const question = pendingQuestion("question-a", AGENT_A, CURSOR_2);
 
         const hide = reducer.agentVisible(AGENT_A);
         reducer.start();
@@ -70,14 +77,22 @@ describe("HappyReducer agent synchronization", () => {
                     modelId: MODE_A.modelId,
                     providerId: MODE_A.providerId,
                 },
+                agent: agent(AGENT_A, {
+                    parentAgentId: null,
+                    status: "generating_tools",
+                    version: CURSOR_1,
+                }),
                 mode: MODE_A,
+                pending: [pending],
                 processes: [process],
                 subagents: [child],
             }),
+            { question },
         );
 
         await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]).toBeDefined());
         expect(harness.activityRequests).toHaveLength(0);
+        expect(harness.questionRequests).toHaveLength(1);
         expect(reducer.getState().agents[AGENT_A]).toEqual({
             context: {
                 approximate: false,
@@ -91,11 +106,137 @@ describe("HappyReducer agent synchronization", () => {
                 value: { ...MODE_A, text: "A draft" },
             },
             lastUsedModel: { modelId: MODE_A.modelId, providerId: MODE_A.providerId },
+            pending: [pending],
             processes: [process],
+            question,
+            status: "generating_tools",
             subagents: [child],
         });
 
         hide();
+        reducer.stop();
+    });
+
+    it("maintains pending input, the current question, and every live activity phase", async () => {
+        const harness = new AgentReducerHarness();
+        const reducer = new HappyReducer(harness.client);
+        reducer.agentVisible(AGENT_A);
+        reducer.start();
+        harness.connect();
+        await vi.waitFor(() => expect(harness.startedAgentIds).toEqual([AGENT_A]));
+        harness.completeBootstrap(
+            AGENT_A,
+            agentBootstrap(AGENT_A, { processes: [], subagents: [] }),
+        );
+        await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]).toBeDefined());
+
+        const first = userMessage("message-first", MODE_A);
+        const second = userMessage("message-second", MODE_B);
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_2,
+                occurredAt: 2,
+                payload: { agentId: AGENT_A, message: first, runId: null },
+                type: "message.created",
+            }),
+        );
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_3,
+                occurredAt: 3,
+                payload: { agentId: AGENT_A, message: second, runId: null },
+                type: "message.created",
+            }),
+        );
+        await vi.waitFor(() =>
+            expect(reducer.getState().agents[AGENT_A]?.pending).toEqual([first, second]),
+        );
+
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_4,
+                occurredAt: 4,
+                payload: {
+                    acceptedMessageIds: [first.id],
+                    agentId: AGENT_A,
+                    run: run("run-first", "running"),
+                },
+                type: "run.started",
+            }),
+        );
+        await vi.waitFor(() =>
+            expect(reducer.getState().agents[AGENT_A]?.pending).toEqual([second]),
+        );
+
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_5,
+                occurredAt: 5,
+                payload: {
+                    acceptedMessageIds: [second.id],
+                    agentId: AGENT_A,
+                    finishedRun: run("run-first", "completed"),
+                    startedRun: run("run-second", "running"),
+                },
+                type: "run.boundary",
+            }),
+        );
+        await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]?.pending).toEqual([]));
+
+        const phases: ReadonlyArray<readonly [EventCursor, EventCursor, AgentStatus]> = [
+            [CURSOR_6, CURSOR_1, "thinking"],
+            [CURSOR_7, CURSOR_6, "working"],
+            [CURSOR_8, CURSOR_7, "generating_tools"],
+            [CURSOR_9, CURSOR_8, "running_tools"],
+            [CURSOR_10, CURSOR_9, "idle"],
+        ];
+        for (const [cursor, previousVersion, status] of phases) {
+            harness.stream.push(
+                eventUpdate({
+                    cursor,
+                    occurredAt: Number(cursor.slice(-2)),
+                    payload: {
+                        agentId: AGENT_A,
+                        changes: { status },
+                        previousVersion,
+                        version: cursor,
+                    },
+                    type: "agent.updated",
+                }),
+            );
+            await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]?.status).toBe(status));
+        }
+
+        const question = pendingQuestion("question-a", AGENT_A, CURSOR_11);
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_11,
+                occurredAt: 11,
+                payload: { question },
+                type: "question.created",
+            }),
+        );
+        await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]?.question).toBe(question));
+
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_12,
+                occurredAt: 12,
+                payload: {
+                    changes: {
+                        answeredAt: 12,
+                        answers: { "prompt-a": ["Continue"] },
+                        status: "answered",
+                    },
+                    previousVersion: CURSOR_11,
+                    questionId: question.id,
+                    version: CURSOR_12,
+                },
+                type: "question.updated",
+            }),
+        );
+        await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]?.question).toBeNull());
+
         reducer.stop();
     });
 
@@ -251,6 +392,43 @@ describe("HappyReducer agent synchronization", () => {
         reducer.stop();
     });
 
+    it("preserves the public snapshot when unrelated agent metadata changes", async () => {
+        const harness = new AgentReducerHarness();
+        const reducer = new HappyReducer(harness.client);
+        const observedUpdates = vi.fn();
+        reducer.subscribeUpdates(observedUpdates);
+        reducer.agentVisible(AGENT_A);
+        reducer.start();
+        harness.connect();
+        await vi.waitFor(() => expect(harness.startedAgentIds).toEqual([AGENT_A]));
+        harness.completeBootstrap(
+            AGENT_A,
+            agentBootstrap(AGENT_A, { processes: [], subagents: [] }),
+        );
+        await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]).toBeDefined());
+
+        const before = reducer.getState();
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_2,
+                occurredAt: 2,
+                payload: {
+                    agentId: AGENT_A,
+                    changes: { unread: { reason: "completed", since: 2 }, updatedAt: 2 },
+                    previousVersion: CURSOR_1,
+                    version: CURSOR_2,
+                },
+                type: "agent.updated",
+            }),
+        );
+        await vi.waitFor(() => expect(observedUpdates).toHaveBeenCalledTimes(2));
+
+        expect(reducer.getState()).toBe(before);
+        expect(reducer.getState().agents[AGENT_A]).toBe(before.agents[AGENT_A]);
+
+        reducer.stop();
+    });
+
     it("rebases updates received while bootstrap is in flight", async () => {
         const harness = new AgentReducerHarness();
         const reducer = new HappyReducer(harness.client);
@@ -321,6 +499,66 @@ describe("HappyReducer agent synchronization", () => {
             expect(state?.subagents).toEqual([child]);
         });
         expect(harness.startedAgentIds).toEqual([AGENT_A]);
+
+        reducer.stop();
+    });
+
+    it("replays pending and question events that race the focused question read", async () => {
+        const harness = new AgentReducerHarness();
+        const reducer = new HappyReducer(harness.client);
+        const observedUpdates = vi.fn();
+        reducer.subscribeUpdates(observedUpdates);
+        reducer.agentVisible(AGENT_A);
+        reducer.start();
+        harness.connect();
+        await vi.waitFor(() => expect(harness.startedAgentIds).toEqual([AGENT_A]));
+
+        harness.completeBootstrapOnly(
+            AGENT_A,
+            agentBootstrap(AGENT_A, { processes: [], subagents: [] }),
+        );
+        await vi.waitFor(() => expect(harness.questionRequests).toHaveLength(1));
+
+        const pending = userMessage("message-raced", MODE_A);
+        const question = pendingQuestion("question-raced", AGENT_A, CURSOR_3);
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_2,
+                occurredAt: 2,
+                payload: { agentId: AGENT_A, message: pending, runId: null },
+                type: "message.created",
+            }),
+        );
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_3,
+                occurredAt: 3,
+                payload: { question },
+                type: "question.created",
+            }),
+        );
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_4,
+                occurredAt: 4,
+                payload: {
+                    agentId: AGENT_A,
+                    changes: { status: "working" },
+                    previousVersion: CURSOR_1,
+                    version: CURSOR_4,
+                },
+                type: "agent.updated",
+            }),
+        );
+        await vi.waitFor(() => expect(observedUpdates).toHaveBeenCalledTimes(4));
+        harness.completeQuestion(AGENT_A, { question: null });
+
+        await vi.waitFor(() => {
+            const state = reducer.getState().agents[AGENT_A];
+            expect(state?.pending).toEqual([pending]);
+            expect(state?.question).toBe(question);
+            expect(state?.status).toBe("working");
+        });
 
         reducer.stop();
     });
@@ -536,6 +774,56 @@ describe("HappyReducer agent synchronization", () => {
         reducer.stop();
     });
 
+    it("refreshes one agent when a question update cannot join its version chain", async () => {
+        const harness = new AgentReducerHarness();
+        const reducer = new HappyReducer(harness.client);
+        const question = pendingQuestion("question-a", AGENT_A, CURSOR_2);
+        reducer.agentVisible(AGENT_A);
+        reducer.start();
+        harness.connect();
+        await vi.waitFor(() => expect(harness.startedAgentIds).toEqual([AGENT_A]));
+        harness.completeBootstrap(
+            AGENT_A,
+            agentBootstrap(AGENT_A, { processes: [], subagents: [] }),
+            { question },
+        );
+        await vi.waitFor(() => expect(reducer.getState().agents[AGENT_A]?.question).toBe(question));
+
+        const beforeMismatch = reducer.getState();
+        harness.stream.push(
+            eventUpdate({
+                cursor: CURSOR_4,
+                occurredAt: 4,
+                payload: {
+                    changes: { autoResolveAt: 60_000 },
+                    previousVersion: CURSOR_3,
+                    questionId: question.id,
+                    version: CURSOR_4,
+                },
+                type: "question.updated",
+            }),
+        );
+
+        await vi.waitFor(() => expect(harness.startedAgentIds).toEqual([AGENT_A, AGENT_A]));
+        expect(reducer.getState()).toBe(beforeMismatch);
+
+        const authoritative = { ...question, autoResolveAt: 60_000, version: CURSOR_4 };
+        harness.completeBootstrap(
+            AGENT_A,
+            agentBootstrap(AGENT_A, {
+                cursor: CURSOR_4,
+                processes: [],
+                subagents: [],
+            }),
+            { question: authoritative },
+        );
+        await vi.waitFor(() =>
+            expect(reducer.getState().agents[AGENT_A]?.question).toEqual(authoritative),
+        );
+
+        reducer.stop();
+    });
+
     it("retries failed agent snapshots with bounded backoff", async () => {
         vi.useFakeTimers();
         const harness = new AgentReducerHarness();
@@ -573,6 +861,29 @@ describe("HappyReducer agent synchronization", () => {
 
         expect(reducer.getState()).toEqual({ agents: {}, connection: "disconnected" });
     });
+
+    it("ignores a focused question response that resolves after synchronous stop", async () => {
+        const harness = new AgentReducerHarness({ ignoreAbort: true });
+        const reducer = new HappyReducer(harness.client);
+        reducer.agentVisible(AGENT_A);
+        reducer.start();
+        harness.connect();
+        await vi.waitFor(() => expect(harness.startedAgentIds).toEqual([AGENT_A]));
+        harness.completeBootstrapOnly(
+            AGENT_A,
+            agentBootstrap(AGENT_A, { processes: [], subagents: [] }),
+        );
+        await vi.waitFor(() => expect(harness.questionRequests).toHaveLength(1));
+
+        expect(reducer.stop()).toBeUndefined();
+        harness.completeQuestion(AGENT_A, {
+            question: pendingQuestion("question-late", AGENT_A, CURSOR_2),
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(reducer.getState()).toEqual({ agents: {}, connection: "disconnected" });
+    });
 });
 
 interface PendingRequest<T> {
@@ -589,7 +900,9 @@ class AgentReducerHarness {
     readonly startedAgentIds: Cuid2[] = [];
     readonly bootstrapRequests: Array<PendingRequest<AgentBootstrapResponse>> = [];
     readonly activityRequests: Array<PendingRequest<AgentActivityResponse>> = [];
+    readonly questionRequests: Array<PendingRequest<PendingQuestionResponse>> = [];
     readonly queuedActivity = new Map<Cuid2, AgentActivityResponse>();
+    readonly queuedQuestions = new Map<Cuid2, PendingQuestionResponse>();
     readonly client: HappyAgentClient;
 
     constructor(harnessOptions: { ignoreAbort?: boolean } = {}) {
@@ -619,9 +932,25 @@ class AgentReducerHarness {
             }
             return request.promise;
         });
+        const getPendingQuestion = vi.fn((agentId: Cuid2, options: { signal?: AbortSignal }) => {
+            const request = pendingRequest<PendingQuestionResponse>(
+                agentId,
+                options.signal,
+                harnessOptions.ignoreAbort === true,
+            );
+            this.questionRequests.push(request);
+            const queued = this.queuedQuestions.get(agentId);
+            if (queued !== undefined) {
+                this.queuedQuestions.delete(agentId);
+                request.settled = true;
+                request.resolve(queued);
+            }
+            return request.promise;
+        });
         this.client = {
             getAgentActivity,
             getAgentBootstrap,
+            getPendingQuestion,
             updates,
         } as unknown as HappyAgentClient;
     }
@@ -634,6 +963,7 @@ class AgentReducerHarness {
         agentId: Cuid2,
         bootstrap: AgentBootstrapResponse,
         activity: AgentActivityResponse,
+        question: PendingQuestionResponse = { question: null },
     ): void {
         const bootstrapRequest = this.bootstrapRequests.find(
             (request) => request.agentId === agentId && !request.settled,
@@ -642,6 +972,7 @@ class AgentReducerHarness {
         const activityRequest = this.activityRequests.find(
             (request) => request.agentId === agentId && !request.settled,
         );
+        this.queuedQuestions.set(agentId, question);
         bootstrapRequest.settled = true;
         bootstrapRequest.resolve(bootstrap);
         if (activityRequest === undefined) this.queuedActivity.set(agentId, activity);
@@ -651,13 +982,38 @@ class AgentReducerHarness {
         }
     }
 
-    completeBootstrap(agentId: Cuid2, bootstrap: AgentBootstrapResponse): void {
+    completeBootstrap(
+        agentId: Cuid2,
+        bootstrap: AgentBootstrapResponse,
+        question: PendingQuestionResponse = { question: null },
+    ): void {
+        const bootstrapRequest = this.bootstrapRequests.find(
+            (request) => request.agentId === agentId && !request.settled,
+        );
+        if (bootstrapRequest === undefined) throw new Error(`No pending sync for ${agentId}.`);
+        this.queuedQuestions.set(agentId, question);
+        bootstrapRequest.settled = true;
+        bootstrapRequest.resolve(bootstrap);
+    }
+
+    completeBootstrapOnly(agentId: Cuid2, bootstrap: AgentBootstrapResponse): void {
         const bootstrapRequest = this.bootstrapRequests.find(
             (request) => request.agentId === agentId && !request.settled,
         );
         if (bootstrapRequest === undefined) throw new Error(`No pending sync for ${agentId}.`);
         bootstrapRequest.settled = true;
         bootstrapRequest.resolve(bootstrap);
+    }
+
+    completeQuestion(agentId: Cuid2, response: PendingQuestionResponse): void {
+        const questionRequest = this.questionRequests.find(
+            (request) => request.agentId === agentId && !request.settled,
+        );
+        if (questionRequest === undefined) {
+            throw new Error(`No pending question request for ${agentId}.`);
+        }
+        questionRequest.settled = true;
+        questionRequest.resolve(response);
     }
 
     fail(agentId: Cuid2, error: unknown): void {
@@ -830,6 +1186,41 @@ function userMessage(id: Cuid2, mode: MessageMode): UserMessage {
         role: "user",
         runId: null,
         status: "pending",
+    };
+}
+
+function pendingQuestion(id: Cuid2, agentId: Cuid2, version: string): Question {
+    return {
+        agentId,
+        answeredAt: null,
+        answers: null,
+        autoResolveAt: null,
+        createdAt: 1,
+        id,
+        questions: [
+            {
+                header: "Choice",
+                id: "prompt-a",
+                multiSelect: false,
+                options: [{ description: "Keep going.", label: "Continue" }],
+                question: "What next?",
+            },
+        ],
+        runId: "run-question",
+        status: "pending",
+        version,
+    };
+}
+
+function run(id: Cuid2, status: Run["status"]): Run {
+    return {
+        costUsd: null,
+        endedAt: status === "running" ? null : 5,
+        id,
+        reason: status === "running" ? null : "completed",
+        startedAt: 1,
+        status,
+        usage: {},
     };
 }
 

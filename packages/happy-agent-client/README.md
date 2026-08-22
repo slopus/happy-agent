@@ -23,13 +23,15 @@ current snapshot.
 State contains `connection` and an `agents` record keyed by Agent ID. Calling `agentVisible(id)`
 registers visible interest and returns an idempotent cleanup that lowers the agent to background
 priority. One agent bootstrap supplies its draft, last-used provider/model, context occupancy,
-processes, and direct subagents; the reducer calls the separate activity endpoint only when an
-older compatible daemon omits the additive activity fields. At most three agents sync at once;
-visible agents are selected before tracked background agents. The reducer opens SSE first,
-retains a bounded 60-second event window, and reconciles each field against its private cursor
-before reapplying events received during snapshot loading. A stream gap or broken
-resource-version chain marks affected agents dirty and queues an authoritative refresh. Failed
-reads retry with exponential backoff.
+pending input, current activity phase, processes, and direct subagents. The reducer also reads the
+focused question endpoint, and calls the separate activity endpoint only when an older compatible
+daemon omits the additive activity fields. Pending messages leave state when a run accepts them;
+the question becomes `null` when it is answered or canceled. At most three agents sync at once;
+visible agents are selected before tracked background agents. The reducer opens SSE first, retains
+a bounded 60-second event window, and reconciles each field against its private cursor before
+reapplying events received during snapshot loading. A stream gap or broken resource-version chain
+marks affected agents dirty and queues an authoritative refresh. Failed reads retry with
+exponential backoff.
 
 Stopping is synchronous: it immediately makes the reducer disconnected, aborts snapshot reads,
 and ignores late results. A later start resumes the SSE cursor and refreshes every tracked agent.

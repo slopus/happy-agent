@@ -2,7 +2,9 @@ import type { Agent, AgentActivityResponse, AgentDraftSnapshot } from "./protoco
 import type { AgentBootstrapResponse } from "./protocol/bootstrap.js";
 import type { EventCursor, MessageMode, ResourceVersion } from "./protocol/common.js";
 import type { HappyAgentEvent, ResourceUpdate } from "./protocol/events.js";
+import type { UserMessage } from "./protocol/messages.js";
 import type { BackgroundProcess } from "./protocol/processes.js";
+import type { Question } from "./protocol/questions.js";
 import type { AgentContextUsage } from "./protocol/usage.js";
 import type { HappyReducerAgentModel, HappyReducerAgentState } from "./HappyReducerState.js";
 
@@ -16,7 +18,9 @@ interface HappyReducerAgentFieldCursors {
     readonly context: EventCursor;
     readonly draft: EventCursor;
     readonly lastUsedModel: EventCursor;
+    readonly pending: EventCursor;
     readonly processes: EventCursor;
+    readonly question: EventCursor;
     readonly subagents: EventCursor;
 }
 
@@ -35,10 +39,16 @@ export function createHappyReducerAgentReplica(
     bootstrap: AgentBootstrapResponse,
     activity: AgentActivityResponse,
     activityCursors: HappyReducerAgentActivityCursors,
+    focusedQuestion: Question | null,
+    questionCursor: EventCursor,
     previous: HappyReducerAgentReplica | undefined,
 ): HappyReducerAgentReplica {
     const previousState = previous?.state;
     const previousFieldCursors = previous?.fieldCursors;
+    const rootAgent =
+        previous !== undefined && previous.agent.version >= bootstrap.agent.version
+            ? previous.agent
+            : bootstrap.agent;
     const keepPreviousDraft = isNewer(previousFieldCursors?.draft, bootstrap.cursor);
     const draft =
         previousState !== undefined &&
@@ -61,6 +71,10 @@ export function createHappyReducerAgentReplica(
         (keepPreviousContext || contextsEqual(previousState.context, bootstrap.context))
             ? previousState.context
             : bootstrap.context;
+    const keepPreviousPending = isNewer(previousFieldCursors?.pending, bootstrap.cursor);
+    const pending = keepPreviousPending
+        ? (previousState?.pending ?? bootstrap.pending)
+        : reconcilePending(previousState?.pending, bootstrap.pending);
     const keepPreviousProcesses = isNewer(
         previousFieldCursors?.processes,
         activityCursors.processes,
@@ -75,28 +89,42 @@ export function createHappyReducerAgentReplica(
     const subagents = keepPreviousSubagents
         ? (previousState?.subagents ?? activity.subagents)
         : reconcileVersionedList(previousState?.subagents, activity.subagents);
+    const keepPreviousQuestion = isNewer(previousFieldCursors?.question, questionCursor);
+    const question = keepPreviousQuestion
+        ? (previousState?.question ?? normalizeQuestion(focusedQuestion))
+        : reconcileQuestion(previousState?.question, focusedQuestion);
     const state =
         previousState !== undefined &&
         previousState.draft === draft &&
         previousState.lastUsedModel === lastUsedModel &&
         previousState.context === context &&
+        previousState.pending === pending &&
         previousState.processes === processes &&
+        previousState.question === question &&
+        previousState.status === rootAgent.status &&
         previousState.subagents === subagents
             ? previousState
-            : { context, draft, lastUsedModel, processes, subagents };
-    const rootAgent =
-        previous !== undefined && previous.agent.version >= bootstrap.agent.version
-            ? previous.agent
-            : bootstrap.agent;
+            : {
+                  context,
+                  draft,
+                  lastUsedModel,
+                  pending,
+                  processes,
+                  question,
+                  status: rootAgent.status,
+                  subagents,
+              };
     const nextFieldCursors: HappyReducerAgentFieldCursors = {
         context: keepPreviousContext ? previousFieldCursors.context : bootstrap.cursor,
         draft: keepPreviousDraft ? previousFieldCursors.draft : bootstrap.cursor,
         lastUsedModel: keepPreviousLastUsedModel
             ? previousFieldCursors.lastUsedModel
             : bootstrap.cursor,
+        pending: keepPreviousPending ? previousFieldCursors.pending : bootstrap.cursor,
         processes: keepPreviousProcesses
             ? previousFieldCursors.processes
             : activityCursors.processes,
+        question: keepPreviousQuestion ? previousFieldCursors.question : questionCursor,
         subagents: keepPreviousSubagents
             ? previousFieldCursors.subagents
             : activityCursors.subagents,
@@ -127,6 +155,17 @@ export function reduceHappyReducerAgentEvent(
     if (event.type === "agent.created") {
         if (event.payload.agent.id === agent.id && event.payload.agent.version > agent.version) {
             agent = event.payload.agent;
+            state = withStatus(state, agent.status);
+            if (event.cursor > fieldCursors.question) {
+                if (agent.pendingQuestionId === null) {
+                    state = withQuestion(state, null);
+                    fieldCursors = withFieldCursor(fieldCursors, "question", event.cursor);
+                } else if (state.question?.id === agent.pendingQuestionId) {
+                    fieldCursors = withFieldCursor(fieldCursors, "question", event.cursor);
+                } else {
+                    dirty = true;
+                }
+            }
         }
         if (
             event.payload.agent.parentAgentId === agent.id &&
@@ -137,9 +176,26 @@ export function reduceHappyReducerAgentEvent(
         }
     } else if (event.type === "agent.updated") {
         if (event.payload.agentId === agent.id) {
+            const previousAgent = agent;
             const result = applyResourceUpdate(agent, event.payload);
             agent = result.value;
             dirty ||= result.dirty;
+            if (!result.dirty && agent !== previousAgent) {
+                state = withStatus(state, agent.status);
+                if (
+                    Object.hasOwn(event.payload.changes, "pendingQuestionId") &&
+                    event.cursor > fieldCursors.question
+                ) {
+                    if (agent.pendingQuestionId === null) {
+                        state = withQuestion(state, null);
+                        fieldCursors = withFieldCursor(fieldCursors, "question", event.cursor);
+                    } else if (state.question?.id === agent.pendingQuestionId) {
+                        fieldCursors = withFieldCursor(fieldCursors, "question", event.cursor);
+                    } else {
+                        dirty = true;
+                    }
+                }
+            }
         }
         const subagentIndex = state.subagents.findIndex(
             (subagent) => subagent.id === event.payload.agentId,
@@ -177,11 +233,47 @@ export function reduceHappyReducerAgentEvent(
     } else if (
         event.type === "message.created" &&
         event.payload.agentId === agent.id &&
-        event.payload.message.role === "user" &&
-        event.cursor > fieldCursors.lastUsedModel
+        event.payload.message.role === "user"
     ) {
-        state = withLastUsedModel(state, modelFromMode(event.payload.message.mode));
-        fieldCursors = withFieldCursor(fieldCursors, "lastUsedModel", event.cursor);
+        if (event.cursor > fieldCursors.lastUsedModel) {
+            state = withLastUsedModel(state, modelFromMode(event.payload.message.mode));
+            fieldCursors = withFieldCursor(fieldCursors, "lastUsedModel", event.cursor);
+        }
+        if (event.payload.message.status === "pending" && event.cursor > fieldCursors.pending) {
+            state = withPending(state, appendPending(state.pending, event.payload.message));
+            fieldCursors = withFieldCursor(fieldCursors, "pending", event.cursor);
+        }
+    } else if (
+        (event.type === "run.started" || event.type === "run.boundary") &&
+        event.payload.agentId === agent.id &&
+        event.cursor > fieldCursors.pending
+    ) {
+        state = withPending(state, removePending(state.pending, event.payload.acceptedMessageIds));
+        fieldCursors = withFieldCursor(fieldCursors, "pending", event.cursor);
+    } else if (
+        event.type === "question.created" &&
+        event.payload.question.agentId === agent.id &&
+        event.cursor > fieldCursors.question
+    ) {
+        state = withQuestion(state, reconcileQuestion(state.question, event.payload.question));
+        fieldCursors = withFieldCursor(fieldCursors, "question", event.cursor);
+    } else if (
+        event.type === "question.updated" &&
+        event.cursor > fieldCursors.question &&
+        (state.question?.id === event.payload.questionId ||
+            agent.pendingQuestionId === event.payload.questionId)
+    ) {
+        const question = state.question;
+        if (question === null || question.id !== event.payload.questionId) {
+            dirty = true;
+        } else {
+            const result = applyResourceUpdate(question, event.payload);
+            dirty ||= result.dirty;
+            if (!result.dirty) {
+                state = withQuestion(state, normalizeQuestion(result.value));
+                fieldCursors = withFieldCursor(fieldCursors, "question", event.cursor);
+            }
+        }
     } else if (
         event.type === "process.started" &&
         event.payload.process.agentId === agent.id &&
@@ -235,7 +327,9 @@ function fieldCursorsEqual(
         left.context === right.context &&
         left.draft === right.draft &&
         left.lastUsedModel === right.lastUsedModel &&
+        left.pending === right.pending &&
         left.processes === right.processes &&
+        left.question === right.question &&
         left.subagents === right.subagents
     );
 }
@@ -280,6 +374,35 @@ function reconcileVersionedList<
     return changed ? reconciled : previous;
 }
 
+function reconcilePending(
+    previous: readonly UserMessage[] | undefined,
+    incoming: readonly UserMessage[],
+): readonly UserMessage[] {
+    if (previous === undefined) return incoming;
+    const previousById = new Map(previous.map((message) => [message.id, message]));
+    let changed = previous.length !== incoming.length;
+    const reconciled = incoming.map((message, index) => {
+        const selected = previousById.get(message.id) ?? message;
+        if (selected !== previous[index]) changed = true;
+        return selected;
+    });
+    return changed ? reconciled : previous;
+}
+
+function reconcileQuestion(
+    previous: Question | null | undefined,
+    incoming: Question | null,
+): Question | null {
+    const normalized = normalizeQuestion(incoming);
+    if (previous === undefined || previous === null || normalized === null) return normalized;
+    if (previous.id !== normalized.id) return normalized;
+    return previous.version >= normalized.version ? previous : normalized;
+}
+
+function normalizeQuestion(question: Question | null): Question | null {
+    return question?.status === "pending" ? question : null;
+}
+
 function upsertNewest<TResource extends { readonly id: string; readonly version: string }>(
     resources: readonly TResource[],
     incoming: TResource,
@@ -295,6 +418,25 @@ function replaceAt<T>(values: readonly T[], index: number, value: T): readonly T
     const next = values.slice();
     next[index] = value;
     return next;
+}
+
+function appendPending(
+    pending: readonly UserMessage[],
+    message: UserMessage,
+): readonly UserMessage[] {
+    return pending.some((candidate) => candidate.id === message.id)
+        ? pending
+        : [...pending, message];
+}
+
+function removePending(
+    pending: readonly UserMessage[],
+    acceptedMessageIds: readonly string[],
+): readonly UserMessage[] {
+    if (pending.length === 0 || acceptedMessageIds.length === 0) return pending;
+    const accepted = new Set(acceptedMessageIds);
+    const remaining = pending.filter((message) => !accepted.has(message.id));
+    return remaining.length === pending.length ? pending : remaining;
 }
 
 function withContext(
@@ -321,12 +463,36 @@ function withLastUsedModel(
     return { ...state, lastUsedModel };
 }
 
+function withPending(
+    state: HappyReducerAgentState,
+    pending: readonly UserMessage[],
+): HappyReducerAgentState {
+    if (state.pending === pending) return state;
+    return { ...state, pending };
+}
+
 function withProcesses(
     state: HappyReducerAgentState,
     processes: readonly BackgroundProcess[],
 ): HappyReducerAgentState {
     if (state.processes === processes) return state;
     return { ...state, processes };
+}
+
+function withQuestion(
+    state: HappyReducerAgentState,
+    question: Question | null,
+): HappyReducerAgentState {
+    if (state.question === question) return state;
+    return { ...state, question };
+}
+
+function withStatus(
+    state: HappyReducerAgentState,
+    status: Agent["status"],
+): HappyReducerAgentState {
+    if (state.status === status) return state;
+    return { ...state, status };
 }
 
 function withSubagents(
