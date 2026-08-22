@@ -19,10 +19,9 @@ const MAX_TIMEOUT_MS = 600_000;
 
 const exact = { additionalProperties: false } as const;
 
-const CLAUDE_BASH_DESCRIPTION = `Executes a bash command and returns its output.
+const CLAUDE_BASH_DESCRIPTION = `Executes a bash command in the current working directory and returns its output.
 
-- Commands start in the session working directory. Shell state (such as \`cd\`, environment variables, and functions) does not persist between calls.
-- Try to maintain the current working directory by using absolute paths and avoiding usage of \`cd\`. In particular, never prepend \`cd <current-directory>\` to a \`git\` command: Git already operates on the current working tree, and making it a compound command can trigger an unnecessary permission review.
+- Environment variables and shell functions do not carry over between commands.
 - Prefer the dedicated file and search tools over shell equivalents when one fits.
 - \`timeout\` is in milliseconds: default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)}. It is how long you wait, not how long the command may live: a command still running when the wait ends keeps running in the background and comes back with a shell ID.
 - \`run_in_background\` starts the command in the background right away, waiting about ${String(COMPUTE_BACKGROUND_GRACE_MS / 1_000)} seconds to see that it did not fall over. Use it for dev servers and watchers. No \`&\` needed.

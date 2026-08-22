@@ -21,13 +21,13 @@ const MAX_OUTPUT_CHARACTERS = 40_000;
 export function grokRunTerminalCommandTool(compute: Compute) {
     return defineAgentTool({
         name: "run_terminal_command",
-        description: `Run a bash command and return its output.
+        description: `Run a bash command in the current working directory and return its output.
 
 Usage notes:
 - You can specify an optional timeout in milliseconds, up to ${String(MAX_TIMEOUT_MS)}. If not specified, foreground commands wait ${String(DEFAULT_TIMEOUT_MS)}ms. The timeout is how long you wait, not how long the command may live: a command still running when the wait ends keeps running and comes back with a task_id.
 - Use background for long-running commands such as development servers and long builds. It waits about ${String(COMPUTE_BACKGROUND_GRACE_MS / 1_000)} seconds to see that the command did not fall over; do not add '&' to the command.
 - Read a background command with get_command_or_subagent_output, type into it with send_command_input, and stop it with kill_command_or_subagent.
-- Nothing carries over between calls: a directory change or a variable set by one command is gone by the next.
+- Environment variables and shell functions do not carry over between commands.
 - Output may be truncated before it is returned.`,
         parameters: Type.Object(
             {
