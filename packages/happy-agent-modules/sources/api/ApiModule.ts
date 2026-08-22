@@ -2147,19 +2147,7 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (operation === "activity" && request.method === "GET") {
-                const agents = this.#agentSystem();
-                if ((await agents.config(ctx, agentId)) === undefined) {
-                    throw notFound("The agent was not found.");
-                }
-                const children = await agents.childOf(ctx, agentId);
-                sendJson(response, 200, {
-                    subagents: await Promise.all(
-                        [...children]
-                            .reverse()
-                            .map(async (childId) => await this.#requireAgentResource(ctx, childId)),
-                    ),
-                    processes: await this.#compute.listProcesses(ctx, agentId),
-                });
+                sendJson(response, 200, await this.#agentActivity(ctx, agentId));
                 return true;
             }
             return false;
@@ -2520,21 +2508,39 @@ export class ApiModule implements AgentModule {
         // Capture first so every concurrent mutation is either in this snapshot or replayed.
         const cursor = this.#journal.cursor();
         const agent = await this.#requireAgentResource(ctx, agentId);
-        const [draft, mode, usage, pending, slashCommands] = await Promise.all([
+        const [draft, mode, usage, pending, slashCommands, activity] = await Promise.all([
             this.#agentDraft(ctx, agentId),
             this.#agentMode(ctx, agentId),
             this.#agentUsage(ctx, agentId),
             this.#history.pending(ctx, agentId),
             this.#slashCommands.catalog(ctx, agentId),
+            this.#agentActivity(ctx, agentId),
         ]);
         return {
             ...usage,
+            ...activity,
             agent,
             draft,
             mode,
             pending: pending.map(pendingMessageResource),
             slashCommands,
             cursor,
+        };
+    }
+
+    async #agentActivity(ctx: Context, agentId: string): Promise<Record<string, unknown>> {
+        const agents = this.#agentSystem();
+        if ((await agents.config(ctx, agentId)) === undefined) {
+            throw notFound("The agent was not found.");
+        }
+        const children = await agents.childOf(ctx, agentId);
+        return {
+            subagents: await Promise.all(
+                [...children]
+                    .reverse()
+                    .map(async (childId) => await this.#requireAgentResource(ctx, childId)),
+            ),
+            processes: await this.#compute.listProcesses(ctx, agentId),
         };
     }
 

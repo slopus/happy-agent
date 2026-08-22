@@ -320,6 +320,10 @@ describe("public questions and activity API", () => {
         });
         expect(child.workspaceId).toBe((await gym.client.getAgent(parentId)).agent.workspaceId);
         expect(activity.processes).toEqual([]);
+        await expect(gym.client.getAgentBootstrap(parentId)).resolves.toMatchObject({
+            processes: [],
+            subagents: [expect.objectContaining({ id: child.id, status: "idle" })],
+        });
 
         const rootAgents = await gym.listSessions();
         expect(rootAgents.map((agent) => agent.id)).toContain(parentId);

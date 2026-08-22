@@ -39,7 +39,7 @@
     },
     "dependencies": {
         "@slopus/happy-agent-base": "0.0.27",
-        "@slopus/happy-agent-client": "0.0.20",
+        "@slopus/happy-agent-client": "0.0.21",
         "@slopus/happy-agent-modules": "workspace:*",
         "@slopus/happy-providers": "0.0.11",
         "@steve.kite/stdlib": "0.0.12"

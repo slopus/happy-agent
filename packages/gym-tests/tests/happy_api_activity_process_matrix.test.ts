@@ -96,6 +96,10 @@ describe("public activity and process API matrix", () => {
                 status: "running",
             }),
         );
+        await expect(gym.client.getAgentBootstrap(gym.defaultSessionId)).resolves.toMatchObject({
+            processes: [expect.objectContaining({ command: "sleep 30", status: "running" })],
+            subagents: [],
+        });
         await stopFirstProcess(gym, activity);
     });
 
