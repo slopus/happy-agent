@@ -37,13 +37,16 @@ labels plus text; batched requests settle with one answer map. Answer, cancellat
 away transitions are single-settlement operations.
 
 The `request_user_input` and `cancel_ask` tools never enter Auto-mode review. The request tool is
-non-durable because its wait can outlive a tool execution. It accepts an optional
+durable: a person may take days to answer, so a call interrupted by a restart is executed again
+rather than failed. Running it again is safe because the provider call ID is the request ID, which
+Agent Base restores with the stored call — the second execution resumes the same request and
+returns immediately when it was answered while the daemon was down. It accepts an optional
 `autoResolutionMs` window from 60 to 240 seconds for questions where the model may continue with
-its best judgement. `cancel_ask` accepts `requestId` (and the legacy `ask_id` spelling) plus an
-optional reason. Agent Base's stable call ID is the request ID. The tool creates or resumes that
-request in one transaction, then waits outside a transaction. After a terminal
-result, the same tool can read bounded detail pages by request ID and cursor so long answers remain
-available to the model.
+its best judgement, measured from when the request was created rather than from when a wait
+resumed. `cancel_ask` accepts `requestId` (and the legacy `ask_id` spelling) plus an
+optional reason. The tool creates or resumes that request in one transaction, then waits outside a
+transaction. After a terminal result, the same tool can read bounded detail pages by request ID and
+cursor so long answers remain available to the model.
 
 Host callers can use `ask`, `wait`, `listPage`/`list`, `get`/`getPage`, `answer`, `cancel`, and
 `complete`. `formatForModel`, `formatPageForModel`, `formatDetailPageForModel`, and

@@ -10,10 +10,13 @@ import {
     userInputRequestSchema,
     type UserInputAskInput,
 } from "../../sources/userInput/index.js";
+import { requestUserInputTool } from "../../sources/userInput/tools/request_user_input.js";
 import {
     agentsWithParent,
     createUserInputDatabase,
     createUserInputModule,
+    onlinePresence,
+    ScriptedPresenceModule,
     singularAsk,
 } from "./userInputTestSupport.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
@@ -66,6 +69,71 @@ describe("UserInput durable lifecycle and persistence", () => {
             await expect(second.get(database.context, agentId, "stable-retry")).resolves.toEqual(
                 created,
             );
+        } finally {
+            database.close();
+        }
+    });
+
+    it("resumes the wait a restart interrupted instead of asking again", async () => {
+        const interrupted = createUserInputModule();
+        const database = createUserInputDatabase(interrupted, "user-input-restart-resume");
+        await database.ready;
+        try {
+            const input = singularAsk();
+            // What the interrupted daemon left behind: the request its tool call created.
+            const asked = await interrupted.ask(database.context, agentId, input, "restarted-call");
+
+            // Agent Base restores the provider call ID, so the retried call is this same request.
+            const presence = new ScriptedPresenceModule(onlinePresence());
+            const restarted = createUserInputModule(presence);
+            const tool = requestUserInputTool(restarted, agentId);
+            const resumed = tool.execute(database.context, { input }, {
+                id: "internal-call",
+                providerCallId: "restarted-call",
+            } as never);
+            await vi.waitFor(() => expect(presence.subscriberCount).toBe(1));
+            const answered = await restarted.answer(database.context, agentId, {
+                requestId: "restarted-call",
+                answer: "Use the first option.",
+            });
+
+            expect(answered.createdAt).toBe(asked.createdAt);
+            await expect(resumed).resolves.toMatchObject({
+                id: "restarted-call",
+                status: "answered",
+                answer: "Use the first option.",
+            });
+            await expect(restarted.list(database.context, agentId)).resolves.toHaveLength(1);
+        } finally {
+            database.close();
+        }
+    });
+
+    it("hands back an answer given while the daemon was down", async () => {
+        const interrupted = createUserInputModule();
+        const database = createUserInputDatabase(interrupted, "user-input-restart-answered");
+        await database.ready;
+        try {
+            const input = singularAsk();
+            await interrupted.ask(database.context, agentId, input, "answered-while-down");
+            await interrupted.answer(database.context, agentId, {
+                requestId: "answered-while-down",
+                answer: "The second option.",
+            });
+
+            const restarted = createUserInputModule();
+            const tool = requestUserInputTool(restarted, agentId);
+            const resumed = await tool.execute(database.context, { input }, {
+                id: "internal-call",
+                providerCallId: "answered-while-down",
+            } as never);
+
+            expect(resumed).toMatchObject({
+                id: "answered-while-down",
+                status: "answered",
+                answer: "The second option.",
+            });
+            expect(JSON.stringify(tool.toLLM(resumed))).toContain("The second option.");
         } finally {
             database.close();
         }

@@ -387,7 +387,7 @@ describe("UserInput runtime schemas and contracts", () => {
 
         expect(requestTool).toMatchObject({
             name: "request_user_input",
-            durable: false,
+            durable: true,
         });
         expect(cancelTool).toMatchObject({
             name: "cancel_ask",

@@ -51,6 +51,11 @@ type RequestUserInputToolParameters = Static<typeof requestUserInputToolParamete
  * sees, so a genuine human "yes" would never be recognized as authorization. The provider call ID is
  * itself durable across restarts (Agent Base restores it with the stored tool call), so a resumed
  * `request_user_input` re-resolves the same request.
+ *
+ * That is why the tool is durable. A person may take days to answer, and a daemon restart in the
+ * meantime must not turn their question into a failed tool call. Executing it again is safe rather
+ * than merely tolerable: `ask` creates or resumes the one request the provider call ID names, and
+ * `wait` returns at once when it was already answered while the daemon was down.
  */
 export function requestUserInputTool(userInput: UserInputModule, agentId: string) {
     return defineAgentTool({
@@ -59,7 +64,7 @@ export function requestUserInputTool(userInput: UserInputModule, agentId: string
             "Ask the human one to four related questions with short headers and the Markdown context they need, then wait for an explicit answer, cancellation, away, or timeout outcome. This request is durable across daemon restarts. Set autoResolutionMs from 60000 to 240000 only when continuing with your best judgement is acceptable if nobody answers. To read more detail from a completed request, call this tool with its requestId and an optional cursor.",
         parameters: requestUserInputToolParametersSchema,
         returnType: requestUserInputToolResultSchema,
-        durable: false,
+        durable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { input }: RequestUserInputToolParameters, call) => {
             if ("requestId" in input) {

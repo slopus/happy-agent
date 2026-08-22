@@ -62,7 +62,7 @@ describe("UserInputModule", () => {
         await database.ready;
         try {
             const tool = requestUserInputTool(module, agentId);
-            expect(tool.durable).toBe(false);
+            expect(tool.durable).toBe(true);
             expect(tool.transactional).toBeUndefined();
             const running = tool.execute(database.context, { input: askInput }, {
                 id: "tool-call",
