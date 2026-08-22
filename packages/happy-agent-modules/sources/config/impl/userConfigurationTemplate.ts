@@ -25,6 +25,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # daemon_heap_snapshots = false
 # durable_global_event_queue = false
 # happy_integration = true
+# Show the agents in the macOS menu bar while the daemon runs.
+# menu_bar = true
 # show_reasoning = false
 # show_usage = false
 

@@ -7,6 +7,7 @@ import { resolveBinaryVersion } from "./resolveBinaryVersion.js";
 
 const MINIMUM_BUN_VERSION = [1, 4, 0] as const;
 const VIRTUAL_ASSETS_MODULE = "happy-agent:binary-assets";
+const MENU_BAR_RELATIVE_PATH = "happy-menu-bar";
 const happyAgentRoot = resolve(import.meta.dirname, "..");
 
 interface BinaryTarget {
@@ -39,6 +40,8 @@ interface BinaryAssets {
     ghosttyVariable: string;
     justBashWorkerGroups: Record<JustBashWorker, JustBashWorkerGroup>;
     libsqlRelativePath: string;
+    /** The macOS menu bar app, absent on the platforms that have no menu bar. */
+    menuBarRelativePath?: string;
     montyRelativePath: string;
     supervisorRelativePaths: Record<BinaryTarget["key"], string>;
 }
@@ -97,7 +100,7 @@ async function main(): Promise<void> {
 
 async function buildTarget(target: BinaryTarget): Promise<void> {
     const assets = resolveBinaryAssets(target);
-    const adapters = resolveSourceAdapters();
+    const adapters = resolveSourceAdapters(target);
     const appliedAdapters = new Set<string>();
     const outfile = join(happyAgentRoot, "dist", "bin", `happy-agent-${target.key}`);
     console.log(`Compiling ${target.key}...`);
@@ -323,6 +326,11 @@ export const { getQuickJS } = QJS;
         );
     }
 
+    const menuBarApp = buildMenuBarApp(modulesRoot, target);
+    if (menuBarApp !== undefined) {
+        assets.push(asset("menuBarAsset", menuBarApp, MENU_BAR_RELATIVE_PATH, true));
+    }
+
     return {
         assets,
         claudeRelativePath: "claude",
@@ -345,12 +353,34 @@ export const { getQuickJS } = QJS;
             },
         },
         libsqlRelativePath: "index.node",
+        ...(menuBarApp === undefined ? {} : { menuBarRelativePath: MENU_BAR_RELATIVE_PATH }),
         montyRelativePath: basename(montySource),
         supervisorRelativePaths,
     };
 }
 
-function resolveSourceAdapters(): Map<string, SourceAdapter> {
+/**
+ * Compiles the macOS menu bar app for this target and returns it, or nothing on a platform that
+ * has no menu bar. It is built here rather than reused from the host build so that compiling for
+ * another macOS architecture embeds an app for that architecture.
+ */
+function buildMenuBarApp(modulesRoot: string, target: BinaryTarget): string | undefined {
+    if (target.platform !== "darwin") return undefined;
+    if (process.platform !== "darwin") {
+        throw new Error("Compiling a macOS Happy Agent binary requires a macOS host.");
+    }
+    const built = Bun.spawnSync({
+        cmd: ["node", join("scripts", "build-menu-bar.mjs"), target.key],
+        cwd: modulesRoot,
+        stdio: ["ignore", "inherit", "inherit"],
+    });
+    if (!built.success) {
+        throw new Error(`Failed to build the menu bar app for ${target.key}.`);
+    }
+    return join(modulesRoot, "dist", "menuBar", "bin", `happy-menu-bar-${target.key}`);
+}
+
+function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter> {
     const adapters = new Map<string, SourceAdapter>();
     const modulesRoot = directPackageRoot("@slopus/happy-agent-modules");
     const libsqlRoot = packageDependencyRoot(
@@ -502,6 +532,14 @@ export function resolveBinaryForTarget(key, binaryPath) {
                 `import { loadGhosttyWasm } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\nexport async function loadBundledWasm() { return loadGhosttyWasm(); }\n`,
         },
     );
+    if (target.platform === "darwin") {
+        addAdapter(adapters, join(modulesRoot, "dist", "menuBar", "impl", "resolveMenuBarApp.js"), {
+            name: "menu bar app resolver",
+            required: true,
+            adapt: () =>
+                `export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64"];\nexport { getMenuBarApp as resolveMenuBarApp } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
+        });
+    }
     addPermissionPromptAdapter(adapters, modulesRoot);
     addAdapter(adapters, onlyMatchingFile(justBashChunks, /^js-exec-[A-Z0-9]+\.js$/u), {
         name: "just-bash JavaScript worker resolver",
@@ -603,6 +641,13 @@ export function getSupervisorBinary(key) {
 }
 export function getClaudeExecutable() {
     return join(materializeEmbeddedFiles("claude", ${files(["claudeAsset"])}), ${JSON.stringify(binaryAssets.claudeRelativePath)});
+}
+${
+    binaryAssets.menuBarRelativePath === undefined
+        ? ""
+        : `export function getMenuBarApp() {
+    return join(materializeEmbeddedFiles("menu-bar", ${files(["menuBarAsset"])}), ${JSON.stringify(binaryAssets.menuBarRelativePath)});
+}`
 }
 export function loadGhosttyWasm() {
     return Uint8Array.from(readFileSync(${binaryAssets.ghosttyVariable})).buffer;

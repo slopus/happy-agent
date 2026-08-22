@@ -140,6 +140,7 @@ const settingsInputSchema = Type.Object(
         max_collaborators: Type.Optional(
             Type.Integer({ minimum: 1, maximum: MAX_CONFIGURED_COLLABORATORS }),
         ),
+        menu_bar: Type.Optional(Type.Boolean()),
         show_reasoning: Type.Optional(Type.Boolean()),
         show_usage: Type.Optional(Type.Boolean()),
         tool_result_retention_days: Type.Optional(
@@ -756,6 +757,7 @@ const resolvedValuesSchema = Type.Object(
                     minimum: 1,
                     maximum: MAX_CONFIGURED_COLLABORATORS,
                 }),
+                menuBar: Type.Boolean(),
                 showReasoning: Type.Boolean(),
                 showUsage: Type.Boolean(),
                 toolResultRetentionDays: Type.Integer({
@@ -945,6 +947,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         inferenceMaxRetries: 10,
         maxCollaborationDepth: 3,
         maxCollaborators: 5,
+        menuBar: true,
         showReasoning: false,
         showUsage: false,
         toolResultRetentionDays: 7,
@@ -2049,6 +2052,7 @@ function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Recor
         ...(value.max_collaborators === undefined
             ? {}
             : { maxCollaborators: value.max_collaborators }),
+        ...(value.menu_bar === undefined ? {} : { menuBar: value.menu_bar }),
         ...(value.show_reasoning === undefined ? {} : { showReasoning: value.show_reasoning }),
         ...(value.show_usage === undefined ? {} : { showUsage: value.show_usage }),
         ...(value.tool_result_retention_days === undefined
@@ -2433,6 +2437,8 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         inference_max_retries: _inferenceMaxRetries,
         max_collaboration_depth: _maxCollaborationDepth,
         max_collaborators: _maxCollaborators,
+        // Whether this machine shows a menu bar is the person's business, not a repository's.
+        menu_bar: _menuBar,
         tool_result_retention_days: _toolResultRetentionDays,
         ...projectSettings
     } = settings ?? {};
@@ -2480,6 +2486,7 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
             inference_max_retries: "inferenceMaxRetries",
             max_collaboration_depth: "maxCollaborationDepth",
             max_collaborators: "maxCollaborators",
+            menu_bar: "menuBar",
             show_reasoning: "showReasoning",
             show_usage: "showUsage",
             tool_result_retention_days: "toolResultRetentionDays",
@@ -2550,6 +2557,7 @@ function readSettings(
             "inference_max_retries",
             "max_collaboration_depth",
             "max_collaborators",
+            "menu_bar",
             "show_reasoning",
             "show_usage",
             "tool_result_retention_days",

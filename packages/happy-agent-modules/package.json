@@ -29,7 +29,8 @@
         "access": "public"
     },
     "scripts": {
-        "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json && node --eval \"import('node:fs/promises').then(({ cp }) => cp('sources/auto/prompts', 'dist/auto/prompts', { recursive: true }))\"",
+        "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json && node --eval \"import('node:fs/promises').then(({ cp }) => cp('sources/auto/prompts', 'dist/auto/prompts', { recursive: true }))\" && pnpm build:menu-bar",
+        "build:menu-bar": "node scripts/build-menu-bar.mjs",
         "check": "tsc --noEmit",
         "test": "vitest run --passWithNoTests"
     },

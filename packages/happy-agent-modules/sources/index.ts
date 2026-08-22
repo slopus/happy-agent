@@ -257,6 +257,9 @@ export { selectHistoryPage } from "./history/impl/selectHistoryPage.js";
 // Compute: the machine an agent works on, as file and command tools over one compute.
 export * from "./compute/index.js";
 
+// Menu bar: the native macOS status item showing what the agents are doing.
+export * from "./menuBar/index.js";
+
 // Model switch: the notice a model gets when it inherits a conversation it cannot see.
 export { ModelSwitchModule } from "./modelSwitch/ModelSwitchModule.js";
 export {

@@ -256,6 +256,7 @@ describe("ConfigModule edge coverage", () => {
                     "durable_global_event_queue = true",
                     "happy_integration = false",
                     "inference_max_retries = 1",
+                    "menu_bar = false",
                     "tool_result_retention_days = 1",
                     "",
                     "[providers.codex]",
@@ -290,6 +291,7 @@ describe("ConfigModule edge coverage", () => {
                         durableGlobalEventQueue: true,
                         happyIntegration: false,
                         inferenceMaxRetries: 1,
+                        menuBar: false,
                         toolResultRetentionDays: 1,
                     },
                 });
@@ -303,6 +305,7 @@ describe("ConfigModule edge coverage", () => {
                     durableGlobalEventQueue: false,
                     happyIntegration: true,
                     inferenceMaxRetries: 10,
+                    menuBar: true,
                     toolResultRetentionDays: 7,
                 });
                 expect(configuration.values).not.toHaveProperty("observation.traces", true);

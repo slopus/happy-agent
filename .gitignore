@@ -6,6 +6,8 @@
 # repositories, bug screenshots, investigation files, and draft notes.
 /.local/
 .context/
+# The Happy home `pnpm dev` runs the daemon against, holding its databases and token.
+.happy-terminal-dev/
 .rig-dev/
 .terminal-target/
 .worktrees/

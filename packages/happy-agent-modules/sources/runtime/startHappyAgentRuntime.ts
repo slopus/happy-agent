@@ -43,6 +43,7 @@ import { GoalModule } from "../goal/index.js";
 import { HappyModule } from "../happy/index.js";
 import { HistoryModule } from "../history/index.js";
 import { ImageGenerationModule } from "../imageGeneration/index.js";
+import { MenuBarModule } from "../menuBar/index.js";
 import { ModelSwitchModule } from "../modelSwitch/ModelSwitchModule.js";
 import { MurmurModule } from "../murmur/index.js";
 import { ObservationModule } from "../observation/index.js";
@@ -127,6 +128,7 @@ export interface HappyAgentRuntimeModules {
     readonly history: HistoryModule;
     readonly imageGeneration: ImageGenerationModule;
     readonly installation: InstallationModule;
+    readonly menuBar: MenuBarModule;
     readonly modelSwitch: ModelSwitchModule;
     readonly murmur: MurmurModule<LibSQLDatabase>;
     readonly observation: ObservationModule;
@@ -431,6 +433,8 @@ export async function startHappyAgentRuntime(
         );
         const goal = new GoalModule();
         const imageGeneration = new ImageGenerationModule(config);
+        const menuBar = new MenuBarModule(config);
+        registerShutdown("menu-bar", async () => await menuBar.close());
         const modelSwitch = new ModelSwitchModule(history);
         const search = new SearchModule(config);
         const secrets = new SecretsModule();
@@ -480,6 +484,7 @@ export async function startHappyAgentRuntime(
             history,
             imageGeneration,
             installation,
+            menuBar,
             modelSwitch,
             murmur,
             observation,
@@ -543,6 +548,7 @@ export async function startHappyAgentRuntime(
             compute.computeModule,
             happy,
             installation,
+            menuBar,
         ]
             .map(checkModuleToolParameters)
             .map(instrumentModuleLogging);
