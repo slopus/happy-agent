@@ -15,11 +15,17 @@ const inputSchema = Type.Object(
 
 type Input = Static<typeof inputSchema>;
 
-export function grokWebSearchTool(search: SearchModule, agentId: string) {
+export function grokWebSearchTool(
+    search: SearchModule,
+    agentId: string,
+    currentProviderId: string,
+    isPreferred: boolean,
+) {
     return defineAgentTool({
         name: "grok_web_search",
-        description:
-            "Search published web pages through Grok. Use Grok X search for posts and social reaction.",
+        description: isPreferred
+            ? "This is the preferred web search for this agent because Grok is its current provider. Omit provider_id to use the current Grok account. Search published web pages; use Grok X search for posts and social reaction."
+            : "Search published web pages through Grok. Use Grok X search for posts and social reaction.",
         parameters: inputSchema,
         returnType: searchAnswerSchema,
         durable: false,
@@ -28,14 +34,19 @@ export function grokWebSearchTool(search: SearchModule, agentId: string) {
         describeAutoPermissionAction: ({ query }) =>
             `searching the web through Grok for "${query}". Access: external provider network`,
         execute: async (ctx, input: Input) =>
-            await search.providerSearch(ctx, agentId, {
-                provider: "grok",
-                query: input.query,
-                ...(input.include_domains === undefined
-                    ? {}
-                    : { allowedDomains: input.include_domains }),
-                ...(input.provider_id === undefined ? {} : { providerId: input.provider_id }),
-            }),
+            await search.providerSearch(
+                ctx,
+                agentId,
+                {
+                    provider: "grok",
+                    query: input.query,
+                    ...(input.include_domains === undefined
+                        ? {}
+                        : { allowedDomains: input.include_domains }),
+                    ...(input.provider_id === undefined ? {} : { providerId: input.provider_id }),
+                },
+                currentProviderId,
+            ),
         toLLM: (answer) => [{ type: "text", text: search.formatSearchAnswerForModel(answer) }],
     });
 }

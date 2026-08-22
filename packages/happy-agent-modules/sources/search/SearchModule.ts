@@ -64,15 +64,13 @@ export class SearchModule implements AgentModule {
     /**
      * The accounts every vendor search runs on, resolved per call.
      *
-     * The catalog and the accounts are settled once by configuration, but the Gemini key is read
-     * from the environment each time it is asked for, so this is assembled when a search needs it
-     * rather than frozen at construction.
+     * Agent tools supply the provider of the agent they serve. A direct caller has no agent scope,
+     * so omitting it retains the configured default. The Gemini key is also read each time, which
+     * keeps this context current rather than freezing it at construction.
      */
-    get #search(): VendorSearchContext {
+    #search(currentProviderId?: string): VendorSearchContext {
         const models = this.#config.models;
-        // The account this chat itself runs on is the first model's: that is what a session gets
-        // when it names nothing, and it is the one known to be signed in and paid for.
-        const currentProviderId = models[0]?.providerId;
+        const routedProviderId = currentProviderId ?? models[0]?.providerId;
         const geminiApiKey = this.#config.geminiApiKey;
         return {
             providers: this.#config.providers,
@@ -80,7 +78,7 @@ export class SearchModule implements AgentModule {
                 providers: this.#config.providers,
                 models,
                 bedrockSearchModels: this.#config.bedrockSearchModels,
-                ...(currentProviderId === undefined ? {} : { currentProviderId }),
+                ...(routedProviderId === undefined ? {} : { currentProviderId: routedProviderId }),
             }),
             ...(geminiApiKey === undefined ? {} : { geminiApiKey }),
         };
@@ -90,6 +88,7 @@ export class SearchModule implements AgentModule {
         ctx: Context,
         agentId: string,
         request: SearchProviderRequest,
+        currentProviderId?: string,
     ): Promise<SearchAnswer> {
         assertAgentId(agentId);
         if (!Value.Check(searchProviderRequestSchema, request)) {
@@ -117,7 +116,7 @@ export class SearchModule implements AgentModule {
                 : { blockedDomains: [...request.blockedDomains] }),
             ...(request.latest === undefined ? {} : { latest: request.latest }),
         };
-        const answer = await vendorSearch(ctx, this.#search, normalized);
+        const answer = await vendorSearch(ctx, this.#search(currentProviderId), normalized);
         assertSearchAnswer(answer, normalized);
         /*
          * The formatter is part of the module boundary.  An answer whose sources cannot all be
@@ -155,17 +154,44 @@ export class SearchModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
-            webFetchTool(this, scope.agent.id),
-            ...(this.#config.geminiApiKey === undefined
-                ? []
-                : [geminiWebSearchTool(this, scope.agent.id)]),
-            claudeWebSearchTool(this, scope.agent.id),
-            codexWebSearchTool(this, scope.agent.id),
-            bedrockWebSearchTool(this, scope.agent.id),
-            grokWebSearchTool(this, scope.agent.id),
-            grokXSearchTool(this, scope.agent.id),
-        ],
+        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => {
+            const currentProviderId = scope.agent.provider;
+            const currentProviderKind =
+                scope.agent.providerKind ??
+                this.#config.providers.typeOf(currentProviderId) ??
+                undefined;
+            return [
+                webFetchTool(this, scope.agent.id),
+                ...(this.#config.geminiApiKey === undefined
+                    ? []
+                    : [geminiWebSearchTool(this, scope.agent.id)]),
+                claudeWebSearchTool(
+                    this,
+                    scope.agent.id,
+                    currentProviderId,
+                    currentProviderKind === "claude",
+                ),
+                codexWebSearchTool(
+                    this,
+                    scope.agent.id,
+                    currentProviderId,
+                    currentProviderKind === "codex",
+                ),
+                bedrockWebSearchTool(
+                    this,
+                    scope.agent.id,
+                    currentProviderId,
+                    currentProviderKind === "bedrock",
+                ),
+                grokWebSearchTool(
+                    this,
+                    scope.agent.id,
+                    currentProviderId,
+                    currentProviderKind === "grok",
+                ),
+                grokXSearchTool(this, scope.agent.id, currentProviderId),
+            ];
+        },
     };
 
     readonly beforeStart = (): AgentModuleHooks => this.#hooks;

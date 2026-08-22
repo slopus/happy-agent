@@ -71,8 +71,12 @@ async function module(): Promise<SearchModule> {
     );
 }
 
-function scope(agentId: string): AgentModuleScope {
-    return { agent: { id: agentId } } as AgentModuleScope;
+function scope(
+    agentId: string,
+    provider = "codex",
+    providerKind: "claude" | "codex" | undefined = "codex",
+): AgentModuleScope {
+    return { agent: { id: agentId, provider, providerKind } } as AgentModuleScope;
 }
 
 function answer(overrides: Partial<SearchAnswer> = {}): SearchAnswer {
@@ -86,9 +90,9 @@ function answer(overrides: Partial<SearchAnswer> = {}): SearchAnswer {
     };
 }
 
-async function toolsFor(search: SearchModule) {
+async function toolsFor(search: SearchModule, agentScope = scope(AGENT_ID)) {
     const hooks = await resolveModuleHooks(ctx, search);
-    return await hooks.tools!(ctx, scope(AGENT_ID));
+    return await hooks.tools!(ctx, agentScope);
 }
 
 afterEach(() => {
@@ -129,6 +133,33 @@ describe("SearchModule", () => {
         const tools = await toolsFor(await module());
 
         expect(tools.map((tool) => tool.name)).not.toContain("gemini_web_search");
+    });
+
+    it("prefers and routes web search through the agent's current provider", async () => {
+        const search = new SearchModule(
+            await configWith([
+                ["work", "codex"],
+                ["personal", "codex"],
+                ["anthropic", "claude"],
+            ]),
+        );
+        const providerSearch = vi.spyOn(search, "providerSearch").mockResolvedValue(answer());
+        const tools = await toolsFor(search, scope(AGENT_ID, "personal", undefined));
+        const preferred = tools.filter(
+            (tool) => tool.description?.includes("preferred web search") === true,
+        );
+
+        expect(preferred.map((tool) => tool.name)).toEqual(["codex_web_search"]);
+        expect(preferred[0]!.description).toContain("current Codex account");
+
+        await preferred[0]!.execute(ctx, { query: "rig" }, undefined as never);
+
+        expect(providerSearch).toHaveBeenCalledWith(
+            ctx,
+            AGENT_ID,
+            { provider: "codex", query: "rig" },
+            "personal",
+        );
     });
 
     it("says which vendor has no configured account instead of searching nowhere", async () => {

@@ -15,7 +15,7 @@ const inputSchema = Type.Object(
 
 type Input = Static<typeof inputSchema>;
 
-export function grokXSearchTool(search: SearchModule, agentId: string) {
+export function grokXSearchTool(search: SearchModule, agentId: string, currentProviderId: string) {
     return defineAgentTool({
         name: "grok_x_search",
         description:
@@ -28,12 +28,17 @@ export function grokXSearchTool(search: SearchModule, agentId: string) {
         describeAutoPermissionAction: ({ query }) =>
             `searching X through Grok for "${query}". Access: external provider network`,
         execute: async (ctx, input: Input) =>
-            await search.providerSearch(ctx, agentId, {
-                provider: "grok-x",
-                query: input.query,
-                ...(input.latest === undefined ? {} : { latest: input.latest }),
-                ...(input.provider_id === undefined ? {} : { providerId: input.provider_id }),
-            }),
+            await search.providerSearch(
+                ctx,
+                agentId,
+                {
+                    provider: "grok-x",
+                    query: input.query,
+                    ...(input.latest === undefined ? {} : { latest: input.latest }),
+                    ...(input.provider_id === undefined ? {} : { providerId: input.provider_id }),
+                },
+                currentProviderId,
+            ),
         toLLM: (answer) => [{ type: "text", text: search.formatSearchAnswerForModel(answer) }],
     });
 }

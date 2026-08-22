@@ -19,8 +19,10 @@ The module takes only the configuration module, and asks it for everything a sea
 accounts (`providers`), the catalog each vendor searches with (`models`), the model a Bedrock
 account serves its hosted index from (`bedrockSearchModels`), and the Gemini key
 (`geminiApiKey`) — Gemini is not one of the accounts a chat runs on, so it authenticates with a key
-of its own. The account this chat itself uses is the first model's, which is what a session gets
-when it names nothing; it is preferred whenever it serves the asked vendor.
+of its own. Agent tools take the actual current provider from their agent scope. The matching
+vendor tool identifies itself as the preferred web search, and omitting `provider_id` routes the
+call through that current account. Direct module callers that have no agent scope retain the first
+configured model as their default.
 
 The bounds are the module's own constants rather than settings: `MAX_SEARCH_FETCH_CHARACTERS`
 (40,000) is how much of a fetched page is kept before truncation, and `MAX_SEARCH_OUTPUT_CHARACTERS`
@@ -45,6 +47,9 @@ to fail authentication. The available tools are shared by Claude, Codex, Grok, B
 providers. A vendor search spends one bounded call on that vendor's own search — Codex's
 `web_search`, Claude's `WebSearch`, Bedrock's hosted index, Grok's `web_search` and `x_search`, and
 Gemini's grounding over Google's HTTP API — on an account the person already configured.
+The fixed array remains available to every model, but exactly one ordinary web-search description
+is marked preferred when the current provider has a matching search. Other vendor searches remain
+available for an explicit request or fallback.
 
 A vendor search is not paginated. Each search returns a bounded `SearchAnswer` (`provider`, `query`,
 `answer`, `sources`, `durationMs`). The model sees the vendor's answer text first, then a bounded
@@ -70,12 +75,14 @@ contrast, is prose and may be cut with an `[Answer truncated.]` marker to keep t
 
 ## External functions
 
-- **`search.providerSearch(ctx, agentId, request): Promise<SearchAnswer>`** — normalizes a
+- **`search.providerSearch(ctx, agentId, request, currentProviderId?): Promise<SearchAnswer>`** — normalizes a
   vendor-routed request, runs that vendor's search, and validates the answer: it must echo the same
   vendor and (trimmed) query, report a finite non-negative duration, and cite canonical
   `http`/`https` sources with no duplicate URLs. It also confirms the answer can be rendered within
-  `MAX_SEARCH_OUTPUT_CHARACTERS` before returning. A request that both allows and blocks domains, or that
-  names an account the person has not configured, is rejected before any vendor is called.
+  `MAX_SEARCH_OUTPUT_CHARACTERS` before returning. Agent tools pass their current provider ID;
+  direct callers may pass one or use the configured default. A request that both allows and blocks
+  domains, or that names an account the person has not configured, is rejected before any vendor
+  is called.
 - **`search.fetch(ctx, agentId, input: FetchInput): Promise<FetchResult>`** — normalizes and
   lower-bounds `input.url` (protocol, canonical form, length), fetches the page,
   and returns it as text. If the content exceeds the requested character bound, it is sliced and

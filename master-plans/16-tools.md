@@ -20,13 +20,13 @@ a common Rig tool for every model.
 `@slopus/happy-agent-base` owns the normal durable agent inference and tool
 loop. It is only the minimal durable agent runtime and does not own ready-made
 capabilities or product features. Ready-made tools, hooks, and other reusable
-agent capabilities live in `@slopus/happy-agent-features`.
+agent capabilities live in `@slopus/happy-agent-modules`.
 
 ## Search tools
 
 All ready-made search features live together in
-`packages/happy-agent-features/sources/search/`. The common `web_fetch` tool
-lives there as well. Happy Agent Features owns the ordinary tools `web_fetch`,
+`packages/happy-agent-modules/sources/search/`. The common `web_fetch` tool
+lives there as well. Happy Agent Modules owns the ordinary tools `web_fetch`,
 `gemini_web_search`, `codex_web_search`, `claude_web_search`,
 `grok_web_search`, and `grok_x_search` as the product needs them. There is no
 combined `grok_search`; web and X search remain separate definitions.
@@ -106,7 +106,7 @@ code or the narrow provider adapter; do not erase or relax the evidence.
 First, restore server tools and `tool_search` to provider-only concerns and
 remove their common agent-runtime, protocol, and client representations. Then
 create the ordinary search wrappers and common `web_fetch` tool in
-`packages/happy-agent-features/sources/search/`. Finally, assemble every model
+`packages/happy-agent-modules/sources/search/`. Finally, assemble every model
 surface from fixed common and vendor arrays and run bounded search work through
 direct one-off provider inference.
 
@@ -114,12 +114,12 @@ This plan is complete when:
 
 - normal durable inference and tool execution are owned by
   `@slopus/happy-agent-base`, while ready-made capabilities are supplied by
-  `@slopus/happy-agent-features`;
+  `@slopus/happy-agent-modules`;
 - every model receives one explicit merged array of ordinary Rig tools;
 - `web_fetch` is one common tool available to every model and lives in
-  `packages/happy-agent-features/sources/search/`;
+  `packages/happy-agent-modules/sources/search/`;
 - all ready-made search wrappers live in
-  `packages/happy-agent-features/sources/search/` and cross-vendor definitions
+  `packages/happy-agent-modules/sources/search/` and cross-vendor definitions
   share no schema, description, prompt, or definition factory;
 - no model or provider capability classification decides which tools exist;
 - server tools and `tool_search` exist only inside `happy-providers`, and the

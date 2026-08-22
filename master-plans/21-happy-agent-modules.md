@@ -1,4 +1,4 @@
-# Master plan 21: happy-agent-features
+# Master plan 21: happy-agent-modules
 
 ## Big picture
 

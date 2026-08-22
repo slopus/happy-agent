@@ -15,11 +15,17 @@ const inputSchema = Type.Object(
 
 type Input = Static<typeof inputSchema>;
 
-export function codexWebSearchTool(search: SearchModule, agentId: string) {
+export function codexWebSearchTool(
+    search: SearchModule,
+    agentId: string,
+    currentProviderId: string,
+    isPreferred: boolean,
+) {
     return defineAgentTool({
         name: "codex_web_search",
-        description:
-            "Research the live web through Codex when current documentation, releases, or facts need direct sources.",
+        description: isPreferred
+            ? "This is the preferred web search for this agent because Codex is its current provider. Omit provider_id to use the current Codex account. Use it when current documentation, releases, or facts need direct sources."
+            : "Research the live web through Codex when current documentation, releases, or facts need direct sources.",
         parameters: inputSchema,
         returnType: searchAnswerSchema,
         durable: false,
@@ -28,12 +34,17 @@ export function codexWebSearchTool(search: SearchModule, agentId: string) {
         describeAutoPermissionAction: ({ query }) =>
             `searching the web through Codex for "${query}". Access: external provider network`,
         execute: async (ctx, input: Input) =>
-            await search.providerSearch(ctx, agentId, {
-                provider: "codex",
-                query: input.query,
-                ...(input.domains === undefined ? {} : { allowedDomains: input.domains }),
-                ...(input.provider_id === undefined ? {} : { providerId: input.provider_id }),
-            }),
+            await search.providerSearch(
+                ctx,
+                agentId,
+                {
+                    provider: "codex",
+                    query: input.query,
+                    ...(input.domains === undefined ? {} : { allowedDomains: input.domains }),
+                    ...(input.provider_id === undefined ? {} : { providerId: input.provider_id }),
+                },
+                currentProviderId,
+            ),
         toLLM: (answer) => [{ type: "text", text: search.formatSearchAnswerForModel(answer) }],
     });
 }
