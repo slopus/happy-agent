@@ -800,4 +800,64 @@ describe("Agent", () => {
         ]);
         await agent.close();
     });
+
+    it("merges inference preparation compaction actions from modules", async () => {
+        const replacement: SessionMessage = {
+            role: "compaction",
+            content: "summary",
+            encryptedContent: null,
+        };
+        const provider = new ScriptedProvider([
+            [{ type: "done", state: "normal", tokens: { input: 500, output: 40 } }],
+            textTurn("after compaction"),
+        ]);
+        const session = provider.session.bind(provider);
+        provider.session = async (id, options) => {
+            const created = await session(id, options);
+            (created as ScriptedSession).compactionResults = [
+                {
+                    status: "completed",
+                    preservedMessages: [],
+                    usage: {
+                        input: 540,
+                        output: 5,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                        totalTokens: 545,
+                    },
+                    context: { instructions: "", messages: [replacement, user("more")] },
+                },
+            ];
+            return created;
+        };
+        const agent = await Agent.create(ctx, {
+            id: "preparation-compaction-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            sharedKV: sharedKV(),
+            modules: [
+                module({
+                    name: "context-window",
+                    prepareInference: (_hookCtx, _scope, preparation) =>
+                        preparation.contextTokens === undefined ||
+                        preparation.contextTokens < 540
+                            ? undefined
+                            : [{ type: "compact" }],
+                }),
+            ],
+        });
+
+        await agent.send(ctx, user("first"));
+        await agent.waitForIdle();
+        await agent.send(ctx, user("more"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.compactions).toHaveLength(1);
+        expect(provider.sessions[0]?.requests[1]?.context.messages).toEqual([
+            replacement,
+            user("more"),
+        ]);
+        await agent.close();
+    });
 });

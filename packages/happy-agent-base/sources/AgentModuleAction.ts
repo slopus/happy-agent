@@ -28,3 +28,9 @@ export type AgentModuleAction =
           readonly message: SessionSystemMessage;
       }
     | { readonly type: "compact" };
+
+/** The only action that may restart the boundary immediately before a provider inference. */
+export type AgentModuleInferencePreparationAction = Extract<
+    AgentModuleAction,
+    { readonly type: "compact" }
+>;

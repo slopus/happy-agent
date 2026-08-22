@@ -13,7 +13,10 @@ import type {
 } from "@slopus/happy-providers";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { AgentModuleAction } from "./AgentModuleAction.js";
+import type {
+    AgentModuleAction,
+    AgentModuleInferencePreparationAction,
+} from "./AgentModuleAction.js";
 import type { AgentMessageMetadata, AgentMetadataChange } from "./AgentMetadata.js";
 import type { AgentPermissionMode } from "./AgentPermissionMode.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
@@ -111,6 +114,9 @@ export interface AgentBaseTurnStart extends AgentBaseLoop {
      */
     readonly contextTokens: number | undefined;
 }
+
+/** The conversation state at a safe boundary immediately before a possible inference request. */
+export type AgentBaseInferencePreparation = AgentBaseTurnStart;
 
 /** Stable identity of one provider inference within a turn. */
 export interface AgentBaseInferenceStart extends AgentBaseTurnStart {
@@ -436,6 +442,15 @@ export interface AgentBaseHooks {
         ctx: Context,
         turn: AgentBaseTurnStart,
     ) => MaybePromise<readonly AgentModuleAction[] | undefined>;
+    /**
+     * Checks the settled, queue-admitted conversation immediately before each possible provider
+     * request. A returned compaction runs first, then this boundary is checked again before the
+     * durable inference stage opens.
+     */
+    readonly prepareInference?: (
+        ctx: Context,
+        preparation: AgentBaseInferencePreparation,
+    ) => MaybePromise<readonly AgentModuleInferencePreparationAction[] | undefined>;
     /** Runs inside the transaction committing the inference stage for the request being made. */
     readonly beforeInferenceTransact?: (
         ctx: Context,

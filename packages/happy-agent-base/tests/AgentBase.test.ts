@@ -21,6 +21,7 @@ import {
     agentServiceTier,
     AgentProviders,
     defineAgentTool,
+    type AgentBaseHooks,
     type AgentBaseInference,
     type AgentBasePersistedEvent,
     type AgentBaseTurn,
@@ -2288,6 +2289,96 @@ describe("AgentBase compaction", () => {
             content: [{ type: "text", text: "ok" }],
         });
         expect(session?.requests[1]?.context.messages).toEqual([compactionMessage]);
+        await agent.close();
+    });
+
+    it("runs inference preparation compaction before opening the provider request", async () => {
+        const provider = new ScriptedProvider([
+            [
+                { type: "done", state: "normal", tokens: { input: 500, output: 40 } },
+            ],
+            textTurn("answered after compaction"),
+        ]);
+        const original = provider.session.bind(provider);
+        provider.session = async (id, options) => {
+            const session = await original(id, options);
+            (session as ScriptedSession).compactionResults = [
+                completed([compactionMessage, user("more")]),
+            ];
+            return session;
+        };
+        let observedInferences = 0;
+        const hooks = {
+            prepareInference: (_hookCtx: Context, preparation: AgentBaseTurnStart) =>
+                preparation.contextTokens === undefined || preparation.contextTokens < 540
+                    ? undefined
+                    : [{ type: "compact" as const }],
+            beforeInference: () => {
+                observedInferences += 1;
+            },
+        } as unknown as AgentBaseHooks;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks,
+        });
+
+        await agent.send(ctx, user("first"));
+        await agent.waitForIdle();
+        await agent.send(ctx, user("more"));
+        await agent.waitForIdle();
+
+        const session = provider.sessions[0];
+        expect(session?.compactions).toHaveLength(1);
+        expect(session?.compactions[0]?.context.messages.at(-1)).toEqual(user("more"));
+        expect(session?.requests).toHaveLength(2);
+        expect(session?.requests[1]?.context.messages).toEqual([
+            compactionMessage,
+            user("more"),
+        ]);
+        expect(observedInferences).toBe(2);
+        await agent.close();
+    });
+
+    it("does not repeat failed inference preparation compaction on an unchanged context", async () => {
+        const provider = new ScriptedProvider([
+            [{ type: "done", state: "normal", tokens: { input: 500, output: 40 } }],
+            textTurn("answered without another compaction attempt"),
+        ]);
+        const original = provider.session.bind(provider);
+        provider.session = async (id, options) => {
+            const session = await original(id, options);
+            (session as ScriptedSession).compactionResults = [
+                { status: "failed", kind: "inference_error", message: "first failure" },
+                { status: "failed", kind: "inference_error", message: "repeated failure" },
+            ];
+            return session;
+        };
+        let remainingRequests = 2;
+        const hooks = {
+            prepareInference: (_hookCtx: Context, preparation: AgentBaseTurnStart) => {
+                if (preparation.contextTokens !== 540 || remainingRequests === 0) return undefined;
+                remainingRequests -= 1;
+                return [{ type: "compact" as const }];
+            },
+        } as unknown as AgentBaseHooks;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks,
+        });
+
+        await agent.send(ctx, user("first"));
+        await agent.waitForIdle();
+        await agent.send(ctx, user("more"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.compactions).toHaveLength(1);
+        expect(provider.sessions[0]?.requests).toHaveLength(2);
         await agent.close();
     });
 

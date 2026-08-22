@@ -128,6 +128,7 @@ export {
     type AgentBaseCompletedCompaction,
     type AgentBaseHooks,
     type AgentBaseInference,
+    type AgentBaseInferencePreparation,
     type AgentBaseInferenceStart,
     type AgentBaseLoop,
     type AgentBaseModelChange,
@@ -161,7 +162,10 @@ export {
     type AgentModuleScope,
     type AgentModuleSystemScope,
 } from "./AgentModule.js";
-export { type AgentModuleAction } from "./AgentModuleAction.js";
+export {
+    type AgentModuleAction,
+    type AgentModuleInferencePreparationAction,
+} from "./AgentModuleAction.js";
 
 // Registry of provider sources agents resolve their selected models through.
 export {

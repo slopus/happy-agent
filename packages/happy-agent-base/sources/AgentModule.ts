@@ -17,6 +17,7 @@ import type {
     AgentBaseCompactionStart,
     AgentBaseCompletedCompaction,
     AgentBaseInference,
+    AgentBaseInferencePreparation,
     AgentBaseInferenceStart,
     AgentBaseLoop,
     AgentBaseModelChange,
@@ -30,7 +31,10 @@ import type {
     AgentBaseTurnStart,
     MaybePromise,
 } from "./AgentBaseHooks.js";
-import type { AgentModuleAction } from "./AgentModuleAction.js";
+import type {
+    AgentModuleAction,
+    AgentModuleInferencePreparationAction,
+} from "./AgentModuleAction.js";
 import type { AgentKV } from "./AgentKV.js";
 import type { AgentMetadata, AgentMetadataChange } from "./AgentMetadata.js";
 import type { AgentPermissionMode } from "./AgentPermissionMode.js";
@@ -373,6 +377,16 @@ export interface AgentModuleHooks<
         scope: AgentModuleScope<Database>,
         turn: AgentBaseTurnStart,
     ) => MaybePromise<readonly AgentModuleAction[] | undefined>;
+    /**
+     * Receives the settled context after queued input joins its active run and before every
+     * possible provider request. Compaction actions from all modules are concatenated; when one
+     * is returned, compaction runs and this boundary is evaluated again before inference starts.
+     */
+    readonly prepareInference?: (
+        ctx: Context,
+        scope: AgentModuleScope<Database>,
+        preparation: AgentBaseInferencePreparation,
+    ) => MaybePromise<readonly AgentModuleInferencePreparationAction[] | undefined>;
     /** Transactional counterpart to `beforeInference`. */
     readonly beforeInferenceTransact?: (
         ctx: Context,

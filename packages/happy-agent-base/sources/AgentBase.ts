@@ -86,6 +86,8 @@ import { setAgentSpanAttributes, type AgentSpanAttributes } from "./AgentSpanAtt
 
 /** Race winner when an abort interrupts a wait on the stream or a running tool. */
 const ABORTED = Symbol("aborted");
+/** Marks a provider context measurement that inference preparation has not evaluated yet. */
+const UNPREPARED_CONTEXT = Symbol("unprepared context");
 
 /**
  * The agents whose run loop the current execution is running inside. Hooks and tool executions
@@ -2292,6 +2294,10 @@ export class AgentBase {
             // successful response clears it; a turn that ends while it is set has failed and
             // surfaces it to the context as a system message.
             let pendingError: string | undefined;
+            let preparedContextTokens:
+                | number
+                | undefined
+                | typeof UNPREPARED_CONTEXT = UNPREPARED_CONTEXT;
             while (true) {
                 if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 // An abort during the tool batch ends the turn here, before the next inference.
@@ -2336,12 +2342,40 @@ export class AgentBase {
                 // Nothing to answer — a start() on an idle history, or the queues ran dry.
                 if (!this.#noticeAwaitingResponse && !injected && !needsInference) break;
                 if (this.#stopAtSafeEdgeRequested()) return "shutdown";
+                if (preparedContextTokens !== this.#contextTokens) {
+                    preparedContextTokens = this.#contextTokens;
+                    const preparation = {
+                        loopId: this.#loopId ?? createId(),
+                        turnId: this.#turnId ?? createId(),
+                        contextTokens: this.#contextTokens,
+                    };
+                    this.#loopId = preparation.loopId;
+                    this.#turnId = preparation.turnId;
+                    await this.#applyActions(
+                        ctx,
+                        this.#hooks.prepareInference,
+                        abort.signal,
+                        preparation,
+                    );
+                    if (this.#stopAtSafeEdgeRequested()) return "shutdown";
+                    if (this.#compaction !== undefined) {
+                        // The admitted message already owns the active run, while no inference
+                        // stage has opened yet. Keep its response obligation across the boundary;
+                        // the next pass compacts that settled context. A failed attempt leaves the
+                        // measurement prepared, so it cannot retry forever before one request.
+                        needsInference = true;
+                        continue;
+                    }
+                }
                 const response = await this.#span(ctx, "agent.inference", {}, (inferenceCtx) =>
                     this.#requestInference(inferenceCtx, abortPromise),
                 );
                 // A cancellation arrived before the request was made, so the turn cycles rather
                 // than talking to a session it may no longer own.
                 if (response === undefined) continue;
+                // The response commits a new provider measurement. Even the same numeric count
+                // describes a new context and must be eligible for the next preparation check.
+                preparedContextTokens = UNPREPARED_CONTEXT;
                 const { content, state } = response;
                 needsInference = false;
                 pendingError = state === "error" ? response.errorMessage : undefined;

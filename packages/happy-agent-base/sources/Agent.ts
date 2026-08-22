@@ -307,7 +307,10 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
     };
     // Action hooks concatenate what every module asks for; a failing module loses only its
     // own actions.
-    const collect = <Arguments extends readonly unknown[]>(
+    const collect = <
+        Arguments extends readonly unknown[],
+        Action extends AgentModuleAction = AgentModuleAction,
+    >(
         pick: (
             module: AgentModuleRuntime<Tool, Database>,
         ) =>
@@ -315,15 +318,15 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
                   ctx: Context,
                   scope: AgentModuleScope<Database>,
                   ...args: Arguments
-              ) => MaybePromise<readonly AgentModuleAction[] | undefined>)
+              ) => MaybePromise<readonly Action[] | undefined>)
             | undefined,
     ):
-        | ((ctx: Context, ...args: Arguments) => Promise<readonly AgentModuleAction[]>)
+        | ((ctx: Context, ...args: Arguments) => Promise<readonly Action[]>)
         | undefined => {
         const implemented = modules.filter((module) => pick(module) !== undefined);
         if (implemented.length === 0) return undefined;
         return async (ctx, ...args) => {
-            const actions: AgentModuleAction[] = [];
+            const actions: Action[] = [];
             for (const module of implemented) {
                 try {
                     actions.push(
@@ -540,6 +543,10 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
         ...spread(
             "beforeTurn",
             collect((module) => module.hooks.beforeTurn),
+        ),
+        ...spread(
+            "prepareInference",
+            collect((module) => module.hooks.prepareInference),
         ),
         ...spread(
             "beforeInferenceTransact",
