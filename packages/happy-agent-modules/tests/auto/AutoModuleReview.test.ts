@@ -269,7 +269,7 @@ describe("AutoModule reviewer", () => {
         await expect(
             resolveModuleHooks(context, auto, {} as unknown as AgentSystemRef),
         ).rejects.toThrow(
-            "Automatic permission review cannot start because no model is enabled by the configuration.",
+            "Automatic permission review cannot start because no provider model is configured.",
         );
         await auto.close(context);
         await emptyCatalog.compute.dispose(context);

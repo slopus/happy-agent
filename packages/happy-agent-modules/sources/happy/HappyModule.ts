@@ -218,7 +218,7 @@ export class HappyModule
 
     /** Every model the phone may offer, across providers. */
     models(): readonly HappyModel[] {
-        return this.#system().models.map((model) => ({
+        return this.#config.models.map((model) => ({
             defaultEffort: model.defaultEffort,
             effortLevels: [...model.effortLevels],
             id: model.id,
@@ -243,7 +243,7 @@ export class HappyModule
             throw new Error(`No agent exists for Happy session "${agentId}".`);
         }
         const current = selectionFromConfig(config, this.#defaultSelection());
-        const next = checkedSelection(system.models, {
+        const next = checkedSelection(this.#config.models, {
             effort: message.selection.effort ?? current.effort,
             modelId: message.selection.modelId ?? current.modelId,
             permissionMode: message.selection.permissionMode ?? current.permissionMode,
@@ -322,7 +322,7 @@ export class HappyModule
 
         const owner = await this.#workspaces.resolvePath(ctx, request.cwd);
         const cwd = owner.workspace?.path ?? owner.project.repositoryRef;
-        const selection = checkedSelection(system.models, {
+        const selection = checkedSelection(this.#config.models, {
             effort: request.effort,
             modelId: request.modelId,
             permissionMode: request.permissionMode,
@@ -415,7 +415,7 @@ export class HappyModule
     }
 
     #defaultSelection(): HappySelection {
-        const model = this.#system().models[0];
+        const model = this.#config.models[0];
         if (model === undefined) {
             throw new Error("Happy cannot start a session without an available model.");
         }

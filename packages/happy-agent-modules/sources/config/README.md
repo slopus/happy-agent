@@ -9,6 +9,7 @@ and exposes one deeply frozen snapshot.
 ├── .happy/
 │   └── agent/
 │       ├── agent.sqlite
+│       ├── provider-state.json
 │       └── runtime.toml
 └── Happy/
     └── Config/
@@ -57,21 +58,24 @@ configuration and would otherwise be handed the version separately.
 ## The accounts
 
 Configuration is not only what the files say. This module owns the accounts too: `providers` is one
-registry holding every enabled provider, each constructing its client on first use so a credential
-is read when a session needs it rather than at startup, and `models` is the curated catalog filtered
-to what those accounts actually serve, with the configured default first. Happy Agent never asks a vendor
-which models exist — the list is source, and a configured provider entry decides which of them its
-own key serves.
+registry holding every configured provider, each constructing its client on first use. Providers
+start behind a disabled gate; `ProviderScanModule` opens the gates after bounded local credential
+discovery or an explicit user enable. `models` is the live curated catalog filtered by those gates,
+while `offeredModels` is the stable complete set the agent systems can accept after a later enable.
+Happy Agent never asks a vendor which models exist — the list is source, and a configured provider
+entry decides which of them its own key serves.
 
 A module that needs to reach a vendor takes this module and asks it, instead of being handed a
 registry or building a second one that would sign in again. `bedrockSearchModels` answers the same
 way for the models a Bedrock account serves its hosted search index from.
 
 Every session resolved from the shared registry combines its caller's lifetime with the daemon's
-provider lifetime. `closeProviders()` aborts that lifetime before runtime shutdown starts draining
-agents, so a network request or stream cleanup cannot hold an Agent upgrade open indefinitely.
-The decoration is provider-neutral and preserves each concrete provider and session identity,
-including vendor-specific capabilities such as image generation and Claude executable metadata.
+provider lifetime and its provider's resettable enablement lifetime. Disabling a provider aborts
+all of that provider's live inference and compaction immediately. Enabling it replaces the aborted
+gate, including for sessions that were already cached. `closeProviders()` aborts the daemon-wide
+lifetime before runtime shutdown starts draining agents. The decoration is provider-neutral and
+preserves each concrete provider and session identity, including vendor-specific capabilities such
+as image generation and Claude executable metadata.
 
 A Bedrock account may name an AWS `profile`, including one backed by the standard
 `credential_process` setting in the AWS shared config. Optional `config_file` and

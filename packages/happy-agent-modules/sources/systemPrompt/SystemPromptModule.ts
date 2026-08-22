@@ -88,7 +88,6 @@ export class SystemPromptModule implements AgentModule {
     readonly #config: ConfigModule;
     /** Live AGENTS.md discovery and durable change-notice behavior. */
     readonly #agentsMd: AgentsMdInstructions;
-    #availableModels: readonly SystemPromptAvailableModel[] | undefined;
 
     constructor(config: ConfigModule, compute: ComputeModule) {
         this.#config = config;
@@ -99,11 +98,10 @@ export class SystemPromptModule implements AgentModule {
      * The routes the environment section prints, taken from configuration.
      *
      * Configuration owns which accounts exist and which models they serve, so the catalog is read
-     * from it rather than restated here. It is settled once per installation, so it is checked
-     * against the section's bounds the first time it is needed and kept.
+     * from it rather than restated here. Provider scans and explicit overrides can change it while
+     * the daemon is running, so it is rebuilt for each inference.
      */
     get #models(): readonly SystemPromptAvailableModel[] {
-        if (this.#availableModels !== undefined) return this.#availableModels;
         const models = this.#config.models.map(({ id, name, providerId }) => ({
             id,
             name,
@@ -118,8 +116,7 @@ export class SystemPromptModule implements AgentModule {
         ) {
             throw new Error(AVAILABLE_MODELS_BYTE_BOUND_ERROR);
         }
-        this.#availableModels = Object.freeze(models.map((model) => Object.freeze(model)));
-        return this.#availableModels;
+        return Object.freeze(models.map((model) => Object.freeze(model)));
     }
 
     /** The prompt this model is written for, ready to use. */

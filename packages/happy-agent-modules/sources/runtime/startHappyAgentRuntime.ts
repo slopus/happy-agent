@@ -51,6 +51,7 @@ import { PresenceModule } from "../presence/index.js";
 import { ProfileModule } from "../profile/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
+import { ProviderScanModule } from "../providerScan/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
@@ -134,6 +135,7 @@ export interface HappyAgentRuntimeModules {
     readonly profile: ProfileModule<LibSQLDatabase>;
     readonly projects: ProjectsModule;
     readonly providerUsage: ProviderUsageModule;
+    readonly providerScan: ProviderScanModule;
     readonly scheduling: SchedulingModule;
     readonly search: SearchModule;
     readonly secrets: SecretsModule;
@@ -290,15 +292,18 @@ export async function startHappyAgentRuntime(
             ctx.log.warn("Could not create the public Happy folder.", {}, error);
         }
 
-        const models = config.models;
+        const providerScan = new ProviderScanModule(config);
+        await providerScan.open(ctx.named("provider-startup-scan"));
+        const enabledModels = config.models;
+        const models = config.offeredModels;
         for (const notice of config.catalogNotices) {
             ctx.log.warn(notice, {});
         }
-        const provider = models[0]?.providerId;
-        if (provider === undefined) throw new Error("No model is enabled by the configuration.");
+        const provider = enabledModels[0]?.providerId ?? models[0]?.providerId;
+        if (provider === undefined) throw new Error("No provider model is configured.");
         const providers = config.providers;
         if (providers.typeOf(provider) === null) {
-            throw new Error(`The configured default provider "${provider}" is not enabled.`);
+            throw new Error(`The configured default provider "${provider}" is unavailable.`);
         }
 
         const main = await openHappyAgentDatabase(paths.databasePath);
@@ -451,6 +456,7 @@ export async function startHappyAgentRuntime(
             userInput,
             usage,
             providerUsage,
+            providerScan,
             profile,
             compute.computeModule,
             slashCommands,
@@ -480,6 +486,7 @@ export async function startHappyAgentRuntime(
             presence,
             profile,
             projects,
+            providerScan,
             providerUsage,
             scheduling,
             search,
@@ -501,6 +508,7 @@ export async function startHappyAgentRuntime(
             apiModule,
             abort,
             config,
+            providerScan,
             observation,
             systemPrompt,
             history,
@@ -632,7 +640,9 @@ export async function startHappyAgentRuntime(
                 epoch: installation.epoch,
                 schemaVersion: installation.schemaVersion,
             },
-            models,
+            get models() {
+                return config.models;
+            },
             modules,
             provider,
             providers,

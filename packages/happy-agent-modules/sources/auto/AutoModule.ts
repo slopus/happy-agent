@@ -199,14 +199,14 @@ export class AutoModule implements AgentModule {
                 type,
             );
         }
-        const models = this.#config.models;
+        const models = this.#config.offeredModels;
         // The account a reviewer agent is created on is the one every agent starts on: the first
         // entry of the configured catalog. Without one there is nothing to review with, and saying
         // so here is better than a review that fails closed on every action from then on.
         const provider = models[0]?.providerId;
         if (provider === undefined) {
             throw new Error(
-                "Automatic permission review cannot start because no model is enabled by the configuration.",
+                "Automatic permission review cannot start because no provider model is configured.",
             );
         }
         this.#catalog = buildAutoReviewCatalog({

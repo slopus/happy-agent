@@ -83,7 +83,10 @@ export class CollaborationModule implements AgentModule {
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         this.#assert(collaborationCreateOptionsSchema, options, "create agent options");
         const agents = this.#requireAgents();
-        const selection = this.#validateSelection(agents.models, input);
+        const selection = this.#validateSelection(
+            agents.models.filter((model) => this.#config.isProviderEnabled(model.providerId)),
+            input,
+        );
 
         return await this.#createAgent(ctx, actingAgentId, input, agentId, options, selection);
     }
@@ -104,7 +107,10 @@ export class CollaborationModule implements AgentModule {
         this.#assert(collaborationAgentIdSchema, agentId, "collaborator ID");
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         const agents = this.#requireAgents();
-        const selection = this.#validateSelection(agents.models, input);
+        const selection = this.#validateSelection(
+            agents.models.filter((model) => this.#config.isProviderEnabled(model.providerId)),
+            input,
+        );
 
         return await this.#serializeToolCreation(async () => {
             const existing = await agents.config(ctx, agentId);

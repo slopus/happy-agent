@@ -124,6 +124,7 @@ its public methods, and its storage and event contracts.
 | Module                                          | What it adds                                                                                                                              |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | [Config](sources/config/README.md)              | One frozen filesystem layout and layered Happy Agent settings snapshot shared by every other module.                                      |
+| [Provider scan](sources/providerScan/README.md) | Local credential discovery, durable provider overrides, live enablement, and bounded account verification.                                |
 | [Observation](sources/observation/README.md)    | What the agent records about itself: a pino log file, optional OpenTelemetry traces, and a readable per-agent history dump.               |
 | [System prompt](sources/systemPrompt/README.md) | Native per-vendor instructions, environment context, and live global/security/project AGENTS.md guidance.                                 |
 | [History](sources/history/README.md)            | The agent's own durable record of what happened, separate from the compactable model context, readable back through `read_agent_history`. |

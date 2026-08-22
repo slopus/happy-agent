@@ -21,6 +21,7 @@ import { ConfigModule } from "../../sources/config/index.js";
 export const testConfig: ConfigModule = await ConfigModule.load(
     await mkdtemp(join(tmpdir(), "happy-modules-")),
 );
+for (const providerId of testConfig.providerIds) testConfig.setProviderEnabled(providerId, true);
 
 /**
  * A compute module that hands out the machine the test built.

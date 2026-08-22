@@ -88,7 +88,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # answer_wait = "15 minutes"
 
 # [providers]
-# default_enable = true
+# Providers start disabled and the local credential scan enables discovered accounts.
+# default_enable = false
 
 # [providers.codex]
 # type = "codex"

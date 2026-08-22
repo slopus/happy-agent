@@ -128,9 +128,10 @@ const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
 export function agentModels(
     configuration: HappyAgentConfiguration,
     onIgnored?: (message: string) => void,
+    isProviderEnabled?: (id: string) => boolean,
 ): readonly CatalogAgentModel[] {
     const values = configuration.values;
-    const available = agentModelCatalog(configuration)
+    const available = agentModelCatalog(configuration, isProviderEnabled)
         .filter((candidate) => candidate.enabled)
         .map(({ enabled: _enabled, ...candidate }) => candidate as CatalogAgentModel);
     const wantedModel = values.defaults.modelId;
@@ -173,6 +174,8 @@ export function agentModels(
  */
 export function agentModelCatalog(
     configuration: HappyAgentConfiguration,
+    isProviderEnabled: (id: string) => boolean = (id) =>
+        configuration.values.providers[id]?.enabled !== false,
 ): readonly ConfiguredAgentModel[] {
     const models: ConfiguredAgentModel[] = [];
     const values = configuration.values;
@@ -181,7 +184,7 @@ export function agentModelCatalog(
         for (const candidate of source) {
             if (provider.type !== "bedrock" && candidate.providerId !== provider.type) continue;
             const enabled =
-                provider.enabled !== false &&
+                isProviderEnabled(id) &&
                 provider.includeModels?.includes(candidate.id) !== false &&
                 provider.excludeModels?.includes(candidate.id) !== true;
             models.push({ ...candidate, enabled, providerId: id });
@@ -197,7 +200,7 @@ export function agentModelContext(modelId: string): AgentModelContext | undefine
 }
 
 /**
- * One registry holding every enabled provider, each constructing its client on first use so a
+ * One registry holding every configured provider, each constructing its client on first use so a
  * credential is read when a session needs it rather than at startup.
  */
 export function agentProviders(
@@ -207,7 +210,6 @@ export function agentProviders(
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
     for (const [id, provider] of Object.entries(configuration.values.providers)) {
-        if (provider.enabled === false) continue;
         providers.add(
             id,
             async ({ model: selected }) =>

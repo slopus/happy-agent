@@ -7,7 +7,11 @@ import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
-import type { MessageMode } from "@slopus/happy-agent-client";
+import {
+    configPatchSchema,
+    providerVerificationRequestSchema,
+    type MessageMode,
+} from "@slopus/happy-agent-client";
 import {
     currentAgentEnvironment,
     type AgentConfig,
@@ -67,6 +71,7 @@ import {
     type ProjectEvent,
 } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
+import { ProviderNotFoundError, ProviderScanModule } from "../providerScan/index.js";
 import {
     SlashCommandInputError,
     SlashCommandNotFoundError,
@@ -229,6 +234,7 @@ export class ApiModule implements AgentModule {
     readonly #userInput: UserInputModule;
     readonly #usage: UsageModule;
     readonly #providerUsage: ProviderUsageModule;
+    readonly #providerScan: ProviderScanModule;
     readonly #profile: ProfileModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
@@ -298,6 +304,7 @@ export class ApiModule implements AgentModule {
         userInput: UserInputModule,
         usage: UsageModule,
         providerUsage: ProviderUsageModule,
+        providerScan: ProviderScanModule,
         profile: ProfileModule,
         compute: ComputeModule,
         slashCommands: SlashCommandsModule,
@@ -316,6 +323,7 @@ export class ApiModule implements AgentModule {
         this.#userInput = userInput;
         this.#usage = usage;
         this.#providerUsage = providerUsage;
+        this.#providerScan = providerScan;
         this.#profile = profile;
         this.#compute = compute;
         this.#slashCommands = slashCommands;
@@ -468,12 +476,57 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "PATCH" && url.pathname === "/v0/config") {
-                await readJson(request);
-                throw new ApiError(
-                    409,
-                    "conflict",
-                    "This daemon cannot change its settings at runtime.",
+                const body = await bodyAs(request, configPatchSchema, "configuration patch");
+                if (
+                    body.providers === undefined ||
+                    Object.keys(body).some((key) => key !== "providers") ||
+                    Object.values(body.providers).some(
+                        (provider) =>
+                            Object.keys(provider).length !== 1 ||
+                            !Object.hasOwn(provider, "enabled"),
+                    )
+                ) {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "This daemon can only change provider enablement at runtime.",
+                    );
+                }
+                try {
+                    await this.#providerScan.setOverrides(ctx, body.providers);
+                } catch (error: unknown) {
+                    if (error instanceof ProviderNotFoundError) throw notFound(error.message);
+                    throw error;
+                }
+                this.#journal.append("config.updated", {});
+                sendJson(response, 200, { config: this.#sanitizedConfig() });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/providers/scan") {
+                const result = await this.#providerScan.scan(ctx);
+                this.#journal.append("config.updated", {});
+                sendJson(response, 200, result);
+                return;
+            }
+            const providerVerification = /^\/v0\/providers\/([^/]+)\/verify$/u.exec(url.pathname);
+            if (request.method === "POST" && providerVerification !== null) {
+                const encodedProviderId = providerVerification[1];
+                if (encodedProviderId === undefined) throw notFound("Provider not found.");
+                const providerId = decodePathSegment(encodedProviderId, "provider ID");
+                const body = await bodyAs(
+                    request,
+                    providerVerificationRequestSchema,
+                    "provider verification request",
                 );
+                try {
+                    const result = await this.#providerScan.verify(ctx, providerId, body.level);
+                    if (result.status === "passed") this.#journal.append("config.updated", {});
+                    sendJson(response, 200, result);
+                } catch (error: unknown) {
+                    if (error instanceof ProviderNotFoundError) throw notFound(error.message);
+                    throw error;
+                }
+                return;
             }
             if (request.method === "GET" && url.pathname === "/v0/config/instructions") {
                 sendJson(response, 200, {
@@ -3918,11 +3971,12 @@ export class ApiModule implements AgentModule {
     #sanitizedConfig(): Record<string, unknown> {
         const values = this.#config.configuration.values;
         const { models, providers } = this.#sanitizedCatalog();
+        const defaultModel = this.#config.models[0] ?? this.#config.offeredModels[0];
         return {
             defaults: {
-                providerId: values.defaults.providerId ?? this.#config.models[0]?.providerId,
-                modelId: values.defaults.modelId,
-                effort: values.defaults.effort ?? this.#config.models[0]?.defaultEffort,
+                providerId: defaultModel?.providerId ?? values.defaults.providerId,
+                modelId: defaultModel?.id ?? values.defaults.modelId,
+                effort: defaultModel?.defaultEffort ?? values.defaults.effort,
                 permissionMode: values.defaults.permissionMode,
             },
             features: values.features,
@@ -3991,7 +4045,7 @@ export class ApiModule implements AgentModule {
         )) {
             providers[providerId] = {
                 type: provider.type,
-                enabled: provider.enabled !== false,
+                enabled: this.#config.isProviderEnabled(providerId),
                 models: [],
             };
         }
@@ -4002,7 +4056,7 @@ export class ApiModule implements AgentModule {
                 provider = {
                     type:
                         compatibility === null || compatibility === "gym" ? "codex" : compatibility,
-                    enabled: true,
+                    enabled: this.#config.isProviderEnabled(route.providerId),
                     models: [],
                 };
                 providers[route.providerId] = provider;

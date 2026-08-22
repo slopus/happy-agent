@@ -11,6 +11,7 @@ export interface LoadConfiguredProviderUsageOptions {
     readonly environment: NodeJS.ProcessEnv;
     readonly providerId: string;
     readonly providers: HappyAgentConfigValues["providers"];
+    readonly ignoreEnabled?: boolean;
     readonly signal?: AbortSignal;
 }
 
@@ -19,7 +20,9 @@ export function loadConfiguredProviderUsage(
     options: LoadConfiguredProviderUsageOptions,
 ): Promise<ProviderUsage | null> {
     const provider = options.providers[options.providerId];
-    if (provider === undefined || provider.enabled === false) return Promise.resolve(null);
+    if (provider === undefined || (provider.enabled === false && options.ignoreEnabled !== true)) {
+        return Promise.resolve(null);
+    }
     const env = providerEnvironment(provider.credentialIsolation === true, options.environment);
     const providerFetch = options.signal === undefined ? {} : { fetch: until(options.signal) };
 

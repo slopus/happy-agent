@@ -11,7 +11,10 @@ import {
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
-import { providerRegistryUntil } from "../../sources/config/impl/providerRegistryUntil.js";
+import {
+    ProviderEnablement,
+    providerRegistryUntil,
+} from "../../sources/config/impl/providerRegistryUntil.js";
 
 describe("providerRegistryUntil", () => {
     it("cancels provider work when the daemon lifetime ends", async () => {
@@ -50,6 +53,43 @@ describe("providerRegistryUntil", () => {
             value: { state: "cancelled", type: "done" },
         });
         expect(session.lifetime?.aborted).toBe(true);
+    });
+
+    it("cancels active work when disabled and lets cached sessions use a fresh gate after re-enable", async () => {
+        const session = new BlockingSession("agent-1");
+        const source = new AgentProviders();
+        source.add("test", new BlockingProvider(session), "codex");
+        const shutdown = new AbortController();
+        const enablement = new ProviderEnablement(source.ids, () => true);
+        const providers = providerRegistryUntil(source, shutdown.signal, enablement);
+        const provider = await providers.resolve("test", "test/model");
+        if (provider === null) throw new Error("The wrapped provider was not found.");
+        const cached = await provider.session("agent-1", { instructions: "", tools: [] });
+
+        const first = cached
+            .run(createRootContext(), {
+                context: { instructions: "", messages: [] },
+                model: "test/model",
+            })
+            [Symbol.asyncIterator]()
+            .next();
+        await session.started;
+        enablement.setEnabled("test", false);
+        await expect(first).resolves.toMatchObject({ value: { state: "cancelled" } });
+
+        enablement.setEnabled("test", true);
+        const second = cached
+            .run(createRootContext(), {
+                context: { instructions: "", messages: [] },
+                model: "test/model",
+            })
+            [Symbol.asyncIterator]()
+            .next();
+        await Promise.resolve();
+        expect(session.lifetime?.aborted).toBe(false);
+
+        shutdown.abort(new Error("test shutdown"));
+        await expect(second).resolves.toMatchObject({ value: { state: "cancelled" } });
     });
 });
 

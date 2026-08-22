@@ -6,8 +6,11 @@ import {
 } from "@slopus/happy-providers";
 
 /** Every configured Codex account, in the order this generation should try them. */
-export function codexImageProviderIds(providers: AgentProviders): readonly string[] {
-    return providers.ids.filter((id) => providers.typeOf(id) === "codex");
+export function codexImageProviderIds(
+    providers: AgentProviders,
+    isEnabled: (providerId: string) => boolean = () => true,
+): readonly string[] {
+    return providers.ids.filter((id) => providers.typeOf(id) === "codex" && isEnabled(id));
 }
 
 export interface CodexImageGenerationRequest {

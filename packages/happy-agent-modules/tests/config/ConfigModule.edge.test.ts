@@ -95,6 +95,44 @@ describe("ConfigModule edge coverage", () => {
             expect("environment" in configured).toBe(false);
         });
 
+        it("recognizes AWS credential material without treating a region-only config as Bedrock credentials", async () => {
+            const root = await temporaryRoot();
+            const configFile = join(root, ".aws", "config");
+            const credentialsFile = join(root, ".aws", "credentials");
+            await writeLayer(root, ".aws/config", "[default]\nregion = us-east-1\n");
+            const environment = {
+                AWS_ACCESS_KEY_ID: "",
+                AWS_BEARER_TOKEN_BEDROCK: "",
+                AWS_CONFIG_FILE: configFile,
+                AWS_CONTAINER_CREDENTIALS_FULL_URI: "",
+                AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "",
+                AWS_ROLE_ARN: "",
+                AWS_SECRET_ACCESS_KEY: "",
+                AWS_SHARED_CREDENTIALS_FILE: credentialsFile,
+                AWS_WEB_IDENTITY_TOKEN_FILE: "",
+                HOME: root,
+            };
+            const regionOnly = await ConfigModule.load(join(root, ".happy-region"), {
+                environment,
+            });
+
+            await expect(regionOnly.probeLocalProviderCredentials("bedrock")).resolves.toBe(
+                "missing",
+            );
+
+            await writeLayer(
+                root,
+                ".aws/credentials",
+                "[default]\naws_access_key_id = local-key\naws_secret_access_key = local-secret\n",
+            );
+            const withCredentials = await ConfigModule.load(join(root, ".happy-credentials"), {
+                environment,
+            });
+            await expect(withCredentials.probeLocalProviderCredentials("bedrock")).resolves.toBe(
+                "available",
+            );
+        });
+
         it("resolves relative roots and derives the complete immutable path set", async () => {
             const root = await temporaryRoot();
             const relativeRoot = join(process.cwd(), ".context", `config-relative-${Date.now()}`);
@@ -123,6 +161,7 @@ describe("ConfigModule edge coverage", () => {
                 logPath: join(root, ".happy", "agent", "observation", "agent.log"),
                 observationHome: join(root, ".happy", "agent", "observation"),
                 pidPath: join(root, ".happy", "agent", "daemon.pid"),
+                providerStatePath: join(root, ".happy", "agent", "provider-state.json"),
                 publicHome: join(root, "Happy"),
                 runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),
                 securityPath: join(root, "Happy", "Config", "SECURITY.md"),
@@ -269,7 +308,7 @@ describe("ConfigModule edge coverage", () => {
                 });
                 expect(configuration.values).not.toHaveProperty("observation.traces", true);
                 expect(configuration.values.providers.codex).toEqual({
-                    enabled: true,
+                    enabled: false,
                     type: "codex",
                 });
                 expect(configuration.provenance).not.toHaveProperty("providers");
@@ -742,6 +781,25 @@ describe("ConfigModule edge coverage", () => {
                 providerDefaultEnable: "global",
                 mcpServers: "global",
             });
+        });
+
+        it("lets a later provider entry clear an earlier explicit enable", async () => {
+            const root = await temporaryRoot();
+            await writeLayer(
+                root,
+                "Happy/Config/happy.toml",
+                "[providers.codex]\nenabled = true\n",
+            );
+            await writeLayer(
+                root,
+                ".happy/agent/runtime.toml",
+                '[providers.codex]\ninclude_models = ["openai/gpt-5.6-luna"]\n',
+            );
+
+            const config = await ConfigModule.load(join(root, ".happy"));
+
+            expect(config.configuration.values.providers.codex?.enabled).toBe(false);
+            expect(config.configuredProviderOverride("codex")).toBeUndefined();
         });
 
         it("resets a secondary P2P identity when a later layer makes the rig primary", async () => {

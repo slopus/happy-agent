@@ -300,6 +300,7 @@ describe("ConfigModule", () => {
         vi.stubEnv("XAI_API_KEY", "");
 
         const config = await ConfigModule.load(join(root, ".happy"));
+        config.setProviderEnabled("grok", true);
         const provider = await config.providers.resolve("grok", "xai/grok-4.6");
 
         expect(provider).toBeInstanceOf(GrokProvider);

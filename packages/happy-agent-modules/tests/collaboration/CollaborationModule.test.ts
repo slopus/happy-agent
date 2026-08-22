@@ -404,7 +404,13 @@ describe("collaboration", () => {
 
     it("enforces collaborator limits persisted in Happy settings", async () => {
         const config = await temporaryTestConfig(
-            ["[settings]", "max_collaborators = 2", "max_collaboration_depth = 2"].join("\n"),
+            [
+                "[providers]",
+                "default_enable = true",
+                "[settings]",
+                "max_collaborators = 2",
+                "max_collaboration_depth = 2",
+            ].join("\n"),
         );
         const countCollection = new Collection();
         countCollection.seed("c1", "root");

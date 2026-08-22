@@ -1,4 +1,4 @@
-import { chmod, mkdir, open, rm } from "node:fs/promises";
+import { chmod, mkdir, open, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -25,7 +25,7 @@ import {
     type ConfiguredAgentModel,
 } from "./impl/agentCatalog.js";
 import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.js";
-import { providerRegistryUntil } from "./impl/providerRegistryUntil.js";
+import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
@@ -44,6 +44,7 @@ const MAX_CONFIGURED_COLLABORATION_DEPTH = 64;
 const MAX_INFERENCE_MAX_RETRIES = 100;
 const MAX_TOOL_RESULT_RETENTION_DAYS = 36_500;
 const MAX_MCP_TIMEOUT_SECONDS = 600;
+const MAX_LOCAL_CREDENTIAL_FILE_BYTES = 256 * 1024;
 
 const pathSchema = Type.String({
     minLength: 1,
@@ -816,6 +817,7 @@ const pathSchemaSet = Type.Object(
         logPath: pathSchema,
         observationHome: pathSchema,
         pidPath: pathSchema,
+        providerStatePath: pathSchema,
         publicHome: pathSchema,
         runtimeConfigPath: pathSchema,
         securityPath: pathSchema,
@@ -925,12 +927,12 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
     },
     permissions: { protectedPaths: [] },
     presence: { states: {} },
-    providerDefaultEnable: true,
+    providerDefaultEnable: false,
     providers: {
-        bedrock: { enabled: true, type: "bedrock" },
-        claude: { enabled: true, type: "claude" },
-        codex: { enabled: true, type: "codex" },
-        grok: { enabled: true, type: "grok" },
+        bedrock: { enabled: false, type: "bedrock" },
+        claude: { enabled: false, type: "claude" },
+        codex: { enabled: false, type: "codex" },
+        grok: { enabled: false, type: "grok" },
     },
     settings: {
         compactCompletedTurns: false,
@@ -998,13 +1000,15 @@ export class ConfigModule implements AgentModule {
     readonly #scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined;
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
     readonly #providerLifetime = new AbortController();
-    #catalog: readonly ConfiguredAgentModel[] | undefined;
-    #models: readonly AgentModel[] | undefined;
+    readonly #providerEnabled = new Map<string, boolean>();
+    #providerEnablement: ProviderEnablement | undefined;
     readonly #catalogNotices: string[] = [];
     #projectsHome: string | undefined;
     #providers: AgentProviders | undefined;
+    #sourceProviders: AgentProviders | undefined;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
     #resolvedScripted: ConfigInferenceOverride | undefined;
+    #scriptedModelSnapshot: readonly AgentModel[] | undefined;
     #workspacesHome: string | undefined;
 
     private constructor(
@@ -1015,6 +1019,9 @@ export class ConfigModule implements AgentModule {
         this.configuration = configuration;
         this.#scripted = scripted;
         this.#environment = environment;
+        for (const id of Object.keys(configuration.values.providers)) {
+            this.#providerEnabled.set(id, this.configuredProviderOverride(id) ?? false);
+        }
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -1032,17 +1039,34 @@ export class ConfigModule implements AgentModule {
      * entry is the account every agent starts on.
      */
     get models(): readonly AgentModel[] {
-        this.#models ??=
-            this.#resolveScripted()?.models ??
-            agentModels(this.configuration, (message) => this.#catalogNotices.push(message));
-        return this.#models;
+        const scripted = this.#scriptedModels();
+        if (scripted !== undefined) {
+            // Initialize the test-owned accounts before applying their live gates. The scan module
+            // can then take ownership and turn them off during its startup phase just like real
+            // accounts.
+            void this.#providerSource();
+            return scripted.filter((model) => this.isProviderEnabled(model.providerId));
+        }
+        return agentModels(
+            this.configuration,
+            (message) => {
+                if (!this.#catalogNotices.includes(message)) this.#catalogNotices.push(message);
+            },
+            (id) => this.isProviderEnabled(id),
+        );
+    }
+
+    /** Every configured route independent of its live provider gate. */
+    get offeredModels(): readonly AgentModel[] {
+        return this.#scriptedModels() ?? agentModels(this.configuration, undefined, () => true);
     }
 
     /** Every configured provider/model route, including disabled and filtered catalog entries. */
     get catalog(): readonly ConfiguredAgentModel[] {
-        if (this.#catalog !== undefined) return this.#catalog;
-        const catalog = [...agentModelCatalog(this.configuration)];
-        const scripted = this.#resolveScripted()?.models;
+        const catalog = [
+            ...agentModelCatalog(this.configuration, (id) => this.isProviderEnabled(id)),
+        ];
+        const scripted = this.#scriptedModels();
         if (scripted !== undefined) {
             for (const model of scripted) {
                 const route = catalog.findIndex(
@@ -1052,14 +1076,13 @@ export class ConfigModule implements AgentModule {
                 const entry: ConfiguredAgentModel = {
                     ...model,
                     contextWindow: agentModelContext(model.id)?.contextWindow ?? null,
-                    enabled: true,
+                    enabled: this.isProviderEnabled(model.providerId),
                 };
                 if (route === -1) catalog.push(entry);
                 else catalog[route] = entry;
             }
         }
-        this.#catalog = catalog;
-        return this.#catalog;
+        return catalog;
     }
 
     /** Curated context limits for one enabled provider/model route. */
@@ -1087,12 +1110,130 @@ export class ConfigModule implements AgentModule {
      * second registry that would sign in again.
      */
     get providers(): AgentProviders {
-        this.#providers ??= providerRegistryUntil(
-            this.#resolveScripted()?.providers ??
-                agentProviders(this.configuration, (usage) => this.#reportAccountUsage(usage)),
+        if (this.#providers !== undefined) return this.#providers;
+        const source = this.#providerSource();
+        this.#providerEnablement = new ProviderEnablement(source.ids, (id) =>
+            this.isProviderEnabled(id),
+        );
+        this.#providers = providerRegistryUntil(
+            source,
             this.#providerLifetime.signal,
+            this.#providerEnablement,
         );
         return this.#providers;
+    }
+
+    get providerIds(): readonly string[] {
+        return this.#providerSource().ids;
+    }
+
+    isProviderEnabled(providerId: string): boolean {
+        return this.#providerEnabled.get(providerId) === true;
+    }
+
+    setProviderEnabled(providerId: string, enabled: boolean): void {
+        if (!this.#providerEnabled.has(providerId)) {
+            throw new Error(`Provider "${providerId}" is not configured.`);
+        }
+        this.#providerEnabled.set(providerId, enabled);
+        this.#providerEnablement?.setEnabled(providerId, enabled);
+    }
+
+    /** A configuration-file setting is explicit and always outranks automatic discovery. */
+    configuredProviderOverride(providerId: string): boolean | undefined {
+        let explicitDefault: boolean | undefined;
+        let explicitProvider: boolean | undefined;
+        for (const name of ["global", "runtime"] as const) {
+            const values = this.configuration.sources[name].values;
+            if (typeof values.providerDefaultEnable === "boolean") {
+                explicitDefault = values.providerDefaultEnable;
+            }
+            const providers = values.providers as
+                | Record<string, { readonly enabled?: unknown }>
+                | undefined;
+            if (providers !== undefined && Object.hasOwn(providers, providerId)) {
+                const enabled = providers[providerId]?.enabled;
+                explicitProvider = typeof enabled === "boolean" ? enabled : undefined;
+            }
+        }
+        return explicitProvider ?? explicitDefault;
+    }
+
+    /** Resolve an account without consulting its live gate, for bounded scans and verification. */
+    async resolveProviderUnchecked(
+        providerId: string,
+        model: string | undefined,
+    ): Promise<import("@slopus/happy-providers").BaseProvider | null> {
+        return await this.#providerSource().resolve(providerId, model);
+    }
+
+    /** Local credential evidence only; this method never performs a vendor request. */
+    async probeLocalProviderCredentials(providerId: string): Promise<"available" | "missing"> {
+        if (this.#scripted !== undefined) {
+            return (await this.resolveProviderUnchecked(providerId, undefined)) === null
+                ? "missing"
+                : "available";
+        }
+        const configured = this.configuration.values.providers[providerId];
+        if (configured === undefined) return "missing";
+        if (configured.type === "bedrock") {
+            return (await this.#hasLocalBedrockCredential(configured)) ? "available" : "missing";
+        }
+        try {
+            return (await this.resolveProviderUnchecked(providerId, undefined)) === null
+                ? "missing"
+                : "available";
+        } catch (error: unknown) {
+            if (error instanceof Error && error.message.includes("authentication is unavailable")) {
+                return "missing";
+            }
+            throw error;
+        }
+    }
+
+    async #hasLocalBedrockCredential(
+        provider: HappyAgentConfigValues["providers"][string] & { readonly type: "bedrock" },
+    ): Promise<boolean> {
+        const environment = { ...process.env, ...this.#environment };
+        if ((provider.bearerToken?.trim().length ?? 0) > 0) return true;
+        if (
+            provider.bearerTokenEnvVar !== undefined &&
+            (environment[provider.bearerTokenEnvVar]?.trim().length ?? 0) > 0
+        ) {
+            return true;
+        }
+        const explicitFiles = [provider.credentialsFile, provider.configFile].filter(
+            (path): path is string => path !== undefined,
+        );
+        if (await hasAwsCredentialConfiguration(explicitFiles)) return true;
+        if (provider.credentialIsolation === true) return false;
+        if ((environment.AWS_BEARER_TOKEN_BEDROCK?.trim().length ?? 0) > 0) return true;
+        if (
+            (environment.AWS_ACCESS_KEY_ID?.trim().length ?? 0) > 0 &&
+            (environment.AWS_SECRET_ACCESS_KEY?.trim().length ?? 0) > 0
+        ) {
+            return true;
+        }
+        if (
+            (environment.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI?.trim().length ?? 0) > 0 ||
+            (environment.AWS_CONTAINER_CREDENTIALS_FULL_URI?.trim().length ?? 0) > 0
+        ) {
+            return true;
+        }
+        const webIdentityToken = environment.AWS_WEB_IDENTITY_TOKEN_FILE?.trim();
+        if (
+            webIdentityToken !== undefined &&
+            webIdentityToken.length > 0 &&
+            (environment.AWS_ROLE_ARN?.trim().length ?? 0) > 0 &&
+            (await anyNonemptyFile([webIdentityToken]))
+        ) {
+            return true;
+        }
+        const home = environment.HOME?.trim() || homedir();
+        return await hasAwsCredentialConfiguration([
+            environment.AWS_SHARED_CREDENTIALS_FILE ?? join(home, ".aws", "credentials"),
+            environment.AWS_CONFIG_FILE ?? join(home, ".aws", "config"),
+        ]);
     }
 
     /**
@@ -1129,10 +1270,20 @@ export class ConfigModule implements AgentModule {
         ctx: Context,
         providerId: string,
     ): Promise<import("@slopus/happy-providers").ProviderUsage | null> {
+        if (!this.isProviderEnabled(providerId)) return null;
+        return await this.readProviderUsageUnchecked(ctx, providerId);
+    }
+
+    /** Authenticated usage probe that bypasses enablement for explicit verification. */
+    async readProviderUsageUnchecked(
+        ctx: Context,
+        providerId: string,
+    ): Promise<import("@slopus/happy-providers").ProviderUsage | null> {
         return await loadConfiguredProviderUsage({
             environment: { ...process.env, ...this.#environment },
             providerId,
             providers: this.configuration.values.providers,
+            ignoreEnabled: true,
             ...(ctx.lifetime === undefined ? {} : { signal: ctx.lifetime }),
         });
     }
@@ -1153,6 +1304,46 @@ export class ConfigModule implements AgentModule {
             this.configuration,
         );
         return this.#resolvedScripted;
+    }
+
+    /** Snapshot a test-owned catalog once while retaining only its provider gates as live state. */
+    #scriptedModels(): readonly AgentModel[] | undefined {
+        const models = this.#resolveScripted()?.models;
+        if (models === undefined) return undefined;
+        this.#scriptedModelSnapshot ??= Object.freeze(
+            models.map((model) =>
+                Object.freeze({
+                    ...model,
+                    effortLevels: Object.freeze([...model.effortLevels]),
+                    ...(model.serviceTiers === undefined
+                        ? {}
+                        : { serviceTiers: Object.freeze([...model.serviceTiers]) }),
+                }),
+            ),
+        );
+        return this.#scriptedModelSnapshot;
+    }
+
+    #providerSource(): AgentProviders {
+        if (this.#sourceProviders === undefined) {
+            this.#sourceProviders =
+                this.#resolveScripted()?.providers ??
+                agentProviders(this.configuration, (usage) => this.#reportAccountUsage(usage));
+            // A test-owned inference registry is already authenticated. Initialize all its
+            // accounts as usable, including canonical IDs whose production defaults are off. This
+            // happens exactly once: ProviderScanModule may subsequently gate them without a later
+            // registry read silently re-enabling them.
+            if (this.#scripted !== undefined) {
+                const ids = new Set([
+                    ...this.#sourceProviders.ids,
+                    ...(this.#scriptedModels()?.map((model) => model.providerId) ?? []),
+                ]);
+                for (const id of ids) {
+                    this.#providerEnabled.set(id, this.configuredProviderOverride(id) ?? true);
+                }
+            }
+        }
+        return this.#sourceProviders;
     }
 
     /**
@@ -1234,7 +1425,7 @@ export class ConfigModule implements AgentModule {
     get bedrockSearchModels(): Readonly<Record<string, string>> {
         const models: Record<string, string> = {};
         for (const [id, provider] of Object.entries(this.configuration.values.providers)) {
-            if (provider.enabled === false || provider.type !== "bedrock") continue;
+            if (!this.isProviderEnabled(id) || provider.type !== "bedrock") continue;
             if (provider.searchModelId !== undefined) models[id] = provider.searchModelId;
         }
         return models;
@@ -1606,6 +1797,7 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         logPath: join(observationHome, "agent.log"),
         observationHome,
         pidPath: join(agentHome, "daemon.pid"),
+        providerStatePath: join(agentHome, "provider-state.json"),
         publicHome,
         runtimeConfigPath: join(agentHome, "runtime.toml"),
         securityPath: join(configHome, "SECURITY.md"),
@@ -2818,6 +3010,56 @@ function isMissingFile(error: unknown): boolean {
         "code" in error &&
         (error.code === "ENOENT" || error.code === "ENOTDIR")
     );
+}
+
+async function anyNonemptyFile(paths: readonly string[]): Promise<boolean> {
+    for (const path of paths) {
+        try {
+            if ((await stat(path)).size > 0) return true;
+        } catch (error: unknown) {
+            if (!isMissingFile(error)) throw error;
+        }
+    }
+    return false;
+}
+
+/** Recognize configured AWS credential sources without invoking a process or metadata service. */
+async function hasAwsCredentialConfiguration(paths: readonly string[]): Promise<boolean> {
+    for (const path of paths) {
+        const source = await readLocalCredentialFile(path);
+        if (source === undefined) continue;
+        const hasKeyPair =
+            hasIniAssignment(source, "aws_access_key_id") &&
+            hasIniAssignment(source, "aws_secret_access_key");
+        const hasConfiguredSource =
+            hasIniAssignment(source, "credential_process") ||
+            hasIniAssignment(source, "web_identity_token_file") ||
+            hasIniAssignment(source, "sso_start_url") ||
+            hasIniAssignment(source, "sso_session");
+        if (hasKeyPair || hasConfiguredSource) return true;
+    }
+    return false;
+}
+
+function hasIniAssignment(source: string, key: string): boolean {
+    return new RegExp(`^\\s*${key}\\s*=\\s*\\S+`, "imu").test(source);
+}
+
+async function readLocalCredentialFile(path: string): Promise<string | undefined> {
+    let file: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+        file = await open(path, "r");
+        const size = Math.min((await file.stat()).size, MAX_LOCAL_CREDENTIAL_FILE_BYTES);
+        if (size <= 0) return undefined;
+        const buffer = Buffer.allocUnsafe(size);
+        const { bytesRead } = await file.read(buffer, 0, size, 0);
+        return buffer.subarray(0, bytesRead).toString("utf8");
+    } catch (error: unknown) {
+        if (isMissingFile(error)) return undefined;
+        throw error;
+    } finally {
+        await file?.close().catch(() => undefined);
+    }
 }
 
 function deepFreeze<T>(value: T): T {
