@@ -33,10 +33,25 @@ export interface HappySessionSnapshot {
     readonly sessionId: string;
     /** What the session is doing, in the words the daemon uses. */
     readonly status: string;
-    readonly title: string;
+    /** What this chat is called, once anything has named it. */
+    readonly title?: string;
     readonly tools: readonly string[];
     /** True while the agent owes work, which is what the phone shows as thinking. */
     readonly working: boolean;
+}
+
+/**
+ * A message from the phone this daemon will never be able to take.
+ *
+ * Retrying cannot help, so the message is answered rather than left unacknowledged: the person is
+ * told why in the conversation, and the inbox behind it keeps moving. The `message` is written to
+ * be read on the phone.
+ */
+export class HappyMessageRefused extends Error {
+    constructor(message: string, options?: ErrorOptions) {
+        super(message, options);
+        this.name = "HappyMessageRefused";
+    }
 }
 
 /** One image a person attached on the phone. */

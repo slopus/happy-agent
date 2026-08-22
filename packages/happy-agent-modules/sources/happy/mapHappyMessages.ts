@@ -218,10 +218,8 @@ export class HappyMessageMapper {
             if (!Value.Check(retryingSchema, payload.event)) return [];
             return [
                 this.#agentMessage(event, `${event.id}:retry`, {
-                    attempt: payload.event.attempt,
-                    outcome: "retried",
-                    reason: payload.event.reason,
-                    t: "failure",
+                    t: "service",
+                    text: `Retrying after an error (attempt ${payload.event.attempt}): ${payload.event.reason}`,
                 }),
             ];
         }
@@ -278,9 +276,8 @@ export class HappyMessageMapper {
         if (failed) {
             output.push(
                 this.#agentMessage(event, `${event.id}:failure`, {
-                    outcome: "failed",
-                    reason: failureText ?? "The model response failed.",
-                    t: "failure",
+                    t: "service",
+                    text: `The run failed: ${failureText ?? "The model response failed."}`,
                 }),
             );
         }

@@ -5,6 +5,7 @@ import {
     encryptHappyPayload,
     decryptHappyPayload,
     happySessionTag,
+    HappyMessageRefused,
     HappySessionClient,
     happySyncMigrations,
 } from "../../sources/happy/index.js";
@@ -362,6 +363,40 @@ describe("keeping one session in step with Happy", () => {
         await session.settle();
         expect(calls.filter((call) => call.kind === "submit")).toEqual([]);
         expect(await sync.readSession(store.context, AGENT_ID)).toMatchObject({ lastRemoteSeq: 3 });
+        await session.close();
+    });
+
+    it("answers a message it can never take, and keeps reading the ones behind it", async () => {
+        const server = fakeServer();
+        const calls: Call[] = [];
+        const { operations } = fakeOperations({
+            submit: async (_ctx, _agentId, message) => {
+                calls.push({ detail: message, kind: "submit" });
+                if (message.text === "use a model that is gone") {
+                    throw new HappyMessageRefused("That model is not available.");
+                }
+            },
+        });
+        server.deliver([
+            remoteMessage(4, "remote-message-1", {
+                content: { text: "use a model that is gone", type: "text" },
+                role: "user",
+            }),
+            remoteMessage(5, "remote-message-2", {
+                content: { text: "and now this one", type: "text" },
+                role: "user",
+            }),
+        ]);
+        const session = client({ operations, server, socket: new FakeSocket() });
+        await session.settle();
+
+        const said = server
+            .posted("/messages")
+            .flatMap((request) => (request.body as { messages: { localId: string }[] }).messages);
+        expect(said.map((one) => one.localId)).toContain("rig:refused:remote-message-1");
+        // The message behind it still ran, and Happy was told to send neither again.
+        expect(calls).toHaveLength(2);
+        expect(await sync.readSession(store.context, AGENT_ID)).toMatchObject({ lastRemoteSeq: 5 });
         await session.close();
     });
 

@@ -315,6 +315,28 @@ export function createHappySyncDatabase() {
         },
 
         /**
+         * Queues a message that belongs to no durable event, such as this daemon's
+         * answer to something the phone asked for and cannot have.
+         *
+         * The projection cursor stays where it is, because nothing was projected.
+         * Deferral follows whatever is already queued: order is still the point.
+         */
+        async enqueue(
+            ctx: Context,
+            agentId: string,
+            messages: readonly HappyOutboxMessage[],
+            now: number,
+        ): Promise<void> {
+            const session = await readSession(ctx, agentId);
+            if (session === undefined) return;
+            const counts = await countOutbox(ctx, agentId);
+            if (counts.deferred + counts.ready + messages.length > MAX_HAPPY_OUTBOX_MESSAGES) {
+                return;
+            }
+            await append(ctx, agentId, messages, counts.deferred > 0, now);
+        },
+
+        /**
          * Projects one durable event into the delivery queue and advances the cursor.
          *
          * The cursor only ever moves forward, and only past an event whose

@@ -53,12 +53,13 @@ export { readHappyRemoteInput } from "./readHappyRemoteInput.js";
 export { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js";
 export { describeHappyProvider, type HappyProviderDescriptor } from "./describeHappyProvider.js";
 export { HAPPY_PERMISSION_MODES, type HappyPermissionModeKind } from "./happyPermissionModes.js";
-export type {
-    HappyInboundImage,
-    HappyInboundMessage,
-    HappyModel,
-    HappySessionSnapshot,
-    HappySpawnRequest,
+export {
+    HappyMessageRefused,
+    type HappyInboundImage,
+    type HappyInboundMessage,
+    type HappyModel,
+    type HappySessionSnapshot,
+    type HappySpawnRequest,
 } from "./HappySession.js";
 export {
     createHappyAgentState,

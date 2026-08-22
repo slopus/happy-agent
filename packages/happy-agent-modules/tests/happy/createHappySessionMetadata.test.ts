@@ -81,12 +81,22 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         });
     });
 
-    it("shows the session as thinking while it owes work", () => {
-        expect(metadata().activity.session).toEqual({ kind: "thinking" });
-        expect(metadata(snapshot({ working: false })).activity.session).toEqual({ kind: "idle" });
-        expect(metadata(snapshot({ archived: true, working: false })).activity.session).toEqual({
-            kind: "archived",
-        });
+    it("never describes activity, which the phone reserves for its own counters", () => {
+        expect("activity" in metadata()).toBe(false);
+        expect("activity" in metadata(snapshot({ working: false }))).toBe(false);
+        expect("activity" in metadata(snapshot({ archived: true, working: false }))).toBe(false);
+    });
+
+    it("carries the name a session has been given", () => {
+        const published = metadata();
+        expect(published.name).toBe("Porting the Happy module");
+        expect(published.summary).toEqual({ text: "Porting the Happy module", updatedAt: 5_000 });
+    });
+
+    it("leaves an unnamed session unnamed, rather than overwriting Happy's own words", () => {
+        const published = metadata(snapshot({ title: undefined }));
+        expect("name" in published).toBe(false);
+        expect("summary" in published).toBe(false);
     });
 
     it("offers every model the daemon can serve, whatever the provider", () => {

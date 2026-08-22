@@ -220,10 +220,8 @@ describe("Happy message mapping", () => {
             }),
         );
         expect(retried[0]?.content.ev).toEqual({
-            attempt: 2,
-            outcome: "retried",
-            reason: "The provider was overloaded.",
-            t: "failure",
+            t: "service",
+            text: "Retrying after an error (attempt 2): The provider was overloaded.",
         });
     });
 
@@ -267,9 +265,8 @@ describe("Happy message mapping", () => {
             settled({ error: "The provider refused the request.", stopReason: "error" }, 1_500),
         );
         expect(ended[0]?.content.ev).toEqual({
-            outcome: "failed",
-            reason: "The provider refused the request.",
-            t: "failure",
+            t: "service",
+            text: "The run failed: The provider refused the request.",
         });
         expect(ended[1]?.content.ev).toMatchObject({
             reason: "error",

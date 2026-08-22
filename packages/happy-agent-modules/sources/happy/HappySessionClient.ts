@@ -22,16 +22,18 @@ import {
 import { connectHappySocket } from "./connectHappySocket.js";
 import { HAPPY_SESSION_RPC_METHODS, handleHappySessionRpc } from "./handleHappySessionRpc.js";
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
-import type {
-    HappyInboundImage,
-    HappyInboundMessage,
-    HappyModel,
-    HappySessionSnapshot,
+import {
+    HappyMessageRefused,
+    type HappyInboundImage,
+    type HappyInboundMessage,
+    type HappyModel,
+    type HappySessionSnapshot,
 } from "./HappySession.js";
 import {
     happyRemoteMessageId,
     happyRemoteMessageSchema,
     type HappyRemoteMessage,
+    type HappySessionProtocolMessage,
 } from "./HappyProtocol.js";
 import type { HappySyncSession } from "./HappySync.js";
 import type { HappySyncDatabase } from "./HappySyncDatabase.js";
@@ -461,26 +463,54 @@ export class HappySessionClient {
         const attachments = await Promise.all(this.#pendingAttachments.values());
         this.#pendingAttachments.clear();
         const permissionMode = incoming.selection.permissionMode;
-        await this.#options.operations.submit(this.#options.context, this.#options.agentId, {
-            images: attachments.filter(
-                (attachment): attachment is HappyInboundImage => attachment !== undefined,
-            ),
-            remoteMessageId: happyRemoteMessageId(message.id),
-            selection: {
-                ...(incoming.selection.effort === undefined
-                    ? {}
-                    : { effort: incoming.selection.effort }),
-                ...(incoming.selection.modelId === undefined
-                    ? {}
-                    : { modelId: incoming.selection.modelId }),
-                ...(isAgentPermissionMode(permissionMode) ? { permissionMode } : {}),
-                ...(incoming.selection.providerId === undefined
-                    ? {}
-                    : { providerId: incoming.selection.providerId }),
-            },
-            text: incoming.text,
-        });
+        try {
+            await this.#options.operations.submit(this.#options.context, this.#options.agentId, {
+                images: attachments.filter(
+                    (attachment): attachment is HappyInboundImage => attachment !== undefined,
+                ),
+                remoteMessageId: happyRemoteMessageId(message.id),
+                selection: {
+                    ...(incoming.selection.effort === undefined
+                        ? {}
+                        : { effort: incoming.selection.effort }),
+                    ...(incoming.selection.modelId === undefined
+                        ? {}
+                        : { modelId: incoming.selection.modelId }),
+                    ...(isAgentPermissionMode(permissionMode) ? { permissionMode } : {}),
+                    ...(incoming.selection.providerId === undefined
+                        ? {}
+                        : { providerId: incoming.selection.providerId }),
+                },
+                text: incoming.text,
+            });
+        } catch (error) {
+            if (!(error instanceof HappyMessageRefused)) throw error;
+            // Nothing about this message will ever work, so saying why is the whole answer.
+            // Leaving it unacknowledged would only have Happy redeliver it forever, and every
+            // message queued behind it would wait on one this daemon can never take.
+            await this.#reportRefusal(message, error.message);
+        }
         return true;
+    }
+
+    /** Tells the phone, in the conversation, why a message of theirs went nowhere. */
+    async #reportRefusal(message: HappyRemoteMessage, text: string): Promise<void> {
+        const id = `refused:${message.id}`;
+        const payload: HappySessionProtocolMessage = {
+            content: { ev: { t: "service", text }, id, role: "agent", time: Date.now() },
+            localId: `rig:${id}`,
+            meta: { sentFrom: "rig" },
+            role: "session",
+        };
+        await this.#options.context.inTx(async (txCtx) => {
+            await this.#options.sync.enqueue(
+                txCtx,
+                this.#options.agentId,
+                [{ localId: payload.localId, payload }],
+                Date.now(),
+            );
+        });
+        this.kick();
     }
 
     async #downloadAttachment(
@@ -632,7 +662,11 @@ export class HappySessionClient {
     async #syncMetadata(state: HappySyncSession, snapshot: HappySessionSnapshot): Promise<void> {
         if (this.#socket?.connected === false || this.#metadataVersion === undefined) return;
         const rigMetadata = this.#metadataFor(snapshot);
-        let metadata: Record<string, unknown> = { ...this.#metadataBase, ...rigMetadata };
+        // `activity` is dropped rather than merged forward: an older Happy Agent wrote a shape the
+        // phone reserves for its own counters, and one key of the wrong shape fails the phone's
+        // whole metadata parse.
+        const { activity: _stale, ...base } = this.#metadataBase;
+        let metadata: Record<string, unknown> = { ...base, ...rigMetadata };
         let serialized = JSON.stringify(metadata);
         if (serialized === this.#lastMetadata) return;
         for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -662,7 +696,7 @@ export class HappySessionClient {
                 }
                 this.#metadataVersion = answer.version;
                 this.#metadataBase = latest;
-                metadata = { ...latest, ...rigMetadata };
+                metadata = composeSessionMetadata(latest, rigMetadata);
                 serialized = JSON.stringify(metadata);
                 continue;
             }
@@ -870,4 +904,19 @@ export class HappySessionClient {
 
 function decodeKey(value: string): Uint8Array {
     return new Uint8Array(Buffer.from(value, "base64"));
+}
+
+/**
+ * Puts this daemon's facts on top of whatever else the session metadata carries.
+ *
+ * `activity` is dropped rather than kept, because an older Happy Agent wrote a shape the phone
+ * reserves for its own counters, and one key of the wrong shape fails the phone's whole metadata
+ * parse. Carrying it forward would leave a session that upgraded still looking unreadable.
+ */
+function composeSessionMetadata(
+    base: Record<string, unknown>,
+    rigMetadata: Record<string, unknown>,
+): Record<string, unknown> {
+    const { activity: _activity, ...kept } = base;
+    return { ...kept, ...rigMetadata };
 }

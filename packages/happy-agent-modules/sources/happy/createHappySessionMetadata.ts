@@ -27,7 +27,6 @@ export interface HappyPublishedModel {
 
 /** Everything the phone needs to draw a session before a single message arrives. */
 export interface HappySessionMetadata {
-    activity: { session: { kind: string; since?: number } };
     capabilities: {
         abort: boolean;
         attachments: { enabled: boolean; maxBytes: number; mediaTypes: readonly string[] };
@@ -53,7 +52,7 @@ export interface HappySessionMetadata {
     machineId?: string;
     model: { id: string; providerId: string };
     models: readonly HappyPublishedModel[];
-    name: string;
+    name?: string;
     operatingModes: readonly {
         code: string;
         description: string;
@@ -71,7 +70,7 @@ export interface HappySessionMetadata {
     session: { modelLocked: false; permissionMode: string; serviceTier?: string; status: string };
     startedBy: "daemon";
     startedFromDaemon: true;
-    summary: { text: string; updatedAt: number };
+    summary?: { text: string; updatedAt: number };
     thoughtLevels: readonly { code: string; value: string }[];
     tools: readonly string[];
 }
@@ -101,11 +100,6 @@ export function createHappySessionMetadata(options: {
     const provider = describeHappyProvider(session.providerId);
     const efforts = selected?.effortLevels ?? [];
     return {
-        activity: {
-            session: session.working
-                ? { kind: "thinking" }
-                : { kind: session.archived ? "archived" : "idle" },
-        },
         capabilities: {
             abort: true,
             attachments: {
@@ -140,7 +134,7 @@ export function createHappySessionMetadata(options: {
         ...(configuration.machineId === undefined ? {} : { machineId: configuration.machineId }),
         model: { id: session.modelId, providerId: session.providerId },
         models: models.map(publishModel),
-        name: session.title,
+        ...(session.title === undefined ? {} : { name: session.title }),
         operatingModes: HAPPY_PERMISSION_MODES.map((mode) => ({ ...mode })),
         os: `${platform()} ${release()}`,
         path: session.cwd,
@@ -158,7 +152,9 @@ export function createHappySessionMetadata(options: {
         },
         startedBy: "daemon",
         startedFromDaemon: true,
-        summary: { text: session.title, updatedAt: options.summaryUpdatedAt },
+        ...(session.title === undefined
+            ? {}
+            : { summary: { text: session.title, updatedAt: options.summaryUpdatedAt } }),
         thoughtLevels: efforts.map((level) => ({ code: level, value: level })),
         tools: [...session.tools],
     };

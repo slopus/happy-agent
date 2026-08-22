@@ -50,11 +50,12 @@ import type { HappySpawnOperations } from "./handleHappySpawnSession.js";
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import { HappyMachineClient, type HappyMachineConnectionEvent } from "./HappyMachineClient.js";
 import { HappyPairing, HappyPairingError } from "./HappyPairing.js";
-import type {
-    HappyInboundMessage,
-    HappyModel,
-    HappySessionSnapshot,
-    HappySpawnRequest,
+import {
+    HappyMessageRefused,
+    type HappyInboundMessage,
+    type HappyModel,
+    type HappySessionSnapshot,
+    type HappySpawnRequest,
 } from "./HappySession.js";
 import { HappySessionClient, type HappySessionOperations } from "./HappySessionClient.js";
 import { createHappySyncDatabase, happySyncMigrations } from "./HappySyncDatabase.js";
@@ -755,12 +756,20 @@ export class HappyModule
             throw new Error(`No agent exists for Happy session "${agentId}".`);
         }
         const current = selectionFromConfig(config, this.#defaultSelection());
-        const next = checkedSelection(this.#config.models, {
-            effort: message.selection.effort ?? current.effort,
-            modelId: message.selection.modelId ?? current.modelId,
-            permissionMode: message.selection.permissionMode ?? current.permissionMode,
-            providerId: message.selection.providerId ?? current.providerId,
-        });
+        let next: HappySelection;
+        try {
+            next = checkedSelection(this.#config.models, {
+                effort: message.selection.effort ?? current.effort,
+                modelId: message.selection.modelId ?? current.modelId,
+                permissionMode: message.selection.permissionMode ?? current.permissionMode,
+                providerId: message.selection.providerId ?? current.providerId,
+            });
+        } catch (cause) {
+            throw new HappyMessageRefused(
+                cause instanceof Error ? cause.message : "That model selection is not available.",
+                { cause },
+            );
+        }
         const messageOptions = messageOptionsFor(next);
         try {
             await system.send(ctx, agentId, messageFrom(message), {
@@ -856,6 +865,18 @@ export class HappyModule
         return { agentId: request.sessionId };
     }
 
+    /**
+     * Whether a person can open this agent, which is whether it belongs to a project or workspace.
+     *
+     * A hidden subagent belongs to the agent that spawned it and to no place a person navigates to.
+     * Giving it a session of its own would put work nobody started at the top of the phone's list,
+     * and a busy delegating agent would fill that list on its own.
+     */
+    async #userVisible(ctx: Context, agentId: string): Promise<boolean> {
+        if ((await this.#workspaces.workspaceForAgent(ctx, agentId)) !== undefined) return true;
+        return (await this.#projects.projectForAgent(ctx, agentId)) !== undefined;
+    }
+
     async #attach(ctx: Context, agentId: string): Promise<ConnectedAgent | undefined> {
         const existing = this.#agents.get(agentId);
         if (existing !== undefined) return existing;
@@ -863,6 +884,7 @@ export class HappyModule
         const context = this.#context;
         if (configuration === undefined || context === undefined) return undefined;
         if (this.#agents.size >= MAX_CONNECTED_AGENTS) return undefined;
+        if (!(await this.#userVisible(ctx, agentId))) return undefined;
         const session = await this.session(ctx, agentId);
         if (session === undefined) return undefined;
         this.#trackedAgentIds.add(agentId);
@@ -924,10 +946,9 @@ export class HappyModule
             providerId: selection.providerId,
             sessionId: agentId,
             status: "idle",
-            title:
-                typeof config.metadata?.title === "string"
-                    ? config.metadata.title
-                    : "Untitled session",
+            // An unnamed chat says nothing rather than inventing a name: Happy has its own
+            // words for one, and a placeholder here would overwrite them on the phone.
+            ...(typeof config.metadata?.title === "string" ? { title: config.metadata.title } : {}),
             tools: [],
             // Agent Base deliberately does not expose active state through AgentSystemRef.
             working: false,

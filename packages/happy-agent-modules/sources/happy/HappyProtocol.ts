@@ -21,7 +21,9 @@ export interface HappyUsage {
 /** One thing that happened, as the phone renders it. */
 export type HappySessionEvent =
     | { t: "file"; ref: string; name: string; size: number; mimeType?: string }
-    | { t: "failure"; outcome: "retried" | "failed"; reason: string; attempt?: number }
+    // A failure travels as a `service` line. The phone's vocabulary has no failure of its own and
+    // silently drops any event it cannot name, so plain words about what went wrong reach a person
+    // and a truer-looking event does not.
     | { t: "service"; text: string }
     | { t: "text"; text: string; thinking?: boolean }
     | { t: "tool-call-end"; call: string }
