@@ -157,7 +157,9 @@ export class SearchModule implements AgentModule {
     readonly #hooks: AgentModuleHooks = {
         tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
             webFetchTool(this, scope.agent.id),
-            geminiWebSearchTool(this, scope.agent.id),
+            ...(this.#config.geminiApiKey === undefined
+                ? []
+                : [geminiWebSearchTool(this, scope.agent.id)]),
             claudeWebSearchTool(this, scope.agent.id),
             codexWebSearchTool(this, scope.agent.id),
             bedrockWebSearchTool(this, scope.agent.id),

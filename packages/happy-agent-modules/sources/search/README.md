@@ -2,8 +2,9 @@
 
 Web search and page fetch, run by the module itself. There is no injected backend and no host
 boundary: the module owns the routing, the vendor call, and the fetch. Every model receives the
-same fixed ordinary-tool array. The vendor names select which account the search runs on; they do
-not lift a provider's server tool into Agent Base.
+same fixed base tool array, with Gemini web search added only when `GEMINI_API_KEY` is configured.
+The vendor names select which account the search runs on; they do not lift a provider's server tool
+into Agent Base.
 
 ```ts
 import { Agent } from "@slopus/happy-agent-base";
@@ -29,20 +30,21 @@ a collection; `agentId` is threaded through on each call.
 
 ## Tools
 
-The fixed array matches Happy Agent:
+The fixed base array matches Happy Agent:
 
 - **`web_fetch`**
-- **`gemini_web_search`**
 - **`claude_web_search`**
 - **`codex_web_search`**
 - **`bedrock_web_search`**
 - **`grok_web_search`**
 - **`grok_x_search`**
 
-All seven tools are available to Claude, Codex, Grok, Bedrock, and future providers. A vendor
-search spends one bounded call on that vendor's own search — Codex's `web_search`, Claude's
-`WebSearch`, Bedrock's hosted index, Grok's `web_search` and `x_search`, and Gemini's grounding over
-Google's HTTP API — on an account the person already configured.
+**`gemini_web_search`** is added to that array only when `GEMINI_API_KEY` resolves to a usable key.
+It is absent when the key is missing or blank, so a model cannot select a tool that is guaranteed
+to fail authentication. The available tools are shared by Claude, Codex, Grok, Bedrock, and future
+providers. A vendor search spends one bounded call on that vendor's own search — Codex's
+`web_search`, Claude's `WebSearch`, Bedrock's hosted index, Grok's `web_search` and `x_search`, and
+Gemini's grounding over Google's HTTP API — on an account the person already configured.
 
 A vendor search is not paginated. Each search returns a bounded `SearchAnswer` (`provider`, `query`,
 `answer`, `sources`, `durationMs`). The model sees the vendor's answer text first, then a bounded
@@ -82,7 +84,8 @@ contrast, is prose and may be cut with an `[Answer truncated.]` marker to keep t
   **`search.formatFetchForModel(result: FetchResult): string`** — the exact formatting the tools
   use to turn a validated answer or fetch result into model-visible text, exposed so a host can
   render the same output outside a tool call. Both throw if given a value that fails its schema.
-- **`search.tools(ctx, scope)`** — returns the fixed seven-tool array above for every provider.
+- **`search.tools(ctx, scope)`** — returns the fixed base array above for every provider and adds
+  `gemini_web_search` when `GEMINI_API_KEY` is configured.
 
 None of these functions emit events or take listeners; every call resolves or rejects within the
 single search or fetch it performs.
@@ -90,6 +93,6 @@ single search or fetch it performs.
 ## Storage
 
 The module persists nothing. It is stateless between calls: `SearchModule` holds only the
-configuration module, resolving the routes and the Gemini key from it each time a search runs, and
-every call is answered fresh from the vendor. Search results, fetched pages, and rate limits are not
-cached anywhere.
+configuration module, resolving the Gemini key when tools are assembled and resolving the routes
+and key again each time a search runs. Every call is answered fresh from the vendor. Search
+results, fetched pages, and rate limits are not cached anywhere.

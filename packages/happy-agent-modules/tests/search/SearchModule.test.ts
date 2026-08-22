@@ -97,6 +97,7 @@ afterEach(() => {
 
 describe("SearchModule", () => {
     it("exposes every vendor tool with explicit Auto network permissions", async () => {
+        vi.stubEnv("GEMINI_API_KEY", "secret-key");
         const tools = await toolsFor(await module());
         expect(tools.map((tool) => tool.name)).toEqual([
             "web_fetch",
@@ -122,8 +123,15 @@ describe("SearchModule", () => {
         }
     });
 
-    it("says which vendor has no configured account instead of searching nowhere", async () => {
+    it("does not expose Gemini web search when no Gemini key is configured", async () => {
         vi.stubEnv("GEMINI_API_KEY", "");
+
+        const tools = await toolsFor(await module());
+
+        expect(tools.map((tool) => tool.name)).not.toContain("gemini_web_search");
+    });
+
+    it("says which vendor has no configured account instead of searching nowhere", async () => {
         const tools = await toolsFor(await module());
         const byName = new Map(tools.map((tool) => [tool.name, tool]));
 
@@ -133,9 +141,6 @@ describe("SearchModule", () => {
         await expect(
             byName.get("bedrock_web_search")!.execute(ctx, { query: "rig" }, undefined as never),
         ).rejects.toThrow("No Bedrock account is configured");
-        await expect(
-            byName.get("gemini_web_search")!.execute(ctx, { query: "rig" }, undefined as never),
-        ).rejects.toThrow("GEMINI_API_KEY");
     });
 
     it("names the account a vendor search was asked for when that account does not exist", async () => {
