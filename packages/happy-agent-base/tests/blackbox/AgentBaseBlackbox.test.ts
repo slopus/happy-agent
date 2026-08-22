@@ -1188,7 +1188,51 @@ describe("AgentBase black-box tool validation and ordering", () => {
         );
         await runInvalidToolCall(
             { callId: "schema", name: "known", arguments: '{"path":123}' },
-            'The arguments for "known" did not match its schema.',
+            [
+                'The arguments for "known" did not match its schema:',
+                "- path: Expected string; received number (123).",
+            ].join("\n"),
+        );
+    });
+
+    it("reports the closest union form with exact invalid argument paths", async () => {
+        const requestUserInput = defineAgentTool({
+            name: "request_user_input",
+            parameters: Type.Object(
+                {
+                    input: Type.Union([
+                        Type.Object({ requestId: Type.String() }, { additionalProperties: false }),
+                        Type.Object(
+                            {
+                                question: Type.String(),
+                                context: Type.String(),
+                                header: Type.Optional(Type.String({ maxLength: 12 })),
+                            },
+                            { additionalProperties: false },
+                        ),
+                    ]),
+                },
+                { additionalProperties: false },
+            ),
+            returnType: Type.Object({ value: Type.String() }),
+            shouldReviewInAutoMode: () => false,
+            execute: async () => ({ value: "ok" }),
+            toLLM: (result) => [{ type: "text", text: result.value }],
+        });
+
+        await runInvalidToolCall(
+            {
+                callId: "nested-schema",
+                name: "request_user_input",
+                arguments: '{"input":{"question":42,"header":"this header is far too long"}}',
+            },
+            [
+                'The arguments for "request_user_input" did not match its schema:',
+                "- input.context: Required property is missing.",
+                "- input.question: Expected string; received number (42).",
+                "- input.header: Expected string length less than or equal to 12; received string (length 27).",
+            ].join("\n"),
+            [requestUserInput],
         );
     });
 

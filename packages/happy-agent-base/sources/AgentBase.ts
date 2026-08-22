@@ -81,6 +81,7 @@ import { AgentProviders } from "./AgentProviders.js";
 import type { AgentModuleAction } from "./AgentModuleAction.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
 import type { AnyAgentTool } from "./AgentTool.js";
+import { agentToolArgumentsError } from "./AgentToolArgumentsError.js";
 import { setAgentSpanAttributes, type AgentSpanAttributes } from "./AgentSpanAttributes.js";
 
 /** Race winner when an abort interrupts a wait on the stream or a running tool. */
@@ -3716,8 +3717,9 @@ export class AgentBase {
                 return failure(`The arguments for "${call.name}" were not valid JSON.`);
             }
         }
-        if (tool.parameters !== undefined && !Value.Check(tool.parameters, args)) {
-            return failure(`The arguments for "${call.name}" did not match its schema.`);
+        if (tool.parameters !== undefined) {
+            const argumentError = agentToolArgumentsError(call.name, tool.parameters, args);
+            if (argumentError !== undefined) return failure(argumentError);
         }
         const callKV = this.#kv.scoped("call", entry.id);
         const callLifetime = new AbortController();
@@ -3835,12 +3837,13 @@ export class AgentBase {
                 if (decision?.arguments !== undefined) ranArguments = decision.arguments;
                 // An amended call is validated again: the schema that mattered is the one belonging
                 // to the tool that is about to run, on the arguments it is about to receive.
-                if (
-                    (ran !== tool || ranArguments !== args) &&
-                    ran.parameters !== undefined &&
-                    !Value.Check(ran.parameters, ranArguments)
-                ) {
-                    throw new Error(`The arguments for "${ran.name}" did not match its schema.`);
+                if ((ran !== tool || ranArguments !== args) && ran.parameters !== undefined) {
+                    const argumentError = agentToolArgumentsError(
+                        ran.name,
+                        ran.parameters,
+                        ranArguments,
+                    );
+                    if (argumentError !== undefined) throw new Error(argumentError);
                 }
                 const runCtx =
                     decision?.permissionMode === undefined

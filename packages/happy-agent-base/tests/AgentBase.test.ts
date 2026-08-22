@@ -411,7 +411,10 @@ describe("AgentBase", () => {
             content: [
                 {
                     type: "text",
-                    text: 'The arguments for "read_file" did not match its schema.',
+                    text: [
+                        'The arguments for "read_file" did not match its schema:',
+                        "- path: Expected string; received number (123).",
+                    ].join("\n"),
                 },
             ],
             isError: true,
