@@ -9,40 +9,56 @@ import {
     type UsageSummary,
 } from "../Usage.js";
 
-export const getUsageInputSchema = Type.Object(
+export const getAgentUsageInputSchema = Type.Object(
     {
         aggregate: Type.Optional(Type.Boolean()),
-        target: Type.Optional(usageAgentIdSchema),
         cursor: Type.Optional(usageAggregateQuerySchema.properties.cursor),
         maxGroups: Type.Optional(usageAggregateQuerySchema.properties.maxGroups),
     },
     { additionalProperties: false },
 );
 
+export const getUsageInputSchema = Type.Object(
+    {
+        ...getAgentUsageInputSchema.properties,
+        target: Type.Optional(usageAgentIdSchema),
+    },
+    { additionalProperties: false },
+);
+
+export type GetAgentUsageInput = Static<typeof getAgentUsageInputSchema>;
 export type GetUsageInput = Static<typeof getUsageInputSchema>;
 
 /**
  * Read one agent's usage aggregate, or the whole collection when constructed
  * without an agent ID and called from a host-neutral context.
  */
+export function getUsageTool(module: UsageModule): ReturnType<typeof getHostUsageTool>;
+export function getUsageTool(
+    module: UsageModule,
+    agentId: string,
+): ReturnType<typeof getAgentUsageTool>;
 export function getUsageTool(module: UsageModule, agentId?: string) {
+    if (agentId === undefined) return getHostUsageTool(module);
+    return getAgentUsageTool(module, agentId);
+}
+
+function getAgentUsageTool(module: UsageModule, agentId: string) {
     return defineAgentTool({
         name: "get_usage",
         description:
-            "Read bounded token and timing usage. Agent tools read their own grouped totals; a host-neutral caller may construct this tool without an agent ID to read one target or the whole collection.",
-        parameters: getUsageInputSchema,
+            "Read this agent's bounded token and timing usage. Set aggregate=true to group the totals, and follow a returned cursor to continue.",
+        parameters: getAgentUsageInputSchema,
         returnType: usageSummarySchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx, input: GetUsageInput): Promise<UsageSummary> => {
+        execute: async (ctx, input: GetAgentUsageInput): Promise<UsageSummary> => {
             const owner = contextAgentId(ctx);
-            if (owner !== undefined) {
-                if (agentId !== undefined && agentId !== owner) {
-                    throw new Error("Usage can only be read for the current agent.");
-                }
-                if (input.target !== undefined && input.target !== owner) {
-                    throw new Error("Usage can only be read for the current agent.");
-                }
+            if (owner !== undefined && agentId !== owner) {
+                throw new Error("Usage can only be read for the current agent.");
+            }
+            if ("target" in input) {
+                throw new Error("Usage can only be read for the current agent.");
             }
             const query = {
                 ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
@@ -54,18 +70,45 @@ export function getUsageTool(module: UsageModule, agentId?: string) {
              * contexts still remain self-scoped through UsageModule's access
              * boundary.
              */
-            if (
-                owner === undefined &&
-                (input.aggregate === true || input.target !== undefined || agentId === undefined)
-            ) {
-                return await module.aggregate(ctx, {
-                    ...(input.target === undefined ? {} : { agentId: input.target }),
-                    ...query,
-                });
+            if (owner === undefined && input.aggregate === true) {
+                return await module.aggregate(ctx, query);
             }
-            if (agentId !== undefined) return await module.read(ctx, agentId, query);
-            if (owner !== undefined) return await module.read(ctx, owner, query);
-            throw new Error("Usage agent identity is unavailable.");
+            return await module.read(ctx, agentId, query);
+        },
+        toLLM: (summary) => [
+            {
+                type: "text",
+                text: module.formatForModel(summary),
+            },
+        ],
+    });
+}
+
+function getHostUsageTool(module: UsageModule) {
+    return defineAgentTool({
+        name: "get_usage",
+        description:
+            "Read bounded token and timing usage for one target or the whole collection from a host-neutral context.",
+        parameters: getUsageInputSchema,
+        returnType: usageSummarySchema,
+        durable: true,
+        shouldReviewInAutoMode: () => false,
+        execute: async (ctx, input: GetUsageInput): Promise<UsageSummary> => {
+            const owner = contextAgentId(ctx);
+            const query = {
+                ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+                ...(input.maxGroups === undefined ? {} : { maxGroups: input.maxGroups }),
+            };
+            if (owner !== undefined) {
+                if (input.target !== undefined && input.target !== owner) {
+                    throw new Error("Usage can only be read for the current agent.");
+                }
+                return await module.read(ctx, owner, query);
+            }
+            return await module.aggregate(ctx, {
+                ...(input.target === undefined ? {} : { agentId: input.target }),
+                ...query,
+            });
         },
         toLLM: (summary) => [
             {

@@ -33,6 +33,7 @@ export {
     userInputAnswerTextSchema,
     userInputAnswerInputSchema,
     userInputAnswerInputUnionSchema,
+    userInputAgentToolInputSchema,
     userInputBatchAnswerInputSchema,
     userInputBatchQuestionInputSchema,
     userInputBatchQuestionInputsSchema,

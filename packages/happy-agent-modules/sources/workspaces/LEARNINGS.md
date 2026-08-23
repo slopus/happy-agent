@@ -26,3 +26,9 @@ calling agent. A project-owned agent therefore creates below the project root, w
 by a nested workspace creates at that exact depth. Without `baseRef`, a nested child inherits its
 parent's branch. The child returns its explicit `parentId`, so the ordinary flat API list preserves
 the complete tree without a second hierarchy representation.
+
+## Advertised page limits match execution limits
+
+Workspace list and detail tools return at most 50 rows. Their TypeBox schemas use that same bound
+so models paginate from the returned cursor instead of repeatedly requesting an advertised 100-row
+page that execution must reject.

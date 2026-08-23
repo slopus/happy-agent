@@ -6,7 +6,7 @@ import { taskSchema } from "./Task.js";
 export const taskPageQuerySchema = Type.Object(
     {
         offset: Type.Optional(Type.Integer({ minimum: 0 })),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
     },
     { additionalProperties: false },
 );
@@ -14,9 +14,9 @@ export const taskPageQuerySchema = Type.Object(
 /** A page of tasks with enough metadata for a model to continue reading. */
 export const taskPageSchema = Type.Object(
     {
-        tasks: Type.Array(taskSchema, { maxItems: 100 }),
+        tasks: Type.Array(taskSchema, { maxItems: 50 }),
         offset: Type.Integer({ minimum: 0 }),
-        limit: Type.Integer({ minimum: 1, maximum: 100 }),
+        limit: Type.Integer({ minimum: 1, maximum: 50 }),
         total: Type.Integer({ minimum: 0, maximum: 500 }),
         nextOffset: Type.Optional(Type.Integer({ minimum: 0, maximum: 500 })),
     },

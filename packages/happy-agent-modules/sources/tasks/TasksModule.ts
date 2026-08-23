@@ -154,13 +154,13 @@ export class TasksModule implements AgentModule {
     /** Return one bounded page; callers can follow nextOffset until every task is visible. */
     async listPage(ctx: Context, agentId: string, query: TaskPageQuery = {}): Promise<TaskPage> {
         this.#assertAgentId(agentId);
+        if (query.limit !== undefined && query.limit > MAX_TASK_PAGE_SIZE) {
+            throw new Error(`Task page limit cannot exceed ${MAX_TASK_PAGE_SIZE}.`);
+        }
         if (!Value.Check(taskPageQuerySchema, query)) {
             throw new Error("Invalid task page query.");
         }
         const limit = query.limit ?? MAX_TASK_PAGE_SIZE;
-        if (limit > MAX_TASK_PAGE_SIZE) {
-            throw new Error(`Task page limit cannot exceed ${MAX_TASK_PAGE_SIZE}.`);
-        }
         const offset = query.offset ?? 0;
         const tasks = await this.#read(ctx, agentId);
         const visibleTasks = tasks.map((task) => taskForTaskList(task, tasks));

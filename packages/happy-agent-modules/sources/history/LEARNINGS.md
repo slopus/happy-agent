@@ -41,6 +41,13 @@ atomic transition the public contract describes: the old run becomes `aborted/st
 successor becomes running. Provider failure and explicit abort still settle immediately; queued
 messages do not defer settlement.
 
+## The first cursor has no previous page
+
+An explicit cursor of zero is the same first page as `from: "start"`; it does not prove that an
+earlier page exists. A previous cursor is emitted only when the selected first matching record has
+an earlier matching record. Otherwise returning zero as its own predecessor makes bounded readers
+reject the page as stalled.
+
 ## A run starts when its accepted work was submitted
 
 `startedAt` is the accepted message's durable submission time, or the maintenance operation's

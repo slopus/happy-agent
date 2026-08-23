@@ -8,7 +8,7 @@ export const MAX_USER_INPUT_AGENT_ID_LENGTH = 128;
 export const MAX_USER_INPUT_REQUEST_ID_LENGTH = 128;
 export const MAX_USER_INPUT_EVENT_ID_LENGTH = 128;
 export const MAX_USER_INPUT_CURSOR_LENGTH = 512;
-export const MAX_USER_INPUT_HEADER_CHARACTERS = 12;
+export const MAX_USER_INPUT_HEADER_CHARACTERS = 64;
 export const MAX_USER_INPUT_QUESTION_ID_LENGTH = 128;
 export const MAX_USER_INPUT_BATCH_QUESTION_COUNT = 4;
 export const MIN_USER_INPUT_AUTO_RESOLUTION_MS = 60_000;
@@ -343,6 +343,11 @@ export const userInputAskInputSchema = Type.Union([
     userInputBatchedAskInputSchema,
 ]);
 export const userInputToolInputSchema = userInputAskInputSchema;
+/** Agent calls use a relative timeout so they never have to invent the daemon's wall clock. */
+export const userInputAgentToolInputSchema = Type.Union([
+    Type.Omit(userInputSingleAskInputSchema, ["deadlineAt"]),
+    Type.Omit(userInputBatchedAskInputSchema, ["deadlineAt"]),
+]);
 
 export const userInputWaitInputSchema = Type.Object(
     {
@@ -431,7 +436,7 @@ export const userInputCompleteInputSchema = Type.Union([
 
 export const userInputListQuerySchema = Type.Object(
     {
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
         cursor: Type.Optional(
             Type.String({ minLength: 1, maxLength: MAX_USER_INPUT_CURSOR_LENGTH }),
         ),
@@ -443,13 +448,13 @@ export const userInputListQuerySchema = Type.Object(
 
 export const userInputPageSchema = Type.Object(
     {
-        requests: Type.Array(userInputRequestSchema, { maxItems: 100 }),
+        requests: Type.Array(userInputRequestSchema, { maxItems: 50 }),
         /** Absolute source position of the first returned request. */
         cursor: Type.String({
             minLength: 1,
             maxLength: MAX_USER_INPUT_CURSOR_LENGTH,
         }),
-        limit: Type.Integer({ minimum: 1, maximum: 100 }),
+        limit: Type.Integer({ minimum: 1, maximum: 50 }),
         previousCursor: Type.Optional(
             Type.String({ minLength: 1, maxLength: MAX_USER_INPUT_CURSOR_LENGTH }),
         ),

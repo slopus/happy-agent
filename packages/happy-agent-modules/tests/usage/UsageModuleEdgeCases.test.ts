@@ -5,6 +5,7 @@ import {
     withAgentContext,
 } from "@slopus/happy-agent-base";
 import { withAfterCommit, withLogger, type Context } from "@steve.kite/stdlib";
+import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -671,6 +672,7 @@ describe("UsageModule edge cases", () => {
             await insertRawRecord(database, inferenceRecord("b", "agent-2", 12));
             const module = new UsageModule(new EventsModule());
             const hostTool = getUsageTool(module);
+            expect(Value.Check(hostTool.parameters!, { target: "agent-2" })).toBe(true);
             await expect(
                 hostTool.execute(database.context, { target: "agent-2" }, undefined as never),
             ).resolves.toMatchObject({ agentId: "agent-2", totalTokens: 5 });
@@ -679,10 +681,11 @@ describe("UsageModule edge cases", () => {
             ).resolves.toMatchObject({ totalTokens: 10 });
 
             const agentTool = getUsageTool(module, "agent-1");
+            expect(Value.Check(agentTool.parameters!, { target: "agent-2" })).toBe(false);
             await expect(
                 agentTool.execute(
                     agentContext(database.context),
-                    { target: "agent-2" },
+                    { target: "agent-2" } as never,
                     undefined as never,
                 ),
             ).rejects.toThrow("current agent");

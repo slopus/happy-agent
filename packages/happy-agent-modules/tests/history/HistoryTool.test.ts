@@ -69,6 +69,34 @@ describe("read_agent_history", () => {
         }
     });
 
+    it("does not point a first page back to its own zero cursor", async () => {
+        const history = new HistoryModule();
+        const database = moduleDatabase(history.migrations, "history-tool-zero-cursor");
+        await database.ready;
+        try {
+            for (let index = 0; index < 3; index += 1) {
+                await history.record(
+                    database.context,
+                    "agent-a",
+                    textMessage(`record-${index}`, `message-${index}`),
+                );
+            }
+            const tool = await toolFor(history, database);
+            const first = (await tool.execute(
+                database.context,
+                { cursor: 0, limit: 2, include_tools: true },
+                { id: "call-zero", kv: {} } as never,
+            )) as Record<string, unknown>;
+
+            expect(first.cursor).toBe(0);
+            expect(first.returned_messages).toBe(2);
+            expect(first.next_cursor).toBe(2);
+            expect(first).not.toHaveProperty("previous_cursor");
+        } finally {
+            database.close();
+        }
+    });
+
     it("rejects cursor/from combinations before reading the archive", async () => {
         const history = new HistoryModule();
         const database = moduleDatabase(history.migrations, "history-tool-cursor-input");

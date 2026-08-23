@@ -31,3 +31,14 @@ daemon runs in the test process, so when the shutdown times out the SQLite proce
 released and the next daemon refuses to open the database. Cover this behavior at the module
 boundary — a fresh module instance replaying the same Base tool-call CUID2 over the same database
 is what a restart actually looks like.
+
+## Agent questions use natural labels and relative timeouts
+
+Short means concise, not twelve characters. Agent-facing question headers allow up to 64
+characters so ordinary labels such as “Release scope” and “Client release” remain valid. Batched
+questions carry shared Markdown context once on the request and question-specific headers and
+options on each question.
+
+The direct module API can accept an absolute `deadlineAt`, but the agent tool does not expose it.
+An agent does not share the daemon's authoritative wall clock and should request the bounded
+relative `autoResolutionMs` instead, avoiding deadlines that precede request creation.

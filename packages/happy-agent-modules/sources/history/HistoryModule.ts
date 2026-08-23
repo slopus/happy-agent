@@ -1362,8 +1362,7 @@ export class HistoryModule implements AgentModule {
                   );
         const previousOffset = Math.max(0, startIndex - requestedLimit);
         const previousCursor =
-            matchedMessages > messages.length &&
-            (query.from === "end" || query.cursor !== undefined || startIndex > 0)
+            matchedMessages > messages.length && (query.from === "end" || startIndex > 0)
                 ? await historyPositionAt(ctx.db, filters, previousOffset)
                 : undefined;
         const cursor =

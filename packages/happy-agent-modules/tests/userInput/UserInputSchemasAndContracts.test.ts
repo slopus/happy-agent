@@ -8,6 +8,7 @@ import {
     MAX_USER_INPUT_CONTEXT_CHARACTERS,
     MAX_USER_INPUT_CURSOR_LENGTH,
     MAX_USER_INPUT_DETAIL_PAGE_CHARACTERS,
+    MAX_USER_INPUT_HEADER_CHARACTERS,
     MAX_USER_INPUT_QUESTION_CHARACTERS,
     MIN_USER_INPUT_AUTO_RESOLUTION_MS,
     UserInputModule,
@@ -402,7 +403,36 @@ describe("UserInput runtime schemas and contracts", () => {
             Value.Check(requestTool.parameters, {
                 input: {
                     question: "Question",
+                    header: "Release scope",
                     context: "Context",
+                },
+            }),
+        ).toBe(true);
+        expect(MAX_USER_INPUT_HEADER_CHARACTERS).toBe(64);
+        expect(
+            Value.Check(requestTool.parameters, {
+                input: {
+                    question: "Question",
+                    header: "x".repeat(MAX_USER_INPUT_HEADER_CHARACTERS + 1),
+                    context: "Context",
+                },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(requestTool.parameters, {
+                input: {
+                    question: "Question",
+                    context: "Context",
+                    deadlineAt: Date.now() + 60_000,
+                },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(requestTool.parameters, {
+                input: {
+                    question: "Question",
+                    context: "Context",
+                    autoResolutionMs: MIN_USER_INPUT_AUTO_RESOLUTION_MS,
                 },
             }),
         ).toBe(true);

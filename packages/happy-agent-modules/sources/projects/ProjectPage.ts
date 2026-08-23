@@ -2,7 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { projectStatusSchema, projectSchema } from "./Project.js";
 
-export const MAX_PROJECT_PAGE_SIZE = 100;
+export const MAX_PROJECT_PAGE_SIZE = 50;
 export const MAX_PROJECT_CURSOR_LENGTH = 16;
 
 export const projectCursorSchema = Type.String({

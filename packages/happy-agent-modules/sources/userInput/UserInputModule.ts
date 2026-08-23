@@ -304,15 +304,15 @@ export class UserInputModule implements AgentModule {
         query: UserInputListQuery = {},
     ): Promise<UserInputPage> {
         this.#assertAgentId(agentId);
-        this.#assertInput(userInputListQuerySchema, query, "user input list query");
-        const targetAgentId = query.askingAgentId ?? agentId;
-        await this.#authorize(ctx, agentId, targetAgentId, "list");
-        const limit = query.limit ?? MAX_USER_INPUT_PAGE_SIZE;
-        if (limit > MAX_USER_INPUT_PAGE_SIZE) {
+        if (query.limit !== undefined && query.limit > MAX_USER_INPUT_PAGE_SIZE) {
             throw new Error(
                 `User input page limit cannot exceed ${String(MAX_USER_INPUT_PAGE_SIZE)}.`,
             );
         }
+        this.#assertInput(userInputListQuerySchema, query, "user input list query");
+        const targetAgentId = query.askingAgentId ?? agentId;
+        await this.#authorize(ctx, agentId, targetAgentId, "list");
+        const limit = query.limit ?? MAX_USER_INPUT_PAGE_SIZE;
         const requestedCursor = query.cursor ?? "0";
         assertSourceCursor(requestedCursor, "requests");
         const normalized = {

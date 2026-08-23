@@ -7,3 +7,10 @@ current context therefore updates inside the turn, not only when the turn settle
 completion durably stores and publishes its exact input-plus-output measurement in the same
 transaction as the inference usage record. The turn record remains a final reconciliation point,
 and successful compaction still clears the measurement until the replacement is measured.
+
+## Agent usage tools are structurally self-scoped
+
+The agent-scoped `get_usage` schema omits `target`; rejecting another agent only after execution
+advertises a capability the caller does not have and invites guaranteed failures. The host-neutral
+tool keeps its target field for collection administration, while an agent tool can read only the
+agent identity captured when it was constructed.

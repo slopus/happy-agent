@@ -180,7 +180,7 @@ export const secretAttachReferenceResultSchema = Type.Object(
 
 const secretListLimitSchema = Type.Integer({
     minimum: 1,
-    maximum: 100,
+    maximum: 50,
 });
 
 /** Public metadata input; the module supplies the bounded default when limit is omitted. */
@@ -206,8 +206,8 @@ export const secretListQuerySchema = Type.Object(
 /** A bounded page returned by the module database with an explicit integer-offset continuation. */
 export const secretPageSchema = Type.Object(
     {
-        secrets: Type.Array(secretReferenceSchema, { maxItems: 100 }),
-        limit: Type.Integer({ minimum: 1, maximum: 100 }),
+        secrets: Type.Array(secretReferenceSchema, { maxItems: 50 }),
+        limit: Type.Integer({ minimum: 1, maximum: 50 }),
         nextCursor: Type.Optional(secretCursorSchema),
     },
     { additionalProperties: false },

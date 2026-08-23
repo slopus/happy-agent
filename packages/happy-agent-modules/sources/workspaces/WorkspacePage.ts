@@ -2,7 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { workspaceProjectRefSchema, workspaceSchema } from "./Workspace.js";
 
-export const MAX_WORKSPACE_PAGE_SIZE = 100;
+export const MAX_WORKSPACE_PAGE_SIZE = 50;
 
 /**
  * Every page in this module — the workspace list, one workspace's detail, and branch metadata
