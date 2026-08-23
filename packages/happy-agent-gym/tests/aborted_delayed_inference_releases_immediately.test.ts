@@ -10,18 +10,33 @@ afterEach(async () => {
 });
 
 it("releases delayed scripted inference immediately when the run is aborted", async () => {
+    let providerStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+        providerStarted = resolve;
+    });
     const gym = await createAgentGym({
-        inference: [
-            { content: [{ text: "<title>Abort delayed inference</title>", type: "text" }] },
-            {
+        inference: async (request) => {
+            if (request.sessionId.startsWith("naming:")) {
+                return {
+                    content: [
+                        {
+                            text: "<title>Abort delayed inference</title><slug>abort-delayed-inference</slug>",
+                            type: "text",
+                        },
+                    ],
+                };
+            }
+            providerStarted();
+            return {
                 content: [{ text: "too late", type: "text" }],
                 delayMs: 60_000,
-            },
-        ],
+            };
+        },
     });
     activeGyms.add(gym);
 
     const accepted = await gym.send("keep working", { wait: false });
+    await started;
     await gym.client.abortAgent(gym.defaultSessionId, {
         expectedRunId: accepted.runId,
     });
