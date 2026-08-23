@@ -23,6 +23,6 @@
 
 ## Tests
 
-- AgentGym must provide an isolated `HAPPY_HOME_DIR` by default. Otherwise an elevated API test can import the developer's real Happy credentials and emit unrelated connection events, making the harness non-hermetic.
+- AgentGym must enforce its isolated `HAPPY_HOME_DIR` after merging caller-supplied environment values. A default placed before that merge can be overridden accidentally, causing an API test to import the developer's real Happy credentials and register persistent machines against the production backend. The harness prevents the connection rather than relying on remote teardown.
 - Build package `dist` output before running AgentGym because the harness imports package exports, not sibling TypeScript source. A stale build can make a correct source change appear absent at the public boundary.
 - Exercise the independent Happy protocol fixture through `HappyAgentClient`: successful authorization and current-agent attachment, concurrent start joining, lifecycle controls, restart ordering, rejection suppression and changed-login recovery, socket-auth revalidation, server affinity, expiry, and disabled isolation are release-risk behavior rather than optional unit coverage.

@@ -255,10 +255,10 @@ class AgentGymInstance implements AgentGym {
                 GROK_HOME: join(this.#home.root, "credentials", "grok"),
                 HAPPY_AGENT_PROJECTS_DIRECTORY: join(this.#home.root, "projects"),
                 HAPPY_AGENT_WORKSPACES_DIRECTORY: join(this.#home.root, "workspaces"),
-                HAPPY_HOME_DIR: join(this.#home.root, "credentials", "happy"),
                 OPENAI_API_KEY: undefined,
                 XAI_API_KEY: undefined,
                 ...this.#options.environment,
+                HAPPY_HOME_DIR: join(this.#home.root, "credentials", "happy"),
             },
             happyHome: this.#home.happyHome,
             inference: {
