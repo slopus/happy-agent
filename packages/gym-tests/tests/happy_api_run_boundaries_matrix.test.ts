@@ -216,16 +216,31 @@ describe("public run boundary matrix", () => {
     }, 40_000);
 
     it("RB-12 aborts the current run without manufacturing a boundary", async () => {
+        let providerStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            providerStarted = resolve;
+        });
         const gym = await startGym({
-            inference: [
-                { content: [{ text: "<title>Abort run</title>", type: "text" }] },
-                {
+            inference: async (request) => {
+                if (request.sessionId.startsWith("naming:")) {
+                    return {
+                        content: [
+                            {
+                                text: "<title>Abort run</title><slug>abort-run</slug>",
+                                type: "text",
+                            },
+                        ],
+                    };
+                }
+                providerStarted();
+                return {
                     content: [{ text: "never returned", type: "text" }],
                     delayMs: 60_000,
-                },
-            ],
+                };
+            },
         });
         const accepted = await gym.send("abort me", { wait: false });
+        await started;
         await gym.client.abortAgent(gym.defaultSessionId, {
             expectedRunId: accepted.runId,
             mutationId: "rb-12-abort",
