@@ -27,10 +27,7 @@ interface AgentRecord {
 describe("the public agent API", () => {
     it("creates an agent in a project root, sends a message, and groups its history by run", async () => {
         const gym = await createAgentGym({
-            inference: [
-                { content: [{ text: "<title>Public API answer</title>", type: "text" }] },
-                { content: [{ text: "The API message was answered.", type: "text" }] },
-            ],
+            inference: [{ content: [{ text: "The API message was answered.", type: "text" }] }],
         });
         running.add(gym);
 

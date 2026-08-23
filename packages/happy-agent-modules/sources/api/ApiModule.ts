@@ -1971,6 +1971,10 @@ export class ApiModule implements AgentModule {
                         return agent;
                     }),
             );
+            // Initial discovery records a durable cursor when the catalog first appears. Await it
+            // before snapshotting the resource so creation and an immediate ID replay return the
+            // same settled agent version.
+            const slashCommands = await this.#slashCommands.catalog(ctx, created.id);
             const agent = await this.#requireAgentResource(ctx, created.id);
             if (!this.#announcedAgentCreations.has(created.id)) {
                 boundedAdd(
@@ -1985,7 +1989,7 @@ export class ApiModule implements AgentModule {
             }
             sendJson(response, 201, {
                 agent,
-                slashCommands: await this.#slashCommands.catalog(ctx, created.id),
+                slashCommands,
             });
             return true;
         }

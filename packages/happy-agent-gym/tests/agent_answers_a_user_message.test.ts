@@ -12,10 +12,7 @@ afterEach(async () => {
 describe("the agent answers a user message", () => {
     it("records the answer in the session and shows the model what was asked", async () => {
         const gym = await createAgentGym({
-            inference: [
-                { content: [{ text: "<title>Repository contents</title>", type: "text" }] },
-                { content: [{ text: "The repository is empty.", type: "text" }] },
-            ],
+            inference: [{ content: [{ text: "The repository is empty.", type: "text" }] }],
         });
         running.add(gym);
 

@@ -242,7 +242,10 @@ describe("public message and history matrix", () => {
         await gym.send("persist me");
         const before = await gym.client.getMessages(gym.defaultSessionId);
         await gym.restart();
-        await expect(gym.client.getMessages(gym.defaultSessionId)).resolves.toEqual(before);
+        const after = await gym.client.getMessages(gym.defaultSessionId);
+        expect(after.cursor).not.toBe(before.cursor);
+        expect(after.hasMore).toBe(before.hasMore);
+        expect(after.runs).toEqual(before.runs);
     });
 
     it("MH-10 records exact per-run usage by provider and model", async () => {
@@ -499,7 +502,7 @@ describe("public message and history matrix", () => {
         expect(textOf(history.runs[0]?.messages.at(-1))).toContain("recovered");
     });
 
-    it("MH-19 keeps explicit compaction out of lifecycle runs", async () => {
+    it("MH-19 records explicit compaction as one maintenance lifecycle run", async () => {
         const gym = await startGym({
             inference: [{ content: [{ text: "before compact", type: "text" }] }],
         });
@@ -509,12 +512,19 @@ describe("public message and history matrix", () => {
             mutationId: "mh-19-compact",
         });
         expect(result.agent.id).toBe(gym.defaultSessionId);
-        await gym.waitUntil(
-            () => (gym.inference.compactions.length === 1 ? true : undefined),
-            "compaction request",
-        );
-        expect(await lifecycleEvents(gym)).toEqual(before);
-        expect((await gym.client.getMessages(gym.defaultSessionId)).runs).toHaveLength(1);
+        await gym.waitForRun(result.run.id);
+        expect(await lifecycleEvents(gym)).toEqual([
+            ...before,
+            `run.started:${result.run.id}`,
+            `run.finished:${result.run.id}`,
+        ]);
+        const history = await gym.client.getMessages(gym.defaultSessionId);
+        expect(history.runs).toHaveLength(2);
+        expect(history.runs[1]).toMatchObject({
+            id: result.run.id,
+            reason: "completed",
+            status: "completed",
+        });
     });
 
     it("MH-20 sends the complete retained context to a custom compaction handler", async () => {
@@ -732,7 +742,9 @@ describe("public message and history matrix", () => {
         const before = await gym.client.getMessages(gym.defaultSessionId);
         await gym.restart();
         const after = await gym.client.getMessages(gym.defaultSessionId);
-        expect(after).toEqual(before);
+        expect(after.cursor).not.toBe(before.cursor);
+        expect(after.hasMore).toBe(before.hasMore);
+        expect(after.runs).toEqual(before.runs);
         expect(after.runs[0]?.status).toBe("failed");
     });
 

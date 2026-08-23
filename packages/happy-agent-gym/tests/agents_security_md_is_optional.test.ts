@@ -18,10 +18,7 @@ describe("AGENTS_SECURITY.md is optional", () => {
     it("does not fail the turn when the project has no AGENTS_SECURITY.md", async () => {
         const gym = await createAgentGym({
             files: { "AGENTS.md": "Use the project conventions.\n" },
-            inference: [
-                { content: [{ text: "<title>Optional security rules</title>", type: "text" }] },
-                { content: [{ text: "Done.", type: "text" }] },
-            ],
+            inference: [{ content: [{ text: "Done.", type: "text" }] }],
         });
         running.add(gym);
 
@@ -36,10 +33,7 @@ describe("AGENTS_SECURITY.md is optional", () => {
     it("includes AGENTS_SECURITY.md rules once the file exists", async () => {
         const gym = await createAgentGym({
             files: { "AGENTS_SECURITY.md": "Never expose credentials.\n" },
-            inference: [
-                { content: [{ text: "<title>Project security rules</title>", type: "text" }] },
-                { content: [{ text: "Done.", type: "text" }] },
-            ],
+            inference: [{ content: [{ text: "Done.", type: "text" }] }],
         });
         running.add(gym);
 

@@ -14,7 +14,6 @@ describe("the agent runs a command on the machine it was given", () => {
         const gym = await createAgentGym({
             files: { "README.md": "fixture repository\n" },
             inference: [
-                { content: [{ text: "<title>Copy readme</title>", type: "text" }] },
                 {
                     content: [
                         {
@@ -46,10 +45,7 @@ describe("the agent runs a command on the machine it was given", () => {
 
     it("offers the shell tools the model's own vendor uses", async () => {
         const gym = await createAgentGym({
-            inference: [
-                { content: [{ text: "<title>Nothing to do</title>", type: "text" }] },
-                { content: [{ text: "Nothing to do.", type: "text" }] },
-            ],
+            inference: [{ content: [{ text: "Nothing to do.", type: "text" }] }],
         });
         running.add(gym);
 

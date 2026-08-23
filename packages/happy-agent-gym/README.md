@@ -123,6 +123,12 @@ const inference = [
 A turn with a tool call ends as `tool_call`; the agent runs the tool and asks again, consuming the
 next turn. Every other turn ends normally.
 
+A fixed array scripts only the real agent loop. Detached automatic-title sessions receive a
+deterministic gym title and stay out of the fixed script's request log, so their background race
+cannot consume an entry, change a call index, or reorder the scenario. A handler receives and logs
+every inference request, including sessions whose ID starts with `naming:`, and can script naming
+explicitly when that behavior is what the scenario exercises.
+
 Fields a turn may set:
 
 - `content` — text, reasoning, and tool-call blocks, in order.

@@ -90,7 +90,7 @@ export interface GymTurn {
 
 /** What the scripted model was asked, exactly as the agent asked it. */
 export interface GymInferenceRequest {
-    /** Zero-based position of this request among every run the gym has served. */
+    /** Zero-based position in the selected inference seam; see `GymInference`. */
     readonly callIndex: number;
     /** The provider session, which is the agent the request belongs to. */
     readonly sessionId: string;
@@ -118,7 +118,7 @@ export interface GymCompactionRequest {
 /** Answers each request, when a fixed list of turns is not enough. */
 export type GymInferenceHandler = (request: GymInferenceRequest) => GymTurn | Promise<GymTurn>;
 
-/** Either a fixed script or a handler. */
+/** Either fixed agent turns or a handler for every request, including detached naming. */
 export type GymInference = readonly GymTurn[] | GymInferenceHandler;
 
 /** Answers a compaction request. */
@@ -128,7 +128,7 @@ export type GymCompactionHandler = (
 
 /** Everything the scripted model was asked, and what it did about it. */
 export interface GymInferenceLog {
-    /** Every run request, oldest first. */
+    /** Every request visible to the selected inference seam, oldest first. */
     readonly requests: readonly GymInferenceRequest[];
     /** Every compaction request, oldest first. */
     readonly compactions: readonly GymCompactionRequest[];
@@ -152,6 +152,15 @@ const EMPTY_USAGE: SessionUsage = {
     totalTokens: 0,
 };
 
+const DEFAULT_NAMING_TURN: GymTurn = {
+    content: [
+        {
+            text: "<title>Gym session</title><slug>gym-session</slug>",
+            type: "text",
+        },
+    ],
+};
+
 export interface ScriptedInferenceOptions {
     readonly inference?: GymInference;
     readonly compaction?: GymCompactionHandler;
@@ -168,31 +177,38 @@ export interface ScriptedInference {
  * Build the one thing a gym pretends about: the model.
  *
  * Everything else in the agent stays real, so the script is deliberately literal — a turn says
- * what the model produced and nothing about what the agent should do with it.
+ * what the model produced and nothing about what the agent should do with it. Fixed arrays belong
+ * to the real agent loop; optional detached naming receives a deterministic default so its race
+ * with the loop cannot consume those ordered turns. A handler receives both kinds of request.
  */
 export function createScriptedInference(options: ScriptedInferenceOptions = {}): ScriptedInference {
     const requests: GymInferenceRequest[] = [];
     const compactions: GymCompactionRequest[] = [];
     const unscripted: GymInferenceRequest[] = [];
     const script = options.inference ?? [];
-    const answer: GymInferenceHandler =
-        typeof script === "function"
-            ? script
-            : (request) =>
-                  script[request.callIndex] ?? {
-                      error: {
-                          message:
-                              `The gym script has no turn ${String(request.callIndex)}; it ` +
-                              `scripted ${String(script.length)}.`,
-                      },
-                  };
+    let scriptCallIndex = 0;
 
     const provider = new GymProvider({
         answer: async (request) => {
-            requests.push(request);
-            const turn = await answer(request);
-            if (typeof script !== "function" && script[request.callIndex] === undefined) {
-                unscripted.push(request);
+            if (typeof script === "function") {
+                requests.push(request);
+                return await script(request);
+            }
+            if (request.sessionId.startsWith("naming:")) return DEFAULT_NAMING_TURN;
+            const turnIndex = scriptCallIndex;
+            scriptCallIndex += 1;
+            const scriptedRequest = { ...request, callIndex: turnIndex };
+            requests.push(scriptedRequest);
+            const turn = script[turnIndex];
+            if (turn === undefined) {
+                unscripted.push(scriptedRequest);
+                return {
+                    error: {
+                        message:
+                            `The gym script has no turn ${String(turnIndex)}; it ` +
+                            `scripted ${String(script.length)}.`,
+                    },
+                };
             }
             return turn;
         },

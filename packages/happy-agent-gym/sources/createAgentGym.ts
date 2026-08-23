@@ -34,7 +34,7 @@ import {
 } from "./scriptedInference.js";
 
 export interface AgentGymOptions extends GymHomeOptions {
-    /** The turns the scripted model answers with, or a handler that answers each request. */
+    /** Fixed agent turns, or a handler that answers every request including detached naming. */
     readonly inference?: GymInference;
     /** How a scripted compaction answers. Defaults to a completed, empty compaction. */
     readonly compaction?: GymCompactionHandler;
