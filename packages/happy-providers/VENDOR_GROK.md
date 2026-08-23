@@ -176,6 +176,13 @@ traffic in `grok-4-5-x-search.sse.json` and `grok-4-5-web-search.sse.json`, and
 
 ## Inference request
 
+On Node, the Grok connection pairs Undici's `fetch` with an Undici `Agent` so requests reuse a
+pooled HTTP/2 connection and a transport retry can rebuild it as HTTP/1. Bun exposes an `undici`
+compatibility module whose `Agent` does not implement the dispatcher lifecycle. The client checks
+for the real `dispatch` and `close` capabilities before using that path; when they are absent it
+uses the runtime's native `fetch`, which Bun owns and cleans up itself. This keeps Node's explicit
+connection lifecycle without calling missing Undici methods under Bun.
+
 `impl/createGrokOpenAIRequest.ts` sends:
 
 - `model: "grok-4.5"`;

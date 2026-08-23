@@ -15,15 +15,26 @@ export function createGrokOpenAIClient(options: {
         keepAliveTimeout: 60_000,
         keepAliveMaxTimeout: 600_000,
     });
+    const runtimeDispatcher = dispatcher as unknown as {
+        close?: unknown;
+        dispatch?: unknown;
+    };
+    const supportsUndiciDispatcher =
+        typeof runtimeDispatcher.dispatch === "function" &&
+        typeof runtimeDispatcher.close === "function";
     const client = new OpenAI({
         apiKey: options.token,
         baseURL: options.baseUrl,
-        fetch: fetch as unknown as typeof globalThis.fetch,
-        fetchOptions: { dispatcher } as never,
+        ...(supportsUndiciDispatcher
+            ? {
+                  fetch: fetch as unknown as typeof globalThis.fetch,
+                  fetchOptions: { dispatcher } as never,
+              }
+            : {}),
         maxRetries: 0,
     });
     return {
         responses: client.responses,
-        close: () => dispatcher.close(),
+        close: supportsUndiciDispatcher ? () => dispatcher.close() : async () => {},
     };
 }

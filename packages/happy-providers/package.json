@@ -41,7 +41,8 @@
         "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
         "check": "tsc --noEmit",
         "prepack": "pnpm run build",
-        "test": "vitest run --passWithNoTests"
+        "test": "vitest run --passWithNoTests && pnpm run test:bun",
+        "test:bun": "bun tests/bun/grokOpenAIClient.bun.mjs && bun tests/bun/grokXSearch.bun.mjs"
     },
     "dependencies": {
         "@anthropic-ai/bedrock-sdk": "0.32.0",
@@ -61,6 +62,7 @@
     "devDependencies": {
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",
+        "bun": "1.4.0",
         "tsc-alias": "^1.8.16",
         "typescript": "^7.0.2",
         "vitest": "^3.2.4"
@@ -76,6 +78,7 @@
         "@anthropic-ai/claude-agent-sdk-win32-x64": "^0.3.226"
     },
     "engines": {
+        "bun": ">=1.4.0",
         "node": ">=22.19.0"
     }
 }

@@ -55,9 +55,9 @@ application.
 
 ## Installing
 
-This is an ESM-only **Node.js library** for Node 22.19 and newer. It needs real Node process,
-filesystem, and networking APIs, so it won't run in browsers, bundlers targeting the browser, edge
-runtimes, or React Native. The package manifest sets `browser` to `false` on purpose.
+This is an ESM-only server-side library for Node 22.19 and newer or Bun 1.4 and newer. It needs
+real process, filesystem, and networking APIs, so it won't run in browsers, bundlers targeting the
+browser, edge runtimes, or React Native. The package manifest sets `browser` to `false` on purpose.
 
 ```sh
 pnpm add @slopus/happy-providers @steve.kite/stdlib
