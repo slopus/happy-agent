@@ -182,10 +182,12 @@ rather than one per window.
 - `aggregate(ctx, { agentId?, cursor, maxGroups })` returns a `UsageSummary`: running totals
   (`inferenceCount`, `turnCount`, token and duration sums) plus a bounded, paged array of
   `UsageGroup` rows (one per provider/model/effort/tier combination), capped at
-  `USAGE_GROUP_PAGE_SIZE` (100) groups per page. It also exposes `currentContext` when the latest turn has a provider-measured
-  context size from `happy_agent_usage_contexts`; the value is exact (`approximate: false`) and
-  disappears after a reset/compaction writes an invalidation until a later response measures the
-  new context. Updating this row and recording the turn share Agent Base's completion transaction.
+  `USAGE_GROUP_PAGE_SIZE` (100) groups per page. It also exposes `currentContext` when the latest
+  inference has a provider-measured context size from `happy_agent_usage_contexts`; the value is
+  exact (`approximate: false`) and disappears after a reset/compaction writes an invalidation until
+  a later response measures the new context. Updating this row and recording the inference share
+  Agent Base's completion transaction; the turn record reconciles the same value when the turn
+  settles without publishing a duplicate change.
 - `reset(ctx, agentId | null)` deletes matching records, contexts, and lifetime model totals and
   reports how many records were removed.
 - The host transaction is the single read/decide/write boundary every mutation runs inside, and

@@ -63,6 +63,7 @@ import { usageVoidOrPromiseVoidSchema } from "./UsageContracts.js";
 import { getAgentTreeUsageTool } from "./tools/get_agent_tree_usage.js";
 import { getUsageTool } from "./tools/get_usage.js";
 import { assertUsageRecord, assertUsageTokens } from "./impl/assertUsageRecord.js";
+import { currentContextFromRecord } from "./impl/currentContextFromRecord.js";
 import { UsageDatabase } from "./impl/usageDatabase.js";
 
 /**
@@ -350,10 +351,7 @@ export class UsageModule implements AgentModule {
      * would scan the same history once per window. Only host code may ask, because the answer
      * spans every agent in the collection.
      */
-    async readWindowUsage(
-        ctx: Context,
-        cutoffs: readonly number[],
-    ): Promise<UsageRunBreakdown[]> {
+    async readWindowUsage(ctx: Context, cutoffs: readonly number[]): Promise<UsageRunBreakdown[]> {
         this.#assertAgentAccess(ctx, undefined);
         if (cutoffs.length > MAX_USAGE_WINDOWS) {
             throw new Error(`Usage cannot report more than ${MAX_USAGE_WINDOWS} windows at once.`);
@@ -663,7 +661,15 @@ export class UsageModule implements AgentModule {
                         : { errorMessage: inference.errorMessage }),
                 };
                 assertUsageRecord(record);
-                await this.#record(ctx, scope, record);
+                const contextChanged = await this.#record(ctx, scope, record);
+                if (contextChanged) {
+                    await this.#recordContextChange(
+                        ctx,
+                        record.agentId,
+                        currentContextFromRecord(record),
+                        record.finishedAt,
+                    );
+                }
             },
         );
     }
@@ -705,16 +711,7 @@ export class UsageModule implements AgentModule {
                     await this.#recordContextChange(
                         ctx,
                         record.agentId,
-                        record.contextTokens === undefined
-                            ? null
-                            : {
-                                  approximate: false,
-                                  contextTokens: record.contextTokens,
-                                  provider: record.provider,
-                                  ...(record.model === undefined ? {} : { model: record.model }),
-                                  ...(record.effort === undefined ? {} : { effort: record.effort }),
-                                  ...(record.tier === undefined ? {} : { tier: record.tier }),
-                              },
+                        currentContextFromRecord(record),
                         record.finishedAt,
                     );
                 }

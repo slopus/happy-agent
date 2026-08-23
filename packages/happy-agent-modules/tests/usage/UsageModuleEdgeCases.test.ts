@@ -471,9 +471,9 @@ describe("UsageModule edge cases", () => {
                 module.readAgentTreeUsage(database.context, "agent-1"),
             ).resolves.toMatchObject({ totalTokens: 5 * total });
             // The aggregate counts every record rather than the newest page of them.
-            await expect(
-                module.read(database.context, "agent-1"),
-            ).resolves.toMatchObject({ inferenceCount: total });
+            await expect(module.read(database.context, "agent-1")).resolves.toMatchObject({
+                inferenceCount: total,
+            });
         });
     });
 
@@ -490,9 +490,9 @@ describe("UsageModule edge cases", () => {
              * record used to. A row that contradicts itself is not a trustworthy source of
              * tokens either, so neither the run nor the installation-wide windows may spend it.
              */
-            await expect(
-                module.readRun(database.context, "agent-1", "run-1"),
-            ).rejects.toThrow("duration");
+            await expect(module.readRun(database.context, "agent-1", "run-1")).rejects.toThrow(
+                "duration",
+            );
             await expect(module.readWindowUsage(database.context, [0])).rejects.toThrow("duration");
         });
     });
@@ -829,30 +829,29 @@ describe("UsageModule edge cases", () => {
         });
     });
 
-    it("publishes one stable deeply frozen event to both kinds of subscriber", async () => {
+    it("publishes stable deeply frozen events to both kinds of subscriber", async () => {
         await withUsageDatabase("usage-events-stable", async (database) => {
             vi.useFakeTimers({ toFake: ["Date"] });
             vi.setSystemTime(100);
-            let transactional: UsageEvent | undefined;
-            let postCommit: UsageEvent | undefined;
+            const transactional: UsageEvent[] = [];
+            const postCommit: UsageEvent[] = [];
             const module = new UsageModule(new EventsModule());
             module.onEventTransactional((_ctx: Context, event: UsageEvent) => {
-                transactional = event;
+                transactional.push(event);
                 expect(Object.isFrozen(event)).toBe(true);
-                if (event.type !== "usage_recorded") {
-                    throw new Error("Expected a recorded usage event");
+                if (event.type === "usage_recorded") {
+                    const record = event.record;
+                    if (record.kind !== "inference") {
+                        throw new Error("Expected an inference usage event");
+                    }
+                    expect(Object.isFrozen(record)).toBe(true);
+                    expect(() => {
+                        record.tokens.input = 99;
+                    }).toThrow();
                 }
-                const record = event.record;
-                if (record.kind !== "inference") {
-                    throw new Error("Expected an inference usage event");
-                }
-                expect(Object.isFrozen(record)).toBe(true);
-                expect(() => {
-                    record.tokens.input = 99;
-                }).toThrow();
             });
             module.onEvent((_ctx: Context, event: UsageEvent) => {
-                postCommit = event;
+                postCommit.push(event);
             });
             const hooks = await resolveModuleHooks(database.context, module);
             const scope = makeScope(database.database);
@@ -873,13 +872,23 @@ describe("UsageModule edge cases", () => {
                     tokens: { input: 3, output: 2 },
                 });
             });
-            expect(postCommit).toBe(transactional);
-            expect(postCommit).toEqual({
-                type: "usage_recorded",
-                eventId: "event-id",
-                at: 110,
-                record: expect.objectContaining({ id: "event-id" }),
-            });
+            expect(postCommit).toHaveLength(2);
+            expect(postCommit[0]).toBe(transactional[0]);
+            expect(postCommit[1]).toBe(transactional[1]);
+            expect(postCommit).toEqual([
+                {
+                    type: "usage_recorded",
+                    eventId: "event-id",
+                    at: 110,
+                    record: expect.objectContaining({ id: "event-id" }),
+                },
+                expect.objectContaining({
+                    type: "usage_context_changed",
+                    at: 110,
+                    agentId: "agent-1",
+                    context: expect.objectContaining({ contextTokens: 5 }),
+                }),
+            ]);
         });
     });
 
@@ -922,9 +931,12 @@ describe("UsageModule edge cases", () => {
                     });
                 }),
             ).resolves.toBeUndefined();
-            expect(warnedPhases(warnings)).toEqual(["post_commit_subscriber"]);
+            expect(warnedPhases(warnings)).toEqual([
+                "post_commit_subscriber",
+                "post_commit_subscriber",
+            ]);
             // One failing subscriber cannot starve the subscribers queued behind it.
-            expect(announced).toEqual(["usage_recorded"]);
+            expect(announced).toEqual(["usage_recorded", "usage_context_changed"]);
             await expect(module.readPage(database.context, "agent-1")).resolves.toMatchObject({
                 records: [{ id: "post-error" }],
             });
@@ -1093,8 +1105,8 @@ describe("UsageModule edge cases", () => {
                 inferenceCount: 2,
                 turnCount: 1,
                 currentContext: {
-                    contextTokens: 50,
-                    provider: "provider-main",
+                    contextTokens: 10,
+                    provider: "provider-other",
                 },
             });
             expect(summary.groups).toHaveLength(2);

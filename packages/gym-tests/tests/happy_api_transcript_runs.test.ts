@@ -399,6 +399,123 @@ describe("public transcript and run APIs", () => {
         expect(afterRestart.hasMore).toBe(completed.hasMore);
     }, 60_000);
 
+    it("publishes the latest inference context while the same turn starts compaction", async () => {
+        let agentCalls = 0;
+        let releaseCompaction!: () => void;
+        let markCompactionStarted!: () => void;
+        const compactionStarted = new Promise<void>((resolve) => {
+            markCompactionStarted = resolve;
+        });
+        const compactionGate = new Promise<void>((resolve) => {
+            releaseCompaction = resolve;
+        });
+        const gym = await startGym({
+            models: [contextWindowModel()],
+            compaction: async (request) => {
+                markCompactionStarted();
+                await compactionGate;
+                return {
+                    status: "completed",
+                    preservedMessages: [],
+                    usage: {
+                        cacheRead: 200_000,
+                        cacheWrite: 0,
+                        input: 248_000,
+                        output: 10_000,
+                        totalTokens: 258_000,
+                    },
+                    context: {
+                        ...request.context,
+                        messages: request.context.messages.slice(-1),
+                    },
+                };
+            },
+            inference: (request) => {
+                if (request.sessionId.startsWith("naming:")) return namingTurn();
+                const call = agentCalls;
+                agentCalls += 1;
+                if (call === 0) {
+                    return {
+                        content: [{ text: "Initial measurement recorded.", type: "text" }],
+                        usage: {
+                            cacheRead: 180_000,
+                            cacheWrite: 0,
+                            input: 210_000,
+                            output: 1_000,
+                            totalTokens: 211_000,
+                        },
+                    };
+                }
+                if (call === 1) {
+                    return {
+                        content: [
+                            {
+                                arguments: { cmd: "printf context-measured" },
+                                callId: "context-measurement-tool",
+                                name: "exec_command",
+                                type: "tool_call",
+                            },
+                        ],
+                        usage: {
+                            cacheRead: 220_000,
+                            cacheWrite: 0,
+                            input: 247_000,
+                            output: 1_000,
+                            totalTokens: 248_000,
+                        },
+                    };
+                }
+                return {
+                    content: [{ text: "Finished after compaction.", type: "text" }],
+                    usage: {
+                        cacheRead: 20_000,
+                        cacheWrite: 0,
+                        input: 40_000,
+                        output: 1_000,
+                        totalTokens: 41_000,
+                    },
+                };
+            },
+        });
+
+        const first = await gym.send("establish the previous context measurement");
+        await waitForFinished(gym, gym.defaultSessionId, first.runId);
+        await expect(gym.client.getAgentUsage(gym.defaultSessionId)).resolves.toMatchObject({
+            context: { contextTokens: 211_000 },
+        });
+        const before = await gym.client.getAgentBootstrap(gym.defaultSessionId);
+
+        const second = await gym.send("measure again, call a tool, and continue", {
+            permissionMode: "full_access",
+            wait: false,
+        });
+        await compactionStarted;
+        try {
+            await expect(gym.client.getAgentUsage(gym.defaultSessionId)).resolves.toMatchObject({
+                context: { contextTokens: 248_000, contextWindow: 272_000 },
+            });
+            expect(
+                (
+                    await gym.client.getEvents({
+                        after: before.cursor,
+                        limit: 100,
+                    })
+                ).events,
+            ).toContainEqual(
+                expect.objectContaining({
+                    type: "agent.context.updated",
+                    payload: expect.objectContaining({
+                        agentId: gym.defaultSessionId,
+                        context: expect.objectContaining({ contextTokens: 248_000 }),
+                    }),
+                }),
+            );
+        } finally {
+            releaseCompaction();
+        }
+        await waitForFinished(gym, gym.defaultSessionId, second.runId);
+    }, 60_000);
+
     it("syncs a running manual compaction from durable bootstrap state", async () => {
         let releaseCompaction!: () => void;
         let providerStarted!: () => void;

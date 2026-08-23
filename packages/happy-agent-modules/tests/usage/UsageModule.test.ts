@@ -188,6 +188,14 @@ describe("UsageModule", () => {
                 tokens: { input: 10, output: 4 },
             });
         });
+        await expect(module.read(ctx, "agent-1")).resolves.toMatchObject({
+            currentContext: {
+                approximate: false,
+                contextTokens: 14,
+                provider: "provider-main",
+                model: "model-main",
+            },
+        });
         vi.setSystemTime(175);
         await inCompletion(ctx, async (txCtx) => {
             await hooks.afterTurnTransact!(txCtx, agentScope, {
@@ -219,11 +227,13 @@ describe("UsageModule", () => {
                 contextTokens: 14,
             },
         ]);
-        expect(events.slice(0, 2).map((event) => event.eventId)).toEqual([
-            "inference-base-id",
-            "turn-base-id",
+        expect(events.map((event) => event.type)).toEqual([
+            "usage_recorded",
+            "usage_context_changed",
+            "usage_recorded",
         ]);
-        expect(events[2]).toMatchObject({
+        expect(events[0]?.eventId).toBe("inference-base-id");
+        expect(events[1]).toMatchObject({
             type: "usage_context_changed",
             agentId: "agent-1",
             context: {
@@ -233,6 +243,7 @@ describe("UsageModule", () => {
                 model: "model-main",
             },
         });
+        expect(events[2]?.eventId).toBe("turn-base-id");
         expect(runKV.values.size).toBe(0);
         await expect(module.read(ctx, "agent-1")).resolves.toMatchObject({
             currentContext: {
@@ -242,6 +253,62 @@ describe("UsageModule", () => {
                 model: "model-main",
             },
         });
+        database.close();
+    });
+
+    it("publishes every inference measurement before a multi-inference turn completes", async () => {
+        const { database, module } = await createUsageTest("usage-live-inference-context");
+        const ctx = database.context;
+        const hooks = await resolveModuleHooks(ctx, module);
+        const runKV = new FakeKV();
+        const agentScope = scope(database.database, runKV);
+        const contexts: number[] = [];
+        module.onEventTransactional((_eventCtx, event) => {
+            if (event.type === "usage_context_changed" && event.context !== null) {
+                contexts.push(event.context.contextTokens);
+            }
+        });
+
+        await hooks.beforeTurnTransact!(ctx, agentScope, {
+            loopId: "loop-live",
+            turnId: "turn-live",
+            contextTokens: undefined,
+        });
+        for (const [inferenceId, input, output] of [
+            ["inference-211k", 210_000, 1_000],
+            ["inference-248k", 247_000, 1_000],
+        ] as const) {
+            await hooks.beforeInferenceTransact!(ctx, agentScope, {
+                loopId: "loop-live",
+                turnId: "turn-live",
+                inferenceId,
+                contextTokens: contexts.at(-1),
+            });
+            await inCompletion(ctx, async (txCtx) => {
+                await hooks.afterInferenceTransact!(txCtx, agentScope, {
+                    loopId: "loop-live",
+                    turnId: "turn-live",
+                    inferenceId,
+                    contextTokens: contexts.at(-1),
+                    state: "tool_call",
+                    tokens: { input, output },
+                });
+            });
+            await expect(module.read(ctx, "agent-1")).resolves.toMatchObject({
+                currentContext: { contextTokens: input + output },
+            });
+        }
+
+        expect(contexts).toEqual([211_000, 248_000]);
+        await inCompletion(ctx, async (txCtx) => {
+            await hooks.afterTurnTransact!(txCtx, agentScope, {
+                loopId: "loop-live",
+                turnId: "turn-live",
+                contextTokens: 248_000,
+                aborted: false,
+            });
+        });
+        expect(contexts).toEqual([211_000, 248_000]);
         database.close();
     });
 

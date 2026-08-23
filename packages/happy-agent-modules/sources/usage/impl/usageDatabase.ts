@@ -23,6 +23,7 @@ import {
     type UsageSummary,
 } from "../Usage.js";
 import { assertUsageRecord } from "./assertUsageRecord.js";
+import { currentContextFromRecord } from "./currentContextFromRecord.js";
 
 const RECORDS_TABLE = "happy_agent_usage_records";
 const CONTEXTS_TABLE = "happy_agent_usage_contexts";
@@ -301,10 +302,7 @@ export class UsageDatabase {
      *
      * The windows are answered together because the widest of them contains all the others.
      */
-    async windowUsage(
-        ctx: Context,
-        cutoffs: readonly number[],
-    ): Promise<UsageRunBreakdown[]> {
+    async windowUsage(ctx: Context, cutoffs: readonly number[]): Promise<UsageRunBreakdown[]> {
         if (cutoffs.length === 0) return [];
         const widest = Math.min(...cutoffs);
         return await this.#tokensByModelWindows(
@@ -417,6 +415,7 @@ export class UsageDatabase {
 
     async record(ctx: Context, record: UsageRecord): Promise<boolean> {
         assertUsageRecord(record);
+        const currentContext = currentContextFromRecord(record);
         await agentDatabaseRun(
             ctx.db,
             sql`INSERT INTO ${sql.raw(RECORDS_TABLE)}
@@ -439,24 +438,12 @@ export class UsageDatabase {
                         cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens`,
             );
         }
-        if (record.kind === "turn") {
-            return await this.#writeCurrentContext(
-                ctx,
-                record.agentId,
-                record.finishedAt,
-                record.contextTokens === undefined
-                    ? null
-                    : {
-                          approximate: false,
-                          contextTokens: record.contextTokens,
-                          provider: record.provider,
-                          ...(record.model === undefined ? {} : { model: record.model }),
-                          ...(record.effort === undefined ? {} : { effort: record.effort }),
-                          ...(record.tier === undefined ? {} : { tier: record.tier }),
-                      },
-            );
-        }
-        return false;
+        return await this.#writeCurrentContext(
+            ctx,
+            record.agentId,
+            record.finishedAt,
+            currentContext,
+        );
     }
 
     async currentContext(ctx: Context, agentId?: string): Promise<UsageCurrentContext | undefined> {
