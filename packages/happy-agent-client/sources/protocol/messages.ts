@@ -163,6 +163,27 @@ export interface MessageMetadata {
     senderAgentId?: Cuid2;
 }
 
+/** One JSON value inside opaque client-owned message metadata. */
+export const clientMetadataValueSchema = Type.Recursive((value) =>
+    Type.Union([
+        Type.String(),
+        Type.Number(),
+        Type.Boolean(),
+        Type.Null(),
+        Type.Array(value),
+        Type.Record(Type.String(), value),
+    ]),
+);
+
+/** One JSON value inside opaque client-owned message metadata. */
+export type ClientMetadataValue = Static<typeof clientMetadataValueSchema>;
+
+/** Freeform JSON supplied by a client and durably attached to one user message. */
+export const clientMetadataSchema = Type.Record(Type.String(), clientMetadataValueSchema);
+
+/** Freeform JSON supplied by a client and durably attached to one user message. */
+export type ClientMetadata = Static<typeof clientMetadataSchema>;
+
 /** Plain text. */
 export interface TextBlock {
     type: "text";
@@ -310,6 +331,8 @@ export interface UserMessage {
     createdAt: Timestamp;
     content: MessageBlock[];
     metadata: MessageMetadata;
+    /** Opaque client-owned JSON, when the sender supplied it. */
+    clientMetadata?: ClientMetadata;
     /** `"pending"` until inference takes the message up. */
     status: "pending" | "accepted";
     delivery: MessageDelivery;
@@ -378,6 +401,8 @@ export interface SendMessageRequest {
     id?: Cuid2;
     /** The message text. Required. */
     text: string;
+    /** Opaque JSON to persist and return with this user message. */
+    clientMetadata?: ClientMetadata;
     /** Optional rich blocks accompanying the text; image bytes travel inline. */
     content?: MessageBlock[];
     /** Defaults to `"queue"`. On an idle agent the two are identical. */

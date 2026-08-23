@@ -5,8 +5,10 @@ import { applyMessageDelta } from "../sources/applyMessageDelta.js";
 import { messageDeltaPayloadSchema } from "../sources/protocol/events.js";
 import {
     type AgentMessage,
+    clientMetadataSchema,
     type MessageHistoryResponse,
     messageHistoryResponseSchema,
+    type UserMessage,
 } from "../sources/protocol/messages.js";
 
 const message: AgentMessage = {
@@ -90,5 +92,34 @@ describe("message delta application", () => {
         expect(Value.Check(messageDeltaPayloadSchema, { ...delta(0, "Hello"), offset: -1 })).toBe(
             false,
         );
+    });
+
+    it("types and validates freeform client-owned user-message metadata", () => {
+        const clientMetadata = {
+            composer: "mobile",
+            localDraft: { revision: 4, tags: ["auth", null] },
+        };
+        const user: UserMessage = {
+            clientMetadata,
+            content: [{ text: "Fix it", type: "text" }],
+            createdAt: 1,
+            delivery: "queue",
+            id: "message2",
+            metadata: {},
+            mode: {
+                effort: "medium",
+                modelId: "model1",
+                permissionMode: "auto",
+                providerId: "provider1",
+                serviceTier: null,
+            },
+            role: "user",
+            runId: null,
+            status: "pending",
+        };
+
+        expect(user.clientMetadata).toEqual(clientMetadata);
+        expect(Value.Check(clientMetadataSchema, clientMetadata)).toBe(true);
+        expect(Value.Check(clientMetadataSchema, ["not", "an", "object"])).toBe(false);
     });
 });

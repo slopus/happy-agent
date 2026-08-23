@@ -1886,8 +1886,9 @@ agent's `mode` endpoint or bootstrap response).
 ### Message content
 
 Every message is `id`, `role`, `createdAt`, `content` — an ordered array of blocks — and a
-required `metadata` object. This one shape carries the whole conversation; history, send
-acceptances, and events all speak it.
+required `metadata` object. A user message may additionally carry `clientMetadata`, the freeform
+JSON object supplied by the client that sent it. This one shape carries the whole conversation;
+history, send acceptances, pending state, and events all speak it.
 
 `metadata` carries typed public provenance rather than internal message metadata:
 
@@ -1898,6 +1899,14 @@ acceptances, and events all speak it.
 Each field is optional, but the object itself is always present. A message without public
 provenance therefore carries `"metadata": {}`. Clients ignore metadata fields they do not
 recognize as this object grows.
+
+`clientMetadata` is separate from provenance. It is an optional object whose keys and nested
+values may contain any JSON value. The daemon treats it as opaque: it does not interpret its
+keys, merge it with daemon metadata, or send it to the model. When supplied, the complete object
+is durably attached to that user message and returned unchanged in the send response, pending
+bootstrap state, `message.created` and any later full-message event, and accepted history,
+including after daemon restart. When omitted, the field is absent. Re-sending an existing message
+ID returns the originally stored object and never replaces it with metadata from the retry.
 
 **Roles** say who produced the message:
 
@@ -2123,6 +2132,10 @@ Request:
 {
     "id": "tz4a98xxat96iws9zmbrgj3a",
     "text": "Fix the login redirect loop",
+    "clientMetadata": {
+        "composer": "mobile",
+        "localDraft": { "revision": 4 }
+    },
     "content": [
         { "type": "text", "text": "Here is the screenshot:" },
         { "type": "image", "mimeType": "image/png", "data": "<base64>" }
@@ -2147,6 +2160,9 @@ Request:
   agent already has creates nothing and returns the message as it now stands, which makes
   retrying a send whose response was lost safe.
 - `text` — the message text. Required.
+- `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
+  and echoed unchanged on every complete representation of this message, but is not interpreted
+  by the daemon or sent to the model.
 - `content` — optional rich blocks (text and images) accompanying the text. Image bytes
   travel **inline**, base64 in the block, exactly as they later appear in history — there is
   no separate upload step or attachment store.
@@ -2180,6 +2196,10 @@ Response — `202`: the durable message as it now stands, plus the event cursor 
         "createdAt": 1755400000000,
         "content": [{ "type": "text", "text": "Fix the login redirect loop" }],
         "metadata": {},
+        "clientMetadata": {
+            "composer": "mobile",
+            "localDraft": { "revision": 4 }
+        },
         "mode": {
             "providerId": "codex",
             "modelId": "openai/gpt-5.6-sol",
@@ -2246,6 +2266,10 @@ Response — `200`:
                     "createdAt": 1755400000000,
                     "content": [{ "type": "text", "text": "Fix the login redirect loop" }],
                     "metadata": {},
+                    "clientMetadata": {
+                        "composer": "mobile",
+                        "localDraft": { "revision": 4 }
+                    },
                     "mode": {
                         "providerId": "codex",
                         "modelId": "openai/gpt-5.6-sol",
@@ -2993,7 +3017,8 @@ to a different daemon process.
   (content complete, no run yet), or an agent/system/service message that may still grow.
     - `agentId` (ID string).
     - `runId` (ID string, or `null` for a pending user message) — the run it belongs to.
-    - `message` (full message object) — role, content blocks, everything.
+    - `message` (full message object) — role, content blocks, client metadata when supplied,
+      everything.
 - `message.updated` — a message changed structurally after it entered a run: a block was added,
   a tool call or compaction changed `status`, a compaction gained `tokensAfter`, or a result or
   presentation arrived. Pending acceptance is carried by `run.started` or `run.boundary`, not
@@ -3170,6 +3195,7 @@ Response — `200`:
             "createdAt": 1755400009000,
             "content": [{ "type": "text", "text": "Then update the tests" }],
             "metadata": {},
+            "clientMetadata": { "composer": "mobile" },
             "mode": {
                 "providerId": "codex",
                 "modelId": "openai/gpt-5.6-sol",
