@@ -107,8 +107,8 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent-modules
       '@slopus/happy-providers':
-        specifier: 0.0.12
-        version: 0.0.12(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.14
+        version: 0.0.14(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-terminal-gym':
         specifier: workspace:*
         version: link:../gym
@@ -143,8 +143,8 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent-modules
       '@slopus/happy-providers':
-        specifier: 0.0.12
-        version: 0.0.12(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.14
+        version: 0.0.14(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -174,8 +174,8 @@ importers:
         specifier: ^0.34.49
         version: 0.34.49
       '@slopus/happy-providers':
-        specifier: 0.0.12
-        version: 0.0.12(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.14
+        version: 0.0.14(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -283,8 +283,8 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent-modules
       '@slopus/happy-providers':
-        specifier: 0.0.12
-        version: 0.0.12(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.14
+        version: 0.0.14(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -362,8 +362,8 @@ importers:
         specifier: npm:@slopus/happy-agent-compute@0.1.9
         version: 0.1.9
       '@slopus/happy-providers':
-        specifier: 0.0.12
-        version: 0.0.12(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.14
+        version: 0.0.14(ws@8.21.1)(zod@4.4.3)
       '@slopus/murmur':
         specifier: 0.4.4
         version: 0.4.4
@@ -586,8 +586,8 @@ importers:
         specifier: 0.0.26
         version: 0.0.26
       '@slopus/happy-providers':
-        specifier: 0.0.12
-        version: 0.0.12(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.14
+        version: 0.0.14(ws@8.21.1)(zod@4.4.3)
       '@slopus/murmur':
         specifier: 0.4.4
         version: 0.4.4
@@ -2058,6 +2058,10 @@ packages:
 
   '@slopus/happy-providers@0.0.12':
     resolution: {integrity: sha512-iacKDoJRff5++PWU0HVerjjKrTpY7glO52dbdyl7LsVIBk1C/Zj15MH88Clg/MlC5qxai9k1EI3BJvSfzAb27w==}
+    engines: {node: '>=22.19.0'}
+
+  '@slopus/happy-providers@0.0.14':
+    resolution: {integrity: sha512-9Nyt8cSelCoT8c/Zt6RiDFofTkKWndAs7vtT1cu78VJXMUd/9p58orIxuVGjhnufsV+qJpxJqqb6A8tIQ42b/Q==}
     engines: {node: '>=22.19.0'}
 
   '@slopus/murmur@0.4.4':
@@ -5324,6 +5328,36 @@ snapshots:
     optional: true
 
   '@slopus/happy-providers@0.0.12(ws@8.21.1)(zod@4.4.3)':
+    dependencies:
+      '@anthropic-ai/bedrock-sdk': 0.32.0(zod@4.4.3)
+      '@anthropic-ai/claude-agent-sdk': 0.3.226(@anthropic-ai/sdk@0.110.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+      '@anthropic-ai/sdk': 0.110.0(zod@4.4.3)
+      '@aws-sdk/credential-provider-node': 3.972.71
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
+      '@sinclair/typebox': 0.34.49
+      '@smithy/hash-node': 4.5.2
+      '@smithy/signature-v4': 5.6.9
+      '@steve.kite/stdlib': 0.0.12
+      deunicode: 1.0.7
+      openai: 6.46.0(@aws-sdk/credential-provider-node@3.972.71)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)
+      undici: 8.8.0
+      wink-porter2-stemmer: 2.0.1
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.226
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.226
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.226
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.226
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.226
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.226
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.226
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.226
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+      - ws
+      - zod
+
+  '@slopus/happy-providers@0.0.14(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/bedrock-sdk': 0.32.0(zod@4.4.3)
       '@anthropic-ai/claude-agent-sdk': 0.3.226(@anthropic-ai/sdk@0.110.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
