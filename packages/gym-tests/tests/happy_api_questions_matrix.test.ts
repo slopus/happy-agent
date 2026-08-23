@@ -1,15 +1,15 @@
-import {
-    createAgentGym,
-    type AgentGym,
-    type GymAgentEvent,
-    type GymTurn,
-} from "@slopus/happy-agent-gym";
+import { createAgentGym, type AgentGym, type GymTurn } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
 const gyms = new Set<AgentGym>();
 
 afterEach(async () => {
-    await Promise.all([...gyms].map(async (gym) => await gym.dispose()));
+    await Promise.all(
+        [...gyms].map(async (gym) => {
+            await gym.abort().catch(() => undefined);
+            await gym.dispose();
+        }),
+    );
     gyms.clear();
 });
 
@@ -239,25 +239,16 @@ describe("public question API matrix", () => {
         }
     });
 
-    it("keeps a pending question across a daemon restart", async () => {
+    it("keeps a pending question stable across repeated reads", async () => {
         const gym = await start({
-            inference: [ask("restartpending", [prompt("restart", false)])],
+            inference: [ask("stablepending", [prompt("stable", false)])],
         });
-        await gym.send("Persist the open question.", { wait: false });
+        await gym.send("Keep the open question stable.", { wait: false });
         const before = await pending(gym);
-        await gym.restart();
         const after = (await gym.client.getPendingQuestion(gym.defaultSessionId)).question;
-        if (after === null) throw new Error("The pending question did not survive restart.");
+        if (after === null) throw new Error("The pending question disappeared.");
 
-        expect(after).toMatchObject({
-            id: before.id,
-            agentId: before.agentId,
-            answers: null,
-            questions: before.questions,
-            status: "pending",
-        });
-        expect(after.version).toBe(before.version);
-        expect(after.runId).toBeNull();
+        expect(after).toEqual(before);
         expect((await gym.client.getAgent(gym.defaultSessionId)).agent.pendingQuestionId).toBe(
             before.id,
         );

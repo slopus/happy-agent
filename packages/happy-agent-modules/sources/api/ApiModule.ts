@@ -280,6 +280,7 @@ export class ApiModule implements AgentModule {
     readonly #announcedPendingMessages = new Set<string>();
     readonly #apiPendingMessageIds = new Set<string>();
     readonly #announcedAgentCreations = new Set<string>();
+    readonly #pendingAgentCreations = new Set<string>();
     readonly #announcedTerminalRuns = new Set<string>();
     readonly #acceptedMessageBatches = new Map<string, AcceptedMessageBatch>();
     readonly #pendingMessageAnnouncements = new Map<
@@ -427,6 +428,7 @@ export class ApiModule implements AgentModule {
         this.#announcedPendingMessages.clear();
         this.#apiPendingMessageIds.clear();
         this.#announcedAgentCreations.clear();
+        this.#pendingAgentCreations.clear();
         this.#acceptedMessageBatches.clear();
         for (const pending of this.#pendingMessageAnnouncements.values()) pending.resolve();
         this.#pendingMessageAnnouncements.clear();
@@ -1191,10 +1193,24 @@ export class ApiModule implements AgentModule {
                 { agentId, slashCommands: payload.slashCommands },
                 event.occurredAt,
             );
+            // Initial discovery is part of the created agent's settled public snapshot. Announce
+            // creation only after publishing that computed catalog so the creation cursor closes
+            // the snapshot and no immediately-created state trails it.
+            if (this.#pendingAgentCreations.delete(agentId)) {
+                await this.#announceCreatedAgent(ctx, agentId);
+            } else {
+                // Restore-time discovery is a new durable agent event, so its resource version
+                // must remain replayable through the ordinary agent update chain.
+                await this.#appendAgentUpdate(ctx, event, { updatedAt: event.occurredAt });
+            }
             return;
         }
         if (event.type === "agent.created") {
-            await this.#announceCreatedAgent(ctx, agentId);
+            boundedAdd(this.#pendingAgentCreations, agentId, MAX_ANNOUNCED_AGENT_CREATIONS);
+            // Creation hooks discover slash commands after the durable lifecycle event. A forced
+            // refresh also guarantees the corresponding event exists when conversion reaches an
+            // agent created outside the HTTP route, such as a collaborator.
+            await this.#slashCommands.refresh(ctx, agentId);
             await this.#refreshParentSubagents(ctx, agentId);
             return;
         }
@@ -1975,6 +1991,7 @@ export class ApiModule implements AgentModule {
             // before snapshotting the resource so creation and an immediate ID replay return the
             // same settled agent version.
             const slashCommands = await this.#slashCommands.catalog(ctx, created.id);
+            await this.#queueAgentWork(ctx, created.id, undefined, async () => undefined);
             const agent = await this.#requireAgentResource(ctx, created.id);
             if (!this.#announcedAgentCreations.has(created.id)) {
                 boundedAdd(

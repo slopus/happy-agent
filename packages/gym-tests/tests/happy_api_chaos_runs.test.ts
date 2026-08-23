@@ -249,6 +249,7 @@ describe("public run chaos", () => {
 async function createRunContext(seed: string): Promise<RunContext> {
     let releaseFusionPromise!: () => void;
     let fusionReleased = false;
+    let agentCallIndex = 0;
     const fusionGate = new Promise<void>((resolve) => {
         releaseFusionPromise = resolve;
     });
@@ -256,11 +257,17 @@ async function createRunContext(seed: string): Promise<RunContext> {
     const gym = await createAgentGym({
         timeoutMs: 10_000,
         inference: async (request) => {
-            if (request.callIndex === 0) {
+            if (request.sessionId.startsWith("naming:")) {
+                return textTurn(`<title>${seed} run chaos</title><slug>${seed}-run-chaos</slug>`);
+            }
+            const callIndex = agentCallIndex;
+            agentCallIndex += 1;
+            const agentRequest = { ...request, callIndex };
+            if (callIndex === 0) {
                 await fusionGate;
                 return textTurn(`${seed}-fusion-complete`);
             }
-            return runTurnForRequest(request);
+            return runTurnForRequest(agentRequest);
         },
     });
 

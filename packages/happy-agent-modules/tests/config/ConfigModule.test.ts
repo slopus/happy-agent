@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { GrokProvider, GrokSessionCredential } from "@slopus/happy-providers";
+import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -117,6 +118,40 @@ describe("ConfigModule", () => {
         });
         expect(module.configuration.provenance["settings.maxCollaborators"]).toBe("global");
         expect(module.configuration.provenance["settings.maxCollaborationDepth"]).toBe("global");
+    });
+
+    it("lets a scripted provider own its catalog after compatibility state is restored", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-scripted-catalog-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        await mkdir(join(happyHome, "agent"), { recursive: true });
+        await writeFile(
+            join(happyHome, "agent", "runtime.toml"),
+            ["[providers.gym]", 'type = "codex"', "enabled = true"].join("\n"),
+        );
+        const models: readonly AgentModel[] = [
+            {
+                defaultEffort: "medium",
+                effortLevels: ["low", "medium", "high"],
+                id: "gym/model",
+                name: "Gym Model",
+                providerId: "gym",
+            },
+            {
+                defaultEffort: "medium",
+                effortLevels: ["low", "medium", "high"],
+                id: "gym/model-2",
+                name: "Gym Model Two",
+                providerId: "gym",
+            },
+        ];
+        const module = await ConfigModule.load(happyHome, {
+            inference: { models, providers: new AgentProviders() },
+        });
+
+        expect(
+            module.catalog.filter((model) => model.providerId === "gym").map((model) => model.id),
+        ).toEqual(["gym/model", "gym/model-2"]);
     });
 
     it("ignores unknown TOML fields while retaining their source locations", () => {

@@ -52,13 +52,17 @@ describe("public message and history matrix", () => {
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
+        let agentCallIndex = 0;
         const gym = await startGym({
             inference: async (request): Promise<GymTurn> => {
-                if (request.callIndex === 0) {
+                if (request.sessionId.startsWith("naming:")) return namingTurn("Queued message");
+                const callIndex = agentCallIndex;
+                agentCallIndex += 1;
+                if (callIndex === 0) {
                     providerStarted();
                     await gate;
                 }
-                return { content: [{ text: `answer ${String(request.callIndex)}`, type: "text" }] };
+                return { content: [{ text: `answer ${String(callIndex)}`, type: "text" }] };
             },
         });
 
@@ -99,13 +103,17 @@ describe("public message and history matrix", () => {
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
+        let agentCallIndex = 0;
         const gym = await startGym({
             inference: async (request): Promise<GymTurn> => {
-                if (request.callIndex === 0) {
+                if (request.sessionId.startsWith("naming:")) return namingTurn("Queued batch");
+                const callIndex = agentCallIndex;
+                agentCallIndex += 1;
+                if (callIndex === 0) {
                     providerStarted();
                     await gate;
                 }
-                return { content: [{ text: `reply-${String(request.callIndex)}`, type: "text" }] };
+                return { content: [{ text: `reply-${String(callIndex)}`, type: "text" }] };
             },
         });
         const first = await gym.send("first", { wait: false });
@@ -153,9 +161,13 @@ describe("public message and history matrix", () => {
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
+        let agentCallIndex = 0;
         const gym = await startGym({
             inference: async (request): Promise<GymTurn> => {
-                if (request.callIndex === 0) {
+                if (request.sessionId.startsWith("naming:")) return namingTurn("Pending messages");
+                const callIndex = agentCallIndex;
+                agentCallIndex += 1;
+                if (callIndex === 0) {
                     providerStarted();
                     await gate;
                 }
@@ -790,6 +802,17 @@ async function startGym(options: Parameters<typeof createAgentGym>[0] = {}): Pro
     const gym = await createAgentGym(options);
     activeGyms.add(gym);
     return gym;
+}
+
+function namingTurn(title: string): GymTurn {
+    return {
+        content: [
+            {
+                text: `<title>${title}</title><slug>${title.toLowerCase().replaceAll(" ", "-")}</slug>`,
+                type: "text",
+            },
+        ],
+    };
 }
 
 function modeFor(

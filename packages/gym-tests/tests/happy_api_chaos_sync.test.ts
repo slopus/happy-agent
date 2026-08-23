@@ -628,6 +628,7 @@ class ChaosWorld {
             limit: 10_000,
         });
         assertPage(page.events);
+        this.replica.ingest(page.events, page.latestCursor);
         const before = this.digest(0);
         const reversed = [...page.events].reverse();
         this.replica.ingest([...reversed, ...page.events], page.latestCursor);
@@ -825,23 +826,7 @@ class ChaosWorld {
     }
 
     private async freshRead(clientIndex: number): Promise<void> {
-        const client = this.clients[clientIndex] ?? this.clients[0]!;
-        const [profile, projects, workspaces] = await Promise.all([
-            client.getProfile(),
-            client.listProjects(),
-            client.listWorkspaces({ includeArchived: true, projectId: this.rootId }),
-        ]);
-        expect(profile.profile).toEqual(this.replica.view().profile);
-        expect(comparableProjects(projects.projects)).toEqual(
-            comparableProjects(this.replica.view().projects),
-        );
-        expect(comparableWorkspaces(workspaces.workspaces)).toEqual(
-            comparableWorkspaces(
-                this.replica
-                    .view()
-                    .workspaces.filter((workspace) => workspace.projectId === this.rootId),
-            ),
-        );
+        await this.assertFresh(clientIndex);
     }
 
     private async reconcile(): Promise<void> {
@@ -983,7 +968,7 @@ class ChaosWorld {
         }
     }
 
-    private async assertFresh(): Promise<void> {
+    private async assertFresh(clientIndex = 0): Promise<void> {
         const view = this.replica.view();
         expect(view.cursor <= view.journalHead).toBe(true);
         expect(new Set(view.projects.map((project) => project.id)).size).toBe(view.projects.length);
@@ -1000,21 +985,22 @@ class ChaosWorld {
                 expect(view.agents.find((candidate) => candidate.id === agent.id)).toEqual(agent);
             }
         }
+        const client = this.clients[clientIndex] ?? this.clients[0]!;
         const barrier = createPublicStateBarrier(async () => {
             await this.pullUntilHead();
             const [profile, projects, workspaces, rootProject, rootWorkspace, touchedAgent] =
                 await Promise.all([
-                    this.clients[0]!.getProfile(),
-                    this.clients[0]!.listProjects(),
-                    this.clients[0]!.listWorkspaces({
+                    client.getProfile(),
+                    client.listProjects(),
+                    client.listWorkspaces({
                         includeArchived: true,
                         projectId: this.rootId,
                     }),
-                    this.clients[0]!.getProject(this.rootId),
-                    this.clients[0]!.getWorkspace(this.rootId),
+                    client.getProject(this.rootId),
+                    client.getWorkspace(this.rootId),
                     this.touchedAgentId === undefined
                         ? Promise.resolve(undefined)
-                        : this.clients[0]!.getAgent(this.touchedAgentId),
+                        : client.getAgent(this.touchedAgentId),
                 ]);
             return {
                 state: {

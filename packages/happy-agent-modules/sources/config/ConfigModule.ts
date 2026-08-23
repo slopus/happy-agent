@@ -1078,23 +1078,19 @@ export class ConfigModule implements AgentModule {
 
     /** Every configured provider/model route, including disabled and filtered catalog entries. */
     get catalog(): readonly ConfiguredAgentModel[] {
-        const catalog = [
-            ...agentModelCatalog(this.configuration, (id) => this.isProviderEnabled(id)),
-        ];
         const scripted = this.#scriptedModels();
+        const scriptedProviderIds = new Set(scripted?.map((model) => model.providerId) ?? []);
+        const catalog = agentModelCatalog(this.configuration, (id) =>
+            this.isProviderEnabled(id),
+        ).filter((model) => !scriptedProviderIds.has(model.providerId));
         if (scripted !== undefined) {
             for (const model of scripted) {
-                const route = catalog.findIndex(
-                    (candidate) =>
-                        candidate.providerId === model.providerId && candidate.id === model.id,
-                );
                 const entry: ConfiguredAgentModel = {
                     ...model,
                     contextWindow: agentModelContext(model.id)?.contextWindow ?? null,
                     enabled: this.isProviderEnabled(model.providerId),
                 };
-                if (route === -1) catalog.push(entry);
-                else catalog[route] = entry;
+                catalog.push(entry);
             }
         }
         return catalog;

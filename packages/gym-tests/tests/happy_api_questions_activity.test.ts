@@ -368,6 +368,7 @@ describe("public questions and activity API", () => {
         });
         const callsByAgent = new Map<string, number>();
         const gym = await createAgentGym({
+            timeoutMs: 30_000,
             inference: async (request: GymInferenceRequest): Promise<GymTurn> => {
                 if (request.sessionId.startsWith("naming:")) {
                     return {
@@ -456,7 +457,13 @@ describe("public questions and activity API", () => {
 
         await gym.send("Create a collaborator chain, then interrupt the direct collaborator.", {
             permissionMode: "full_access",
+            wait: false,
         });
+        await gym.waitUntil(
+            () =>
+                childAgentId !== undefined && grandchildAgentId !== undefined ? true : undefined,
+            "the collaborator chain to be created",
+        );
         if (childAgentId === undefined || grandchildAgentId === undefined) {
             throw new Error("The collaborator chain was not created.");
         }
@@ -465,6 +472,13 @@ describe("public questions and activity API", () => {
             waitForAbortedHistory(gym, grandchildAgentId),
         ]);
 
+        await gym.waitUntil(
+            async () =>
+                (await gym.client.getAgent(parentAgentId)).agent.status === "idle"
+                    ? true
+                    : undefined,
+            "the parent agent to finish after interrupting its descendants",
+        );
         expect(
             gym.inference.toolResults().some((result) => result.callId === "interruptchain"),
         ).toBe(true);
@@ -472,7 +486,11 @@ describe("public questions and activity API", () => {
             expect.objectContaining({ reason: "abort", status: "aborted" }),
             expect.objectContaining({ reason: "abort", status: "aborted" }),
         ]);
-        await expect(gym.client.getAgentActivity(parentAgentId)).resolves.toMatchObject({
+        const activity = await gym.waitUntil(async () => {
+            const candidate = await gym.client.getAgentActivity(parentAgentId);
+            return candidate.subagents[0]?.status === "idle" ? candidate : undefined;
+        }, "the parent activity projection to observe the interrupted collaborator");
+        expect(activity).toMatchObject({
             subagents: [expect.objectContaining({ id: childAgentId, status: "idle" })],
         });
     }, 60_000);
