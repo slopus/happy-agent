@@ -81,6 +81,9 @@ export function messageResource(
                 ? {}
                 : { senderAgentId: message.senderAgentId }),
         },
+        ...(role === "user" && message.clientMetadata !== undefined
+            ? { clientMetadata: message.clientMetadata }
+            : {}),
         ...(role === "user"
             ? {
                   status: "accepted",

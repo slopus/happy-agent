@@ -138,6 +138,40 @@ async function finishInference(
 }
 
 describe("HistoryModule run history", () => {
+    it("keeps the original client metadata when a pending user message is accepted", async () => {
+        const world = await setup("history-runs-client-metadata");
+        const clientMetadata = {
+            composer: "mobile",
+            localDraft: { revision: 4, tags: ["auth", null] },
+        };
+        try {
+            await world.history.queuePending(world.database.context, {
+                ...pending("message-client-metadata", 100),
+                clientMetadata,
+            });
+            await acceptBatch(world, [
+                {
+                    ...accepted("message-client-metadata", "send"),
+                    metadata: {
+                        ...USER_MESSAGE_ORIGIN_METADATA,
+                        clientMetadata: { replaced: true },
+                    },
+                },
+            ]);
+
+            expect(
+                await world.history.message(
+                    world.database.context,
+                    "agent-a",
+                    "message-client-metadata",
+                ),
+            ).toMatchObject({ clientMetadata });
+            expect(await world.history.pending(world.database.context, "agent-a")).toEqual([]);
+        } finally {
+            world.database.close();
+        }
+    });
+
     it("reads exact current and previous run state without depending on run messages", async () => {
         const world = await setup("history-runs-exact-state");
         try {

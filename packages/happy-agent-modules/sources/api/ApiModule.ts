@@ -2488,6 +2488,9 @@ export class ApiModule implements AgentModule {
                 metadata: {
                     ...USER_MESSAGE_ORIGIN_METADATA,
                     mode: body.mode,
+                    ...(body.clientMetadata === undefined
+                        ? {}
+                        : { clientMetadata: body.clientMetadata }),
                 },
             };
             const agents = this.#agentSystem();
@@ -2510,6 +2513,9 @@ export class ApiModule implements AgentModule {
                           },
                 ),
                 mode: body.mode,
+                ...(body.clientMetadata === undefined
+                    ? {}
+                    : { clientMetadata: body.clientMetadata }),
                 runId: null,
             };
             this.#announcedPendingMessages.add(id);
@@ -4669,6 +4675,9 @@ function pendingMessageResource(pending: HistoryPendingMessage): Record<string, 
             role: "user",
             blocks: pending.blocks,
             at: pending.createdAt,
+            ...(pending.clientMetadata === undefined
+                ? {}
+                : { clientMetadata: pending.clientMetadata }),
             delivery: pending.delivery,
             mode: pending.mode,
         }),

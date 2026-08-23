@@ -1,6 +1,7 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { cuid2Schema } from "@slopus/happy-agent-base";
+import { clientMetadataSchema, type ClientMetadata } from "@slopus/happy-agent-client";
 
 import { toolPermissionReviewSchema } from "../permissions/ToolPermissionReview.js";
 
@@ -89,6 +90,12 @@ export const historyMessageModeSchema = Type.Object(
 
 /** The TypeScript type inferred from {@link historyMessageModeSchema}. */
 export type HistoryMessageMode = Static<typeof historyMessageModeSchema>;
+
+/** Opaque JSON owned by the client that submitted a user message. */
+export const historyClientMetadataSchema = clientMetadataSchema;
+
+/** The TypeScript type inferred from {@link historyClientMetadataSchema}. */
+export type HistoryClientMetadata = ClientMetadata;
 
 /**
  * Who a recorded message came from. The six roles a reader may filter on.
@@ -359,6 +366,8 @@ const historyMessageFields = {
     mode: Type.Optional(historyMessageModeSchema),
     /** Optimistic client mutation identity, echoed but never interpreted or deduplicated. */
     mutationId: Type.Optional(historyMutationIdSchema),
+    /** Opaque JSON owned by the client that submitted this user message. */
+    clientMetadata: Type.Optional(historyClientMetadataSchema),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
     /** Happy's source identity, used to suppress a remote message echo. */

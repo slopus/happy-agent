@@ -15,6 +15,127 @@ afterEach(async () => {
 });
 
 describe("public transcript and run APIs", () => {
+    it("persists opaque client metadata through pending state, events, history, retries, and restart", async () => {
+        let releaseFirst!: () => void;
+        let providerStarted!: () => void;
+        let agentCalls = 0;
+        const firstProviderStarted = new Promise<void>((resolve) => {
+            providerStarted = resolve;
+        });
+        const firstProviderGate = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        const gym = await startGym({
+            inference: async (request) => {
+                if (request.sessionId.startsWith("naming:")) return namingTurn();
+                const call = agentCalls;
+                agentCalls += 1;
+                if (call === 0) {
+                    providerStarted();
+                    await firstProviderGate;
+                    return { content: [{ text: "first answer", type: "text" }] };
+                }
+                return { content: [{ text: "metadata answer", type: "text" }] };
+            },
+        });
+
+        const first = await gym.client.sendMessage(gym.defaultSessionId, {
+            mode: modeFor(gym),
+            text: "hold the first run open",
+        });
+        const firstStarted = await waitForStarted(gym, gym.defaultSessionId, first.message.id);
+        const firstRunId = runIdOf(firstStarted);
+        if (firstRunId === undefined) throw new Error("The first run had no ID.");
+        await firstProviderStarted;
+
+        try {
+            const clientMetadata = {
+                composer: "mobile",
+                localDraft: { revision: 4, tags: ["auth", null] },
+            };
+            const queued = await gym.client.sendMessage(gym.defaultSessionId, {
+                clientMetadata,
+                delivery: "queue",
+                id: "clientmetadata1",
+                mode: modeFor(gym),
+                text: "keep my client metadata",
+            });
+            expect(queued.message).toMatchObject({
+                clientMetadata,
+                id: "clientmetadata1",
+                runId: null,
+                status: "pending",
+            });
+
+            const created = await gym.waitForEvent(
+                (event) =>
+                    event.type === "message.created" &&
+                    event.payload.agentId === gym.defaultSessionId &&
+                    event.payload.message.id === queued.message.id,
+                "the client metadata message.created event",
+            );
+            expect(created.type).toBe("message.created");
+            if (created.type !== "message.created") throw new Error("Expected message.created.");
+            expect(created.payload.message).toMatchObject({ clientMetadata });
+
+            const pending = await gym.client.getAgentBootstrap(gym.defaultSessionId);
+            expect(
+                pending.pending.find((message) => message.id === queued.message.id),
+            ).toMatchObject({ clientMetadata });
+
+            const retry = await gym.client.sendMessage(gym.defaultSessionId, {
+                clientMetadata: { replaced: true },
+                delivery: "queue",
+                id: queued.message.id,
+                mode: modeFor(gym),
+                text: "a retry must not replace the original",
+            });
+            expect(retry.message).toMatchObject({ clientMetadata });
+
+            releaseFirst();
+            await waitForFinished(gym, gym.defaultSessionId, firstRunId);
+            const secondStarted = await waitForStarted(
+                gym,
+                gym.defaultSessionId,
+                queued.message.id,
+            );
+            const secondRunId = runIdOf(secondStarted);
+            if (secondRunId === undefined) throw new Error("The metadata run had no ID.");
+            await waitForFinished(gym, gym.defaultSessionId, secondRunId);
+
+            const history = await gym.client.getMessages(gym.defaultSessionId);
+            expect(
+                history.runs
+                    .flatMap((run) => run.messages)
+                    .find((message) => message.id === queued.message.id),
+            ).toMatchObject({ clientMetadata });
+
+            await gym.restart();
+            const afterRestart = await gym.client.getMessages(gym.defaultSessionId);
+            expect(
+                afterRestart.runs
+                    .flatMap((run) => run.messages)
+                    .find((message) => message.id === queued.message.id),
+            ).toMatchObject({ clientMetadata });
+            const acceptedRetry = await gym.client.sendMessage(gym.defaultSessionId, {
+                clientMetadata: { replacedAfterRestart: true },
+                delivery: "queue",
+                id: queued.message.id,
+                mode: modeFor(gym),
+                text: "an accepted retry must still return the original",
+            });
+            expect(acceptedRetry.message).toMatchObject({
+                clientMetadata,
+                status: "accepted",
+            });
+            await expect(gym.client.getAgentBootstrap(gym.defaultSessionId)).resolves.toMatchObject(
+                { pending: [] },
+            );
+        } finally {
+            releaseFirst();
+        }
+    }, 60_000);
+
     it("persists provider startup failures as service messages in the failed run", async () => {
         const failure = "Codex access token could not be refreshed: 401 Unauthorized";
         const gym = await startGym({

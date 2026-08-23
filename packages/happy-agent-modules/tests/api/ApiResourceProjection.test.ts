@@ -60,6 +60,34 @@ describe("messageHiddenFromUser", () => {
 });
 
 describe("messageResource", () => {
+    it("projects client-owned metadata separately on a user message", () => {
+        const clientMetadata = {
+            composer: "mobile",
+            localDraft: { revision: 4, tags: ["auth", null] },
+        };
+
+        expect(
+            messageResource({
+                at: 100,
+                blocks: [{ type: "text", text: "Keep my metadata." }],
+                clientMetadata,
+                recordId: "message-client-metadata",
+                role: "user",
+            }),
+        ).toEqual({
+            id: "message-client-metadata",
+            role: "user",
+            createdAt: 100,
+            content: [{ type: "text", text: "Keep my metadata." }],
+            metadata: {},
+            clientMetadata,
+            status: "accepted",
+            delivery: "queue",
+            mode: null,
+            runId: null,
+        });
+    });
+
     it("projects a durable system notice with its role intact", () => {
         expect(
             messageResource({

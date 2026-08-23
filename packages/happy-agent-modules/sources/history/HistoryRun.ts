@@ -3,6 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import {
     historyAgentIdSchema,
     historyBlockSchema,
+    historyClientMetadataSchema,
     historyMessageModeSchema,
     historyMessageSchema,
     historyMutationIdSchema,
@@ -42,6 +43,7 @@ export const historyPendingMessageSchema = Type.Object(
         createdAt: historyTimestampSchema,
         blocks: Type.Array(historyBlockSchema, { maxItems: MAX_HISTORY_BLOCKS_PER_MESSAGE }),
         mode: historyMessageModeSchema,
+        clientMetadata: Type.Optional(historyClientMetadataSchema),
         mutationId: Type.Optional(historyMutationIdSchema),
         runId: Type.Null(),
     },

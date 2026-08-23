@@ -35,6 +35,7 @@ import {
 } from "../permissions/ToolPermissionReview.js";
 import {
     historyBlockSchema,
+    historyClientMetadataSchema,
     historyMessageSchema,
     historyMessageInputSchema,
     historyMessageModeSchema,
@@ -59,6 +60,7 @@ import {
     historyToolArgumentsWithinByteLimit,
     MAX_HISTORY_TOOL_OUTPUT_LENGTH,
     type HistoryBlock,
+    type HistoryClientMetadata,
     type HistoryMessage,
     type HistoryMessageInput,
     type HistoryMessageMode,
@@ -1568,6 +1570,12 @@ export class HistoryModule implements AgentModule {
                 (Value.Check(historyMutationIdSchema, metadataMutationId)
                     ? (metadataMutationId as string)
                     : undefined);
+            const metadataClientMetadata = accepted.metadata?.["clientMetadata"];
+            const clientMetadata =
+                pending?.clientMetadata ??
+                (Value.Check(historyClientMetadataSchema, metadataClientMetadata)
+                    ? (metadataClientMetadata as HistoryClientMetadata)
+                    : undefined);
             // A message sent from outside the API — a phone, another module — has no pending
             // row, but still runs with a composer selection; it may stamp that selection on
             // its metadata the way the API does.
@@ -1605,6 +1613,7 @@ export class HistoryModule implements AgentModule {
                               (accepted.kind === "steering" ? "steer" : "queue"),
                           ...(mode === undefined ? {} : { mode }),
                           ...(mutationId === undefined ? {} : { mutationId }),
+                          ...(clientMetadata === undefined ? {} : { clientMetadata }),
                       }
                     : {}),
                 ...(sender === undefined ? {} : { senderAgentId: sender }),

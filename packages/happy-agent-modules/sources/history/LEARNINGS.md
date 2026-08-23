@@ -1,5 +1,13 @@
 # History learnings
 
+## Client metadata stays distinct from message provenance
+
+A client may attach opaque JSON to a person-authored message. Carry it through Agent Base's
+durable message metadata, but persist it as the dedicated `clientMetadata` field on both pending
+and accepted History records. Public projections return that field unchanged and never merge it
+into daemon-owned provenance metadata. A repeated send with the same message ID reads the original
+pending or accepted record, so later payloads cannot replace its client metadata.
+
 ## Assistant history is append-only by inference
 
 Each completed provider inference creates its own durable assistant message under the inference's

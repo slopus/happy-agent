@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { cuid2Schema } from "@slopus/happy-agent-base";
+import { clientMetadataSchema } from "@slopus/happy-agent-client";
 
 export { invokeSlashCommandRequestSchema } from "@slopus/happy-agent-client";
 
@@ -150,6 +151,7 @@ export const agentCreateBodySchema = Type.Object(
 
 export const messageSendBodySchema = Type.Object(
     {
+        clientMetadata: Type.Optional(clientMetadataSchema),
         content: Type.Optional(
             Type.Array(
                 Type.Union([

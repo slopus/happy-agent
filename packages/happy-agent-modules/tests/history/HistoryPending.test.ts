@@ -33,12 +33,19 @@ describe("HistoryModule pending messages", () => {
 
         try {
             await first.queuePending(database.context, pending("message-a", 100));
-            await first.queuePending(database.context, pending("message-b", 101));
+            const withClientMetadata = {
+                ...pending("message-b", 101),
+                clientMetadata: {
+                    composer: "mobile",
+                    localDraft: { revision: 4, tags: ["auth", null] },
+                },
+            };
+            await first.queuePending(database.context, withClientMetadata);
 
             const restarted = new HistoryModule();
             expect(await restarted.pending(database.context, "agent-a")).toEqual([
                 pending("message-a", 100),
-                pending("message-b", 101),
+                withClientMetadata,
             ]);
         } finally {
             database.close();
