@@ -385,6 +385,54 @@ describe.each(databaseBackends)("AgentStorage Drizzle persistence ($label)", ({ 
         await second.close();
     });
 
+    it("publishes a transactionally created agent idle until it receives work", async () => {
+        const { close, database } = await open();
+        const provider = new ScriptedProvider([textTurn("answer")]);
+        let loops = 0;
+        const storage = new AgentStorage({ acquireLock: lock(), database });
+        const system = await AgentSystemLocal.create(ctx, storage, {
+            modules: [
+                {
+                    name: "transactional-loop-observer",
+                    beforeStart: () => ({
+                        beforeAgentLoop: () => {
+                            loops += 1;
+                        },
+                    }),
+                },
+            ],
+            providers: providersOf(provider),
+            provider: "scripted",
+            models: [],
+        });
+
+        const agent = await withAgentDatabase(ctx, database).inTx(async (txCtx) => {
+            const created = await system.create(
+                txCtx,
+                {},
+                {
+                    id: "h12345678901234567890123",
+                },
+            );
+            expect(created.active).toBe(false);
+            expect(provider.sessions).toHaveLength(0);
+            return created;
+        });
+        await agent.waitForIdle();
+
+        expect(agent.active).toBe(false);
+        expect(loops).toBe(0);
+        expect(provider.sessions).toHaveLength(0);
+
+        await agent.send(ctx, user("answer this"));
+        await agent.waitForIdle();
+
+        expect(loops).toBe(1);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        await system.close(ctx);
+        await close();
+    });
+
     it("queues live send and steer messages inside an outer transaction and starts after commit", async () => {
         const { close, database } = await open();
         const provider = new ScriptedProvider([textTurn("steered"), textTurn("committed")]);

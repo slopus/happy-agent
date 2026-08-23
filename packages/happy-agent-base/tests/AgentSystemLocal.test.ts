@@ -58,6 +58,48 @@ function managerKV(persistence: InMemoryPersistence): AgentKV {
 }
 
 describe("AgentSystemLocal", () => {
+    it("keeps a freshly created agent idle until it receives work", async () => {
+        const provider = new ScriptedProvider([textTurn("answer")]);
+        let loops = 0;
+        const system = await AgentSystemLocal.create(
+            ctx,
+            new InMemoryAgentStorage({
+                acquireLock: inMemoryStorageLock(),
+                kv: managerKV(new InMemoryPersistence()),
+                persistence: () => new InMemoryPersistence(),
+            }),
+            {
+                modules: [
+                    {
+                        name: "loop-observer",
+                        beforeStart: () => ({
+                            beforeAgentLoop: () => {
+                                loops += 1;
+                            },
+                        }),
+                    },
+                ],
+                providers: providersOf(provider),
+                provider: "scripted",
+                models: [],
+            },
+        );
+
+        const agent = await system.create(ctx, {}, { id: "freshagent123456789012345" });
+        await agent.waitForIdle();
+
+        expect(agent.active).toBe(false);
+        expect(loops).toBe(0);
+        expect(provider.sessions).toHaveLength(0);
+
+        await agent.send(ctx, user("answer this"));
+        await agent.waitForIdle();
+
+        expect(loops).toBe(1);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        await system.close(ctx);
+    });
+
     it("awaits beforeStart before agents and afterStart after agents", async () => {
         const provider = new ScriptedProvider([textTurn("resumed")]);
         const managerPersistence = new InMemoryPersistence();

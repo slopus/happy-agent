@@ -463,10 +463,21 @@ export class AgentSystemLocal<
                         (hooks) => hooks.agentCreated,
                     );
                 });
+                // Creation publishes an idle lifetime. Accepted work starts it through the same
+                // durable activation path as every later message; starting here would enter an
+                // empty lifecycle and make creation itself look like agent work.
                 const agent =
                     agentStorageTransaction(lockCtx) === undefined
-                        ? await this.#instantiate(agentId, owned)
-                        : await this.#transactionAgent(lockCtx, agentId, owned, true, true);
+                        ? await this.#instantiate(
+                              agentId,
+                              owned,
+                              false,
+                              false,
+                              undefined,
+                              true,
+                              true,
+                          )
+                        : await this.#transactionAgent(lockCtx, agentId, owned, false, true);
                 if (agent === undefined) throw new Error(`Agent "${agentId}" could not be built.`);
                 return agent;
             };
