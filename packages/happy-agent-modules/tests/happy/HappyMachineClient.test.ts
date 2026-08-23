@@ -14,6 +14,10 @@ import {
     type HappySocket,
 } from "../../sources/happy/index.js";
 
+vi.mock("../../sources/happy/credentials/readHappyCliMachineId.js", () => ({
+    readHappyCliMachineId: async () => undefined,
+}));
+
 const KEY = Buffer.alloc(32, 7);
 const SERVER = "https://api.happy.example";
 
@@ -173,7 +177,7 @@ async function connected(
         socket,
     });
     machine.start();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(socket.connected).toBe(true));
     return { socket };
 }
 

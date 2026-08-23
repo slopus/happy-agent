@@ -11,6 +11,7 @@ import {
     happySyncMigrations,
     type HappySpawnRequest,
 } from "../../sources/happy/index.js";
+import { happyIntegrationMigrations } from "../../sources/happy/HappyIntegrationDatabase.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
 const happyConnection = vi.hoisted(() => ({
@@ -76,7 +77,10 @@ function targetRequest(
 }
 
 async function fixture() {
-    const database = moduleDatabase(happySyncMigrations, "happy-module-test");
+    const database = moduleDatabase(
+        [...happySyncMigrations, ...happyIntegrationMigrations],
+        "happy-module-test",
+    );
     databases.push(database);
     await database.ready;
 
@@ -187,7 +191,10 @@ async function fixture() {
     const module = new HappyModule(
         {
             configuration: {
-                values: { defaults: { permissionMode: "auto" } },
+                values: {
+                    defaults: { permissionMode: "auto" },
+                    settings: { happyIntegration: true },
+                },
                 version: "test",
             },
             models: [
@@ -434,7 +441,10 @@ describe("archiving a Happy session", () => {
     });
 
     it("archives a workspace session that never occupied an attached-client slot", async () => {
-        const database = moduleDatabase(happySyncMigrations, "happy-unattached-archive-test");
+        const database = moduleDatabase(
+            [...happySyncMigrations, ...happyIntegrationMigrations],
+            "happy-unattached-archive-test",
+        );
         databases.push(database);
         await database.ready;
 

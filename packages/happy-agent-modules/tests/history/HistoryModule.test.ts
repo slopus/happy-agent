@@ -35,7 +35,9 @@ describe("HistoryModule durability", () => {
             });
             await history.record(database.context, "agent-a", {
                 at: 300,
-                blocks: [{ arguments: {}, callId: "call-1", name: "read", type: "tool_call" }],
+                blocks: [
+                    { arguments: {}, callId: "callactivity1", name: "read", type: "tool_call" },
+                ],
                 recordId: "assistant-tool",
                 role: "assistant",
             });
