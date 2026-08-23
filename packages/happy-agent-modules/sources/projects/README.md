@@ -11,18 +11,31 @@ avatar bytes: all of it is this module's own. There is no host
 object between the catalog and the disk.
 
 ```ts
-import { ConfigModule, GitModule, ProjectsModule } from "@slopus/happy-agent-modules";
+import {
+    AbortModule,
+    ComputeModule,
+    ConfigModule,
+    GitModule,
+    ProjectsModule,
+} from "@slopus/happy-agent-modules";
 
-const projects = new ProjectsModule(await ConfigModule.load(), new GitModule());
+const config = await ConfigModule.load();
+const abort = new AbortModule(new ComputeModule(config));
+const projects = new ProjectsModule(config, new GitModule(), abort);
 await projects.open(ctx, agentId);
 ```
 
-Two modules and nothing else.
+Three modules and nothing else.
 
 | Module                                | What it answers                                                                                                                                                   |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`ConfigModule`](../config/README.md) | Where managed projects live, where the agent keeps its own state, whether cross-workspace work is on, and the GitHub token a clone of a private repository needs. |
 | [`GitModule`](../git/README.md)       | Every Git command, probe, clone and worktree, the credentials they carry, and who this copy of Git commits as.                                                    |
+| [`AbortModule`](../abort/README.md)   | How the agents standing in a project stop when it is archived, together with everything below them.                                                               |
+
+Both `AbortModule` and the `ComputeModule` beneath it have to be installed on the
+agent and started with it: the abort module learns the agent collection from its
+`beforeStart` hook, and asking it to cancel anything before that throws.
 
 There is no `rootContext`, no path string, no runner and no callback. The
 lifetime the catalog's own Git and filesystem work runs on is derived from the

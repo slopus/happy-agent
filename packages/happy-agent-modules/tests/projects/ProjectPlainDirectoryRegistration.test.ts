@@ -10,12 +10,14 @@ import { projectMigrations, ProjectsModule } from "../../sources/projects/index.
 import { validateRegistrationPath } from "../../sources/projects/impl/validateRegistrationPath.js";
 import {
     workspaceMigrations,
-    WorkspacesModule,
     type Workspace,
+    type WorkspacesModule,
 } from "../../sources/workspaces/index.js";
 import { cleanupRoots, createRepository, gitRunner } from "../git/helpers.js";
 import { testConfigRootedAt } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { projectsModuleFor } from "../support/projectsModule.js";
+import { workspacesCatalogFrom } from "../support/workspacesModule.js";
 
 afterEach(cleanupRoots);
 
@@ -53,7 +55,7 @@ describe("plain-directory project registration", () => {
             expect(ready).not.toHaveProperty("gitHead");
             expect(ready).not.toHaveProperty("gitUpstream");
 
-            reopened = new ProjectsModule(world.config, world.git);
+            reopened = projectsModuleFor(world.config, world.git);
             await expect(reopened.get(world.database.context, registered.id)).resolves.toEqual(
                 ready,
             );
@@ -165,13 +167,13 @@ describe("plain-directory project registration", () => {
 async function createWorld(root: string, name: string) {
     const config = await testConfigRootedAt(join(root, "state"));
     const git = GitModule.withRunner(gitRunner);
-    const projects = new ProjectsModule(config, git);
-    const workspaces = new WorkspacesModule(config, projects, git);
+    const { projects, start, workspaces } = workspacesCatalogFrom(config, git);
     const database = moduleDatabase(
         [...projectMigrations, ...workspaceMigrations],
         `${name}-database`,
     );
     await database.ready;
+    start(database.context);
     return {
         config,
         database,

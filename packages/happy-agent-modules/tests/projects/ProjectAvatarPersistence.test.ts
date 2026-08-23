@@ -2,13 +2,10 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
-import {
-    type ProjectEvent,
-    projectMigrations,
-    ProjectsModule,
-} from "../../sources/projects/index.js";
+import { type ProjectEvent, projectMigrations } from "../../sources/projects/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { projectsModuleFor } from "../support/projectsModule.js";
 
 describe("project avatar persistence", () => {
     it("atomically persists normalized bytes, public metadata, and exact lifecycle events", async () => {
@@ -17,7 +14,7 @@ describe("project avatar persistence", () => {
         await database.ready;
         try {
             const config = await temporaryTestConfig();
-            const projects = new ProjectsModule(config, new GitModule());
+            const projects = projectsModuleFor(config, new GitModule());
             const events: ProjectEvent[] = [];
             projects.onEventTransactional((_ctx, event) => {
                 if (
@@ -60,7 +57,7 @@ describe("project avatar persistence", () => {
                 width: 256,
             });
 
-            const reopened = new ProjectsModule(config, new GitModule());
+            const reopened = projectsModuleFor(config, new GitModule());
             await expect(reopened.avatarAsset(database.context, created.id)).resolves.toEqual(
                 firstAsset,
             );
@@ -96,7 +93,7 @@ describe("project avatar persistence", () => {
         const database = moduleDatabase(projectMigrations, "project-avatar-content-type");
         await database.ready;
         try {
-            const projects = new ProjectsModule(await temporaryTestConfig(), new GitModule());
+            const projects = projectsModuleFor(await temporaryTestConfig(), new GitModule());
             const created = await projects.create(database.context, {
                 name: "Avatar content type",
                 repositoryRef: "/tmp/projects/avatar-content-type",

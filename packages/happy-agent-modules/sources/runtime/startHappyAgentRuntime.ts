@@ -393,9 +393,10 @@ export async function startHappyAgentRuntime(
         auto = autoModule;
 
         const permissions = new PermissionsModule(compute.computeModule, autoModule);
+        const abort = new AbortModule(compute.computeModule);
         const git = new GitModule(config);
-        const projects = new ProjectsModule(config, git);
-        const workspaces = new WorkspacesModule(config, projects, git);
+        const projects = new ProjectsModule(config, git, abort);
+        const workspaces = new WorkspacesModule(config, projects, git, abort);
         const titles = new TitlesModule(config, history, workspaces);
         const terminals = new TerminalsModule(projects, workspaces);
         registerShutdown("terminals", async () => await terminals.close());
@@ -404,7 +405,6 @@ export async function startHappyAgentRuntime(
 
         const profile = new ProfileModule<LibSQLDatabase>();
         const murmur = new MurmurModule<LibSQLDatabase>(config, profile);
-        const abort = new AbortModule(compute.computeModule);
         const collaboration = new CollaborationModule(config, abort);
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);

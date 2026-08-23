@@ -6,9 +6,8 @@ import { createId } from "@paralleldrive/cuid2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
-import { projectMigrations, ProjectsModule } from "../../sources/projects/index.js";
+import { projectMigrations } from "../../sources/projects/index.js";
 import {
-    WorkspacesModule,
     workspaceMigrations,
     type CreateWorkspaceRequest,
     type Workspace,
@@ -25,6 +24,7 @@ import {
 } from "../git/helpers.js";
 import { testConfigRootedAt } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { workspacesCatalogFrom } from "../support/workspacesModule.js";
 
 afterEach(cleanupRoots);
 
@@ -477,13 +477,13 @@ async function createWorld(name: string, toml?: string) {
     const root = await createRoot(`happy-${name}-`);
     const config = await testConfigRootedAt(root, toml);
     const gitModule = GitModule.withRunner(gitRunner);
-    const projects = new ProjectsModule(config, gitModule);
-    const workspaces = new WorkspacesModule(config, projects, gitModule);
+    const { projects, start, workspaces } = workspacesCatalogFrom(config, gitModule);
     const database = moduleDatabase(
         [...projectMigrations, ...workspaceMigrations],
         `${name}-database`,
     );
     await database.ready;
+    start(database.context);
     return {
         config,
         git: gitModule,

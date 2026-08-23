@@ -840,12 +840,18 @@ export class HappyModule
             permissionMode: request.permissionMode,
             providerId: request.providerId,
         });
-        await system.create(ctx, agentConfigFor(cwd, selection), { id: request.sessionId });
-        if (owner.workspace === undefined) {
-            await this.#projects.attachAgent(ctx, owner.project.id, request.sessionId);
-        } else {
-            await this.#workspaces.attachAgent(ctx, owner.workspace.id, request.sessionId);
-        }
+        // Creating the agent and placing it in its folder are one decision. The catalog refuses a
+        // folder that is being archived, and this is the retry key's only durable record, so a
+        // refusal must leave no agent behind: an existing configuration is what a later retry reads
+        // to decide the session is already made.
+        await ctx.inTx(async (txCtx) => {
+            await system.create(txCtx, agentConfigFor(cwd, selection), { id: request.sessionId });
+            if (owner.workspace === undefined) {
+                await this.#projects.attachAgent(txCtx, owner.project.id, request.sessionId);
+            } else {
+                await this.#workspaces.attachAgent(txCtx, owner.workspace.id, request.sessionId);
+            }
+        });
         await this.#attach(ctx, request.sessionId);
         return { agentId: request.sessionId };
     }

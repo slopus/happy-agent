@@ -16,6 +16,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import {
+    afterCommit,
     detach,
     mapAsyncLock,
     type Context,
@@ -23,6 +24,7 @@ import {
     type RootContext,
 } from "@steve.kite/stdlib";
 
+import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
 import {
     GitModule,
@@ -74,6 +76,7 @@ import {
     type ProjectCreatorProfile,
     type RegisterProjectRequest,
 } from "./ProjectProvisioning.js";
+import { ProjectLifecycleError } from "./ProjectLifecycleError.js";
 import { ProjectRegistrationError } from "./ProjectRegistrationError.js";
 import { findHostingAvatar, findRepositoryAvatar } from "./impl/findProjectAvatar.js";
 import { normalizeProjectAvatar } from "./impl/normalizeProjectAvatar.js";
@@ -177,13 +180,15 @@ const PROJECT_STATE_FIELDS = [
  * and the background setup that carries a new project through to a usable one.
  *
  * It takes configuration, because configuration owns the paths and the credentials this
- * installation runs against, and it takes Git, because Git is what clones a repository and reads a
- * folder. Everything else it does itself.
+ * installation runs against; it takes Git, because Git is what clones a repository and reads a
+ * folder; and it takes abort, because stopping an agent and everything below it is that module's.
+ * Everything else it does itself.
  */
 export class ProjectsModule implements AgentModule {
     readonly name = "projects";
     readonly migrations = projectMigrations;
 
+    readonly #abort: AbortModule;
     readonly #config: ConfigModule;
     readonly #git: GitModule;
     readonly #store: ProjectStore;
@@ -209,7 +214,13 @@ export class ProjectsModule implements AgentModule {
     /** This machine, as the installation that built the catalog named it. */
     #localInstanceId: string | undefined;
 
-    constructor(config: ConfigModule, git: GitModule) {
+    /**
+     * @param abort How the work in a project is stopped. Archiving a project is the moment its
+     * folders stop being anybody's, so the decision cancels the root agents attached to it rather
+     * than leaving them running in a checkout that is about to be removed.
+     */
+    constructor(config: ConfigModule, git: GitModule, abort: AbortModule) {
+        this.#abort = abort;
         this.#config = config;
         this.#git = git;
         this.#store = createProjectStore();
@@ -329,6 +340,16 @@ export class ProjectsModule implements AgentModule {
                     async (lockCtx) =>
                         await lockCtx.inTx(async (txCtx) => {
                             const before = await this.#mutations.getRequired(txCtx, projectId);
+                            // Archiving cancels the root agents it can see, in its own transaction.
+                            // An attachment that commits after that one would leave an agent
+                            // running in a project the decision has already scanned past. Reading
+                            // the status inside this transaction makes the database settle the
+                            // order: whichever commits second sees the first and loses.
+                            if (before.status === "archived") {
+                                throw new ProjectLifecycleError(
+                                    `Project "${projectId}" is archived, so no agent can be attached to it.`,
+                                );
+                            }
                             const association = await attachProjectRootAgent(txCtx, attachment);
                             if (association === undefined) return;
                             const after = await touchProject(
@@ -350,6 +371,18 @@ export class ProjectsModule implements AgentModule {
                         }),
                 ),
         );
+    }
+
+    /**
+     * Cancels every root agent of a project that is leaving the active catalog.
+     *
+     * Only the project's own attachments are named here. Each abort carries the whole subagent tree
+     * below it, so a helper spawned by a root agent stops with the agent that started it.
+     */
+    async #abortRootAgents(ctx: Context, projectId: string): Promise<void> {
+        for (const agentId of await this.listAgentIds(ctx, projectId)) {
+            await this.#abort.abort(ctx, agentId);
+        }
     }
 
     /** Root-agent IDs in durable attachment order, including agents archived by Agent Base. */
@@ -639,6 +672,18 @@ export class ProjectsModule implements AgentModule {
         return requireProjectFromResult(result);
     }
 
+    /**
+     * Archives a project, and with it every workspace cut from it.
+     *
+     * The decision also stops the work standing in the project. Its root agents — with the
+     * subagents and background processes below them — have their cancellation prepared in the
+     * transaction that records the archival, so an archival that succeeds has taken responsibility
+     * for that work, and preparation that fails leaves the project active rather than archived with
+     * work still going. The signal itself is released after the commit. The workspaces catalog
+     * prepares the agents of each workspace it archives in the same transaction, because a
+     * project's root agents and a workspace's agents are two separate attachments and neither
+     * catalog can see the other's.
+     */
     async archive(ctx: Context, projectId: string): Promise<Project> {
         this.#assertId(projectId);
         const result = await this.#mutations.run(ctx, {
@@ -649,19 +694,27 @@ export class ProjectsModule implements AgentModule {
                 project: after,
                 previousProject: requirePreviousProject(before),
             }),
-            run: async (txCtx) =>
-                await requirePromise(
+            run: async (txCtx, before) => {
+                const archived = await requirePromise(
                     this.#store.archive(txCtx, { projectId }),
                     "Project store archive",
-                ),
+                );
+                // Only the archival that actually happens stops anything. A repeat of an archive
+                // already made must not reach into agents that have since moved on.
+                if (before !== undefined && before.status !== "archived") {
+                    await this.#abortRootAgents(txCtx, projectId);
+                }
+                return archived;
+            },
         });
         const project = requireProjectFromResult(result);
         if (project.status !== "archived") {
             throw new Error("Project archival did not leave the project archived.");
         }
         // Nobody works in this project any more, so the credential it was cloned with stops being
-        // available to anything that still asks.
-        this.#git.revokeCredentials(projectId);
+        // available to anything that still asks. Revoking cannot be undone, so it waits until the
+        // archival the caller may still roll back is durable.
+        afterCommit(ctx, () => this.#git.revokeCredentials(projectId));
         return project;
     }
 

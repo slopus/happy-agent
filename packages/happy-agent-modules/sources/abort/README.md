@@ -40,6 +40,15 @@ its settlement to its creator; leaf-first cancellation ensures that report arriv
 creator's own abort and cannot reopen an ancestor that was already canceled.
 
 The traversal is breadth-first, rejects cycles or duplicate identities, and refuses a chain larger
-than `MAX_ABORT_CHAIN_AGENTS` rather than consuming unbounded memory. The module owns no tools,
-tables, migrations, events, or persistent state of its own; the one-shot notice belongs to
-Compute's shared Agent KV. API and collaboration modules call its public `abort` operation.
+than `MAX_ABORT_CHAIN_AGENTS` rather than consuming unbounded memory.
+
+Several aborts sharing one transaction cancel each identity once between them. Archiving a project
+is the case that needs it: the projects catalog cancels the project's own root agents and the
+workspaces catalog cancels each workspace's agents, in the same transaction, and a subagent can
+appear on both sides. Cancelling it twice would replace the notice it has already been left with a
+poorer one. The record of who a transaction has already reached lives exactly as long as that
+transaction, so a later one — including a retry of one that rolled back — starts from nothing.
+
+The module owns no tools, tables, migrations, events, or persistent state of its own; the one-shot
+notice belongs to Compute's shared Agent KV. API and collaboration modules call its public `abort`
+operation.

@@ -8,13 +8,14 @@ import {
 import { GitModule } from "../../sources/git/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { projectsModuleFor } from "../support/projectsModule.js";
 
 describe("project lifecycle event versions", () => {
     it("carries the exact preceding project through sequential updates", async () => {
         const database = moduleDatabase(projectMigrations, "project-event-version-chain");
         await database.ready;
         try {
-            const projects = new ProjectsModule(await temporaryTestConfig(), new GitModule());
+            const projects = projectsModuleFor(await temporaryTestConfig(), new GitModule());
             const events: ProjectEvent[] = [];
             projects.onEventTransactional((_ctx, event) => {
                 events.push(event);
@@ -64,7 +65,7 @@ describe("project lifecycle event versions", () => {
         await database.ready;
         try {
             const config = await temporaryTestConfig();
-            const projects = new ProjectsModule(config, new GitModule());
+            const projects = projectsModuleFor(config, new GitModule());
             projects.beforeStart(database.context, {
                 parentOf: async () => null,
             } as never);
@@ -105,7 +106,7 @@ describe("project lifecycle event versions", () => {
                 previousOrderKey: expect.any(String),
             });
 
-            const restarted = new ProjectsModule(config, new GitModule());
+            const restarted = projectsModuleFor(config, new GitModule());
             expect(await restarted.get(database.context, created.id)).toEqual(reordered);
             expect(await restarted.listAgentIds(database.context, created.id)).toEqual([
                 "agent-two",
@@ -120,7 +121,7 @@ describe("project lifecycle event versions", () => {
         const database = moduleDatabase(projectMigrations, "project-reorder-event-version-chain");
         await database.ready;
         try {
-            const projects = new ProjectsModule(await temporaryTestConfig(), new GitModule());
+            const projects = projectsModuleFor(await temporaryTestConfig(), new GitModule());
             const events: ProjectEvent[] = [];
             projects.onEventTransactional((_ctx, event) => {
                 events.push(event);

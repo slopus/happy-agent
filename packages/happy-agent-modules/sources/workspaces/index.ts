@@ -120,6 +120,7 @@ export {
 } from "./WorkspaceAgent.js";
 export { workspaceBranchName, workspaceNameKey, workspaceStorageKey } from "./WorkspaceIdentity.js";
 export { WorkspaceInputError } from "./WorkspaceInputError.js";
+export { WorkspaceLifecycleError } from "./WorkspaceLifecycleError.js";
 export {
     workspaceContextSchema,
     workspaceEventIdSchema,

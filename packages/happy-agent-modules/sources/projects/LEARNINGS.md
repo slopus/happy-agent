@@ -95,8 +95,9 @@ before background work writes.
 
 ## Construction names only module dependencies
 
-The catalog takes `ConfigModule` and `GitModule`, not an options object or loose collaborators.
-Configuration owns its durable paths and credentials; Git owns repository operations. The catalog
+The catalog takes `ConfigModule`, `GitModule`, and `AbortModule`, not an options object or loose
+collaborators. Configuration owns its durable paths and credentials; Git owns repository
+operations; abort owns stopping an agent and everything below it. The catalog
 mints IDs and timestamps itself, keeps page bounds as constants, and accepts event subscribers
 after construction through `onEventTransactional` and `onEvent`.
 

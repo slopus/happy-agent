@@ -21,9 +21,12 @@ import {
     type RootContext,
 } from "@steve.kite/stdlib";
 
+import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
 import { GitModule, type GitCredentialRef, type GitRepositoryFacts } from "../git/index.js";
 import { ProjectRegistrationError, ProjectsModule, type Project } from "../projects/index.js";
+
+import { WorkspaceLifecycleError } from "./WorkspaceLifecycleError.js";
 
 import { copyProjectFolder } from "./impl/copyProjectFolder.js";
 
@@ -193,6 +196,7 @@ export class WorkspacesModule implements AgentModule {
 
     // --- The catalog's own Git and filesystem work -------------------------------------------
 
+    readonly #abort: AbortModule;
     readonly #config: ConfigModule;
     readonly #git: GitModule;
     readonly #projects: ProjectsModule;
@@ -217,8 +221,17 @@ export class WorkspacesModule implements AgentModule {
      * project's repository, in a folder named after it, so the projects catalog owns the folder,
      * the credential, and the repository lock every Git call here goes through.
      * @param git Git itself.
+     * @param abort How work standing in a workspace is stopped. Archiving is the moment a folder
+     * stops being anybody's, so the decision cancels the agents working in it rather than leaving
+     * them running in a checkout that is about to be deleted.
      */
-    constructor(config: ConfigModule, projects: ProjectsModule, git: GitModule) {
+    constructor(
+        config: ConfigModule,
+        projects: ProjectsModule,
+        git: GitModule,
+        abort: AbortModule,
+    ) {
+        this.#abort = abort;
         this.#config = config;
         this.#git = git;
         this.#projects = projects;
@@ -268,8 +281,12 @@ export class WorkspacesModule implements AgentModule {
         },
     };
 
-    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+    readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
+        // The earliest root context the catalog is given, and the one its background work should
+        // run on. Taking it here rather than from the first caller keeps a transactional tool from
+        // pinning its own transaction facade as the catalog's database.
+        this.#pinBackgroundRoot(ctx);
         return this.#hooks;
     };
 
@@ -583,6 +600,14 @@ export class WorkspacesModule implements AgentModule {
     /**
      * Archives a workspace: the immediate, irreversible logical decision. It leaves the active
      * list at once and never comes back because cleanup went wrong.
+     *
+     * The decision also stops the work standing in the workspace. Its folder is about to be taken
+     * away, so every agent attached to it — with the subagents and background processes below
+     * them — has its cancellation prepared in the transaction that records the archival. An
+     * archival that succeeds has therefore taken responsibility for the work in it: preparation
+     * that fails takes the archival down with it and leaves the workspace active. The signal
+     * itself is released after the commit, and attaching an agent to a workspace whose archival
+     * has committed is refused, so nothing new arrives behind the decision.
      */
     async beginArchive(
         ctx: Context,
@@ -598,8 +623,8 @@ export class WorkspacesModule implements AgentModule {
             "begin_archive",
             normalized.operationId,
             workspaceId,
-            async (txCtx, request) =>
-                await this.#store.beginArchive(
+            async (txCtx, request) => {
+                const result = await this.#store.beginArchive(
                     txCtx,
                     {
                         workspaceId,
@@ -608,7 +633,13 @@ export class WorkspacesModule implements AgentModule {
                             : { expectedVersion: normalized.expectedVersion }),
                     },
                     request,
-                ),
+                );
+                // Only the archival that actually happens stops anything. A repeat of an archive
+                // already made leaves the record alone, and must not reach into agents that have
+                // since moved on.
+                if (result.changed) await this.#abortWorkspaceAgents(txCtx, workspaceId);
+                return result;
+            },
             (before, after) => ({
                 type: "workspace_updated",
                 change: "begin_archive",
@@ -650,6 +681,11 @@ export class WorkspacesModule implements AgentModule {
      * before this call answers. Removing a worktree can take minutes and can fail, so it runs on
      * the module's cleanup lifetime instead of the caller's, and its outcome arrives later as the
      * `workspace_archived` event or as a logged failure. Archival never fails because cleanup did.
+     *
+     * Cleanup waits for the decision to become durable. A caller that already carries a transaction
+     * — the transactional `archive_workspace` tool — has not committed when the nested transaction
+     * below returns, and it can still roll back, so deleting the folder eagerly would destroy a
+     * checkout whose archival never happened.
      */
     async archive(
         ctx: Context,
@@ -684,13 +720,23 @@ export class WorkspacesModule implements AgentModule {
             rows.push(begun);
             return { begun, rows };
         });
-        for (const workspace of archived.rows) this.#stopSetup(workspace.id);
         const cleanup = archived.rows.filter((workspace) => workspace.status === "archiving");
-        if (cleanup.length === 0) return archived.begun;
-        this.#runCleanup(ctx, async (workerCtx) => {
-            for (const workspace of cleanup) {
-                await this.removeArchivedWorkspace(workerCtx, workspace.projectRef, workspace.id);
-            }
+        // Deleting a folder cannot be undone, so the removals wait for the archival the caller may
+        // still roll back to be durable. The lifetime they run on is derived here rather than in
+        // the callback: a context that carried the transaction cannot be read once it has ended.
+        const workerCtx = this.#backgroundLifetime("workspace-cleanup");
+        afterCommit(ctx, () => {
+            for (const workspace of archived.rows) this.#stopSetup(workspace.id);
+            if (cleanup.length === 0) return;
+            this.#runCleanup(workerCtx, async () => {
+                for (const workspace of cleanup) {
+                    await this.removeArchivedWorkspace(
+                        workerCtx,
+                        workspace.projectRef,
+                        workspace.id,
+                    );
+                }
+            });
         });
         return archived.begun;
     }
@@ -746,12 +792,18 @@ export class WorkspacesModule implements AgentModule {
     /**
      * Picks up whatever the last run left unfinished: workspaces still being created, and the file
      * replication watch for every workspace that is ready.
+     *
+     * This is also where the catalog's own background lifetime is taken. Opening happens once, from
+     * the root context, before anything can reach the catalog through a tool or a request — so the
+     * database that later folder removals write through is the root one, never a caller's
+     * transaction facade.
      */
     async open(ctx: Context): Promise<void> {
+        this.#pinBackgroundRoot(ctx);
         for (const workspace of await this.#allWorkspaces(ctx)) {
             if (workspace.status === "ready") this.#scheduleSync(ctx, workspace.projectRef);
         }
-        this.#runInBackground(ctx, "workspace-initialization", async (workerCtx) => {
+        this.#runInBackground("workspace-initialization", async (workerCtx) => {
             await this.reconcileInitializingWorkspaces(workerCtx);
         });
     }
@@ -918,14 +970,10 @@ export class WorkspacesModule implements AgentModule {
         );
         if (reserved.created) {
             const workspace = reserved.workspace;
-            afterCommit(ctx, (postCommitCtx) => {
-                this.#runInBackground(
-                    postCommitCtx,
-                    "workspace-initialization",
-                    async (workerCtx) => {
-                        await this.#initializeWorkspace(workerCtx, workspace);
-                    },
-                );
+            afterCommit(ctx, () => {
+                this.#runInBackground("workspace-initialization", async (workerCtx) => {
+                    await this.#initializeWorkspace(workerCtx, workspace);
+                });
             });
         }
         return reserved.workspace;
@@ -1380,7 +1428,7 @@ export class WorkspacesModule implements AgentModule {
     async #archiveProjectWorkspaces(ctx: Context, projectId: string): Promise<void> {
         if (!this.#enabled) return;
         const active = (await this.#allWorkspaces(ctx, projectId)).filter(
-            (workspace) => workspace.status !== "archived" && workspace.status !== "archiving",
+            (workspace) => !isArchivalDecided(workspace),
         );
         const withDepth = await Promise.all(
             active.map(async (workspace) => ({
@@ -1400,13 +1448,19 @@ export class WorkspacesModule implements AgentModule {
             .map(({ workspace }) => workspace);
         for (const workspace of workspaces) {
             await this.beginArchive(ctx, workspace.id);
-            this.#stopSetup(workspace.id);
         }
         if (workspaces.length === 0) return;
-        this.#runCleanup(ctx, async (workerCtx) => {
-            for (const workspace of workspaces) {
-                await this.removeArchivedWorkspace(workerCtx, projectId, workspace.id);
-            }
+        // This runs inside the project's archival transaction, which can still roll back. Stopping
+        // setup and deleting folders cannot be undone, so they wait for the decision to be durable.
+        // The lifetime they run on is derived while this context still carries a live transaction.
+        const workerCtx = this.#backgroundLifetime("workspace-cleanup");
+        afterCommit(ctx, () => {
+            for (const workspace of workspaces) this.#stopSetup(workspace.id);
+            this.#runCleanup(workerCtx, async () => {
+                for (const workspace of workspaces) {
+                    await this.removeArchivedWorkspace(workerCtx, projectId, workspace.id);
+                }
+            });
         });
     }
 
@@ -1414,6 +1468,20 @@ export class WorkspacesModule implements AgentModule {
         this.#setupControllers
             .get(workspaceId)
             ?.abort(new Error("Workspace setup stopped because the workspace was archived."));
+    }
+
+    /**
+     * Cancels every agent standing in a workspace that is leaving the active list.
+     *
+     * Only the agents attached to the workspace are named here. Each abort carries the whole
+     * subagent tree below it, so a hidden helper working in the same folder stops with the agent
+     * that started it, and a managed root belonging to another workspace stops without disturbing
+     * the parent that supervises it from elsewhere.
+     */
+    async #abortWorkspaceAgents(ctx: Context, workspaceId: string): Promise<void> {
+        for (const association of await readWorkspaceAgents(ctx.db, workspaceId)) {
+            await this.#abort.abort(ctx, association.agentId);
+        }
     }
 
     // --- File replication --------------------------------------------------------------------
@@ -1424,7 +1492,7 @@ export class WorkspacesModule implements AgentModule {
         clearTimeout(this.#syncTimers.get(projectId));
         const timer = setTimeout(() => {
             this.#syncTimers.delete(projectId);
-            this.#runInBackground(ctx, "workspace-sync", async (workerCtx) => {
+            this.#runInBackground("workspace-sync", async (workerCtx) => {
                 await this.#syncLocks.runInLock(workerCtx, projectId, async (lockedCtx) => {
                     await this.#runSyncPass(lockedCtx, projectId);
                 });
@@ -1600,23 +1668,38 @@ export class WorkspacesModule implements AgentModule {
      * transaction facade that has already committed — so the agent database is put back on it
      * deliberately, and nothing else about the request comes along.
      */
-    #backgroundLifetime(ctx: Context, name: string): Context {
+    #backgroundLifetime(name: string): Context {
+        const lifetime = this.#lifetime;
+        const storage = this.#storage;
+        if (lifetime === undefined || storage === undefined) {
+            throw new Error(
+                "The workspaces catalog was asked for background work before it was started.",
+            );
+        }
+        return withAgentDatabase(lifetime.named(name), storage);
+    }
+
+    /**
+     * Captures the lifetime and database the catalog's own background work runs on.
+     *
+     * This is taken at startup rather than from whoever happens to ask first, because a caller can
+     * be inside a transaction — archiving is reachable from a transactional tool — and that
+     * caller's `db` is the transaction's facade, which is dead by the time background work runs.
+     * Pinning the root here is what keeps a folder removal deferred to after the commit from
+     * writing through a transaction that has ended.
+     */
+    #pinBackgroundRoot(ctx: Context): void {
         this.#lifetime ??= detach(ctx);
         this.#storage ??= ctx.db;
-        return withAgentDatabase(this.#lifetime.named(name), this.#storage);
     }
 
     /**
      * Starts work that outlives whatever asked for it, on its own named lifetime. The caller's
      * context is deliberately not used: a background checkout must not end when a request does.
      */
-    #runInBackground(
-        ctx: Context,
-        name: string,
-        work: (workerCtx: Context) => Promise<void>,
-    ): void {
+    #runInBackground(name: string, work: (workerCtx: Context) => Promise<void>): void {
         if (this.#closed) return;
-        const task = work(this.#backgroundLifetime(ctx, name))
+        const task = work(this.#backgroundLifetime(name))
             .catch(() => undefined)
             .finally(() => {
                 this.#tasks.delete(task);
@@ -1831,6 +1914,17 @@ export class WorkspacesModule implements AgentModule {
                                 txCtx,
                                 input.workspaceId,
                             );
+                            // Archiving cancels the agents it can see, in its own transaction. An
+                            // attachment that commits after that one would put an agent in a folder
+                            // the decision has already scanned past, leaving it running in a
+                            // checkout about to be deleted with nothing left to stop it. Reading
+                            // the status inside this transaction makes the database settle the
+                            // order: whichever commits second sees the first and loses.
+                            if (isArchivalDecided(targetBefore)) {
+                                throw new WorkspaceLifecycleError(
+                                    `Workspace "${input.workspaceId}" is being archived, so no agent can be attached to it.`,
+                                );
+                            }
                             const current = await readWorkspaceAgent(txCtx.db, input.agentId);
                             if (current?.workspaceId === input.workspaceId) {
                                 return structuredClone(current);
@@ -2372,9 +2466,11 @@ export class WorkspacesModule implements AgentModule {
      * used: an archive that has already been committed must not be tied to the request that asked
      * for it, and a failure here cannot reach that caller as an error.
      */
-    #runCleanup(ctx: Context, work: (workerCtx: Context) => Promise<void>): void {
-        const task = work(this.#backgroundLifetime(ctx, "workspace-cleanup"))
-            .catch(() => undefined)
+    #runCleanup(workerCtx: Context, work: () => Promise<void>): void {
+        const task = work()
+            .catch((error: unknown) => {
+                workerCtx.log.error("A workspace folder could not be removed.", error);
+            })
             .finally(() => {
                 this.#cleanupTasks.delete(task);
             });
@@ -2440,6 +2536,11 @@ function requirePreviousWorkspace(workspace: Workspace | undefined): Workspace {
         throw new Error("A workspace update did not have a previous workspace.");
     }
     return workspace;
+}
+
+/** Whether the irreversible archival decision has already been made for a workspace. */
+function isArchivalDecided(workspace: Workspace): boolean {
+    return workspace.status === "archiving" || workspace.status === "archived";
 }
 
 /** Why a workspace cannot be worked in, said the way a person would say it. */

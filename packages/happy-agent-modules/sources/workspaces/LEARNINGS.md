@@ -2,6 +2,48 @@
 
 Feedback and decisions gathered while building this module.
 
+## Archiving stops the work, not just the record
+
+Archiving used to move the row out of the active list, cancel setup, and delete the folder while
+leaving the agents standing in it running. One of them kept working for twenty-five minutes after
+its worktree was deleted, then asked the person a question — and because its workspace was archived
+it was no longer listed anywhere, so the question could not be reached and never got an answer. The
+agent stayed in its durable tool stage, which meant every later daemon restart drained forever
+waiting for an agent nobody could see.
+
+Archival now prepares the cancellation of every agent attached to the workspace inside the
+transaction that records the decision, and each cancellation carries the subagent tree and
+background processes below it. Preparing it there is what ties the two together in the direction
+that matters: work that cannot be cancelled fails the archival, so a workspace is never archived
+while its agents were left alone. A repeat of an archive already made cancels nothing, so an
+idempotent retry cannot reach into agents that have since moved on.
+
+Be careful about how strongly this is stated. The cancellation is _prepared_ transactionally, not
+recorded durably: Agent Base registers an in-memory post-commit callback, and Compute persists a
+notice only when it already has processes to name. A crash between the commit and the signal can
+therefore leave an archived workspace whose agent was never told. Closing that gap needs a durable
+cancellation intent and startup reconciliation, which this change does not add — so the documents
+say _prepared in the transaction, signalled after commit_, and must not say "one durable fact".
+
+The other half is the arriving agent. Attaching to a workspace whose archival has committed is
+refused, because the decision has already scanned the attachments and would never see a later one.
+
+The archival of a _folder_ is still background cleanup that never rolls the decision back. Stopping
+the work is not cleanup; it is half of the decision itself.
+
+## Deferred work needs its lifetime taken before the transaction ends
+
+`archive_workspace` is a transactional tool, so archiving often runs inside a caller's transaction
+that may still roll back. Deleting a folder cannot be undone, so the removals moved behind
+`afterCommit`. Reaching for the module's background lifetime from inside that callback then failed:
+a post-commit callback still runs on the context that carried the transaction, and reading storage
+from an ended transaction throws. The failure was invisible from the outside, because it surfaced
+as a swallowed post-commit warning while the archival itself looked entirely successful.
+
+Derive the background lifetime while the caller's context is still live, then let the callback use
+only what it was handed. The rule generalizes: whatever an `afterCommit` callback needs from the
+transaction's context must be read before the callback is registered, never inside it.
+
 ## Setup failure does not erase a valid checkout
 
 Workspace setup commands run only after the worktree or copied folder exists. An install failure

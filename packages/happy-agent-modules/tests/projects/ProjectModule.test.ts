@@ -23,6 +23,7 @@ import {
 import { writeGuardedProject } from "../../sources/projects/store/projectRecords.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { projectsModuleFor } from "../support/projectsModule.js";
 
 /** Cross-workspace work is a feature a person turns on, so a test turns it on the same way. */
 const CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = true\n";
@@ -277,7 +278,7 @@ describe("ProjectsModule", () => {
             expect(reordered[0]?.orderKey).not.toBe(attached[1]?.orderKey);
             expect(reordered[1]?.orderKey).toBe(attached[0]?.orderKey);
 
-            const restarted = new ProjectsModule(await temporaryTestConfig(), new GitModule());
+            const restarted = projectsModuleFor(await temporaryTestConfig(), new GitModule());
             expect(await restarted.listAgents(database.context, first.id)).toEqual(reordered);
             expect(await projects.projectForAgent(database.context, "agent-a")).toMatchObject({
                 id: first.id,
@@ -680,7 +681,7 @@ describe("ProjectsModule", () => {
                     source: "user",
                 }),
             ).toBe(true);
-            const projects = new ProjectsModule(config, new GitModule());
+            const projects = projectsModuleFor(config, new GitModule());
             const created = await projects.create(database.context, {
                 repositoryRef: "/tmp/projects/avatar",
                 name: "Avatar",
@@ -943,7 +944,7 @@ describe("ProjectsModule", () => {
  * on them.
  */
 async function projectsModule(toml?: string): Promise<ProjectsModule> {
-    return new ProjectsModule(await temporaryTestConfig(toml), new GitModule());
+    return projectsModuleFor(await temporaryTestConfig(toml), new GitModule());
 }
 
 async function migratedProjectDatabase(name: string) {

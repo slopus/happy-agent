@@ -197,7 +197,7 @@ describe("WorkspacesModule", () => {
     });
 
     it("durably places agents in a workspace and keeps their manual order", async () => {
-        const { config, git, projects, workspaces } = await temporaryWorkspacesCatalog();
+        const { abort, config, git, projects, workspaces } = await temporaryWorkspacesCatalog();
         const events: string[] = [];
         const unsubscribe = workspaces.onEventTransactional((_ctx, event) => {
             events.push(event.type);
@@ -238,7 +238,7 @@ describe("WorkspacesModule", () => {
             expect(reordered[0]?.orderKey).not.toBe(attached[2]?.orderKey);
             expect(reordered.slice(1)).toEqual(attached.slice(0, 2));
 
-            const restarted = new WorkspacesModule(config, projects, git);
+            const restarted = new WorkspacesModule(config, projects, git, abort);
             expect(await restarted.listAgents(database.context, "workspace-1")).toEqual(reordered);
 
             await expect(

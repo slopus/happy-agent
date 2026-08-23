@@ -1105,6 +1105,12 @@ Response — `202`: `{ "project": { ... } }` with `status` `"archived"`. The dec
 when the response is sent; removing the project's workspace folders and closing its terminals
 is background work.
 
+Archiving a project archives every workspace cut from it, in the same transaction, so the work
+standing in each of them stops exactly as it does for a workspace archived on its own. Agents
+attached to the project itself rather than to one of its workspaces are cancelled the same way,
+and no new agent can be attached to an archived project; an attachment in flight is refused with
+`409`. Archiving a project that is already archived changes nothing and stops nothing.
+
 ### `GET /v0/projects/:projectId/avatar`
 
 Serves the project picture's image bytes. The response carries an `ETag` derived from the image
@@ -1280,6 +1286,16 @@ decision is durable when the response is sent; removing checkouts and closing te
 standing in them is background work. Whether the folder itself is kept follows the workspace
 configuration: worktrees are removed by default, plain copies are kept. The root workspace
 cannot be archived here — archive the project instead; trying is `409`.
+
+Archiving also stops the work standing in the workspace. Every agent in it is cancelled, together
+with the subagents and background processes below it. The cancellation is prepared inside the
+transaction that records the archival, so an archival that answers has always taken responsibility
+for the work in it: if the preparation fails, the archival fails with it and the workspace stays
+active. The signal itself is released once that decision is durable — a run learns it was cancelled
+after the commit, its background processes are killed, and an open question it was waiting on is
+canceled as that turn settles. No new agent can be attached to a workspace once its archival has
+committed; an attachment that was in flight is refused with `409`. Archiving a workspace that is
+already archived changes nothing and stops nothing.
 
 ### `POST /v0/workspaces/:workspaceId/reorder`
 

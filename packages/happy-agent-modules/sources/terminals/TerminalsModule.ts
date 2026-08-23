@@ -2,7 +2,7 @@ import type { Duplex } from "node:stream";
 
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
+import { detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
 
 import { createUuidV7Factory } from "../events/index.js";
 import { ProjectsModule } from "../projects/index.js";
@@ -50,6 +50,8 @@ export class TerminalsModule {
     readonly #projects: ProjectsModule;
     readonly #scopes = new Map<string, TerminalCollection>();
     readonly #workspaces: WorkspacesModule;
+    /** Closures started by an archival, so shutdown and tests can wait for them. */
+    readonly #closures = new Set<Promise<void>>();
     #closed = false;
     #processFactory: TerminalProcessFactory;
 
@@ -65,6 +67,59 @@ export class TerminalsModule {
         this.#projects = projects;
         this.#workspaces = workspaces;
         this.#processFactory = createHostTerminalProcessFactory();
+
+        // A terminal is a shell standing in a folder. Archiving is the decision that the folder is
+        // nobody's any more and is about to be deleted, so these collections end with it. Both
+        // catalogs own their own decision, so this module listens for it rather than asking them
+        // to know that terminals exist.
+        //
+        // Ending a shell means killing a process and waiting for it to be reaped, which the
+        // archival must not be held up by: archiving answers as soon as the decision is durable,
+        // and closing terminals is background work. So each closure is started here and tracked,
+        // never awaited by the catalog's post-commit publisher.
+        workspaces.onEvent((ctx, event) => {
+            if (event.type !== "workspace_updated" || event.change !== "begin_archive") return;
+            const closeCtx = detach(ctx).named("terminal-archive-closure");
+            this.#closeInBackground(
+                closeCtx,
+                this.closeScope(
+                    {
+                        projectId: event.workspace.projectRef,
+                        workspaceId: event.workspace.id,
+                    },
+                    closeCtx,
+                ),
+            );
+        });
+        projects.onEvent((ctx, event) => {
+            if (event.type !== "project_archived") return;
+            const closeCtx = detach(ctx).named("terminal-archive-closure");
+            this.#closeInBackground(closeCtx, this.closeProject(event.project.id, closeCtx));
+        });
+    }
+
+    /**
+     * Follows one archival's closure without letting it fail the archival or delay it.
+     *
+     * The decision is already durable by the time this runs, so a shell that will not die is
+     * something to report rather than a reason to keep the folder in the catalog.
+     */
+    #closeInBackground(ctx: Context, closing: Promise<void>): void {
+        const tracked = closing
+            .catch((error: unknown) => {
+                ctx.log.error("Terminals could not be closed after an archival.", error);
+            })
+            .finally(() => {
+                this.#closures.delete(tracked);
+            });
+        this.#closures.add(tracked);
+    }
+
+    /** Waits for closures an archival started, for shutdown and for tests. */
+    async whenClosuresSettle(): Promise<void> {
+        while (this.#closures.size > 0) {
+            await Promise.allSettled(this.#closures);
+        }
     }
 
     /**
@@ -182,25 +237,46 @@ export class TerminalsModule {
     /**
      * End every terminal on one folder.
      *
-     * Archiving a workspace removes the folder its terminals are standing in, so the host calls
-     * this as part of that decision rather than leaving shells in a directory that is gone.
+     * Archiving a workspace removes the folder its terminals are standing in, so this module runs
+     * it from that decision rather than leaving shells in a directory that is gone.
      */
-    async closeScope(scope: TerminalScope): Promise<void> {
+    async closeScope(scope: TerminalScope, ctx?: Context): Promise<void> {
         assertScope(scope);
-        const key = scopeKey(scope);
-        const collection = this.#scopes.get(key);
-        if (collection === undefined) return;
-        this.#scopes.delete(key);
-        await collection.dispose();
+        await this.#closeKey(scopeKey(scope), ctx);
     }
 
     /** End every terminal of a project, including those of its workspaces. */
-    async closeProject(projectId: string): Promise<void> {
-        const closing = [...this.#scopes.entries()].filter(
-            ([, collection]) => collection.projectId === projectId,
-        );
-        for (const [key] of closing) this.#scopes.delete(key);
-        await Promise.all(closing.map(async ([, collection]) => await collection.dispose()));
+    async closeProject(projectId: string, ctx?: Context): Promise<void> {
+        // Read the keys first, then take each scope's own lock. A collection installed by a create
+        // that is still holding its lock is caught by the archived-folder check that create makes
+        // once it has it, so nothing this scan misses can survive.
+        const keys = [...this.#scopes.entries()]
+            .filter(([, collection]) => collection.projectId === projectId)
+            .map(([key]) => key);
+        await Promise.all(keys.map(async (key) => await this.#closeKey(key, ctx)));
+    }
+
+    /**
+     * Ends one folder's collection under the lock that also guards creating it.
+     *
+     * Creation resolves its folder, then installs the collection under this lock. Closing takes
+     * the same lock, so a create that has begun either finishes before the close removes its
+     * collection — and its session is disposed with the rest — or installs into a collection this
+     * close has already marked disposed, which refuses it. Neither order leaves a live shell in an
+     * archived folder.
+     */
+    async #closeKey(key: string, ctx: Context | undefined): Promise<void> {
+        const close = async (): Promise<void> => {
+            const collection = this.#scopes.get(key);
+            if (collection === undefined) return;
+            this.#scopes.delete(key);
+            await collection.dispose();
+        };
+        if (ctx === undefined) {
+            await close();
+            return;
+        }
+        await this.#locks.runInLock(ctx, key, close);
     }
 
     /** Stop everything. Nothing opens after this. */
@@ -209,6 +285,9 @@ export class TerminalsModule {
         const collections = [...this.#scopes.values()];
         this.#scopes.clear();
         await Promise.all(collections.map(async (collection) => await collection.dispose()));
+        // A closure an archival started owns collections this one already took, so shutdown ends
+        // only once those have finished too.
+        await this.whenClosuresSettle();
     }
 
     /**
@@ -219,13 +298,19 @@ export class TerminalsModule {
      */
     async #collection(ctx: Context, scope: TerminalScope): Promise<TerminalCollection> {
         const key = scopeKey(scope);
-        const root = await this.#root(ctx, scope);
+        await this.#root(ctx, scope);
         return await this.#locks.runInLock(ctx, key, async () => {
             if (this.#closed) {
                 throw new TerminalError("unavailable", "The Happy agent is shutting down.");
             }
             const existing = this.#scopes.get(key);
             if (existing !== undefined) return existing;
+            // Ask the catalog again, under the lock, before installing the first collection for
+            // this folder. A closure scans for the collections to end and closes only what it
+            // finds, so a folder archived while the resolution above was in flight would be
+            // scanned before this collection existed and closed by nothing afterwards. Resolving
+            // once more here is what makes such a create lose that race rather than win it.
+            const root = await this.#root(ctx, scope);
             const created = new TerminalCollection({
                 nextVersion: this.#nextVersion,
                 onCreated: (terminal) => this.#emit({ terminal, type: "terminal_created" }),

@@ -1,9 +1,13 @@
+import type { Context } from "@steve.kite/stdlib";
+
+import type { AbortModule } from "../../sources/abort/index.js";
 import type { ConfigModule } from "../../sources/config/index.js";
 import { GitModule } from "../../sources/git/index.js";
-import { ProjectsModule } from "../../sources/projects/index.js";
+import type { ProjectsModule } from "../../sources/projects/index.js";
 import { WorkspacesModule } from "../../sources/workspaces/index.js";
 
 import { temporaryTestConfig, testConfigRootedAt } from "./configModule.js";
+import { projectsCatalogFor, type TestAgentCollection } from "./projectsModule.js";
 
 /**
  * The three modules a workspace test drives, built the way the composition root builds them.
@@ -14,21 +18,44 @@ import { temporaryTestConfig, testConfigRootedAt } from "./configModule.js";
  * repeating how the path was decided.
  */
 export interface WorkspacesCatalog {
+    readonly abort: AbortModule;
+    /** What the shared abort module was asked to cancel, in the order it was asked. */
+    readonly agents: TestAgentCollection;
     readonly config: ConfigModule;
     readonly git: GitModule;
     readonly projects: ProjectsModule;
+    /**
+     * Starts both catalogs from a root context, the way the composition root does.
+     *
+     * The workspaces catalog takes the lifetime and database its background work runs on at
+     * startup, and refuses background work when it was never started, so a world that creates or
+     * archives has to call this before it does.
+     */
+    readonly start: (ctx: Context) => void;
     readonly workspaces: WorkspacesModule;
     readonly workspacesDirectory: string;
 }
 
-export function workspacesCatalogFrom(config: ConfigModule): WorkspacesCatalog {
-    const git = new GitModule();
-    const projects = new ProjectsModule(config, git);
+export function workspacesCatalogFrom(
+    config: ConfigModule,
+    git: GitModule = new GitModule(),
+): WorkspacesCatalog {
+    // One abort module across both catalogs, exactly as production wires it. With two, each
+    // catalog would cancel into an instance the other cannot see, and a test could pass while
+    // the arrangement it claims to mirror was never built.
+    const { abort, agents, projects } = projectsCatalogFor(config, git);
+    const workspaces = new WorkspacesModule(config, projects, git, abort);
     return {
+        abort,
+        agents,
         config,
         git,
         projects,
-        workspaces: new WorkspacesModule(config, projects, git),
+        start: (ctx: Context) => {
+            projects.beforeStart(ctx, agents.asRef());
+            workspaces.beforeStart(ctx, agents.asRef());
+        },
+        workspaces,
         workspacesDirectory: git.normalizeFuturePath(config.workspacesHome),
     };
 }

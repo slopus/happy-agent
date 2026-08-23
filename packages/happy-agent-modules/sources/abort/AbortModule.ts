@@ -12,11 +12,15 @@ export const MAX_ABORT_CHAIN_AGENTS = 10_000;
  * The module reads one stable ancestry snapshot and registers every abort on the same transaction.
  * A traversal or resolution failure therefore releases no aborts, while commit immediately
  * signals the whole chain from its leaves to its root. It never waits for any run, provider,
- * tool, or descendant to settle.
+ * tool, or descendant to settle. Several aborts sharing one transaction — the way archiving a
+ * project cancels its root agents and each of its workspaces' agents — cancel each identity once
+ * between them.
  */
 export class AbortModule implements AgentModule {
     readonly name = "abort";
     readonly #compute: ComputeModule;
+    /** Who each open transaction has already cancelled, so one transaction signals nobody twice. */
+    readonly #signalled = new WeakMap<object, Set<string>>();
 
     #agents: AgentSystemRef | undefined;
 
@@ -32,7 +36,15 @@ export class AbortModule implements AgentModule {
             // A descendant can report its settlement to its parent. Release leaf cancellations
             // first so those reports arrive before the ancestor's cancellation and cannot reopen
             // an ancestor that was already signalled.
-            const leafFirst = [...chain].reverse();
+            const alreadySignalled = this.#signalledIn(txCtx);
+            // One transaction can reach the same identity twice — a subagent standing in a
+            // workspace being archived that also hangs below the root agent of the project the
+            // workspace was cut from. Cancelling it once is the whole decision; repeating it would
+            // overwrite the notice it has already been left with a poorer one.
+            const leafFirst = [...chain]
+                .reverse()
+                .filter((targetAgentId) => !alreadySignalled.has(targetAgentId));
+            for (const targetAgentId of leafFirst) alreadySignalled.add(targetAgentId);
             for (const targetAgentId of leafFirst) {
                 await this.#compute.recordAbortNotice(txCtx, targetAgentId);
                 await agents.abort(txCtx, targetAgentId);
@@ -67,6 +79,20 @@ export class AbortModule implements AgentModule {
         this.#agents = agents;
         return {};
     };
+
+    /**
+     * The identities this context's transaction has already cancelled. The transaction's own
+     * database facade is the key, so the set lives exactly as long as the transaction does and a
+     * later transaction — including a retry of one that rolled back — starts from nothing.
+     */
+    #signalledIn(txCtx: Context): Set<string> {
+        const transaction: object = txCtx.db;
+        const existing = this.#signalled.get(transaction);
+        if (existing !== undefined) return existing;
+        const created = new Set<string>();
+        this.#signalled.set(transaction, created);
+        return created;
+    }
 
     #requireAgents(): AgentSystemRef {
         const agents = this.#agents;

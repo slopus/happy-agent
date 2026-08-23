@@ -25,6 +25,7 @@ import {
 } from "../../sources/projects/ProjectMigrations.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { projectsModuleFor } from "../support/projectsModule.js";
 
 describe("ProjectsModule edge cases", () => {
     it("preserves the documented singleton home-project invariant", async () => {
@@ -502,7 +503,7 @@ describe("ProjectsModule edge cases", () => {
  * asserts on them.
  */
 async function projectsModule(toml?: string): Promise<ProjectsModule> {
-    return new ProjectsModule(await temporaryTestConfig(toml), new GitModule());
+    return projectsModuleFor(await temporaryTestConfig(toml), new GitModule());
 }
 
 async function migratedProjectDatabase(name: string) {

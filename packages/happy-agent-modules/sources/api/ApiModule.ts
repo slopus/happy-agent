@@ -67,6 +67,7 @@ import {
 import {
     ProjectRegistrationError,
     ProjectAvatarInputError,
+    ProjectLifecycleError,
     ProjectsModule,
     type Project,
     type ProjectEvent,
@@ -95,6 +96,7 @@ import { UsageModule, type UsageCurrentContext } from "../usage/index.js";
 import { UserInputModule, type UserInputEvent } from "../userInput/index.js";
 import {
     WorkspaceInputError,
+    WorkspaceLifecycleError,
     WorkspacesModule,
     type Workspace,
     type WorkspaceEvent,
@@ -3614,6 +3616,11 @@ export class ApiModule implements AgentModule {
     }> {
         const project = await this.#projects.get(ctx, workspaceId);
         if (project !== undefined) {
+            // A root workspace is its project, and an archived project's folder is on its way out.
+            // The child branch below refuses a workspace that is not ready for the same reason.
+            if (project.status !== "active") {
+                throw new ApiError(409, "conflict", "The workspace is not available.");
+            }
             return {
                 projectId: project.id,
                 root: project.repositoryRef,
@@ -4308,6 +4315,16 @@ export class ApiModule implements AgentModule {
             sendJson(response, 400, {
                 error: error.message,
                 code: "invalid_request",
+            });
+            return;
+        }
+        // A folder archived while this request was in flight. The request was legitimate when it
+        // arrived and the caller simply lost the race, so it reads as a conflict rather than a
+        // daemon fault the person can do nothing about.
+        if (error instanceof ProjectLifecycleError || error instanceof WorkspaceLifecycleError) {
+            sendJson(response, 409, {
+                error: error.message,
+                code: "conflict",
             });
             return;
         }

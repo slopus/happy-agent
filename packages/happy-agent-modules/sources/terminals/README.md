@@ -33,6 +33,16 @@ agent calls, and everything below is a host operation.
 A scope is `{ projectId }` or `{ projectId, workspaceId }`. A project and its workspaces are
 separate collections, because they are separate folders.
 
+The module subscribes to both catalogs when it is built. Archiving a workspace ends that
+workspace's collection and archiving a project ends every collection under it, so a shell is never
+left standing in a folder that is about to be deleted. Neither catalog knows terminals exist.
+
+The closing runs behind the archival rather than inside it: an archive answers as soon as its
+decision is durable, and the shells die on their own lifetime, which is why `close()` waits for
+those closures to settle before it returns. A folder being closed stops accepting terminals the
+moment its closure starts, so a `create` racing an archive is refused instead of opening a shell in
+a folder that is going away.
+
 ## What it depends on
 
 The two catalogs that own the folders, given directly:
@@ -52,6 +62,8 @@ option for it, because nothing in the product supplies one.
 
 ```ts
 import {
+    AbortModule,
+    ComputeModule,
     ConfigModule,
     GitModule,
     ProjectsModule,
@@ -61,10 +73,14 @@ import {
 
 const config = await ConfigModule.load();
 const git = new GitModule();
-const projects = new ProjectsModule(config, git);
-const workspaces = new WorkspacesModule(config, projects, git);
+const abort = new AbortModule(new ComputeModule(config));
+const projects = new ProjectsModule(config, git, abort);
+const workspaces = new WorkspacesModule(config, projects, git, abort);
 const terminals = new TerminalsModule(projects, workspaces);
 ```
+
+Every module here — including the compute beneath abort — is installed on the agent. A catalog
+whose abort module was never started refuses to archive rather than leaving live work behind.
 
 ## Bounds
 

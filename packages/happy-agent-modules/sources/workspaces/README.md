@@ -16,6 +16,8 @@ crashed creation recoverable rather than a half-made worktree nobody recorded.
 ```ts
 import { Agent } from "@slopus/happy-agent-base";
 import {
+    AbortModule,
+    ComputeModule,
     ConfigModule,
     GitModule,
     ProjectsModule,
@@ -24,18 +26,28 @@ import {
 
 const config = await ConfigModule.load();
 const git = new GitModule();
-const projects = new ProjectsModule(config, git);
-const workspaces = new WorkspacesModule(config, projects, git);
-const agent = await Agent.create(ctx, { ...options, modules: [projects, workspaces] });
+const compute = new ComputeModule(config);
+const abort = new AbortModule(compute);
+const projects = new ProjectsModule(config, git, abort);
+const workspaces = new WorkspacesModule(config, projects, git, abort);
+const agent = await Agent.create(ctx, {
+    ...options,
+    modules: [compute, abort, projects, workspaces],
+});
 ```
 
-Three modules, and nothing else.
+Abort and the compute beneath it are installed on the agent like any other module. The abort module
+learns the agent collection from its `beforeStart` hook, so a catalog that asks it to cancel
+something before the agent has started throws rather than quietly archiving over live work.
+
+Four modules, and nothing else.
 
 | Module                                    | What it answers                                                                                                                                                                    |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`ConfigModule`](../config/README.md)     | Where managed workspace folders live, whether managed workspaces are on at all, and what a workspace folder does by default — setup commands, sync paths, what is kept on archive. |
 | [`ProjectsModule`](../projects/README.md) | The project's folder, its credential, its repository lock, and the vocabulary a workspace names things with.                                                                       |
 | [`GitModule`](../git/README.md)           | Worktrees, branches, clones, and every path Git is handed.                                                                                                                         |
+| [`AbortModule`](../abort/README.md)       | How the agents working in a folder are stopped, so archiving a workspace ends the work standing in it.                                                                             |
 
 The dependency on projects is one-way. A workspace is a branch of a project's repository, in a
 folder under that project's key, cut from the trunk that project decided on, and every worktree of

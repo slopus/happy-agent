@@ -4,7 +4,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
-import { projectMigrations, ProjectsModule } from "../../sources/projects/index.js";
+import { projectMigrations, type ProjectsModule } from "../../sources/projects/index.js";
 import {
     MAX_TERMINALS_PER_SCOPE,
     TerminalError,
@@ -14,9 +14,10 @@ import {
     type TerminalProcessFactory,
     type TerminalProcessOptions,
 } from "../../sources/terminals/index.js";
-import { workspaceMigrations, WorkspacesModule } from "../../sources/workspaces/index.js";
+import { workspaceMigrations, type WorkspacesModule } from "../../sources/workspaces/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { workspacesCatalogFrom } from "../support/workspacesModule.js";
 
 const opened: World[] = [];
 
@@ -233,6 +234,115 @@ describe("TerminalsModule", () => {
         expect(factory.processes[0]?.killed).toBe(true);
     });
 
+    it("ends a workspace's terminals when the workspace is archived", async () => {
+        const { ctx, factory, module, project, workspace, workspaces } = await createWorld(
+            "terminals-workspace-archived",
+        );
+        const workspaceScope = { projectId: project.id, workspaceId: workspace.id };
+        await module.create(ctx, { projectId: project.id }, {});
+        await module.create(ctx, workspaceScope, {});
+
+        await workspaces.beginArchive(ctx, workspace.id);
+        await module.whenClosuresSettle();
+
+        // The workspace folder is going away, so its shells go with it; the project's own folder
+        // is untouched and so is the terminal standing in it.
+        expect(factory.processes[1]?.killed).toBe(true);
+        expect(factory.processes[0]?.killed).toBe(false);
+    });
+
+    it("ends every terminal under a project when the project is archived", async () => {
+        const { ctx, factory, module, project, projects, workspace } = await createWorld(
+            "terminals-project-archived",
+        );
+        await module.create(ctx, { projectId: project.id }, {});
+        await module.create(ctx, { projectId: project.id, workspaceId: workspace.id }, {});
+
+        await projects.archive(ctx, project.id);
+        await module.whenClosuresSettle();
+
+        expect(factory.processes[0]?.killed).toBe(true);
+        expect(factory.processes[1]?.killed).toBe(true);
+    });
+
+    it("answers an archival while its shells are still being ended", async () => {
+        const { ctx, factory, module, project, workspace, workspaces } = await createWorld(
+            "terminals-archive-does-not-wait",
+        );
+        await module.create(ctx, { projectId: project.id, workspaceId: workspace.id }, {});
+        const process = factory.processes[0] as FakeProcess;
+        // A shell nothing can end, so its closure cannot finish without the timeout being waited
+        // out. Archiving must come back anyway.
+        process.ignoresKill = true;
+
+        vi.useFakeTimers();
+        try {
+            await workspaces.beginArchive(ctx, workspace.id);
+
+            // The decision is durable and the caller has it back, with the shell still being waited
+            // out: no timer had to fire for the archival to answer.
+            expect((await workspaces.get(ctx, workspace.id))?.status).toBe("archiving");
+            expect(process.killed).toBe(true);
+            await vi.advanceTimersByTimeAsync(2_000);
+        } finally {
+            vi.useRealTimers();
+        }
+        await module.whenClosuresSettle();
+    });
+
+    it("refuses a terminal that finishes opening after its folder was closed", async () => {
+        const { ctx, factory, module, project } = await createWorld("terminals-create-loses-race");
+        const scope = { projectId: project.id };
+        // The collection has to already exist, so that closing has something to take.
+        await module.create(ctx, scope, {});
+
+        const open = factory.hold();
+        const creating = module.create(ctx, scope, {});
+        while (factory.started.length < 2) await new Promise(setImmediate);
+        await module.closeScope(scope, ctx);
+        open();
+
+        await expect(creating).rejects.toBeInstanceOf(TerminalError);
+        // The shell that did start is not left standing in a folder nobody has any more.
+        expect(factory.processes[1]?.killed).toBe(true);
+        expect(await module.list(ctx, scope)).toEqual([]);
+    });
+
+    it("refuses the first terminal of a folder archived while it was resolving", async () => {
+        const { ctx, factory, module, project, workspace, workspaces } = await createWorld(
+            "terminals-first-create-loses-race",
+        );
+        const scope = { projectId: project.id, workspaceId: workspace.id };
+        // Nothing is open on this folder yet, so the closure the archival starts has no collection
+        // to find. This create must not be the thing that installs one behind it.
+        const ready = await workspaces.get(ctx, workspace.id);
+        const resolve = workspaces.get.bind(workspaces);
+
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let first = true;
+        vi.spyOn(workspaces, "get").mockImplementation(async (getCtx, workspaceId) => {
+            if (!first || workspaceId !== workspace.id) return await resolve(getCtx, workspaceId);
+            first = false;
+            await held;
+            // The answer this create started with: the workspace as it was before the archival.
+            return ready;
+        });
+
+        const creating = module.create(ctx, scope, {});
+        // Let the create reach its first resolution before the folder is taken away from it.
+        while (first) await new Promise(setImmediate);
+        await workspaces.beginArchive(ctx, workspace.id);
+        await module.whenClosuresSettle();
+        release();
+
+        await expect(creating).rejects.toBeInstanceOf(TerminalError);
+        // No shell was ever started in the folder that is about to be deleted.
+        expect(factory.started).toEqual([]);
+    });
+
     it("closes a terminal at once, without waiting on the process to agree", async () => {
         const { ctx, factory, module, project } = await createWorld("terminals-instant-stop");
         const scope = { projectId: project.id };
@@ -320,6 +430,9 @@ interface World {
     readonly otherProject: { readonly id: string };
     readonly module: TerminalsModule;
     readonly project: { readonly id: string; readonly repositoryRef: string };
+    /** The catalogs whose archival decisions this module follows. */
+    readonly projects: ProjectsModule;
+    readonly workspaces: WorkspacesModule;
     readonly workspace: { readonly id: string; readonly path: string };
     /**
      * Where this world's workspace folders live, as the catalog itself resolves it: configuration
@@ -347,8 +460,8 @@ async function createWorld(name: string): Promise<World> {
     const ctx = database.context;
     const config = await temporaryTestConfig();
     const git = new GitModule();
-    const projects = new ProjectsModule(config, git);
-    const workspaces = new WorkspacesModule(config, projects, git);
+    const { projects, start, workspaces } = workspacesCatalogFrom(config, git);
+    start(ctx);
 
     const project = await projects.create(ctx, {
         name: "Main",
@@ -388,7 +501,9 @@ async function createWorld(name: string): Promise<World> {
         module,
         otherProject,
         project,
+        projects,
         workspace,
+        workspaces,
         workspacesDirectory: git.normalizeFuturePath(config.workspacesHome),
     };
     opened.push(world);
@@ -446,9 +561,23 @@ class FakeProcess implements TerminalProcess {
 class FakeProcessFactory implements TerminalProcessFactory {
     readonly processes: FakeProcess[] = [];
     readonly started: TerminalProcessOptions[] = [];
+    #gate: Promise<void> | undefined;
+    #open: (() => void) | undefined;
+
+    /** Leave every start from here on in flight, returning the call that lets them through. */
+    hold(): () => void {
+        this.#gate = new Promise<void>((resolve) => {
+            this.#open = resolve;
+        });
+        return () => {
+            this.#gate = undefined;
+            this.#open?.();
+        };
+    }
 
     async start(options: TerminalProcessOptions): Promise<TerminalProcess> {
         this.started.push(options);
+        await this.#gate;
         const process = new FakeProcess();
         this.processes.push(process);
         return process;

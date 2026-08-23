@@ -170,6 +170,7 @@ export {
     type ProjectRegistrationErrorCode,
 } from "./ProjectRegistrationError.js";
 export { ProjectAvatarInputError } from "./ProjectAvatarInputError.js";
+export { ProjectLifecycleError } from "./ProjectLifecycleError.js";
 export {
     assertProjectPage,
     assertProjectStore,

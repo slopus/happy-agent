@@ -31,6 +31,8 @@ export class TerminalCollection {
     readonly #root: string;
     readonly #sessions = new Map<string, TerminalSession>();
     readonly #workspaceId: string;
+    /** Set by `dispose`: this folder is gone, and nothing opens in it again. */
+    #disposed = false;
 
     constructor(options: {
         readonly nextVersion: () => string;
@@ -50,7 +52,15 @@ export class TerminalCollection {
         this.#workspaceId = options.workspaceId;
     }
 
+    /** Whether this folder's collection has been ended and can never hold a terminal again. */
+    get disposed(): boolean {
+        return this.#disposed;
+    }
+
     async create(input: CreateTerminalInput): Promise<TerminalSession> {
+        if (this.#disposed) {
+            throw new TerminalError("conflict", "That folder is no longer available.");
+        }
         const cols = input.cols ?? DEFAULT_TERMINAL_COLS;
         const rows = input.rows ?? DEFAULT_TERMINAL_ROWS;
         const maxScrollback = input.maxScrollback ?? DEFAULT_TERMINAL_SCROLLBACK;
@@ -80,12 +90,20 @@ export class TerminalCollection {
             rows,
             workspaceId: this.#workspaceId,
         });
+        // Starting the process is asynchronous, so the folder may have been archived while this
+        // shell was coming up. A session that arrives after that ends here instead of joining a
+        // collection nobody holds any more and outliving the folder it stands in.
+        if (this.#disposed) {
+            await session.dispose();
+            throw new TerminalError("conflict", "That folder is no longer available.");
+        }
         this.#sessions.set(session.id, session);
         this.#onCreated(session.terminal());
         return session;
     }
 
     async dispose(): Promise<void> {
+        this.#disposed = true;
         const sessions = [...this.#sessions.values()];
         this.#sessions.clear();
         await Promise.all(sessions.map(async (session) => await session.dispose()));
