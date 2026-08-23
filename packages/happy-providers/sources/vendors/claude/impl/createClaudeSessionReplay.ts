@@ -22,6 +22,7 @@ import type {
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
+import { createProviderToolCallIdResolver, providerToolCallId } from "@/core/SessionToolCallId.js";
 
 /** A message Claude can replay, once system notices have been projected onto the user role. */
 type ReplayMessage = Exclude<SessionMessage, SessionSystemMessage | SessionAgentMessage>;
@@ -40,10 +41,11 @@ export function createClaudeSessionReplay(options: {
     sessionId: string;
 }): ClaudeSessionReplay {
     const messages = toReplayMessages(options.context.messages);
+    const resolveProviderCallId = createProviderToolCallIdResolver(options.context.messages);
     const splitIndex = findPromptStart(messages);
     const history = messages.slice(0, splitIndex);
     const promptMessages = messages.slice(splitIndex);
-    const entries = toSessionStoreEntries(history, options);
+    const entries = toSessionStoreEntries(history, options, resolveProviderCallId);
     let compactionSummary: string | undefined;
     const sessionStore: SessionStore = {
         append: (key, appendedEntries) => {
@@ -60,7 +62,7 @@ export function createClaudeSessionReplay(options: {
                 key.sessionId === options.sessionId && key.subpath === undefined ? entries : null,
             ),
     };
-    const message = toPromptMessage(promptMessages);
+    const message = toPromptMessage(promptMessages, resolveProviderCallId);
     return {
         compactionSummary: () => compactionSummary,
         entries: () => entries,
@@ -74,6 +76,7 @@ export function createClaudeLivePromptMessage(
     sessionMessages: readonly SessionMessage[],
 ): SDKUserMessage {
     const messages = toReplayMessages(sessionMessages);
+    const resolveProviderCallId = createProviderToolCallIdResolver(sessionMessages);
     let firstTrailingToolIndex = messages.length;
     while (firstTrailingToolIndex > 0 && messages[firstTrailingToolIndex - 1]?.role === "tool") {
         firstTrailingToolIndex -= 1;
@@ -82,6 +85,7 @@ export function createClaudeLivePromptMessage(
         firstTrailingToolIndex === messages.length
             ? messages.slice(-1)
             : messages.slice(firstTrailingToolIndex),
+        resolveProviderCallId,
     );
 }
 
@@ -105,7 +109,10 @@ function findPromptStart(messages: readonly ReplayMessage[]): number {
     return messages.length;
 }
 
-function toPromptMessage(messages: readonly ReplayMessage[]): SDKUserMessage {
+function toPromptMessage(
+    messages: readonly ReplayMessage[],
+    resolveProviderCallId: (callId: string) => string,
+): SDKUserMessage {
     const first = messages[0];
     if (first === undefined) {
         return toSdkUserMessage({
@@ -126,7 +133,7 @@ function toPromptMessage(messages: readonly ReplayMessage[]): SDKUserMessage {
                 if (message.role !== "tool") {
                     throw new Error("A Claude tool-result prompt may contain only tool results.");
                 }
-                return toToolResultBlock(message);
+                return toToolResultBlock(message, resolveProviderCallId);
             }),
         },
     };
@@ -135,6 +142,7 @@ function toPromptMessage(messages: readonly ReplayMessage[]): SDKUserMessage {
 function toSessionStoreEntries(
     messages: readonly ReplayMessage[],
     options: { model: string; sessionId: string },
+    resolveProviderCallId: (callId: string) => string,
 ): SessionStoreEntry[] {
     let parentUuid: string | null = null;
     const assistantUuidByToolCallId = new Map<string, string>();
@@ -190,11 +198,18 @@ function toSessionStoreEntries(
                 toolResults.push(messages[index + 1] as SessionToolResultMessage);
                 index += 1;
             }
-            const sourceToolAssistantUUID = assistantUuidByToolCallId.get(message.callId);
+            const sourceToolAssistantUUID = assistantUuidByToolCallId.get(
+                resolveProviderCallId(message.callId),
+            );
             entries.push({
                 ...base,
                 isMeta: true,
-                message: { role: "user", content: toolResults.map(toToolResultBlock) },
+                message: {
+                    role: "user",
+                    content: toolResults.map((result) =>
+                        toToolResultBlock(result, resolveProviderCallId),
+                    ),
+                },
                 ...(sourceToolAssistantUUID === undefined ? {} : { sourceToolAssistantUUID }),
                 type: "user",
             });
@@ -238,7 +253,7 @@ function toSdkAssistantMessage(message: SessionAssistantMessage, model: string, 
             return [
                 {
                     type: "tool_use" as const,
-                    id: block.callId,
+                    id: providerToolCallId(block),
                     name: block.name,
                     input: parseArguments(block.arguments),
                 },
@@ -283,10 +298,13 @@ function toThinkingBlock(
     ];
 }
 
-function toToolResultBlock(message: SessionToolResultMessage) {
+function toToolResultBlock(
+    message: SessionToolResultMessage,
+    resolveProviderCallId: (callId: string) => string,
+) {
     return {
         type: "tool_result" as const,
-        tool_use_id: message.callId,
+        tool_use_id: resolveProviderCallId(message.callId),
         content: toSdkContent(message.content),
         ...(message.isError === undefined ? {} : { is_error: message.isError }),
     };

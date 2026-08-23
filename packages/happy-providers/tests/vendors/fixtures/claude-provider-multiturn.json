@@ -33,7 +33,8 @@
                     "callId": "<TOOLU_ID>",
                     "name": "Read",
                     "vendor": {
-                        "type": "claude_tool_use"
+                        "type": "claude_tool_use",
+                        "providerCallId": "<TOOLU_ID>"
                     }
                 },
                 {
@@ -106,7 +107,8 @@
                     "name": "Read",
                     "arguments": "{\"file_path\": \"/virtual/provider-golden.txt\"}",
                     "vendor": {
-                        "type": "claude_tool_use"
+                        "type": "claude_tool_use",
+                        "providerCallId": "<TOOLU_ID>"
                     }
                 }
             ]

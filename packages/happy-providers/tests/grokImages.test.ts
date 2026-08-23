@@ -24,7 +24,11 @@ describe("Grok image input", () => {
                                 callId: "call-1",
                                 name: "read_file",
                                 arguments: "{}",
-                                vendor: { provider: "grok", type: "function_call" },
+                                vendor: {
+                                    provider: "grok",
+                                    type: "function_call",
+                                    providerCallId: "call-1",
+                                },
                             },
                         ].map((call) => ({
                             type: "tool_call" as const,

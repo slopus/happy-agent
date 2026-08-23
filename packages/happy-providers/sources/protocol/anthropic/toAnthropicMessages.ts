@@ -16,6 +16,7 @@ import type {
     SessionToolResultMessage,
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
+import { createProviderToolCallIdResolver, providerToolCallId } from "@/core/SessionToolCallId.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
 import { toAnthropicCompactionBlock } from "@/protocol/anthropic/toAnthropicCompactionBlock.js";
 import { toAnthropicToolName } from "@/protocol/anthropic/toAnthropicToolName.js";
@@ -25,6 +26,7 @@ export type AnthropicReasoningState =
     | { type: "redacted_thinking"; data: string };
 
 export function toAnthropicMessages(messages: readonly SessionMessage[]): BetaMessageParam[] {
+    const resolveProviderCallId = createProviderToolCallIdResolver(messages);
     const converted = messages.flatMap((message): BetaMessageParam[] => {
         if (message.role === "system" || message.role === "agent") {
             // Anthropic has no system role inside a conversation, so a notice keeps the position
@@ -42,9 +44,14 @@ export function toAnthropicMessages(messages: readonly SessionMessage[]): BetaMe
             return [{ role: "user", content: toInputContent(message.content) }];
         }
         if (message.role === "tool") {
-            return [{ role: "user", content: [toToolResult(message)] }];
+            return [{ role: "user", content: [toToolResult(message, resolveProviderCallId)] }];
         }
-        return [{ role: "assistant", content: toAssistantContent(message) }];
+        return [
+            {
+                role: "assistant",
+                content: toAssistantContent(message, resolveProviderCallId),
+            },
+        ];
     });
     const last = converted.at(-1);
     if (last !== undefined) last.content = addCacheBreakpoint(last.content);
@@ -76,11 +83,17 @@ function toInputBlock(block: SessionInputBlock): BetaContentBlockParam {
     };
 }
 
-function toAssistantContent(message: SessionAssistantMessage): BetaContentBlockParam[] {
-    return message.content.flatMap(toAssistantBlock);
+function toAssistantContent(
+    message: SessionAssistantMessage,
+    resolveProviderCallId: (callId: string) => string,
+): BetaContentBlockParam[] {
+    return message.content.flatMap((block) => toAssistantBlock(block, resolveProviderCallId));
 }
 
-function toAssistantBlock(block: SessionAssistantBlock): BetaContentBlockParam[] {
+function toAssistantBlock(
+    block: SessionAssistantBlock,
+    resolveProviderCallId: (callId: string) => string,
+): BetaContentBlockParam[] {
     if (block.type === "text") return [{ type: "text", text: block.text }];
     if (block.type === "reasoning") {
         if (block.reasoning === undefined) return [];
@@ -90,11 +103,13 @@ function toAssistantBlock(block: SessionAssistantBlock): BetaContentBlockParam[]
     }
     if (block.type === "tool_result") {
         const outputBlock = parseOutputBlock(block.vendor);
-        if (outputBlock !== undefined) return [outputBlock];
+        if (outputBlock !== undefined) {
+            return [withAnthropicToolUseId(outputBlock, resolveProviderCallId(block.callId))];
+        }
         return [
             {
                 type: "tool_result",
-                tool_use_id: block.callId,
+                tool_use_id: resolveProviderCallId(block.callId),
                 content: block.content.map(toToolResultContentBlock),
                 ...(block.isError === undefined ? {} : { is_error: block.isError }),
             },
@@ -103,7 +118,7 @@ function toAssistantBlock(block: SessionAssistantBlock): BetaContentBlockParam[]
     return [
         {
             type: "tool_use",
-            id: block.callId,
+            id: providerToolCallId(block),
             name: toAnthropicToolName(block),
             input: parseArguments(block.arguments),
         },
@@ -123,16 +138,26 @@ function parseOutputBlock(vendor: unknown): BetaContentBlockParam | undefined {
     }
 }
 
-function toToolResult(message: SessionToolResultMessage): BetaContentBlockParam {
+function toToolResult(
+    message: SessionToolResultMessage,
+    resolveProviderCallId: (callId: string) => string,
+): BetaContentBlockParam {
     return {
         type: "tool_result",
-        tool_use_id: message.callId,
+        tool_use_id: resolveProviderCallId(message.callId),
         content:
             message.content.length === 1 && message.content[0]?.type === "text"
                 ? message.content[0].text
                 : message.content.map(toToolResultContentBlock),
         ...(message.isError === undefined ? {} : { is_error: message.isError }),
     };
+}
+
+function withAnthropicToolUseId(
+    block: BetaContentBlockParam,
+    providerCallId: string,
+): BetaContentBlockParam {
+    return "tool_use_id" in block ? { ...block, tool_use_id: providerCallId } : block;
 }
 
 function toToolResultContentBlock(

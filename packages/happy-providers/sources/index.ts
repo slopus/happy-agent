@@ -54,6 +54,13 @@ export type {
     SessionToolResultMessage,
     SessionUserMessage,
 } from "@/core/SessionContext.js";
+export {
+    createProviderToolCallIdResolver,
+    providerToolCallId,
+    toProviderToolResultMessage,
+    withProviderToolCallId,
+    type SessionToolCallVendor,
+} from "@/core/SessionToolCallId.js";
 export type { SessionModelConfiguration } from "@/core/SessionModelConfiguration.js";
 export type {
     SessionDoneState,

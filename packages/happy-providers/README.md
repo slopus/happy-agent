@@ -756,6 +756,7 @@ interface SessionReasoningBlock {
 
 interface SessionToolCallBlock {
     readonly type: "tool_call";
+    /** Stable caller-owned identity; Happy Agent Base uses a CUID2. */
     readonly callId: string;
     readonly name: string;
     readonly namespace?: string;
@@ -763,12 +764,13 @@ interface SessionToolCallBlock {
     readonly arguments: string;
     /** The provider stopped before this call became executable — do not run it. */
     readonly incomplete?: boolean;
-    /** Opaque provider metadata; echo it back on the tool result. */
-    readonly vendor?: any;
+    /** Opaque replay data and the only retained copy of the provider-native identity. */
+    readonly vendor: { readonly providerCallId: string; readonly [key: string]: unknown };
 }
 ```
 
-Your answer to a tool call, tied back by `callId`:
+Your answer to a tool call, tied back by the same caller-owned `callId`. Do not copy the provider
+identity onto the result; the provider looks it up from the earlier tool-call block when replaying:
 
 ```ts
 interface SessionToolResultMessage {
@@ -777,7 +779,7 @@ interface SessionToolResultMessage {
     readonly content: readonly SessionOutputBlock[];
     /** Whether the caller reported that the tool invocation failed. */
     readonly isError?: boolean;
-    /** The opaque metadata that arrived with the call, echoed back. */
+    /** Optional opaque result metadata; never a duplicate provider call identity. */
     readonly vendor?: any;
 }
 ```

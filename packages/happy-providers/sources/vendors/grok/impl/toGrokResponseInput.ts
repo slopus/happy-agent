@@ -7,6 +7,7 @@ import type {
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
+import { createProviderToolCallIdResolver, providerToolCallId } from "@/core/SessionToolCallId.js";
 import type { GrokToolVendor } from "@/vendors/grok/GrokToolVendor.js";
 import { toGrokInputContent } from "@/vendors/grok/impl/toGrokInputContent.js";
 
@@ -16,6 +17,7 @@ export function toGrokResponseInput(context: SessionContext): ResponseInput {
     ];
     const customToolCallIds = new Set<string>();
     const toolSearchCallIds = new Set<string>();
+    const resolveProviderCallId = createProviderToolCallIdResolver(context.messages);
     for (const original of context.messages) {
         // xAI has no in-conversation system role, so a notice — including the one that carries a
         // message from another agent — reaches the model as a `<system-reminder>` user turn.
@@ -40,10 +42,11 @@ export function toGrokResponseInput(context: SessionContext): ResponseInput {
         }
         if (message.role === "compaction") continue;
         if (message.role === "tool") {
-            if (toolSearchCallIds.has(message.callId)) {
+            const providerCallId = resolveProviderCallId(message.callId);
+            if (toolSearchCallIds.has(providerCallId)) {
                 input.push({
                     type: "tool_search_output",
-                    call_id: message.callId,
+                    call_id: providerCallId,
                     execution: "client",
                     status: "completed",
                     tools: parseToolSearchTools(message.content),
@@ -52,11 +55,11 @@ export function toGrokResponseInput(context: SessionContext): ResponseInput {
             }
             input.push({
                 type:
-                    customToolCallIds.has(message.callId) ||
+                    customToolCallIds.has(providerCallId) ||
                     toolVendorType(message.vendor) === "custom_tool_call"
                         ? "custom_tool_call_output"
                         : "function_call_output",
-                call_id: message.callId,
+                call_id: providerCallId,
                 output: toGrokInputContent(message.content),
             } as ResponseInputItem);
             continue;
@@ -65,8 +68,18 @@ export function toGrokResponseInput(context: SessionContext): ResponseInput {
         for (const block of message.content) {
             const native = nativeOutputItem(block);
             if (native !== undefined) {
-                input.push(native);
-                rememberNativeCall(native, customToolCallIds, toolSearchCallIds);
+                const providerCallId =
+                    block.type === "tool_call"
+                        ? providerToolCallId(block)
+                        : block.type === "tool_result"
+                          ? resolveProviderCallId(block.callId)
+                          : undefined;
+                const replay =
+                    providerCallId === undefined
+                        ? native
+                        : withNativeCallId(native, providerCallId);
+                input.push(replay);
+                rememberNativeCall(replay, customToolCallIds, toolSearchCallIds);
                 continue;
             }
             if (block.type === "reasoning") {
@@ -88,31 +101,32 @@ export function toGrokResponseInput(context: SessionContext): ResponseInput {
                 continue;
             }
             if (block.type === "tool_result") continue;
+            const providerCallId = providerToolCallId(block);
             const vendorType = toolVendorType(block.vendor);
             if (vendorType === "tool_search_call") {
                 try {
                     input.push({
                         type: "tool_search_call",
-                        call_id: block.callId,
+                        call_id: providerCallId,
                         execution: "client",
                         arguments: JSON.parse(block.arguments),
                     } as ResponseInputItem);
-                    toolSearchCallIds.add(block.callId);
+                    toolSearchCallIds.add(providerCallId);
                 } catch {
                     // Malformed optional tool-search state is omitted from replay.
                 }
             } else if (vendorType === "custom_tool_call") {
                 input.push({
                     type: "custom_tool_call",
-                    call_id: block.callId,
+                    call_id: providerCallId,
                     name: block.name,
                     input: block.arguments,
                 } as ResponseInputItem);
-                customToolCallIds.add(block.callId);
+                customToolCallIds.add(providerCallId);
             } else {
                 input.push({
                     type: "function_call",
-                    call_id: block.callId,
+                    call_id: providerCallId,
                     name: block.name,
                     arguments: block.arguments,
                 } as ResponseInputItem);
@@ -120,6 +134,12 @@ export function toGrokResponseInput(context: SessionContext): ResponseInput {
         }
     }
     return input;
+}
+
+function withNativeCallId(item: ResponseInputItem, callId: string): ResponseInputItem {
+    return "call_id" in item && typeof item.call_id === "string"
+        ? ({ ...item, call_id: callId } as ResponseInputItem)
+        : item;
 }
 
 function parseToolSearchTools(content: readonly SessionOutputBlock[]): readonly unknown[] {

@@ -90,7 +90,7 @@ describe("assistantMessageFromEvents", () => {
                     callId: "call-1",
                     name: "read",
                     arguments: '{"path":"x"}',
-                    vendor: { provider: "test" },
+                    vendor: { provider: "test", providerCallId: "call-1" },
                 },
             ],
         });

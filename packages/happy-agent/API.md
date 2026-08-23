@@ -1919,7 +1919,7 @@ recognize as this object grows.
 ```json
 {
     "type": "tool_call",
-    "id": "call-7",
+    "id": "tz4a98xxat96iws9zmbrgj3b",
     "name": "exec_command",
     "status": "completed",
     "arguments": { "cmd": "pnpm test" },
@@ -1939,9 +1939,14 @@ recognize as this object grows.
 }
 ```
 
-`id` is the provider's stable identity for this invocation and is identical in live updates and
-durable history. `status` is `"running"`, `"completed"`, or `"failed"`; `arguments` and `result`
-are the raw tool data; `presentation` is defined below.
+`id` is the CUID2 identity Happy Agent Base assigns when the invocation first starts. The same
+identity is used in every live update, permission decision, tool execution, result, and durable
+history projection, including for tools the provider executes on its own backend. Provider-native
+call identifiers are private replay state: they may be retained only inside the opaque `vendor`
+metadata of the corresponding provider-context tool-call block and never appear in this API.
+Clients treat `id` as opaque and use it only to correlate the invocation across lifecycle updates.
+`status` is `"running"`, `"completed"`, or `"failed"`; `arguments` and `result` are the raw tool
+data; `presentation` is defined below.
 
 - `compaction` — one complete context-compaction lifecycle, inside a `service` message:
 

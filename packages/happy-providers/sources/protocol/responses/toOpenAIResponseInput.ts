@@ -6,6 +6,7 @@ import type {
     SessionOutputBlock,
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
+import { createProviderToolCallIdResolver, providerToolCallId } from "@/core/SessionToolCallId.js";
 import { createCodexCallIdMapper } from "@/protocol/responses/createCodexCallIdMapper.js";
 import {
     toOpenAIInputContent,
@@ -18,6 +19,7 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
     const customToolCallIds = new Set<string>();
     const toolSearchCallIds = new Set<string>();
     const mapCallId = createCodexCallIdMapper();
+    const resolveProviderCallId = createProviderToolCallIdResolver(context.messages);
     let messageId = 0;
 
     for (const original of context.messages) {
@@ -49,7 +51,7 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
             continue;
         }
         if (message.role === "tool") {
-            const callId = mapCallId(message.callId);
+            const callId = mapCallId(resolveProviderCallId(message.callId));
             if (toolSearchCallIds.has(callId)) {
                 try {
                     const parsed: unknown = JSON.parse(textFromBlocks(message.content));
@@ -86,7 +88,17 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
         for (const block of message.content) {
             const native = nativeOutputItem(block);
             if (native !== undefined) {
-                input.push(mapNativeCallId(native, mapCallId));
+                const providerCallId =
+                    block.type === "tool_call"
+                        ? providerToolCallId(block)
+                        : block.type === "tool_result"
+                          ? resolveProviderCallId(block.callId)
+                          : undefined;
+                input.push(
+                    providerCallId === undefined
+                        ? native
+                        : withNativeCallId(native, mapCallId(providerCallId)),
+                );
                 continue;
             }
             if (block.type === "reasoning") {
@@ -111,7 +123,7 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
             }
             if (block.type === "tool_result") continue;
 
-            const callId = mapCallId(block.callId);
+            const callId = mapCallId(providerToolCallId(block));
             const vendorType = toolVendorType(block.vendor);
             if (vendorType === "tool_search_call") {
                 try {
@@ -174,12 +186,9 @@ function nativeOutputItem(block: SessionAssistantBlock): ResponseInputItem | und
     }
 }
 
-function mapNativeCallId(
-    item: ResponseInputItem,
-    mapCallId: (callId: string) => string,
-): ResponseInputItem {
+function withNativeCallId(item: ResponseInputItem, callId: string): ResponseInputItem {
     return "call_id" in item && typeof item.call_id === "string"
-        ? ({ ...item, call_id: mapCallId(item.call_id) } as ResponseInputItem)
+        ? ({ ...item, call_id: callId } as ResponseInputItem)
         : item;
 }
 

@@ -57,6 +57,7 @@ describe("Codex response items", () => {
                             arguments: "{}",
                             callId: overlongCallId,
                             name: "inspect",
+                            vendor: { providerCallId: overlongCallId },
                         },
                     ],
                 },
@@ -142,6 +143,10 @@ describe("Codex response items", () => {
                             ...result.toolCalls.map((call) => ({
                                 type: "tool_call" as const,
                                 ...call,
+                                vendor: {
+                                    ...call.vendor,
+                                    providerCallId: call.callId,
+                                },
                             })),
                         ],
                     },
@@ -269,6 +274,7 @@ describe("Codex response items", () => {
                                 callId: "call-1",
                                 name: "Read",
                                 arguments: '{"file_path":"/tmp/input"}',
+                                vendor: { providerCallId: "call-1" },
                             },
                         ],
                     },
@@ -393,6 +399,7 @@ describe("Codex response items", () => {
                                     vendor: {
                                         provider: "codex",
                                         type: "function_call",
+                                        providerCallId: "ordinary-search",
                                     },
                                 },
                             ].map((call) => ({
@@ -606,6 +613,7 @@ describe("Codex response items", () => {
                                         provider: "codex",
                                         type: "tool_search_call",
                                         execution: "client",
+                                        providerCallId: "search-call",
                                     },
                                     arguments: '{"query":"tools"}',
                                 },
@@ -659,6 +667,7 @@ describe("Codex response items", () => {
                                 vendor: {
                                     provider: "grok",
                                     type: "custom_tool_call",
+                                    providerCallId: "grok-call",
                                 },
                             },
                         ].map((call) => ({
@@ -707,6 +716,7 @@ describe("Codex response items", () => {
                                     vendor: {
                                         provider: "codex",
                                         type: "custom_tool_call",
+                                        providerCallId: "codex-call",
                                     },
                                 },
                             ].map((call) => ({

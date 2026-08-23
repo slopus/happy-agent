@@ -25,7 +25,11 @@ describe("Codex image input", () => {
                                     callId: "image-call",
                                     name: "view_image",
                                     arguments: "{}",
-                                    vendor: { provider: "codex", type: "function_call" },
+                                    vendor: {
+                                        provider: "codex",
+                                        type: "function_call",
+                                        providerCallId: "image-call",
+                                    },
                                 },
                             ].map((call) => ({
                                 type: "tool_call" as const,

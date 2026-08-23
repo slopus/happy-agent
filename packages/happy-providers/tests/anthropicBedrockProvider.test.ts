@@ -786,7 +786,10 @@ describe("AnthropicBedrockProvider", () => {
                             name: "Read",
                             namespace: "files",
                             arguments: '{"file_path":"/tmp/image.png"}',
-                            vendor: { type: "claude_tool_use" },
+                            vendor: {
+                                type: "claude_tool_use",
+                                providerCallId: "tool-1",
+                            },
                         },
                     ].map((call) => ({
                         type: "tool_call" as const,

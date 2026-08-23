@@ -1756,6 +1756,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
                                         vendor: {
                                             provider: "codex",
                                             type: "custom_tool_call",
+                                            providerCallId: "custom-call",
                                         },
                                     },
                                 ].map((call) => ({
@@ -1831,7 +1832,11 @@ describe("Codex CLI mode WebSocket goldens", () => {
                                     callId: "function-call",
                                     name: "exec_command",
                                     arguments: '{"cmd":"true"}',
-                                    vendor: { provider: "codex", type: "function_call" },
+                                    vendor: {
+                                        provider: "codex",
+                                        type: "function_call",
+                                        providerCallId: "function-call",
+                                    },
                                 },
                             ],
                         },
@@ -1875,7 +1880,11 @@ describe("Codex CLI mode WebSocket goldens", () => {
             callId: "custom-call",
             name: "exec",
             arguments: "text(true);",
-            vendor: { provider: "codex" as const, type: "custom_tool_call" as const },
+            vendor: {
+                provider: "codex" as const,
+                type: "custom_tool_call" as const,
+                providerCallId: "custom-call",
+            },
         };
         await drain(
             session.run(testContext, {
@@ -1951,6 +1960,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
                                 vendor: {
                                     provider: "codex",
                                     type: "custom_tool_call",
+                                    providerCallId: "custom-call",
                                 },
                             },
                         ],
@@ -2137,7 +2147,11 @@ describe("Codex CLI mode WebSocket goldens", () => {
             callId: "custom-call",
             name: "exec",
             arguments: "text(true);",
-            vendor: { provider: "codex" as const, type: "custom_tool_call" as const },
+            vendor: {
+                provider: "codex" as const,
+                type: "custom_tool_call" as const,
+                providerCallId: "custom-call",
+            },
         };
         await drain(
             session.run(testContext, {
@@ -2231,7 +2245,11 @@ describe("Codex CLI mode WebSocket goldens", () => {
                                 callId: "custom-call",
                                 name: "exec",
                                 arguments: "text(true);",
-                                vendor: { provider: "codex", type: "custom_tool_call" },
+                                vendor: {
+                                    provider: "codex",
+                                    type: "custom_tool_call",
+                                    providerCallId: "custom-call",
+                                },
                             },
                         ],
                     },
@@ -2450,12 +2468,17 @@ describe("Codex CLI mode WebSocket goldens", () => {
                     {
                         role: "assistant",
                         content: [
-                            ...[{ callId: "call-1", name: "shell", arguments: "{}" }].map(
-                                (call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                }),
-                            ),
+                            ...[
+                                {
+                                    callId: "call-1",
+                                    name: "shell",
+                                    arguments: "{}",
+                                    vendor: { providerCallId: "call-1" },
+                                },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         ],
                     },
                     {

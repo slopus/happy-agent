@@ -38,7 +38,11 @@ import {
     createClaudeSessionReplay,
     type ClaudeSessionReplay,
 } from "@/vendors/claude/impl/createClaudeSessionReplay.js";
-import { claudeMessageIdentity } from "@/vendors/claude/impl/claudeMessageIdentity.js";
+import { claudeConversationIdentity } from "@/vendors/claude/impl/claudeMessageIdentity.js";
+import {
+    createProviderToolCallIdResolver,
+    withProviderToolCallId,
+} from "@/core/SessionToolCallId.js";
 import { resolveClaudeLiveDelta } from "@/vendors/claude/impl/resolveClaudeLiveDelta.js";
 import {
     claudeSdkBuiltInToolNames,
@@ -359,10 +363,7 @@ export class ClaudeSession extends BaseSession {
                     // The query generated this turn, so it holds it even though no caller sent it.
                     // Leaving it out would let a later edit of this message look like an append.
                     if (this.sentConversation !== undefined) {
-                        this.sentConversation = [
-                            ...this.sentConversation,
-                            claudeMessageIdentity(assistantMessage),
-                        ];
+                        this.sentConversation = claudeConversationIdentity(this.context.messages);
                     }
                 }
             }
@@ -405,7 +406,8 @@ export class ClaudeSession extends BaseSession {
         // Subsumes the older tail check: the live MCP bridge can close a tool batch only while
         // its results remain at the context tail, and requiring the suffix to be exactly that
         // batch already refuses anything appended after it rather than stranding the open tool.
-        const incomingConversation = configuredContext.messages.map(claudeMessageIdentity);
+        const incomingConversation = claudeConversationIdentity(configuredContext.messages);
+        const resolveProviderCallId = createProviderToolCallIdResolver(configuredContext.messages);
         const delta =
             this.activeQuery === undefined ||
             this.activePromptQueue === undefined ||
@@ -415,6 +417,7 @@ export class ClaudeSession extends BaseSession {
                       incoming: incomingConversation,
                       messages: configuredContext.messages,
                       pendingToolCallIds: this.lastQueryToolCalls.map((call) => call.callId),
+                      resolveProviderCallId,
                       sent: this.sentConversation,
                   });
         const continuingQuery = delta.kind !== "restart";
@@ -647,7 +650,10 @@ export class ClaudeSession extends BaseSession {
                             callId: event.content_block.id,
                             name: event.content_block.name,
                             arguments: "",
-                            vendor: { type: "claude_tool_use" },
+                            vendor: withProviderToolCallId(
+                                { type: "claude_tool_use" },
+                                event.content_block.id,
+                            ),
                             ...(server ? { server: true as const } : {}),
                         });
                         yield {
@@ -655,7 +661,10 @@ export class ClaudeSession extends BaseSession {
                             callId: event.content_block.id,
                             name: event.content_block.name,
                             ...(server ? { server: true as const } : {}),
-                            vendor: { type: "claude_tool_use" },
+                            vendor: withProviderToolCallId(
+                                { type: "claude_tool_use" },
+                                event.content_block.id,
+                            ),
                         };
                         // server_tool_use carries its full input on the start block; tool_use
                         // streams input_json_delta instead.
@@ -667,7 +676,10 @@ export class ClaudeSession extends BaseSession {
                                 callId: event.content_block.id,
                                 name: event.content_block.name,
                                 arguments: input,
-                                vendor: { type: "claude_tool_use" },
+                                vendor: withProviderToolCallId(
+                                    { type: "claude_tool_use" },
+                                    event.content_block.id,
+                                ),
                             });
                             if (input.length > 0) {
                                 yield {

@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-providers",
-    "version": "0.0.12",
+    "version": "0.0.13",
     "description": "Stateful Node.js sessions for Codex, Claude, Grok, Bedrock, and Responses-compatible model providers.",
     "keywords": [
         "ai",

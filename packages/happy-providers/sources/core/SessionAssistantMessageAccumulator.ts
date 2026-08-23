@@ -4,6 +4,7 @@ import type {
     SessionOutputBlock,
 } from "@/core/SessionContext.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
+import { withProviderToolCallId } from "@/core/SessionToolCallId.js";
 
 type MutableTextBlock = { type: "text"; text: string };
 type MutableReasoningBlock = { type: "reasoning"; text?: string; reasoning?: string };
@@ -109,7 +110,7 @@ export class SessionAssistantMessageAccumulator {
                 name: event.name,
                 ...(event.namespace === undefined ? {} : { namespace: event.namespace }),
                 arguments: "",
-                ...(event.vendor === undefined ? {} : { vendor: event.vendor }),
+                vendor: withProviderToolCallId(event.vendor, event.callId),
                 ...(event.server === true ? { server: true } : {}),
             };
             this.toolCalls.set(event.callId, block);
