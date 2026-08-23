@@ -26,7 +26,16 @@ export interface HappySessionSnapshot {
     readonly cwd: string;
     readonly effort?: string;
     readonly modelId: string;
+    /** The branch the working directory is on, when it is a checkout of something. */
+    readonly gitBranch?: string;
     readonly permissionMode: AgentPermissionMode;
+    /**
+     * The project this session belongs to, which is what the phone groups sessions by.
+     *
+     * Every workspace of one project reports the same project, so their sessions gather in a
+     * single card. Absent when the session runs somewhere this daemon does not keep.
+     */
+    readonly project?: { readonly id: string; readonly name: string };
     readonly projectName: string;
     readonly providerId: string;
     readonly serviceTier?: string;
@@ -38,6 +47,13 @@ export interface HappySessionSnapshot {
     readonly tools: readonly string[];
     /** True while the agent owes work, which is what the phone shows as thinking. */
     readonly working: boolean;
+    /**
+     * The workspace this session runs in, absent in the project's own checkout.
+     *
+     * The name is the workspace's current title rather than its branch, so renaming a workspace
+     * renames it everywhere the phone shows it.
+     */
+    readonly workspace?: { readonly id: string; readonly name: string };
 }
 
 /**

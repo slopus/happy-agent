@@ -745,7 +745,7 @@ export class HappyModule
     async session(ctx: Context, agentId: string): Promise<HappySessionSnapshot | undefined> {
         const config = await this.#system().config(ctx, agentId);
         if (config === undefined) return undefined;
-        return this.#snapshot(agentId, config);
+        return await this.#snapshot(ctx, agentId, config);
     }
 
     /** Delivers what a person said on the phone, and what they chose to say it with. */
@@ -866,15 +866,57 @@ export class HappyModule
     }
 
     /**
-     * Whether a person can open this agent, which is whether it belongs to a project or workspace.
+     * Whether a person can still open this agent, which is whether the place it lives is still
+     * somewhere they navigate to.
      *
      * A hidden subagent belongs to the agent that spawned it and to no place a person navigates to.
      * Giving it a session of its own would put work nobody started at the top of the phone's list,
      * and a busy delegating agent would fill that list on its own.
+     *
+     * Archiving keeps the association, so belonging to a workspace is not the same as being
+     * reachable through one: an archived owner is asked about here rather than assumed live, or a
+     * session put away on the desktop would come back the moment its agent said anything.
      */
     async #userVisible(ctx: Context, agentId: string): Promise<boolean> {
-        if ((await this.#workspaces.workspaceForAgent(ctx, agentId)) !== undefined) return true;
-        return (await this.#projects.projectForAgent(ctx, agentId)) !== undefined;
+        const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+        if (workspaceId !== undefined) {
+            const workspace = await this.#workspaces.get(ctx, workspaceId);
+            if (workspace === undefined) return false;
+            if (workspace.status === "archived" || workspace.archivedAt !== undefined) return false;
+            const parent = await this.#projects.get(ctx, workspace.projectRef);
+            return parent !== undefined && parent.status !== "archived";
+        }
+        const project = await this.#projects.projectForAgent(ctx, agentId);
+        return project !== undefined && project.status !== "archived";
+    }
+
+    /**
+     * Asks every live session to describe itself again, because where it lives has changed.
+     *
+     * Renaming a workspace or a project renames it on the phone: the session's own metadata is
+     * what the phone groups and labels by, so it is republished rather than left saying the old
+     * name until something else happens to move it.
+     */
+    async #republishAttached(_ctx: Context): Promise<void> {
+        for (const attached of this.#agents.values()) attached.client.kick();
+    }
+
+    /**
+     * Puts away every session whose place has been archived since it was published.
+     *
+     * Archiving on the desktop is the same decision as ending the session on the phone, so the
+     * phone is told in the same words rather than left holding a session pointing at a checkout
+     * that may no longer be on disk.
+     */
+    async #reapArchived(ctx: Context): Promise<void> {
+        for (const agentId of [...this.#agents.keys()]) {
+            try {
+                if (await this.#userVisible(ctx, agentId)) continue;
+                await this.#detach(ctx, agentId);
+            } catch (error) {
+                ctx.log.debug("Happy could not retire an archived session.", { agentId }, error);
+            }
+        }
     }
 
     async #attach(ctx: Context, agentId: string): Promise<ConnectedAgent | undefined> {
@@ -929,20 +971,27 @@ export class HappyModule
     }
 
     /** One session, described in the terms Happy publishes it. */
-    #snapshot(agentId: string, config: AgentConfig): HappySessionSnapshot {
+    async #snapshot(
+        ctx: Context,
+        agentId: string,
+        config: AgentConfig,
+    ): Promise<HappySessionSnapshot> {
         const cwd = config.environment?.workingDirectory;
         if (cwd === undefined) {
             throw new Error(`Agent "${agentId}" has no working directory.`);
         }
         const selection = selectionFromConfig(config, this.#defaultSelection());
+        const owner = await this.#owner(ctx, agentId);
         return {
             agentId,
             archived: false,
             cwd,
             effort: selection.effort,
+            ...(owner.gitBranch === undefined ? {} : { gitBranch: owner.gitBranch }),
             modelId: selection.modelId,
             permissionMode: selection.permissionMode,
-            projectName: basename(cwd) || cwd,
+            ...(owner.project === undefined ? {} : { project: owner.project }),
+            projectName: owner.project?.name ?? basename(cwd) ?? cwd,
             providerId: selection.providerId,
             sessionId: agentId,
             status: "idle",
@@ -952,7 +1001,52 @@ export class HappyModule
             tools: [],
             // Agent Base deliberately does not expose active state through AgentSystemRef.
             working: false,
+            ...(owner.workspace === undefined ? {} : { workspace: owner.workspace }),
         };
+    }
+
+    /**
+     * Where this agent lives, in the terms the phone groups by.
+     *
+     * A workspace names its own project, so a session in a worktree gathers with the sessions in
+     * the checkout it came from rather than sitting alone. An agent belonging to neither is a
+     * session somewhere this daemon does not keep, and says so by describing no owner at all.
+     */
+    async #owner(
+        ctx: Context,
+        agentId: string,
+    ): Promise<{
+        gitBranch?: string;
+        project?: { id: string; name: string };
+        workspace?: { id: string; name: string };
+    }> {
+        try {
+            const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+            if (workspaceId !== undefined) {
+                const workspace = await this.#workspaces.get(ctx, workspaceId);
+                if (workspace !== undefined) {
+                    const project = await this.#projects.get(ctx, workspace.projectRef);
+                    return {
+                        ...(workspace.branch === undefined ? {} : { gitBranch: workspace.branch }),
+                        ...(project === undefined
+                            ? {}
+                            : { project: { id: project.id, name: project.name } }),
+                        workspace: { id: workspace.id, name: workspace.name },
+                    };
+                }
+            }
+            const project = await this.#projects.projectForAgent(ctx, agentId);
+            if (project === undefined) return {};
+            return {
+                ...(project.gitBranch === undefined ? {} : { gitBranch: project.gitBranch }),
+                project: { id: project.id, name: project.name },
+            };
+        } catch (error) {
+            // Describing a session is never worth failing to publish it over: without an owner
+            // it still reaches the phone, grouped by itself rather than with its neighbours.
+            ctx.log.debug("Happy could not read where an agent lives.", { agentId }, error);
+            return {};
+        }
     }
 
     #defaultSelection(): HappySelection {

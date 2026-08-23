@@ -62,6 +62,12 @@ export interface HappySessionMetadata {
     os: string;
     path: string;
     permissionMode: string;
+    /**
+     * What the phone groups this session under.
+     *
+     * Every workspace of one project carries the same `project.id`, so their sessions gather in a
+     * single card, and `workspace` names the checkout within it.
+     */
     project: { id: string; kind: "regular"; name: string };
     provider: HappyProviderDescriptor;
     providers: readonly HappyProviderDescriptor[];
@@ -73,6 +79,15 @@ export interface HappySessionMetadata {
     summary?: { text: string; updatedAt: number };
     thoughtLevels: readonly { code: string; value: string }[];
     tools: readonly string[];
+    /** The branch this checkout is on, which legacy sessions report too. */
+    gitBranch?: string;
+    /**
+     * The workspace this session runs in, absent in the project's own checkout.
+     *
+     * Named by its current title rather than its branch, so renaming a workspace renames it
+     * everywhere the phone shows it.
+     */
+    workspace?: { id: string; kind: "worktree"; name: string };
 }
 
 /**
@@ -139,7 +154,13 @@ export function createHappySessionMetadata(options: {
         os: `${platform()} ${release()}`,
         path: session.cwd,
         permissionMode: session.permissionMode,
-        project: { id: `rig:${session.sessionId}`, kind: "regular", name: session.projectName },
+        // Falls back to the session's own identity only when this daemon keeps no project for it.
+        // A per-session id groups nothing, which is the right answer for a session that belongs
+        // to nothing, and the wrong one for every session that does.
+        project:
+            session.project === undefined
+                ? { id: `rig:${session.sessionId}`, kind: "regular", name: session.projectName }
+                : { id: session.project.id, kind: "regular", name: session.project.name },
         provider,
         providers,
         reasoning: { current: session.effort ?? null, levels: [...efforts] },
@@ -157,6 +178,16 @@ export function createHappySessionMetadata(options: {
             : { summary: { text: session.title, updatedAt: options.summaryUpdatedAt } }),
         thoughtLevels: efforts.map((level) => ({ code: level, value: level })),
         tools: [...session.tools],
+        ...(session.gitBranch === undefined ? {} : { gitBranch: session.gitBranch }),
+        ...(session.workspace === undefined
+            ? {}
+            : {
+                  workspace: {
+                      id: session.workspace.id,
+                      kind: "worktree" as const,
+                      name: session.workspace.name,
+                  },
+              }),
     };
 }
 

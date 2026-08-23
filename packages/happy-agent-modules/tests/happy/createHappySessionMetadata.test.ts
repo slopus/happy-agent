@@ -99,6 +99,49 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         expect("summary" in published).toBe(false);
     });
 
+    it("groups by the project it belongs to, not by the session it is", () => {
+        const published = metadata(
+            snapshot({ project: { id: "project-7", name: "rig" }, projectName: "rig" }),
+        );
+        expect(published.project).toEqual({ id: "project-7", kind: "regular", name: "rig" });
+    });
+
+    it("names the workspace by its title, and reports the branch beside it", () => {
+        const published = metadata(
+            snapshot({
+                gitBranch: "worktree/retry-policy",
+                project: { id: "project-7", name: "rig" },
+                workspace: { id: "workspace-3", name: "Retry policy rewrite" },
+            }),
+        );
+        expect(published.workspace).toEqual({
+            id: "workspace-3",
+            kind: "worktree",
+            name: "Retry policy rewrite",
+        });
+        expect(published.gitBranch).toBe("worktree/retry-policy");
+    });
+
+    it("says no workspace for a session in the project's own checkout", () => {
+        expect("workspace" in metadata(snapshot({ project: { id: "p", name: "rig" } }))).toBe(
+            false,
+        );
+    });
+
+    it("groups a session belonging nowhere by itself, rather than with strangers", () => {
+        expect(metadata().project).toEqual({ id: "rig:session-1", kind: "regular", name: "rig" });
+    });
+
+    it("keeps every field a legacy Happy session is read for", () => {
+        const published = metadata() as unknown as Record<string, unknown>;
+        for (const key of ["path", "host", "machineId", "homeDir", "happyHomeDir", "os"]) {
+            expect(typeof published[key]).toBe("string");
+        }
+        expect(published.startedBy).toBe("daemon");
+        expect(published.startedFromDaemon).toBe(true);
+        expect(typeof published.flavor).toBe("string");
+    });
+
     it("offers every model the daemon can serve, whatever the provider", () => {
         const published = metadata();
         expect(published.models.map((model) => model.id)).toEqual(["gpt-5.6-sol", "opus-5"]);
