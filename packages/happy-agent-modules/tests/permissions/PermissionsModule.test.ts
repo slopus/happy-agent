@@ -199,6 +199,10 @@ function toolResults(provider: ScriptedProvider): string[] {
     );
 }
 
+function generatedCallId() {
+    return expect.stringMatching(/^[a-z][a-z0-9]{1,31}$/);
+}
+
 function wideArguments(count: number): string {
     return JSON.stringify(
         Object.fromEntries(Array.from({ length: count }, (_, index) => [`key-${index}`, index])),
@@ -239,7 +243,7 @@ describe("PermissionsModule", () => {
             {
                 type: "permission_action_reviewed",
                 agentId: "elevating-agent",
-                callId: "call-1",
+                callId: generatedCallId(),
                 tool: "publish",
                 action: "Publish to /etc/hosts, outside the workspace.",
                 elevated: true,
@@ -278,7 +282,10 @@ describe("PermissionsModule", () => {
         expect(results).toContain("Automatic permission review refused");
         expect(results).toContain("The file belongs to the system");
         expect(results).toContain("materially safer alternative");
-        expect(events[0]).toMatchObject({ type: "permission_action_denied", callId: "call-1" });
+        expect(events[0]).toMatchObject({
+            type: "permission_action_denied",
+            callId: generatedCallId(),
+        });
     });
 
     it("does not honor an allowed critical-risk review", async () => {
@@ -753,7 +760,7 @@ describe("PermissionsModule", () => {
             {
                 type: "permission_action_reviewed",
                 agentId: "review-metadata-agent",
-                callId: "call-1",
+                callId: generatedCallId(),
                 tool: "publish",
                 action: "Publish to /tmp/out, outside the workspace.",
                 elevated: true,

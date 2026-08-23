@@ -1218,7 +1218,7 @@ describe("public transcript and run APIs", () => {
 
         expect(fullTool).toMatchObject({
             type: "tool_call",
-            id: "transcript-file-diff",
+            id: expect.stringMatching(/^[a-z][a-z0-9]{1,31}$/),
             name: "apply_patch",
             status: "completed",
             presentation: {
@@ -1243,10 +1243,11 @@ describe("public transcript and run APIs", () => {
                 ],
             },
         });
+        expect(fullTool.id).not.toBe("transcript-file-diff");
         expect(liveTool).toEqual(fullTool);
         expect(toolCallFrom(omitted)).toEqual({
             type: "tool_call",
-            id: "transcript-file-diff",
+            id: fullTool.id,
             name: "apply_patch",
             status: "completed",
             presentation: fullTool.presentation,
