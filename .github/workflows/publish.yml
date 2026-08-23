@@ -47,6 +47,11 @@ jobs:
                   node-version: "24"
                   package-manager-cache: false
 
+            - name: Set up Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: "1.4.0"
+
             - name: Install Linux sandbox dependencies
               if: ${{ !contains(github.ref_name, '-beta.') }}
               run: |
@@ -116,6 +121,11 @@ jobs:
               with:
                   node-version: "24"
                   package-manager-cache: false
+
+            - name: Set up Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: "1.4.0"
 
             - name: Install Linux sandbox dependencies
               run: |
