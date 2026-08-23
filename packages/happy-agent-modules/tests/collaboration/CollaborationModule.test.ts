@@ -694,6 +694,26 @@ describe("collaboration", () => {
             toAgentId: "parent",
             text: "Message from agent child:\n\nDone.",
         });
+        expect(collection.steered).toEqual([collection.delivered[1]]);
+    });
+
+    it("keeps a creator's follow-up to its collaborator queued", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        await module.createAgent(ctx, "parent", TASK, "child");
+
+        await module.sendMessage(
+            ctx,
+            "parent",
+            { toAgentId: "child", text: "Please also check Windows." },
+            "m1",
+        );
+
+        expect(collection.delivered[1]).toMatchObject({
+            toAgentId: "child",
+            text: "Message from agent parent:\n\nPlease also check Windows.",
+        });
+        expect(collection.steered).toHaveLength(0);
     });
 
     it("refuses a message between agents with no relationship", async () => {
@@ -807,6 +827,25 @@ describe("collaboration", () => {
             text: "Collaborator child finished working. Its answer follows, verbatim.\n\nThe parser change looks correct.",
         });
         expect(collection.steered).toHaveLength(1);
+    });
+
+    it("does not report an interrupted collaborator's last words to its creator", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        await module.createAgent(ctx, "parent", TASK, "child");
+        const scope = runScope("child");
+
+        await hooks.onEventTransact!(ctx, scope, textEnd("Still investigating."));
+        await hooks.afterTurnTransact!(ctx, scope, {
+            aborted: true,
+            contextTokens: 10,
+            loopId: "loop",
+            turnId: "turn",
+        });
+        await hooks.afterAgentSettledTransact!(ctx, scope, settlement("s1"));
+
+        expect(collection.delivered).toHaveLength(1);
+        expect(collection.steered).toHaveLength(0);
     });
 
     it("marks the report so it can be shown as a notice rather than as someone talking", async () => {

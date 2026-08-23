@@ -24,9 +24,12 @@ things the runtime already does.
 
 ### How agents text each other
 
-`send_agent_message` calls `AgentSystemRef.send`, which appends to the recipient's durable queue.
-The message ID is the sender's own durable tool-call ID, so a retried tool call delivers the same
-message rather than a second one — Agent Base settles that, not this module.
+`send_agent_message` follows the direction of the relationship. A creator's message to its
+collaborator calls `AgentSystemRef.send` and appends to the collaborator's durable queue. A
+collaborator's reply to its creator calls `AgentSystemRef.steer`, so an active creator continues its
+turn with the reply instead of finishing first. The message ID is the sender's own durable
+tool-call ID, so a retried tool call delivers the same message rather than a second one — Agent Base
+settles that, not this module.
 
 The recipient's model only ever sees text, so the delivered message names its sender:
 
@@ -69,7 +72,9 @@ The parser change looks correct, but it drops the trailing newline case.
 
 A run that said nothing still reports that it stopped. A hard stop may be settled after a restart,
 when the process no longer retains the original error; reporting the stop ensures the creator never
-waits for an answer that cannot arrive.
+waits for an answer that cannot arrive. A run explicitly interrupted by its creator is different:
+the interrupt result already tells the creator what happened, so settlement sends no automatic
+report and never relabels the child's last progress update as a finished answer.
 
 A run that _failed_ is not silent, though. It stopped for a reason, and that reason is reported in
 place of the answer:
@@ -113,8 +118,9 @@ report is made again the next time it settles rather than being lost.
 ### Messages are asynchronous, always
 
 Nothing here waits. There is no `wait_for_reply`, no reply obligation, and no record that an answer
-is owed. A message is delivered and the sending agent carries on with its turn. Whatever comes back
-arrives in its inbox and is read as ordinary conversation on a later turn.
+is owed. A message is delivered and the sending agent carries on with its turn. A reply from a
+collaborator steers its creator, so an active creator continues the same turn with it; a creator's
+message to a collaborator waits in that collaborator's queue.
 
 This is what makes the module small. A synchronous request/response would need the answer to reach
 an agent that is parked inside its own tool call — which its own run loop cannot deliver, because

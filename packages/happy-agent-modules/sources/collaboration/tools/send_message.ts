@@ -7,14 +7,14 @@ import {
     type CollaborationSendInput,
 } from "../CollaborationAgent.js";
 
-/** Put one message in a collaborator's inbox. */
+/** Send one message along a direct collaboration relationship. */
 export function sendMessageTool(collaboration: CollaborationModule, actingAgentId: string) {
     return defineAgentTool({
         name: "send_agent_message",
         description: [
             "Send a message to a collaborator you created, or back to the agent that created you.",
             "",
-            "Messages are one-way. This returns as soon as the message is delivered, and the recipient answers whenever it is ready by sending one back — there is nothing to wait on. To answer a message you received, send one to the agent it came from.",
+            "Messages are one-way. A reply to your creator steers its active turn so it can continue with the message; a message to your collaborator joins its queue. This returns as soon as the message is delivered, and there is nothing to wait on.",
         ].join("\n"),
         parameters: collaborationSendInputSchema,
         returnType: Type.Void(),

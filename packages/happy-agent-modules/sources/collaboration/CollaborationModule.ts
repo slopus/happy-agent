@@ -2,6 +2,7 @@ import {
     agentConfig,
     type AgentBasePersistedEvent,
     type AgentBaseSettlement,
+    type AgentBaseTurn,
     type AgentConfig,
     type AgentMetadata,
     type AgentModel,
@@ -44,8 +45,8 @@ import { sendMessageTool } from "./tools/send_message.js";
  * the supplied message ID. Its only migrations retire the schema it used to keep.
  *
  * Messages are asynchronous, in both directions and without exception. Nothing here waits for an
- * answer, and nothing records that one is owed: a reply is simply a message sent back, and it
- * arrives in the sender's inbox to be read as ordinary conversation on its next turn. An agent
+ * answer, and nothing records that one is owed. A task sent down to a collaborator joins its queue;
+ * a reply sent up to its creator steers the creator so its active turn continues with it. An agent
  * that wants to keep working while a collaborator thinks just keeps working.
  *
  * What a collaborator runs on is settled once, on the message that starts it, and no later message
@@ -152,13 +153,13 @@ export class CollaborationModule implements AgentModule {
         } else if ((await agents.parentOf(ctx, agentId)) !== actingAgentId) {
             throw new Error(`Agent "${agentId}" already exists.`);
         }
-        await this.#deliver(ctx, actingAgentId, agentId, input.text, agentId, selection);
+        await this.#deliver(ctx, actingAgentId, agentId, input.text, agentId, "send", selection);
         return { agentId };
     }
 
     /**
-     * Send text to a collaborator this agent can already reach. Replying is this same operation:
-     * an answer is a message addressed back to whoever asked.
+     * Send text to a collaborator this agent can already reach. A reply to the creator steers its
+     * active turn; a creator's follow-up to its collaborator joins that collaborator's queue.
      */
     async sendMessage(
         ctx: Context,
@@ -168,8 +169,16 @@ export class CollaborationModule implements AgentModule {
     ): Promise<void> {
         this.#assert(collaborationAgentIdSchema, actingAgentId, "acting agent ID");
         this.#assert(collaborationSendInputSchema, input, "send message");
-        await this.#authorize(ctx, actingAgentId, input.toAgentId, "send to");
-        await this.#deliver(ctx, actingAgentId, input.toAgentId, input.text, messageId, undefined);
+        const relation = await this.#authorize(ctx, actingAgentId, input.toAgentId, "send to");
+        await this.#deliver(
+            ctx,
+            actingAgentId,
+            input.toAgentId,
+            input.text,
+            messageId,
+            relation === "creator" ? "steer" : "send",
+            undefined,
+        );
     }
 
     /** Immediately abort a collaborator and every descendant without waiting for settlement. */
@@ -229,6 +238,16 @@ export class CollaborationModule implements AgentModule {
             await scope.runKV.write(ctx, LAST_TEXT_KEY, text);
         },
 
+        /** An explicitly interrupted run owes its creator no automatic settlement report. */
+        afterTurnTransact: async (
+            ctx: Context,
+            scope: AgentModuleScope,
+            turn: AgentBaseTurn,
+        ): Promise<void> => {
+            if (!turn.aborted) return;
+            await scope.runKV.write(ctx, INTERRUPTED_KEY, true);
+        },
+
         afterAgentSettledTransact: (
             ctx: Context,
             scope: AgentModuleScope,
@@ -263,12 +282,13 @@ export class CollaborationModule implements AgentModule {
     };
 
     /**
-     * Pass a collaborator's answer to its creator, verbatim, when the collaborator stops working.
+     * Pass a collaborator's answer to its creator, verbatim, when the collaborator finishes.
      *
      * This is the runtime reporting, not the model choosing to, which is what makes an answer
      * arrive at all now that nothing waits for one. A run that said nothing still reports that it
      * stopped, because a hard stop can finish settlement in a later process that no longer knows
-     * the original error. Silence would leave the creator expecting an answer that cannot arrive.
+     * the original error. An explicitly interrupted run is the exception: its creator already
+     * requested and observed that interruption, so stale progress must not come back as an answer.
      *
      * It all happens in the settling transaction, which is the point: this transaction erases the
      * run store, so it is the last moment the run's own words can be read, and the delivery
@@ -286,6 +306,7 @@ export class CollaborationModule implements AgentModule {
         const agents = this.#requireAgents();
         const parent = await agents.parentOf(ctx, scope.agent.id);
         if (parent === null) return;
+        if ((await scope.runKV.read(ctx, INTERRUPTED_KEY)) === true) return;
         const said = await scope.runKV.read(ctx, LAST_TEXT_KEY);
         // Whitespace is not an answer. The note is written trimmed, so a blank one can only come
         // from a store this run does not control, and reporting it would put an empty quotation in
@@ -338,36 +359,38 @@ export class CollaborationModule implements AgentModule {
         toAgentId: string,
         text: string,
         messageId: string,
+        delivery: "send" | "steer",
         selection: CollaborationAgentSelection | undefined,
     ): Promise<void> {
-        const accepted = await this.#requireAgents().send(
-            ctx,
-            toAgentId,
-            {
-                role: "agent",
-                author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
-                content: [{ type: "text", text: `Message from agent ${fromAgentId}:\n\n${text}` }],
+        const agents = this.#requireAgents();
+        const message = {
+            role: "agent" as const,
+            author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
+            content: [
+                { type: "text" as const, text: `Message from agent ${fromAgentId}:\n\n${text}` },
+            ],
+        };
+        const options = {
+            id: messageId,
+            metadata: {
+                collaboration: { fromAgentId, toAgentId },
+                ...senderAgentIdMetadata(fromAgentId),
             },
-            {
-                id: messageId,
-                metadata: {
-                    collaboration: { fromAgentId, toAgentId },
-                    ...senderAgentIdMetadata(fromAgentId),
-                },
-                ...(selection === undefined
-                    ? {}
-                    : {
-                          model: selection.model,
-                          effort: selection.effort,
-                          ...(selection.provider === undefined
-                              ? {}
-                              : { provider: selection.provider }),
-                          ...(selection.serviceTier === undefined
-                              ? {}
-                              : { serviceTier: selection.serviceTier }),
-                      }),
-            },
-        );
+            ...(selection === undefined
+                ? {}
+                : {
+                      model: selection.model,
+                      effort: selection.effort,
+                      ...(selection.provider === undefined ? {} : { provider: selection.provider }),
+                      ...(selection.serviceTier === undefined
+                          ? {}
+                          : { serviceTier: selection.serviceTier }),
+                  }),
+        };
+        const accepted =
+            delivery === "steer"
+                ? await agents.steer(ctx, toAgentId, message, options)
+                : await agents.send(ctx, toAgentId, message, options);
         if (accepted.id !== messageId) {
             throw new Error("Agent Base did not preserve the requested message ID.");
         }
@@ -383,10 +406,10 @@ export class CollaborationModule implements AgentModule {
         actingAgentId: string,
         targetAgentId: string,
         action: string,
-    ): Promise<void> {
+    ): Promise<"collaborator" | "creator"> {
         const agents = this.#requireAgents();
-        if ((await agents.parentOf(ctx, targetAgentId)) === actingAgentId) return;
-        if ((await agents.parentOf(ctx, actingAgentId)) === targetAgentId) return;
+        if ((await agents.parentOf(ctx, targetAgentId)) === actingAgentId) return "collaborator";
+        if ((await agents.parentOf(ctx, actingAgentId)) === targetAgentId) return "creator";
         throw new Error(
             `Agent "${actingAgentId}" is not authorized to ${action} agent "${targetAgentId}".`,
         );
@@ -532,6 +555,9 @@ export class CollaborationModule implements AgentModule {
 
 /** Where a run keeps the last thing its model said, until the run ends. */
 const LAST_TEXT_KEY = "lastText";
+
+/** Marks a run whose creator deliberately interrupted it, suppressing its automatic report. */
+const INTERRUPTED_KEY = "interrupted";
 
 /** How a collaborator's answer reaches its creator. */
 function answerReport(agentId: string, answer: string): string {
