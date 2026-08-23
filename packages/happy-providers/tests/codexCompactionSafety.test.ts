@@ -77,6 +77,39 @@ describe("Codex compaction request safety", () => {
         ).toBeLessThan(300);
     });
 
+    it("does not drop history because an inline image is large on the wire", () => {
+        const input = [
+            { type: "message", role: "user", content: "history that must survive" },
+            {
+                type: "message",
+                role: "user",
+                content: [
+                    { type: "input_text", text: "screenshot" },
+                    {
+                        type: "input_image",
+                        detail: "auto",
+                        image_url: `data:image/png;base64,${"A".repeat(1_100_000)}`,
+                    },
+                ],
+            },
+            { type: "message", role: "user", content: "current request" },
+            { type: "compaction_trigger" },
+        ];
+
+        const fitted = fitCodexCompactionRequest(
+            {
+                model: "gpt-5.6-sol",
+                stream: true,
+                input,
+            } as never,
+            [],
+            272_000,
+        );
+
+        expect(fitted.input).toEqual(input);
+        expect(estimateCodexContextTokens(fitted, Number.MAX_SAFE_INTEGER)).toBeLessThan(10_000);
+    });
+
     it("counts UTF-8 bytes in the complete request envelope", () => {
         expect(
             estimateCodexContextTokens(

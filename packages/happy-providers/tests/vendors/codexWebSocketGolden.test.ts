@@ -1477,6 +1477,51 @@ describe("Codex CLI mode WebSocket goldens", () => {
         session.destroy();
     });
 
+    it("keeps WebSocket compaction continuation with a large inline image", async () => {
+        websocket.emitTextResponses = true;
+        const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
+        const session = await codexProvider("websocket", 1).session("<SESSION_ID>", {
+            instructions: prompt.instructions,
+            tools: codexCliTools("gpt-5.6-sol"),
+        });
+        const user = {
+            role: "user" as const,
+            content: [
+                { type: "text" as const, text: "Keep the earlier conversation." },
+                {
+                    type: "image" as const,
+                    data: "A".repeat(1_100_000),
+                    mimeType: "image/png",
+                },
+            ],
+        };
+        await drain(
+            session.run(testContext, {
+                context: { instructions: prompt.instructions, messages: [user] },
+                effort: "low",
+                model: "gpt-5.6-sol",
+            }),
+        );
+
+        const compacted = await session.compact(testContext, {
+            context: {
+                instructions: prompt.instructions,
+                messages: [
+                    user,
+                    {
+                        role: "assistant",
+                        content: [{ type: "text" as const, text: "mock response" }],
+                    },
+                ],
+            },
+        });
+
+        expect(compacted.status).toBe("completed");
+        expect(websocket.sent[2]!.previous_response_id).toBe("response");
+        expect(websocket.sent[2]!.input).toEqual([{ type: "compaction_trigger" }]);
+        session.destroy();
+    });
+
     it("rolls back and retries a WebSocket request after text has already streamed", async () => {
         const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
         websocket.failMidstreamOnce = true;

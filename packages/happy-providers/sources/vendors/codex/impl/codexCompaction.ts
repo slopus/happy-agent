@@ -34,11 +34,25 @@ export interface CodexCompactionMetadata {
 }
 
 const APPROXIMATE_BYTES_PER_TOKEN = 4;
+// Codex counts an auto-detail image by its resized model-visible cost, not by the size of the
+// base64 transport payload. 7,373 bytes maps to approximately 1,844 tokens under the estimator.
+const RESIZED_IMAGE_BYTES_ESTIMATE = 7_373;
+const ESTIMATED_IMAGE_PAYLOAD = "A".repeat(RESIZED_IMAGE_BYTES_ESTIMATE);
 
 /** Conservative UTF-8 estimate of the final model-visible request envelope. */
 export function estimateCodexContextTokens(envelope: unknown, tokenLimit: number): number {
-    const bytes = Buffer.byteLength(JSON.stringify(envelope));
+    const bytes = Buffer.byteLength(JSON.stringify(envelope, modelVisibleImageReplacer));
     return Math.min(tokenLimit, Math.ceil(bytes / APPROXIMATE_BYTES_PER_TOKEN));
+}
+
+function modelVisibleImageReplacer(key: string, value: unknown): unknown {
+    if (key !== "image_url" || typeof value !== "string") return value;
+    const commaIndex = value.indexOf(",");
+    if (commaIndex === -1) return value;
+    const metadata = value.slice(0, commaIndex);
+    if (!metadata.toLowerCase().startsWith("data:image/")) return value;
+    if (!metadata.split(";").some((part) => part.toLowerCase() === "base64")) return value;
+    return `${value.slice(0, commaIndex + 1)}${ESTIMATED_IMAGE_PAYLOAD}`;
 }
 
 /** Mirrors Codex's UTF-8, middle-preserving token-budget truncation. */
