@@ -80,8 +80,9 @@ throws, it is logged through the context's own logger, so the durable record sta
 failure is still visible.
 
 `open(ctx, agentId)` picks up whatever the last run left unfinished — every workspace still being
-created is carried through to a usable checkout — and `close(ctx)` stops every background lifetime
-and waits for the ones in flight.
+created is carried through to a usable checkout, and every workspace still `archiving` has its
+folder removal resumed and its archival completed — and `close(ctx)` stops every background
+lifetime and waits for the ones in flight.
 
 ## The record
 
@@ -124,11 +125,13 @@ Archival is two steps on purpose. `beginArchive` is the durable decision and mov
 `archiving` immediately, and that is what `archive` returns. Folder removal does **not** run in the
 caller's lifetime: it is started on the catalog's own background lifetime, and `completeArchive`
 moves the row to `archived` when it finishes. A tool call therefore returns as soon as the decision
-is durable — with status `archiving` — however long a folder takes to delete. If removal throws, the
-workspace stays `archiving` and the failure is logged — **cleanup failure never rolls archival
-back**. A
-person who archived a workspace does not get it handed back because a folder would not delete.
-`whenCleanupSettles()` waits for the removals this module started, for shutdown and for tests.
+is durable — with status `archiving` — however long a folder takes to delete. If removal throws,
+the failure is logged and the archival still completes — **cleanup failure never rolls archival
+back**. A person who archived a workspace does not get it handed back because a folder would not
+delete. A removal interrupted by shutdown resumes at the next `open`, which finishes the removal
+and the completion for every row still `archiving` — so `archiving` is always a window, never a
+resting state. `whenCleanupSettles()` waits for the removals this module started, for shutdown and
+for tests.
 
 ## Tools it provides to the model
 

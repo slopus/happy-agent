@@ -31,6 +31,24 @@ refused, because the decision has already scanned the attachments and would neve
 The archival of a _folder_ is still background cleanup that never rolls the decision back. Stopping
 the work is not cleanup; it is half of the decision itself.
 
+## An interrupted removal resumes at startup
+
+A graceful shutdown racing an archive stranded the workspace in `archiving` forever. `close()`
+raises the closed flag before waiting for cleanup, and an in-flight folder removal that observes
+the flag returns without completing the archival — correctly, because a closing daemon must not
+keep deleting. But nothing ever came back for the row: startup reconciled only `initializing`
+workspaces, so the stranded one was hidden from every default list, refused agents through the
+attach gate, kept its folder on disk, and never published the `workspace_archived` event — while
+reading as "removal is still running" for the life of the installation.
+
+`open` now sweeps every row still `archiving` and hands it back to `removeArchivedWorkspace` on
+the cleanup lifetime. Resuming is safe because the state is terminal: nothing can move an
+`archiving` row anywhere but `archived`, no restore transition exists that could have resurrected
+the workspace in between, and the managed path cannot have been reused while its folder still
+exists. The keep-on-archive settings are read fresh at resume time, exactly as on the normal path,
+and completion publishes the event the interrupted run still owed. `archiving` is a window, never
+a resting state.
+
 ## Deferred work needs its lifetime taken before the transaction ends
 
 `archive_workspace` is a transactional tool, so archiving often runs inside a caller's transaction

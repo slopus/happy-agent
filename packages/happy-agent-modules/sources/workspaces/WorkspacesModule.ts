@@ -790,8 +790,9 @@ export class WorkspacesModule implements AgentModule {
     }
 
     /**
-     * Picks up whatever the last run left unfinished: workspaces still being created, and the file
-     * replication watch for every workspace that is ready.
+     * Picks up whatever the last run left unfinished: workspaces still being created, folder
+     * removals a shutdown interrupted, and the file replication watch for every workspace that is
+     * ready.
      *
      * This is also where the catalog's own background lifetime is taken. Opening happens once, from
      * the root context, before anything can reach the catalog through a tool or a request — so the
@@ -800,8 +801,27 @@ export class WorkspacesModule implements AgentModule {
      */
     async open(ctx: Context): Promise<void> {
         this.#pinBackgroundRoot(ctx);
+        const stranded: Workspace[] = [];
         for (const workspace of await this.#allWorkspaces(ctx)) {
             if (workspace.status === "ready") this.#scheduleSync(ctx, workspace.projectRef);
+            if (workspace.status === "archiving") stranded.push(workspace);
+        }
+        // A workspace still `archiving` was archived by a run that ended before its folder removal
+        // finished. The decision is durable and terminal — nothing can move the row anywhere but
+        // `archived` — so removal simply resumes here, honouring the keep-on-archive settings as
+        // they stand now, and completion publishes the `workspace_archived` event that run still
+        // owed. Without this the row would say "removal is still running" forever.
+        if (stranded.length > 0) {
+            const workerCtx = this.#backgroundLifetime("workspace-cleanup");
+            this.#runCleanup(workerCtx, async () => {
+                for (const workspace of stranded) {
+                    await this.removeArchivedWorkspace(
+                        workerCtx,
+                        workspace.projectRef,
+                        workspace.id,
+                    );
+                }
+            });
         }
         this.#runInBackground("workspace-initialization", async (workerCtx) => {
             await this.reconcileInitializingWorkspaces(workerCtx);
