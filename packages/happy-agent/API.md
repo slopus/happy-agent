@@ -819,9 +819,29 @@ tokens, private keys, and server responses are never exposed through this API.
   keeps the object with the greater version.
 - `updatedAt` — when any field in this snapshot last changed.
 
+The fields form a status-discriminated state rather than independent flags:
+
+- `"disabled"` has no authorization or error and may be configured or unconfigured;
+- `"disconnected"` has no authorization, may be configured or unconfigured, and may carry a
+  transient connection error;
+- `"pairing"` is unconfigured, has an authorization, and has no error;
+- `"connecting"` and `"connected"` are configured and have neither authorization nor error;
+- `"failed"` has an error and no authorization, and may be configured or unconfigured depending
+  on which operation failed.
+
+The daemon durably preserves the integration version high-water mark. Every replacement is greater
+than every integration version that installation previously exposed, including across daemon
+restarts and system-clock rollback.
+
 Pairing state and its ephemeral private key live only in this daemon process. A restart abandons
 an unfinished attempt and returns to `"disconnected"`; durable credentials survive and the new
 process proceeds through `"connecting"` as it reconnects.
+
+When Happy rejects credentials, the daemon removes its owned copy and remembers the fingerprint of
+the matching external Happy CLI credential. Restarting must not import that same rejected credential
+again. A genuinely changed external credential may be imported, and successful pairing clears the
+rejection marker. The same suppression applies when a person explicitly unlinks the integration;
+unlinking never edits the external Happy CLI installation.
 
 ### `GET /v0/integrations/happy`
 
@@ -850,6 +870,42 @@ If the daemon cannot create the authorization request because Happy is unavailab
 returns `503` with code `happy_unavailable` and includes the current `integration` object. No
 attempt was started, the snapshot is unchanged, and no event is emitted. Failures after a pairing
 attempt has started settle through the integration snapshot and its update event instead.
+
+### `POST /v0/integrations/happy/cancel`
+
+Cancels an active pairing attempt without unlinking configured credentials. The operation is
+idempotent and has no request body. A pairing snapshot becomes unconfigured `"disconnected"` with
+no authorization or error. Every other state is returned unchanged, including `"disabled"`.
+
+Response — `200`: `{ "integration": { ... } }`. A cancelled pairing emits one
+`happy.integration.updated`; a no-op emits nothing.
+
+### `DELETE /v0/integrations/happy`
+
+Unlinks this daemon from Happy. The operation cancels pairing, closes the live Happy connection,
+removes daemon-owned credentials, and suppresses re-import of the exact external credential that
+was present when the person unlinked. It never changes or deletes the external Happy CLI
+credentials. The operation is idempotent and has no request body.
+
+The resulting snapshot is unconfigured, with no authorization or error. Its status is
+`"disabled"` when the integration is disabled in configuration and `"disconnected"` otherwise.
+
+Response — `200`: `{ "integration": { ... } }`. A changed snapshot emits one
+`happy.integration.updated`; an already-unlinked snapshot emits nothing.
+
+### `POST /v0/integrations/happy/re-pair`
+
+Explicitly replaces the current Happy authorization. The operation has no request body. It first
+performs the unlink behavior above—even when already connected or pairing—and then creates a fresh
+two-minute pairing attempt. The returned authorization therefore differs from every attempt this
+operation replaced.
+
+Response — `200`: `{ "integration": { ... } }` with the fresh `"pairing"` snapshot. Unlinking and
+starting the new attempt each emit their own complete `happy.integration.updated` snapshot when
+they change state. When disabled, the request returns `503` with code `unsupported` and the current
+integration. When Happy cannot create the fresh authorization request, it returns `503` with code
+`happy_unavailable` and the now-unlinked `"disconnected"` integration; the previous credentials
+remain removed so a later retry cannot silently reconnect the account the person chose to replace.
 
 ## Projects and workspaces
 
