@@ -872,6 +872,30 @@ describe("ProjectsModule", () => {
         }
     });
 
+    it("keeps complete catalog pages separate from model-output fitting", async () => {
+        const projects = await projectsModule();
+        const database = await migratedProjectDatabase("projects-catalog-page-test");
+
+        try {
+            for (let index = 0; index < 50; index += 1) {
+                await projects.create(database.context, {
+                    name: `Project ${String(index)}`,
+                    repositoryRef: `/tmp/projects/${String(index)}-${"x".repeat(300)}`,
+                });
+            }
+
+            const catalog = await projects.listCatalogPage(database.context, { limit: 50 });
+            const model = await projects.list(database.context, { limit: 50 });
+
+            expect(catalog.projects).toHaveLength(50);
+            expect(catalog.nextCursor).toBeUndefined();
+            expect(model.projects.length).toBeLessThan(50);
+            expect(model.nextCursor).toBe(String(model.projects.length));
+        } finally {
+            database.close();
+        }
+    });
+
     it("accepts only the remote URLs a clone would actually run", () => {
         const remote = (url: string) =>
             Value.Check(projectRemoteSourceSchema, { kind: "git", url });

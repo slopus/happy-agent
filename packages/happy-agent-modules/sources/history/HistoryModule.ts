@@ -525,6 +525,58 @@ export class HistoryModule implements AgentModule {
         });
     }
 
+    /**
+     * The newest visible human message or final model response, for conversation ordering.
+     *
+     * A human message counts as soon as it is accepted. Assistant text counts only after its
+     * owning run completes successfully, so intermediate prose around tool calls cannot keep
+     * moving a conversation through the list. Assistant text without a durable completed run is
+     * not assumed to be final. Generated handoffs, service and system prose, reasoning, and tools
+     * never count. A message received from Happy still counts: `remoteMessageId` only suppresses
+     * its echo back to the same server and does not make the human's message invisible.
+     */
+    async latestUserOrFinalAssistantTextMessageAt(
+        ctx: Context,
+        agentId: string,
+    ): Promise<number | undefined> {
+        if (!Value.Check(historyAgentIdSchema, agentId)) {
+            throw new Error("The history module received an invalid activity agent ID.");
+        }
+        return await this.#direct(ctx, async (txCtx) => {
+            const rows = await agentDatabaseRows<{ message_json: string }>(
+                txCtx.db,
+                sql`SELECT message_json
+                    FROM ${sql.raw(HISTORY_TABLE)} AS history
+                    WHERE agent_id = ${agentId}
+                      AND (
+                          role = 'user'
+                          OR (
+                              role = 'assistant'
+                              AND run_id IS NOT NULL
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM ${sql.raw(HISTORY_RUNS_TABLE)} AS run
+                                  WHERE run.agent_id = history.agent_id
+                                    AND run.run_id = history.run_id
+                                    AND run.status = 'completed'
+                              )
+                          )
+                      )
+                      AND COALESCE(json_extract(message_json, '$.hideFromUser'), 0) != 1
+                      AND EXISTS (
+                          SELECT 1
+                          FROM json_each(history.message_json, '$.blocks') AS block
+                          WHERE json_extract(block.value, '$.type') = 'text'
+                            AND length(trim(json_extract(block.value, '$.text'))) > 0
+                      )
+                    ORDER BY position DESC
+                    LIMIT 1`,
+            );
+            const encoded = rows[0]?.message_json;
+            return encoded === undefined ? undefined : parseStoredMessage(encoded).at;
+        });
+    }
+
     /** The most recent durable assistant message for one run, when that run has produced one. */
     async assistantMessage(
         ctx: Context,

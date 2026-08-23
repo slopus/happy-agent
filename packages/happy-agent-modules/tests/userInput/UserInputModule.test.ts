@@ -17,6 +17,31 @@ const askInput = {
 } as const;
 
 describe("UserInputModule", () => {
+    it("keeps the newest question creation time after that question settles", async () => {
+        const module = createUserInputModule();
+        const database = createUserInputDatabase(module, "user-input-latest-question");
+        await database.ready;
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+        try {
+            await expect(
+                module.latestQuestionAt(database.context, agentId),
+            ).resolves.toBeUndefined();
+            await module.ask(database.context, agentId, askInput, "older-question");
+            clock.mockReturnValue(2_000);
+            await module.ask(database.context, agentId, askInput, "newer-question");
+            clock.mockReturnValue(3_000);
+            await module.answer(database.context, agentId, {
+                answer: "Use the first option.",
+                requestId: "newer-question",
+            });
+
+            await expect(module.latestQuestionAt(database.context, agentId)).resolves.toBe(2_000);
+        } finally {
+            clock.mockRestore();
+            database.close();
+        }
+    });
+
     it("uses ctx.db to create and resume the stable request identity", async () => {
         const module = createUserInputModule();
         const database = createUserInputDatabase(module, "user-input-resume");

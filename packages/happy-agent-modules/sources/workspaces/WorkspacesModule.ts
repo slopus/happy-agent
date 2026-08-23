@@ -1630,10 +1630,18 @@ export class WorkspacesModule implements AgentModule {
 
     /** Every workspace this agent can see, archived ones included. */
     async #allWorkspaces(ctx: Context, projectId?: string): Promise<readonly Workspace[]> {
-        return await this.list(ctx, {
-            includeArchived: true,
-            ...(projectId === undefined ? {} : { projectRef: projectId }),
-        });
+        const workspaces: Workspace[] = [];
+        let cursor: number | undefined;
+        do {
+            const page = await this.listCatalogPage(ctx, {
+                includeArchived: true,
+                ...(cursor === undefined ? {} : { cursor }),
+                ...(projectId === undefined ? {} : { projectRef: projectId }),
+            });
+            workspaces.push(...page.workspaces);
+            cursor = page.nextCursor;
+        } while (cursor !== undefined);
+        return workspaces;
     }
 
     /** One workspace, but only if it belongs to the project the caller named. */
@@ -1789,11 +1797,13 @@ export class WorkspacesModule implements AgentModule {
     }
 
     /**
-     * The workspaces someone can still work in. Archived rows are history: they are only listed
-     * when a caller asks for them by name, so a list nobody qualified never shows a folder that
-     * is already gone.
+     * One complete store page for a caller that must inspect the catalog itself.
+     *
+     * Archived rows are history and are returned only when requested. Unlike the model-facing
+     * list, this page does not discard rows to fit a prose-output budget; callers that need every
+     * row follow `nextCursor` until the catalog is exhausted.
      */
-    async listPage(ctx: Context, query: WorkspacePageQuery = {}): Promise<WorkspacePage> {
+    async listCatalogPage(ctx: Context, query: WorkspacePageQuery = {}): Promise<WorkspacePage> {
         this.#assertEnabled();
         this.#assertInput(workspacePageQuerySchema, query, "workspace page query");
         const limit = query.limit ?? WORKSPACE_PAGE_SIZE;
@@ -1823,6 +1833,12 @@ export class WorkspacesModule implements AgentModule {
                 throw new Error("Workspace page returned an archived row without includeArchived.");
             }
         }
+        return structuredClone(raw);
+    }
+
+    /** One model-facing workspace page, fitted to the bounded tool output. */
+    async listPage(ctx: Context, query: WorkspacePageQuery = {}): Promise<WorkspacePage> {
+        const raw = await this.listCatalogPage(ctx, query);
         return structuredClone(fitPageForModel(raw, MAX_WORKSPACE_OUTPUT_CHARACTERS));
     }
 

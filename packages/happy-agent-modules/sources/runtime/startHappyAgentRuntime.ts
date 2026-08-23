@@ -424,7 +424,9 @@ export async function startHappyAgentRuntime(
         const installation = new InstallationModule();
         const happy = new HappyModule(
             config,
+            compute.computeModule,
             events,
+            git,
             history,
             projects,
             scheduling,

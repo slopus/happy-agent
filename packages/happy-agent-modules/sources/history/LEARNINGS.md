@@ -57,6 +57,17 @@ earlier page exists. A previous cursor is emitted only when the selected first m
 an earlier matching record. Otherwise returning zero as its own predecessor makes bounded readers
 reject the page as stalled.
 
+## Visible message activity means human text or a final model response
+
+History reports the newest non-hidden `user` message with non-whitespace text immediately. An
+`assistant` message counts only when its durable run has completed successfully; text without an
+owning completed run is not assumed to be final. This prevents intermediate model prose around
+tool calls from repeatedly reordering a conversation. Tool calls and results, reasoning, system
+and service prose, failed or aborted runs, and generated agent-to-agent handoffs do not count. A
+human message received from a remote client still counts even though its `remoteMessageId`
+suppresses an echo. User-facing questions are meaningful session activity too, but they belong to
+UserInput and are combined by the consumer rather than being faked as history.
+
 ## A run starts when its accepted work was submitted
 
 `startedAt` is the accepted message's durable submission time, or the maintenance operation's

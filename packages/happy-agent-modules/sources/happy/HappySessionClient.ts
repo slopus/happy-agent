@@ -665,8 +665,14 @@ export class HappySessionClient {
         // `activity` is dropped rather than merged forward: an older Happy Agent wrote a shape the
         // phone reserves for its own counters, and one key of the wrong shape fails the phone's
         // whole metadata parse.
-        const { activity: _stale, ...base } = this.#metadataBase;
+        const base = { ...this.#metadataBase };
+        delete base.activity;
+        delete base.lastUserOrAgentTextMessageAt;
         let metadata: Record<string, unknown> = { ...base, ...rigMetadata };
+        if (rigMetadata.git === undefined) delete metadata.git;
+        if (rigMetadata.lastMeaningfulMessageAt === undefined) {
+            delete metadata.lastMeaningfulMessageAt;
+        }
         let serialized = JSON.stringify(metadata);
         if (serialized === this.#lastMetadata) return;
         for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -911,12 +917,22 @@ function decodeKey(value: string): Uint8Array {
  *
  * `activity` is dropped rather than kept, because an older Happy Agent wrote a shape the phone
  * reserves for its own counters, and one key of the wrong shape fails the phone's whole metadata
- * parse. Carrying it forward would leave a session that upgraded still looking unreadable.
+ * parse. `git` and `lastMeaningfulMessageAt` are also daemon-owned: keeping older values when local
+ * history and user input have none would make an empty session sort as though it still had that
+ * activity, or show a diff the checkout no longer has. The immediately superseded field name is
+ * removed instead of leaking into metadata.
  */
 function composeSessionMetadata(
     base: Record<string, unknown>,
     rigMetadata: Record<string, unknown>,
 ): Record<string, unknown> {
-    const { activity: _activity, ...kept } = base;
-    return { ...kept, ...rigMetadata };
+    const kept = { ...base };
+    delete kept.activity;
+    delete kept.lastUserOrAgentTextMessageAt;
+    const composed = { ...kept, ...rigMetadata };
+    if (rigMetadata.git === undefined) delete composed.git;
+    if (rigMetadata.lastMeaningfulMessageAt === undefined) {
+        delete composed.lastMeaningfulMessageAt;
+    }
+    return composed;
 }

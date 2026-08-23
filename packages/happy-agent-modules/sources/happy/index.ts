@@ -57,9 +57,13 @@ export {
     HappyMessageRefused,
     type HappyInboundImage,
     type HappyInboundMessage,
+    type HappyGitSummary,
     type HappyModel,
+    type HappyDirectorySpawnRequest,
     type HappySessionSnapshot,
     type HappySpawnRequest,
+    type HappySpawnTarget,
+    type HappyTargetSpawnRequest,
 } from "./HappySession.js";
 export {
     createHappyAgentState,
@@ -92,6 +96,7 @@ export {
     HAPPY_SPAWN_RETRY_MS,
     type HappySpawnOperations,
     type HappySpawnResult,
+    type HappySpawnStartResult,
 } from "./handleHappySpawnSession.js";
 export {
     HappyMachineClient,

@@ -12,6 +12,130 @@ import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
 describe("HistoryModule durability", () => {
+    it("reports only visible user text and completed-run assistant text as conversation activity", async () => {
+        const history = new HistoryModule();
+        const database = moduleDatabase(history.migrations, "history-text-activity-test");
+        await database.ready;
+
+        try {
+            await expect(
+                history.latestUserOrFinalAssistantTextMessageAt(database.context, "agent-a"),
+            ).resolves.toBeUndefined();
+            await history.record(database.context, "agent-a", {
+                at: 100,
+                blocks: [{ text: "Human message.", type: "text" }],
+                recordId: "human-text",
+                role: "user",
+            });
+            await history.record(database.context, "agent-a", {
+                at: 200,
+                blocks: [{ thinking: "Private reasoning.", type: "thinking" }],
+                recordId: "assistant-reasoning",
+                role: "assistant",
+            });
+            await history.record(database.context, "agent-a", {
+                at: 300,
+                blocks: [{ arguments: {}, callId: "call-1", name: "read", type: "tool_call" }],
+                recordId: "assistant-tool",
+                role: "assistant",
+            });
+            await history.record(database.context, "agent-a", {
+                at: 400,
+                blocks: [{ text: "Generated handoff.", type: "text" }],
+                recordId: "generated-agent-text",
+                role: "agent",
+            });
+            await history.record(database.context, "agent-a", {
+                at: 500,
+                blocks: [{ text: "Service notice.", type: "text" }],
+                recordId: "service-text",
+                role: "service",
+            });
+            await history.record(database.context, "agent-a", {
+                at: 600,
+                blocks: [{ text: "   ", type: "text" }],
+                recordId: "assistant-whitespace",
+                role: "assistant",
+            });
+
+            await expect(
+                history.latestUserOrFinalAssistantTextMessageAt(database.context, "agent-a"),
+            ).resolves.toBe(100);
+
+            await history.record(database.context, "agent-a", {
+                at: 700,
+                blocks: [{ text: "Assistant text without a completed run.", type: "text" }],
+                recordId: "unsettled-assistant-text",
+                role: "assistant",
+            });
+            await history.beginMaintenanceRun(database.context, "agent-a", "completed-run", 710);
+            await history.record(database.context, "agent-a", {
+                at: 720,
+                blocks: [{ text: "Final model response.", type: "text" }],
+                recordId: "final-assistant-text",
+                role: "assistant",
+                runId: "completed-run",
+            });
+
+            await expect(
+                history.latestUserOrFinalAssistantTextMessageAt(database.context, "agent-a"),
+            ).resolves.toBe(100);
+
+            await history.finishMaintenanceRun(
+                database.context,
+                "agent-a",
+                "completed-run",
+                "completed",
+                730,
+            );
+
+            await expect(
+                history.latestUserOrFinalAssistantTextMessageAt(database.context, "agent-a"),
+            ).resolves.toBe(720);
+
+            await history.beginMaintenanceRun(database.context, "agent-a", "failed-run", 740);
+            await history.record(database.context, "agent-a", {
+                at: 750,
+                blocks: [{ text: "Partial response before failure.", type: "text" }],
+                recordId: "failed-assistant-text",
+                role: "assistant",
+                runId: "failed-run",
+            });
+            await history.finishMaintenanceRun(
+                database.context,
+                "agent-a",
+                "failed-run",
+                "failed",
+                760,
+            );
+
+            await expect(
+                history.latestUserOrFinalAssistantTextMessageAt(database.context, "agent-a"),
+            ).resolves.toBe(720);
+
+            await history.record(database.context, "agent-a", {
+                at: 800,
+                blocks: [{ text: "Hidden human text.", type: "text" }],
+                hideFromUser: true,
+                recordId: "hidden-user-text",
+                role: "user",
+            });
+            await history.record(database.context, "agent-a", {
+                at: 900,
+                blocks: [{ text: "Remote human message.", type: "text" }],
+                recordId: "remote-user-text",
+                remoteMessageId: "happy-message-1",
+                role: "user",
+            });
+
+            await expect(
+                history.latestUserOrFinalAssistantTextMessageAt(database.context, "agent-a"),
+            ).resolves.toBe(900);
+        } finally {
+            database.close();
+        }
+    });
+
     it("marks the durable read tool transactional", async () => {
         const history = new HistoryModule();
         const database = moduleDatabase(history.migrations, "history-tool-commit-test");

@@ -62,6 +62,14 @@ Derive the background lifetime while the caller's context is still live, then le
 only what it was handed. The rule generalizes: whatever an `afterCommit` callback needs from the
 transaction's context must be read before the callback is registered, never inside it.
 
+## Catalog pages and model pages have different bounds
+
+The workspace list shown to a model is deliberately shortened to a bounded amount of prose. That
+shortening is not a catalog query: reconciliation, startup recovery, and other module-owned work
+use `listCatalogPage` and follow every cursor so a long workspace identity cannot silently hide
+another workspace. Helpers that mean “all workspaces” do the same rather than reading one fitted
+page.
+
 ## Setup failure does not erase a valid checkout
 
 Workspace setup commands run only after the worktree or copied folder exists. An install failure

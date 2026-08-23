@@ -151,7 +151,19 @@ export function createSqliteUserInputStorage(): UserInputStore {
             ...(rows.length > limit ? { nextCursor: String(offset + requests.length) } : {}),
         };
     };
+    const latestQuestionAt = async (ctx: Context, agentId: string): Promise<number | undefined> => {
+        const rows = await agentDatabaseRows<RequestRow>(
+            ctx.db,
+            sql`SELECT request_json FROM happy_user_input_requests
+                WHERE asking_agent_id = ${agentId}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1`,
+        );
+        const row = rows[0];
+        return row === undefined ? undefined : readRequestRow(row).createdAt;
+    };
     return {
+        latestQuestionAt,
         readRequest,
         writeRequest,
         listRequests,

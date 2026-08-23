@@ -109,8 +109,11 @@ records anything; it takes its lifetime and the agent collection at
 point. Publishing a session means describing what it is doing, and until every
 durable agent has been restored there is no honest answer to give — a phone
 would be shown a row of sessions that all look idle and then watch them correct
-themselves. After startup, the API may ask the same module to begin pairing or
-resume a configured connection.
+themselves. Catalog reconciliation then runs on the module's background
+lifetime, so reading a large archive cannot hold daemon startup open. It follows
+complete catalog pages, rejects archived agents and owners, and opens at most 64
+session connections. After startup, the API may ask the same module to begin
+pairing or resume a configured connection.
 
 The public integration state is a complete, versioned snapshot. Pairing,
 connecting, connected, disconnected and failed transitions are emitted through
@@ -160,3 +163,23 @@ than quietly substituted, because a session running on something other than
 what was asked for is worse than no session. The session id is derived from the
 request, so a phone that asks again gets the same session rather than a second
 one.
+
+The newer `happy-agent-spawn` request names a project, a ready workspace, a new
+workspace, or a folder to import. Its outer object and agent configuration are
+strict schemas. Agent and new-workspace identities are both derived from the
+client request ID; terminal answers are memoized for the daemon lifetime, while
+`pending` is deliberately retried until background workspace provisioning is
+ready.
+
+## Historical context
+
+A newly mirrored session receives at most its latest 50 archived messages, in
+oldest-first order, once. Backfill uses the same message mapper as live sync and
+stable `history:` identities. It publishes visible text and structured tool-call
+start/end events, but never private reasoning or tool output content.
+
+Archiving is one decision in both products. A phone archive aborts the run,
+disposes the local compute and writes Agent Base's durable `archivedAt` metadata
+before the remote projection closes. Project and workspace archives enumerate
+their own durable agent associations, so a session does not have to be one of the
+currently connected 64 to be retired remotely.

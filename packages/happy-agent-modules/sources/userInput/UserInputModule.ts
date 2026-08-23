@@ -39,6 +39,7 @@ import {
     userInputPageSchema,
     userInputRequestIdSchema,
     userInputPresenceStateSchema,
+    userInputTimestampSchema,
     userInputToolInputSchema,
     type UserInputAnswer,
     type UserInputAnswerInput,
@@ -358,6 +359,14 @@ export class UserInputModule implements AgentModule {
         query: UserInputListQuery = {},
     ): Promise<readonly UserInputRequest[]> {
         return (await this.listPage(ctx, agentId, query)).requests;
+    }
+
+    /** When this agent most recently asked the person a user-facing question. */
+    async latestQuestionAt(ctx: Context, agentId: string): Promise<number | undefined> {
+        this.#assertAgentId(agentId);
+        const at = await this.#store.latestQuestionAt(ctx, agentId);
+        if (at !== undefined) this.#assertValue(userInputTimestampSchema, at, "question timestamp");
+        return at;
     }
 
     async get(

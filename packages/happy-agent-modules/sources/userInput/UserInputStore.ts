@@ -8,6 +8,7 @@ import {
     userInputPageSchema,
     userInputRequestIdSchema,
     userInputRequestSchema,
+    userInputTimestampSchema,
     type UserInputPage,
 } from "./UserInputRequest.js";
 import { userInputContextSchema } from "./UserInputEvent.js";
@@ -35,6 +36,10 @@ export const userInputStoreSchema = Type.Object(
         listRequests: Type.Function(
             [userInputContextSchema, userInputAgentIdSchema, userInputListQuerySchema],
             Type.Promise(userInputPageSchema),
+        ),
+        latestQuestionAt: Type.Function(
+            [userInputContextSchema, userInputAgentIdSchema],
+            Type.Promise(Type.Union([userInputTimestampSchema, Type.Undefined()])),
         ),
     },
     { additionalProperties: false },

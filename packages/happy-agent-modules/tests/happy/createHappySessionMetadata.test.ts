@@ -93,6 +93,34 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         expect(published.summary).toEqual({ text: "Porting the Happy module", updatedAt: 5_000 });
     });
 
+    it("publishes the exact meaningful-message timestamp used for session ordering", () => {
+        expect(
+            metadata(snapshot({ lastMeaningfulMessageAt: 12_345 })).lastMeaningfulMessageAt,
+        ).toBe(12_345);
+        expect("lastMeaningfulMessageAt" in metadata()).toBe(false);
+    });
+
+    it("publishes Rig's canonical branch-diff line counts", () => {
+        expect(
+            metadata(
+                snapshot({
+                    git: {
+                        changedFiles: 39,
+                        countsExact: true,
+                        deletions: 180,
+                        insertions: 3_032,
+                    },
+                }),
+            ).git,
+        ).toEqual({
+            changedFiles: 39,
+            countsExact: true,
+            deletions: 180,
+            insertions: 3_032,
+        });
+        expect("git" in metadata()).toBe(false);
+    });
+
     it("leaves an unnamed session unnamed, rather than overwriting Happy's own words", () => {
         const { title: _named, ...untitled } = snapshot();
         const published = metadata(untitled);

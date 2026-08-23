@@ -9,6 +9,10 @@ path is up to 4,096 characters, longer than the smallest configurable budget of 
 an ordinary maximum-length project into a list nobody could read. `fitProjectPage` keeps the first
 row and lets the formatter truncate it, so the person always has a row and an ID to act on.
 
+The fitted page is only a model/tool boundary. Internal catalog consumers use
+`listCatalogPage` and follow every cursor; otherwise the prose budget can silently hide valid rows
+from startup reconciliation and background maintenance.
+
 ## Equality is canonical everywhere, including the store
 
 `sameJson` is the module's equality, and the store must use it too. Comparing settings with

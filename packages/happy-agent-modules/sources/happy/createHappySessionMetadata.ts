@@ -49,6 +49,18 @@ export interface HappySessionMetadata {
     homeDir: string;
     host: string;
     hostPid: number;
+    /** Rig's branch/worktree line delta against the merge base with origin/main. */
+    git?: {
+        changedFiles: number;
+        countsExact: boolean;
+        deletions: number;
+        insertions: number;
+    };
+    /**
+     * The newest visible human text, final model response, or user-facing question, in epoch
+     * milliseconds.
+     */
+    lastMeaningfulMessageAt?: number;
     machineId?: string;
     model: { id: string; providerId: string };
     models: readonly HappyPublishedModel[];
@@ -146,6 +158,10 @@ export function createHappySessionMetadata(options: {
         homeDir: homedir(),
         host: hostname(),
         hostPid: process.pid,
+        ...(session.git === undefined ? {} : { git: { ...session.git } }),
+        ...(session.lastMeaningfulMessageAt === undefined
+            ? {}
+            : { lastMeaningfulMessageAt: session.lastMeaningfulMessageAt }),
         ...(configuration.machineId === undefined ? {} : { machineId: configuration.machineId }),
         model: { id: session.modelId, providerId: session.providerId },
         models: models.map(publishModel),

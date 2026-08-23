@@ -248,6 +248,8 @@ Reading:
 
 - `listPage(ctx, agentId, query?)` and `list(ctx, agentId, query?)` — active workspaces only
   unless `includeArchived: true` is passed.
+- `listCatalogPage(ctx, query?)` — the complete bounded store page without model-output fitting;
+  internal consumers follow `nextCursor` when every workspace matters.
 - `get(ctx, agentId, workspaceId)`, `getByPath(ctx, agentId, path)`, and
   `getPage(ctx, agentId, workspaceId, query?)` — `getPage` returns `{ workspace: null }` for an
   unknown ID instead of throwing.

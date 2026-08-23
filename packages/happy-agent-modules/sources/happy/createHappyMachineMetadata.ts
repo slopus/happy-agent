@@ -7,7 +7,15 @@ import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import type { HappyModel } from "./HappySession.js";
 import type { HappyPublishedModel } from "./createHappySessionMetadata.js";
 
-/** What the phone knows about this computer before it opens any session on it. */
+/**
+ * What the phone knows about this computer before it opens any session on it.
+ *
+ * Deliberately not a catalog of the projects and workspaces on this computer. Machine metadata is
+ * one document, republished whole on every change, and a person setting up work moves several
+ * catalogs at once — so carrying them here meant re-sending everything about this machine each
+ * time a workspace was created or renamed. The phone reads the places to work from the sessions
+ * themselves instead, which it already receives one at a time.
+ */
 export interface HappyMachineMetadata {
     capabilities: { newSession: boolean; resume: false; worktrees: false };
     client: { id: "rig"; name: "Happy Agent"; version: string };

@@ -112,6 +112,9 @@ const loopSchema = Type.Object(
     { additionalProperties: true },
 );
 
+/** Text from old history is useful as a preview, but not at the cost of an unbounded outbox item. */
+const MAX_HISTORY_TEXT = 4_000;
+
 interface ActiveTurn {
     readonly id: string;
     readonly startedAt: number;
@@ -154,6 +157,20 @@ export class HappyMessageMapper {
         return [];
     }
 
+    /** Maps archived history through the same message vocabulary used by the live event stream. */
+    mapHistory(
+        messages: readonly HistoryMessage[],
+        maximumMessages?: number,
+    ): readonly HappySessionProtocolMessage[] {
+        const mapped = messages.flatMap((message) => {
+            if (message.hideFromUser === true || message.remoteMessageId !== undefined) return [];
+            return this.#mapHistoryMessage(message, `history:${message.recordId}`, message.at ?? 0);
+        });
+        if (maximumMessages === undefined) return mapped;
+        if (maximumMessages <= 0) return [];
+        return mapped.slice(-maximumMessages);
+    }
+
     #mapAccepted(
         event: AgentEvent,
         message: HistoryMessage | undefined,
@@ -184,6 +201,68 @@ export class HappyMessageMapper {
         }
         // Anything the runtime or another agent said belongs to the agent's side.
         return [...interrupted, this.#agentMessage(event, accepted.id, { t: "service", text })];
+    }
+
+    #mapHistoryMessage(
+        message: HistoryMessage,
+        idPrefix: string,
+        time: number,
+    ): HappySessionProtocolMessage[] {
+        const output: HappySessionProtocolMessage[] = [];
+        const turn = `history:${message.runId ?? message.recordId}`;
+        for (const block of message.blocks) {
+            const id = output.length === 0 ? idPrefix : `${idPrefix}:${String(output.length)}`;
+            if (block.type === "text") {
+                const text = block.text.trim();
+                if (text.length === 0) continue;
+                const bounded =
+                    text.length > MAX_HISTORY_TEXT ? `${text.slice(0, MAX_HISTORY_TEXT)}…` : text;
+                output.push(
+                    this.#createMessage({
+                        ev:
+                            message.role === "user" || message.role === "assistant"
+                                ? { t: "text", text: bounded }
+                                : { t: "service", text: bounded },
+                        id,
+                        role: message.role === "user" ? "user" : "agent",
+                        time,
+                        ...(message.role === "user" ? {} : { turn }),
+                    }),
+                );
+                continue;
+            }
+            // Reasoning is private model state. Live sync does not reconstruct it from prose, and
+            // a historical replay must not publish it merely because the archive retained it.
+            if (block.type === "thinking") continue;
+            if (block.type === "tool_call") {
+                output.push(
+                    this.#createMessage({
+                        ev: this.#toolCallEvent({
+                            arguments: block.arguments,
+                            id: block.callId,
+                            name: block.name,
+                        }),
+                        id,
+                        role: "agent",
+                        time,
+                        turn,
+                    }),
+                );
+                continue;
+            }
+            if (block.type === "tool_result") {
+                output.push(
+                    this.#createMessage({
+                        ev: this.#toolResultEvent(block.callId),
+                        id,
+                        role: "agent",
+                        time,
+                        turn,
+                    }),
+                );
+            }
+        }
+        return output;
     }
 
     #mapLoopStarted(event: AgentEvent): readonly HappySessionProtocolMessage[] {
@@ -230,28 +309,45 @@ export class HappyMessageMapper {
     #mapTool(event: AgentEvent): readonly HappySessionProtocolMessage[] {
         if (Value.Check(toolStartSchema, event.payload)) {
             const call = event.payload.rigEvent.toolCall;
-            const title = humanizeToolName(call.name ?? "tool");
             return [
-                this.#agentMessage(event, `tool-call:${call.id}`, {
-                    args: toRecord(call.arguments),
-                    call: call.id,
-                    description: `Running ${title}`,
-                    name: call.name ?? "tool",
-                    t: "tool-call-start",
-                    title,
-                }),
+                this.#agentMessage(
+                    event,
+                    `tool-call:${call.id}`,
+                    this.#toolCallEvent({
+                        arguments: call.arguments,
+                        id: call.id,
+                        name: call.name ?? "tool",
+                    }),
+                ),
             ];
         }
         if (Value.Check(toolEndSchema, event.payload)) {
             const callId = event.payload.rigEvent.result.toolCallId;
             return [
-                this.#agentMessage(event, `tool-result:${callId}`, {
-                    call: callId,
-                    t: "tool-call-end",
-                }),
+                this.#agentMessage(event, `tool-result:${callId}`, this.#toolResultEvent(callId)),
             ];
         }
         return [];
+    }
+
+    #toolCallEvent(call: {
+        arguments?: unknown;
+        id: string;
+        name: string;
+    }): Extract<HappySessionEvent, { t: "tool-call-start" }> {
+        const title = humanizeToolName(call.name);
+        return {
+            args: call.arguments === undefined ? {} : toRecord(call.arguments),
+            call: call.id,
+            description: `Running ${title}`,
+            name: call.name,
+            t: "tool-call-start",
+            title,
+        };
+    }
+
+    #toolResultEvent(callId: string): Extract<HappySessionEvent, { t: "tool-call-end" }> {
+        return { call: callId, t: "tool-call-end" };
     }
 
     #mapInference(event: AgentEvent): readonly HappySessionProtocolMessage[] {

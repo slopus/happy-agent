@@ -2,30 +2,38 @@ import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+    decryptHappyPayload,
+    encryptHappyPayload,
     HappyMachineClient,
     type HappyConnectionConfiguration,
     type HappyMachineConnectionEvent,
     type HappyModel,
+    type HappySpawnOperations,
+    type HappySpawnRequest,
+    type HappySpawnResult,
     type HappySocket,
 } from "../../sources/happy/index.js";
+
+const KEY = Buffer.alloc(32, 7);
+const SERVER = "https://api.happy.example";
 
 const CONFIGURATION: HappyConnectionConfiguration = {
     credentialFingerprint: "credential-fingerprint",
     credentials: {
-        encryption: { secret: new Uint8Array(32).fill(4), type: "legacy" },
+        encryption: { secret: new Uint8Array(KEY), type: "legacy" },
         token: "happy-token",
     },
     credentialsPath: "/tmp/happy/access.key",
     happyHome: "/tmp/happy",
     imported: false,
     machineId: "machine-1",
-    serverUrl: "https://happy.example",
+    serverUrl: SERVER,
 };
 
 const MODELS: readonly HappyModel[] = [
     {
         defaultEffort: "medium",
-        effortLevels: ["medium"],
+        effortLevels: ["low", "medium"],
         id: "gpt-5.6-sol",
         name: "GPT-5.6 Sol",
         providerId: "codex",
@@ -33,10 +41,24 @@ const MODELS: readonly HappyModel[] = [
     },
 ];
 
+function decode(value: string): Record<string, unknown> {
+    return decryptHappyPayload(
+        new Uint8Array(KEY),
+        "legacy",
+        new Uint8Array(Buffer.from(value, "base64")),
+    ) as Record<string, unknown>;
+}
+
+function encode(value: unknown): string {
+    return Buffer.from(encryptHappyPayload(new Uint8Array(KEY), "legacy", value)).toString(
+        "base64",
+    );
+}
+
 class FakeSocket implements HappySocket {
     readonly #listeners = new Map<string, (...values: any[]) => void>();
-    /** Every event name this socket was asked to send, in order. */
-    readonly emitted: string[] = [];
+    readonly emitted: { event: string; value: unknown }[] = [];
+    acknowledgements: unknown[] = [];
     connected = false;
     disconnectCount = 0;
 
@@ -51,10 +73,12 @@ class FakeSocket implements HappySocket {
     }
 
     emit(event: string, ...values: unknown[]): void {
-        this.emitted.push(event);
+        this.emitted.push({ event, value: values[0] });
         const callback = values[1];
         if (typeof callback === "function") {
-            (callback as (answer: unknown) => void)({ result: "success", version: 1 });
+            (callback as (answer: unknown) => void)(
+                this.acknowledgements.shift() ?? { result: "success", version: 1 },
+            );
         }
     }
 
@@ -66,31 +90,143 @@ class FakeSocket implements HappySocket {
         this.connected = event === "connect";
         this.#listeners.get(event)?.();
     }
+
+    /** Plays the Happy server forwarding one machine RPC from the phone. */
+    async rpc(method: string, params: unknown): Promise<Record<string, unknown>> {
+        const listener = this.#listeners.get("rpc-request");
+        if (listener === undefined) throw new Error("The client registered no RPC listener.");
+        return await new Promise((resolve) => {
+            listener({ method, params: encode(params) }, (answer: string) => {
+                resolve(decode(answer));
+            });
+        });
+    }
+
+    /** Every metadata document this client published, oldest first. */
+    published(): Record<string, unknown>[] {
+        return this.emitted
+            .filter((one) => one.event === "machine-update-metadata")
+            .map((one) => decode((one.value as { metadata: string }).metadata));
+    }
 }
+
+const clients = new Set<HappyMachineClient>();
+
+afterEach(() => {
+    for (const client of clients) client.close();
+    clients.clear();
+});
 
 function client(options: {
     fetch: typeof fetch;
-    onConnectionChanged: (event: HappyMachineConnectionEvent) => void;
+    onConnectionChanged?: (event: HappyMachineConnectionEvent) => void;
+    operations?: HappySpawnOperations;
+    remoteSessionId?: (agentId: string) => Promise<string | undefined>;
     socket: FakeSocket | (() => FakeSocket);
 }): HappyMachineClient {
     const { socket } = options;
-    return new HappyMachineClient({
+    const machine = new HappyMachineClient({
         configuration: CONFIGURATION,
         context: createRootContext().named("happy-machine-test"),
         fetch: options.fetch,
         models: () => MODELS,
-        onConnectionChanged: options.onConnectionChanged,
-        operations: { spawnSession: async () => ({ agentId: "agent-1" }) },
-        remoteSessionId: async () => undefined,
+        ...(options.onConnectionChanged === undefined
+            ? {}
+            : { onConnectionChanged: options.onConnectionChanged }),
+        operations:
+            options.operations ??
+            ({
+                defaultSpawnPermissionMode: () => "auto",
+                readSpawnResult: () => undefined,
+                rememberSpawnResult: () => undefined,
+                spawnSession: async () => ({ agentId: "agent-1", type: "ready" }),
+            } satisfies HappySpawnOperations),
+        remoteSessionId: options.remoteSessionId ?? (async () => undefined),
         socketFactory: () => (typeof socket === "function" ? socket() : socket),
         version: "1.2.3",
     });
+    clients.add(machine);
+    return machine;
 }
 
 const REGISTERED = () =>
     new Response(JSON.stringify({ machine: { daemonStateVersion: 1, metadataVersion: 1 } }), {
         status: 200,
     });
+
+async function connected(
+    options: {
+        operations?: HappySpawnOperations;
+        remoteSessionId?: (agentId: string) => Promise<string | undefined>;
+    } = {},
+): Promise<{ socket: FakeSocket }> {
+    const socket = new FakeSocket();
+    const machine = client({
+        fetch: (async () =>
+            Response.json({
+                machine: { daemonStateVersion: 1, id: "machine-1", metadataVersion: 4 },
+            })) as unknown as typeof fetch,
+        ...(options.operations === undefined ? {} : { operations: options.operations }),
+        ...(options.remoteSessionId === undefined
+            ? {}
+            : { remoteSessionId: options.remoteSessionId }),
+        socket,
+    });
+    machine.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { socket };
+}
+
+describe("starting Happy Agent work through the machine RPC", () => {
+    it("routes the new discriminator through the existing spawn-happy-session method", async () => {
+        const started: HappySpawnRequest[] = [];
+        const served = new Map<string, HappySpawnResult>();
+        const operations: HappySpawnOperations = {
+            defaultSpawnPermissionMode: () => "auto",
+            readSpawnResult: (clientRequestId) => served.get(clientRequestId),
+            rememberSpawnResult: (clientRequestId, result) => {
+                served.set(clientRequestId, result);
+            },
+            spawnSession: async (_ctx, request) => {
+                started.push(request);
+                return { agentId: request.sessionId, type: "ready" };
+            },
+        };
+        const { socket } = await connected({
+            operations,
+            remoteSessionId: async () => "remote-1",
+        });
+
+        await expect(
+            socket.rpc("machine-1:spawn-happy-session", {
+                clientRequestId: "phone-1",
+                target: { id: "project-1", kind: "project" },
+                type: "happy-agent-spawn",
+            }),
+        ).resolves.toEqual({ sessionId: "remote-1", type: "success" });
+        expect(started).toHaveLength(1);
+        expect(started[0]).toMatchObject({ target: { id: "project-1", kind: "project" } });
+        expect(
+            socket.emitted.some(
+                (entry) =>
+                    entry.event === "rpc-register" &&
+                    (entry.value as { method?: string }).method === "machine-1:spawn-happy-session",
+            ),
+        ).toBe(true);
+    });
+});
+
+describe("keeping Happy's picture of this computer current", () => {
+    it("describes this computer without listing the work on it", async () => {
+        // The phone reads where a session may start from the sessions, so this document stays
+        // about the machine itself and does not grow with every workspace somebody makes.
+        const { socket } = await connected();
+        const published = socket.published()[0];
+        expect(published?.host).toBeDefined();
+        expect(published?.projects).toBeUndefined();
+        expect(published?.workspaces).toBeUndefined();
+    });
+});
 
 /**
  * Registration answers without a real body.

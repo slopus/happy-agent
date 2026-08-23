@@ -261,7 +261,14 @@ export class ProjectsModule implements AgentModule {
         return this.#hooks;
     };
 
-    async list(ctx: Context, query: ProjectPageQuery = {}): Promise<ProjectPage> {
+    /**
+     * One complete store page for another module that must inspect the catalog itself.
+     *
+     * Model-facing lists intentionally stop when their rendered text budget is full. Internal
+     * consumers page the durable rows instead, or a long folder name can make an unrelated
+     * project disappear from reconciliation.
+     */
+    async listCatalogPage(ctx: Context, query: ProjectPageQuery = {}): Promise<ProjectPage> {
         this.#assertInput(projectPageQuerySchema, query, "page query");
         const limit = query.limit ?? PROJECT_PAGE_SIZE;
         if (limit > PROJECT_PAGE_SIZE) {
@@ -287,9 +294,13 @@ export class ProjectsModule implements AgentModule {
                 );
             }
         }
-        return structuredClone(
-            fitProjectPage(raw, normalized.cursor, MAX_PROJECT_OUTPUT_CHARACTERS),
-        );
+        return structuredClone(raw);
+    }
+
+    /** One model-facing project page, fitted to the bounded tool output. */
+    async list(ctx: Context, query: ProjectPageQuery = {}): Promise<ProjectPage> {
+        const raw = await this.listCatalogPage(ctx, query);
+        return structuredClone(fitProjectPage(raw, query.cursor, MAX_PROJECT_OUTPUT_CHARACTERS));
     }
 
     async get(ctx: Context, projectId: string): Promise<Project | undefined> {
@@ -1263,7 +1274,17 @@ export class ProjectsModule implements AgentModule {
 
     /** Every project this agent can see, archived ones included. */
     async #allProjects(ctx: Context): Promise<readonly Project[]> {
-        return (await this.list(ctx, { includeArchived: true })).projects;
+        const projects: Project[] = [];
+        let cursor: string | undefined;
+        do {
+            const page = await this.listCatalogPage(ctx, {
+                includeArchived: true,
+                ...(cursor === undefined ? {} : { cursor }),
+            });
+            projects.push(...page.projects);
+            cursor = page.nextCursor;
+        } while (cursor !== undefined);
+        return projects;
     }
 
     // --- Setting a project up ----------------------------------------------------------------

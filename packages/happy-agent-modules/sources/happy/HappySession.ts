@@ -19,13 +19,25 @@ export interface HappyModel {
     readonly serviceTiers: readonly string[];
 }
 
+/** Rig's current branch/worktree delta against its comparison base. */
+export interface HappyGitSummary {
+    readonly changedFiles: number;
+    readonly countsExact: boolean;
+    readonly deletions: number;
+    readonly insertions: number;
+}
+
 /** One session, in the terms Happy publishes it. */
 export interface HappySessionSnapshot {
     readonly agentId: string;
     readonly archived: boolean;
     readonly cwd: string;
     readonly effort?: string;
+    /** The project/worktree line delta Rig already computes for its native Git surface. */
+    readonly git?: HappyGitSummary;
     readonly modelId: string;
+    /** The newest visible human text, final model response, or question, in epoch milliseconds. */
+    readonly lastMeaningfulMessageAt?: number;
     /** The branch the working directory is on, when it is a checkout of something. */
     readonly gitBranch?: string;
     readonly permissionMode: AgentPermissionMode;
@@ -94,9 +106,14 @@ export interface HappyInboundMessage {
     readonly text: string;
 }
 
-/** A session the phone asked for, once everything about it has been checked. */
-export interface HappySpawnRequest {
-    readonly cwd: string;
+/** One place the phone may ask Happy Agent to start a session. */
+export type HappySpawnTarget =
+    | { readonly kind: "project"; readonly id: string }
+    | { readonly kind: "workspace"; readonly id: string }
+    | { readonly kind: "newWorkspace"; readonly projectId: string }
+    | { readonly kind: "projectFolder"; readonly projectPath: string };
+
+interface HappySpawnSelection {
     readonly effort: string;
     readonly modelId: string;
     readonly permissionMode: AgentPermissionMode;
@@ -104,3 +121,17 @@ export interface HappySpawnRequest {
     /** The session id Happy Agent reserved for this request, the same one on every retry. */
     readonly sessionId: string;
 }
+
+/** A legacy directory spawn, kept wire-compatible with the Happy client that already uses it. */
+export interface HappyDirectorySpawnRequest extends HappySpawnSelection {
+    readonly cwd: string;
+}
+
+/** A Happy Agent catalog spawn, once its wire request and model choice have been checked. */
+export interface HappyTargetSpawnRequest extends HappySpawnSelection {
+    readonly target: HappySpawnTarget;
+    /** The deterministic workspace identity used only by `newWorkspace`. */
+    readonly workspaceId: string;
+}
+
+export type HappySpawnRequest = HappyDirectorySpawnRequest | HappyTargetSpawnRequest;

@@ -135,6 +135,9 @@ Reads:
 - `list` returns a bounded page of the projects someone can still work in;
   archived rows are history and appear only with `includeArchived: true`. A page
   that ended exactly on the last row returns no `nextCursor`.
+- `listCatalogPage` returns the same bounded store page without fitting it to a
+  model-output budget. Internal consumers follow its cursor when every project
+  matters.
 - `get` reads by ID, `getByPath` reads by canonical folder path.
 - `readSettings` returns the bounded settings record.
 - `avatarAsset` reads the project's bounded normalized WebP by project ID,

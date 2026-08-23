@@ -468,6 +468,62 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
+    it("republishes metadata only when the latest meaningful-message timestamp changes", async () => {
+        const socket = new FakeSocket();
+        const { operations, snapshot } = fakeOperations();
+        let lastMeaningfulMessageAt = 1_000;
+        const session = client({
+            operations: {
+                ...operations,
+                session: async () => ({ ...snapshot, lastMeaningfulMessageAt }),
+            },
+            server: fakeServer(),
+            socket,
+        });
+        await session.settle();
+        await session.settle();
+        expect(socket.emittedValues("update-metadata")).toHaveLength(1);
+
+        lastMeaningfulMessageAt = 2_000;
+        await session.settle();
+        const updates = socket.emittedValues("update-metadata") as { metadata: string }[];
+        expect(updates).toHaveLength(2);
+        expect(decode(updates[1]!.metadata)).toMatchObject({
+            lastMeaningfulMessageAt: 2_000,
+        });
+        await session.close();
+    });
+
+    it("republishes Git line counts and clears them when comparison becomes unavailable", async () => {
+        const socket = new FakeSocket();
+        const { operations, snapshot } = fakeOperations();
+        let git: HappySessionSnapshot["git"] = {
+            changedFiles: 2,
+            countsExact: true,
+            deletions: 4,
+            insertions: 12,
+        };
+        const session = client({
+            operations: {
+                ...operations,
+                session: async () => ({ ...snapshot, ...(git === undefined ? {} : { git }) }),
+            },
+            server: fakeServer(),
+            socket,
+        });
+        await session.settle();
+        expect(
+            decode((socket.emittedValues("update-metadata")[0] as { metadata: string }).metadata),
+        ).toMatchObject({ git });
+
+        git = undefined;
+        await session.settle();
+        const updates = socket.emittedValues("update-metadata") as { metadata: string }[];
+        expect(updates).toHaveLength(2);
+        expect(decode(updates[1]!.metadata)).not.toHaveProperty("git");
+        await session.close();
+    });
+
     it("puts Happy Agent's facts back on top of whatever was written first", async () => {
         const socket = new FakeSocket();
         socket.acknowledgements = [

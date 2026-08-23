@@ -4,6 +4,7 @@ import { createHappyMachineMetadata } from "../../sources/happy/index.js";
 import type { HappyConnectionConfiguration, HappyModel } from "../../sources/happy/index.js";
 
 const CONFIGURATION: HappyConnectionConfiguration = {
+    credentialFingerprint: "credential-fingerprint",
     credentials: { encryption: { secret: new Uint8Array(32), type: "legacy" }, token: "token" },
     credentialsPath: "/home/steve/.happy/access.key",
     happyHome: "/home/steve/.happy",
@@ -51,6 +52,14 @@ describe("describing this computer to Happy", () => {
     it("names the machine the other daemon on this computer registered", () => {
         expect(metadata({ siblingMachineId: "cli-1" }).siblingMachineId).toBe("cli-1");
         expect("siblingMachineId" in metadata()).toBe(false);
+    });
+
+    it("says nothing about the projects and workspaces on this computer", () => {
+        // They are read from the sessions instead. Carrying them here meant re-sending the whole
+        // description of this machine every time a workspace was created or renamed.
+        const published = metadata() as unknown as Record<string, unknown>;
+        expect("projects" in published).toBe(false);
+        expect("workspaces" in published).toBe(false);
     });
 
     it("offers itself for new sessions, with what it can run", () => {

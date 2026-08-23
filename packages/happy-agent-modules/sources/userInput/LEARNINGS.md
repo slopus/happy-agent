@@ -36,3 +36,11 @@ options on each question.
 The direct module API can accept an absolute `deadlineAt`, but the agent tool does not expose it.
 An agent does not share the daemon's authoritative wall clock and should request the bounded
 relative `autoResolutionMs` instead, avoiding deadlines that precede request creation.
+
+## Asking is meaningful session activity
+
+A user-facing question advances a session's meaningful activity at the request's durable
+`createdAt`. Settling the request does not advance it again and does not erase it: consumers that
+sort conversations must see the same timestamp while the question is pending, after it is
+answered, and after a daemon restart. User input exposes the newest question timestamp directly so
+callers do not page through model-bounded list output or duplicate knowledge of its storage.

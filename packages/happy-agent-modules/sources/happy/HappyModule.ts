@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { Type, type Static } from "@sinclair/typebox";
@@ -18,7 +18,9 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import type { AgentEvent, EventsModuleListener } from "../events/index.js";
+import { ComputeModule } from "../compute/index.js";
 import { EventsModule } from "../events/index.js";
+import { GitModule, type GitChangeSnapshot, type GitTrackedEntity } from "../git/index.js";
 import { HistoryModule } from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ProjectsModule } from "../projects/index.js";
@@ -46,7 +48,11 @@ import {
     createHappyIntegrationDatabase,
     happyIntegrationMigrations,
 } from "./HappyIntegrationDatabase.js";
-import type { HappySpawnOperations } from "./handleHappySpawnSession.js";
+import type {
+    HappySpawnOperations,
+    HappySpawnResult,
+    HappySpawnStartResult,
+} from "./handleHappySpawnSession.js";
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import { HappyMachineClient, type HappyMachineConnectionEvent } from "./HappyMachineClient.js";
 import { HappyPairing, HappyPairingError } from "./HappyPairing.js";
@@ -64,6 +70,18 @@ import { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js"
 
 /** How many agents one daemon keeps connected to Happy at once. */
 const MAX_CONNECTED_AGENTS = 64;
+
+/** How many archived messages a newly attached Happy session receives as its initial context. */
+const HAPPY_BACKFILL_MESSAGES = 50;
+
+/** Terminal RPC answers remembered for fast retries during one daemon lifetime. */
+const MAX_SERVED_SPAWN_RESULTS = 1_024;
+
+/** Old projections inspected on restart so an archive event missed while offline still converges. */
+const MAX_REAPED_SYNC_SESSIONS = 4_096;
+
+/** Keeps Happy-owned Git subscriptions inside GitModule's bounded lease. */
+const GIT_TRACK_RENEWAL_MS = 60_000;
 
 const happySelectionSchema = Type.Object(
     {
@@ -140,8 +158,10 @@ export class HappyModule
     readonly name = "happy";
     readonly migrations = [...happySyncMigrations, ...happyIntegrationMigrations];
     readonly #agents = new Map<string, ConnectedAgent>();
-    readonly #trackedAgentIds = new Set<string>();
     readonly #config: ConfigModule;
+    readonly #compute: ComputeModule;
+    readonly #events: EventsModule;
+    readonly #git: GitModule;
     readonly #history: HistoryModule;
     readonly #scheduling: SchedulingModule;
     readonly #projects: ProjectsModule;
@@ -150,22 +170,33 @@ export class HappyModule
     readonly #sync = createHappySyncDatabase();
     readonly #integrationDatabase = createHappyIntegrationDatabase();
     readonly #integrationListeners = new Set<HappyIntegrationListener>();
+    readonly #served = new Map<string, HappySpawnResult>();
+    readonly #tasks = new Set<Promise<void>>();
+    readonly #archivingAgents = new Set<string>();
+    readonly #retiredAgents = new Set<string>();
+    readonly #gitEntityByAgent = new Map<string, GitTrackedEntity>();
+    readonly #gitAgentsByEntity = new Map<string, Set<string>>();
     #agentSystem: AgentSystemRef<LibSQLDatabase> | undefined;
     #configuration: HappyConnectionConfiguration | undefined;
     #context: Context | undefined;
     #fingerprint = "";
     #integration: HappyIntegration;
-    #machine: HappyMachineClient | undefined;
     #pairing: HappyPairing | undefined;
     #pairingGeneration = 0;
     #integrationStart: Promise<HappyIntegration> | undefined;
     #integrationUpdates: Promise<void> = Promise.resolve();
     #lifecycleUpdates: Promise<void> = Promise.resolve();
+    #gitRenewalTimer: NodeJS.Timeout | undefined;
+    #machine: HappyMachineClient | undefined;
+    #reconcilePromise: Promise<void> | undefined;
     #stopping = false;
+    readonly #unwatchCatalog: (() => void)[] = [];
 
     constructor(
         config: ConfigModule,
+        compute: ComputeModule,
         events: EventsModule,
+        git: GitModule,
         history: HistoryModule,
         projects: ProjectsModule,
         scheduling: SchedulingModule,
@@ -173,6 +204,9 @@ export class HappyModule
         workspaces: WorkspacesModule,
     ) {
         this.#config = config;
+        this.#compute = compute;
+        this.#events = events;
+        this.#git = git;
         this.#history = history;
         this.#projects = projects;
         this.#scheduling = scheduling;
@@ -201,9 +235,6 @@ export class HappyModule
         },
         onEventTransactional: async (ctx: Context, event: AgentEvent): Promise<void> => {
             if (event.agentId === undefined) return;
-            // Pairing can complete while agents already exist. Remember every durable agent
-            // observed before credentials arrive so the new connection can attach it immediately.
-            this.#trackedAgentIds.add(event.agentId);
             if (this.#configuration === undefined) return;
             const attached = await this.#attach(ctx, event.agentId);
             if (attached === undefined) return;
@@ -283,6 +314,62 @@ export class HappyModule
         const updatedAt = Date.now();
         const version = await this.#integrationDatabase.reserveVersion(ctx, () => updatedAt);
         this.#integration = { ...this.#integration, updatedAt, version };
+    }
+
+    /**
+     * Keeps what the phone has been told about these sessions true as work is renamed and put away.
+     *
+     * Where a session may start is not published here. The phone reads that from the sessions
+     * themselves, so a project is only ever described by the sessions that belong to it.
+     */
+    #watchCatalog(ctx: Context): void {
+        this.#unwatchCatalog.push(
+            this.#git.onSnapshot((_eventCtx, entity) => {
+                for (const agentId of this.#gitAgentsByEntity.get(gitEntityKey(entity)) ?? []) {
+                    this.#agents.get(agentId)?.client.kick();
+                }
+            }),
+        );
+        this.#gitRenewalTimer ??= setInterval(() => {
+            for (const entity of this.#gitEntityByAgent.values()) this.#git.track(entity);
+        }, GIT_TRACK_RENEWAL_MS);
+        this.#gitRenewalTimer.unref();
+        this.#unwatchCatalog.push(
+            this.#projects.onEvent((_eventCtx, event) => {
+                this.#runTask(async () => {
+                    if (event.type === "project_archived") {
+                        await this.#archiveRemoteAgents(
+                            ctx,
+                            await this.#projects.listAgentIds(ctx, event.project.id),
+                        );
+                    }
+                    await this.#reapArchived(ctx);
+                    await this.#republishAttached(ctx);
+                });
+            }),
+        );
+        this.#unwatchCatalog.push(
+            this.#workspaces.onEvent((_eventCtx, event) => {
+                this.#runTask(async () => {
+                    if (
+                        (event.type === "workspace_updated" && event.change === "begin_archive") ||
+                        event.type === "workspace_archived"
+                    ) {
+                        await this.#archiveRemoteAgents(
+                            ctx,
+                            await this.#workspaces.listAgentIds(ctx, event.workspace.id),
+                        );
+                    }
+                    await this.#reapArchived(ctx);
+                    await this.#republishAttached(ctx);
+                });
+            }),
+        );
+        this.#unwatchCatalog.push(
+            this.#userInput.onEvent((_eventCtx, event) => {
+                this.#agents.get(event.request.askingAgentId)?.client.kick();
+            }),
+        );
     }
 
     /** Stops talking to Happy, which the daemon does as it shuts down. */
@@ -582,9 +669,17 @@ export class HappyModule
         });
         this.#machine = machine;
         machine.start();
-        await Promise.all(
-            [...this.#trackedAgentIds].map(async (agentId) => await this.#attach(ctx, agentId)),
-        );
+        this.#watchCatalog(ctx);
+        const reconcile = (async () => {
+            await this.#reapArchived(ctx);
+            await this.#reconcile(ctx);
+        })().catch((error: unknown) => {
+            ctx.log.debug("Happy could not restore its visible sessions.", {}, error);
+        });
+        this.#reconcilePromise = reconcile;
+        void reconcile.finally(() => {
+            if (this.#reconcilePromise === reconcile) this.#reconcilePromise = undefined;
+        });
     }
 
     async #handleMachineConnection(
@@ -697,10 +792,20 @@ export class HappyModule
     }
 
     async #closeHappyClients(): Promise<void> {
+        if (this.#gitRenewalTimer !== undefined) clearInterval(this.#gitRenewalTimer);
+        this.#gitRenewalTimer = undefined;
+        for (const unwatch of this.#unwatchCatalog.splice(0)) unwatch();
         this.#machine?.close();
         this.#machine = undefined;
+        await this.#reconcilePromise?.catch(() => undefined);
+        await this.#settleTasks();
         const connected = [...this.#agents.values()];
         this.#agents.clear();
+        this.#served.clear();
+        this.#archivingAgents.clear();
+        this.#retiredAgents.clear();
+        this.#gitEntityByAgent.clear();
+        this.#gitAgentsByEntity.clear();
         await Promise.all(connected.map(async (agent) => await agent.client.close()));
     }
 
@@ -724,9 +829,29 @@ export class HappyModule
 
     /** Sends everything owed and waits for it, which is what a shutdown and a test need. */
     async settle(): Promise<void> {
+        await this.#reconcilePromise;
+        await this.#settleTasks();
         await Promise.all(
             [...this.#agents.values()].map(async (agent) => await agent.client.settle()),
         );
+    }
+
+    async #settleTasks(): Promise<void> {
+        while (this.#tasks.size > 0) {
+            await Promise.allSettled([...this.#tasks]);
+        }
+    }
+
+    #runTask(work: () => Promise<void>): void {
+        if (this.#stopping) return;
+        const task = work()
+            .catch((error: unknown) => {
+                this.#context?.log.debug("Happy catalog synchronization failed.", {}, error);
+            })
+            .finally(() => {
+                this.#tasks.delete(task);
+            });
+        this.#tasks.add(task);
     }
 
     /** Every model the phone may offer, across providers. */
@@ -791,15 +916,23 @@ export class HappyModule
         await this.#system().abort(ctx, agentId);
     }
 
-    /**
-     * Ends this phone's view of an agent.
-     *
-     * Agents are never deleted or archived: a later message may resume one. Closing the remote
-     * projection therefore only detaches the Happy client after stopping the active work.
-     */
+    /** Archives the local agent when the person archives its Happy session. */
     async archiveSession(ctx: Context, agentId: string): Promise<void> {
-        await this.abort(ctx, agentId);
-        await this.#detach(ctx, agentId);
+        const system = this.#system();
+        const config = await system.config(ctx, agentId);
+        if (config === undefined) return;
+        if (typeof config.metadata?.archivedAt !== "number") {
+            await system.abort(ctx, agentId);
+            await this.#compute.archiveAgent(ctx, agentId);
+            const now = Date.now();
+            await system.updateMetadata(ctx, agentId, {
+                archivedAt: now,
+                updatedAt: now,
+                version:
+                    typeof config.metadata?.version === "number" ? config.metadata.version + 1 : 1,
+            });
+        }
+        await this.#archiveRemoteProjection(ctx, agentId);
     }
 
     /** The questions this agent is waiting on right now. */
@@ -830,19 +963,32 @@ export class HappyModule
         });
     }
 
-    /**
-     * Starts an agent in a directory the phone named.
-     *
-     * The requested session ID is the agent ID. It is deterministic across retried Happy RPCs,
-     * making the Agent Base identity itself the durable idempotency key.
-     */
-    async spawnSession(ctx: Context, request: HappySpawnRequest): Promise<{ agentId: string }> {
-        const system = this.#system();
-        const existing = await system.config(ctx, request.sessionId);
-        if (existing !== undefined) return { agentId: request.sessionId };
+    defaultSpawnPermissionMode(): HappySelection["permissionMode"] {
+        return this.#config.configuration.values.defaults.permissionMode;
+    }
 
-        const owner = await this.#workspaces.resolvePath(ctx, request.cwd);
-        const cwd = owner.workspace?.path ?? owner.project.repositoryRef;
+    readSpawnResult(clientRequestId: string): HappySpawnResult | undefined {
+        return this.#served.get(clientRequestId);
+    }
+
+    rememberSpawnResult(clientRequestId: string, result: HappySpawnResult): void {
+        if (result.type === "pending") return;
+        this.#served.delete(clientRequestId);
+        this.#served.set(clientRequestId, result);
+        while (this.#served.size > MAX_SERVED_SPAWN_RESULTS) {
+            const oldest = this.#served.keys().next().value as string | undefined;
+            if (oldest === undefined) break;
+            this.#served.delete(oldest);
+        }
+    }
+
+    /** Starts the deterministic local agent behind either Happy spawn request. */
+    async spawnSession(ctx: Context, request: HappySpawnRequest): Promise<HappySpawnStartResult> {
+        const system = this.#system();
+        const owner = await this.#resolveSpawnOwner(ctx, request);
+        if (owner === undefined) return { type: "pending" };
+        const cwd = owner.workspaceId === undefined ? owner.projectPath : owner.workspacePath;
+        const existing = await system.config(ctx, request.sessionId);
         const selection = checkedSelection(this.#config.models, {
             effort: request.effort,
             modelId: request.modelId,
@@ -853,16 +999,142 @@ export class HappyModule
         // folder that is being archived, and this is the retry key's only durable record, so a
         // refusal must leave no agent behind: an existing configuration is what a later retry reads
         // to decide the session is already made.
-        await ctx.inTx(async (txCtx) => {
-            await system.create(txCtx, agentConfigFor(cwd, selection), { id: request.sessionId });
-            if (owner.workspace === undefined) {
-                await this.#projects.attachAgent(txCtx, owner.project.id, request.sessionId);
-            } else {
-                await this.#workspaces.attachAgent(txCtx, owner.workspace.id, request.sessionId);
-            }
-        });
+        if (existing === undefined) {
+            await ctx.inTx(async (txCtx) => {
+                await system.create(txCtx, agentConfigFor(cwd, selection), {
+                    id: request.sessionId,
+                });
+                await this.#attachSpawnOwner(txCtx, request.sessionId, owner);
+            });
+        } else if (typeof existing.metadata?.archivedAt === "number") {
+            throw new Error("That Happy Agent session is archived.");
+        } else {
+            await this.#attachSpawnOwner(ctx, request.sessionId, owner);
+        }
         await this.#attach(ctx, request.sessionId);
-        return { agentId: request.sessionId };
+        return { agentId: request.sessionId, type: "ready" };
+    }
+
+    async #resolveSpawnOwner(
+        ctx: Context,
+        request: HappySpawnRequest,
+    ): Promise<
+        | {
+              projectId: string;
+              projectPath: string;
+              workspaceId?: string;
+              workspacePath: string;
+          }
+        | undefined
+    > {
+        if ("cwd" in request) {
+            const owner = await this.#workspaces.resolvePath(ctx, request.cwd);
+            return {
+                projectId: owner.project.id,
+                projectPath: owner.project.repositoryRef,
+                ...(owner.workspace === undefined
+                    ? { workspacePath: owner.project.repositoryRef }
+                    : {
+                          workspaceId: owner.workspace.id,
+                          workspacePath: owner.workspace.path,
+                      }),
+            };
+        }
+
+        const target = request.target;
+        if (target.kind === "project") {
+            const project = await this.#projects.get(ctx, target.id);
+            if (project === undefined || project.status === "archived") {
+                throw new Error("That project is not available in Happy Agent.");
+            }
+            return {
+                projectId: project.id,
+                projectPath: project.repositoryRef,
+                workspacePath: project.repositoryRef,
+            };
+        }
+        if (target.kind === "workspace") {
+            const workspace = await this.#workspaces.get(ctx, target.id);
+            if (workspace === undefined || workspace.status !== "ready") {
+                throw new Error("That workspace is not ready in Happy Agent.");
+            }
+            const project = await this.#projects.get(ctx, workspace.projectRef);
+            if (project === undefined || project.status === "archived") {
+                throw new Error("That workspace's project is not available in Happy Agent.");
+            }
+            return {
+                projectId: project.id,
+                projectPath: project.repositoryRef,
+                workspaceId: workspace.id,
+                workspacePath: workspace.path,
+            };
+        }
+        if (target.kind === "projectFolder") {
+            await mkdir(target.projectPath, { recursive: true });
+            const owner = await this.#workspaces.resolvePath(ctx, target.projectPath);
+            return {
+                projectId: owner.project.id,
+                projectPath: owner.project.repositoryRef,
+                ...(owner.workspace === undefined
+                    ? { workspacePath: owner.project.repositoryRef }
+                    : {
+                          workspaceId: owner.workspace.id,
+                          workspacePath: owner.workspace.path,
+                      }),
+            };
+        }
+
+        const project = await this.#projects.get(ctx, target.projectId);
+        if (project === undefined || project.status === "archived") {
+            throw new Error("That project is not available in Happy Agent.");
+        }
+        let workspace = await this.#workspaces.get(ctx, request.workspaceId);
+        if (workspace === undefined) {
+            workspace = await this.#workspaces.createWorkspace(ctx, project.id, {
+                id: request.workspaceId,
+                name: "Workspace",
+                nameConfigured: false,
+                parentId: project.id,
+            });
+        }
+        if (workspace === undefined) {
+            throw new Error("Happy Agent could not create that workspace.");
+        }
+        if (workspace.projectRef !== project.id) {
+            throw new Error("That workspace belongs to another project.");
+        }
+        if (workspace.status === "initializing") return undefined;
+        if (workspace.status !== "ready") {
+            throw new Error("That workspace could not be prepared.");
+        }
+        return {
+            projectId: project.id,
+            projectPath: project.repositoryRef,
+            workspaceId: workspace.id,
+            workspacePath: workspace.path,
+        };
+    }
+
+    async #attachSpawnOwner(
+        ctx: Context,
+        agentId: string,
+        owner: { readonly projectId: string; readonly workspaceId?: string },
+    ): Promise<void> {
+        const currentWorkspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+        const currentProject = await this.#projects.projectForAgent(ctx, agentId);
+        if (owner.workspaceId !== undefined) {
+            if (currentWorkspaceId === owner.workspaceId) return;
+            if (currentWorkspaceId !== undefined || currentProject !== undefined) {
+                throw new Error("That session already belongs to another project or workspace.");
+            }
+            await this.#workspaces.attachAgent(ctx, owner.workspaceId, agentId);
+            return;
+        }
+        if (currentProject?.id === owner.projectId && currentWorkspaceId === undefined) return;
+        if (currentWorkspaceId !== undefined || currentProject !== undefined) {
+            throw new Error("That session already belongs to another project or workspace.");
+        }
+        await this.#projects.attachAgent(ctx, owner.projectId, agentId);
     }
 
     /**
@@ -878,6 +1150,8 @@ export class HappyModule
      * session put away on the desktop would come back the moment its agent said anything.
      */
     async #userVisible(ctx: Context, agentId: string): Promise<boolean> {
+        const config = await this.#system().config(ctx, agentId);
+        if (config === undefined || typeof config.metadata?.archivedAt === "number") return false;
         const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
         if (workspaceId !== undefined) {
             const workspace = await this.#workspaces.get(ctx, workspaceId);
@@ -909,10 +1183,16 @@ export class HappyModule
      * that may no longer be on disk.
      */
     async #reapArchived(ctx: Context): Promise<void> {
-        for (const agentId of [...this.#agents.keys()]) {
+        const agentIds = new Set([
+            ...this.#agents.keys(),
+            ...(this.#fingerprint.length === 0
+                ? []
+                : await this.#sync.listAgentIds(ctx, this.#fingerprint, MAX_REAPED_SYNC_SESSIONS)),
+        ]);
+        for (const agentId of agentIds) {
             try {
                 if (await this.#userVisible(ctx, agentId)) continue;
-                await this.#detach(ctx, agentId);
+                await this.#archiveRemoteProjection(ctx, agentId);
             } catch (error) {
                 ctx.log.debug("Happy could not retire an archived session.", { agentId }, error);
             }
@@ -920,6 +1200,7 @@ export class HappyModule
     }
 
     async #attach(ctx: Context, agentId: string): Promise<ConnectedAgent | undefined> {
+        if (this.#stopping) return undefined;
         const existing = this.#agents.get(agentId);
         if (existing !== undefined) return existing;
         const configuration = this.#configuration;
@@ -929,7 +1210,6 @@ export class HappyModule
         if (!(await this.#userVisible(ctx, agentId))) return undefined;
         const session = await this.session(ctx, agentId);
         if (session === undefined) return undefined;
-        this.#trackedAgentIds.add(agentId);
         await this.#sync.ensureSession(
             ctx,
             {
@@ -941,6 +1221,8 @@ export class HappyModule
             },
             Date.now(),
         );
+        const mapper = new HappyMessageMapper();
+        await this.#backfill(ctx, agentId, mapper);
         const attached: ConnectedAgent = {
             client: new HappySessionClient({
                 agentId,
@@ -951,8 +1233,12 @@ export class HappyModule
                 sync: this.#sync,
                 version: this.#config.configuration.version,
             }),
-            mapper: new HappyMessageMapper(),
+            mapper,
         };
+        if (this.#stopping) {
+            await attached.client.close();
+            return undefined;
+        }
         this.#agents.set(agentId, attached);
         afterCommit(ctx, () => {
             attached.client.start();
@@ -960,13 +1246,165 @@ export class HappyModule
         return attached;
     }
 
-    async #detach(ctx: Context, agentId: string): Promise<void> {
+    /**
+     * Puts the conversation a session already had onto the phone, once.
+     *
+     * A session that has been running all week is not new to the person who started it, and
+     * without this it arrives on the phone as an empty room: the projection only carries what
+     * happens from the moment Happy attaches, so everything said before that is simply missing.
+     *
+     * The projection cursor is moved to the newest event this agent has recorded, so the live
+     * stream picks up immediately after what was replayed rather than repeating it. The archive
+     * is the source rather than the journal because the journal's live window is bounded and a
+     * cold start begins with it empty — the very case this exists for.
+     *
+     * Failing to read the past is not a reason to refuse the present. A session that cannot be
+     * backfilled still attaches and still streams; it just opens empty, which is what it did
+     * before this existed.
+     */
+    async #backfill(ctx: Context, agentId: string, mapper: HappyMessageMapper): Promise<void> {
+        const existing = await this.#sync.readSession(ctx, agentId);
+        if (existing?.historyBackfilled !== false) return;
+        try {
+            const page = await this.#history.read(ctx, agentId, {
+                from: "end",
+                limit: HAPPY_BACKFILL_MESSAGES,
+            });
+            const latest = await this.#events.latestAgentEvent(ctx, agentId);
+            // One archived record may contain several structured tool events. The phone's initial
+            // payload is still bounded to 50 protocol messages, keeping the newest visible context
+            // while preserving chronological order within that window.
+            const history = mapper.mapHistory(
+                page.messages.map((record) => record.message),
+                HAPPY_BACKFILL_MESSAGES,
+            );
+            await this.#sync.backfillHistory(
+                ctx,
+                agentId,
+                history.map((message) => ({
+                    localId: message.localId,
+                    payload: message,
+                })),
+                latest?.cursor,
+                Date.now(),
+            );
+        } catch (error) {
+            ctx.log.debug(
+                "Happy could not replay what this session already said.",
+                { agentId },
+                error,
+            );
+        }
+    }
+
+    /**
+     * Attaches every session a person can still open, because this daemon has just started.
+     *
+     * Sessions attach on their own when they next record something, which is enough for a busy
+     * agent and no use at all for a quiet one: before this, a conversation nobody had touched
+     * since the restart stayed off the phone until somebody went to the desktop and prodded it.
+     * A person expects to reopen their laptop and find their work where they left it.
+     *
+     * Walked through the places a person navigates to rather than through every agent that
+     * exists, because those places are exactly what makes a session reachable — the same
+     * question `#userVisible` asks one agent at a time. A hidden subagent belongs to no such
+     * place and is passed over here for the reason it is refused there.
+     *
+     * Archived projects and workspaces are left out by the listings themselves, which is the
+     * same answer a person gets when they go looking for their work. The durable attachment lists
+     * may still name locally archived agents, so `#attach` checks Agent Base metadata before
+     * spending one of the bounded session connections on them.
+     */
+    async #reconcile(ctx: Context): Promise<void> {
+        const attach = async (agentId: string): Promise<boolean> => {
+            if (this.#stopping || this.#agents.size >= MAX_CONNECTED_AGENTS) return false;
+            try {
+                await this.#attach(ctx, agentId);
+            } catch (error) {
+                ctx.log.debug("Happy could not restore a session.", { agentId }, error);
+            }
+            return true;
+        };
+        try {
+            let workspaceCursor: number | undefined;
+            do {
+                const page = await this.#workspaces.listCatalogPage(ctx, {
+                    ...(workspaceCursor === undefined ? {} : { cursor: workspaceCursor }),
+                });
+                for (const workspace of page.workspaces) {
+                    for (const agentId of await this.#workspaces.listAgentIds(ctx, workspace.id)) {
+                        if (!(await attach(agentId))) return;
+                    }
+                }
+                workspaceCursor = page.nextCursor;
+            } while (workspaceCursor !== undefined);
+
+            let projectCursor: string | undefined;
+            do {
+                const page = await this.#projects.listCatalogPage(ctx, {
+                    ...(projectCursor === undefined ? {} : { cursor: projectCursor }),
+                });
+                for (const project of page.projects) {
+                    for (const agentId of await this.#projects.listAgentIds(ctx, project.id)) {
+                        if (!(await attach(agentId))) return;
+                    }
+                }
+                projectCursor = page.nextCursor;
+            } while (projectCursor !== undefined);
+        } catch (error) {
+            ctx.log.debug("Happy could not read the sessions on this computer.", {}, error);
+        }
+    }
+
+    async #archiveRemoteAgents(ctx: Context, agentIds: readonly string[]): Promise<void> {
+        for (const agentId of agentIds) {
+            try {
+                await this.#archiveRemoteProjection(ctx, agentId);
+            } catch (error) {
+                ctx.log.debug("Happy could not retire an archived session.", { agentId }, error);
+            }
+        }
+    }
+
+    async #archiveRemoteProjection(ctx: Context, agentId: string): Promise<void> {
+        if (this.#archivingAgents.has(agentId) || this.#retiredAgents.has(agentId)) return;
         const attached = this.#agents.get(agentId);
-        this.#agents.delete(agentId);
-        this.#trackedAgentIds.delete(agentId);
-        if (attached === undefined) return;
+        const existing = await this.#sync.readSession(ctx, agentId);
+        if (attached === undefined && existing?.remoteSessionId === undefined) return;
+        const configuration = this.#configuration;
+        const context = this.#context;
+        if (configuration === undefined || context === undefined) return;
+        const client =
+            attached?.client ??
+            new HappySessionClient({
+                agentId,
+                configuration,
+                context,
+                operations: this,
+                sessionId: existing?.sessionId ?? agentId,
+                sync: this.#sync,
+                version: this.#config.configuration.version,
+            });
         afterCommit(ctx, () => {
-            void attached.client.archive();
+            if (this.#archivingAgents.has(agentId) || this.#retiredAgents.has(agentId)) {
+                if (attached === undefined) void client.close();
+                return;
+            }
+            if (this.#stopping) {
+                if (attached === undefined) void client.close();
+                return;
+            }
+            this.#agents.delete(agentId);
+            this.#forgetGitAgent(agentId);
+            this.#archivingAgents.add(agentId);
+            this.#runTask(async () => {
+                try {
+                    await client.archive();
+                    this.#retiredAgents.add(agentId);
+                } finally {
+                    this.#archivingAgents.delete(agentId);
+                }
+            });
         });
     }
 
@@ -982,12 +1420,49 @@ export class HappyModule
         }
         const selection = selectionFromConfig(config, this.#defaultSelection());
         const owner = await this.#owner(ctx, agentId);
+        const git =
+            owner.project === undefined
+                ? (this.#forgetGitAgent(agentId), undefined)
+                : this.#gitSummary(agentId, {
+                      path: cwd,
+                      projectId: owner.project.id,
+                      ...(owner.workspace === undefined ? {} : { workspaceId: owner.workspace.id }),
+                  });
+        let lastUserOrFinalAssistantTextMessageAt: number | undefined;
+        try {
+            lastUserOrFinalAssistantTextMessageAt =
+                await this.#history.latestUserOrFinalAssistantTextMessageAt(ctx, agentId);
+        } catch (error) {
+            // Session ordering is enrichment. A broken history read must not take the live
+            // conversation or the rest of its metadata off the phone.
+            ctx.log.debug(
+                "Happy could not read the latest conversation timestamp.",
+                { agentId },
+                error,
+            );
+        }
+        let lastQuestionAt: number | undefined;
+        try {
+            lastQuestionAt = await this.#userInput.latestQuestionAt(ctx, agentId);
+        } catch (error) {
+            ctx.log.debug(
+                "Happy could not read the latest question timestamp.",
+                { agentId },
+                error,
+            );
+        }
+        const lastMeaningfulMessageAt = latestTimestamp(
+            lastUserOrFinalAssistantTextMessageAt,
+            lastQuestionAt,
+        );
         return {
             agentId,
-            archived: false,
+            archived: typeof config.metadata?.archivedAt === "number",
             cwd,
             effort: selection.effort,
+            ...(git === undefined ? {} : { git }),
             ...(owner.gitBranch === undefined ? {} : { gitBranch: owner.gitBranch }),
+            ...(lastMeaningfulMessageAt === undefined ? {} : { lastMeaningfulMessageAt }),
             modelId: selection.modelId,
             permissionMode: selection.permissionMode,
             ...(owner.project === undefined ? {} : { project: owner.project }),
@@ -999,10 +1474,51 @@ export class HappyModule
             // words for one, and a placeholder here would overwrite them on the phone.
             ...(typeof config.metadata?.title === "string" ? { title: config.metadata.title } : {}),
             tools: [],
-            // Agent Base deliberately does not expose active state through AgentSystemRef.
-            working: false,
+            // Events owns the live run edge and restores it from durable state after restart.
+            // Its post-commit listener kicks this session on both start and completion.
+            working: this.#events.activeRunId(agentId) !== undefined,
             ...(owner.workspace === undefined ? {} : { workspace: owner.workspace }),
         };
+    }
+
+    /** Tracks one checkout and returns its latest complete branch comparison, when ready. */
+    #gitSummary(
+        agentId: string,
+        entity: GitTrackedEntity,
+    ):
+        | {
+              changedFiles: number;
+              countsExact: boolean;
+              deletions: number;
+              insertions: number;
+          }
+        | undefined {
+        this.#rememberGitEntity(agentId, entity);
+        this.#git.track(entity);
+        const snapshot = this.#git.trackedSnapshot(entity);
+        if (snapshot?.comparison !== "ready") return undefined;
+        return gitSummary(snapshot);
+    }
+
+    #rememberGitEntity(agentId: string, entity: GitTrackedEntity): void {
+        const previous = this.#gitEntityByAgent.get(agentId);
+        if (previous !== undefined && sameGitEntity(previous, entity)) return;
+        this.#forgetGitAgent(agentId);
+        this.#gitEntityByAgent.set(agentId, entity);
+        const key = gitEntityKey(entity);
+        const agents = this.#gitAgentsByEntity.get(key) ?? new Set<string>();
+        agents.add(agentId);
+        this.#gitAgentsByEntity.set(key, agents);
+    }
+
+    #forgetGitAgent(agentId: string): void {
+        const previous = this.#gitEntityByAgent.get(agentId);
+        if (previous === undefined) return;
+        this.#gitEntityByAgent.delete(agentId);
+        const key = gitEntityKey(previous);
+        const agents = this.#gitAgentsByEntity.get(key);
+        agents?.delete(agentId);
+        if (agents?.size === 0) this.#gitAgentsByEntity.delete(key);
     }
 
     /**
@@ -1089,6 +1605,43 @@ function agentConfigFor(cwd: string, selection: HappySelection): AgentConfig {
         environment: { ...currentAgentEnvironment(), workingDirectory: cwd },
         metadata: { happy: selection },
         modules: { compute: { cwd, providerId: "host" } },
+    };
+}
+
+function latestTimestamp(
+    first: number | undefined,
+    second: number | undefined,
+): number | undefined {
+    if (first === undefined) return second;
+    if (second === undefined) return first;
+    return Math.max(first, second);
+}
+
+function gitEntityKey(entity: Pick<GitTrackedEntity, "projectId" | "workspaceId">): string {
+    return entity.workspaceId === undefined
+        ? `project:${entity.projectId}`
+        : `workspace:${entity.workspaceId}`;
+}
+
+function sameGitEntity(left: GitTrackedEntity, right: GitTrackedEntity): boolean {
+    return (
+        left.path === right.path &&
+        left.projectId === right.projectId &&
+        left.workspaceId === right.workspaceId
+    );
+}
+
+function gitSummary(snapshot: GitChangeSnapshot): {
+    changedFiles: number;
+    countsExact: boolean;
+    deletions: number;
+    insertions: number;
+} {
+    return {
+        changedFiles: snapshot.changedFiles,
+        countsExact: snapshot.countsExact,
+        deletions: snapshot.deletions,
+        insertions: snapshot.insertions,
     };
 }
 

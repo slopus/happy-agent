@@ -94,6 +94,31 @@ describe("WorkspacesModule", () => {
         }
     });
 
+    it("keeps complete catalog pages separate from model-output fitting", async () => {
+        const { workspaces } = await temporaryWorkspacesCatalog();
+        const database = workspaceDatabase("workspaces-catalog-page-test");
+        await database.ready;
+        try {
+            for (let index = 0; index < 50; index += 1) {
+                await workspaces.reserve(database.context, {
+                    id: `workspace-${String(index).padStart(2, "0")}`,
+                    projectRef: "project-a",
+                    name: `${String(index).padStart(2, "0")} ${"workspace".repeat(12)}`,
+                });
+            }
+
+            const catalog = await workspaces.listCatalogPage(database.context, { limit: 50 });
+            const model = await workspaces.listPage(database.context, { limit: 50 });
+
+            expect(catalog.workspaces).toHaveLength(50);
+            expect(catalog.nextCursor).toBeUndefined();
+            expect(model.workspaces.length).toBeLessThan(50);
+            expect(model.nextCursor).toBe(model.workspaces.length);
+        } finally {
+            database.close();
+        }
+    });
+
     it("drops obsolete replay tables in the forward migration", async () => {
         const database = workspaceDatabase("workspaces-drop-replay-test");
         await database.ready;
