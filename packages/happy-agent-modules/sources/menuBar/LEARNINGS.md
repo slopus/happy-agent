@@ -6,12 +6,29 @@ Linux has no dependable cross-desktop tray standard worth carrying, so the app i
 executable and nothing is built for Linux. Do not add a cross-platform tray implementation or a
 second rendering path to "finish" the feature.
 
+## Only a released binary has a menu bar
+
+The app used to start from any macOS build that had compiled it, which meant working on Happy
+Agent, or running its tests, put a status item in the developer's menu bar and sometimes left one
+behind. It now ships in the released Happy Agent binary alone: the binary build replaces
+`resolveMenuBarApp` with a resolver for its embedded copy, and the source version returns nothing
+at all. Do not restore the `dist/menuBar/bin` lookup to make a development daemon show the menu
+bar; build the binary and run that instead.
+
 ## It is on by default, and turned off in configuration
 
-The module starts the app whenever the daemon runs on macOS. There is no opt-in flag; `menu_bar =
-false` under `[settings]` is the way off. The app itself decides whether a machine actually has a
-menu bar, by checking for a login session, and exits cleanly when there is none — a daemon started
-over SSH must not look like a failure.
+Within a release the module starts the app whenever the daemon runs on macOS. There is no opt-in
+flag; `menu_bar = false` under `[settings]` is the way off. The app itself decides whether a machine
+actually has a menu bar, by checking for a login session, and exits cleanly when there is none — a
+daemon started over SSH must not look like a failure.
+
+## The app never outlives its daemon
+
+A daemon that is killed outright never runs its shutdown handlers, so the app has to notice on its
+own. It watches two things, and either is enough: end of file on the standard input the daemon holds
+open, and the exit of the parent process itself through a dispatch process source. Standard input
+alone was the original mechanism and is not sufficient, because anything else holding that pipe open
+keeps the app alive after the daemon is gone.
 
 ## The status item shows no count and the menu has no footer
 

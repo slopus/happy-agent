@@ -4,8 +4,8 @@ import CoreGraphics
 /// The Happy Agent menu bar app.
 ///
 /// The daemon starts it, hands it the socket and token it should read, and keeps its standard
-/// input open. Closing that input is how a daemon that died without stopping its children still
-/// takes the menu bar down with it.
+/// input open. The app never outlives that daemon: a daemon killed outright never gets to stop its
+/// children, so the app watches for its death itself.
 
 private func argument(_ name: String) -> String? {
     let arguments = CommandLine.arguments
@@ -15,11 +15,26 @@ private func argument(_ name: String) -> String? {
     return arguments[index + 1]
 }
 
-private func exitWhenParentClosesInput() {
-    let input = FileHandle.standardInput
-    input.readabilityHandler = { handle in
+/// Held for the process's life: a dispatch source stops delivering once it is released.
+private var parentWatch: DispatchSourceProcess?
+
+/// Ends the app when the daemon that started it goes away.
+///
+/// Two independent signals say it is gone, and either one is enough. The standard input the daemon
+/// holds open reaches end of file when its side closes, which covers a daemon that exited without
+/// its children being reparented yet. Watching the parent process itself covers the rest, including
+/// an input pipe left open by something else in the chain.
+private func exitWhenParentGoesAway() {
+    FileHandle.standardInput.readabilityHandler = { handle in
         if handle.availableData.isEmpty { exit(0) }
     }
+    let parent = getppid()
+    // A parent of one means the daemon died before the app got this far and launchd adopted it.
+    guard parent > 1 else { exit(0) }
+    let watch = DispatchSource.makeProcessSource(identifier: parent, eventMask: .exit)
+    watch.setEventHandler { exit(0) }
+    watch.resume()
+    parentWatch = watch
 }
 
 guard let socketPath = argument("--socket"), let tokenPath = argument("--token-file") else {
@@ -58,5 +73,5 @@ final class MenuBarDelegate: NSObject, NSApplicationDelegate {
 
 let delegate = MenuBarDelegate(controller: controller)
 application.delegate = delegate
-exitWhenParentClosesInput()
+exitWhenParentGoesAway()
 application.run()

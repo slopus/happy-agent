@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MenuBarApp } from "../../sources/menuBar/index.js";
+import { MenuBarApp, resolveMenuBarApp } from "../../sources/menuBar/index.js";
 
 const roots: string[] = [];
 
@@ -30,6 +30,15 @@ async function fakeApp(root: string, body: string): Promise<string> {
 function context(name: string) {
     return createRootContext().named(name);
 }
+
+describe("resolveMenuBarApp", () => {
+    it("finds no app outside a released binary, so nothing starts in development or a test", () => {
+        // The released binary embeds the app and replaces this resolver. Everywhere else — a
+        // source build, a daemon run from a checkout, this test run — must have no menu bar,
+        // even on a macOS machine where the Swift app has already been compiled into `dist`.
+        expect(resolveMenuBarApp()).toBeUndefined();
+    });
+});
 
 describe("MenuBarApp", () => {
     it("stops trying when the app reports the machine has no menu bar", async () => {
