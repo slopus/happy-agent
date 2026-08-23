@@ -273,9 +273,10 @@ export class AgentSystemLocal<
     }
 
     /**
-     * Ask every live agent to stop at its next durable edge without cancelling current work.
-     * The mode is sticky: agents published by an operation already in flight are drained before
-     * they can start, and repeated callers join the same barrier.
+     * Ask every live agent to stop at its next durable edge. Tools decide whether drain waits,
+     * interrupts them, or leaves their durable calls for reload. The mode is sticky: agents
+     * published by an operation already in flight are drained before they can start, and repeated
+     * callers join the same barrier.
      */
     drain(): Promise<void> {
         if (this.#drainPromise === undefined) {

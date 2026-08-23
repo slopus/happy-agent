@@ -706,6 +706,91 @@ describe("AgentSystemLocal", () => {
         expect(agentPersistence.records).toContainEqual(expect.objectContaining({ type: "tool" }));
     });
 
+    it("does not wait for a steerable tool during graceful shutdown", async () => {
+        const coordinator = new GracefulShutdown();
+        const shutdownCtx = withShutdown(
+            createRootContext().named("agentSystem-steerable-tool-shutdown-test"),
+            coordinator,
+        );
+        const managerPersistence = new InMemoryPersistence();
+        const agentPersistence = new InMemoryPersistence();
+        let toolStarted = (): void => undefined;
+        const started = new Promise<void>((resolve) => {
+            toolStarted = resolve;
+        });
+        let releaseTool = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+            releaseTool = resolve;
+        });
+        let toolSignal: AbortSignal | undefined;
+        const toolModule: AgentModule = {
+            name: "shutdown-steerable-tool",
+            beforeStart: () => ({
+                tools: () => [
+                    defineAgentTool({
+                        name: "shutdown_steerable_tool",
+                        returnType: Type.Object({}),
+                        steerable: true,
+                        shouldReviewInAutoMode: () => false,
+                        execute: async (toolCtx) => {
+                            toolSignal = toolCtx.lifetime;
+                            toolStarted();
+                            await held;
+                            return {};
+                        },
+                        toLLM: () => [],
+                    }),
+                ],
+            }),
+        };
+        const provider = new ScriptedProvider([
+            [
+                {
+                    type: "toolcall_start",
+                    callId: "call-1",
+                    name: "shutdown_steerable_tool",
+                },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("must not start"),
+        ]);
+        const system = await AgentSystemLocal.create(
+            shutdownCtx,
+            new InMemoryAgentStorage({
+                acquireLock: inMemoryStorageLock(),
+                kv: managerKV(managerPersistence),
+                persistence: () => agentPersistence,
+            }),
+            {
+                modules: [toolModule],
+                providers: providersOf(provider),
+                provider: "scripted",
+                models: [],
+            },
+        );
+        const agent = await system.create(shutdownCtx, {}, { id: "shutdownsteerableagent" });
+        await agent.send(shutdownCtx, user("run the tool"));
+        await started;
+
+        const closing = coordinator.shutdown({ timeout: 1_000 });
+        const settledBeforeRelease = await Promise.race([
+            closing.then(() => true),
+            new Promise<false>((resolve) => setTimeout(() => resolve(false), 25)),
+        ]);
+        const signalAbortedBeforeRelease = toolSignal?.aborted === true;
+        releaseTool();
+        const report = await closing;
+
+        expect({ settledBeforeRelease, signalAbortedBeforeRelease, report }).toEqual({
+            settledBeforeRelease: true,
+            signalAbortedBeforeRelease: true,
+            report: { failed: [], timedOut: [] },
+        });
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(agentPersistence.records).toContainEqual(expect.objectContaining({ type: "tool" }));
+    });
+
     it("caches the resolved agent and its store, and tells modules which agent they serve", async () => {
         const provider = new ScriptedProvider([]);
         const managerPersistence = new InMemoryPersistence();

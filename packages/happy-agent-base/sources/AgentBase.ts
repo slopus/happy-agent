@@ -96,6 +96,10 @@ import { setAgentSpanAttributes, type AgentSpanAttributes } from "./AgentSpanAtt
 
 /** Race winner when an abort interrupts a wait on the stream or a running tool. */
 const ABORTED = Symbol("aborted");
+/** Race winner when drain or shutdown stops waiting for a steerable tool execution. */
+const STEERABLE_STOPPED = Symbol("steerable-stopped");
+/** Race winner when drain or shutdown leaves a reloadable call for the next process. */
+const RELOADABLE_STOPPED = Symbol("reloadable-stopped");
 /** Marks a provider context measurement that inference preparation has not evaluated yet. */
 const UNPREPARED_CONTEXT = Symbol("unprepared context");
 
@@ -304,7 +308,7 @@ export interface AgentBaseOptions {
  *   results, settle their own calls with error results before appending anything behind them.
  * - A conversation loaded with a call stranded under later messages is repaired atomically at
  *   load, since the answer belongs beside its call rather than at the end.
- * - A non-durable tool never runs twice; a durable one may.
+ * - A tool that is neither durable nor reloadable never runs twice; either retry-safe flag may.
  *
  * ## Compaction
  *
@@ -461,6 +465,8 @@ export class AgentBase {
     #providerToolIds = new Map<string, string>();
     /** The durable steering queue, in the order its keys sort. */
     #steering: QueueEntry[] = [];
+    /** Steering IDs accepted but not consumed, including ones not yet merged into memory. */
+    readonly #pendingSteeringInterruptions = new Set<string>();
     /** The durable send queue, in the order its keys sort. */
     #sends: QueueEntry[] = [];
     /** A committed outer-transaction queue write not yet merged into the in-memory queues. */
@@ -586,6 +592,28 @@ export class AgentBase {
     readonly #admitted = new Set<Promise<unknown>>();
     /** Queue acceptances the run loop must publish before it may decide its queues are empty. */
     readonly #messageAdmissions = new Set<Promise<readonly AgentMessageAcceptance[]>>();
+    /** Active tool executions whose own definition opts into cooperative steering cancellation. */
+    readonly #steerableToolExecutions = new Set<AbortController>();
+    /** Raised once sticky drain or shutdown stops accepting steerable execution latency. */
+    readonly #stopSteerableToolsController = new AbortController();
+    /** One shared race edge, so completed tools do not leave listeners behind until shutdown. */
+    readonly #stopSteerableTools = new Promise<typeof STEERABLE_STOPPED>((resolve) => {
+        this.#stopSteerableToolsController.signal.addEventListener(
+            "abort",
+            () => resolve(STEERABLE_STOPPED),
+            { once: true },
+        );
+    });
+    /** Raised once drain or shutdown may leave reloadable calls pending for the next process. */
+    readonly #stopReloadableToolsController = new AbortController();
+    /** One shared reload edge, avoiding one shutdown listener per completed reloadable tool. */
+    readonly #stopReloadableTools = new Promise<typeof RELOADABLE_STOPPED>((resolve) => {
+        this.#stopReloadableToolsController.signal.addEventListener(
+            "abort",
+            () => resolve(RELOADABLE_STOPPED),
+            { once: true },
+        );
+    });
     /**
      * Work from an earlier response that is still unwinding: a provider stream that has not
      * finished closing, or a tool that was settled in the conversation by an abort and is still
@@ -1265,9 +1293,15 @@ export class AgentBase {
                                 : { metadata: request.metadata }),
                             options: request.options,
                         });
+                        if (request.kind === "steering") {
+                            this.#pendingSteeringInterruptions.add(request.id);
+                        }
                     }
                     this.#turnRequested = true;
                     this.#startRun();
+                    if (accepted.some(({ request }) => request.kind === "steering")) {
+                        this.#interruptSteerableTools();
+                    }
                 });
             });
             return results;
@@ -1316,8 +1350,14 @@ export class AgentBase {
         // the caller's own transaction and is published or rolled back with the batch itself.
         if (staged?.activated === true) await this.#announceActivation(ctx, false);
         const offeredIds = batch.map(({ id }) => id);
+        const acceptedSteeringIds = results.flatMap((result, index) =>
+            result.accepted === "created" && result.delivery === "steer" ? [batch[index]!.id] : [],
+        );
         afterCommit(ctx, async () => {
-            await this.#activateCommittedMessages(offeredIds, staged);
+            for (const id of acceptedSteeringIds) this.#pendingSteeringInterruptions.add(id);
+            const activated = this.#activateCommittedMessages(offeredIds, staged);
+            if (acceptedSteeringIds.length > 0) this.#interruptSteerableTools();
+            await activated;
         });
         return results;
     }
@@ -1359,6 +1399,9 @@ export class AgentBase {
     ): Promise<void> {
         for (const id of offeredIds) this.#offeredMessageIds.add(id);
         if (staged === undefined) return;
+        // The queue already committed. Raise the merge marker synchronously so a steerable tool
+        // woken by that commit cannot reach the next inference before the message is visible.
+        this.#committedQueueDirty = true;
         // The commit published the staged activation announcement along with the batch, so the
         // current active period is now an announced one.
         if (staged.activated) {
@@ -1380,10 +1423,14 @@ export class AgentBase {
             if (this.#runPromise === undefined) {
                 this.#adoptPendingState(pending);
             }
-            this.#committedQueueDirty = true;
         });
         this.#turnRequested = true;
         this.#startRun();
+    }
+
+    /** Abort only active tool execution signals that explicitly opted into steering. */
+    #interruptSteerableTools(): void {
+        for (const execution of this.#steerableToolExecutions) execution.abort();
     }
 
     /** Make one committed pending record the exact in-memory lifecycle state. */
@@ -1438,11 +1485,14 @@ export class AgentBase {
     }
 
     /**
-     * Stop this loop at its next durable edge without cancelling its current operation. The mode
-     * is sticky: later queue writes remain durable but cannot start another run in this process.
+     * Stop this loop at its next durable edge. Ordinary current operations finish; a steerable
+     * tool receives a cancelled lifetime and is no longer awaited. The mode is sticky: later
+     * queue writes remain durable but cannot start another run in this process.
      */
     drain(): Promise<void> {
         this.#draining = true;
+        this.#stopSteerableToolsController.abort();
+        this.#stopReloadableToolsController.abort();
         this.#drainPromise ??= this.#finishDrain();
         return this.#drainPromise;
     }
@@ -1662,9 +1712,10 @@ export class AgentBase {
         // because the work it would abandon is the caller itself.
         const fromInsideOwnLoop = this.#insideOwnLoop();
         this.#closed = true;
-        // Graceful shutdown stops at the next operation boundary. Do not abort a tool that is
-        // already running; the coordinator's timeout and the daemon's hard exit bound one that
-        // never returns.
+        // Graceful shutdown lets ordinary tools reach the next durable edge, but steerable tools
+        // explicitly opt out of holding shutdown open. A direct close still abandons every tool.
+        this.#stopSteerableToolsController.abort();
+        this.#stopReloadableToolsController.abort();
         if (!fromInsideOwnLoop && !this.#stopAtSafeEdgeRequested()) {
             this.#closeController.abort();
         }
@@ -3068,7 +3119,16 @@ export class AgentBase {
                 (await this.#persistence.readValues(lockCtx, prefix)).map(({ key }) => key),
             );
             const remaining = queue.filter((entry) => durable.has(entry.key));
-            if (remaining.length !== queue.length) queue.splice(0, queue.length, ...remaining);
+            if (remaining.length !== queue.length) {
+                if (kind === "steering") {
+                    for (const entry of queue) {
+                        if (!durable.has(entry.key)) {
+                            this.#pendingSteeringInterruptions.delete(entry.id);
+                        }
+                    }
+                }
+                queue.splice(0, queue.length, ...remaining);
+            }
             if (queue.length === 0) return false;
             const count = mode === "all" ? queue.length : 1;
             const batch = queue.slice(0, count);
@@ -3288,6 +3348,9 @@ export class AgentBase {
                 })),
             );
             queue.splice(0, count);
+            if (kind === "steering") {
+                for (const entry of batch) this.#pendingSteeringInterruptions.delete(entry.id);
+            }
             if (reset) {
                 this.#messages = injected === undefined ? [] : [injected];
                 this.#providerToolIds.clear();
@@ -3426,6 +3489,9 @@ export class AgentBase {
             const measured = context[0]?.value as { readonly tokens: number } | undefined;
             this.#contextTokens = measured?.tokens;
             this.#steering = steering.map(({ key, value }) => this.#restoreQueueEntry(key, value));
+            for (const entry of this.#steering) {
+                this.#pendingSteeringInterruptions.add(entry.id);
+            }
             this.#sends = sends.map(({ key, value }) => this.#restoreQueueEntry(key, value));
             this.#injections = injections.map(({ key, value }) => ({
                 key,
@@ -3474,9 +3540,9 @@ export class AgentBase {
      * result. All calls run in parallel, but results land strictly in call order: a finished
      * result waits until every earlier call in the batch has committed, and each commit appends
      * the tool record and removes the pending entry in one transaction before memory changes.
-     * On resume, only durable tools execute again; the rest become error results. An abort
-     * settles every call still running as an aborted error result, so the batch always leaves a
-     * complete context behind.
+     * On resume, durable and reloadable tools execute again; the rest become error results. An
+     * abort settles every call still running as an aborted error result, so the batch always
+     * leaves a complete context behind.
      */
     async #runToolBatch(
         ctx: Context,
@@ -3533,8 +3599,9 @@ export class AgentBase {
         }
         const results: (SessionToolResultMessage | undefined)[] = new Array(entries.length);
         // Every execution actually started, whether or not its result reached the conversation.
-        const running: Promise<SessionToolResultMessage>[] = [];
+        const running: Promise<SessionToolResultMessage | typeof RELOADABLE_STOPPED>[] = [];
         let closedDuringTools = false;
+        let reloadableStopped = false;
         let committed = 0;
         // A failed commit blocks the turn with its pending calls intact for resume. A sibling
         // still running at that moment no longer owns the append-only tail: its result could
@@ -3611,10 +3678,10 @@ export class AgentBase {
         this.#toolsRunning += 1;
         const batch = Promise.all(
             entries.map(async (entry, index) => {
-                let outcome: SessionToolResultMessage | typeof ABORTED;
+                let outcome: SessionToolResultMessage | typeof ABORTED | typeof RELOADABLE_STOPPED;
                 if (entry.committed !== undefined) {
                     outcome = entry.committed;
-                } else if (resume && !(await this.#isDurable(ctx, entry.call))) {
+                } else if (resume && !(await this.#isRetryable(ctx, entry.call))) {
                     outcome = toolFailure(
                         entry.id,
                         "The tool call was interrupted by a restart and was not retried.",
@@ -3642,6 +3709,10 @@ export class AgentBase {
                     );
                     running.push(execution);
                     outcome = await Promise.race([execution, abortPromise, this.#closingTools()]);
+                }
+                if (outcome === RELOADABLE_STOPPED) {
+                    reloadableStopped = true;
+                    return;
                 }
                 if (outcome === ABORTED && !signal.aborted) closedDuringTools = true;
                 results[index] =
@@ -3672,7 +3743,7 @@ export class AgentBase {
         // An abort or failure may settle the conversation or block the batch without settling the
         // actual execution. Track that unwinding so another in-process attempt cannot overlap it;
         // the batch itself does not wait, so an uncooperative tool cannot hold this turn open.
-        return closedDuringTools;
+        return closedDuringTools || reloadableStopped;
     }
 
     /**
@@ -3689,12 +3760,12 @@ export class AgentBase {
         });
     }
 
-    /** Whether this call's tool may safely be executed again after a restart interrupted it. */
-    async #isDurable(ctx: Context, call: SessionToolCallBlock): Promise<boolean> {
+    /** Whether this call's tool may safely execute again after a crash or deliberate reload. */
+    async #isRetryable(ctx: Context, call: SessionToolCallBlock): Promise<boolean> {
         const tool = (await this.#tools(ctx)).find(
             (candidate) => candidate.name === call.name && candidate.namespace === call.namespace,
         );
-        return tool?.durable === true;
+        return tool?.durable === true || tool?.reloadable === true;
     }
 
     /** Every client tool call in the conversation that has no matching result yet. */
@@ -3860,7 +3931,10 @@ export class AgentBase {
      * The context carries the turn's abort signal as its lifetime, so a running tool can
      * observe cancellation and stop its own work.
      */
-    async #executeToolCall(ctx: Context, entry: ToolBatchEntry): Promise<SessionToolResultMessage> {
+    async #executeToolCall(
+        ctx: Context,
+        entry: ToolBatchEntry,
+    ): Promise<SessionToolResultMessage | typeof RELOADABLE_STOPPED> {
         const { call } = entry;
         const failure = (text: string): SessionToolResultMessage => ({
             role: "tool",
@@ -4025,51 +4099,84 @@ export class AgentBase {
                     decision?.permissionMode === undefined
                         ? callCtx
                         : withAgentPermissionMode(callCtx, decision.permissionMode);
+                const reloadable = ran.reloadable === true;
+                const steeringLifetime = ran.steerable === true ? new AbortController() : undefined;
                 const executionCtx = withLifetime(
                     runCtx,
-                    AbortSignal.any(
-                        runCtx.lifetime === undefined
-                            ? [callLifetime.signal]
-                            : [runCtx.lifetime, callLifetime.signal],
-                    ),
+                    AbortSignal.any([
+                        ...(runCtx.lifetime === undefined ? [] : [runCtx.lifetime]),
+                        callLifetime.signal,
+                        ...(steeringLifetime === undefined
+                            ? []
+                            : [steeringLifetime.signal, this.#stopSteerableToolsController.signal]),
+                        ...(reloadable ? [this.#stopReloadableToolsController.signal] : []),
+                    ]),
                 );
                 const toolCall = {
                     id: entry.id,
                     kv: boundedCallKV,
                     commit,
                 };
-                const returned =
-                    ran.transactional === true
-                        ? this.#persistence.transaction(executionCtx, async (txCtx) => {
-                              const result = await ran.execute(txCtx, ranArguments, toolCall);
-                              if (!Value.Check(ran.returnType, result)) {
-                                  throw new Error(`Tool "${ran.name}" returned an invalid result.`);
-                              }
-                              return await commit(txCtx, result);
-                          })
-                        : Promise.resolve(ran.execute(executionCtx, ranArguments, toolCall));
-                const execution = returned.then(
-                    (result) => ({ type: "returned", result }) as const,
-                    (error: unknown) => ({ type: "threw", error }) as const,
-                );
-                const settled = await Promise.race([
-                    execution,
-                    committed.then((committed) => ({ type: "committed", committed }) as const),
-                ]);
-                if (settled.type === "committed") {
-                    outcome = settled.committed;
-                } else if (settled.type === "threw") {
-                    throw settled.error;
-                } else if (committedOutcome !== undefined) {
-                    outcome = committedOutcome;
-                } else {
-                    if (!Value.Check(ran.returnType, settled.result)) {
-                        throw new Error(`Tool "${ran.name}" returned an invalid result.`);
+                if (steeringLifetime !== undefined) {
+                    this.#steerableToolExecutions.add(steeringLifetime);
+                    if (this.#pendingSteeringInterruptions.size > 0) steeringLifetime.abort();
+                }
+                try {
+                    const returned =
+                        ran.transactional === true
+                            ? this.#persistence.transaction(executionCtx, async (txCtx) => {
+                                  const result = await ran.execute(txCtx, ranArguments, toolCall);
+                                  if (!Value.Check(ran.returnType, result)) {
+                                      throw new Error(
+                                          `Tool "${ran.name}" returned an invalid result.`,
+                                      );
+                                  }
+                                  return await commit(txCtx, result);
+                              })
+                            : Promise.resolve(ran.execute(executionCtx, ranArguments, toolCall));
+                    const execution = returned.then(
+                        (result) => ({ type: "returned", result }) as const,
+                        (error: unknown) => ({ type: "threw", error }) as const,
+                    );
+                    const settled = await Promise.race([
+                        execution,
+                        committed.then((committed) => ({ type: "committed", committed }) as const),
+                        ...(reloadable
+                            ? [this.#stopReloadableTools]
+                            : steeringLifetime === undefined
+                              ? []
+                              : [this.#stopSteerableTools]),
+                    ]);
+                    if (settled === RELOADABLE_STOPPED) {
+                        throw RELOADABLE_STOPPED;
+                    } else if (settled === STEERABLE_STOPPED) {
+                        throw new Error(
+                            "The tool call was interrupted while the agent was stopping.",
+                        );
+                    } else if (settled.type === "committed") {
+                        outcome = settled.committed;
+                    } else if (settled.type === "threw") {
+                        throw settled.error;
+                    } else if (committedOutcome !== undefined) {
+                        outcome = committedOutcome;
+                    } else {
+                        if (!Value.Check(ran.returnType, settled.result)) {
+                            throw new Error(`Tool "${ran.name}" returned an invalid result.`);
+                        }
+                        outcome = outcomeFor(settled.result);
                     }
-                    outcome = outcomeFor(settled.result);
+                } finally {
+                    if (steeringLifetime !== undefined) {
+                        this.#steerableToolExecutions.delete(steeringLifetime);
+                        steeringLifetime.abort();
+                    }
                 }
             }
         } catch (error: unknown) {
+            if (error === RELOADABLE_STOPPED) {
+                callLifetime.abort();
+                return RELOADABLE_STOPPED;
+            }
             outcome =
                 committedOutcome ??
                 ({

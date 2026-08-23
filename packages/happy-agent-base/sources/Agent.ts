@@ -186,7 +186,7 @@ export class Agent<
         this.#base.start();
     }
 
-    /** Stop the loop at its next durable edge without cancelling its current operation. */
+    /** Stop at the next durable edge, interrupting tools that opt into stop or reload behavior. */
     drain(): Promise<void> {
         return this.#base.drain();
     }
@@ -320,9 +320,7 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
                   ...args: Arguments
               ) => MaybePromise<readonly Action[] | undefined>)
             | undefined,
-    ):
-        | ((ctx: Context, ...args: Arguments) => Promise<readonly Action[]>)
-        | undefined => {
+    ): ((ctx: Context, ...args: Arguments) => Promise<readonly Action[]>) | undefined => {
         const implemented = modules.filter((module) => pick(module) !== undefined);
         if (implemented.length === 0) return undefined;
         return async (ctx, ...args) => {

@@ -102,6 +102,19 @@ export interface AgentTool<Args extends TSchema = TSchema, Result extends TSchem
      */
     readonly durable?: boolean;
     /**
+     * Whether drain and graceful shutdown may abandon this execution without recording a result,
+     * leaving the same durable call to be re-executed by the next process. Reloadable tools are
+     * intrinsically safe to retry after any restart, including when `durable` is omitted.
+     */
+    readonly reloadable?: boolean;
+    /**
+     * Whether steering or agent shutdown aborts this tool's execution context lifetime. Pending
+     * steering aborts it immediately as execution begins; drain and shutdown also stop awaiting
+     * it. Cancellation affects only this invocation, not the agent's turn or durable call state,
+     * so a cooperative tool may return an ordinary interrupted result.
+     */
+    readonly steerable?: boolean;
+    /**
      * Whether Agent Base wraps `execute` and its returned-result commit in one Agent Storage
      * transaction. A transactional tool commits only after `execute` returns successfully; a
      * throw, invalid result, or rendering failure rolls the transaction back.

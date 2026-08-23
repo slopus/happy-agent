@@ -68,7 +68,7 @@ export interface AgentSystem<Database extends AgentDatabase = AgentDatabase> {
     /** Stop every agent and release this system's exclusive ownership of its durable store. */
     close(ctx: Context): Promise<void>;
 
-    /** Stop every live loop at its next durable edge without cancelling its current operation. */
+    /** Stop every live loop at its next durable edge under each tool's declared stop behavior. */
     drain(): Promise<void>;
 
     /** Report the agents that have not reached their requested draining edge yet. */

@@ -2216,6 +2216,339 @@ describe("AgentBase message delivery strategies", () => {
         ]);
         await agent.close();
     });
+
+    it("interrupts only active tools that opt into steering", async () => {
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "call-1", name: "steerable_wait" },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "toolcall_start", callId: "call-2", name: "ordinary_wait" },
+                { type: "toolcall_end", callId: "call-2", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("answered"),
+        ]);
+        let steerableSignal: AbortSignal | undefined;
+        let ordinarySignal: AbortSignal | undefined;
+        let steerableFinished = false;
+        let releaseOrdinary = (): void => undefined;
+        const ordinary = new Promise<{ state: string }>((resolve) => {
+            releaseOrdinary = () => resolve({ state: "finished" });
+        });
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            initialState: {
+                tools: [
+                    defineAgentTool({
+                        name: "steerable_wait",
+                        returnType: Type.Object({ state: Type.String() }),
+                        steerable: true,
+                        shouldReviewInAutoMode: () => false,
+                        execute: async (toolCtx) => {
+                            const signal = toolCtx.lifetime;
+                            if (signal === undefined) throw new Error("Missing tool lifetime.");
+                            steerableSignal = signal;
+                            if (!signal.aborted) {
+                                await new Promise<void>((resolve) =>
+                                    signal.addEventListener("abort", () => resolve(), {
+                                        once: true,
+                                    }),
+                                );
+                            }
+                            steerableFinished = true;
+                            return { state: "interrupted" };
+                        },
+                        toLLM: (result) => [{ type: "text", text: result.state }],
+                    }),
+                    defineAgentTool({
+                        name: "ordinary_wait",
+                        returnType: Type.Object({ state: Type.String() }),
+                        shouldReviewInAutoMode: () => false,
+                        execute: async (toolCtx) => {
+                            ordinarySignal = toolCtx.lifetime;
+                            return await ordinary;
+                        },
+                        toLLM: (result) => [{ type: "text", text: result.state }],
+                    }),
+                ],
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await until(() => steerableSignal !== undefined && ordinarySignal !== undefined);
+        await agent.steer(ctx, user("stop waiting"));
+        await until(() => steerableFinished);
+
+        expect(steerableSignal?.aborted).toBe(true);
+        expect(ordinarySignal?.aborted).toBe(false);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+
+        releaseOrdinary();
+        await agent.waitForIdle();
+        expect(provider.sessions[0]?.requests[1]?.context.messages.slice(-3)).toEqual([
+            {
+                role: "tool",
+                callId: "call-1",
+                content: [{ type: "text", text: "interrupted" }],
+            },
+            {
+                role: "tool",
+                callId: "call-2",
+                content: [{ type: "text", text: "finished" }],
+            },
+            user("stop waiting"),
+        ]);
+        await agent.close();
+    });
+
+    it("starts a steerable tool interrupted when steering arrived before registration", async () => {
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "call-1", name: "steerable_wait" },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("answered"),
+        ]);
+        let hookEntered = (): void => undefined;
+        const entered = new Promise<void>((resolve) => {
+            hookEntered = resolve;
+        });
+        let releaseHook = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+            releaseHook = resolve;
+        });
+        let abortedAtStart: boolean | undefined;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks: {
+                beforeToolCall: async () => {
+                    hookEntered();
+                    await held;
+                    return undefined;
+                },
+            },
+            initialState: {
+                tools: [
+                    defineAgentTool({
+                        name: "steerable_wait",
+                        returnType: Type.Object({ state: Type.String() }),
+                        steerable: true,
+                        shouldReviewInAutoMode: () => false,
+                        execute: async (toolCtx) => {
+                            abortedAtStart = toolCtx.lifetime?.aborted;
+                            return {
+                                state: abortedAtStart === true ? "interrupted" : "missed",
+                            };
+                        },
+                        toLLM: (result) => [{ type: "text", text: result.state }],
+                    }),
+                ],
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await entered;
+        await agent.steer(ctx, user("stop before starting"));
+        releaseHook();
+        await agent.waitForIdle();
+
+        expect(abortedAtStart).toBe(true);
+        expect(provider.sessions[0]?.requests[1]?.context.messages.slice(-2)).toEqual([
+            {
+                role: "tool",
+                callId: "call-1",
+                content: [{ type: "text", text: "interrupted" }],
+            },
+            user("stop before starting"),
+        ]);
+        await agent.close();
+    });
+
+    it("drain stops waiting for a running steerable tool", async () => {
+        const persistence = new InMemoryPersistence();
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "call-1", name: "steerable_wait" },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("must not start"),
+        ]);
+        let toolStarted = (): void => undefined;
+        const started = new Promise<void>((resolve) => {
+            toolStarted = resolve;
+        });
+        let releaseTool = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+            releaseTool = resolve;
+        });
+        let toolSignal: AbortSignal | undefined;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            initialState: {
+                tools: [
+                    defineAgentTool({
+                        name: "steerable_wait",
+                        returnType: Type.Object({}),
+                        steerable: true,
+                        shouldReviewInAutoMode: () => false,
+                        execute: async (toolCtx) => {
+                            toolSignal = toolCtx.lifetime;
+                            toolStarted();
+                            await held;
+                            return {};
+                        },
+                        toLLM: () => [],
+                    }),
+                ],
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await started;
+        const draining = agent.drain();
+        const settledBeforeRelease = await Promise.race([
+            draining.then(() => true),
+            new Promise<false>((resolve) => setTimeout(() => resolve(false), 25)),
+        ]);
+        const signalAbortedBeforeRelease = toolSignal?.aborted === true;
+        releaseTool();
+        await draining;
+        await agent.close();
+
+        expect({ settledBeforeRelease, signalAbortedBeforeRelease }).toEqual({
+            settledBeforeRelease: true,
+            signalAbortedBeforeRelease: true,
+        });
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(persistence.records.at(-1)).toEqual({
+            type: "tool",
+            id: generatedCallId(),
+            message: {
+                role: "tool",
+                callId: "call-1",
+                content: [
+                    {
+                        type: "text",
+                        text: "The tool call was interrupted while the agent was stopping.",
+                    },
+                ],
+                isError: true,
+            },
+        });
+    });
+
+    it("drain leaves a reloadable tool pending for the next process", async () => {
+        const persistence = new InMemoryPersistence();
+        const firstProvider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "call-1", name: "reloadable_wait" },
+                { type: "toolcall_end", callId: "call-1", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+        ]);
+        let firstStarted = (): void => undefined;
+        const started = new Promise<void>((resolve) => {
+            firstStarted = resolve;
+        });
+        let releaseFirst = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        let firstSignal: AbortSignal | undefined;
+        let firstCallId: string | undefined;
+        const first = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(firstProvider),
+            provider: "scripted",
+            persistence,
+            initialState: {
+                tools: [
+                    defineAgentTool({
+                        name: "reloadable_wait",
+                        returnType: Type.Object({ value: Type.String() }),
+                        reloadable: true,
+                        shouldReviewInAutoMode: () => false,
+                        execute: async (toolCtx, _args, call) => {
+                            firstSignal = toolCtx.lifetime;
+                            firstCallId = call.id;
+                            firstStarted();
+                            await held;
+                            return { value: "obsolete" };
+                        },
+                        toLLM: (result) => [{ type: "text", text: result.value }],
+                    }),
+                ],
+            },
+        });
+
+        await first.send(ctx, user("go"));
+        await started;
+        const draining = first.drain();
+        const drainedBeforeRelease = await Promise.race([
+            draining.then(() => true),
+            new Promise<false>((resolve) => setTimeout(() => resolve(false), 25)),
+        ]);
+        if (!drainedBeforeRelease) releaseFirst();
+        await draining;
+        await first.close();
+
+        expect(drainedBeforeRelease).toBe(true);
+        expect(firstSignal?.aborted).toBe(true);
+        expect(persistence.records.at(-1)).toMatchObject({
+            type: "block",
+            block: { type: "tool_call", name: "reloadable_wait" },
+        });
+        expect([...persistence.values.keys()]).toContainEqual(expect.stringMatching(/^tool\./));
+        expect(persistence.values.get(AGENT_BASE_PENDING_KEY)).toMatchObject({ stage: "tools" });
+
+        const secondProvider = new ScriptedProvider([textTurn("resumed")]);
+        let secondCallId: string | undefined;
+        const second = await AgentBase.load(ctx, {
+            id: "test-agent",
+            providers: providersOf(secondProvider),
+            provider: "scripted",
+            persistence,
+            initialState: {
+                tools: [
+                    defineAgentTool({
+                        name: "reloadable_wait",
+                        returnType: Type.Object({ value: Type.String() }),
+                        reloadable: true,
+                        shouldReviewInAutoMode: () => false,
+                        execute: async (_toolCtx, _args, call) => {
+                            secondCallId = call.id;
+                            return { value: "restored" };
+                        },
+                        toLLM: (result) => [{ type: "text", text: result.value }],
+                    }),
+                ],
+            },
+        });
+        second.start();
+        await second.waitForIdle();
+        releaseFirst();
+
+        expect(secondCallId).toBe(firstCallId);
+        expect(secondProvider.sessions[0]?.requests[0]?.context.messages.at(-1)).toEqual({
+            role: "tool",
+            callId: "call-1",
+            content: [{ type: "text", text: "restored" }],
+        });
+        expect(persistence.values.has(AGENT_BASE_PENDING_KEY)).toBe(false);
+        expect([...persistence.values.keys()].some((key) => key.startsWith("tool."))).toBe(false);
+        await second.close();
+    });
 });
 
 describe("AgentBase compaction", () => {

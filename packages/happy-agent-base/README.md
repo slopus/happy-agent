@@ -95,6 +95,13 @@ Setting a tool's optional `transactional` property to `true` wraps its `execute`
 validation, rendering, and automatic result commit in one outer transaction. It defaults to
 `false`.
 
+Tool lifetime flags describe distinct interruption guarantees. `durable` means an unfinished call
+may execute again after a crash. `reloadable` additionally lets graceful drain abandon the live
+execution without writing a result, leaving the same call ID pending for the next process; it is
+therefore retry-safe even when `durable` is omitted. `steerable` lets newly accepted steering abort
+the execution lifetime, and lets drain settle the interrupted call instead of waiting. Ordinary
+tools finish before graceful drain reaches its edge.
+
 Modules may provide an ordered array of `[key, migration]` tuples. Agent base tracks each
 successful key and runs every missing migration transactionally before any `beforeStart` hook; a
 failure aborts system startup. Every module migration and hook context carries the common Drizzle
