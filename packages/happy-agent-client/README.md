@@ -39,6 +39,14 @@ exponential backoff.
 Stopping is synchronous: it immediately makes the reducer disconnected, aborts snapshot reads,
 and ignores late results. A later start resumes the SSE cursor and refreshes every tracked agent.
 
+Happy integration state is available in the desktop bootstrap and through focused read, start,
+cancel, disconnect, and re-pair methods. Its `status` is a discriminated union: pairing always has
+renderable opaque QR data, failure always has a display-safe error, and connected states always
+carry configured credentials. A desktop client installs the bootstrap snapshot, follows complete
+`happy.integration.updated` replacements from the bootstrap cursor, and keeps the greater version.
+The integration remains separate from required onboarding, so a product may present pairing as an
+optional onboarding screen or later in settings without changing onboarding completion.
+
 ```ts
 const reducer = new HappyReducer(client);
 const hideAgent = reducer.agentVisible(agentId);

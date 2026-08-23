@@ -332,6 +332,35 @@ export class HappyAgentClient {
         });
     }
 
+    /** `POST /v0/integrations/happy/cancel` — cancels active pairing. */
+    async cancelHappyIntegration(options: RequestOptions = {}): Promise<HappyIntegrationResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/integrations/happy/cancel",
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/integrations/happy` — unlinks this daemon from Happy. */
+    async disconnectHappyIntegration(
+        options: RequestOptions = {},
+    ): Promise<HappyIntegrationResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: "v0/integrations/happy",
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/integrations/happy/re-pair` — unlinks and starts fresh pairing. */
+    async rePairHappyIntegration(options: RequestOptions = {}): Promise<HappyIntegrationResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/integrations/happy/re-pair",
+            signal: options.signal,
+        });
+    }
+
     // Profile
 
     /** `GET /v0/profile` — always succeeds; an untouched profile is all `null`. */

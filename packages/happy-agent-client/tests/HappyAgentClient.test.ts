@@ -155,7 +155,7 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.body).toBeNull();
     });
 
-    it("reads and starts the Happy integration through its focused routes", async () => {
+    it("manages the Happy integration through its focused routes", async () => {
         const response = {
             integration: {
                 authorization: null,
@@ -171,12 +171,24 @@ describe("HappyAgentClient", () => {
 
         await expect(client.getHappyIntegration()).resolves.toEqual(response);
         await expect(client.startHappyIntegration()).resolves.toEqual(response);
+        await expect(client.cancelHappyIntegration()).resolves.toEqual(response);
+        await expect(client.disconnectHappyIntegration()).resolves.toEqual(response);
+        await expect(client.rePairHappyIntegration()).resolves.toEqual(response);
 
         expect(requests[0]?.url).toBe("http://agent.local/v0/integrations/happy");
         expect(requests[0]?.method).toBe("GET");
         expect(requests[1]?.url).toBe("http://agent.local/v0/integrations/happy/start");
         expect(requests[1]?.method).toBe("POST");
         expect(requests[1]?.body).toBeNull();
+        expect(requests[2]?.url).toBe("http://agent.local/v0/integrations/happy/cancel");
+        expect(requests[2]?.method).toBe("POST");
+        expect(requests[2]?.body).toBeNull();
+        expect(requests[3]?.url).toBe("http://agent.local/v0/integrations/happy");
+        expect(requests[3]?.method).toBe("DELETE");
+        expect(requests[3]?.body).toBeNull();
+        expect(requests[4]?.url).toBe("http://agent.local/v0/integrations/happy/re-pair");
+        expect(requests[4]?.method).toBe("POST");
+        expect(requests[4]?.body).toBeNull();
     });
 
     it("requests provider verification at the selected strength", async () => {

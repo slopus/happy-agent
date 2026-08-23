@@ -19,25 +19,59 @@ export const happyIntegrationErrorSchema = Type.Object({
 });
 export type HappyIntegrationError = Static<typeof happyIntegrationErrorSchema>;
 
-/** The complete current Happy integration snapshot. */
-export const happyIntegrationSchema = Type.Object({
-    authorization: Nullable(happyIntegrationAuthorizationSchema),
-    configured: Type.Boolean(),
-    error: Nullable(happyIntegrationErrorSchema),
-    status: Type.Union([
-        Type.Literal("disabled"),
-        Type.Literal("disconnected"),
-        Type.Literal("pairing"),
-        Type.Literal("connecting"),
-        Type.Literal("connected"),
-        Type.Literal("failed"),
-    ]),
-    version: resourceVersionSchema,
+const snapshotFields = {
     updatedAt: timestampSchema,
-});
+    version: resourceVersionSchema,
+};
+
+/** The complete current Happy integration snapshot, narrowed by `status`. */
+export const happyIntegrationSchema = Type.Union([
+    Type.Object({
+        ...snapshotFields,
+        authorization: Type.Null(),
+        configured: Type.Boolean(),
+        error: Type.Null(),
+        status: Type.Literal("disabled"),
+    }),
+    Type.Object({
+        ...snapshotFields,
+        authorization: Type.Null(),
+        configured: Type.Boolean(),
+        error: Nullable(happyIntegrationErrorSchema),
+        status: Type.Literal("disconnected"),
+    }),
+    Type.Object({
+        ...snapshotFields,
+        authorization: happyIntegrationAuthorizationSchema,
+        configured: Type.Literal(false),
+        error: Type.Null(),
+        status: Type.Literal("pairing"),
+    }),
+    Type.Object({
+        ...snapshotFields,
+        authorization: Type.Null(),
+        configured: Type.Literal(true),
+        error: Type.Null(),
+        status: Type.Literal("connecting"),
+    }),
+    Type.Object({
+        ...snapshotFields,
+        authorization: Type.Null(),
+        configured: Type.Literal(true),
+        error: Type.Null(),
+        status: Type.Literal("connected"),
+    }),
+    Type.Object({
+        ...snapshotFields,
+        authorization: Type.Null(),
+        configured: Type.Boolean(),
+        error: happyIntegrationErrorSchema,
+        status: Type.Literal("failed"),
+    }),
+]);
 export type HappyIntegration = Static<typeof happyIntegrationSchema>;
 
-/** `GET /v0/integrations/happy` and `POST /v0/integrations/happy/start`. */
+/** The current snapshot returned by every Happy integration operation. */
 export const happyIntegrationResponseSchema = Type.Object({
     integration: happyIntegrationSchema,
 });
