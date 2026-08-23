@@ -2252,6 +2252,18 @@ export class AgentBase {
         try {
             if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             await this.#ensureLoaded(ctx);
+            // A completed block proves the inherited provider request already produced durable
+            // content. Ordinarily afterInference retires its identity before any tool batch or
+            // later request. A process that stopped before that transaction leaves the old ID on
+            // the inference stage; carrying it onward would give two provider requests one
+            // identity. Retire it at the first loaded edge.
+            if (
+                this.#inferenceId !== undefined &&
+                this.#lastRecordType === "block" &&
+                this.#inherited?.stage === "inference"
+            ) {
+                this.#inferenceId = undefined;
+            }
             // Resume a tool batch that was dispatched but cut off before its results landed, so
             // the interrupted results reach the main store before any queued message.
             const resumed = this.#pendingTools;

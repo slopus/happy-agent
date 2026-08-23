@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
     AGENT_BASE_PENDING_KEY,
     AgentBase,
+    agentBasePendingStateOf,
     agentEffort,
     agentModel,
     agentProvider,
@@ -762,6 +763,105 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         ]);
         // Nothing is left owed, and the conversation no longer holds an unanswered call.
         expect(persistence.pending.size).toBe(0);
+        await agent.close();
+    });
+
+    it("retires the interrupted inference identity before recovering its tool call", async () => {
+        const baseCallId = "recoveredcall";
+        const interruptedInferenceId = "interruptedinference";
+        const call: SessionToolCallBlock = {
+            type: "tool_call",
+            callId: "provider-recovered-call",
+            name: "recoverable",
+            arguments: "{}",
+        };
+        const persistence = new InMemoryPersistence([
+            userRecord("recover this call"),
+            callRecord(baseCallId, call),
+        ]);
+        persistence.values.set(AGENT_BASE_PENDING_KEY, {
+            stage: "inference",
+            loopId: "recoveredloop",
+            turnId: "recoveredturn",
+            inferenceId: interruptedInferenceId,
+        });
+        const pendingAtDispatch: unknown[] = [];
+        const followingInferenceIds: string[] = [];
+        const provider = new ScriptedProvider([textTurn("continued")]);
+        const agent = await AgentBase.load(ctx, {
+            id: "recovered-inference-identity",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            initialState: {
+                tools: [
+                    defineAgentTool({
+                        name: "recoverable",
+                        returnType: Type.Object({}),
+                        shouldReviewInAutoMode: () => false,
+                        execute: () => Promise.resolve({}),
+                        toLLM: () => [],
+                    }),
+                ],
+            },
+            hooks: {
+                beforeToolCallTransact: async (hookCtx) => {
+                    pendingAtDispatch.push(await agentBasePendingStateOf(hookCtx, persistence));
+                },
+                beforeInferenceTransact: (_hookCtx, inference) => {
+                    followingInferenceIds.push(inference.inferenceId);
+                },
+            },
+        });
+
+        agent.start();
+        await agent.waitForIdle();
+
+        expect(pendingAtDispatch).toMatchObject([
+            {
+                stage: "tools",
+                loopId: "recoveredloop",
+                turnId: "recoveredturn",
+            },
+        ]);
+        expect(pendingAtDispatch).not.toMatchObject([{ inferenceId: interruptedInferenceId }]);
+        expect(followingInferenceIds).toHaveLength(1);
+        expect(followingInferenceIds[0]).not.toBe(interruptedInferenceId);
+        await agent.close();
+    });
+
+    it("retires an interrupted inference identity after any completed response block", async () => {
+        const interruptedInferenceId = "interruptedtextinference";
+        const persistence = new InMemoryPersistence([
+            userRecord("start an answer"),
+            { type: "block", block: { type: "text", text: "partial answer" } },
+        ]);
+        persistence.values.set(AGENT_BASE_PENDING_KEY, {
+            stage: "inference",
+            loopId: "recoveredtextloop",
+            turnId: "recoveredtextturn",
+            inferenceId: interruptedInferenceId,
+        });
+        persistence.values.set("send.00000000000001.000000", queued(user("continue with this")));
+        const followingInferenceIds: string[] = [];
+        const provider = new ScriptedProvider([textTurn("fresh response")]);
+        const agent = await AgentBase.load(ctx, {
+            id: "recovered-text-inference-identity",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            hooks: {
+                beforeInferenceTransact: (_hookCtx, inference) => {
+                    followingInferenceIds.push(inference.inferenceId);
+                },
+            },
+        });
+
+        agent.start();
+        await agent.waitForIdle();
+
+        expect(followingInferenceIds).toHaveLength(1);
+        expect(followingInferenceIds[0]).not.toBe(interruptedInferenceId);
         await agent.close();
     });
 

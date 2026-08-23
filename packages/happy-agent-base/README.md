@@ -124,6 +124,10 @@ and steer actions accept the same fields.
 Base allocates cuid2 identities for every settled-to-settled loop, turn, inference, and settlement.
 The IDs are persisted with outstanding work before their first lifecycle hook, survive restart,
 and are passed to transactional and observing hook counterparts without imposing a host protocol.
+An inference ID survives only while that provider request has produced no completed block. If a
+restart finds completed response content whose inference transaction never finished, Base retires
+that request's ID before recovering its tool calls or making another provider request. Recovery
+therefore never gives two provider requests the same inference identity.
 Modules may also observe agent creation, restoration, metadata changes, and archival. Creation,
 restoration, and archival provide transactional and post-commit hook pairs with an immutable agent
 ID/metadata snapshot and module-scoped shared KV.
