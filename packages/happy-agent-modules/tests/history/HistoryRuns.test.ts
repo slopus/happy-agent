@@ -409,7 +409,7 @@ describe("HistoryModule run history", () => {
                 type: "text_end",
             });
 
-            for (const callId of ["call-a", "call-b"]) {
+            for (const callId of ["calla", "callb"]) {
                 await world.historyHooks.onEventTransact?.(world.database.context, world.scope, {
                     type: "toolcall_end",
                     block: {
@@ -425,7 +425,7 @@ describe("HistoryModule run history", () => {
                 state: "tool_call",
                 tokens: { input: 1, output: 1 },
             });
-            for (const callId of ["call-a", "call-b"]) {
+            for (const callId of ["calla", "callb"]) {
                 await world.historyHooks.beforeToolCallTransact?.(
                     world.database.context,
                     world.scope,
@@ -571,7 +571,7 @@ describe("HistoryModule run history", () => {
                 type: "toolcall_end",
                 block: {
                     type: "tool_call",
-                    callId: "call-a",
+                    callId: "calla",
                     name: "shell",
                     arguments: '{"command":"secret"}',
                 },
@@ -586,13 +586,13 @@ describe("HistoryModule run history", () => {
             });
             await world.historyHooks.beforeToolCallTransact?.(world.database.context, world.scope, {
                 type: "tool_call",
-                callId: "call-a",
+                callId: "calla",
                 name: "shell",
                 arguments: '{"command":"secret"}',
             } as never);
             await world.historyHooks.afterToolCallTransact?.(world.database.context, world.scope, {
                 role: "tool",
-                callId: "call-a",
+                callId: "calla",
                 content: [{ type: "text", text: "private output" }],
             });
 

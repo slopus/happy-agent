@@ -54,7 +54,7 @@ describe("History tool presentations", () => {
                 blocks: [
                     {
                         arguments: argumentsValue,
-                        callId: "call-edit",
+                        callId: "calledit",
                         name: "apply_patch",
                         type: "tool_call",
                     },
@@ -64,13 +64,13 @@ describe("History tool presentations", () => {
             });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: JSON.stringify(argumentsValue),
-                callId: "call-edit",
+                callId: "calledit",
                 name: "apply_patch",
                 type: "tool_call",
             });
             await hooks.afterToolCall!(database.context, scope, {
                 arguments: argumentsValue,
-                callId: "call-edit",
+                callId: "calledit",
                 content: write.toLLM(result),
                 isError: false,
                 result,
@@ -80,7 +80,7 @@ describe("History tool presentations", () => {
             // result after a daemon restart without an in-memory presentation cache.
             const restartedHooks = await resolveModuleHooks(database.context, new HistoryModule());
             await restartedHooks.afterToolCallTransact!(database.context, scope, {
-                callId: "call-edit",
+                callId: "calledit",
                 content: write.toLLM(result),
                 role: "tool",
             });

@@ -77,7 +77,7 @@ describe("messageResource", () => {
         });
     });
 
-    it("projects legacy compaction provenance as the required empty compatibility field", () => {
+    it("projects a compaction without model-context provenance", () => {
         expect(
             messageResource({
                 at: 100,
@@ -86,7 +86,6 @@ describe("messageResource", () => {
                         type: "compaction",
                         trigger: "automatic",
                         status: "completed",
-                        replacedMessageIds: ["legacy-message-a", "legacy-message-b"],
                         tokensBefore: null,
                         tokensAfter: null,
                         failureReason: null,
@@ -98,7 +97,7 @@ describe("messageResource", () => {
                 role: "service",
             }),
         ).toMatchObject({
-            content: [{ type: "compaction", replacedMessageIds: [] }],
+            content: [{ type: "compaction" }],
         });
     });
 
@@ -109,13 +108,13 @@ describe("messageResource", () => {
                 blocks: [
                     {
                         type: "tool_call",
-                        callId: "call-a",
+                        callId: "calla",
                         name: "exec_command",
                         arguments: { cmd: "pnpm test" },
                     },
                     {
                         type: "tool_result",
-                        callId: "call-a",
+                        callId: "calla",
                         toolName: "exec_command",
                         display: "Tool exec_command returned 9 characters.",
                         output: "42 passed",
@@ -131,7 +130,7 @@ describe("messageResource", () => {
             content: [
                 {
                     type: "tool_call",
-                    id: "call-a",
+                    id: "calla",
                     name: "exec_command",
                     status: "completed",
                     arguments: { cmd: "pnpm test" },
@@ -153,7 +152,7 @@ describe("messageResource", () => {
             blocks: [
                 {
                     type: "tool_call" as const,
-                    callId: "call-reviewed",
+                    callId: "callreviewed",
                     name: "exec_command",
                     arguments: { cmd: "git push" },
                     elevated: true,
@@ -191,7 +190,7 @@ describe("messageResource", () => {
                 [
                     {
                         type: "toolCall",
-                        id: "call-reviewed",
+                        id: "callreviewed",
                         name: "exec_command",
                         arguments: { cmd: "git push" },
                     },
@@ -213,13 +212,13 @@ describe("messageResource", () => {
             blocks: [
                 {
                     type: "tool_call",
-                    callId: "call-a",
+                    callId: "calla",
                     name: "exec_command",
                     arguments: { cmd: "pnpm test" },
                 },
                 {
                     type: "tool_result",
-                    callId: "call-a",
+                    callId: "calla",
                     toolName: "exec_command",
                     display: "Tool exec_command returned 9 characters.",
                     output: "42 passed",
@@ -231,13 +230,13 @@ describe("messageResource", () => {
         const live = providerMessageContent([
             {
                 type: "toolCall",
-                id: "call-a",
+                id: "calla",
                 name: "exec_command",
                 arguments: { cmd: "pnpm test" },
             },
             {
                 type: "tool_result",
-                toolCallId: "call-a",
+                toolCallId: "calla",
                 toolName: "exec_command",
                 display: "Tool exec_command returned 9 characters.",
                 rendered: [{ type: "text", text: "42 passed" }],
@@ -274,13 +273,13 @@ describe("messageResource", () => {
             blocks: [
                 {
                     type: "tool_call" as const,
-                    callId: "call-edit",
+                    callId: "calledit",
                     name: "apply_patch",
                     arguments: { patch: "*** Begin Patch\n..." },
                 },
                 {
                     type: "tool_result" as const,
-                    callId: "call-edit",
+                    callId: "calledit",
                     toolName: "apply_patch",
                     output: "Success. Updated the following files:\nM sources/auth.ts",
                     presentation,
@@ -295,13 +294,13 @@ describe("messageResource", () => {
             [
                 {
                     type: "toolCall",
-                    id: "call-edit",
+                    id: "calledit",
                     name: "apply_patch",
                     arguments: { patch: "*** Begin Patch\n..." },
                 },
                 {
                     type: "tool_result",
-                    toolCallId: "call-edit",
+                    toolCallId: "calledit",
                     rendered: [
                         {
                             type: "text",
@@ -319,7 +318,7 @@ describe("messageResource", () => {
         expect(messageResource(historyMessage, { omitToolData: true }).content).toEqual([
             {
                 type: "tool_call",
-                id: "call-edit",
+                id: "calledit",
                 name: "apply_patch",
                 status: "completed",
                 presentation,
@@ -334,25 +333,25 @@ describe("messageResource", () => {
                 blocks: [
                     {
                         type: "tool_call",
-                        callId: "call-a",
+                        callId: "calla",
                         name: "exec_command",
                         arguments: { cmd: "pnpm test" },
                     },
                     {
                         type: "tool_result",
-                        callId: "call-a",
+                        callId: "calla",
                         toolName: "exec_command",
                         output: "42 passed",
                     },
                     {
                         type: "tool_call",
-                        callId: "call-b",
+                        callId: "callb",
                         name: "custom_tool",
                         arguments: { secret: "still needed to render" },
                     },
                     {
                         type: "tool_result",
-                        callId: "call-b",
+                        callId: "callb",
                         toolName: "custom_tool",
                         output: "custom output",
                     },
@@ -366,7 +365,7 @@ describe("messageResource", () => {
         expect(message.content).toEqual([
             {
                 type: "tool_call",
-                id: "call-a",
+                id: "calla",
                 name: "exec_command",
                 status: "completed",
                 presentation: {
@@ -377,7 +376,7 @@ describe("messageResource", () => {
             },
             {
                 type: "tool_call",
-                id: "call-b",
+                id: "callb",
                 name: "custom_tool",
                 status: "completed",
                 arguments: { secret: "still needed to render" },
@@ -391,7 +390,7 @@ describe("toolCallResource", () => {
     it("projects fixed vendor exploration and search tools", () => {
         expect(
             toolCallResource({
-                id: "call-read",
+                id: "callread",
                 name: "Read",
                 status: "running",
                 arguments: { file_path: "/workspace/auth.ts" },
@@ -404,7 +403,7 @@ describe("toolCallResource", () => {
         });
         expect(
             toolCallResource({
-                id: "call-search",
+                id: "callsearch",
                 name: "grok_x_search",
                 status: "completed",
                 arguments: { query: "Happy Agent launch" },

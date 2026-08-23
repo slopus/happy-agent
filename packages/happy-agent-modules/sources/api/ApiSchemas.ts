@@ -11,11 +11,7 @@ export const apiIdSchema = Type.String({
     pattern: "^[a-z][a-z0-9]+$",
 });
 
-/**
- * Question identifiers are provider tool-call IDs, not daemon-minted CUID2s: the durable
- * request is keyed by the provider call ID so a recorded answer matches the exact tool result
- * that carries it. Provider call IDs mix cases, underscores, and hyphens.
- */
+/** Question labels inside one user-input batch may use mixed case, underscores, and hyphens. */
 export const questionIdSchema = Type.String({
     minLength: 1,
     maxLength: 96,

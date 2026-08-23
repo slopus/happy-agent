@@ -119,12 +119,12 @@ describe("history selection", () => {
             blocks: [
                 {
                     arguments: { secret: "argument needle" },
-                    callId: "call-1",
+                    callId: "call1",
                     name: "search",
                     type: "tool_call",
                 },
                 {
-                    callId: "call-1",
+                    callId: "call1",
                     display: "display needle",
                     output: "output needle",
                     toolName: "search",

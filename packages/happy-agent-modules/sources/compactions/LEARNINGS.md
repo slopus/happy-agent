@@ -8,9 +8,9 @@ Manual compaction owns a standalone maintenance run with that same ID; automatic
 the active run. Clients recover both running and terminal state through normal message history and
 never infer lifecycle from agent status or human-readable text.
 
-`replacedMessageIds` remains on the public block only for protocol compatibility and is always an
-empty array. Model-context replacement is provider-owned state, not history provenance; never scan
-person-visible history positions to infer what a compaction replaced.
+Model-context replacement is provider-owned state, not history provenance. The public block does
+not expose replaced message identities, and code must never scan person-visible history positions
+to infer what a compaction replaced.
 
 ## History and events move together
 

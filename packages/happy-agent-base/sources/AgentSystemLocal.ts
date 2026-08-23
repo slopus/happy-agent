@@ -25,6 +25,7 @@ import type { AgentDatabase } from "./AgentDatabase.js";
 import { outsideAgentDatabaseOperation } from "./AgentDatabaseConnection.js";
 import type { AgentKV } from "./AgentKV.js";
 import type { AgentPersistence } from "./AgentPersistence.js";
+import { baseContextMessages, storedContextToolIds } from "./AgentProviderContext.js";
 import {
     agentConfigSchema,
     ownAgentConfig,
@@ -577,9 +578,11 @@ export class AgentSystemLocal<
             }
             await persistence.writeValue(txCtx, "agentConfig", config);
             if (messages.length > 0) {
+                const context = baseContextMessages(messages, new Map(), true);
                 await persistence.append(txCtx, {
                     type: "compaction",
-                    messages: structuredClone(messages),
+                    contextToolIds: storedContextToolIds(context.toolIds),
+                    messages: context.messages,
                 });
             }
         });

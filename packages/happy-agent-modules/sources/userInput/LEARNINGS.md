@@ -8,11 +8,11 @@ take days to answer; losing their question to a daemon restart is the opposite o
 for.
 
 The tool is now `durable: true`. Re-executing it is safe rather than merely tolerable, because the
-request ID is the provider call ID and Agent Base restores that ID with the stored call: the second
-execution's `ask` resumes the very request the first one created instead of asking again, and its
-`wait` returns immediately when the person answered while the daemon was down. Deadlines are
-absolute — `autoResolutionMs` counts from `createdAt` — so a resumed wait cannot silently extend the
-window a restart interrupted.
+request ID is Agent Base's generated tool-call CUID2 and Base restores that ID with the stored call:
+the second execution's `ask` resumes the very request the first one created instead of asking
+again, and its `wait` returns immediately when the person answered while the daemon was down.
+Deadlines are absolute — `autoResolutionMs` counts from `createdAt` — so a resumed wait cannot
+silently extend the window a restart interrupted.
 
 ## A parked wait holds a graceful shutdown open, and that is what makes durability work
 
@@ -29,5 +29,5 @@ failure after every restart instead of being asked again.
 A consequence for tests: the API gym cannot restart a daemon that has a question in flight. Its
 daemon runs in the test process, so when the shutdown times out the SQLite process lock is never
 released and the next daemon refuses to open the database. Cover this behavior at the module
-boundary — a fresh module instance replaying the same provider call ID over the same database is
-what a restart actually looks like.
+boundary — a fresh module instance replaying the same Base tool-call CUID2 over the same database
+is what a restart actually looks like.

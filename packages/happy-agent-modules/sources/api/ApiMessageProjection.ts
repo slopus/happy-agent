@@ -178,7 +178,6 @@ function historyBlocks(
                     type: "compaction",
                     trigger: block.trigger,
                     status: block.status,
-                    replacedMessageIds: [],
                     tokensBefore: block.tokensBefore,
                     tokensAfter: block.tokensAfter,
                     failureReason: block.failureReason,
@@ -211,7 +210,7 @@ function historyBlocks(
         });
 }
 
-/** Review annotations from a durable message, keyed by the provider's stable call identity. */
+/** Review annotations from a durable message, keyed by Agent Base's stable call identity. */
 export function reviewedToolCalls(
     message: HistoryMessage | undefined,
 ): ReadonlyMap<string, ReviewedHistoryToolCall> {
@@ -228,7 +227,7 @@ export function reviewedToolCalls(
     return reviewed;
 }
 
-/** Result-derived presentations from a durable assistant message, by provider call identity. */
+/** Result-derived presentations from a durable assistant message, by Base call identity. */
 export function toolResultPresentations(
     message: HistoryMessage | undefined,
 ): ReadonlyMap<string, HistoryToolPresentation> {

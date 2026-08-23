@@ -107,7 +107,7 @@ export class AgentKV {
      * Return the durable value already stored under `key`, or create and store it exactly once.
      * The read and possible write share one persistence transaction, and an existing outer
      * transaction is reused. A tool can use this on its call-bound KV for retry-stable operation
-     * identities without coupling them to a provider call ID.
+     * identities without minting another identity for the invocation.
      */
     async getOrCreate<Value>(
         ctx: Context,

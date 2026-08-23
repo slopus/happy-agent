@@ -31,11 +31,23 @@ export type AgentRecord =
           readonly message: AgentQueuedMessage;
           readonly metadata?: AgentMessageMetadata;
       }
-    | { readonly type: "block"; readonly block: SessionAssistantBlock }
-    | { readonly type: "tool"; readonly message: SessionToolResultMessage }
+    | {
+          readonly type: "block";
+          /** Base CUID2 when `block` is a provider-native tool call or result. */
+          readonly id?: string;
+          readonly block: SessionAssistantBlock;
+      }
+    | {
+          readonly type: "tool";
+          /** Base CUID2 paired with the provider-native `message.callId`. */
+          readonly id: string;
+          readonly message: SessionToolResultMessage;
+      }
     | { readonly type: "system"; readonly message: SessionSystemMessage }
     | {
           readonly type: "compaction";
+          /** Base-to-provider tool identities required to replay `messages`. */
+          readonly contextToolIds: readonly (readonly [id: string, callId: string])[];
           readonly messages: readonly SessionMessage[];
       };
 

@@ -255,7 +255,7 @@ describe("UserInput events, tools, and output bounds", () => {
         expect(detailOutput).toContain(`Request ${request.id}:`);
     });
 
-    it("uses provider call IDs for request identity and supports detail reads through the same tool", async () => {
+    it("uses Base tool-call IDs for request identity and supports detail reads through the same tool", async () => {
         const module = createUserInputModule();
         const database = createUserInputDatabase(module, "user-input-tools");
         await database.ready;
@@ -271,20 +271,17 @@ describe("UserInput events, tools, and output bounds", () => {
                 },
                 {
                     id: "internal-id",
-                    providerCallId: "provider-call-id",
                 } as never,
             );
             await vi.waitFor(async () => {
-                expect(
-                    await module.get(database.context, agentId, "provider-call-id"),
-                ).toBeDefined();
+                expect(await module.get(database.context, agentId, "internal-id")).toBeDefined();
             });
             await module.answer(database.context, agentId, {
-                requestId: "provider-call-id",
+                requestId: "internal-id",
                 answer: "Proceed.",
             });
             await expect(running).resolves.toMatchObject({
-                id: "provider-call-id",
+                id: "internal-id",
                 status: "answered",
             });
 
@@ -292,7 +289,7 @@ describe("UserInput events, tools, and output bounds", () => {
                 database.context,
                 {
                     input: {
-                        requestId: "provider-call-id",
+                        requestId: "internal-id",
                         cursor: "0",
                         limit: 64,
                     },
@@ -300,7 +297,7 @@ describe("UserInput events, tools, and output bounds", () => {
                 {} as never,
             );
             expect(detail).toMatchObject({
-                request: { id: "provider-call-id", status: "answered" },
+                request: { id: "internal-id", status: "answered" },
                 cursor: 0,
             });
             expect(requestTool.toLLM(detail as never)[0]).toMatchObject({ type: "text" });

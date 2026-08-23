@@ -782,7 +782,7 @@ describe("public transcript and run APIs", () => {
                 role: "agent",
                 content: [
                     {
-                        id: "append-only-tool-1",
+                        id: expect.stringMatching(/^[a-z][a-z0-9]{1,31}$/),
                         status: "completed",
                         type: "tool_call",
                     },
@@ -790,13 +790,13 @@ describe("public transcript and run APIs", () => {
             },
             {
                 role: "service",
-                content: [{ replacedMessageIds: [], type: "compaction" }],
+                content: [{ type: "compaction" }],
             },
             {
                 role: "agent",
                 content: [
                     {
-                        id: "append-only-tool-2",
+                        id: expect.stringMatching(/^[a-z][a-z0-9]{1,31}$/),
                         status: "completed",
                         type: "tool_call",
                     },
@@ -804,13 +804,19 @@ describe("public transcript and run APIs", () => {
             },
             {
                 role: "service",
-                content: [{ replacedMessageIds: [], type: "compaction" }],
+                content: [{ type: "compaction" }],
             },
             {
                 role: "agent",
                 content: [{ text: "append-only history complete", type: "text" }],
             },
         ]);
+        const publicToolIds = run?.messages.flatMap((message) =>
+            message.content.flatMap((block) => (block.type === "tool_call" ? [block.id] : [])),
+        );
+        expect(publicToolIds).toHaveLength(2);
+        expect(publicToolIds).not.toContain("append-only-tool-1");
+        expect(publicToolIds).not.toContain("append-only-tool-2");
         expect(gym.inference.compactions).toHaveLength(2);
 
         await gym.restart();
@@ -1127,9 +1133,10 @@ describe("public transcript and run APIs", () => {
         const fullTool = toolCallFrom(full);
         const liveTool = completedToolCallFromEvents(await gym.events(), gym.defaultSessionId);
 
+        expect(fullTool.id).toMatch(/^[a-z][a-z0-9]{1,31}$/);
+        expect(fullTool.id).not.toBe("transcript-tool-presentation");
         expect(fullTool).toMatchObject({
             type: "tool_call",
-            id: "transcript-tool-presentation",
             name: "exec_command",
             status: "completed",
             arguments: { cmd: "printf presented" },
@@ -1143,7 +1150,7 @@ describe("public transcript and run APIs", () => {
         expect(liveTool).toEqual(fullTool);
         expect(toolCallFrom(omitted)).toEqual({
             type: "tool_call",
-            id: "transcript-tool-presentation",
+            id: fullTool.id,
             name: "exec_command",
             status: "completed",
             presentation: fullTool.presentation,
@@ -1362,8 +1369,9 @@ describe("public transcript and run APIs", () => {
         const fullTool = toolCallFrom(full);
         const omittedTool = toolCallFrom(omitted);
         const liveTool = completedToolCallFromEvents(await gym.events(), gym.defaultSessionId);
+        expect(fullTool.id).toMatch(/^[a-z][a-z0-9]{1,31}$/);
+        expect(fullTool.id).not.toBe("transcript-tool-result");
         expect(fullTool).toMatchObject({
-            id: "transcript-tool-result",
             arguments: { cmd: "printf tool-result" },
             result: { output: expect.stringContaining("tool-result") },
             presentation: {
@@ -1375,7 +1383,7 @@ describe("public transcript and run APIs", () => {
         expect(liveTool).toEqual(fullTool);
         expect(omittedTool).toEqual({
             type: "tool_call",
-            id: "transcript-tool-result",
+            id: fullTool.id,
             name: "exec_command",
             status: "completed",
             presentation: fullTool.presentation,

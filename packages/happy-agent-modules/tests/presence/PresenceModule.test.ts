@@ -287,7 +287,6 @@ current = "nowhere"
             const tool = setPresenceTool(module);
             const call = {
                 id: "call-presence-1",
-                providerCallId: "provider-presence-1",
             } as never;
 
             const result = await tool.execute(

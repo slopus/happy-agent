@@ -38,12 +38,12 @@ describe("history rendering", () => {
                 { redacted: true, thinking: "secret", type: "thinking" as const },
                 {
                     arguments: { path: "src" },
-                    callId: "call-1",
+                    callId: "call1",
                     name: "read",
                     type: "tool_call" as const,
                 },
                 {
-                    callId: "call-1",
+                    callId: "call1",
                     display: "Read one file.",
                     isError: true,
                     output: "permission denied",

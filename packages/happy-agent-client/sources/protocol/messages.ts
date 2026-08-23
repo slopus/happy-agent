@@ -211,7 +211,7 @@ export type ToolPermissionReview =
 
 interface ToolCallBlockBase {
     type: "tool_call";
-    /** The provider's stable identity for this invocation. */
+    /** Happy Agent Base's stable CUID2 identity for this invocation. */
     id: string;
     name: string;
     status: "running" | "completed" | "failed";
@@ -248,8 +248,6 @@ export type CompactionTrigger = Static<typeof compactionTriggerSchema>;
 const compactionBlockBaseSchema = Type.Object({
     type: Type.Literal("compaction"),
     trigger: compactionTriggerSchema,
-    /** Durable history messages whose model-context representations this attempt targets. */
-    replacedMessageIds: Type.Array(cuid2Schema, { uniqueItems: true }),
     /** Exact provider-measured input context before compaction, when available. */
     tokensBefore: Nullable(Type.Integer({ minimum: 0 })),
     startedAt: timestampSchema,

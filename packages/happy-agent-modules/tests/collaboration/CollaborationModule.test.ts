@@ -206,7 +206,6 @@ function settlement(settlementId: string, error?: string) {
 function toolCall(id: string) {
     return {
         id,
-        providerCallId: `${id}-provider`,
         kv: undefined,
         commit: async (_ctx: Context, result: unknown) => result,
     } as never;

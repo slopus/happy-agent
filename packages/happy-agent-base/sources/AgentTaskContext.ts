@@ -19,7 +19,7 @@ const taskContextNamespace = createContextNamespace<readonly SessionMessage[] | 
  * gaining a general-purpose history-reading capability.
  */
 export function withAgentTaskContext(ctx: Context, messages: readonly SessionMessage[]): Context {
-    return taskContextNamespace.set(ctx, structuredClone(messages));
+    return taskContextNamespace.set(ctx, publicTaskContext(messages));
 }
 
 /** The pre-tool-call parent conversation available to the current tool execution. */
@@ -41,5 +41,29 @@ export function taskContextBeforeToolCall(
             message.role === "assistant" &&
             message.content.some((block) => block.type === "tool_call" && block.callId === callId),
     );
-    return structuredClone(boundary < 0 ? messages : messages.slice(0, boundary));
+    return publicTaskContext(boundary < 0 ? messages : messages.slice(0, boundary));
+}
+
+/** Tool work may inherit portable conversation content, never opaque provider replay state. */
+function publicTaskContext(messages: readonly SessionMessage[]): SessionMessage[] {
+    return structuredClone(
+        messages.map((message): SessionMessage => {
+            if (message.role === "assistant") {
+                return {
+                    ...message,
+                    content: message.content.map((block) => {
+                        if (block.type !== "tool_call" && block.type !== "tool_result")
+                            return block;
+                        const { vendor: _vendor, ...publicBlock } = block;
+                        return publicBlock;
+                    }),
+                };
+            }
+            if (message.role === "tool" || message.role === "compaction") {
+                const { vendor: _vendor, ...publicMessage } = message;
+                return publicMessage;
+            }
+            return message;
+        }),
+    );
 }

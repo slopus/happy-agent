@@ -6,7 +6,6 @@ import { compactionBlockSchema } from "../sources/protocol/messages.js";
 const base = {
     type: "compaction",
     trigger: "manual",
-    replacedMessageIds: ["message1", "message2"],
     tokensBefore: 201_000,
     startedAt: 1_755_400_000_000,
 } as const;
@@ -47,18 +46,5 @@ describe("compaction message protocol", () => {
         };
         expect(Value.Check(compactionBlockSchema, failed)).toBe(true);
         expect(Value.Check(compactionBlockSchema, { ...failed, failureReason: null })).toBe(false);
-    });
-
-    it("keeps the targeted history identities unique", () => {
-        expect(
-            Value.Check(compactionBlockSchema, {
-                ...base,
-                replacedMessageIds: ["message1", "message1"],
-                status: "running",
-                tokensAfter: null,
-                failureReason: null,
-                completedAt: null,
-            }),
-        ).toBe(false);
     });
 });

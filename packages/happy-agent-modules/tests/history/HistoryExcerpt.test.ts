@@ -178,10 +178,10 @@ describe("createHistoryExcerpt", () => {
             { type: "text", text: "visible" },
             { type: "thinking", thinking: "reasoned", redacted: true },
             { type: "image", mediaType: "image/png" },
-            { type: "tool_call", callId: "call-1", name: "lookup", arguments: { q: "x" } },
+            { type: "tool_call", callId: "call1", name: "lookup", arguments: { q: "x" } },
             {
                 type: "tool_result",
-                callId: "call-1",
+                callId: "call1",
                 toolName: "lookup",
                 display: "looked up",
                 output: "result",

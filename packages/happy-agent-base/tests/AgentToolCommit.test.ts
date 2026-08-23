@@ -10,6 +10,7 @@ import {
     agentKV,
     cuid2Schema,
     defineAgentTool,
+    type AgentBasePersistedEvent,
     type AgentToolCall,
 } from "../sources/index.js";
 import { providersOf, textTurn, user } from "./gym/fixtures.js";
@@ -26,13 +27,19 @@ function toolCallTurn(providerCallId: string, name: string): SessionEvent[] {
     ];
 }
 
+function generatedCallId() {
+    return expect.stringMatching(/^[a-z][a-z0-9]{1,31}$/);
+}
+
 const resultSchema = Type.Object({ value: Type.String() });
 type Result = { readonly value: string };
 
 describe("transactional tool commits", () => {
-    it("provides separate internal/provider IDs and lets the first committed result win", async () => {
+    it("replaces the provider ID with one Base CUID2 before persistence and execution", async () => {
         const providerCallId = "provider.call.with.dots";
         const persistence = new InMemoryPersistence();
+        const events: SessionEvent[] = [];
+        const persistedEvents: AgentBasePersistedEvent[] = [];
         let received: AgentToolCall<typeof resultSchema> | undefined;
         let secondCommit: Result | undefined;
         let storedDuringExecution: unknown;
@@ -67,7 +74,16 @@ describe("transactional tool commits", () => {
             toLLM: (result) => [{ type: "text", text: result.value }],
         });
         const provider = new ScriptedProvider([
-            toolCallTurn(providerCallId, tool.name),
+            [
+                {
+                    type: "toolcall_start",
+                    callId: providerCallId,
+                    name: tool.name,
+                    vendor: { provider: "test", opaque: true },
+                },
+                { type: "toolcall_end", callId: providerCallId, arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
             textTurn("done"),
         ]);
         const agent = await AgentBase.create(ctx, {
@@ -75,21 +91,46 @@ describe("transactional tool commits", () => {
             providers: providersOf(provider),
             provider: "scripted",
             persistence,
+            hooks: {
+                onEvent: (_hookCtx, event) => events.push(event),
+                onEventTransact: (_hookCtx, event) => {
+                    persistedEvents.push(event);
+                },
+            },
             initialState: { tools: [tool] },
         });
 
         await agent.send(ctx, user("run it"));
         await agent.waitForIdle();
 
-        expect(received?.providerCallId).toBe(providerCallId);
         expect(Value.Check(cuid2Schema, received?.id)).toBe(true);
         expect(received?.id).not.toBe(providerCallId);
+        expect(received).not.toHaveProperty("providerCallId");
         expect(secondCommit).toEqual({ value: "committed first" });
         expect(operationFactoryCalls).toBe(1);
         expect(storedDuringExecution).toMatchObject({
             id: received?.id,
-            providerCallId,
+            call: { type: "tool_call", name: tool.name, arguments: "{}" },
         });
+        expect(storedDuringExecution).not.toHaveProperty("providerCallId");
+        expect(JSON.stringify(storedDuringExecution)).not.toContain(providerCallId);
+        expect(events.filter((event) => event.type.startsWith("toolcall_"))).toEqual([
+            { type: "toolcall_start", callId: received?.id, name: tool.name },
+            { type: "toolcall_end", callId: received?.id, arguments: "{}" },
+        ]);
+        expect(persistedEvents.filter((event) => event.type === "toolcall_end")).toEqual([
+            {
+                type: "toolcall_end",
+                callId: received?.id,
+                arguments: "{}",
+                block: {
+                    type: "tool_call",
+                    callId: received?.id,
+                    name: tool.name,
+                    arguments: "{}",
+                },
+            },
+        ]);
         expect(provider.sessions[0]?.requests[1]?.context.messages.at(-1)).toEqual({
             role: "tool",
             callId: providerCallId,
@@ -622,6 +663,7 @@ describe("transactional tool commits", () => {
 
             expect(persistence.records.findLast((record) => record.type === "tool")).toMatchObject({
                 type: "tool",
+                id: generatedCallId(),
                 message: {
                     callId: `provider-${ending}`,
                     content: [{ type: "text", text: "winner" }],

@@ -2236,7 +2236,7 @@ function omitPresentedToolData(messages: readonly HistoryMessage[]): HistoryMess
     }));
 }
 
-/** Keep a narrow durable lookup from a provider call identity to its public history message. */
+/** Keep a narrow durable lookup from a Base call identity to its public history message. */
 async function indexHistoryToolCalls(
     database: AgentDatabase,
     agentId: string,

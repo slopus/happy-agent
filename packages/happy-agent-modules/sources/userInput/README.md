@@ -38,13 +38,13 @@ away transitions are single-settlement operations.
 
 The `request_user_input` and `cancel_ask` tools never enter Auto-mode review. The request tool is
 durable: a person may take days to answer, so a call interrupted by a restart is executed again
-rather than failed. Running it again is safe because the provider call ID is the request ID, which
-Agent Base restores with the stored call — the second execution resumes the same request and
-returns immediately when it was answered while the daemon was down. It accepts an optional
-`autoResolutionMs` window from 60 to 240 seconds for questions where the model may continue with
-its best judgement, measured from when the request was created rather than from when a wait
-resumed. `cancel_ask` accepts `requestId` (and the legacy `ask_id` spelling) plus an
-optional reason. The tool creates or resumes that request in one transaction, then waits outside a
+rather than failed. Running it again is safe because Agent Base's generated tool-call CUID2 is the
+request ID and Base restores it with the stored call — the second execution resumes the same
+request and returns immediately when it was answered while the daemon was down. It accepts an
+optional `autoResolutionMs` window from 60 to 240 seconds for questions where the model may
+continue with its best judgement, measured from when the request was created rather than from when
+a wait resumed. `cancel_ask` accepts `requestId` (and the legacy `ask_id` spelling) plus an optional
+reason. The tool creates or resumes that request in one transaction, then waits outside a
 transaction. After a terminal result, the same tool can read bounded detail pages by request ID and
 cursor so long answers remain available to the model.
 

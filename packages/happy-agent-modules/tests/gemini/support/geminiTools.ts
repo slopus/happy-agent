@@ -66,12 +66,11 @@ export async function geminiToolset(
     const scope = { agent: { id: agentId }, kv } as AgentModuleScope;
     const hooks = await resolveModuleHooks(ctx, module);
     const tools = await hooks.tools!(ctx, scope);
-    const call: AgentToolCall = {
-        id: "gemini-test-call",
-        providerCallId: "gemini-test-provider-call",
-        kv: kv.scoped("call", "gemini-test-call"),
+    const call = {
+        id: "geminitestcall",
+        kv: kv.scoped("call", "geminitestcall"),
         commit: async (_commitCtx, result) => result,
-    };
+    } as AgentToolCall;
     return {
         module,
         tools,

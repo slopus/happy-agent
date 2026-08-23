@@ -180,7 +180,7 @@ export interface AgentBaseSettlement extends AgentBaseLoop {
 
 /** One validated tool invocation, as it stands before anything decides what to do with it. */
 export interface AgentBaseToolCall {
-    /** The ID the model attached to this call, used to match its eventual result back to it. */
+    /** Base-generated CUID2 used by every hook, execution, result, and public projection. */
     readonly callId: string;
     /** The tool definition the call resolved to, already amended by any earlier decision. */
     readonly tool: AnyAgentTool;
@@ -227,7 +227,7 @@ export type AgentBaseToolCallDecision =
  * whether it ran, was answered by a hook, or failed before it could run at all.
  */
 export interface AgentBaseToolOutcome {
-    /** The ID the model attached to the call. */
+    /** Base-generated CUID2 of the call. */
     readonly callId: string;
     /** The tool that actually ran, after any replacement a decision made. */
     readonly tool: AnyAgentTool;
@@ -300,10 +300,11 @@ export interface AgentBaseHooks {
      * before anything runs. That transaction is what records that these calls are owed results, so
      * a hook writing its own note of a call about to happen commits it with exactly that fact.
      *
-     * The call is what the store holds at this point — the block the model produced, arguments
-     * still unparsed — because nothing has resolved or validated it yet. A batch being resumed
-     * after a restart does not run this again: it was already dispatched, and the process that
-     * dispatched it already ran the hook. A failure rolls the dispatch back and fails the turn.
+     * The call contains the block the model produced with its provider ID replaced by Base's
+     * CUID2 and opaque provider replay metadata removed; arguments remain unparsed because nothing
+     * has resolved or validated it yet. A batch being resumed after a restart does not run this
+     * again: it was already dispatched, and the process that dispatched it already ran the hook.
+     * A failure rolls the dispatch back and fails the turn.
      */
     readonly beforeToolCallTransact?: (
         ctx: Context,
@@ -337,8 +338,9 @@ export interface AgentBaseHooks {
      *
      * Every result the conversation records reaches this, including the ones no execution
      * produced: a call settled as an error because an abort, a shutdown, a restart, or a failed
-     * turn ended it. What it receives is the result message exactly as the conversation stores
-     * it. A failure rolls that commit back, leaving the call unanswered — which ends a running
+     * turn ended it. It receives the public result under Base's CUID2 with opaque provider replay
+     * metadata removed; the transaction privately appends the provider-context result at the same
+     * time. A failure rolls that commit back, leaving the call unanswered — which ends a running
      * batch and the turn with it, and leaves a settlement for a later attempt to make.
      */
     readonly afterToolCallTransact?: (

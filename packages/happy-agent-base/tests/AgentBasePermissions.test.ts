@@ -224,16 +224,18 @@ describe("AgentBase permission modes", () => {
         ]);
         const seen: AgentPermissionMode[] = [];
         const decided: AgentPermissionMode[] = [];
+        let calls = 0;
         const agent = await AgentBase.create(
             ctx,
             options(provider, new InMemoryPersistence(), {
                 initialState: { tools: [probeTool(seen)] },
                 hooks: {
-                    beforeToolCall: (hookCtx, call) => {
+                    beforeToolCall: (hookCtx) => {
                         // The hook itself runs on the agent's mode; what it decides applies to
                         // the execution alone.
                         decided.push(agentPermissionMode(hookCtx));
-                        if (call.callId !== "call-1") return undefined;
+                        calls += 1;
+                        if (calls !== 1) return undefined;
                         return { type: "run", permissionMode: "full_access" };
                     },
                 },

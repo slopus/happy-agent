@@ -7,10 +7,10 @@ stable ID. A later inference never appends blocks to an earlier message, even wh
 the same run. This preserves the exact order of service messages such as automatic compaction
 across reload and event reconciliation.
 
-Tool completion is the narrow mutation exception. The tool-call index resolves a provider call ID
-to the inference message that owns it, and the result and permission review update only that
-message. This keeps a call and its result together without turning the whole run into one mutable
-history row.
+Tool completion is the narrow mutation exception. The tool-call index resolves Agent Base's
+generated CUID2 to the inference message that owns it, and the result and permission review update
+only that message. This keeps a call and its result together without turning the whole run into one
+mutable history row.
 
 ## Run lifecycle belongs to History
 

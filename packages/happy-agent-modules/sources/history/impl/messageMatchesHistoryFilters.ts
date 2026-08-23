@@ -40,13 +40,7 @@ export function historyMessageSearchParts(message: HistoryMessage): readonly str
         } else if (block.type === "tool_result") {
             parts.push(block.toolName, block.display ?? "", block.output ?? "");
         } else {
-            parts.push(
-                "compaction",
-                block.trigger,
-                block.status,
-                block.failureReason ?? "",
-                ...block.replacedMessageIds,
-            );
+            parts.push("compaction", block.trigger, block.status, block.failureReason ?? "");
         }
     }
     return parts;

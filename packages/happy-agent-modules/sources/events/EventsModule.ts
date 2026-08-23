@@ -817,9 +817,7 @@ function projectProviderEvent(
             id: event.callId,
             name: event.name,
             ...(event.namespace === undefined ? {} : { namespace: event.namespace }),
-            providerToolCallId: event.callId,
             type: "toolCall",
-            ...(event.vendor === undefined ? {} : { vendor: event.vendor }),
         });
         rigEvent = {
             contentIndex: index,
@@ -908,9 +906,7 @@ function presentedToolCall(call: SessionToolCallBlock): UnknownRecord {
         id: call.callId,
         name: call.name,
         ...(call.namespace === undefined ? {} : { namespace: call.namespace }),
-        providerToolCallId: call.callId,
         type: "toolCall",
-        ...(call.vendor === undefined ? {} : { vendor: call.vendor }),
     };
 }
 

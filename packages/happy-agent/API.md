@@ -1942,8 +1942,10 @@ recognize as this object grows.
 `id` is the CUID2 identity Happy Agent Base assigns when the invocation first starts. The same
 identity is used in every live update, permission decision, tool execution, result, and durable
 history projection, including for tools the provider executes on its own backend. Provider-native
-call identifiers are private replay state: they may be retained only inside the opaque `vendor`
-metadata of the corresponding provider-context tool-call block and never appear in this API.
+call identifiers remain only in the raw provider stream and Happy Agent Base's private provider-
+context storage, where they preserve native replay and server-tool call/result correlation across
+restarts. Base pairs each stored native ID with its CUID2 outside provider metadata and projects
+only the CUID2 through hooks, execution, modules, durable public history, and this API.
 Clients treat `id` as opaque and use it only to correlate the invocation across lifecycle updates.
 `status` is `"running"`, `"completed"`, or `"failed"`; `arguments` and `result` are the raw tool
 data; `presentation` is defined below.
@@ -1955,7 +1957,6 @@ data; `presentation` is defined below.
     "type": "compaction",
     "trigger": "automatic",
     "status": "completed",
-    "replacedMessageIds": [],
     "tokensBefore": 201000,
     "tokensAfter": 43000,
     "failureReason": null,
@@ -1967,10 +1968,9 @@ data; `presentation` is defined below.
 The enclosing message's `id` is the stable compaction ID, its history group supplies the `runId`,
 and the route or event envelope supplies the `agentId`; these identities are not duplicated in the
 block. `trigger` is `"manual"` or `"automatic"`. Every block starts as `"running"` and changes
-exactly once to `"completed"` or `"failed"`. `replacedMessageIds` is retained as a required
-compatibility field and is always the empty array. Context replacement is provider-owned state,
-not person-visible history provenance; clients must not infer compaction scope from history
-message identities.
+exactly once to `"completed"` or `"failed"`. Context replacement is provider-owned state, not
+person-visible history provenance; clients must not infer compaction scope from history message
+identities.
 
 `tokensBefore` is the exact provider-measured input context when available. `tokensAfter` is
 `null` until the first subsequent inference measures the replacement, and that later measurement
@@ -2448,7 +2448,6 @@ Response — `202`:
                 "type": "compaction",
                 "trigger": "manual",
                 "status": "running",
-                "replacedMessageIds": [],
                 "tokensBefore": 201000,
                 "tokensAfter": null,
                 "failureReason": null,

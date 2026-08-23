@@ -149,7 +149,7 @@ describe("HistoryModule edge cases", () => {
             await history.record(database.context, "agent-a", {
                 blocks: [
                     {
-                        callId: "call-binary",
+                        callId: "callbinary",
                         output,
                         toolName: "exec_command",
                         type: "tool_result",
@@ -675,7 +675,7 @@ describe("HistoryModule edge cases", () => {
                 blocks: [
                     {
                         arguments: {},
-                        callId: "call-1",
+                        callId: "call1",
                         name: "read",
                         type: "tool_call",
                     },
@@ -685,12 +685,12 @@ describe("HistoryModule edge cases", () => {
             });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: "{}",
-                callId: "call-1",
+                callId: "call1",
                 name: "read",
                 type: "tool_call",
             });
             await hooks.afterToolCallTransact!(database.context, scope, {
-                callId: "call-1",
+                callId: "call1",
                 content: [{ text: "x".repeat(20_000), type: "text" }],
                 role: "tool",
             });
@@ -758,12 +758,12 @@ describe("HistoryModule edge cases", () => {
                     { thinking: "reason", type: "thinking" },
                     {
                         arguments: { path: "src" },
-                        callId: "call-1",
+                        callId: "call1",
                         name: "read",
                         type: "tool_call",
                     },
                     {
-                        callId: "call-1",
+                        callId: "call1",
                         output: "done",
                         toolName: "read",
                         type: "tool_result",

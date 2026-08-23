@@ -34,7 +34,6 @@ function runKV() {
 function toolCall(id: string) {
     return {
         id,
-        providerCallId: `provider-${id}`,
         kv: {},
         commit: async (_ctx: Context, result: unknown) => result,
     } as never;

@@ -98,7 +98,6 @@ export class CompactionsModule implements AgentModule {
     /** Project the internal lifecycle row into its canonical durable history message. */
     historyMessage(compaction: Compaction): HistoryMessage {
         const base = {
-            replacedMessageIds: [...compaction.replacedMessageIds],
             startedAt: compaction.startedAt,
             tokensBefore: compaction.tokensBefore ?? null,
             trigger: compaction.trigger,
@@ -154,7 +153,6 @@ export class CompactionsModule implements AgentModule {
                 agentId,
                 id,
                 runId: id,
-                replacedMessageIds: [],
                 startedAt,
                 status: "running",
                 ...(current.currentContext === undefined
@@ -266,7 +264,6 @@ export class CompactionsModule implements AgentModule {
                 agentId: scope.agent.id,
                 id: attempt.compactionId,
                 runId,
-                replacedMessageIds: [],
                 startedAt,
                 status: "running",
                 ...(tokensBefore === undefined ? {} : { tokensBefore }),

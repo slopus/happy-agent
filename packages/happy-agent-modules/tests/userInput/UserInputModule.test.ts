@@ -56,7 +56,7 @@ describe("UserInputModule", () => {
         }
     });
 
-    it("uses the provider call ID, does not commit manually, and waits outside its transaction", async () => {
+    it("uses the Base tool-call ID, does not commit manually, and waits outside its transaction", async () => {
         const module = createUserInputModule();
         const database = createUserInputDatabase(module, "user-input-tool-wait");
         await database.ready;
@@ -66,20 +66,19 @@ describe("UserInputModule", () => {
             expect(tool.transactional).toBeUndefined();
             const running = tool.execute(database.context, { input: askInput }, {
                 id: "tool-call",
-                providerCallId: "provider-call",
             } as never);
 
             await vi.waitFor(async () => {
-                expect(await module.get(database.context, agentId, "provider-call")).toBeDefined();
+                expect(await module.get(database.context, agentId, "tool-call")).toBeDefined();
             });
             const settled = await module.answer(database.context, agentId, {
-                requestId: "provider-call",
+                requestId: "tool-call",
                 answer: "Use the first option.",
             });
             if (settled.status !== "answered") throw new Error("expected an answer");
 
             await expect(running).resolves.toMatchObject({
-                id: "provider-call",
+                id: "tool-call",
                 status: "answered",
             });
         } finally {
@@ -99,9 +98,8 @@ describe("UserInputModule", () => {
             await expect(
                 tool.execute(database.context, { input: askInput }, {
                     id: "internal-away-call",
-                    providerCallId: "away-call",
                 } as never),
-            ).resolves.toMatchObject({ id: "away-call", status: "away" });
+            ).resolves.toMatchObject({ id: "internal-away-call", status: "away" });
         } finally {
             database.close();
         }
@@ -246,12 +244,14 @@ describe("UserInputModule", () => {
                         ],
                     },
                 },
-                { id: "internal-batch-call", providerCallId: "batch-call" } as never,
+                { id: "internal-batch-call" } as never,
             );
             await vi.waitFor(async () => {
-                expect(await module.get(database.context, agentId, "batch-call")).toBeDefined();
+                expect(
+                    await module.get(database.context, agentId, "internal-batch-call"),
+                ).toBeDefined();
             });
-            const request = await module.get(database.context, agentId, "batch-call");
+            const request = await module.get(database.context, agentId, "internal-batch-call");
             if (request === undefined) throw new Error("expected batch request");
             expect(request.questions?.map((question) => question.header)).toEqual([
                 "Scope",
@@ -265,7 +265,7 @@ describe("UserInputModule", () => {
                 },
             });
             await expect(waiting).resolves.toMatchObject({
-                id: "batch-call",
+                id: "internal-batch-call",
                 status: "answered",
                 answers: { scope: "Small", rollout: "Yes" },
             });
@@ -289,15 +289,15 @@ describe("UserInputModule", () => {
                         autoResolutionMs: 60_000,
                     },
                 },
-                { id: "internal-auto-call", providerCallId: "auto-call" } as never,
+                { id: "internal-auto-call" } as never,
             );
             await vi.waitFor(async () => {
-                expect(await module.get(database.context, agentId, "auto-call")).toMatchObject({
-                    autoResolutionMs: 60_000,
-                });
+                expect(
+                    await module.get(database.context, agentId, "internal-auto-call"),
+                ).toMatchObject({ autoResolutionMs: 60_000 });
             });
             await module.answer(database.context, agentId, {
-                requestId: "auto-call",
+                requestId: "internal-auto-call",
                 answer: "Yes",
             });
             await expect(waiting).resolves.toMatchObject({ status: "answered" });

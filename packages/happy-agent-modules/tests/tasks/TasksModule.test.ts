@@ -15,7 +15,6 @@ describe("TasksModule durable tools", () => {
             const call = (id: string) =>
                 ({
                     id,
-                    providerCallId: `provider-${id}`,
                     kv: {},
                 }) as never;
             const scope = { agent: { id: "agent-a" } } as AgentModuleScope;
@@ -144,7 +143,6 @@ describe("TasksModule durable tools", () => {
             const call = (id: string) =>
                 ({
                     id,
-                    providerCallId: `provider-${id}`,
                     kv: {},
                 }) as never;
             const scope = { agent: { id: "agent-a" } } as AgentModuleScope;

@@ -30,8 +30,7 @@ describe("HistoryModule durability", () => {
             } as Parameters<NonNullable<typeof hooks.tools>>[1];
             const [tool] = await hooks.tools!(database.context, scope);
             const result = await tool!.execute(database.context, {}, {
-                id: "call-history-1",
-                providerCallId: "provider-history-1",
+                id: "callhistory1",
                 kv: {},
             } as never);
 
@@ -74,8 +73,7 @@ describe("HistoryModule durability", () => {
             } as Parameters<NonNullable<typeof hooks.tools>>[1];
             const [tool] = await hooks.tools!(database.context, scope);
             const result = await tool!.execute(database.context, { target: "agent-b" }, {
-                id: "call-history-tree",
-                providerCallId: "provider-history-tree",
+                id: "callhistorytree",
                 kv: {},
             } as never);
 
@@ -140,8 +138,7 @@ describe("HistoryModule durability", () => {
             } as Parameters<NonNullable<typeof hooks.tools>>[1];
             const [tool] = await hooks.tools!(database.context, scope);
             const result = await tool!.execute(database.context, { target: "agent-b" }, {
-                id: "call-history-open",
-                providerCallId: "provider-history-open",
+                id: "callhistoryopen",
                 kv: {},
             } as never);
 
@@ -266,7 +263,7 @@ describe("HistoryModule durability", () => {
                 blocks: [
                     {
                         type: "tool_call",
-                        callId: "call-reviewed",
+                        callId: "callreviewed",
                         name: "exec_command",
                         arguments: { cmd: "git push" },
                     },
@@ -286,7 +283,7 @@ describe("HistoryModule durability", () => {
                 history.recordToolPermissionReview(
                     database.context,
                     "agent-a",
-                    "call-reviewed",
+                    "callreviewed",
                     true,
                     review,
                 ),
@@ -302,7 +299,7 @@ describe("HistoryModule durability", () => {
                 history.recordToolPermissionReview(
                     database.context,
                     "agent-a",
-                    "call-reviewed",
+                    "callreviewed",
                     false,
                     { ...review, outcome: "denied" },
                 ),
@@ -335,7 +332,7 @@ describe("HistoryModule durability", () => {
                 blocks: [
                     {
                         arguments: {},
-                        callId: "call-display-error",
+                        callId: "calldisplayerror",
                         name: "list_files",
                         type: "tool_call",
                     },
@@ -345,12 +342,12 @@ describe("HistoryModule durability", () => {
             });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: "{}",
-                callId: "call-display-error",
+                callId: "calldisplayerror",
                 name: "list_files",
                 type: "tool_call",
             });
             await hooks.afterToolCallTransact!(database.context, scope, {
-                callId: "call-display-error",
+                callId: "calldisplayerror",
                 content: [{ text: "no such directory", type: "text" }],
                 isError: true,
                 role: "tool",
@@ -391,7 +388,7 @@ describe("HistoryModule durability", () => {
                 blocks: [
                     {
                         arguments: {},
-                        callId: "call-display-2",
+                        callId: "calldisplay2",
                         name: "list_files",
                         type: "tool_call",
                     },
@@ -401,12 +398,12 @@ describe("HistoryModule durability", () => {
             });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: "{}",
-                callId: "call-display-2",
+                callId: "calldisplay2",
                 name: "list_files",
                 type: "tool_call",
             });
             await hooks.afterToolCallTransact!(database.context, scope, {
-                callId: "call-display-2",
+                callId: "calldisplay2",
                 content: [{ text: "file.txt", type: "text" }],
                 role: "tool",
             });

@@ -83,8 +83,11 @@ transaction that appends the result. Nothing outside the loop ever executes a to
 drove execution would be deciding inside machinery that also commits results, resumes interrupted
 batches, and settles cancelled ones.
 
-Every executable call receives an internally generated cuid2 `id`, the provider's separate opaque
-`providerCallId`, and a call-bound `kv`. Calling `call.commit(ctx, result)` inside a transaction
+Every tool call receives a Base-generated cuid2 `id`; executable calls also receive a call-bound
+`kv`. Events, hooks, task context, modules, results, and execution use that ID. The provider-native
+ID remains only in the raw stream and private provider-context records so replay and server-tool
+results can still be correlated after a restart; each context record pairs it with the Base ID as
+a separate sidecar, never in `vendor`. Calling `call.commit(ctx, result)` inside a transaction
 atomically saves that result with the tool's writes. The first successful commit wins; later
 commits and the tool's eventual return or throw are ignored. Committed results survive a crash,
 remain ordered with their batch, and the call-bound KV is erased in the result transaction.

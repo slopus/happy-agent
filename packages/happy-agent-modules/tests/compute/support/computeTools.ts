@@ -114,12 +114,11 @@ export async function computeToolset(
     } as AgentModuleScope;
     const hooks = await resolveModuleHooks(agentCtx, module);
     const tools = await hooks.tools!(agentCtx, scope);
-    const call: AgentToolCall = {
-        id: "compute-test-call",
-        providerCallId: "compute-test-provider-call",
-        kv: kv.scoped("call", "compute-test-call"),
+    const call = {
+        id: "computetestcall",
+        kv: kv.scoped("call", "computetestcall"),
         commit: async (_commitCtx, result) => result,
-    };
+    } as AgentToolCall;
     return {
         module,
         tools,

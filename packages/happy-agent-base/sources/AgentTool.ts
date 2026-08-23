@@ -6,10 +6,8 @@ import type { AgentKV } from "./AgentKV.js";
 
 /** One durable invocation as handed directly to the tool that executes it. */
 export interface AgentToolCall<Result extends TSchema = TSchema> {
-    /** Stable internally generated cuid2 identity, reused when an interrupted call resumes. */
+    /** Stable Base-generated cuid2 identity, reused everywhere and across interrupted resumes. */
     readonly id: string;
-    /** Opaque identity supplied by the provider and used only to pair its call and result. */
-    readonly providerCallId: string;
     /** State owned by this invocation and erased atomically when its winning result commits. */
     readonly kv: AgentKV;
     /**

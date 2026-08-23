@@ -52,7 +52,6 @@ describe("nested workspace provisioning", () => {
                 async (txCtx) =>
                     await childTool.execute(txCtx, { name: "Child workspace", baseRef: "main" }, {
                         id: "call_workspace_child",
-                        providerCallId: "provider-call-child",
                     } as never),
             );
             expect(child).toMatchObject({
@@ -73,7 +72,6 @@ describe("nested workspace provisioning", () => {
                             { name: "Child workspace", baseRef: "main" },
                             {
                                 id: "call_workspace_child",
-                                providerCallId: "provider-call-child-retry",
                             } as never,
                         ),
                 ),
@@ -90,7 +88,6 @@ describe("nested workspace provisioning", () => {
                 async (txCtx) =>
                     await grandchildTool.execute(txCtx, { name: "Grandchild workspace" }, {
                         id: "call_workspace_grandchild",
-                        providerCallId: "provider-call-grandchild",
                     } as never),
             );
             expect(grandchild).toMatchObject({
@@ -130,7 +127,7 @@ describe("nested workspace provisioning", () => {
                 reserved = await tool.execute(
                     txCtx,
                     { projectRef: project.id, name: "Tool workspace" },
-                    { id: callId, providerCallId: "provider-call" } as never,
+                    { id: callId } as never,
                 );
                 expect(reserved).toMatchObject({
                     id: callId,
@@ -150,7 +147,7 @@ describe("nested workspace provisioning", () => {
                         await tool.execute(
                             txCtx,
                             { projectRef: project.id, name: "Tool workspace" },
-                            { id: callId, providerCallId: "provider-call-retry" } as never,
+                            { id: callId } as never,
                         ),
                 ),
             ).resolves.toMatchObject({ id: callId, status: "ready" });
@@ -185,7 +182,7 @@ describe("nested workspace provisioning", () => {
                     const reserved = await tool.execute(
                         txCtx,
                         { projectRef: project.id, name: "Rolled back workspace" },
-                        { id: callId, providerCallId: "provider-call" } as never,
+                        { id: callId } as never,
                     );
                     reservedPath = reserved.path;
                     throw new Error("roll back tool call");

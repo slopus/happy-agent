@@ -11,6 +11,10 @@ import {
     summarizeHistory,
     historyStatsSchema,
 } from "../../sources/history/impl/summarizeHistory.js";
+import {
+    historyToolCallBlockSchema,
+    historyToolResultBlockSchema,
+} from "../../sources/history/HistoryMessage.js";
 
 describe("history public contracts", () => {
     it("counts every message and block type without conflating agent/system roles", () => {
@@ -119,6 +123,30 @@ describe("history public contracts", () => {
         expect(
             Value.Check(historyQuerySchema, {
                 limit: 0,
+            }),
+        ).toBe(false);
+    });
+
+    it("accepts only Base-generated CUID2 identities for durable tool blocks", () => {
+        expect(
+            Value.Check(historyToolCallBlockSchema, {
+                type: "tool_call",
+                callId: "basecall1",
+                name: "read",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(historyToolResultBlockSchema, {
+                type: "tool_result",
+                callId: "basecall1",
+                toolName: "read",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(historyToolCallBlockSchema, {
+                type: "tool_call",
+                callId: "provider_call-1",
+                name: "read",
             }),
         ).toBe(false);
     });

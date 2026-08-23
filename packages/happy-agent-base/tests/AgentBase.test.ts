@@ -5,6 +5,7 @@ import type {
     SessionMessage,
     SessionStream,
     SessionToolCallBlock,
+    SessionToolResultMessage,
 } from "@slopus/happy-providers";
 import { Type } from "@sinclair/typebox";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
@@ -46,9 +47,13 @@ function recordedUser(text: string) {
     return expect.objectContaining({ type: "user", message: user(text) });
 }
 
+function generatedCallId() {
+    return expect.stringMatching(/^[a-z][a-z0-9]{1,31}$/);
+}
+
 function storedTool(id: string, call: SessionToolCallBlock) {
-    const { callId, server: _server, ...stored } = call;
-    return { id, providerCallId: callId, call: stored };
+    const { server: _server, ...stored } = call;
+    return { id, call: stored };
 }
 
 function tool(name: string) {
@@ -424,7 +429,7 @@ describe("AgentBase", () => {
         await agent.close();
     });
 
-    it("ignores server tool results while keeping the server call in the history", async () => {
+    it("persists a server tool call and result under one Base identity", async () => {
         const persistence = new InMemoryPersistence();
         const provider = new ScriptedProvider([
             [
@@ -455,14 +460,16 @@ describe("AgentBase", () => {
         await agent.send(ctx, user("weather?"));
         await agent.waitForIdle();
 
-        // The server call stays in the assistant message; its provider-settled result is
-        // ignored — nothing executes, no tool result message joins the history, and the turn
-        // needs no follow-up inference.
+        const callId = events.find((event) => event.type === "toolcall_start")?.callId;
+        expect(callId).toMatch(/^[a-z][a-z0-9]{1,31}$/);
+        // A provider-settled result stays in the same assistant response. It is not a client tool
+        // result message and does not cause a follow-up inference.
         expect(provider.sessions[0]?.requests).toHaveLength(1);
         expect(persistence.records).toEqual([
             recordedUser("weather?"),
             {
                 type: "block",
+                id: callId,
                 block: {
                     type: "tool_call",
                     callId: "srv-1",
@@ -471,10 +478,22 @@ describe("AgentBase", () => {
                     server: true,
                 },
             },
+            {
+                type: "block",
+                id: callId,
+                block: {
+                    type: "tool_result",
+                    callId: "srv-1",
+                    content: [{ type: "text", text: "sunny" }],
+                },
+            },
             { type: "block", block: { type: "text", text: "It is sunny." } },
         ]);
-        // The result events still reach the hooks like every other stream event.
-        expect(events.filter((event) => event.type.startsWith("toolcall_result"))).toHaveLength(3);
+        expect(
+            events
+                .filter((event) => event.type.startsWith("toolcall_result"))
+                .map((event) => ("callId" in event ? event.callId : undefined)),
+        ).toEqual([callId, callId, callId]);
         await agent.close();
     });
 
@@ -618,6 +637,7 @@ describe("AgentBase persistence", () => {
             { type: "block", block: { type: "text", text: "sure" } },
             {
                 type: "block",
+                id: generatedCallId(),
                 block: {
                     type: "tool_call",
                     callId: "call-1",
@@ -627,6 +647,7 @@ describe("AgentBase persistence", () => {
             },
             {
                 type: "tool",
+                id: generatedCallId(),
                 message: {
                     role: "tool",
                     callId: "call-1",
@@ -940,6 +961,11 @@ describe("AgentBase persistence", () => {
                 .filter((record) => record.type === "tool")
                 .map((record) => record.message.callId),
         ).toEqual(["call-a", "call-b"]);
+        expect(
+            persistence.records
+                .filter((record) => record.type === "tool")
+                .map((record) => record.id),
+        ).toEqual([generatedCallId(), generatedCallId()]);
         expect(persistence.pending.size).toBe(0);
         await agent.close();
     });
@@ -960,8 +986,8 @@ describe("AgentBase persistence", () => {
         // The crash happened after the batch was committed but before any result landed.
         const persistence = new InMemoryPersistence([
             userRecord("go"),
-            { type: "block", block: durableCall },
-            { type: "block", block: fragileCall },
+            { type: "block", id: "durablecall", block: durableCall },
+            { type: "block", id: "fragilecall", block: fragileCall },
         ]);
         persistence.values.set("tool.000000.durablecall", storedTool("durablecall", durableCall));
         persistence.values.set("tool.000001.fragilecall", storedTool("fragilecall", fragileCall));
@@ -1017,6 +1043,7 @@ describe("AgentBase persistence", () => {
         expect(persistence.records.slice(-4)).toEqual([
             {
                 type: "tool",
+                id: "durablecall",
                 message: {
                     role: "tool",
                     callId: "call-a",
@@ -1025,6 +1052,7 @@ describe("AgentBase persistence", () => {
             },
             {
                 type: "tool",
+                id: "fragilecall",
                 message: {
                     role: "tool",
                     callId: "call-b",
@@ -1338,6 +1366,7 @@ describe("AgentBase persistence", () => {
 
         expect(persistence.records.at(-1)).toEqual({
             type: "tool",
+            id: generatedCallId(),
             message: {
                 role: "tool",
                 callId: "call-1",
@@ -2246,6 +2275,7 @@ describe("AgentBase compaction", () => {
         expect(provider.sessions[0]?.requests).toHaveLength(1);
         expect(persistence.records).toContainEqual({
             type: "compaction",
+            contextToolIds: [],
             messages: [compactionMessage],
         });
         await agent.close();
@@ -2445,6 +2475,7 @@ describe("AgentBase compaction", () => {
         expect(persistence.records).toEqual([
             {
                 type: "compaction",
+                contextToolIds: [],
                 messages: [compactionMessage, user("go")],
             },
             { type: "block", block: { type: "text", text: "turn finished" } },
@@ -2548,6 +2579,7 @@ describe("AgentBase compaction", () => {
         ]);
         expect(persistence.records.at(-1)).toEqual({
             type: "compaction",
+            contextToolIds: [],
             messages: [compactionMessage],
         });
         await agent.close();
@@ -2678,6 +2710,68 @@ describe("AgentBase compaction", () => {
         await agent.close();
     });
 
+    it("keeps provider identities private when compaction is cancelled", async () => {
+        const providerCallId = "provider-cancelled-call";
+        const baseCallId = "basecancelledcall";
+        const rawCall: SessionToolCallBlock = {
+            type: "tool_call",
+            callId: providerCallId,
+            name: "lookup",
+            arguments: "{}",
+            vendor: { replay: "opaque-cancelled-call" },
+        };
+        const rawResult: SessionToolResultMessage = {
+            role: "tool",
+            callId: providerCallId,
+            content: [{ type: "text", text: "found" }],
+        };
+        const rawMessages: SessionMessage[] = [
+            user("hi"),
+            { role: "assistant", content: [rawCall] },
+            rawResult,
+        ];
+        const persistence = new InMemoryPersistence([
+            userRecord("hi"),
+            { type: "block", id: baseCallId, block: rawCall },
+            { type: "tool", id: baseCallId, message: rawResult },
+        ]);
+        const provider = new ScriptedProvider([]);
+        const original = provider.session.bind(provider);
+        provider.session = async (id, options) => {
+            const session = await original(id, options);
+            (session as ScriptedSession).compactionResults = [
+                { status: "cancelled", context: { instructions: "", messages: rawMessages } },
+            ];
+            return session;
+        };
+        let observed: SessionCompaction | undefined;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            hooks: {
+                afterCompaction: (_hookCtx, compaction) => {
+                    observed = compaction.result;
+                },
+            },
+        });
+
+        await agent.compact(ctx);
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.compactions[0]?.context.messages).toEqual(rawMessages);
+        expect(observed?.status).toBe("cancelled");
+        if (observed?.status !== "cancelled") expect.fail("Compaction did not cancel.");
+        expect(JSON.stringify(observed.context.messages)).not.toContain(providerCallId);
+        expect(observed.context.messages[1]).toMatchObject({
+            role: "assistant",
+            content: [{ type: "tool_call", callId: baseCallId }],
+        });
+        expect(observed.context.messages[2]).toMatchObject({ role: "tool", callId: baseCallId });
+        await agent.close();
+    });
+
     it("reports a failed requested compaction through the agent run", async () => {
         const persistence = new InMemoryPersistence([
             userRecord("hi"),
@@ -2769,7 +2863,11 @@ describe("AgentBase compaction", () => {
         const persistence = new InMemoryPersistence([
             userRecord("old question"),
             { type: "block", block: { type: "text", text: "old answer" } },
-            { type: "compaction", messages: [compactionMessage, user("kept message")] },
+            {
+                type: "compaction",
+                contextToolIds: [],
+                messages: [compactionMessage, user("kept message")],
+            },
             userRecord("newer question"),
             { type: "block", block: { type: "text", text: "newer answer" } },
         ]);
@@ -3380,11 +3478,11 @@ describe("AgentBase lifecycle hooks", () => {
             },
             {
                 type: "toolcall_end",
-                callId: "call-1",
+                callId: generatedCallId(),
                 arguments: "{}",
                 block: {
                     type: "tool_call",
-                    callId: "call-1",
+                    callId: generatedCallId(),
                     name: "missing",
                     arguments: "{}",
                 },
@@ -3447,7 +3545,9 @@ describe("AgentBase lifecycle hooks", () => {
         await agent.send(ctx, user("look"));
         await agent.waitForIdle();
 
-        expect(order).toEqual(["dispatched:call-1", "tool", "answered:call-1"]);
+        const callId = order[0]?.slice("dispatched:".length);
+        expect(callId).toMatch(/^[a-z][a-z0-9]{1,31}$/);
+        expect(order).toEqual([`dispatched:${callId}`, "tool", `answered:${callId}`]);
         expect(callScope).toMatch(/^kv\.test-agent\.call\.[a-z0-9]+\.$/);
         expect([...persistence.values.keys()].filter((key) => key.startsWith(callScope))).toEqual(
             [],
@@ -3504,7 +3604,7 @@ describe("AgentBase lifecycle hooks", () => {
         // The turn failed, so what it left the model owed is settled as an error rather than
         // as the tool having run.
         expect(persistence.records.filter((record) => record.type === "tool")).toMatchObject([
-            { message: { callId: "call-1", isError: true } },
+            { id: generatedCallId(), message: { callId: "call-1", isError: true } },
         ]);
         await agent.close();
     });

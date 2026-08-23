@@ -1,5 +1,6 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { cuid2Schema } from "@slopus/happy-agent-base";
 
 import { toolPermissionReviewSchema } from "../permissions/ToolPermissionReview.js";
 
@@ -11,7 +12,7 @@ export const MAX_HISTORY_TEXT_LENGTH = 1_000_000;
 export const MAX_HISTORY_THINKING_LENGTH = 1_000_000;
 export const MAX_HISTORY_MEDIA_TYPE_LENGTH = 256;
 export const MAX_HISTORY_IMAGE_DATA_LENGTH = 48 * 1_024 * 1_024;
-export const MAX_HISTORY_CALL_ID_LENGTH = 256;
+export const MAX_HISTORY_CALL_ID_LENGTH = 32;
 export const MAX_HISTORY_TOOL_NAME_LENGTH = 256;
 export const MAX_HISTORY_TOOL_OUTPUT_LENGTH = 1_000_000;
 /** Tool output retained in an ordinary recorded tool result and its live API projection. */
@@ -187,7 +188,7 @@ export const historyImageBlockSchema = Type.Object(
 export const historyToolCallBlockSchema = Type.Object(
     {
         type: Type.Literal("tool_call"),
-        callId: boundedIdentifier(MAX_HISTORY_CALL_ID_LENGTH),
+        callId: cuid2Schema,
         name: boundedIdentifier(MAX_HISTORY_TOOL_NAME_LENGTH),
         arguments: Type.Optional(historyToolArgumentsSchema),
         /** Present exactly when this invocation crossed the automatic-review boundary. */
@@ -250,7 +251,7 @@ export type HistoryToolPresentation = Static<typeof historyToolPresentationSchem
 export const historyToolResultBlockSchema = Type.Object(
     {
         type: Type.Literal("tool_result"),
-        callId: boundedIdentifier(MAX_HISTORY_CALL_ID_LENGTH),
+        callId: cuid2Schema,
         toolName: boundedIdentifier(MAX_HISTORY_TOOL_NAME_LENGTH),
         /** A bounded one-line summary suitable for a person-facing history view. */
         display: Type.Optional(Type.String({ maxLength: MAX_HISTORY_TOOL_DISPLAY_LENGTH })),
@@ -267,10 +268,6 @@ const historyCompactionBlockBaseSchema = Type.Object(
     {
         type: Type.Literal("compaction"),
         trigger: Type.Union([Type.Literal("manual"), Type.Literal("automatic")]),
-        replacedMessageIds: Type.Array(historyRecordIdSchema, {
-            maxItems: MAX_HISTORY_TOTAL_MESSAGES,
-            uniqueItems: true,
-        }),
         tokensBefore: Type.Union([
             Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
             Type.Null(),

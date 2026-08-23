@@ -609,7 +609,7 @@ current = "offline"
                         fallbackPresenceId: "online",
                     },
                 },
-                { id: "call-1", providerCallId: "provider-1" } as never,
+                { id: "call-1" } as never,
             );
             expect(Value.Check(presenceStateSchema, first.presence)).toBe(true);
             expect(await module.read(database.context)).toEqual(first.presence);

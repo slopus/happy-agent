@@ -44,7 +44,6 @@ describe("read_agent_history", () => {
             const call = (args: Record<string, unknown>) =>
                 tool.execute(database.context, args, {
                     id: "call",
-                    providerCallId: "provider-call",
                     kv: {},
                 } as never) as Promise<Record<string, unknown>>;
 
@@ -78,8 +77,7 @@ describe("read_agent_history", () => {
             const tool = await toolFor(history, database);
             await expect(
                 tool.execute(database.context, { cursor: 0, from: "start" }, {
-                    id: "call-invalid",
-                    providerCallId: "provider-invalid",
+                    id: "callinvalid",
                     kv: {},
                 } as never),
             ).rejects.toThrow("either cursor or from");
@@ -97,12 +95,12 @@ describe("read_agent_history", () => {
                 blocks: [
                     {
                         arguments: { path: "secret" },
-                        callId: "call-1",
+                        callId: "call1",
                         name: "read",
                         type: "tool_call",
                     },
                     {
-                        callId: "call-1",
+                        callId: "call1",
                         output: "sensitive output",
                         toolName: "read",
                         type: "tool_result",
@@ -116,8 +114,7 @@ describe("read_agent_history", () => {
                 database.context,
                 { include_tools: false, query: "sensitive output" },
                 {
-                    id: "call-tools",
-                    providerCallId: "provider-tools",
+                    id: "calltools",
                     kv: {},
                 } as never,
             )) as Record<string, unknown>;
@@ -144,7 +141,7 @@ describe("read_agent_history", () => {
             await history.record(database.context, "agent-a", {
                 blocks: [
                     {
-                        callId: "call-hidden",
+                        callId: "callhidden",
                         output: `${"x".repeat(10_000)}${hiddenNeedle}`,
                         toolName: "dump",
                         type: "tool_result",
@@ -164,8 +161,7 @@ describe("read_agent_history", () => {
 
             const tool = await toolFor(history, database);
             const result = (await tool.execute(database.context, { query: hiddenNeedle }, {
-                id: "call-hidden-read",
-                providerCallId: "provider-hidden-read",
+                id: "callhiddenread",
                 kv: {},
             } as never)) as Record<string, unknown>;
             expect(result.matched_messages).toBe(1);
@@ -189,8 +185,7 @@ describe("read_agent_history", () => {
             }
             const tool = await toolFor(history, database);
             const first = (await tool.execute(database.context, { from: "start", limit: 8 }, {
-                id: "call-cap",
-                providerCallId: "provider-cap",
+                id: "callcap",
                 kv: {},
             } as never)) as Record<string, unknown>;
 
@@ -202,8 +197,7 @@ describe("read_agent_history", () => {
                 database.context,
                 { cursor: first.next_cursor, limit: 8 },
                 {
-                    id: "call-cap-next",
-                    providerCallId: "provider-cap-next",
+                    id: "callcapnext",
                     kv: {},
                 } as never,
             )) as Record<string, unknown>;
@@ -222,8 +216,7 @@ describe("read_agent_history", () => {
             await history.record(database.context, "agent-b", textMessage("record-b", "from b"));
             const tool = await toolFor(history, database);
             const result = (await tool.execute(database.context, { target: "agent-b" }, {
-                id: "call-target",
-                providerCallId: "provider-target",
+                id: "calltarget",
                 kv: {},
             } as never)) as Record<string, unknown>;
 
@@ -252,8 +245,7 @@ describe("read_agent_history", () => {
             const tool = await toolFor(history, database);
             await expect(
                 tool.execute(database.context, { target: "x".repeat(300) }, {
-                    id: "call-bad-target",
-                    providerCallId: "provider-bad-target",
+                    id: "callbadtarget",
                     kv: {},
                 } as never),
             ).rejects.toThrow("is not an Agent ID");

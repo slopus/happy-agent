@@ -29,9 +29,30 @@ function recordedUser(text: string) {
     return expect.objectContaining({ type: "user", message: user(text) });
 }
 
+function generatedCallId() {
+    return expect.stringMatching(/^[a-z][a-z0-9]{1,31}$/);
+}
+
+function providerToolResult(callId: string, text: string, isError?: boolean) {
+    return {
+        role: "tool",
+        callId,
+        content: [{ type: "text", text }],
+        ...(isError === true ? { isError: true } : {}),
+    };
+}
+
 function storedTool(id: string, call: SessionToolCallBlock) {
-    const { callId, server: _server, ...stored } = call;
-    return { id, providerCallId: callId, call: stored };
+    const { server: _server, ...stored } = call;
+    return { id, call: stored };
+}
+
+function callRecord(id: string, block: SessionToolCallBlock) {
+    return { type: "block" as const, id, block };
+}
+
+function resultRecord(id: string, message: SessionToolResultMessage) {
+    return { type: "tool" as const, id, message };
 }
 
 type ToolCallSpec = {
@@ -154,9 +175,66 @@ describe("AgentBase black-box stream and request behavior", () => {
         await agent.send(ctx, user("observe this"));
         await agent.waitForIdle();
 
-        expect(observed).toEqual(scriptedEvents);
+        const callId = observed.find((event) => event.type === "toolcall_start")?.callId;
+        expect(callId).toMatch(/^[a-z][a-z0-9]{1,31}$/);
+        expect(observed).toEqual(
+            scriptedEvents.map((event) => {
+                if (!("callId" in event)) return event;
+                if ("vendor" in event) {
+                    const { vendor: _vendor, ...publicEvent } = event;
+                    return { ...publicEvent, callId };
+                }
+                return { ...event, callId };
+            }),
+        );
         expect(provider.sessions).toHaveLength(1);
         expect(provider.sessions[0]?.requests).toHaveLength(1);
+        await agent.close();
+    });
+
+    it("generates a fresh Base ID when a reset provider response reuses its tool ID", async () => {
+        const observed: SessionEvent[] = [];
+        const tool = defineAgentTool({
+            name: "retry_tool",
+            returnType: Type.Object({}),
+            shouldReviewInAutoMode: () => false,
+            execute: async () => ({}),
+            toLLM: () => [{ type: "text" as const, text: "retried" }],
+        });
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "reused-provider-id", name: tool.name },
+                { type: "toolcall_delta", callId: "reused-provider-id", delta: "{" },
+                { type: "block_reset" },
+                { type: "toolcall_start", callId: "reused-provider-id", name: tool.name },
+                { type: "toolcall_end", callId: "reused-provider-id", arguments: "{}" },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("done"),
+        ]);
+        const persistence = new InMemoryPersistence();
+        const agent = await AgentBase.create(ctx, {
+            id: "reset-tool-call-identity",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            hooks: { onEvent: (_hookCtx, event) => observed.push(event) },
+            initialState: { tools: [tool] },
+        });
+
+        await agent.send(ctx, user("retry it"));
+        await agent.waitForIdle();
+
+        const starts = observed.filter(
+            (event): event is Extract<SessionEvent, { type: "toolcall_start" }> =>
+                event.type === "toolcall_start",
+        );
+        expect(starts.map(({ callId }) => callId)).toEqual([generatedCallId(), generatedCallId()]);
+        expect(starts[0]?.callId).not.toBe(starts[1]?.callId);
+        const result = persistence.records.find((record) => record.type === "tool")?.message;
+        const resultRecord = persistence.records.find((record) => record.type === "tool");
+        expect(result?.callId).toBe("reused-provider-id");
+        expect(resultRecord?.id).toBe(starts[1]?.callId);
         await agent.close();
     });
 
@@ -398,11 +476,8 @@ describe("AgentBase black-box persistence and restart behavior", () => {
             userRecord("question one"),
             { type: "block", block: { type: "reasoning", text: "thinking", reasoning: "sig" } },
             { type: "block", block: { type: "text", text: "partial" } },
-            { type: "block", block: firstCall },
-            {
-                type: "tool",
-                message: toolResult("call-1", "lookup result"),
-            },
+            callRecord("basecallone", firstCall),
+            resultRecord("basecallone", toolResult("call-1", "lookup result")),
             { type: "block", block: { type: "text", text: "after tool" } },
             userRecord("question two"),
         ]);
@@ -534,8 +609,8 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         const result = toolResult("unfinished-call", "already done");
         const persistence = new InMemoryPersistence([
             userRecord("continue"),
-            { type: "block", block: call },
-            { type: "tool", message: result },
+            callRecord("unfinishedbasecall", call),
+            resultRecord("unfinishedbasecall", result),
         ]);
         const provider = new ScriptedProvider([textTurn("continued")]);
         const agent = await AgentBase.create(ctx, {
@@ -582,10 +657,10 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         const resultA = toolResult("call-a", "first result");
         const persistence = new InMemoryPersistence([
             userRecord("resume"),
-            { type: "block", block: callA },
-            { type: "block", block: callB },
-            { type: "block", block: callC },
-            { type: "tool", message: resultA },
+            callRecord("completedcall", callA),
+            callRecord("durablecall", callB),
+            callRecord("fragilecall", callC),
+            resultRecord("completedcall", resultA),
         ]);
         persistence.values.set("tool.000001.durablecall", storedTool("durablecall", callB));
         persistence.values.set("tool.000002.fragilecall", storedTool("fragilecall", callC));
@@ -650,7 +725,7 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         };
         const persistence = new InMemoryPersistence([
             userRecord("do it"),
-            { type: "block", block: call },
+            callRecord("nevercommittedcall", call),
         ]);
         const provider = new ScriptedProvider([textTurn("answered")]);
         const executions: string[] = [];
@@ -744,7 +819,7 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         const results = persistence.records.filter((record) => record.type === "tool");
         expect(results).toHaveLength(1);
         expect(results[0]?.message).toEqual(
-            toolResult(
+            providerToolResult(
                 "call-stranded",
                 "The response ended before this tool call was dispatched.",
                 true,
@@ -810,7 +885,9 @@ describe("AgentBase black-box persistence and restart behavior", () => {
             .filter((record) => record.type === "tool")
             .map((record) => record.message);
         expect(results).toEqual(
-            calls.map((call) => toolResult(call.callId, "The agent system is closed.", true)),
+            calls.map((call) =>
+                providerToolResult(call.callId, "The agent system is closed.", true),
+            ),
         );
         expect(persistence.records.some((record) => record.type === "system")).toBe(false);
         expect(persistence.pending.size).toBe(0);
@@ -833,7 +910,7 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         const failure = system("The last turn failed: The agent system is closed.");
         const persistence = new InMemoryPersistence([
             userRecord("original request"),
-            { type: "block", block: call },
+            callRecord("callbeforefailurenote", call),
             { type: "system", message: failure },
             userRecord("continue"),
         ]);
@@ -913,8 +990,9 @@ describe("AgentBase black-box persistence and restart behavior", () => {
 
         expect(persistence.records.at(-1)).toEqual({
             type: "tool",
-            message: toolResult(
-                call.callId,
+            id: generatedCallId(),
+            message: providerToolResult(
+                "call-hanging-at-close",
                 "The tool call was abandoned when the agent closed.",
                 true,
             ),
@@ -957,6 +1035,7 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         const persistence = new InMemoryPersistence([
             {
                 type: "compaction",
+                contextToolIds: [],
                 messages: [user("a summary of everything so far")],
             },
         ]);
@@ -995,6 +1074,7 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         const persistence = new InMemoryPersistence([
             {
                 type: "compaction",
+                contextToolIds: [],
                 messages: [compacted],
             },
         ]);
@@ -1123,7 +1203,6 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         expect(pendingKey).toMatch(/^tool\.000000\.[a-z0-9]+$/);
         expect(pendingCall).toMatchObject({
             id: pendingKey.split(".").at(-1),
-            providerCallId: call.callId,
             call: {
                 type: "tool_call",
                 name: call.name,
@@ -1147,10 +1226,15 @@ describe("AgentBase black-box persistence and restart behavior", () => {
         expect(firstExecutions).toBe(2);
         // The failed result transaction left the agent active instead of writing over the open
         // call. Recovery can therefore put the result directly after the call for the provider.
+        const recoveredCallId = pendingKey.split(".").at(-1);
+        expect(recoveredCallId).toMatch(/^[a-z][a-z0-9]{1,31}$/);
         expect(secondProvider.sessions[0]?.requests[0]?.context.messages).toEqual([
             user("recover"),
-            { role: "assistant", content: [call] },
-            toolResult("crashed-result", "result"),
+            {
+                role: "assistant",
+                content: [call],
+            },
+            toolResult(call.callId, "result"),
         ]);
         expect(persistence.pending.size).toBe(0);
         expect(secondAgent.active).toBe(false);
@@ -1317,7 +1401,7 @@ describe("AgentBase black-box tool validation and ordering", () => {
 
         expect(received).toEqual({});
         expect(provider.sessions[0]?.requests[1]?.context.messages.at(-1)).toEqual(
-            toolResult("empty", "accepted"),
+            providerToolResult("empty", "accepted"),
         );
         await agent.close();
     });
@@ -1354,7 +1438,7 @@ describe("AgentBase black-box tool validation and ordering", () => {
         expect(executed).toBe(1);
         expect(provider.sessions[0]?.options.tools).toEqual([namespacedTool]);
         expect(provider.sessions[0]?.requests[1]?.context.messages.at(-1)).toEqual(
-            toolResult("namespaced", "answer=found"),
+            providerToolResult("namespaced", "answer=found"),
         );
         await agent.close();
     });
@@ -1416,8 +1500,12 @@ describe("AgentBase black-box tool validation and ordering", () => {
 
         expect(rendered).toBe(0);
         expect(provider.sessions[0]?.requests[1]?.context.messages.slice(-2)).toEqual([
-            toolResult("invalid-result", 'Tool "invalid_result" returned an invalid result.', true),
-            toolResult("structured-error", "warning", true),
+            providerToolResult(
+                "invalid-result",
+                'Tool "invalid_result" returned an invalid result.',
+                true,
+            ),
+            providerToolResult("structured-error", "warning", true),
         ]);
         await agent.close();
     });
@@ -1461,13 +1549,13 @@ describe("AgentBase black-box tool validation and ordering", () => {
         await agent.waitForIdle();
 
         expect(provider.sessions[0]?.requests[1]?.context.messages.slice(-2)).toEqual([
-            toolResult("throws", "execute failed", true),
-            toolResult("works", "ok"),
+            providerToolResult("throws", "execute failed", true),
+            providerToolResult("works", "ok"),
         ]);
         await agent.close();
     });
 
-    it("does not execute server-settled calls or create a client tool result", async () => {
+    it("persists a server-settled result without creating a client tool message", async () => {
         let executed = false;
         const persistence = new InMemoryPersistence();
         const provider = new ScriptedProvider([
@@ -1477,11 +1565,13 @@ describe("AgentBase black-box tool validation and ordering", () => {
                     callId: "server",
                     name: "server_tool",
                     server: true,
+                    vendor: { replay: "opaque-server-call" },
                 },
                 { type: "toolcall_end", callId: "server", arguments: "{}" },
                 {
                     type: "toolcall_result_start",
                     callId: "server",
+                    vendor: { output_id: "server-result" },
                 },
                 {
                     type: "toolcall_result_end",
@@ -1518,21 +1608,80 @@ describe("AgentBase black-box tool validation and ordering", () => {
 
         expect(executed).toBe(false);
         expect(provider.sessions[0]?.requests).toHaveLength(1);
+        const callRecord = persistence.records.find(
+            (record) => record.type === "block" && record.block.type === "tool_call",
+        );
+        const resultRecord = persistence.records.find(
+            (record) => record.type === "block" && record.block.type === "tool_result",
+        );
+        const baseCallId =
+            callRecord !== undefined && "id" in callRecord ? callRecord.id : undefined;
+        expect(baseCallId).toMatch(/^[a-z][a-z0-9]{1,31}$/);
         expect(persistence.records).toEqual([
             recordedUser("server"),
             {
                 type: "block",
+                id: baseCallId,
                 block: {
                     type: "tool_call",
                     callId: "server",
                     name: "server_tool",
                     arguments: "{}",
                     server: true,
+                    vendor: { replay: "opaque-server-call" },
+                },
+            },
+            {
+                type: "block",
+                id: baseCallId,
+                block: {
+                    type: "tool_result",
+                    callId: "server",
+                    content: [{ type: "text", text: "provider settled" }],
+                    vendor: { output_id: "server-result" },
                 },
             },
         ]);
+        expect(
+            resultRecord !== undefined && "id" in resultRecord ? resultRecord.id : undefined,
+        ).toBe(baseCallId);
         expect(persistence.pending.size).toBe(0);
         await agent.close();
+
+        const reloadedProvider = new ScriptedProvider([textTurn("continued")]);
+        const reloaded = await AgentBase.create(ctx, {
+            id: "server-settled",
+            providers: providersOf(reloadedProvider),
+            provider: "scripted",
+            persistence,
+        });
+        await reloaded.send(ctx, user("continue"));
+        await reloaded.waitForIdle();
+
+        expect(reloadedProvider.sessions[0]?.requests[0]?.context.messages.slice(0, 3)).toEqual([
+            user("server"),
+            {
+                role: "assistant",
+                content: [
+                    {
+                        type: "tool_call",
+                        callId: "server",
+                        name: "server_tool",
+                        arguments: "{}",
+                        server: true,
+                        vendor: { replay: "opaque-server-call" },
+                    },
+                    {
+                        type: "tool_result",
+                        callId: "server",
+                        content: [{ type: "text", text: "provider settled" }],
+                        vendor: { output_id: "server-result" },
+                    },
+                ],
+            },
+            user("continue"),
+        ]);
+        await reloaded.close();
     });
 
     it("does not perform a second inference for a tool_call done state with no executable calls", async () => {
@@ -1618,8 +1767,13 @@ describe("AgentBase black-box tool validation and ordering", () => {
                 .filter((record) => record.type === "tool")
                 .map((record) => record.message.callId),
         ).toEqual(calls.map((call) => call.callId));
+        expect(
+            persistence.records
+                .filter((record) => record.type === "tool")
+                .map((record) => record.id),
+        ).toEqual(calls.map(() => generatedCallId()));
         expect(provider.sessions[0]?.requests[1]?.context.messages.slice(-5)).toEqual(
-            calls.map((call) => toolResult(call.callId, call.name)),
+            calls.map((call) => providerToolResult(call.callId, call.name)),
         );
         expect(persistence.pending.size).toBe(0);
         await agent.close();

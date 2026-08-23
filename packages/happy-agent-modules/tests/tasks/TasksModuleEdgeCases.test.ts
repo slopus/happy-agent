@@ -714,8 +714,7 @@ describe("TasksModule edge cases", () => {
             const [, , get, update, complete, remove] = await hooks.tools!(database.context, {
                 agent: { id: "agent-a" },
             } as never);
-            const call = (id: string) =>
-                ({ id, providerCallId: `provider-${id}`, kv: {} }) as never;
+            const call = (id: string) => ({ id, kv: {} }) as never;
             await expect(
                 get!.execute(database.context, { id: "missing" }, call("get")),
             ).resolves.toEqual({
@@ -990,20 +989,17 @@ describe("TasksModule edge cases", () => {
             } as never);
             await scopeA[0]!.execute(database.context, { title: "A" }, {
                 id: "call-a",
-                providerCallId: "provider-a",
                 kv: {},
             } as never);
             await expect(
                 scopeB[1]!.execute(database.context, {}, {
                     id: "call-b",
-                    providerCallId: "provider-b",
                     kv: {},
                 } as never),
             ).resolves.toMatchObject({ tasks: [], total: 0 });
             await expect(
                 scopeA[1]!.execute(database.context, {}, {
                     id: "call-a-list",
-                    providerCallId: "provider-a-list",
                     kv: {},
                 } as never),
             ).resolves.toMatchObject({ tasks: [{ id: "call-a" }], total: 1 });
@@ -1076,7 +1072,7 @@ describe("TasksModule edge cases", () => {
             const [create, , , update, complete, remove] = await hooks.tools!(database.context, {
                 agent: { id: "agent-a" },
             } as never);
-            const createCall = { id: "task", providerCallId: "provider-task", kv: {} } as never;
+            const createCall = { id: "task", kv: {} } as never;
             const created = await create!.execute(
                 database.context,
                 { title: "x".repeat(500) },
@@ -1085,16 +1081,14 @@ describe("TasksModule edge cases", () => {
             const updated = await update!.execute(
                 database.context,
                 { id: "task", priority: "high" },
-                { id: "update", providerCallId: "provider-update", kv: {} } as never,
+                { id: "update", kv: {} } as never,
             );
             const completed = await complete!.execute(database.context, { id: "task" }, {
                 id: "complete",
-                providerCallId: "provider-complete",
                 kv: {},
             } as never);
             const removed = await remove!.execute(database.context, { id: "task" }, {
                 id: "remove",
-                providerCallId: "provider-remove",
                 kv: {},
             } as never);
             const outputs = [

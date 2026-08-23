@@ -3,7 +3,6 @@ import { Type, type Static } from "@sinclair/typebox";
 export const MAX_COMPACTION_ID_LENGTH = 256;
 export const MAX_COMPACTION_FAILURE_REASON_LENGTH = 8_192;
 export const MAX_COMPACTION_TOKEN_COUNT = 1_000_000_000;
-export const MAX_COMPACTION_REPLACED_MESSAGES = 100_000;
 export const MAX_COMPACTION_PAGE_SIZE = 100;
 export const DEFAULT_COMPACTION_PAGE_SIZE = 50;
 
@@ -38,10 +37,6 @@ const compactionBaseSchema = Type.Object(
         agentId: compactionIdSchema,
         id: compactionIdSchema,
         runId: compactionIdSchema,
-        replacedMessageIds: Type.Array(compactionIdSchema, {
-            maxItems: MAX_COMPACTION_REPLACED_MESSAGES,
-            uniqueItems: true,
-        }),
         startedAt: compactionTimestampSchema,
         tokensBefore: Type.Optional(compactionTokenCountSchema),
         trigger: compactionTriggerSchema,

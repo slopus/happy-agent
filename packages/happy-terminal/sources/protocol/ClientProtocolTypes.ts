@@ -159,11 +159,9 @@ export interface ToolCallBlock {
     name: string;
     namespace?: string;
     presentation?: ToolCallPresentation;
-    providerToolCallId?: string;
     /** Present exactly when this invocation crossed the automatic-review boundary. */
     toolPermission?: ToolPermission;
     type: "tool_call";
-    vendor?: unknown;
 }
 
 export type { ToolPermissionReview };
@@ -178,13 +176,11 @@ export interface ToolResultBlock {
     failure?: ToolResultFailure;
     isError?: boolean;
     presentation?: ToolResultPresentation;
-    providerToolCallId?: string;
     rendered: readonly ContentBlock[];
     toolCallId: string;
     toolName: string;
     trustedUserEvidence?: readonly ContentBlock[];
     type: "tool_result";
-    vendor?: unknown;
 }
 
 export type AgentBlock = ContentBlock | ThinkingBlock | ToolCallBlock | ToolResultBlock;
@@ -238,7 +234,6 @@ export interface CompactionMessage {
     blocks: readonly ContentBlock[];
     id: string;
     providerId: string;
-    replacedMessageIds: readonly string[];
     requestedModelId?: string;
     responseModel?: string;
     role: "compaction";
@@ -537,7 +532,6 @@ export interface ExternalToolCall {
     createdAt: number;
     definition: ExternalToolDefinition;
     id: string;
-    providerToolCallId?: string;
     resolution?: ExternalToolCallResolution;
     resolvedAt?: number;
     runId: string;

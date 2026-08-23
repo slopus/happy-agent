@@ -9,6 +9,7 @@ import type {
     SessionSystemMessage,
     SessionTokens,
     SessionToolCallBlock,
+    SessionToolResultBlock,
     SessionToolResultMessage,
 } from "@slopus/happy-providers";
 import { areProviderModelsCompatible } from "@slopus/happy-providers";
@@ -62,6 +63,15 @@ import type {
     MaybePromise,
 } from "./AgentBaseHooks.js";
 import type { AgentPersistence, AgentRecord } from "./AgentPersistence.js";
+import {
+    assistantContextRecord,
+    baseContextMessages,
+    baseSessionEvent,
+    contextFromRecords,
+    providerContextMessages,
+    storedContextToolIds,
+    toolContextRecord,
+} from "./AgentProviderContext.js";
 import {
     cuid2Schema,
     ownAgentMessageMetadata,
@@ -167,10 +177,8 @@ interface InjectionEntry {
 interface ToolBatchEntry {
     /** The pending-tool key the call is durable under until its result commits. */
     readonly key: string;
-    /** Internally generated stable identity used for persistence and the call's KV scope. */
+    /** Base-generated stable identity used by persistence, hooks, and execution. */
     readonly id: string;
-    /** The provider's opaque identity, kept separate from the internal identity. */
-    readonly providerCallId: string;
     readonly call: SessionToolCallBlock;
     /** A tool-side result that already committed and must not execute again. */
     readonly committed?: SessionToolResultMessage;
@@ -178,7 +186,6 @@ interface ToolBatchEntry {
 
 const storedToolCallSchema = Type.Object({
     id: cuid2Schema,
-    providerCallId: Type.String(),
     call: Type.Object({
         type: Type.Literal("tool_call"),
         name: Type.String(),
@@ -194,7 +201,7 @@ type StoredToolCall = Static<typeof storedToolCallSchema>;
 /** A durable first-writer-wins claim on the result one call will append. */
 const storedToolResultSchema = Type.Object({
     role: Type.Literal("tool"),
-    callId: Type.String(),
+    callId: cuid2Schema,
     content: Type.Array(Type.Unknown()),
     isError: Type.Optional(Type.Boolean()),
     vendor: Type.Optional(Type.Unknown()),
@@ -448,8 +455,10 @@ export class AgentBase {
     #session: BaseSession | undefined;
     /** The provider-facing configuration the current session was created with. */
     #sessionConfig: string | undefined;
-    /** The conversation as this instance last knew it, reloaded from the store every turn. */
+    /** The conversation under Base-owned identities, reloaded from the store every turn. */
     #messages: SessionMessage[] = [];
+    /** Provider-native tool IDs used only when serializing the private provider context. */
+    #providerToolIds = new Map<string, string>();
     /** The durable steering queue, in the order its keys sort. */
     #steering: QueueEntry[] = [];
     /** The durable send queue, in the order its keys sort. */
@@ -2706,6 +2715,17 @@ export class AgentBase {
                 context: { instructions, messages: snapshot },
                 ...(this.#model === undefined ? {} : { model: this.#model }),
             });
+            const cancelledContext =
+                result.status === "cancelled"
+                    ? baseContextMessages(result.context.messages, this.#providerToolIds)
+                    : undefined;
+            let hookResult =
+                result.status === "cancelled" && cancelledContext !== undefined
+                    ? {
+                          ...result,
+                          context: { ...result.context, messages: cancelledContext.messages },
+                      }
+                    : result;
             if (result.status === "failed") {
                 await this.#preserveCompactionContinuation(
                     ctx,
@@ -2718,7 +2738,24 @@ export class AgentBase {
                 throw new Error(result.message);
             }
             if (result.status === "completed") {
-                const completed: AgentBaseCompletedCompaction = { ...compactionStart, result };
+                const replacement = baseContextMessages(
+                    result.context.messages,
+                    this.#providerToolIds,
+                );
+                const preserved = baseContextMessages(
+                    result.preservedMessages,
+                    this.#providerToolIds,
+                );
+                const publicResult = {
+                    ...result,
+                    preservedMessages: preserved.messages,
+                    context: { ...result.context, messages: replacement.messages },
+                };
+                hookResult = publicResult;
+                const completed: AgentBaseCompletedCompaction = {
+                    ...compactionStart,
+                    result: publicResult,
+                };
                 await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
                     // Physically delete the superseded records and write the replacement —
                     // which keeps the messages that stay — in one atomic step.
@@ -2736,7 +2773,8 @@ export class AgentBase {
                         }
                         await this.#persistence.append(txCtx, {
                             type: "compaction",
-                            messages: result.context.messages,
+                            contextToolIds: storedContextToolIds(replacement.toolIds),
+                            messages: replacement.messages,
                         });
                         if (continueWithInference) {
                             // The replacement and the response it still owes are one durable
@@ -2748,7 +2786,8 @@ export class AgentBase {
                         }
                     });
                     this.#rotateHistoryKV();
-                    this.#messages = [...result.context.messages];
+                    this.#messages = replacement.messages;
+                    this.#providerToolIds = replacement.toolIds;
                     this.#lastRecordType = "compaction";
                 });
                 // The conversation the measurement described is gone; its size is unknown
@@ -2763,7 +2802,7 @@ export class AgentBase {
             }
             await this.#invokeHook(ctx, this.#hooks.afterCompaction, {
                 ...compactionStart,
-                result,
+                result: hookResult,
             });
             this.#compaction = undefined;
             pending.resolve();
@@ -2808,9 +2847,7 @@ export class AgentBase {
                 // while the call remains open, so leave the durable stage untouched for resume.
                 const pending = await this.#persistence.readValues(lockCtx, "tool.");
                 const dispatched = new Set(
-                    pending.map(
-                        ({ key, value }) => this.#restoreToolEntry(key, value).providerCallId,
-                    ),
+                    pending.map(({ key, value }) => this.#restoreToolEntry(key, value).id),
                 );
                 if (owed.some((call) => dispatched.has(call.callId))) {
                     this.#durableWorkBlocked = true;
@@ -2820,7 +2857,7 @@ export class AgentBase {
                     const entry = this.#newToolEntry(index, call);
                     return {
                         ...entry,
-                        committed: toolFailure(entry.providerCallId, reason),
+                        committed: toolFailure(entry.id, reason),
                     };
                 });
                 // Give every otherwise-undispatched call a durable internal identity and staged
@@ -2840,7 +2877,10 @@ export class AgentBase {
                 await this.#recordTransaction(lockCtx, async (txCtx) => {
                     for (const entry of entries) {
                         const result = entry.committed;
-                        await this.#appendRecord(txCtx, { type: "tool", message: result });
+                        await this.#appendRecord(
+                            txCtx,
+                            toolContextRecord(result, this.#providerToolIds),
+                        );
                         await this.#persistence.deleteValue(txCtx, entry.key);
                         // A result the conversation records is a result the hook sees, however
                         // little of a run produced it. A hook that fails here leaves the calls
@@ -2848,7 +2888,6 @@ export class AgentBase {
                         await this.#invokeToolTransactHook(
                             txCtx,
                             entry.id,
-                            entry.providerCallId,
                             this.#hooks.afterToolCallTransact,
                             result,
                         );
@@ -3239,6 +3278,7 @@ export class AgentBase {
             queue.splice(0, count);
             if (reset) {
                 this.#messages = injected === undefined ? [] : [injected];
+                this.#providerToolIds.clear();
                 this.#contextTokens = undefined;
             }
             this.#messages.push(...batch.map((entry) => entry.message));
@@ -3360,14 +3400,15 @@ export class AgentBase {
             const records = await this.#persistence.load(lockCtx);
             const last = records[records.length - 1];
             this.#lastRecordType = last?.type;
-            let restored = messagesFromRecords(records);
+            const restored = contextFromRecords(records);
             const steering = await this.#persistence.readValues(lockCtx, "steering.");
             const sends = await this.#persistence.readValues(lockCtx, "send.");
             const injections = await this.#persistence.readValues(lockCtx, "inject.");
             const pendingTools = await this.#persistence.readValues(lockCtx, "tool.");
             const settings = await this.#persistence.readValues(lockCtx, "settings");
             const context = await this.#persistence.readValues(lockCtx, "context");
-            this.#messages = restored;
+            this.#messages = restored.messages;
+            this.#providerToolIds = restored.toolIds;
             // The measured size of the restored context, so the first turn after a reload can
             // still decide whether it needs a compaction.
             const measured = context[0]?.value as { readonly tokens: number } | undefined;
@@ -3405,7 +3446,7 @@ export class AgentBase {
                 // context would keep an unanswered tool call for ever, which most providers
                 // reject outright. They are recovered as the batch that was about to be
                 // dispatched.
-                const owed = this.#unansweredCalls(restored);
+                const owed = this.#unansweredCalls(restored.messages);
                 if (owed.length > 0) {
                     this.#pendingTools = owed.map((call, index) => this.#newToolEntry(index, call));
                     this.#pendingToolsUndispatched = true;
@@ -3465,12 +3506,12 @@ export class AgentBase {
                     // Last, so a hook noting a call about to happen sees a transaction holding
                     // the whole batch it belongs to.
                     for (const entry of entries) {
+                        const { vendor: _vendor, ...call } = entry.call;
                         await this.#invokeToolTransactHook(
                             txCtx,
                             entry.id,
-                            entry.providerCallId,
                             this.#hooks.beforeToolCallTransact,
-                            entry.call,
+                            call,
                         );
                     }
                 }),
@@ -3515,17 +3556,17 @@ export class AgentBase {
                                 );
                             }
                             const result = stored as SessionToolResultMessage;
-                            if (result.callId !== entry.providerCallId) {
+                            if (result.callId !== entry.id) {
                                 throw new Error(
-                                    `The committed result claim for tool "${entry.id}" has the wrong provider call ID.`,
+                                    `The committed result claim for tool "${entry.id}" has the wrong identity.`,
                                 );
                             }
                             winner = result;
                             results[committed] = result;
-                            await this.#appendRecord(txCtx, {
-                                type: "tool",
-                                message: result,
-                            });
+                            await this.#appendRecord(
+                                txCtx,
+                                toolContextRecord(result, this.#providerToolIds),
+                            );
                             // The call is answered, so both its retry record and its temporary
                             // invocation store disappear in this same result transaction.
                             await this.#persistence.deleteValue(txCtx, entry.key);
@@ -3533,7 +3574,6 @@ export class AgentBase {
                             await this.#invokeToolTransactHook(
                                 txCtx,
                                 entry.id,
-                                entry.providerCallId,
                                 this.#hooks.afterToolCallTransact,
                                 result,
                             );
@@ -3564,7 +3604,7 @@ export class AgentBase {
                     outcome = entry.committed;
                 } else if (resume && !(await this.#isDurable(ctx, entry.call))) {
                     outcome = toolFailure(
-                        entry.call.callId,
+                        entry.id,
                         "The tool call was interrupted by a restart and was not retried.",
                     );
                 } else {
@@ -3596,7 +3636,7 @@ export class AgentBase {
                     outcome === ABORTED
                         ? {
                               role: "tool",
-                              callId: entry.call.callId,
+                              callId: entry.id,
                               content: [
                                   {
                                       type: "text",
@@ -3705,21 +3745,22 @@ export class AgentBase {
                 if (result !== undefined) ordered.push(result);
             }
         }
-        return ordered;
+        return providerContextMessages(ordered, this.#providerToolIds);
     }
 
-    /** Allocate one internal identity before the call becomes durable or executable. */
+    /** Turn one canonical call into its durable Base-owned batch entry. */
     #newToolEntry(index: number, call: SessionToolCallBlock): ToolBatchEntry {
-        const id = createId();
+        if (!Value.Check(cuid2Schema, call.callId)) {
+            throw new Error(`Tool call "${call.callId}" is not a Base-generated ID.`);
+        }
         return {
-            key: this.#toolKey(index, id),
-            id,
-            providerCallId: call.callId,
+            key: this.#toolKey(index, call.callId),
+            id: call.callId,
             call,
         };
     }
 
-    /** Restore the exact internal/provider identity pair that was dispatched before a restart. */
+    /** Restore the Base/provider context identity pair dispatched before a restart. */
     #restoreToolEntry(key: string, value: unknown): ToolBatchEntry {
         if (!Value.Check(storedToolCallSchema, value)) {
             throw new Error(`The pending tool call under "${key}" is not valid.`);
@@ -3731,14 +3772,10 @@ export class AgentBase {
         ) {
             throw new Error(`The committed result under "${key}" is not valid.`);
         }
-        const call: SessionToolCallBlock = {
-            ...stored.call,
-            callId: stored.providerCallId,
-        };
+        const call: SessionToolCallBlock = { ...stored.call, callId: stored.id };
         return {
             key,
             id: stored.id,
-            providerCallId: stored.providerCallId,
             call,
             ...(stored.committed === undefined
                 ? {}
@@ -3746,12 +3783,17 @@ export class AgentBase {
         };
     }
 
-    /** The explicit durable representation keeps provider and internal identities separate. */
+    /** The durable representation pairs one Base identity with provider-context replay data. */
     #storedToolEntry(entry: ToolBatchEntry): StoredToolCall {
-        const { callId: _providerCallId, server: _server, ...call } = entry.call;
+        if (entry.call.callId !== entry.id) {
+            throw new Error(`Pending tool "${entry.id}" has a mismatched Base identity.`);
+        }
+        if (entry.committed !== undefined && entry.committed.callId !== entry.id) {
+            throw new Error(`Pending tool "${entry.id}" has a mismatched committed result ID.`);
+        }
+        const { callId: _callId, server: _server, ...call } = entry.call;
         return {
             id: entry.id,
-            providerCallId: entry.providerCallId,
             call,
             ...(entry.committed === undefined ? {} : { committed: entry.committed }),
         };
@@ -3768,17 +3810,16 @@ export class AgentBase {
     }
 
     /**
-     * The scope one call owns: state lives under its internal ID, never under the provider's
-     * opaque ID or another call's scope, and is erased when the call commits. The task context
-     * still locates the provider call in conversation history.
+     * The scope one call owns: state lives under its Base ID and is erased when the call commits.
+     * The same ID locates the call in conversation history.
      */
-    #callScoped(ctx: Context, id: string, providerCallId: string): Context {
+    #callScoped(ctx: Context, id: string): Context {
         return withAgentTaskContext(
             withAgentRunKV(
                 withAgentKV(ctx, this.#kv.scoped("call", id)),
                 this.#runKV.scoped("call", id),
             ),
-            taskContextBeforeToolCall(this.#messages, providerCallId),
+            taskContextBeforeToolCall(this.#messages, id),
         );
     }
 
@@ -3790,17 +3831,13 @@ export class AgentBase {
     async #invokeToolTransactHook<Argument>(
         txCtx: Context,
         id: string,
-        providerCallId: string,
         hook: ((ctx: Context, argument: Argument) => MaybePromise<void>) | undefined,
         argument: Argument,
     ): Promise<void> {
         if (hook === undefined) return;
         const lifetime = new AbortController();
         try {
-            await hook(
-                this.#callScoped(withLifetime(txCtx, lifetime.signal), id, providerCallId),
-                argument,
-            );
+            await hook(this.#callScoped(withLifetime(txCtx, lifetime.signal), id), argument);
         } finally {
             lifetime.abort();
         }
@@ -3815,7 +3852,7 @@ export class AgentBase {
         const { call } = entry;
         const failure = (text: string): SessionToolResultMessage => ({
             role: "tool",
-            callId: call.callId,
+            callId: entry.id,
             content: [{ type: "text", text }],
             isError: true,
         });
@@ -3855,10 +3892,7 @@ export class AgentBase {
         const callLifetime = new AbortController();
         let committing = false;
         const boundedCallKV = callKV.until(callLifetime.signal, () => !committing);
-        const callCtx = withAgentKV(
-            this.#callScoped(ctx, entry.id, entry.providerCallId),
-            boundedCallKV,
-        );
+        const callCtx = withAgentKV(this.#callScoped(ctx, entry.id), boundedCallKV);
         // From here the call is one the two tool hooks bracket: a tool that exists, a call that
         // finished, and arguments its schema accepts. A call refused before that reaches neither
         // hook, because there is nothing yet to decide about or to report.
@@ -3872,7 +3906,7 @@ export class AgentBase {
             resolveCommitted = resolve;
         });
         const outcomeFor = (result: unknown): AgentBaseToolOutcome => ({
-            callId: call.callId,
+            callId: entry.id,
             tool: ran,
             arguments: ranArguments,
             content: [...ran.toLLM(result)],
@@ -3890,7 +3924,7 @@ export class AgentBase {
             const candidate = outcomeFor(result);
             const message: SessionToolResultMessage = {
                 role: "tool",
-                callId: entry.providerCallId,
+                callId: entry.id,
                 content: candidate.content,
                 ...(candidate.isError ? { isError: true } : {}),
             };
@@ -3948,7 +3982,7 @@ export class AgentBase {
         };
         try {
             const decision = await this.#hooks.beforeToolCall?.(callCtx, {
-                callId: call.callId,
+                callId: entry.id,
                 tool,
                 arguments: args,
             });
@@ -3956,7 +3990,7 @@ export class AgentBase {
                 // The hook answered the model itself, so the tool never runs and there is no
                 // structured result — only what the model is told.
                 outcome = {
-                    callId: call.callId,
+                    callId: entry.id,
                     tool,
                     arguments: args,
                     content: [...decision.content],
@@ -3989,7 +4023,6 @@ export class AgentBase {
                 );
                 const toolCall = {
                     id: entry.id,
-                    providerCallId: entry.providerCallId,
                     kv: boundedCallKV,
                     commit,
                 };
@@ -4028,7 +4061,7 @@ export class AgentBase {
             outcome =
                 committedOutcome ??
                 ({
-                    callId: call.callId,
+                    callId: entry.id,
                     tool: ran,
                     arguments: ranArguments,
                     content: [
@@ -4044,7 +4077,7 @@ export class AgentBase {
             await this.#invokeHookOn(callCtx, this.#hooks.afterToolCall, outcome);
             return {
                 role: "tool",
-                callId: call.callId,
+                callId: entry.id,
                 content: outcome.content,
                 ...(outcome.isError ? { isError: true } : {}),
             };
@@ -4110,21 +4143,29 @@ export class AgentBase {
         // in-memory assistant message never diverges from what a reload would rebuild.
         const persisted: SessionAssistantBlock[] = [];
         const toolCallIndexes = new Map<string, number>();
-        const persist = async (event: AgentBasePersistedEvent | undefined): Promise<void> => {
-            if (event === undefined) return;
+        const toolResultIndexes = new Map<string, number>();
+        // Provider IDs remain only in the private context blocks. Every event and transactional
+        // projection leaving this method uses the generated Base ID instead.
+        const responseToolIds = new Map<string, string>();
+        const persist = async (
+            block: SessionAssistantBlock | undefined,
+            event: AgentBasePersistedEvent | undefined,
+        ): Promise<void> => {
+            if (block === undefined) return;
+            const record = assistantContextRecord(block, this.#providerToolIds);
             await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
-                if (this.#hooks.onEventTransact === undefined) {
-                    await this.#appendRecord(lockCtx, { type: "block", block: event.block });
+                if (event === undefined || this.#hooks.onEventTransact === undefined) {
+                    await this.#appendRecord(lockCtx, record);
                 } else {
                     await this.#recordTransaction(lockCtx, async (txCtx) => {
-                        await this.#appendRecord(txCtx, { type: "block", block: event.block });
+                        await this.#appendRecord(txCtx, record);
                         await this.#withTransactionalContext(txCtx, (hookCtx) =>
                             this.#hooks.onEventTransact?.(hookCtx, event),
                         );
                     });
                 }
             });
-            persisted.push(event.block);
+            persisted.push(block);
         };
         const iterator = stream[Symbol.asyncIterator]();
         // A response usually ends before its stream does — at the done event, or at an abort —
@@ -4145,7 +4186,12 @@ export class AgentBase {
                     exhausted = true;
                     break;
                 }
-                const event = next.value;
+                const providerEvent = next.value;
+                const event = baseSessionEvent(
+                    providerEvent,
+                    responseToolIds,
+                    this.#providerToolIds,
+                );
                 await this.#emit(ctx, event);
                 switch (event.type) {
                     case "text_start":
@@ -4164,6 +4210,7 @@ export class AgentBase {
                     case "text_end": {
                         const last = content[content.length - 1];
                         await persist(
+                            last?.type === "text" ? last : undefined,
                             last?.type === "text" ? { ...event, block: last } : undefined,
                         );
                         break;
@@ -4191,11 +4238,14 @@ export class AgentBase {
                                     : { reasoning: event.reasoning }),
                             };
                             content[content.length - 1] = finished;
-                            await persist({ ...event, block: finished });
+                            await persist(finished, { ...event, block: finished });
                         }
                         break;
                     }
-                    case "toolcall_start":
+                    case "toolcall_start": {
+                        if (providerEvent.type !== "toolcall_start") {
+                            throw new Error("The provider tool-call start changed event type.");
+                        }
                         toolCallIndexes.set(event.callId, content.length);
                         content.push({
                             type: "tool_call",
@@ -4206,9 +4256,12 @@ export class AgentBase {
                                 ? {}
                                 : { namespace: event.namespace }),
                             ...(event.server === undefined ? {} : { server: event.server }),
-                            ...(event.vendor === undefined ? {} : { vendor: event.vendor }),
+                            ...(providerEvent.vendor === undefined
+                                ? {}
+                                : { vendor: providerEvent.vendor }),
                         });
                         break;
+                    }
                     case "toolcall_end": {
                         const index = toolCallIndexes.get(event.callId);
                         const block = index === undefined ? undefined : content[index];
@@ -4221,17 +4274,59 @@ export class AgentBase {
                                     : { incomplete: event.incomplete }),
                             };
                             content[index] = finished;
-                            await persist({ ...event, block: finished });
+                            const { vendor: _vendor, ...publicBlock } = finished;
+                            await persist(finished, {
+                                ...event,
+                                block: publicBlock,
+                            });
                         }
                         break;
                     }
-                    // The provider settled a server tool call on its own backend and streams the
-                    // result here. The agent simply ignores it: nothing to execute, nothing to
-                    // store — the events still reach the hooks like every other event.
-                    case "toolcall_result_start":
-                    case "toolcall_result_delta":
-                    case "toolcall_result_end":
+                    case "toolcall_result_start": {
+                        if (providerEvent.type !== "toolcall_result_start") {
+                            throw new Error("The provider tool-result start changed event type.");
+                        }
+                        const callIndex = toolCallIndexes.get(event.callId);
+                        const call = callIndex === undefined ? undefined : content[callIndex];
+                        if (call?.type !== "tool_call") {
+                            throw new Error("A provider tool result has no matching call.");
+                        }
+                        toolResultIndexes.set(event.callId, content.length);
+                        content.push({
+                            type: "tool_result",
+                            callId: event.callId,
+                            content: [],
+                            ...(providerEvent.vendor === undefined
+                                ? {}
+                                : { vendor: providerEvent.vendor }),
+                        });
                         break;
+                    }
+                    case "toolcall_result_delta":
+                        break;
+                    case "toolcall_result_end": {
+                        const callIndex = toolCallIndexes.get(event.callId);
+                        const call = callIndex === undefined ? undefined : content[callIndex];
+                        const resultIndex = toolResultIndexes.get(event.callId);
+                        if (resultIndex === undefined || call?.type !== "tool_call") {
+                            throw new Error("A provider tool-result end has no matching start.");
+                        }
+                        const result = content[resultIndex];
+                        if (result?.type !== "tool_result") {
+                            throw new Error("A provider tool-result end has no matching start.");
+                        }
+                        const finished: SessionToolResultBlock = {
+                            ...result,
+                            content: event.content,
+                            ...(event.isError === undefined ? {} : { isError: event.isError }),
+                            ...(event.incomplete === undefined
+                                ? {}
+                                : { incomplete: event.incomplete }),
+                        };
+                        content[resultIndex] = finished;
+                        await persist(finished, undefined);
+                        break;
+                    }
                     case "done":
                         return {
                             // Only blocks that finished, which are exactly the blocks that were
@@ -4311,41 +4406,11 @@ export class AgentBase {
     }
 }
 
-/**
- * The conversation a run of records spells out. A compaction record carries the complete
- * replacement context and supersedes everything before it; consecutive blocks belong to one
- * response. Used both to restore the whole history and to read the tail of it, which is why it
- * takes any run of records rather than the store itself.
- */
-function messagesFromRecords(records: readonly AgentRecord[]): SessionMessage[] {
-    let messages: SessionMessage[] = [];
-    for (const record of records) {
-        if (record.type === "compaction") {
-            messages = [...record.messages];
-            continue;
-        }
-        if (record.type === "user" || record.type === "tool" || record.type === "system") {
-            messages.push(record.message);
-            continue;
-        }
-        const last = messages[messages.length - 1];
-        if (last?.role === "assistant") {
-            messages[messages.length - 1] = {
-                role: "assistant",
-                content: [...last.content, record.block],
-            };
-        } else {
-            messages.push({ role: "assistant", content: [record.block] });
-        }
-    }
-    return messages;
-}
-
 /** The result that stands in for a call the agent could not, or must not, carry out. */
-function toolFailure(callId: string, reason: string): SessionToolResultMessage {
+function toolFailure(id: string, reason: string): SessionToolResultMessage {
     return {
         role: "tool",
-        callId,
+        callId: id,
         content: [{ type: "text", text: reason }],
         isError: true,
     };
