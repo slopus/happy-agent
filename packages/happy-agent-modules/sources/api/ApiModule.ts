@@ -46,6 +46,7 @@ import {
     ProjectFilesModule,
 } from "../files/index.js";
 import { GitModule } from "../git/index.js";
+import { HappyIntegrationStartError, HappyModule } from "../happy/index.js";
 import {
     HistoryModule,
     type HistoryPendingMessage,
@@ -243,6 +244,7 @@ export class ApiModule implements AgentModule {
     readonly #usage: UsageModule;
     readonly #providerUsage: ProviderUsageModule;
     readonly #providerScan: ProviderScanModule;
+    readonly #happy: HappyModule;
     readonly #profile: ProfileModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
@@ -315,6 +317,7 @@ export class ApiModule implements AgentModule {
         usage: UsageModule,
         providerUsage: ProviderUsageModule,
         providerScan: ProviderScanModule,
+        happy: HappyModule,
         profile: ProfileModule,
         compute: ComputeModule,
         slashCommands: SlashCommandsModule,
@@ -334,6 +337,7 @@ export class ApiModule implements AgentModule {
         this.#usage = usage;
         this.#providerUsage = providerUsage;
         this.#providerScan = providerScan;
+        this.#happy = happy;
         this.#profile = profile;
         this.#compute = compute;
         this.#slashCommands = slashCommands;
@@ -583,6 +587,52 @@ export class ApiModule implements AgentModule {
             if (request.method === "POST" && url.pathname === "/v0/onboarding/complete") {
                 await writeOwnerOnlyDocument(this.#onboardingMarker(), "complete\n");
                 sendJson(response, 200, { completed: true });
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/v0/integrations/happy") {
+                sendJson(response, 200, { integration: this.#happy.integration(ctx) });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/integrations/happy/start") {
+                try {
+                    sendJson(response, 200, {
+                        integration: await this.#happy.startIntegration(ctx),
+                    });
+                } catch (error: unknown) {
+                    if (error instanceof HappyIntegrationStartError) {
+                        throw new ApiError(503, error.code, error.message, {
+                            integration: error.integration,
+                        });
+                    }
+                    throw error;
+                }
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/integrations/happy/cancel") {
+                sendJson(response, 200, {
+                    integration: await this.#happy.cancelIntegration(ctx),
+                });
+                return;
+            }
+            if (request.method === "DELETE" && url.pathname === "/v0/integrations/happy") {
+                sendJson(response, 200, {
+                    integration: await this.#happy.disconnectIntegration(ctx),
+                });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/integrations/happy/re-pair") {
+                try {
+                    sendJson(response, 200, {
+                        integration: await this.#happy.rePairIntegration(ctx),
+                    });
+                } catch (error: unknown) {
+                    if (error instanceof HappyIntegrationStartError) {
+                        throw new ApiError(503, error.code, error.message, {
+                            integration: error.integration,
+                        });
+                    }
+                    throw error;
+                }
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/profile") {
@@ -923,6 +973,13 @@ export class ApiModule implements AgentModule {
                     version: event.data.version,
                     profile,
                 });
+            }),
+            this.#happy.onIntegrationUpdated((_eventCtx, integration) => {
+                this.#journal.append(
+                    "happy.integration.updated",
+                    { integration },
+                    integration.updatedAt,
+                );
             }),
             this.#compute.onProcessEvent(async (event) => {
                 await this.#convertProcessEvent(ctx, event);
@@ -3807,6 +3864,7 @@ export class ApiModule implements AgentModule {
             config: this.#sanitizedConfig(),
             profile: profileResource(profile),
             onboarding,
+            happyIntegration: this.#happy.integration(ctx),
             projects: await Promise.all(
                 projects.map(
                     async (project: Project) => await this.#projectWithAgents(ctx, project),

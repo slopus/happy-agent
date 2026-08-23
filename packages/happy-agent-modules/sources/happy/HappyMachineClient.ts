@@ -32,11 +32,35 @@ export interface HappyMachineClientOptions {
     readonly fetch?: typeof fetch;
     readonly operations: HappySpawnOperations;
     readonly models: () => readonly HappyModel[];
+    readonly onConnectionChanged?: (event: HappyMachineConnectionEvent) => void;
     /** The session Happy should open, once Happy Agent has published it. */
     readonly remoteSessionId: (agentId: string) => Promise<string | undefined>;
     /** Only a test supplies this; left out, the client opens its own connection to Happy. */
     readonly socketFactory?: (url: string, options: Record<string, unknown>) => HappySocket;
     readonly version: string;
+}
+
+export type HappyMachineConnectionEvent =
+    | { readonly status: "connected" }
+    | { readonly status: "connecting" }
+    | {
+          readonly message: string;
+          readonly reason: "credentials_rejected" | "happy_unavailable";
+          readonly status: "disconnected";
+      };
+
+class HappyMachineRegistrationError extends Error {
+    readonly credentialsRejected: boolean;
+
+    constructor(credentialsRejected: boolean) {
+        super(
+            credentialsRejected
+                ? "Happy rejected the saved credentials."
+                : "The Happy machine connection is unavailable.",
+        );
+        this.name = "HappyMachineRegistrationError";
+        this.credentialsRejected = credentialsRejected;
+    }
 }
 
 const machineSchema = Type.Object(
@@ -85,6 +109,18 @@ export class HappyMachineClient {
     #metadataBase: Record<string, unknown> = {};
     #retryTimer: NodeJS.Timeout | undefined;
     #socket: HappySocket | undefined;
+    #connectionKey = "";
+    /**
+     * Which socket the client is currently living with.
+     *
+     * A socket cannot be unsubscribed from, so a torn-down one keeps its
+     * listeners and its in-flight acknowledgements. Every handler and callback
+     * carries the generation it was created under and does nothing once that
+     * generation has passed.
+     */
+    #generation = 0;
+    /** A registration request is in flight, so a second `start` would duplicate it. */
+    #registering = false;
 
     constructor(options: HappyMachineClientOptions) {
         const machineId = options.configuration.machineId;
@@ -97,11 +133,47 @@ export class HappyMachineClient {
 
     /** Registers this computer with Happy and keeps it reachable. */
     start(): void {
-        if (this.#closed || this.#socket !== undefined || this.#retryTimer !== undefined) return;
-        void this.#registerAndConnect().catch((error: unknown) => {
-            this.#options.context.log.debug("Happy machine registration will retry.", {}, error);
-            this.#scheduleRetry();
-        });
+        if (
+            this.#closed ||
+            this.#registering ||
+            this.#socket !== undefined ||
+            this.#retryTimer !== undefined
+        ) {
+            return;
+        }
+        this.#registering = true;
+        this.#announce({ status: "connecting" });
+        void this.#registerAndConnect().then(
+            () => {
+                this.#registering = false;
+            },
+            (error: unknown) => {
+                this.#registering = false;
+                const credentialsRejected =
+                    error instanceof HappyMachineRegistrationError && error.credentialsRejected;
+                this.#announce({
+                    message: credentialsRejected
+                        ? "Happy rejected the saved credentials."
+                        : "The Happy machine connection is unavailable.",
+                    reason: credentialsRejected ? "credentials_rejected" : "happy_unavailable",
+                    status: "disconnected",
+                });
+                if (credentialsRejected) {
+                    this.#options.context.log.debug(
+                        "Happy machine registration rejected the saved credentials.",
+                        {},
+                        error,
+                    );
+                } else {
+                    this.#options.context.log.debug(
+                        "Happy machine registration will retry.",
+                        {},
+                        error,
+                    );
+                    this.#scheduleRetry();
+                }
+            },
+        );
     }
 
     /** Stops appearing in Happy and releases everything held for it. */
@@ -109,10 +181,9 @@ export class HappyMachineClient {
         if (this.#closed) return;
         this.#closed = true;
         this.#closeController.abort();
-        if (this.#keepAliveTimer !== undefined) clearInterval(this.#keepAliveTimer);
         if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
-        this.#socket?.disconnect();
-        this.#socket = undefined;
+        this.#retryTimer = undefined;
+        this.#teardownSocket();
     }
 
     async #registerAndConnect(): Promise<void> {
@@ -149,7 +220,11 @@ export class HappyMachineClient {
                 ]),
             },
         );
-        if (!response.ok) throw new Error(`Happy answered with HTTP ${String(response.status)}.`);
+        if (!response.ok) {
+            throw new HappyMachineRegistrationError(
+                response.status === 401 || response.status === 403,
+            );
+        }
         const body: unknown = await response.json();
         if (!Value.Check(machineSchema, body)) {
             throw new Error("Happy returned a machine Happy Agent could not read.");
@@ -161,6 +236,7 @@ export class HappyMachineClient {
     }
 
     #connect(metadataVersion: number, daemonStateVersion: number): void {
+        const generation = ++this.#generation;
         const socket = (this.#options.socketFactory ?? connectHappySocket)(
             this.#options.configuration.serverUrl,
             {
@@ -178,18 +254,59 @@ export class HappyMachineClient {
             },
         );
         socket.on("connect", () => {
+            if (!this.#isCurrent(generation)) return;
+            this.#announce({ status: "connected" });
             socket.emit("rpc-register", { method: `${this.#machineId}:spawn-happy-session` });
-            this.#syncMetadata(metadataVersion, 0);
-            this.#syncDaemonState(daemonStateVersion, 0);
-            this.#sendAlive();
+            this.#syncMetadata(socket, generation, metadataVersion, 0);
+            this.#syncDaemonState(socket, generation, daemonStateVersion, 0);
+            this.#sendAlive(socket);
         });
         socket.on("rpc-request", (request: unknown, callback: (response: string) => void) => {
+            if (!this.#isCurrent(generation)) return;
             void this.#handleRpcRequest(request, callback);
         });
+        socket.on("disconnect", () => {
+            if (!this.#isCurrent(generation)) return;
+            // Socket.IO reconnects a dropped connection itself, and the machine
+            // registration it was built on is still good, so this only reports.
+            this.#announce({
+                message: "The connection to Happy was lost.",
+                reason: "happy_unavailable",
+                status: "disconnected",
+            });
+        });
+        socket.on("connect_error", () => {
+            if (!this.#isCurrent(generation)) return;
+            this.#announce({
+                message: "The Happy machine connection is unavailable.",
+                reason: "happy_unavailable",
+                status: "disconnected",
+            });
+            // A connection that never opened may have been refused by the
+            // registration behind it, so the socket is abandoned and the whole
+            // registration is made again rather than reconnected blindly.
+            this.#teardownSocket();
+            this.#scheduleRetry();
+        });
         this.#socket = socket;
-        this.#keepAliveTimer = setInterval(() => this.#sendAlive(), KEEP_ALIVE_INTERVAL_MS);
+        this.#keepAliveTimer = setInterval(() => this.#sendAlive(socket), KEEP_ALIVE_INTERVAL_MS);
         this.#keepAliveTimer.unref();
         socket.connect();
+    }
+
+    /** Abandons the current socket, so nothing it says afterwards is acted on. */
+    #teardownSocket(): void {
+        if (this.#keepAliveTimer !== undefined) clearInterval(this.#keepAliveTimer);
+        this.#keepAliveTimer = undefined;
+        this.#generation += 1;
+        const socket = this.#socket;
+        this.#socket = undefined;
+        socket?.disconnect();
+    }
+
+    /** Whether the socket a handler belongs to is still the one in use. */
+    #isCurrent(generation: number): boolean {
+        return !this.#closed && generation === this.#generation;
     }
 
     async #handleRpcRequest(request: unknown, callback: (response: string) => void): Promise<void> {
@@ -236,8 +353,8 @@ export class HappyMachineClient {
         return undefined;
     }
 
-    #syncMetadata(version: number, attempt: number): void {
-        if (this.#closed || this.#socket === undefined || attempt >= 3) return;
+    #syncMetadata(socket: HappySocket, generation: number, version: number, attempt: number): void {
+        if (!this.#isCurrent(generation) || attempt >= 3) return;
         const metadata = {
             ...this.#metadataBase,
             ...createHappyMachineMetadata({
@@ -250,7 +367,7 @@ export class HappyMachineClient {
                 ? { displayName: this.#metadataBase.displayName }
                 : {}),
         };
-        this.#socket.emit(
+        socket.emit(
             "machine-update-metadata",
             {
                 expectedVersion: version,
@@ -258,6 +375,7 @@ export class HappyMachineClient {
                 metadata: this.#encode(metadata),
             },
             (answer: unknown) => {
+                if (!this.#isCurrent(generation)) return;
                 if (!Value.Check(acknowledgementSchema, answer)) return;
                 if (answer.result === "success") {
                     this.#metadataBase = metadata;
@@ -266,15 +384,20 @@ export class HappyMachineClient {
                 if (answer.result === "version-mismatch" && answer.version !== undefined) {
                     const latest = this.#decode(answer.metadata);
                     if (Value.Check(recordSchema, latest)) this.#metadataBase = latest;
-                    this.#syncMetadata(answer.version, attempt + 1);
+                    this.#syncMetadata(socket, generation, answer.version, attempt + 1);
                 }
             },
         );
     }
 
-    #syncDaemonState(version: number, attempt: number): void {
-        if (this.#closed || this.#socket === undefined || attempt >= 3) return;
-        this.#socket.emit(
+    #syncDaemonState(
+        socket: HappySocket,
+        generation: number,
+        version: number,
+        attempt: number,
+    ): void {
+        if (!this.#isCurrent(generation) || attempt >= 3) return;
+        socket.emit(
             "machine-update-state",
             {
                 daemonState: this.#encode(this.#daemonState()),
@@ -282,19 +405,20 @@ export class HappyMachineClient {
                 machineId: this.#machineId,
             },
             (answer: unknown) => {
+                if (!this.#isCurrent(generation)) return;
                 if (
                     Value.Check(acknowledgementSchema, answer) &&
                     answer.result === "version-mismatch" &&
                     answer.version !== undefined
                 ) {
-                    this.#syncDaemonState(answer.version, attempt + 1);
+                    this.#syncDaemonState(socket, generation, answer.version, attempt + 1);
                 }
             },
         );
     }
 
-    #sendAlive(): void {
-        this.#socket?.emit("machine-alive", { machineId: this.#machineId, time: Date.now() });
+    #sendAlive(socket: HappySocket): void {
+        socket.emit("machine-alive", { machineId: this.#machineId, time: Date.now() });
     }
 
     #daemonState(): Record<string, unknown> {
@@ -308,6 +432,17 @@ export class HappyMachineClient {
             this.start();
         }, RETRY_INTERVAL_MS);
         this.#retryTimer.unref();
+    }
+
+    #announce(event: HappyMachineConnectionEvent): void {
+        if (this.#closed) return;
+        const key =
+            event.status === "disconnected"
+                ? `${event.status}:${event.reason}:${event.message}`
+                : event.status;
+        if (this.#connectionKey === key) return;
+        this.#connectionKey = key;
+        this.#options.onConnectionChanged?.(event);
     }
 
     #encode(value: unknown): string {

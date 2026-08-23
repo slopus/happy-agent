@@ -26,6 +26,7 @@ const SERVER = "https://api.happy.example";
 const KEY = Buffer.alloc(32, 7).toString("base64");
 
 const CONFIGURATION: HappyConnectionConfiguration = {
+    credentialFingerprint: "credential-fingerprint",
     credentials: { encryption: { secret: new Uint8Array(32), type: "legacy" }, token: "token" },
     credentialsPath: "/tmp/happy/access.key",
     happyHome: "/tmp/happy",

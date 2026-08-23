@@ -2,7 +2,12 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { HappyConnectionConfiguration } from "../HappyCredentials.js";
+import type {
+    HappyConnectionConfiguration,
+    HappyCredentials,
+    StoredHappyCredentials,
+} from "../HappyCredentials.js";
+import { createHappyCredentialFingerprint } from "./createHappyCredentialFingerprint.js";
 import { getHappyPaths } from "./getHappyPaths.js";
 import { loadOrCreateHappyMachineId } from "./loadOrCreateHappyMachineId.js";
 import { parseHappyCredentials } from "./parseHappyCredentials.js";
@@ -20,6 +25,10 @@ import { writeHappyJsonFile } from "./writeHappyJsonFile.js";
  * connected.
  */
 export async function importHappyCredentials(options: {
+    /** Whether a newer credential and settings from the external Happy CLI may be adopted. */
+    adoptExternalCredentials?: boolean;
+    /** Exact rejected credential identities that must not be loaded or adopted. */
+    blockedCredentialFingerprints?: ReadonlySet<string>;
     /** The agent's own data directory; the Happy copy lives in `happy/` beneath it. */
     dataDirectory: string;
     environment?: NodeJS.ProcessEnv;
@@ -28,26 +37,41 @@ export async function importHappyCredentials(options: {
     machineScope?: string;
 }): Promise<HappyConnectionConfiguration | undefined> {
     const environment = options.environment ?? process.env;
-    const homeDirectory = options.homeDirectory ?? homedir();
     const targetPaths = getHappyPaths(options.dataDirectory, options.machineScope);
-    const sourceHome = resolveHappyHome(environment, homeDirectory);
-    const sourceCredentials = await readJson(join(sourceHome, "access.key"));
-    const sourceSettings = await readJson(join(sourceHome, "settings.json"));
+    const adoptExternalCredentials = options.adoptExternalCredentials ?? true;
+    const sourceHome =
+        adoptExternalCredentials === true
+            ? resolveHappyHome(environment, options.homeDirectory ?? homedir())
+            : undefined;
+    const sourceCredentialsPath =
+        sourceHome === undefined ? undefined : join(sourceHome, "access.key");
+    const sourceCredentials =
+        sourceCredentialsPath === undefined
+            ? undefined
+            : await readCredential(sourceCredentialsPath);
+    const sourceSettings =
+        sourceHome === undefined ? undefined : await readJson(join(sourceHome, "settings.json"));
+    const sourceCredentialAllowed =
+        sourceCredentials === undefined ||
+        !options.blockedCredentialFingerprints?.has(sourceCredentials.fingerprint);
     let imported = false;
 
     if (
+        sourceCredentialsPath !== undefined &&
         sourceCredentials !== undefined &&
-        (await isNewerThanTarget(join(sourceHome, "access.key"), targetPaths.credentialsPath))
+        sourceCredentialAllowed &&
+        (await isNewerThanTarget(sourceCredentialsPath, targetPaths.credentialsPath))
     ) {
         try {
-            const parsed = parseHappyCredentials(sourceCredentials);
-            await writeHappyJsonFile(targetPaths.credentialsPath, parsed.stored);
+            await writeHappyJsonFile(targetPaths.credentialsPath, sourceCredentials.stored);
             imported = true;
         } catch {
-            // A malformed external Happy file must not replace a valid local copy.
+            // An external Happy file that cannot be copied must not replace a valid local copy.
         }
     }
     if (
+        sourceHome !== undefined &&
+        sourceCredentialAllowed &&
         isRecord(sourceSettings) &&
         (await isNewerThanTarget(join(sourceHome, "settings.json"), targetPaths.settingsPath))
     ) {
@@ -58,20 +82,22 @@ export async function importHappyCredentials(options: {
         }
     }
 
-    const targetCredentials = await readJson(targetPaths.credentialsPath);
-    if (targetCredentials === undefined) return undefined;
-    let parsed;
-    try {
-        parsed = parseHappyCredentials(targetCredentials);
-    } catch {
+    const targetCredentials = await readCredential(targetPaths.credentialsPath);
+    if (
+        targetCredentials === undefined ||
+        options.blockedCredentialFingerprints?.has(targetCredentials.fingerprint)
+    ) {
         return undefined;
     }
     const targetSettings = await readJson(targetPaths.settingsPath);
-    const sourceServerUrl = readString(sourceSettings, "serverUrl");
+    const sourceServerUrl = sourceCredentialAllowed
+        ? readString(sourceSettings, "serverUrl")
+        : undefined;
     const targetServerUrl = readString(targetSettings, "serverUrl");
     const machineId = await loadOrCreateHappyMachineId(targetPaths.machinePath);
     return {
-        credentials: parsed.credentials,
+        credentialFingerprint: targetCredentials.fingerprint,
+        credentials: targetCredentials.credentials,
         credentialsPath: targetPaths.credentialsPath,
         happyHome: targetPaths.directory,
         imported,
@@ -82,6 +108,76 @@ export async function importHappyCredentials(options: {
             ...(targetServerUrl === undefined ? {} : { targetServerUrl }),
         }),
     };
+}
+
+/**
+ * Reads only the daemon-owned Happy credential and settings.
+ *
+ * This deliberately does not inspect the external Happy home, copy anything,
+ * or create a machine identity, so disabled integrations can be inspected
+ * without adopting credentials or causing side effects.
+ */
+export async function inspectDaemonHappyCredentials(options: {
+    blockedCredentialFingerprints?: ReadonlySet<string>;
+    dataDirectory: string;
+    environment?: NodeJS.ProcessEnv;
+    machineScope?: string;
+}): Promise<HappyConnectionConfiguration | undefined> {
+    const environment = options.environment ?? process.env;
+    const targetPaths = getHappyPaths(options.dataDirectory, options.machineScope);
+    const targetCredentials = await readCredential(targetPaths.credentialsPath);
+    if (
+        targetCredentials === undefined ||
+        options.blockedCredentialFingerprints?.has(targetCredentials.fingerprint)
+    ) {
+        return undefined;
+    }
+    const targetSettings = await readJson(targetPaths.settingsPath);
+    const targetServerUrl = readString(targetSettings, "serverUrl");
+    return {
+        credentialFingerprint: targetCredentials.fingerprint,
+        credentials: targetCredentials.credentials,
+        credentialsPath: targetPaths.credentialsPath,
+        happyHome: targetPaths.directory,
+        imported: false,
+        serverUrl: resolveHappyServerUrl({
+            environment,
+            ...(targetServerUrl === undefined ? {} : { targetServerUrl }),
+        }),
+    };
+}
+
+/** Reads only the external Happy credential's non-secret identity for rejection tombstoning. */
+export async function readExternalHappyCredentialFingerprint(
+    options: {
+        environment?: NodeJS.ProcessEnv;
+        homeDirectory?: string;
+    } = {},
+): Promise<string | undefined> {
+    const environment = options.environment ?? process.env;
+    const homeDirectory = options.homeDirectory ?? homedir();
+    const sourceHome = resolveHappyHome(environment, homeDirectory);
+    return (await readCredential(join(sourceHome, "access.key")))?.fingerprint;
+}
+
+interface ReadHappyCredential {
+    readonly credentials: HappyCredentials;
+    readonly fingerprint: string;
+    readonly stored: StoredHappyCredentials;
+}
+
+async function readCredential(path: string): Promise<ReadHappyCredential | undefined> {
+    const value = await readJson(path);
+    if (value === undefined) return undefined;
+    try {
+        const parsed = parseHappyCredentials(value);
+        return {
+            ...parsed,
+            fingerprint: createHappyCredentialFingerprint(parsed.stored),
+        };
+    } catch {
+        return undefined;
+    }
 }
 
 async function readJson(path: string): Promise<unknown | undefined> {

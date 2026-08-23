@@ -5,6 +5,7 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("cursor_unavailable"),
     Type.Literal("draining"),
     Type.Literal("hash_mismatch"),
+    Type.Literal("happy_unavailable"),
     Type.Literal("internal"),
     Type.Literal("invalid_request"),
     Type.Literal("not_found"),

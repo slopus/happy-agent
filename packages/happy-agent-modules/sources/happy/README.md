@@ -4,9 +4,10 @@ This module connects an agent to Happy, the mobile app. A session running here
 shows up on the phone, streams as it works, and can be driven from there.
 
 ```
-Happy CLI credentials
-        |
-        v
+Happy CLI credentials       API QR pairing
+        |                         |
+        +------------+------------+
+                     v
   <data>/happy/{access.key,settings.json,machine.json}
         |
         v
@@ -20,6 +21,14 @@ Happy signs a person in once, on the phone, and the CLI stores the result in
 agent's own data directory whenever the CLI's copy is newer, so signing in with
 Happy anywhere on the machine signs this agent in too. No credentials means
 Happy is simply not connected; it is never an error.
+
+Clients can also pair this daemon directly through the Happy integration API.
+Starting the integration creates a two-minute, process-local authorization
+request and returns its opaque `happy://` data for a QR code. The daemon saves
+the credentials only after the phone authorizes that exact ephemeral key. An
+initial server failure never exposes a QR code that cannot work. The same API
+can cancel a pairing attempt, unlink only this daemon, or unlink and start a
+fresh pairing attempt. Unlinking never changes the external Happy CLI login.
 
 An account uses one of two encryption formats for its whole lifetime. A
 `legacy` account encrypts every payload with the account secret. A `dataKey`
@@ -40,16 +49,25 @@ key, so the account secret never leaves the phone.
 
 ## Storage
 
-Two tables carry what a restart must not lose. `happy_agent_happy_sessions`
-holds one row per attached agent: the session it mirrors, the tag that keeps
-remote session creation idempotent, the key its payloads are encrypted with,
-how far Happy's own stream has been read, and how far the agent's history has
-been projected. `happy_agent_happy_outbox` holds the messages that are written
-but not yet accepted, in the order they were produced.
+The sync database has two tables for what a restart must not lose.
+`happy_agent_happy_sessions` holds one row per attached agent: the session it
+mirrors, the tag that keeps remote session creation idempotent, the key its
+payloads are encrypted with, how far Happy's own stream has been read, and how
+far the agent's history has been projected. `happy_agent_happy_outbox` holds
+the messages that are written but not yet accepted, in the order they were
+produced.
 
 Both belong to the account that produced them. Signing in to a different
 account discards the remote identity, the cursor and the queue, because none of
 it belongs to the new account.
+
+Integration metadata has its own singleton table. It keeps the public
+snapshot's UUIDv7 high-water mark monotonic across restart and clock rollback,
+and remembers bounded SHA-256 fingerprints of credentials this daemon must not
+adopt again. Happy rejection and explicit unlink both suppress only the exact
+credential involved; a changed external login remains eligible, and successful
+pairing clears the rejection history. No token or encryption key is stored in
+this metadata.
 
 ## Projection
 
@@ -84,14 +102,25 @@ contract each of them needs — `HappySessionOperations` for the session client,
 `HappySpawnOperations` for a phone starting something new — so the wire handling
 can be exercised without a daemon behind it.
 
-Nobody starts it. The module registers its projection listener on the journal in
-its own constructor, because the journal must carry that listener from the moment
-it records anything; it takes its lifetime and the agent collection at
+The module registers its projection listener on the journal in its own
+constructor, because the journal must carry that listener from the moment it
+records anything; it takes its lifetime and the agent collection at
 `beforeStart`; and it connects to Happy at `afterStart`. Connecting last is the
 point. Publishing a session means describing what it is doing, and until every
-durable agent has been restored there is no honest answer to give — a phone would
-be shown a row of sessions that all look idle and then watch them correct
-themselves.
+durable agent has been restored there is no honest answer to give — a phone
+would be shown a row of sessions that all look idle and then watch them correct
+themselves. After startup, the API may ask the same module to begin pairing or
+resume a configured connection.
+
+The public integration state is a complete, versioned snapshot. Pairing,
+connecting, connected, disconnected and failed transitions are emitted through
+the installation event journal, while repeated observations of the same state
+are deduplicated. This gives API clients one authoritative object to replace
+instead of a collection of socket-derived flags to reconcile.
+
+Happy stays separate from required onboarding. Desktop bootstrap returns both
+objects together so a client may offer pairing during onboarding, but Happy
+connection state neither changes nor blocks onboarding completion.
 
 Nothing about talking to Happy is handed in, and nothing it takes is anything
 other than another module. Where the credentials live and what version to report

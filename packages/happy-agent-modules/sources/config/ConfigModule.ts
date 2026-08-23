@@ -1489,6 +1489,20 @@ export class ConfigModule implements AgentModule {
         return value.length > MAX_CONFIG_STRING_LENGTH ? undefined : value;
     }
 
+    /** The process-level Happy settings used to find and authorize the mobile integration. */
+    get happyEnvironment(): Readonly<NodeJS.ProcessEnv> {
+        const environment: NodeJS.ProcessEnv = {};
+        for (const name of [
+            "HAPPY_AGENT_HAPPY_SERVER_URL",
+            "HAPPY_HOME_DIR",
+            "HAPPY_SERVER_URL",
+        ] as const) {
+            const value = this.#environmentValue(name);
+            if (value !== undefined) environment[name] = value;
+        }
+        return environment;
+    }
+
     /** Bedrock serves its hosted search index from particular models, so an account may name one. */
     get bedrockSearchModels(): Readonly<Record<string, string>> {
         const models: Record<string, string> = {};

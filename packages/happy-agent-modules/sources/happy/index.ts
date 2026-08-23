@@ -92,8 +92,23 @@ export {
     type HappySpawnOperations,
     type HappySpawnResult,
 } from "./handleHappySpawnSession.js";
-export { HappyMachineClient, type HappyMachineClientOptions } from "./HappyMachineClient.js";
-export { HappyModule } from "./HappyModule.js";
+export {
+    HappyMachineClient,
+    type HappyMachineClientOptions,
+    type HappyMachineConnectionEvent,
+} from "./HappyMachineClient.js";
+export {
+    HAPPY_PAIRING_LIFETIME_MS,
+    HappyPairing,
+    HappyPairingError,
+    type HappyPairingErrorCode,
+    type HappyPairingOptions,
+} from "./HappyPairing.js";
+export {
+    HappyIntegrationStartError,
+    HappyModule,
+    type HappyIntegrationListener,
+} from "./HappyModule.js";
 export { connectHappySocket } from "./connectHappySocket.js";
 export { decryptHappyBlob } from "./crypto/decryptHappyBlob.js";
 export {
@@ -107,5 +122,9 @@ export { importHappyCredentials } from "./credentials/importHappyCredentials.js"
 export { loadOrCreateHappyMachineId } from "./credentials/loadOrCreateHappyMachineId.js";
 export { parseHappyCredentials } from "./credentials/parseHappyCredentials.js";
 export { resolveHappyHome } from "./credentials/resolveHappyHome.js";
+export {
+    resolveHappyConnectionTarget,
+    type HappyConnectionTarget,
+} from "./credentials/resolveHappyConnectionTarget.js";
 export { resolveHappyServerUrl } from "./credentials/resolveHappyServerUrl.js";
 export { writeHappyJsonFile } from "./credentials/writeHappyJsonFile.js";

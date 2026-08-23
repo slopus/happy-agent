@@ -52,6 +52,8 @@ export type HappyCredentials =
 
 /** Everything the Happy clients need to reach the account this machine is signed in to. */
 export interface HappyConnectionConfiguration {
+    /** Canonical SHA-256 identity of the stored credentials, safe to compare and persist. */
+    credentialFingerprint: string;
     credentials: HappyCredentials;
     credentialsPath: string;
     /** The directory holding this agent's copy of the Happy credentials, settings and machine identity. */

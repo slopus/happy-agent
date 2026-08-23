@@ -99,8 +99,13 @@ happy_integration = false
 
 Repository `happy.toml` files cannot enable or disable this machine-level
 integration. When enabled, Happy Agent automatically imports newer credentials from
-`~/.happy` when its daemon starts. To authenticate from the standalone terminal client,
-run:
+`~/.happy` when its daemon starts. Desktop and other API clients can read the
+current integration status, subscribe to connection updates, and start pairing
+through the daemon API; the start response includes opaque `happy://` data to
+render as a QR code. Clients can also cancel pairing, unlink this daemon, or
+deliberately re-pair it. Happy is available alongside onboarding in desktop
+bootstrap, but remains optional and never blocks onboarding completion. To
+authenticate from the standalone terminal client, run:
 
 ```sh
 happy-terminal happy auth

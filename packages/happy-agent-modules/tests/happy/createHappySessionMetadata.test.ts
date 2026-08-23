@@ -11,6 +11,7 @@ import type {
 } from "../../sources/happy/index.js";
 
 const CONFIGURATION: HappyConnectionConfiguration = {
+    credentialFingerprint: "credential-fingerprint",
     credentials: { encryption: { secret: new Uint8Array(32), type: "legacy" }, token: "token" },
     credentialsPath: "/home/steve/.rig/happy/access.key",
     happyHome: "/home/steve/.rig/happy",

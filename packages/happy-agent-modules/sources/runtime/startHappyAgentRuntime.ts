@@ -462,6 +462,7 @@ export async function startHappyAgentRuntime(
             usage,
             providerUsage,
             providerScan,
+            happy,
             profile,
             compute.computeModule,
             slashCommands,

@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import type { HappyIntegration, HappyIntegrationError } from "@slopus/happy-agent-client";
 import {
     agentDatabase,
     agentPermissionModeSchema,
@@ -28,10 +30,26 @@ import type { SessionInputBlock, SessionUserMessage } from "@slopus/happy-provid
 import { afterCommit, detach, type Context } from "@steve.kite/stdlib";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
-import { importHappyCredentials } from "./credentials/importHappyCredentials.js";
+import {
+    importHappyCredentials,
+    inspectDaemonHappyCredentials,
+    readExternalHappyCredentialFingerprint,
+} from "./credentials/importHappyCredentials.js";
+import { getHappyPaths } from "./credentials/getHappyPaths.js";
+import {
+    resolveHappyConnectionTarget,
+    type HappyConnectionTarget,
+} from "./credentials/resolveHappyConnectionTarget.js";
+import { saveHappyPairingCredentials } from "./credentials/saveHappyPairingCredentials.js";
+import { createHappyIntegrationVersion } from "./createHappyIntegrationVersion.js";
+import {
+    createHappyIntegrationDatabase,
+    happyIntegrationMigrations,
+} from "./HappyIntegrationDatabase.js";
 import type { HappySpawnOperations } from "./handleHappySpawnSession.js";
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
-import { HappyMachineClient } from "./HappyMachineClient.js";
+import { HappyMachineClient, type HappyMachineConnectionEvent } from "./HappyMachineClient.js";
+import { HappyPairing, HappyPairingError } from "./HappyPairing.js";
 import type {
     HappyInboundMessage,
     HappyModel,
@@ -66,6 +84,10 @@ const acceptedEventPayloadSchema = Type.Object(
 );
 
 type HappySelection = Static<typeof happySelectionSchema>;
+type WithoutIntegrationSnapshotFields<Value> = Value extends unknown
+    ? Omit<Value, "updatedAt" | "version">
+    : never;
+type HappyIntegrationValue = WithoutIntegrationSnapshotFields<HappyIntegration>;
 
 interface HappySelectionModel {
     readonly effortLevels: readonly string[];
@@ -83,6 +105,27 @@ interface ConnectedAgent {
     readonly mapper: HappyMessageMapper;
 }
 
+export type HappyIntegrationListener = (
+    ctx: Context,
+    integration: HappyIntegration,
+) => Promise<void> | void;
+
+export class HappyIntegrationStartError extends Error {
+    readonly code: "happy_unavailable" | "unsupported";
+    readonly integration: HappyIntegration;
+
+    constructor(
+        code: "happy_unavailable" | "unsupported",
+        message: string,
+        integration: HappyIntegration,
+    ) {
+        super(message);
+        this.name = "HappyIntegrationStartError";
+        this.code = code;
+        this.integration = integration;
+    }
+}
+
 /**
  * The connection between this daemon and Happy, the mobile app.
  *
@@ -94,8 +137,9 @@ export class HappyModule
     implements AgentModule<AnyAgentTool>, HappySessionOperations, HappySpawnOperations
 {
     readonly name = "happy";
-    readonly migrations = happySyncMigrations;
+    readonly migrations = [...happySyncMigrations, ...happyIntegrationMigrations];
     readonly #agents = new Map<string, ConnectedAgent>();
+    readonly #trackedAgentIds = new Set<string>();
     readonly #config: ConfigModule;
     readonly #history: HistoryModule;
     readonly #scheduling: SchedulingModule;
@@ -103,11 +147,20 @@ export class HappyModule
     readonly #userInput: UserInputModule;
     readonly #workspaces: WorkspacesModule;
     readonly #sync = createHappySyncDatabase();
+    readonly #integrationDatabase = createHappyIntegrationDatabase();
+    readonly #integrationListeners = new Set<HappyIntegrationListener>();
     #agentSystem: AgentSystemRef<LibSQLDatabase> | undefined;
     #configuration: HappyConnectionConfiguration | undefined;
     #context: Context | undefined;
     #fingerprint = "";
+    #integration: HappyIntegration;
     #machine: HappyMachineClient | undefined;
+    #pairing: HappyPairing | undefined;
+    #pairingGeneration = 0;
+    #integrationStart: Promise<HappyIntegration> | undefined;
+    #integrationUpdates: Promise<void> = Promise.resolve();
+    #lifecycleUpdates: Promise<void> = Promise.resolve();
+    #stopping = false;
 
     constructor(
         config: ConfigModule,
@@ -124,6 +177,17 @@ export class HappyModule
         this.#scheduling = scheduling;
         this.#userInput = userInput;
         this.#workspaces = workspaces;
+        const now = Date.now();
+        this.#integration = {
+            authorization: null,
+            configured: false,
+            error: null,
+            status: config.configuration.values.settings.happyIntegration
+                ? "disconnected"
+                : "disabled",
+            updatedAt: now,
+            version: createHappyIntegrationVersion(undefined, () => now),
+        };
         // The journal must know who projects it from the moment it records anything.
         events.observe(this.#eventsListener);
     }
@@ -135,7 +199,11 @@ export class HappyModule
             this.#agents.get(event.agentId)?.client.kick();
         },
         onEventTransactional: async (ctx: Context, event: AgentEvent): Promise<void> => {
-            if (this.#configuration === undefined || event.agentId === undefined) return;
+            if (event.agentId === undefined) return;
+            // Pairing can complete while agents already exist. Remember every durable agent
+            // observed before credentials arrive so the new connection can attach it immediately.
+            this.#trackedAgentIds.add(event.agentId);
+            if (this.#configuration === undefined) return;
             const attached = await this.#attach(ctx, event.agentId);
             if (attached === undefined) return;
             const accepted =
@@ -171,42 +239,486 @@ export class HappyModule
     async #connect(ctx: Context): Promise<void> {
         const context = this.#context;
         if (context === undefined) return;
+        await this.#initializeIntegration(context);
+        const blockedCredentialFingerprints = new Set(
+            (await this.#integrationDatabase.read(context)).blockedCredentialFingerprints,
+        );
         if (!this.#config.configuration.values.settings.happyIntegration) {
+            const configuration = await inspectDaemonHappyCredentials({
+                blockedCredentialFingerprints,
+                dataDirectory: this.#config.configuration.paths.agentHome,
+                environment: this.#config.happyEnvironment,
+            });
+            this.#configuration = configuration;
+            await this.#setIntegration(context, {
+                authorization: null,
+                configured: configuration !== undefined,
+                error: null,
+                status: "disabled",
+            });
             ctx.log.debug("Happy synchronization is turned off in the configuration.");
             return;
         }
         const configuration = await importHappyCredentials({
+            blockedCredentialFingerprints,
             dataDirectory: this.#config.configuration.paths.agentHome,
+            environment: this.#config.happyEnvironment,
         });
         if (configuration === undefined) {
+            this.#configuration = undefined;
+            await this.#setIntegration(context, {
+                authorization: null,
+                configured: false,
+                error: null,
+                status: "disconnected",
+            });
             ctx.log.debug("Happy is not connected on this machine.");
             return;
         }
-        this.#configuration = configuration;
-        this.#fingerprint = fingerprint(configuration);
-        if (configuration.machineId === undefined) {
-            ctx.log.debug("Happy has no machine identity for this computer.");
-            return;
-        }
-        this.#machine = new HappyMachineClient({
-            configuration,
-            context,
-            models: () => this.models(),
-            operations: this,
-            remoteSessionId: async (agentId) =>
-                (await this.#sync.readSession(context, agentId))?.remoteSessionId,
-            version: this.#config.configuration.version,
-        });
-        this.#machine.start();
+        await this.#activate(context, configuration);
+    }
+
+    async #initializeIntegration(ctx: Context): Promise<void> {
+        const updatedAt = Date.now();
+        const version = await this.#integrationDatabase.reserveVersion(ctx, () => updatedAt);
+        this.#integration = { ...this.#integration, updatedAt, version };
     }
 
     /** Stops talking to Happy, which the daemon does as it shuts down. */
     async stop(): Promise<void> {
+        this.#stopping = true;
+        this.#pairingGeneration += 1;
+        this.#integrationStart = undefined;
+        const pairing = this.#pairing;
+        this.#pairing = undefined;
+        pairing?.close();
+        // Cleanup must run after any lifecycle transition that already passed its stopping check.
+        // Otherwise an authorization settling concurrently with shutdown could create a machine
+        // client after the direct cleanup had already finished.
+        await this.#withLifecycleUpdate(async () => await this.#closeHappyClients());
+        await this.#integrationUpdates;
+    }
+
+    /** Reads the installation-wide Happy integration snapshot. */
+    integration(_ctx: Context): HappyIntegration {
+        return this.#integration;
+    }
+
+    /** Watches complete integration snapshot replacements. */
+    onIntegrationUpdated(listener: HappyIntegrationListener): () => void {
+        this.#integrationListeners.add(listener);
+        return () => {
+            this.#integrationListeners.delete(listener);
+        };
+    }
+
+    /** Starts or joins Happy authorization and connection work. */
+    async startIntegration(ctx: Context): Promise<HappyIntegration> {
+        if (!this.#config.configuration.values.settings.happyIntegration) {
+            throw new HappyIntegrationStartError(
+                "unsupported",
+                "The Happy integration is disabled in this daemon.",
+                this.#integration,
+            );
+        }
+        const existing = this.#integrationStart;
+        if (existing !== undefined) return await existing;
+        const generation = this.#pairingGeneration;
+        const started = this.#startIntegration(this.#context ?? ctx, generation);
+        this.#integrationStart = started;
+        try {
+            return await started;
+        } finally {
+            if (this.#integrationStart === started) this.#integrationStart = undefined;
+        }
+    }
+
+    async #startIntegration(ctx: Context, generation: number): Promise<HappyIntegration> {
+        if (this.#stopping || generation !== this.#pairingGeneration) return this.#integration;
+        if (this.#pairing !== undefined) return this.#integration;
+        if (this.#configuration !== undefined) {
+            if (this.#machine === undefined) {
+                const outcome = await this.#withLifecycleUpdate(async () => {
+                    if (this.#stopping || generation !== this.#pairingGeneration) return "stale";
+                    if (this.#pairing !== undefined) return "activated";
+                    if (this.#configuration === undefined) return "pair";
+                    if (this.#machine !== undefined) {
+                        this.#machine.start();
+                        return "activated";
+                    }
+                    const blockedCredentialFingerprints = new Set(
+                        (await this.#integrationDatabase.read(ctx)).blockedCredentialFingerprints,
+                    );
+                    const refreshed = await importHappyCredentials({
+                        blockedCredentialFingerprints,
+                        dataDirectory: this.#config.configuration.paths.agentHome,
+                        environment: this.#config.happyEnvironment,
+                    });
+                    if (this.#stopping || generation !== this.#pairingGeneration) return "stale";
+                    if (refreshed === undefined) {
+                        this.#configuration = undefined;
+                        return "pair";
+                    }
+                    await this.#activate(ctx, refreshed);
+                    return "activated";
+                });
+                if (outcome !== "pair") return this.#integration;
+            } else {
+                if (this.#stopping || generation !== this.#pairingGeneration) {
+                    return this.#integration;
+                }
+                this.#machine.start();
+                return this.#integration;
+            }
+        }
+        if (this.#stopping || generation !== this.#pairingGeneration) return this.#integration;
+        return await this.#beginPairing(ctx, generation);
+    }
+
+    /** Cancels the current QR attempt without changing durable credentials. */
+    async cancelIntegration(ctx: Context): Promise<HappyIntegration> {
+        this.#pairingGeneration += 1;
+        this.#integrationStart = undefined;
+        const pairing = this.#pairing;
+        this.#pairing = undefined;
+        pairing?.close();
+        return await this.#withLifecycleUpdate(async () => {
+            if (this.#integration.status !== "pairing") return this.#integration;
+            return await this.#setIntegration(this.#context ?? ctx, {
+                authorization: null,
+                configured: false,
+                error: null,
+                status: "disconnected",
+            });
+        });
+    }
+
+    /** Unlinks the daemon-owned Happy account without changing the external Happy CLI. */
+    async disconnectIntegration(ctx: Context): Promise<HappyIntegration> {
+        this.#pairingGeneration += 1;
+        this.#integrationStart = undefined;
+        const pairing = this.#pairing;
+        const hadActivePairing = pairing !== undefined;
+        this.#pairing = undefined;
+        pairing?.close();
+        return await this.#withLifecycleUpdate(async () => {
+            // Idempotence covers credential suppression too. Once this daemon is already
+            // unlinked, a repeated request must not tombstone a genuinely new external login.
+            if (!hadActivePairing && isUnlinkedIntegration(this.#integration)) {
+                return this.#integration;
+            }
+            const context = this.#context ?? ctx;
+            await this.#rememberUnlinkedCredentials(context, true);
+            await this.#closeHappyClients();
+            this.#configuration = undefined;
+            this.#fingerprint = "";
+            const credentialsPath = getHappyPaths(
+                this.#config.configuration.paths.agentHome,
+            ).credentialsPath;
+            await rm(credentialsPath, { force: true }).catch((error: unknown) => {
+                context.log.debug(
+                    "Happy credentials could not be removed while unlinking.",
+                    {},
+                    error,
+                );
+            });
+            return await this.#setIntegration(context, {
+                authorization: null,
+                configured: false,
+                error: null,
+                status: this.#config.configuration.values.settings.happyIntegration
+                    ? "disconnected"
+                    : "disabled",
+            });
+        });
+    }
+
+    /** Replaces any current Happy authorization with a fresh QR attempt. */
+    async rePairIntegration(ctx: Context): Promise<HappyIntegration> {
+        if (!this.#config.configuration.values.settings.happyIntegration) {
+            throw new HappyIntegrationStartError(
+                "unsupported",
+                "The Happy integration is disabled in this daemon.",
+                this.#integration,
+            );
+        }
+        await this.disconnectIntegration(ctx);
+        return await this.startIntegration(ctx);
+    }
+
+    async #beginPairing(ctx: Context, generation: number): Promise<HappyIntegration> {
+        const database = agentDatabase(ctx);
+        if (database === undefined) {
+            throw new Error("Happy pairing was started without an agent database.");
+        }
+        const target = await resolveHappyConnectionTarget({
+            dataDirectory: this.#config.configuration.paths.agentHome,
+            environment: this.#config.happyEnvironment,
+        });
+        let pairing: HappyPairing;
+        try {
+            pairing = await HappyPairing.start({
+                serverUrl: target.serverUrl,
+                version: this.#config.configuration.version,
+            });
+            // Ownership can be invalidated before the lifecycle queue accepts this pairing.
+            // Mark rejection as observed immediately; #settlePairing still handles the original
+            // promise whenever this attempt becomes the module's active pairing.
+            void pairing.result.catch(() => undefined);
+        } catch (error: unknown) {
+            if (generation !== this.#pairingGeneration || this.#stopping) {
+                return this.#integration;
+            }
+            ctx.log.debug("Happy authorization could not be started.", {}, error);
+            throw new HappyIntegrationStartError(
+                "happy_unavailable",
+                "Happy is unavailable. Please try again.",
+                this.#integration,
+            );
+        }
+        return await this.#withLifecycleUpdate(async () => {
+            if (this.#stopping || generation !== this.#pairingGeneration) {
+                pairing.close();
+                return this.#integration;
+            }
+            this.#pairing = pairing;
+            await this.#setIntegration(ctx, {
+                authorization: pairing.authorization,
+                configured: false,
+                error: null,
+                status: "pairing",
+            });
+            void this.#settlePairing(
+                withAgentDatabase(detach(ctx).named("happy-pairing"), database),
+                pairing,
+                target,
+            );
+            return this.#integration;
+        });
+    }
+
+    async #settlePairing(
+        ctx: Context,
+        pairing: HappyPairing,
+        target: HappyConnectionTarget,
+    ): Promise<void> {
+        try {
+            const credentials = await pairing.result;
+            await this.#withLifecycleUpdate(async () => {
+                if (this.#pairing !== pairing || this.#stopping) return;
+                await saveHappyPairingCredentials(target, credentials);
+                await this.#integrationDatabase.clearBlockedCredentialFingerprints(ctx);
+                const configuration = await importHappyCredentials({
+                    adoptExternalCredentials: false,
+                    dataDirectory: this.#config.configuration.paths.agentHome,
+                    environment: this.#config.happyEnvironment,
+                });
+                if (configuration === undefined) {
+                    throw new HappyPairingError(
+                        "invalid_response",
+                        "The saved Happy credentials could not be loaded.",
+                    );
+                }
+                this.#pairing = undefined;
+                await this.#activate(ctx, configuration);
+            });
+        } catch (error: unknown) {
+            await this.#withLifecycleUpdate(async () => {
+                if (this.#pairing !== pairing || this.#stopping) return;
+                this.#pairing = undefined;
+                const projected = pairingError(error);
+                ctx.log.debug(
+                    "Happy authorization did not complete.",
+                    { code: projected.code },
+                    error,
+                );
+                await this.#setIntegration(ctx, {
+                    authorization: null,
+                    configured: false,
+                    error: projected,
+                    status: "failed",
+                });
+            });
+        }
+    }
+
+    async #activate(ctx: Context, configuration: HappyConnectionConfiguration): Promise<void> {
+        await this.#closeHappyClients();
+        this.#configuration = configuration;
+        this.#fingerprint = fingerprint(configuration);
+        await this.#setIntegration(ctx, {
+            authorization: null,
+            configured: true,
+            error: null,
+            status: "connecting",
+        });
+        if (configuration.machineId === undefined) {
+            await this.#setIntegration(ctx, {
+                authorization: null,
+                configured: true,
+                error: {
+                    code: "invalid_response",
+                    message: "Happy Agent could not create its Happy machine identity.",
+                },
+                status: "failed",
+            });
+            return;
+        }
+        let machine!: HappyMachineClient;
+        machine = new HappyMachineClient({
+            configuration,
+            context: ctx,
+            models: () => this.models(),
+            onConnectionChanged: (event) => {
+                void this.#handleMachineConnection(ctx, machine, event).catch((error: unknown) => {
+                    ctx.log.error("Happy connection state could not be recorded.", {}, error);
+                });
+            },
+            operations: this,
+            remoteSessionId: async (agentId) =>
+                (await this.#sync.readSession(ctx, agentId))?.remoteSessionId,
+            version: this.#config.configuration.version,
+        });
+        this.#machine = machine;
+        machine.start();
+        await Promise.all(
+            [...this.#trackedAgentIds].map(async (agentId) => await this.#attach(ctx, agentId)),
+        );
+    }
+
+    async #handleMachineConnection(
+        ctx: Context,
+        machine: HappyMachineClient,
+        event: HappyMachineConnectionEvent,
+    ): Promise<void> {
+        if (this.#machine !== machine || this.#stopping) return;
+        if (event.status === "connected") {
+            await this.#setIntegration(ctx, {
+                authorization: null,
+                configured: true,
+                error: null,
+                status: "connected",
+            });
+            return;
+        }
+        if (event.status === "connecting") {
+            // Registration retries remain one stable disconnected snapshot until they succeed.
+            if (this.#integration.status === "disconnected") return;
+            await this.#setIntegration(ctx, {
+                authorization: null,
+                configured: true,
+                error: null,
+                status: "connecting",
+            });
+            return;
+        }
+        if (event.reason === "credentials_rejected") {
+            await this.#withLifecycleUpdate(
+                async () => await this.#invalidateCredentials(ctx, machine, event.message),
+            );
+            return;
+        }
+        await this.#setIntegration(ctx, {
+            authorization: null,
+            configured: true,
+            error: { code: "happy_unavailable", message: event.message },
+            status: "disconnected",
+        });
+    }
+
+    async #invalidateCredentials(
+        ctx: Context,
+        machine: HappyMachineClient,
+        message: string,
+    ): Promise<void> {
+        if (this.#machine !== machine) return;
+        const credentialsPath = this.#configuration?.credentialsPath;
+        await this.#rememberUnlinkedCredentials(ctx, false);
+        await this.#closeHappyClients();
+        this.#configuration = undefined;
+        this.#fingerprint = "";
+        if (credentialsPath !== undefined) {
+            await rm(credentialsPath, { force: true }).catch((error: unknown) => {
+                ctx.log.debug("Rejected Happy credentials could not be removed.", {}, error);
+            });
+        }
+        await this.#setIntegration(ctx, {
+            authorization: null,
+            configured: false,
+            error: { code: "credentials_rejected", message },
+            status: "failed",
+        });
+    }
+
+    async #setIntegration(ctx: Context, value: HappyIntegrationValue): Promise<HappyIntegration> {
+        return await this.#withIntegrationUpdate(async () => {
+            if (sameIntegration(this.#integration, value)) return this.#integration;
+            const updatedAt = Date.now();
+            const version = await this.#integrationDatabase.reserveVersion(
+                this.#context ?? ctx,
+                () => updatedAt,
+            );
+            const integration = { ...value, updatedAt, version } as HappyIntegration;
+            this.#integration = integration;
+            await Promise.all(
+                [...this.#integrationListeners].map(
+                    async (listener) => await listener(ctx, integration),
+                ),
+            );
+            return integration;
+        });
+    }
+
+    async #rememberUnlinkedCredentials(
+        ctx: Context,
+        suppressCurrentExternalCredential: boolean,
+    ): Promise<void> {
+        const owned = await inspectDaemonHappyCredentials({
+            dataDirectory: this.#config.configuration.paths.agentHome,
+            environment: this.#config.happyEnvironment,
+        });
+        const external = await readExternalHappyCredentialFingerprint({
+            environment: this.#config.happyEnvironment,
+        });
+        const ownedFingerprints = [
+            this.#configuration?.credentialFingerprint,
+            owned?.credentialFingerprint,
+        ].filter((value): value is string => value !== undefined);
+        const fingerprints = [
+            ...ownedFingerprints,
+            ...(external !== undefined &&
+            (suppressCurrentExternalCredential || ownedFingerprints.includes(external))
+                ? [external]
+                : []),
+        ];
+        if (fingerprints.length === 0) return;
+        await this.#integrationDatabase.addBlockedCredentialFingerprints(ctx, fingerprints);
+    }
+
+    async #closeHappyClients(): Promise<void> {
         this.#machine?.close();
         this.#machine = undefined;
-        const agents = [...this.#agents.values()];
+        const connected = [...this.#agents.values()];
         this.#agents.clear();
-        await Promise.all(agents.map(async (agent) => await agent.client.close()));
+        await Promise.all(connected.map(async (agent) => await agent.client.close()));
+    }
+
+    async #withIntegrationUpdate<Value>(operation: () => Promise<Value>): Promise<Value> {
+        const run = this.#integrationUpdates.then(operation);
+        this.#integrationUpdates = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return await run;
+    }
+
+    async #withLifecycleUpdate<Value>(operation: () => Promise<Value>): Promise<Value> {
+        const run = this.#lifecycleUpdates.then(operation);
+        this.#lifecycleUpdates = run.then(
+            () => undefined,
+            () => undefined,
+        );
+        return await run;
     }
 
     /** Sends everything owed and waits for it, which is what a shutdown and a test need. */
@@ -347,6 +859,7 @@ export class HappyModule
         if (this.#agents.size >= MAX_CONNECTED_AGENTS) return undefined;
         const session = await this.session(ctx, agentId);
         if (session === undefined) return undefined;
+        this.#trackedAgentIds.add(agentId);
         await this.#sync.ensureSession(
             ctx,
             {
@@ -380,6 +893,7 @@ export class HappyModule
     async #detach(ctx: Context, agentId: string): Promise<void> {
         const attached = this.#agents.get(agentId);
         this.#agents.delete(agentId);
+        this.#trackedAgentIds.delete(agentId);
         if (attached === undefined) return;
         afterCommit(ctx, () => {
             void attached.client.archive();
@@ -478,6 +992,37 @@ function fingerprint(configuration: HappyConnectionConfiguration): string {
         .update(configuration.serverUrl)
         .digest("hex")
         .slice(0, 32);
+}
+
+function pairingError(error: unknown): HappyIntegrationError {
+    if (error instanceof HappyPairingError && error.code !== "cancelled") {
+        return { code: error.code, message: error.message };
+    }
+    return {
+        code: "invalid_response",
+        message: "Happy authorization could not be completed.",
+    };
+}
+
+function sameIntegration(current: HappyIntegration, value: HappyIntegrationValue): boolean {
+    return (
+        current.status === value.status &&
+        current.configured === value.configured &&
+        current.authorization?.kind === value.authorization?.kind &&
+        current.authorization?.data === value.authorization?.data &&
+        current.authorization?.expiresAt === value.authorization?.expiresAt &&
+        current.error?.code === value.error?.code &&
+        current.error?.message === value.error?.message
+    );
+}
+
+function isUnlinkedIntegration(integration: HappyIntegration): boolean {
+    return (
+        integration.configured === false &&
+        integration.authorization === null &&
+        integration.error === null &&
+        (integration.status === "disabled" || integration.status === "disconnected")
+    );
 }
 
 function messageFrom(message: HappyInboundMessage): SessionUserMessage {
