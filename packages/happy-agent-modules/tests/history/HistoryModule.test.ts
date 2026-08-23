@@ -331,6 +331,18 @@ describe("HistoryModule durability", () => {
         } as never;
 
         try {
+            await history.record(database.context, "agent-a", {
+                blocks: [
+                    {
+                        arguments: {},
+                        callId: "call-display-error",
+                        name: "list_files",
+                        type: "tool_call",
+                    },
+                ],
+                recordId: "inference-display-error",
+                role: "assistant",
+            });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: "{}",
                 callId: "call-display-error",
@@ -345,7 +357,7 @@ describe("HistoryModule durability", () => {
             });
 
             const page = await history.read(database.context, "agent-a");
-            expect(page.messages[0]?.message.blocks[0]).toMatchObject({
+            expect(page.messages[0]?.message.blocks[1]).toMatchObject({
                 display: "Tool list_files failed.",
                 isError: true,
                 output: "no such directory",
@@ -375,6 +387,18 @@ describe("HistoryModule durability", () => {
         } as never;
 
         try {
+            await history.record(database.context, "agent-a", {
+                blocks: [
+                    {
+                        arguments: {},
+                        callId: "call-display-2",
+                        name: "list_files",
+                        type: "tool_call",
+                    },
+                ],
+                recordId: "inference-display-fallback",
+                role: "assistant",
+            });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: "{}",
                 callId: "call-display-2",
@@ -388,7 +412,7 @@ describe("HistoryModule durability", () => {
             });
 
             const page = await history.read(database.context, "agent-a");
-            expect(page.messages[0]?.message.blocks[0]).toMatchObject({
+            expect(page.messages[0]?.message.blocks[1]).toMatchObject({
                 display: "Tool list_files returned 8 characters.",
             });
         } finally {

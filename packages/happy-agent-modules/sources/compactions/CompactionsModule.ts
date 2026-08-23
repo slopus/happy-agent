@@ -154,7 +154,7 @@ export class CompactionsModule implements AgentModule {
                 agentId,
                 id,
                 runId: id,
-                replacedMessageIds: await this.history.compactionMessageIds(txCtx, agentId),
+                replacedMessageIds: [],
                 startedAt,
                 status: "running",
                 ...(current.currentContext === undefined
@@ -266,7 +266,7 @@ export class CompactionsModule implements AgentModule {
                 agentId: scope.agent.id,
                 id: attempt.compactionId,
                 runId,
-                replacedMessageIds: await this.history.compactionMessageIds(txCtx, scope.agent.id),
+                replacedMessageIds: [],
                 startedAt,
                 status: "running",
                 ...(tokensBefore === undefined ? {} : { tokensBefore }),

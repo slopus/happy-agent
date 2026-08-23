@@ -6,9 +6,12 @@ away as the conversation moves. The history is what was said and done, kept whet
 model can still see it — so a conversation reset by an incompatible model switch loses its context
 entirely and loses none of its history.
 
-The module writes as the agent works: every accepted user message, every completed assistant
-response, every tool result, and every failed inference, from inside the transactions that commit
-that work, so the record and the thing recorded become durable together.
+The module writes as the agent works: every accepted user message, every completed provider
+inference as its own assistant message, every tool result, and every failed inference, from inside
+the transactions that commit that work, so the record and the thing recorded become durable
+together. Completed messages are append-only. A tool result and its permission review are the
+narrow exceptions: the tool-call index updates the inference message that owns the matching call
+ID.
 
 The record keeps who actually sent each incoming message. An actual system-role message remains
 `role: "system"`. Goal continuations, collaboration deliveries, and some other generated messages
@@ -112,10 +115,12 @@ tool calls, and tool results), let the model size what it did and did not see wi
   archive.
 
 The module also implements the `AgentModule` lifecycle hooks that do the recording:
+`beforeInferenceTransact` (retains the inference identity until its message commits),
 `onEventTransact` (buffers each completed text/thinking/tool-call block), `messageAcceptedTransact`
 (records an accepted user message), `beforeToolCallTransact`/`afterToolCallTransact` (record one
-tool result per call, including its one-line display summary), `afterInferenceTransact` (writes the
-finished response and, if inference failed, a separate `role: "error"` message), and
+tool result per call on the message containing that call, including its one-line display summary),
+`afterInferenceTransact` (writes the finished response and, if inference failed, a separate
+`role: "error"` message), and
 `afterAgentSettledTransact` (flushes any response blocks still pending after an interruption).
 These are not meant to be called directly.
 
@@ -133,6 +138,8 @@ run-scoped Agent KV the Agent Base lends the module, under these keys:
 
 - `pending_blocks` — the array of `HistoryBlock`s (text, thinking, tool calls) accumulated by
   `onEventTransact` since the last flush, up to `MAX_HISTORY_PENDING_BLOCKS` (2,048) entries.
+- `pending_inference_id` — the stable inference ID that becomes the next assistant message ID;
+  retained until the pending blocks commit or settlement flushes them after interruption.
 - `tool_name` — the name of the tool currently dispatched, written by `beforeToolCallTransact` and
   read back by `afterToolCallTransact`.
 

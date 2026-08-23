@@ -77,6 +77,7 @@ const activeRunSchema = Type.Object(
          * it from the raw provider event it may not understand.
          */
         errorMessage: Type.Optional(Type.String({ maxLength: 8_192 })),
+        inferenceId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
         runId: Type.String({ minLength: 1, maxLength: 256 }),
         hasProviderEvent: Type.Boolean(),
         stopReason: Type.Union([
@@ -427,6 +428,15 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             this.#openingLoops.set(scope.agent.id, loop);
         },
 
+        beforeInferenceTransact: async (ctx, scope, inference): Promise<void> => {
+            const current = this.#runs.get(scope.agent.id) ?? emptyRun(inference.loopId);
+            const next = { ...current, inferenceId: inference.inferenceId };
+            await saveActiveRun(ctx.db, scope.agent.id, next);
+            afterCommit(ctx, () => {
+                this.#runs.set(scope.agent.id, next);
+            });
+        },
+
         onEvent: async (
             ctx: Context,
             scope: AgentModuleScope,
@@ -705,12 +715,13 @@ function projectProviderEvent(
 ): { readonly rigEvent?: UnknownRecord; readonly run: ActiveRun } {
     let run = structuredClone(previous);
     let rigEvent: UnknownRecord | undefined;
-    const messageId = `${run.runId}-assistant`;
+    const messageId = run.inferenceId ?? `${run.runId}-assistant`;
     if (event.type === "block_start") {
         run = {
             ...emptyRun(run.runId),
             acceptedMessageIds: run.acceptedMessageIds,
             hasProviderEvent: true,
+            ...(run.inferenceId === undefined ? {} : { inferenceId: run.inferenceId }),
             stopReason: run.stopReason,
         };
         rigEvent = { messageId, type: "block_start" };
@@ -723,6 +734,7 @@ function projectProviderEvent(
             ...emptyRun(run.runId),
             acceptedMessageIds: run.acceptedMessageIds,
             hasProviderEvent: true,
+            ...(run.inferenceId === undefined ? {} : { inferenceId: run.inferenceId }),
             stopReason: run.stopReason,
         };
         rigEvent = { messageId, partial: partialMessage(run, now), type: "block_reset" };

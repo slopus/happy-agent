@@ -1452,6 +1452,7 @@ export class ApiModule implements AgentModule {
         const { messageId, runId } = apiAssistantIdentityForProviderEvent(
             type,
             underlyingRunId,
+            stringValue(rigEvent?.["messageId"]),
             streaming,
         );
         const metadata = {
@@ -1631,10 +1632,7 @@ export class ApiModule implements AgentModule {
             this.#journal.append("message.updated", {
                 agentId: event.agentId,
                 runId,
-                message: {
-                    ...messageResource(message),
-                    id: apiAssistantMessageId(runId),
-                },
+                message: messageResource(message),
             });
         });
     }
@@ -4699,13 +4697,14 @@ function apiAssistantMessageId(runId: string): string {
 export function apiAssistantIdentityForProviderEvent(
     eventType: string,
     candidateRunId: string,
+    candidateMessageId: string | undefined,
     streaming: { readonly messageId: string; readonly runId: string } | undefined,
 ): { readonly messageId: string; readonly runId: string } {
     if (eventType !== "block_start" && streaming !== undefined) {
         return { messageId: streaming.messageId, runId: streaming.runId };
     }
     return {
-        messageId: apiAssistantMessageId(candidateRunId),
+        messageId: candidateMessageId ?? apiAssistantMessageId(candidateRunId),
         runId: candidateRunId,
     };
 }

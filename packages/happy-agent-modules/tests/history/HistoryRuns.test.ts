@@ -100,6 +100,22 @@ async function finishInference(
     inferenceId: string,
     text: string,
 ): Promise<void> {
+    const inference = {
+        inferenceId,
+        loopId: "loop-a",
+        turnId: "turn-a",
+        contextTokens: undefined,
+    };
+    await world.eventHooks.beforeInferenceTransact?.(
+        world.database.context,
+        world.scope,
+        inference,
+    );
+    await world.historyHooks.beforeInferenceTransact?.(
+        world.database.context,
+        world.scope,
+        inference,
+    );
     await world.eventHooks.onEvent?.(world.database.context, world.scope, {
         type: "text_start",
     });
@@ -115,10 +131,7 @@ async function finishInference(
         block: { type: "text", text },
     } as never);
     await world.historyHooks.afterInferenceTransact?.(world.database.context, world.scope, {
-        inferenceId,
-        loopId: "loop-a",
-        turnId: "turn-a",
-        contextTokens: undefined,
+        ...inference,
         state: "normal",
         tokens: { input: 1, output: 1 },
     });
@@ -302,7 +315,7 @@ describe("HistoryModule run history", () => {
                             type: "text",
                         },
                     ],
-                    recordId: "message-settlement-error-error",
+                    recordId: "settlement-error",
                     role: "error",
                     runId: "message-settlement-error",
                 },
@@ -312,7 +325,7 @@ describe("HistoryModule run history", () => {
         }
     });
 
-    it("uses one deterministic error record when a run reports multiple failed inferences", async () => {
+    it("appends one error message for each failed inference", async () => {
         const world = await setup("history-runs-stable-error");
         try {
             await world.history.queuePending(world.database.context, pending("message-error", 100));
@@ -346,20 +359,21 @@ describe("HistoryModule run history", () => {
             );
 
             const page = await world.history.runs(world.database.context, "agent-a");
-            expect(page.runs[0]?.messages.map((message) => message.recordId)).toEqual([
-                "message-error",
-                "message-error-error",
+            expect(page.runs[0]?.messages.map((message) => message.role)).toEqual([
+                "user",
+                "error",
+                "error",
             ]);
-            expect(page.runs[0]?.messages[1]?.blocks).toEqual([
-                { type: "text", text: "first failure" },
-                { type: "text", text: "second failure" },
+            expect(page.runs[0]?.messages.slice(1).map((message) => message.blocks)).toEqual([
+                [{ type: "text", text: "first failure" }],
+                [{ type: "text", text: "second failure" }],
             ]);
         } finally {
             world.database.close();
         }
     });
 
-    it("keeps one live assistant identity across multiple tools, inferences, and restart", async () => {
+    it("appends each inference and merges only its matching tool results", async () => {
         const world = await setup("history-runs-stable-assistant");
         try {
             await world.history.queuePending(
@@ -368,6 +382,22 @@ describe("HistoryModule run history", () => {
             );
             await acceptBatch(world, [accepted("message-stable", "send")]);
 
+            const toolInference = {
+                inferenceId: "inference-tools",
+                loopId: "loop-stable",
+                turnId: "turn-stable",
+                contextTokens: undefined,
+            };
+            await world.eventHooks.beforeInferenceTransact?.(
+                world.database.context,
+                world.scope,
+                toolInference,
+            );
+            await world.historyHooks.beforeInferenceTransact?.(
+                world.database.context,
+                world.scope,
+                toolInference,
+            );
             await world.eventHooks.onEvent?.(world.database.context, world.scope, {
                 type: "text_start",
             });
@@ -391,10 +421,7 @@ describe("HistoryModule run history", () => {
                 } as never);
             }
             await world.historyHooks.afterInferenceTransact?.(world.database.context, world.scope, {
-                inferenceId: "inference-tools",
-                loopId: "loop-stable",
-                turnId: "turn-stable",
-                contextTokens: undefined,
+                ...toolInference,
                 state: "tool_call",
                 tokens: { input: 1, output: 1 },
             });
@@ -423,11 +450,24 @@ describe("HistoryModule run history", () => {
                 type: "text_end",
                 block: { type: "text", text: "done" },
             } as never);
-            await world.historyHooks.afterInferenceTransact?.(world.database.context, world.scope, {
+            const finalInference = {
                 inferenceId: "inference-final",
                 loopId: "loop-stable",
                 turnId: "turn-stable",
                 contextTokens: undefined,
+            };
+            await world.eventHooks.beforeInferenceTransact?.(
+                world.database.context,
+                world.scope,
+                finalInference,
+            );
+            await world.historyHooks.beforeInferenceTransact?.(
+                world.database.context,
+                world.scope,
+                finalInference,
+            );
+            await world.historyHooks.afterInferenceTransact?.(world.database.context, world.scope, {
+                ...finalInference,
                 state: "normal",
                 tokens: { input: 1, output: 1 },
             });
@@ -435,17 +475,18 @@ describe("HistoryModule run history", () => {
             const page = await world.history.runs(world.database.context, "agent-a");
             expect(page.runs[0]?.messages.map((message) => message.recordId)).toEqual([
                 "message-stable",
-                "message-stable-assistant",
+                "inference-tools",
+                "inference-final",
             ]);
             expect(page.runs[0]?.messages[1]?.blocks.map((block) => block.type)).toEqual([
                 "tool_call",
                 "tool_call",
                 "tool_result",
                 "tool_result",
-                "text",
             ]);
+            expect(page.runs[0]?.messages[2]?.blocks).toEqual([{ type: "text", text: "done" }]);
             expect(await world.history.stats(world.database.context, "agent-a")).toMatchObject({
-                messages: 2,
+                messages: 3,
                 toolCalls: 2,
                 toolResults: 2,
             });
@@ -461,7 +502,7 @@ describe("HistoryModule run history", () => {
                         ).rigEvent?.messageId,
                 )
                 .find((messageId) => messageId !== undefined);
-            expect(liveMessageId).toBe("message-stable-assistant");
+            expect(liveMessageId).toBe("inference-tools");
 
             const restartedEvents = new EventsModule();
             await resolveModuleHooks(world.database.context, restartedEvents);
@@ -666,7 +707,7 @@ describe("HistoryModule run history", () => {
             expect(extension.runs).toHaveLength(1);
             expect(extension.runs[0]?.id).toBe("message-b");
             expect(extension.runs[0]?.messages.map((message) => message.recordId)).toEqual([
-                "message-b-assistant",
+                "inference-b",
             ]);
 
             await world.historyHooks.afterAgentSettledTransact?.(

@@ -77,6 +77,31 @@ describe("messageResource", () => {
         });
     });
 
+    it("projects legacy compaction provenance as the required empty compatibility field", () => {
+        expect(
+            messageResource({
+                at: 100,
+                blocks: [
+                    {
+                        type: "compaction",
+                        trigger: "automatic",
+                        status: "completed",
+                        replacedMessageIds: ["legacy-message-a", "legacy-message-b"],
+                        tokensBefore: null,
+                        tokensAfter: null,
+                        failureReason: null,
+                        startedAt: 90,
+                        completedAt: 100,
+                    },
+                ],
+                recordId: "compaction-a",
+                role: "service",
+            }),
+        ).toMatchObject({
+            content: [{ type: "compaction", replacedMessageIds: [] }],
+        });
+    });
+
     it("projects a completed command with the same display-ready tool presentation", () => {
         expect(
             messageResource({

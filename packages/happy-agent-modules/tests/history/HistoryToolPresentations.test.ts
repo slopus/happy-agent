@@ -50,6 +50,18 @@ describe("History tool presentations", () => {
             };
             const result = await write.execute(database.context, argumentsValue, toolset.call);
 
+            await history.record(database.context, "agent-a", {
+                blocks: [
+                    {
+                        arguments: argumentsValue,
+                        callId: "call-edit",
+                        name: "apply_patch",
+                        type: "tool_call",
+                    },
+                ],
+                recordId: "inference-edit",
+                role: "assistant",
+            });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: JSON.stringify(argumentsValue),
                 callId: "call-edit",
@@ -74,7 +86,7 @@ describe("History tool presentations", () => {
             });
 
             const page = await history.read(database.context, "agent-a");
-            expect(page.messages[0]?.message.blocks[0]).toMatchObject({
+            expect(page.messages[0]?.message.blocks[1]).toMatchObject({
                 type: "tool_result",
                 presentation: {
                     type: "file_diff",

@@ -178,7 +178,7 @@ function historyBlocks(
                     type: "compaction",
                     trigger: block.trigger,
                     status: block.status,
-                    replacedMessageIds: [...block.replacedMessageIds],
+                    replacedMessageIds: [],
                     tokensBefore: block.tokensBefore,
                     tokensAfter: block.tokensAfter,
                     failureReason: block.failureReason,

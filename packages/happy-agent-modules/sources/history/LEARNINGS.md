@@ -1,5 +1,17 @@
 # History learnings
 
+## Assistant history is append-only by inference
+
+Each completed provider inference creates its own durable assistant message under the inference's
+stable ID. A later inference never appends blocks to an earlier message, even when both belong to
+the same run. This preserves the exact order of service messages such as automatic compaction
+across reload and event reconciliation.
+
+Tool completion is the narrow mutation exception. The tool-call index resolves a provider call ID
+to the inference message that owns it, and the result and permission review update only that
+message. This keeps a call and its result together without turning the whole run into one mutable
+history row.
+
 ## Run lifecycle belongs to History
 
 The run table is the durable authority for normal turns and standalone maintenance alike. Callers

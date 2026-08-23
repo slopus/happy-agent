@@ -4,16 +4,31 @@ import { apiAssistantIdentityForProviderEvent } from "../../sources/api/ApiModul
 
 describe("API assistant streaming identity", () => {
     it("anchors every event after block start to the in-flight segment", () => {
-        const started = apiAssistantIdentityForProviderEvent("block_start", "run-one", undefined);
+        const started = apiAssistantIdentityForProviderEvent(
+            "block_start",
+            "run-one",
+            "inference-one",
+            undefined,
+        );
 
         for (const eventType of ["text_delta", "text_end", "block_stop", "block_reset"]) {
-            expect(apiAssistantIdentityForProviderEvent(eventType, "run-two", started)).toEqual(
-                started,
-            );
+            expect(
+                apiAssistantIdentityForProviderEvent(
+                    eventType,
+                    "run-two",
+                    "inference-two",
+                    started,
+                ),
+            ).toEqual(started);
         }
 
-        const next = apiAssistantIdentityForProviderEvent("block_start", "run-two", started);
+        const next = apiAssistantIdentityForProviderEvent(
+            "block_start",
+            "run-two",
+            "inference-two",
+            started,
+        );
         expect(next.runId).toBe("run-two");
-        expect(next.messageId).not.toBe(started.messageId);
+        expect(next.messageId).toBe("inference-two");
     });
 });

@@ -717,6 +717,108 @@ describe("public transcript and run APIs", () => {
         expect(gym.inference.unscripted).toEqual([]);
     }, 60_000);
 
+    it("keeps inference messages append-only across automatic compactions", async () => {
+        let agentCall = 0;
+        const gym = await startGym({
+            models: [contextWindowModel()],
+            compaction: (request) => ({
+                status: "completed",
+                preservedMessages: [],
+                usage: {
+                    cacheRead: 200_000,
+                    cacheWrite: 0,
+                    input: 245_000,
+                    output: 10_000,
+                    totalTokens: 255_000,
+                },
+                context: request.context,
+            }),
+            inference: (request) => {
+                if (request.sessionId.startsWith("naming:")) return namingTurn();
+                const call = agentCall;
+                agentCall += 1;
+                if (call < 2) {
+                    return {
+                        content: [
+                            {
+                                arguments: { cmd: `printf tool-${String(call + 1)}` },
+                                callId: `append-only-tool-${String(call + 1)}`,
+                                name: "exec_command",
+                                type: "tool_call",
+                            },
+                        ],
+                        usage: {
+                            cacheRead: 200_000,
+                            cacheWrite: 0,
+                            input: 244_000,
+                            output: 1_000,
+                            totalTokens: 245_000,
+                        },
+                    };
+                }
+                return {
+                    content: [{ text: "append-only history complete", type: "text" }],
+                    usage: {
+                        cacheRead: 20_000,
+                        cacheWrite: 0,
+                        input: 30_000,
+                        output: 1_000,
+                        totalTokens: 31_000,
+                    },
+                };
+            },
+        });
+
+        const sent = await gym.send("compact between tool inferences", {
+            permissionMode: "full_access",
+        });
+        await waitForFinished(gym, gym.defaultSessionId, sent.runId);
+
+        const history = await gym.client.getMessages(gym.defaultSessionId);
+        const run = history.runs.find((candidate) => candidate.id === sent.runId);
+        expect(run?.messages).toMatchObject([
+            { role: "user" },
+            {
+                role: "agent",
+                content: [
+                    {
+                        id: "append-only-tool-1",
+                        status: "completed",
+                        type: "tool_call",
+                    },
+                ],
+            },
+            {
+                role: "service",
+                content: [{ replacedMessageIds: [], type: "compaction" }],
+            },
+            {
+                role: "agent",
+                content: [
+                    {
+                        id: "append-only-tool-2",
+                        status: "completed",
+                        type: "tool_call",
+                    },
+                ],
+            },
+            {
+                role: "service",
+                content: [{ replacedMessageIds: [], type: "compaction" }],
+            },
+            {
+                role: "agent",
+                content: [{ text: "append-only history complete", type: "text" }],
+            },
+        ]);
+        expect(gym.inference.compactions).toHaveLength(2);
+
+        await gym.restart();
+        const afterRestart = await gym.client.getMessages(gym.defaultSessionId);
+        expect(afterRestart.runs).toEqual(history.runs);
+        expect(afterRestart.hasMore).toBe(history.hasMore);
+    }, 60_000);
+
     it("groups concurrent steering acceptances into one successor boundary", async () => {
         let releaseFirst!: () => void;
         let providerStarted!: () => void;

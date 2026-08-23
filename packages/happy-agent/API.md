@@ -1950,7 +1950,7 @@ are the raw tool data; `presentation` is defined below.
     "type": "compaction",
     "trigger": "automatic",
     "status": "completed",
-    "replacedMessageIds": ["x3k9m2q7w1e5r8t4y6u0i2o5", "pfh0haxfpzowht3oi213cqos"],
+    "replacedMessageIds": [],
     "tokensBefore": 201000,
     "tokensAfter": 43000,
     "failureReason": null,
@@ -1962,10 +1962,10 @@ are the raw tool data; `presentation` is defined below.
 The enclosing message's `id` is the stable compaction ID, its history group supplies the `runId`,
 and the route or event envelope supplies the `agentId`; these identities are not duplicated in the
 block. `trigger` is `"manual"` or `"automatic"`. Every block starts as `"running"` and changes
-exactly once to `"completed"` or `"failed"`. `replacedMessageIds` is the ordered set of durable
-history messages whose model-context representations the attempt targets; on completion it is the
-set the replacement superseded. It remains present on failure so diagnostics still identify what
-the attempt covered.
+exactly once to `"completed"` or `"failed"`. `replacedMessageIds` is retained as a required
+compatibility field and is always the empty array. Context replacement is provider-owned state,
+not person-visible history provenance; clients must not infer compaction scope from history
+message identities.
 
 `tokensBefore` is the exact provider-measured input context when available. `tokensAfter` is
 `null` until the first subsequent inference measures the replacement, and that later measurement
@@ -2293,6 +2293,12 @@ global event stream from this cursor after installing the page. A mutation concu
 read may therefore appear in both the page and the replay, but it cannot fall between them; stable
 message identities and delta offsets make the duplicate harmless.
 
+Every provider inference that produces agent content creates a new durable `agent` message inside
+the active run. Streaming deltas grow only that inference's message. Tool results and permission
+reviews update the same message as their matching tool call; a later inference never appends to an
+earlier inference's message. Service messages created between inferences, including automatic
+compaction, therefore retain their exact chronological position after reconnect.
+
 Pending queue and steering messages are deliberately absent here: they are current composer state,
 not pageable accepted history. The agent bootstrap endpoint returns their complete oldest-first
 snapshot. When one is accepted it appears in its run, announced atomically by `run.started` or
@@ -2437,7 +2443,7 @@ Response — `202`:
                 "type": "compaction",
                 "trigger": "manual",
                 "status": "running",
-                "replacedMessageIds": ["x3k9m2q7w1e5r8t4y6u0i2o5"],
+                "replacedMessageIds": [],
                 "tokensBefore": 201000,
                 "tokensAfter": null,
                 "failureReason": null,

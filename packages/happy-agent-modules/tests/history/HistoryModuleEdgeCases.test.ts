@@ -671,6 +671,18 @@ describe("HistoryModule edge cases", () => {
         const scope = scopeFor("agent-a", values);
 
         try {
+            await history.record(database.context, "agent-a", {
+                blocks: [
+                    {
+                        arguments: {},
+                        callId: "call-1",
+                        name: "read",
+                        type: "tool_call",
+                    },
+                ],
+                recordId: "inference-tool-output-limit",
+                role: "assistant",
+            });
             await hooks.beforeToolCallTransact!(database.context, scope, {
                 arguments: "{}",
                 callId: "call-1",
@@ -684,7 +696,7 @@ describe("HistoryModule edge cases", () => {
             });
 
             const page = await history.read(database.context, "agent-a");
-            const block = page.messages[0]?.message.blocks[0];
+            const block = page.messages[0]?.message.blocks[1];
             if (block?.type !== "tool_result" || block.output === undefined) {
                 throw new Error("Expected a recorded tool result.");
             }
