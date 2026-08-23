@@ -56,6 +56,7 @@ import type {
     WriteFileResponse,
 } from "./protocol/files.js";
 import type { GitStateResponse, WatchGitRequest, WatchGitResponse } from "./protocol/git.js";
+import type { HappyIntegrationResponse } from "./protocol/integrations.js";
 import type {
     MessageHistoryQuery,
     MessageHistoryResponse,
@@ -307,6 +308,26 @@ export class HappyAgentClient {
         return await this.#json({
             method: "DELETE",
             path: "v0/debug/inspector",
+            signal: options.signal,
+        });
+    }
+
+    // Happy integration
+
+    /** `GET /v0/integrations/happy` — current Happy mobile connection state. */
+    async getHappyIntegration(options: RequestOptions = {}): Promise<HappyIntegrationResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/integrations/happy",
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/integrations/happy/start` — starts or joins pairing or connection. */
+    async startHappyIntegration(options: RequestOptions = {}): Promise<HappyIntegrationResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/integrations/happy/start",
             signal: options.signal,
         });
     }

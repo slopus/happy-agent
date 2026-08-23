@@ -32,6 +32,7 @@ export * from "./protocol/daemon.js";
 export * from "./protocol/events.js";
 export * from "./protocol/files.js";
 export * from "./protocol/git.js";
+export * from "./protocol/integrations.js";
 export * from "./protocol/messages.js";
 export * from "./protocol/processes.js";
 export * from "./protocol/profile.js";

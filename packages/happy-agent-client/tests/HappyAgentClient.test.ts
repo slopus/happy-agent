@@ -155,6 +155,30 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.body).toBeNull();
     });
 
+    it("reads and starts the Happy integration through its focused routes", async () => {
+        const response = {
+            integration: {
+                authorization: null,
+                configured: false as const,
+                error: null,
+                status: "disconnected" as const,
+                updatedAt: 1_755_400_000_000,
+                version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+            },
+        };
+        const { fetch, requests } = stubFetch(() => json(response));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.getHappyIntegration()).resolves.toEqual(response);
+        await expect(client.startHappyIntegration()).resolves.toEqual(response);
+
+        expect(requests[0]?.url).toBe("http://agent.local/v0/integrations/happy");
+        expect(requests[0]?.method).toBe("GET");
+        expect(requests[1]?.url).toBe("http://agent.local/v0/integrations/happy/start");
+        expect(requests[1]?.method).toBe("POST");
+        expect(requests[1]?.body).toBeNull();
+    });
+
     it("requests provider verification at the selected strength", async () => {
         const response = {
             checkedAt: 1,

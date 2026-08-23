@@ -17,6 +17,7 @@ import {
 } from "./common.js";
 import type { Agent, AgentDraftSnapshot } from "./agents.js";
 import type { GitState } from "./git.js";
+import type { HappyIntegration } from "./integrations.js";
 import type { Message, Run } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { Profile } from "./profile.js";
@@ -184,6 +185,11 @@ export interface ProfileUpdatedPayload extends MutationEcho {
     profile: Profile;
 }
 
+/** Happy integration state is computed, so the payload is a complete replacement. */
+export interface HappyIntegrationUpdatedPayload {
+    integration: HappyIntegration;
+}
+
 /** One event on the journal. */
 export interface EventEnvelope<TType extends string, TPayload> {
     /** This event's place in the journal; never a resource identity. */
@@ -222,7 +228,8 @@ export type HappyAgentEvent =
     | EventEnvelope<"message.delta", MessageDeltaPayload>
     | EventEnvelope<"message.deleted", MessageDeletedPayload>
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
-    | EventEnvelope<"profile.updated", ProfileUpdatedPayload>;
+    | EventEnvelope<"profile.updated", ProfileUpdatedPayload>
+    | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>;
 
 /** The name of an event this client build knows. */
 export type HappyAgentEventType = HappyAgentEvent["type"];

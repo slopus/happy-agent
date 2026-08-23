@@ -3,6 +3,7 @@
 import type { Agent, AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
 import type { EventCursor } from "./common.js";
 import type { DaemonConfig, OnboardingState } from "./daemon.js";
+import type { HappyIntegration } from "./integrations.js";
 import type { UserMessage } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { Profile } from "./profile.js";
@@ -39,6 +40,8 @@ export interface DesktopBootstrapResponse {
     config: DaemonConfig;
     profile: Profile;
     onboarding: OnboardingState;
+    /** Current Happy mobile connection state. Absent on older compatible daemons. */
+    happyIntegration?: HappyIntegration;
     /** Every active project, in catalog order. */
     projects: Project[];
     /** Each project's root workspace and the workspaces directly under it. */

@@ -765,6 +765,92 @@ Marks onboarding finished. Idempotent. Response — `200`: `{ "completed": true 
 `config.updated` nudge is **not** emitted — clients that care watch their own flow; others
 read the flag on next bootstrap.
 
+## Happy integration
+
+The Happy integration connects this daemon to the Happy mobile app. Its state is runtime,
+installation-wide state rather than a durable resource guarded by `If-Match`: the daemon exposes
+one current snapshot and announces complete replacements whenever it changes. Credentials,
+tokens, private keys, and server responses are never exposed through this API.
+
+### The Happy integration object
+
+```json
+{
+    "status": "pairing",
+    "configured": false,
+    "authorization": {
+        "kind": "qr",
+        "data": "happy://terminal?MDEyMzQ1Njc4OWFiY2RlZg",
+        "expiresAt": 1755400120000
+    },
+    "error": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+- `status` — one of:
+    - `"disabled"` — the Happy integration is disabled in this daemon's configuration.
+    - `"disconnected"` — no Happy machine connection is live. `configured` distinguishes a
+      daemon that still needs pairing from one that already has credentials and lost its
+      connection.
+    - `"pairing"` — the daemon is waiting for the person to authorize it from Happy. The
+      `authorization` value is present.
+    - `"connecting"` — usable credentials exist and the daemon is establishing its Happy machine
+      connection.
+    - `"connected"` — the Happy machine connection is live.
+    - `"failed"` — a pairing or connection attempt reached a terminal failure and no automatic
+      retry is active. The `error` value is present; starting again retries.
+- `configured` — whether the daemon currently holds valid durable Happy credentials. It says
+  nothing about network health and may remain `true` while the integration is disabled or
+  disconnected. Credentials rejected by Happy are no longer valid, so the daemon reports
+  `configured: false` and the next start creates a fresh pairing attempt.
+- `authorization` — `null` except while `status` is `"pairing"`. `data` is the complete public
+  payload a client encodes as a QR code or offers as a copyable deep link; it is opaque to the
+  client and must not be parsed or rebuilt. `expiresAt` is the attempt's absolute expiry in epoch
+  milliseconds. Pairing attempts expire after two minutes.
+- `error` — `null`, or `{ "code": "...", "message": "..." }`. `code` is a stable snake_case
+  machine value and `message` is human-readable English safe to display. Known codes are
+  `happy_unavailable`, `authorization_expired`, `credentials_rejected`, and `invalid_response`;
+  the set grows, and clients must tolerate unknown values. A transient connection problem may be
+  present while `status` is `"disconnected"`; `status: "failed"` always has an error.
+- `version` — a UUIDv7 minted whenever this snapshot changes. The event carries the complete
+  object rather than a version-chain diff, so a client reconciling a REST snapshot with an event
+  keeps the object with the greater version.
+- `updatedAt` — when any field in this snapshot last changed.
+
+Pairing state and its ephemeral private key live only in this daemon process. A restart abandons
+an unfinished attempt and returns to `"disconnected"`; durable credentials survive and the new
+process proceeds through `"connecting"` as it reconnects.
+
+### `GET /v0/integrations/happy`
+
+Response — `200`: `{ "integration": { ... } }` with the current Happy integration object.
+
+### `POST /v0/integrations/happy/start`
+
+Starts or joins the current integration attempt and returns immediately. The operation is
+idempotent and has no request body:
+
+- an active pairing attempt returns the same authorization payload and expiry;
+- a configured daemon starts or continues connecting without replacing its credentials;
+- an already connected daemon remains connected;
+- a disconnected, unconfigured daemon or a failed attempt without valid credentials creates a
+  fresh two-minute pairing attempt;
+- rejected credentials are invalidated before the state becomes `"failed"`, so a retry can always
+  return to pairing rather than getting stuck with an unusable credential.
+
+Response — `200`: `{ "integration": { ... } }`. Every state transition, including the one caused
+by this request, emits one `happy.integration.updated`; retries that leave the snapshot unchanged
+do not emit duplicates. When the integration is disabled, the request returns `503` with code
+`unsupported` and includes the current `integration` object in the error body; reading its disabled
+state still succeeds.
+
+If the daemon cannot create the authorization request because Happy is unavailable, the request
+returns `503` with code `happy_unavailable` and includes the current `integration` object. No
+attempt was started, the snapshot is unchanged, and no event is emitted. Failures after a pairing
+attempt has started settle through the integration snapshot and its update event instead.
+
 ## Projects and workspaces
 
 A project is where work lives: a folder on this machine, registered with the daemon, or a
@@ -2880,13 +2966,17 @@ to a different daemon process.
     - `runId` (ID string).
     - `messageId` (ID string).
 
-**Configuration and profile**
+**Configuration, profile, and Happy integration**
 
 - `config.updated` — payload `{}`, deliberately empty. Something about the daemon's
   configuration changed — the effective config, the instructions document, or the security
   policy. It is a nudge to refetch the config endpoints whenever convenient.
 - `profile.updated` — the profile changed.
     - `profile` (full profile object).
+- `happy.integration.updated` — the installation-wide Happy connection state changed. This is
+  a complete replacement rather than a version-chain diff; clients keep the greater embedded
+  `version` when reconciling it with a snapshot.
+    - `integration` (full Happy integration object).
 
 The set grows with the product; clients skip event types they do not recognize.
 
@@ -3077,6 +3167,9 @@ Response — `200`:
     "onboarding": {
         /* exactly GET /v0/onboarding */
     },
+    "happyIntegration": {
+        /* exactly GET /v0/integrations/happy */
+    },
     "projects": [
         /* all project objects, catalog order */
     ],
@@ -3087,7 +3180,8 @@ Response — `200`:
 }
 ```
 
-- `config`, `profile`, `onboarding` — the full objects from their own endpoints.
+- `config`, `profile`, `onboarding`, `happyIntegration` — the full objects from their own
+  endpoints. `happyIntegration` is additive and may be absent on an older compatible daemon.
 - `projects` — every active project.
 - `workspaces` — deliberately shallow: each project's root workspace and the workspaces
   directly under it. Each returned project and workspace embeds its active top-level `agents`
