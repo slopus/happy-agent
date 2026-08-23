@@ -68,7 +68,7 @@ export interface HappySessionMetadata {
      * Every workspace of one project carries the same `project.id`, so their sessions gather in a
      * single card, and `workspace` names the checkout within it.
      */
-    project: { id: string; kind: "regular"; name: string };
+    project: { id: string; kind: "home" | "regular"; name: string };
     provider: HappyProviderDescriptor;
     providers: readonly HappyProviderDescriptor[];
     reasoning: { current: string | null; levels: readonly string[] };
@@ -160,7 +160,11 @@ export function createHappySessionMetadata(options: {
         project:
             session.project === undefined
                 ? { id: `rig:${session.sessionId}`, kind: "regular", name: session.projectName }
-                : { id: session.project.id, kind: "regular", name: session.project.name },
+                : {
+                      id: session.project.id,
+                      kind: session.project.kind,
+                      name: session.project.name,
+                  },
         provider,
         providers,
         reasoning: { current: session.effort ?? null, levels: [...efforts] },

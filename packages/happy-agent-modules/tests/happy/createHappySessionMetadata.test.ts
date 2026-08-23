@@ -94,23 +94,34 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
     });
 
     it("leaves an unnamed session unnamed, rather than overwriting Happy's own words", () => {
-        const published = metadata(snapshot({ title: undefined }));
+        const { title: _named, ...untitled } = snapshot();
+        const published = metadata(untitled);
         expect("name" in published).toBe(false);
         expect("summary" in published).toBe(false);
     });
 
     it("groups by the project it belongs to, not by the session it is", () => {
         const published = metadata(
-            snapshot({ project: { id: "project-7", name: "rig" }, projectName: "rig" }),
+            snapshot({
+                project: { id: "project-7", kind: "regular" as const, name: "rig" },
+                projectName: "rig",
+            }),
         );
         expect(published.project).toEqual({ id: "project-7", kind: "regular", name: "rig" });
+    });
+
+    it("says a home project is a home project, rather than calling it regular", () => {
+        const published = metadata(
+            snapshot({ project: { id: "home", kind: "home" as const, name: "steve" } }),
+        );
+        expect(published.project).toEqual({ id: "home", kind: "home", name: "steve" });
     });
 
     it("names the workspace by its title, and reports the branch beside it", () => {
         const published = metadata(
             snapshot({
                 gitBranch: "worktree/retry-policy",
-                project: { id: "project-7", name: "rig" },
+                project: { id: "project-7", kind: "regular" as const, name: "rig" },
                 workspace: { id: "workspace-3", name: "Retry policy rewrite" },
             }),
         );
@@ -123,9 +134,10 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
     });
 
     it("says no workspace for a session in the project's own checkout", () => {
-        expect("workspace" in metadata(snapshot({ project: { id: "p", name: "rig" } }))).toBe(
-            false,
-        );
+        expect(
+            "workspace" in
+                metadata(snapshot({ project: { id: "p", kind: "regular" as const, name: "rig" } })),
+        ).toBe(false);
     });
 
     it("groups a session belonging nowhere by itself, rather than with strangers", () => {

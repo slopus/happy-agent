@@ -1017,7 +1017,7 @@ export class HappyModule
         agentId: string,
     ): Promise<{
         gitBranch?: string;
-        project?: { id: string; name: string };
+        project?: { id: string; kind: "home" | "regular"; name: string };
         workspace?: { id: string; name: string };
     }> {
         try {
@@ -1030,7 +1030,13 @@ export class HappyModule
                         ...(workspace.branch === undefined ? {} : { gitBranch: workspace.branch }),
                         ...(project === undefined
                             ? {}
-                            : { project: { id: project.id, name: project.name } }),
+                            : {
+                                  project: {
+                                      id: project.id,
+                                      kind: project.kind,
+                                      name: project.name,
+                                  },
+                              }),
                         workspace: { id: workspace.id, name: workspace.name },
                     };
                 }
@@ -1039,7 +1045,7 @@ export class HappyModule
             if (project === undefined) return {};
             return {
                 ...(project.gitBranch === undefined ? {} : { gitBranch: project.gitBranch }),
-                project: { id: project.id, name: project.name },
+                project: { id: project.id, kind: project.kind, name: project.name },
             };
         } catch (error) {
             // Describing a session is never worth failing to publish it over: without an owner

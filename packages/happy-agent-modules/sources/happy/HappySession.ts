@@ -35,7 +35,11 @@ export interface HappySessionSnapshot {
      * Every workspace of one project reports the same project, so their sessions gather in a
      * single card. Absent when the session runs somewhere this daemon does not keep.
      */
-    readonly project?: { readonly id: string; readonly name: string };
+    readonly project?: {
+        readonly id: string;
+        readonly kind: "home" | "regular";
+        readonly name: string;
+    };
     readonly projectName: string;
     readonly providerId: string;
     readonly serviceTier?: string;
