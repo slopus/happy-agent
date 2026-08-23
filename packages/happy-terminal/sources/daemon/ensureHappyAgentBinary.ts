@@ -111,7 +111,7 @@ async function installLatestHappyAgentBinary(
     await mkdir(paths.versionsDirectory, { mode: 0o700, recursive: true });
     await chmod(paths.distDirectory, 0o700);
     await chmod(paths.versionsDirectory, 0o700);
-    const lock = await acquireInstallLock(paths.installLockPath, options.onStatus);
+    const lock = await acquireHappyAgentInstallLock(paths.installLockPath, options.onStatus);
     try {
         const selectedBeforeLookup = await selectedHappyAgentBinary(paths);
         if (useSelectionInstalledWhileWaiting) {
@@ -338,7 +338,7 @@ function runFile(executable: string, arguments_: readonly string[]): Promise<str
     });
 }
 
-async function acquireInstallLock(
+export async function acquireHappyAgentInstallLock(
     path: string,
     onStatus: ((message: string) => void) | undefined,
 ): Promise<{ release(): Promise<void> }> {

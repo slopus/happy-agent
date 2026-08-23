@@ -114,7 +114,14 @@ export async function createGym(options: GymOptions): Promise<Gym> {
         const modelId = options.modelId ?? defaultModelId(providerId);
         const localEnvironment =
             execution === "local"
-                ? createLocalEnvironment(options, homePath, workspacePath, inference, httpProxy)
+                ? createLocalEnvironment(
+                      options,
+                      homePath,
+                      workspacePath,
+                      inference,
+                      httpProxy,
+                      repositoryRoot,
+                  )
                 : undefined;
         const dockerEnvironmentArguments =
             execution === "docker"
@@ -297,6 +304,7 @@ function createLocalEnvironment(
     workspacePath: string,
     inference: MockInferenceServer,
     httpProxy: InterceptingHttpProxy | undefined,
+    repositoryRoot: string,
 ): Record<string, string> {
     const environment = {
         HOME: homePath,
@@ -305,6 +313,10 @@ function createLocalEnvironment(
         HAPPY_GYM_INFERENCE_URL: inference.localUrl,
         HAPPY_GYM_TOKEN: inference.token,
         HAPPY_TERMINAL_GYM_DISPLAY_WORKSPACE: "/workspace",
+        HAPPY_TERMINAL_GYM_HAPPY_AGENT_COMMAND: JSON.stringify([
+            process.execPath,
+            join(repositoryRoot, "packages/happy-agent/dist/cli.js"),
+        ]),
         HAPPY_TERMINAL_GYM_HOME_PATH: homePath,
         HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON: "1",
         HAPPY_TERMINAL_GYM_WORKSPACE_PATH: workspacePath,

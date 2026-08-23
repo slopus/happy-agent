@@ -130,7 +130,6 @@ jobs:
                   package_version="$(node -p "require('$smoke_root/node_modules/@slopus/happy-terminal/package.json').version")"
                   test "$package_version" = "$RELEASE_VERSION"
                   test "$("$smoke_root/node_modules/.bin/happy-terminal" --version)" = "Happy Terminal $RELEASE_VERSION"
-                  test "$("$smoke_root/node_modules/.bin/rig" --version)" = "Happy Terminal $RELEASE_VERSION"
 
                   cd "$smoke_root"
                   node --input-type=module <<'NODE'

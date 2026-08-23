@@ -11,20 +11,13 @@ pnpm add --global @slopus/happy-terminal
 happy-terminal
 ```
 
-The global package installs both `happy-terminal` and the compatibility alias `rig`; they launch
-the same command:
-
-```sh
-rig
-```
-
 The separate Happy CLI also integrates Happy Terminal and exposes it through `happy`.
 
 Released installations check for a newer Happy Agent in the background. When one is available,
 the terminal shows the host command to run, such as `happy upgrade` or
 `happy-terminal upgrade`. The standalone command downloads and verifies the newest Agent release,
-selects it, and gracefully reloads the daemon onto it. A local source checkout continues to run its
-sources and must be updated through the checkout instead.
+selects it, and gracefully reloads the daemon onto it. A locally linked `0.0.0` Agent is offered
+that same update; running it replaces the local Agent with the published release.
 
 ## Embed in a Node.js application
 
@@ -68,7 +61,6 @@ that provide a custom `commandName` should route that command's `upgrade` entry 
 
 ## Happy Agent daemon
 
-Happy Terminal connects to an already-running Happy Agent daemon first. In this repository it runs
-the local Happy Agent sources. A published installation instead downloads the latest matching
-macOS or Linux release once, verifies it, and records the selected installed version under
-`~/.happy/dist/config.json`.
+Happy Terminal connects to an already-running Happy Agent daemon first. Otherwise it starts the
+selected binary recorded under `~/.happy/dist/config.json`. A published installation downloads the
+latest matching macOS or Linux release once when nothing is selected yet.

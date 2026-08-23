@@ -4,7 +4,6 @@ import { HappyTerminalUserError } from "../HappyTerminalUserError.js";
 import {
     getHappyDaemonPaths,
     observeLocalProtocolServer,
-    resolveLocalHappyAgentSources,
     runDaemonCommand,
     upgradeHappyAgentBinary,
     type HappyAgentBinary,
@@ -15,7 +14,6 @@ import { selectedHappyAgentBinary } from "../daemon/happyAgentBinaryConfig.js";
 
 export interface RunUpgradeCommandOptions {
     ctx?: Context;
-    isReleaseInstallation?: () => boolean;
     log?: (line: string) => void;
     paths?: HappyDaemonPaths;
     reloadDaemon?: (log: (line: string) => void, ctx: Context | undefined) => Promise<void>;
@@ -35,17 +33,6 @@ export async function upgradeHappyAgent(options: UpgradeHappyAgentOptions = {}):
 
 /** Downloads the latest managed Happy Agent release and reloads the daemon onto it. */
 export async function runUpgradeCommand(options: RunUpgradeCommandOptions = {}): Promise<void> {
-    const isReleaseInstallation =
-        options.isReleaseInstallation ?? (() => resolveLocalHappyAgentSources() === undefined);
-    if (!isReleaseInstallation()) {
-        throw new HappyTerminalUserError(
-            "A local Happy Agent source checkout cannot self-upgrade.",
-            {
-                hint: "Update and rebuild the source checkout instead.",
-            },
-        );
-    }
-
     const log = options.log ?? console.log;
     const paths = options.paths ?? getHappyDaemonPaths();
     const selectBinary = options.selectedBinary ?? selectedHappyAgentBinary;

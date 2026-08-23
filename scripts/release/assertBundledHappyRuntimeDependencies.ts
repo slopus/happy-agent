@@ -8,8 +8,9 @@ const DAEMON_IMPLEMENTATION_PACKAGES = [
 ] as const;
 
 /**
- * Keeps Happy Terminal on the public client contract. The daemon implementation is downloaded as a release
- * binary and local development resolves its source checkout without package dependencies.
+ * Keeps Happy Terminal on the public client contract. The daemon implementation is a selected
+ * release binary under `~/.happy/dist`, including a locally built `0.0.0`, and Happy Terminal never
+ * depends on the implementation packages.
  */
 export function assertBundledHappyRuntimeDependencies(manifest: PackageManifest): void {
     const implementationDependencies = DAEMON_IMPLEMENTATION_PACKAGES.filter(

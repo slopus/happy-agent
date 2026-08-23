@@ -217,10 +217,33 @@ describe("ensureHappyAgentBinary", () => {
         ).resolves.toBeUndefined();
         expect(fetch_).not.toHaveBeenCalled();
     });
+
+    it("offers a published release as the way off a locally linked Happy Agent", async () => {
+        const paths = await temporaryPaths();
+        const archive = Buffer.from("release archive");
+        await upgradeHappyAgentBinary({
+            arch: "arm64",
+            extractArchive: fakeExtract,
+            fetch: releaseFetch(archive, 0, undefined, "0.0.0"),
+            paths,
+            platform: "darwin",
+        });
+        const fetch_ = releaseFetch(archive, 0, undefined, "1.2.3");
+
+        await expect(
+            detectHappyAgentUpdate({
+                currentVersion: "0.0.0",
+                fetch: fetch_,
+                now: 1_700_000_000_000,
+                paths,
+            }),
+        ).resolves.toEqual({ currentVersion: "0.0.0", latestVersion: "1.2.3" });
+        expect(fetch_).toHaveBeenCalledOnce();
+    });
 });
 
 describe("resolveLocalHappyAgentSources", () => {
-    it("finds sibling Happy Agent sources from a built Happy Terminal checkout", () => {
+    it("finds sibling Happy Agent sources for the in-process Gym daemon", () => {
         const found = resolveLocalHappyAgentSources(
             "file:///workspace/packages/happy-terminal/dist/main.js",
             (path) => path.pathname.includes("/packages/happy-agent/sources/"),

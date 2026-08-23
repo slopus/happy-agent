@@ -11,11 +11,7 @@ import {
     HappyAgentEventHub,
     RemoteAgent,
 } from "../client/index.js";
-import {
-    detectHappyAgentUpdate,
-    resolveLocalHappyAgentSources,
-    type HappyAgentUpdate,
-} from "../daemon/index.js";
+import { detectHappyAgentUpdate, type HappyAgentUpdate } from "../daemon/index.js";
 import {
     createProjectConfigSecurityNotice,
     loadConfig,
@@ -125,14 +121,11 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
             const localServer = await ensureLocalProtocolServer({
                 onStatus: (message) => startup.setStatus(message),
             });
-            const agentUpdate =
-                resolveLocalHappyAgentSources() === undefined
-                    ? detectHappyAgentUpdate({
-                          currentVersion: localServer.health.version.daemon,
-                          paths: localServer.paths,
-                          signal: agentUpdateController.signal,
-                      }).catch(() => undefined)
-                    : undefined;
+            const agentUpdate = detectHappyAgentUpdate({
+                currentVersion: localServer.health.version.daemon,
+                paths: localServer.paths,
+                signal: agentUpdateController.signal,
+            }).catch(() => undefined);
             let agentId = options.resumeSessionId;
             if (options.sessionSelection !== undefined) {
                 agentId = await resolveStartupSessionId({

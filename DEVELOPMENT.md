@@ -35,11 +35,11 @@ Build and start Happy Terminal with checkout-local state:
 pnpm dev
 ```
 
-This builds the checkout, reloads its isolated Happy agent, and runs the built
-Happy Terminal CLI. The agent socket, token, logs, registry, and session database stay
-under the ignored `.happy-terminal-dev` directory instead of the normal Happy home. The
-agent remains available after the TUI exits; the next `pnpm dev` reloads it from
-the newest build.
+This builds the checkout, reloads its isolated Happy Agent from the built Node CLI,
+and runs the built Happy Terminal. The agent socket, token, logs, registry, and session
+database stay under the ignored `.happy-terminal-dev` directory instead of the normal
+Happy home. The agent remains available after the TUI exits; the next `pnpm dev`
+reloads it from the newest build.
 
 ## Running this checkout as the global `happy-terminal`
 
@@ -49,14 +49,19 @@ To make `happy-terminal` resolve to a fresh build from this checkout, run:
 pnpm link:global
 ```
 
-This builds every package, links `packages/happy-terminal` globally, and reloads the normal
-Happy Agent daemon from that build. The link points at this checkout, but Happy Terminal executes
-`packages/happy-terminal/dist/main.js`, so run `pnpm link:global` again whenever you want to
-rebuild and restart it with newer source.
+This builds every package, compiles the local Happy Agent Bun binary, installs it as
+version `0.0.0` in the normal shared location at
+`~/.happy/dist/version/0.0.0/happy-agent`, selects it through the normal
+`~/.happy/dist/config.json`, links `packages/happy-terminal` globally through pnpm,
+and reloads the daemon from that installed binary. Happy Desktop and Happy Terminal
+therefore discover the same local Agent through the same installation state. Run
+`pnpm link:global` again whenever you want to rebuild and restart it with newer source.
 
-Use `pnpm unlink:global` to remove the link before installing a published Happy Terminal
-again. Linking the real package uses the normal Happy home, sessions, and daemon;
-it is not isolated like `pnpm dev`.
+Use `pnpm unlink:global` to remove only the global Happy Terminal link. It deliberately
+leaves Happy Agent `0.0.0` installed and selected. The terminal offers the published
+release as an update; running that upgrade is how you leave the local Agent. Selecting
+another version in Happy Desktop does the same. Linking the real package uses the
+normal Happy home, sessions, and daemon; it is not isolated like `pnpm dev`.
 
 ## Live process debugging
 

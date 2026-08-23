@@ -37,11 +37,11 @@ inference is implemented by the separately published, Node-only
 
 Happy Agent is the long-lived headless daemon. Clients connect to it through the public API.
 Happy Terminal is the official TUI client, available through the `happy` CLI, its own
-`happy-terminal` and `rig` commands, Happy Desktop, or an embedded Node.js host. A standalone
+`happy-terminal` command, Happy Desktop, or an embedded Node.js host. A standalone
 Happy Terminal installation also locates and starts a compatible Happy Agent release.
 
 ```text
-   happy / happy-terminal / rig / embedded host  (Happy Terminal, one per window)
+   happy / happy-terminal / embedded host  (Happy Terminal, one per window)
             |
             |  HTTP + SSE over a unix socket, bearer token
             v
@@ -409,7 +409,7 @@ transaction, advancing `PRAGMA user_version` after each one and stamping
 | Package                        | What it is                                                                                                                                                                 |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/happy-agent`         | `@slopus/happy-agent` — the headless daemon executable and lifecycle used by every client.                                                                                 |
-| `packages/happy-terminal`      | `@slopus/happy-terminal` — the reusable TUI, standalone `happy-terminal` and `rig` commands, Happy Agent launcher, and Node.js embedding API.                              |
+| `packages/happy-terminal`      | `@slopus/happy-terminal` — the reusable TUI, standalone `happy-terminal` command, Happy Agent launcher, and Node.js embedding API.                                         |
 | `packages/happy-agent-base`    | `@slopus/happy-agent-base` — the minimal durable agent loop, provider routing, persistence, and feature hooks.                                                             |
 | `packages/happy-agent-modules` | `@slopus/happy-agent-modules` — reusable agent tools, hooks, and product capabilities composed by Happy Agent.                                                             |
 | `packages/happy-providers`     | `@slopus/happy-providers` — the separately published, Node-only vendor library: stateful sessions, transports, retries, error parsing, credentials, and native compaction. |
@@ -466,3 +466,4 @@ matters in practice, it is worth naming:
 - **`fork` on `BaseSession`** is part of the provider contract but is not yet
   implemented, so there is currently no supported way to branch a provider
   session — including the compact-on-a-fork flow that motivates it.
+  ivates it.

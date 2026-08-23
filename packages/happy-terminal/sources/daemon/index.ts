@@ -16,7 +16,6 @@ export {
     ensureLocalProtocolServer,
     observeLocalProtocolServer,
     readTokenIfPresent,
-    resolveLocalHappyAgentSources,
     runDaemonInProcess,
     type EnsureLocalProtocolServerOptions,
     type LocalProtocolServerConnection,

@@ -19,7 +19,7 @@ one terminal interface, one way to spawn and talk to agents.
 Happy Agent adds no account of its own. It uses the credentials already managed by the
 coding agents installed on the machine, and it never pools or resells provider
 access. The headless daemon holds durable sessions. Happy Terminal is the reusable Pi TUI client,
-used by the `happy` CLI, its standalone `happy-terminal` and `rig` commands, embedded Node.js
+used by the `happy` CLI, its standalone `happy-terminal` command, embedded Node.js
 applications, and Happy Desktop. Other clients attach through `@slopus/happy-agent-client`.
 
 The deeper idea: **agents never die**. Every conversation, every subagent, is a

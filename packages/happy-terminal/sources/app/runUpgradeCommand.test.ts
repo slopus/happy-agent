@@ -18,7 +18,6 @@ describe("runUpgradeCommand", () => {
         });
 
         await runUpgradeCommand({
-            isReleaseInstallation: () => true,
             log,
             reloadDaemon,
             runningVersion: async () => "1.2.3",
@@ -44,7 +43,6 @@ describe("runUpgradeCommand", () => {
         const reloadDaemon = vi.fn();
 
         await runUpgradeCommand({
-            isReleaseInstallation: () => true,
             log,
             reloadDaemon,
             runningVersion: async () => "1.2.3",
@@ -61,7 +59,6 @@ describe("runUpgradeCommand", () => {
         const reloadDaemon = vi.fn();
 
         await runUpgradeCommand({
-            isReleaseInstallation: () => true,
             log,
             reloadDaemon,
             runningVersion: async () => "1.2.2",
@@ -73,22 +70,9 @@ describe("runUpgradeCommand", () => {
         expect(reloadDaemon).toHaveBeenCalledOnce();
     });
 
-    it("refuses to replace a local source checkout", async () => {
-        const upgradeBinary = vi.fn();
-
-        await expect(
-            runUpgradeCommand({
-                isReleaseInstallation: () => false,
-                upgradeBinary,
-            }),
-        ).rejects.toThrow("A local Happy Agent source checkout cannot self-upgrade.");
-        expect(upgradeBinary).not.toHaveBeenCalled();
-    });
-
     it("reports download and reload failures as user-facing upgrade errors", async () => {
         await expect(
             runUpgradeCommand({
-                isReleaseInstallation: () => true,
                 runningVersion: async () => undefined,
                 selectedBinary: async () => undefined,
                 upgradeBinary: async () => {

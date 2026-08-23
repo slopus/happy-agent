@@ -1,15 +1,13 @@
 # Daemon launcher
 
 Happy Terminal is a client of the standalone Happy Agent daemon. This module owns only the local launch
-boundary: it probes the daemon's Unix socket, chooses local source code in a repository checkout,
-installs a released executable for a published Happy Terminal package, and invokes daemon lifecycle commands.
+boundary: it probes the daemon's Unix socket, starts the selected managed binary, installs a released
+executable when nothing is selected yet, and invokes daemon lifecycle commands.
 
 ```text
 Happy Terminal starts
    |
    +-- live ~/.happy/agent/server.sock --------------------> connect
-   |
-   +-- Happy Agent source checkout ------------------------> run local sources
    |
    +-- ~/.happy/dist/config.json selected binary ----------> start binary
    |
@@ -24,8 +22,9 @@ rename. `install.lock` serializes first-run downloads across Happy Terminal proc
 atomic config replacement remain safe even if a process exits midway.
 
 Released installations check GitHub for a newer Agent without blocking terminal startup and cache a
-successful lookup in `~/.happy/dist/latest.json` for 20 hours. Source checkouts and daemons that do
-not match the selected managed binary are never offered a release update. `happy-terminal upgrade`
+successful lookup in `~/.happy/dist/latest.json` for 20 hours. Daemons that do not match the
+selected managed binary are never offered a release update. A locally linked `0.0.0` Agent is
+offered the published release so `happy-terminal upgrade` can leave the local install. That command
 downloads and selects the newest verified release, then crosses the existing `reload` boundary to
 drain, stop, and restart the daemon.
 

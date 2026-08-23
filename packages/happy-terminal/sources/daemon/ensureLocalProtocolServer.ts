@@ -44,15 +44,13 @@ interface LocalHappyAgentSources {
     runModuleUrl: string;
 }
 
-/** Connects to the running daemon, or starts local source/release code when no socket responds. */
+/** Connects to the running daemon, or starts the selected or downloaded Agent when no socket responds. */
 export async function ensureLocalProtocolServer(
     options: EnsureLocalProtocolServerOptions = {},
 ): Promise<LocalProtocolServerConnection> {
     const paths = getHappyDaemonPaths();
     await mkdir(paths.agentDirectory, { mode: 0o700, recursive: true });
-    const localSources = resolveLocalHappyAgentSources();
-    const selectedRelease =
-        localSources === undefined ? await selectedHappyAgentBinary(paths) : undefined;
+    const selectedRelease = await selectedHappyAgentBinary(paths);
 
     const observed = await observeLocalProtocolServer(paths);
     if (observed !== undefined) return await connectWhenReady(observed);
@@ -65,7 +63,6 @@ export async function ensureLocalProtocolServer(
             const command = await resolveHappyAgentCommand(
                 paths,
                 options.onStatus,
-                localSources,
                 selectedRelease,
             );
             options.onStatus?.(
@@ -121,6 +118,7 @@ export function runDaemonInProcess(environment: NodeJS.ProcessEnv = process.env)
     return environment.HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON === "1";
 }
 
+/** Gym in-process daemon only. Production launch always uses the selected managed binary. */
 export function resolveLocalHappyAgentSources(
     moduleUrl: string = import.meta.url,
     exists: (path: URL) => boolean = existsSync,
@@ -138,7 +136,6 @@ export function resolveLocalHappyAgentSources(
 async function resolveHappyAgentCommand(
     paths: HappyDaemonPaths,
     onStatus: ((message: string) => void) | undefined,
-    localSources: LocalHappyAgentSources | undefined,
     selectedRelease: HappyAgentBinary | undefined,
 ): Promise<
     | { arguments: DaemonCommand; source: "development" }
@@ -160,18 +157,6 @@ async function resolveHappyAgentCommand(
             );
         }
         return { arguments: parsed, source: "development" };
-    }
-
-    if (localSources !== undefined) {
-        return {
-            arguments: [
-                process.execPath,
-                "--import",
-                import.meta.resolve("tsx"),
-                localSources.cliPath,
-            ],
-            source: "development",
-        };
     }
 
     if (selectedRelease !== undefined) {

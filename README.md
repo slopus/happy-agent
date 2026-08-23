@@ -50,12 +50,11 @@ Use `happy` when Happy CLI is installed:
 happy
 ```
 
-Or install Happy Terminal directly. Its `rig` command is retained as an alias:
+Or install Happy Terminal directly:
 
 ```sh
 npm install -g @slopus/happy-terminal
 happy-terminal
-# or: rig
 ```
 
 ### Step 2: Sign in to the agents you want to use
@@ -139,8 +138,7 @@ without making you rebuild the setup for every model, machine, or repository.
   execution boundaries visible.
 
 The official terminal client, package, and canonical standalone command share one name:
-**Happy Terminal**. The package also installs `rig` as an alias, while Happy CLI exposes the TUI
-through `happy`.
+**Happy Terminal**. Happy CLI exposes the TUI through `happy`.
 
 ## Embed in another Node.js project
 
