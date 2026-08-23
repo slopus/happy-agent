@@ -589,7 +589,6 @@ describe("Grok compaction behavior", () => {
                     callId: "call-1",
                     name: "read_file",
                     arguments: '{"target_file":"README.md"}',
-                    vendor: { providerCallId: "call-1" },
                 },
             ],
         };

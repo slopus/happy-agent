@@ -31,11 +31,7 @@ describe("Grok continuation goldens", () => {
                                     callId: "call-1",
                                     name: "list_dir",
                                     arguments: '{"target_directory":"."}',
-                                    vendor: {
-                                        provider: "grok",
-                                        type: "function_call",
-                                        providerCallId: "call-1",
-                                    },
+                                    vendor: { provider: "grok", type: "function_call" },
                                 },
                             ].map((call) => ({
                                 type: "tool_call" as const,
@@ -104,7 +100,6 @@ describe("Grok continuation goldens", () => {
                                 vendor: {
                                     provider: "grok",
                                     type: "tool_search_call",
-                                    providerCallId: "search-1",
                                     outputItem: JSON.stringify(call),
                                 },
                             },

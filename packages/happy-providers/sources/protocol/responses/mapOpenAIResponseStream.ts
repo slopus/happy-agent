@@ -13,7 +13,6 @@ import type {
 } from "@/core/SessionContext.js";
 import { emitToolCallResult } from "@/core/emitToolCallResult.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
-import { withProviderToolCallId } from "@/core/SessionToolCallId.js";
 import { toSessionUsage } from "@/protocol/responses/toSessionUsage.js";
 import type {
     ResponsesToolCallType,
@@ -815,7 +814,6 @@ function toSessionAssistantMessage(
                         provider: options.vendor ?? "grok",
                         type: "server_tool_call",
                         outputItem: encoded,
-                        providerCallId: callId,
                     },
                 },
                 ...(result === undefined
@@ -834,15 +832,7 @@ function toSessionAssistantMessage(
         const callId = parsed?.call_id;
         if (callId === undefined) return [];
         const call = toolCalls.find((candidate) => candidate.callId === callId);
-        return call === undefined
-            ? []
-            : [
-                  {
-                      type: "tool_call",
-                      ...call,
-                      vendor: withProviderToolCallId(call.vendor, call.callId),
-                  },
-              ];
+        return call === undefined ? [] : [{ type: "tool_call", ...call }];
     });
     return { role: "assistant", content };
 }

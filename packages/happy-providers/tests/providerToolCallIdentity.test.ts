@@ -4,6 +4,7 @@ import { SessionAssistantMessageAccumulator, type SessionContext } from "@/index
 import { toAnthropicMessages } from "@/protocol/anthropic/toAnthropicMessages.js";
 import { toOpenAIResponseInput } from "@/protocol/responses/toOpenAIResponseInput.js";
 import { createClaudeSessionReplay } from "@/vendors/claude/impl/createClaudeSessionReplay.js";
+import { getCodexIncrementalInput } from "@/vendors/codex/impl/getCodexIncrementalInput.js";
 import { toGrokResponseInput } from "@/vendors/grok/impl/toGrokResponseInput.js";
 
 const INTERNAL_CALL_ID = "tz4a98xxat96iws9zmbrgj3b";
@@ -22,7 +23,16 @@ function context(): SessionContext {
                         callId: INTERNAL_CALL_ID,
                         name: "inspect",
                         arguments: "{}",
-                        vendor: { providerCallId: PROVIDER_CALL_ID },
+                        vendor: {
+                            provider: "grok",
+                            type: "function_call",
+                            outputItem: JSON.stringify({
+                                type: "function_call",
+                                call_id: PROVIDER_CALL_ID,
+                                name: "inspect",
+                                arguments: "{}",
+                            }),
+                        },
                     },
                 ],
             },
@@ -36,7 +46,7 @@ function context(): SessionContext {
 }
 
 describe("provider tool-call identity", () => {
-    it("keeps the native ID only in tool-call vendor data and recovers it for every replay", () => {
+    it("replays the context ID even when opaque native state contains another ID", () => {
         const codex = toOpenAIResponseInput(context());
         const grok = toGrokResponseInput(context());
         const anthropic = toAnthropicMessages(context().messages);
@@ -48,18 +58,18 @@ describe("provider tool-call identity", () => {
 
         for (const replay of [codex, grok, anthropic]) {
             const encoded = JSON.stringify(replay);
-            expect(encoded).toContain(PROVIDER_CALL_ID);
-            expect(encoded).not.toContain(INTERNAL_CALL_ID);
+            expect(encoded).toContain(INTERNAL_CALL_ID);
+            expect(encoded).not.toContain(PROVIDER_CALL_ID);
         }
         const claudeReplay = JSON.stringify({
             entries: claude.entries(),
             message: claude.message,
         });
-        expect(claudeReplay).toContain(PROVIDER_CALL_ID);
-        expect(claudeReplay).not.toContain(INTERNAL_CALL_ID);
+        expect(claudeReplay).toContain(INTERNAL_CALL_ID);
+        expect(claudeReplay).not.toContain(PROVIDER_CALL_ID);
     });
 
-    it("refuses context that tries to use the caller ID as implicit provider replay state", () => {
+    it("accepts a context tool call without vendor identity metadata", () => {
         const missing = context();
         const assistant = missing.messages[1];
         if (assistant?.role !== "assistant") expect.fail("Missing assistant fixture.");
@@ -77,12 +87,32 @@ describe("provider tool-call identity", () => {
             ],
         };
 
-        expect(() => toOpenAIResponseInput(malformed)).toThrow(
-            "missing its provider replay identity",
-        );
+        expect(JSON.stringify(toOpenAIResponseInput(malformed))).toContain(INTERNAL_CALL_ID);
     });
 
-    it("captures a raw provider ID inside accumulated tool-call vendor data", () => {
+    it("replays full context after Base replaces a live Codex tool-call ID", () => {
+        const previousRequest = {
+            model: "gpt-5.6-sol",
+            input: [{ type: "message", role: "user", content: "Inspect it." }],
+        };
+        const nativeToolCall = {
+            type: "function_call",
+            call_id: PROVIDER_CALL_ID,
+            name: "inspect",
+            arguments: "{}",
+        };
+        const rebuilt = {
+            model: "gpt-5.6-sol",
+            input: toOpenAIResponseInput(context()),
+        };
+
+        expect(JSON.stringify(rebuilt.input)).toContain(INTERNAL_CALL_ID);
+        expect(
+            getCodexIncrementalInput(previousRequest, [nativeToolCall], rebuilt),
+        ).toBeUndefined();
+    });
+
+    it("exposes the provider stream ID directly and leaves vendor metadata unchanged", () => {
         const accumulator = new SessionAssistantMessageAccumulator();
         accumulator.add({
             type: "toolcall_start",
@@ -104,7 +134,7 @@ describe("provider tool-call identity", () => {
                     callId: PROVIDER_CALL_ID,
                     name: "inspect",
                     arguments: "{}",
-                    vendor: { provider: "test", providerCallId: PROVIDER_CALL_ID },
+                    vendor: { provider: "test" },
                 },
             ],
         });

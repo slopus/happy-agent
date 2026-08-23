@@ -563,17 +563,12 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "call-1",
-                                        name: "Read",
-                                        arguments: "{}",
-                                        vendor: { providerCallId: "call-1" },
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
+                                ...[{ callId: "call-1", name: "Read", arguments: "{}" }].map(
+                                    (call) => ({
+                                        type: "tool_call" as const,
+                                        ...call,
+                                    }),
+                                ),
                             ],
                         },
                         {
@@ -670,7 +665,6 @@ describe("ClaudeSession", () => {
                                         callId: "usage-call",
                                         name: "Bash",
                                         arguments: '{"command":"pwd"}',
-                                        vendor: { providerCallId: "usage-call" },
                                     },
                                 ].map((call) => ({
                                     type: "tool_call" as const,
@@ -747,7 +741,6 @@ describe("ClaudeSession", () => {
                                         callId: "missing-usage-call",
                                         name: "Bash",
                                         arguments: '{"command":"pwd"}',
-                                        vendor: { providerCallId: "missing-usage-call" },
                                     },
                                 ].map((call) => ({
                                     type: "tool_call" as const,
@@ -826,7 +819,6 @@ describe("ClaudeSession", () => {
                                         callId: "call-1",
                                         name: "Bash",
                                         arguments: '{"command":"echo done"}',
-                                        vendor: { providerCallId: "call-1" },
                                     },
                                 ].map((call) => ({
                                     type: "tool_call" as const,
@@ -912,7 +904,6 @@ describe("ClaudeSession", () => {
                                         callId: "call-1",
                                         name: "Bash",
                                         arguments: '{"command":"echo done"}',
-                                        vendor: { providerCallId: "call-1" },
                                     },
                                 ].map((call) => ({
                                     type: "tool_call" as const,
@@ -994,13 +985,11 @@ describe("ClaudeSession", () => {
                                         callId: "parallel-read",
                                         name: "Read",
                                         arguments: '{"file_path":"/tmp/a"}',
-                                        vendor: { providerCallId: "parallel-read" },
                                     },
                                     {
                                         callId: "parallel-glob",
                                         name: "Glob",
                                         arguments: '{"pattern":"**/*.md"}',
-                                        vendor: { providerCallId: "parallel-glob" },
                                     },
                                 ].map((call) => ({
                                     type: "tool_call" as const,
@@ -1360,17 +1349,12 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "call-1",
-                                        name: "Read",
-                                        arguments: "{}",
-                                        vendor: { providerCallId: "call-1" },
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
+                                ...[{ callId: "call-1", name: "Read", arguments: "{}" }].map(
+                                    (call) => ({
+                                        type: "tool_call" as const,
+                                        ...call,
+                                    }),
+                                ),
                             ],
                         },
                         {
@@ -1875,7 +1859,6 @@ describe("ClaudeSession", () => {
                                         callId: "call-1",
                                         name: "Bash",
                                         arguments: '{"command":"echo done"}',
-                                        vendor: { providerCallId: "call-1" },
                                     },
                                 ].map((call) => ({
                                     type: "tool_call" as const,
@@ -1950,7 +1933,6 @@ describe("ClaudeSession", () => {
                                     callId: "call-1",
                                     name: "Bash",
                                     arguments: '{"command":"echo done"}',
-                                    vendor: { providerCallId: "call-1" },
                                 },
                             ],
                         },
@@ -2133,18 +2115,8 @@ describe("ClaudeSession", () => {
                             role: "assistant",
                             content: [
                                 ...[
-                                    {
-                                        callId: "call-1",
-                                        name: "Bash",
-                                        arguments: "{}",
-                                        vendor: { providerCallId: "call-1" },
-                                    },
-                                    {
-                                        callId: "call-2",
-                                        name: "Bash",
-                                        arguments: "{}",
-                                        vendor: { providerCallId: "call-2" },
-                                    },
+                                    { callId: "call-1", name: "Bash", arguments: "{}" },
+                                    { callId: "call-2", name: "Bash", arguments: "{}" },
                                 ].map((call) => ({
                                     type: "tool_call" as const,
                                     ...call,

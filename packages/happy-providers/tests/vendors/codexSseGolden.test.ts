@@ -342,7 +342,6 @@ describe("Codex SSE goldens", () => {
                             vendor: {
                                 provider: "codex",
                                 type: "function_call",
-                                providerCallId: "huge-call",
                             },
                         },
                     ],

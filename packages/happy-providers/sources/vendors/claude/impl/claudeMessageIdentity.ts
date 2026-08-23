@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import type { SessionMessage } from "@/core/SessionContext.js";
-import { createProviderToolCallIdResolver, providerToolCallId } from "@/core/SessionToolCallId.js";
 
 /**
  * What a message looks like once Claude has it, rather than how the caller happens to hold it.
@@ -12,24 +11,13 @@ import { createProviderToolCallIdResolver, providerToolCallId } from "@/core/Ses
  * server-tool blocks. Comparing the wire-visible projection keeps the live tool loop intact while
  * still catching a genuine rewrite.
  */
-export function claudeConversationIdentity(messages: readonly SessionMessage[]): string[] {
-    const resolveProviderCallId = createProviderToolCallIdResolver(messages);
-    return messages.map((message) => claudeMessageIdentity(message, resolveProviderCallId));
-}
-
-function claudeMessageIdentity(
-    message: SessionMessage,
-    resolveProviderCallId: (callId: string) => string,
-): string {
+export function claudeMessageIdentity(message: SessionMessage): string {
     return createHash("sha256")
-        .update(JSON.stringify(toIdentity(message, resolveProviderCallId)))
+        .update(JSON.stringify(toIdentity(message)))
         .digest("base64");
 }
 
-function toIdentity(
-    message: SessionMessage,
-    resolveProviderCallId: (callId: string) => string,
-): unknown {
+function toIdentity(message: SessionMessage): unknown {
     if (message.role === "assistant") {
         const text = message.content
             .filter((block) => block.type === "text")
@@ -39,7 +27,7 @@ function toIdentity(
             role: "assistant",
             content: text,
             toolCalls: toolCalls.map((call) => [
-                providerToolCallId(call),
+                call.callId,
                 call.name,
                 normalizeArguments(call.arguments),
             ]),
@@ -48,7 +36,7 @@ function toIdentity(
     if (message.role === "tool") {
         return {
             role: "tool",
-            callId: resolveProviderCallId(message.callId),
+            callId: message.callId,
             content: message.content,
             isError: message.isError,
         };

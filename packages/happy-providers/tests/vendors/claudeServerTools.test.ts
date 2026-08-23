@@ -98,7 +98,7 @@ describe("Claude server tools", () => {
             callId: "srvtoolu_1",
             name: "WebSearch",
             server: true,
-            vendor: { type: "claude_tool_use", providerCallId: "srvtoolu_1" },
+            vendor: { type: "claude_tool_use" },
         });
         expect(events).toContainEqual({
             type: "toolcall_delta",
@@ -159,7 +159,7 @@ describe("Claude server tools", () => {
             callId: "srvtoolu_1",
             name: "ToolSearch",
             server: true,
-            vendor: { type: "claude_tool_use", providerCallId: "srvtoolu_1" },
+            vendor: { type: "claude_tool_use" },
         });
         expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
     });

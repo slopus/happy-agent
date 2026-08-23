@@ -6,7 +6,6 @@ import type {
     SessionOutputBlock,
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
-import { createProviderToolCallIdResolver, providerToolCallId } from "@/core/SessionToolCallId.js";
 import { createCodexCallIdMapper } from "@/protocol/responses/createCodexCallIdMapper.js";
 import {
     toOpenAIInputContent,
@@ -19,7 +18,6 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
     const customToolCallIds = new Set<string>();
     const toolSearchCallIds = new Set<string>();
     const mapCallId = createCodexCallIdMapper();
-    const resolveProviderCallId = createProviderToolCallIdResolver(context.messages);
     let messageId = 0;
 
     for (const original of context.messages) {
@@ -51,7 +49,7 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
             continue;
         }
         if (message.role === "tool") {
-            const callId = mapCallId(resolveProviderCallId(message.callId));
+            const callId = mapCallId(message.callId);
             if (toolSearchCallIds.has(callId)) {
                 try {
                     const parsed: unknown = JSON.parse(textFromBlocks(message.content));
@@ -88,16 +86,12 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
         for (const block of message.content) {
             const native = nativeOutputItem(block);
             if (native !== undefined) {
-                const providerCallId =
-                    block.type === "tool_call"
-                        ? providerToolCallId(block)
-                        : block.type === "tool_result"
-                          ? resolveProviderCallId(block.callId)
-                          : undefined;
+                const callId =
+                    block.type === "tool_call" || block.type === "tool_result"
+                        ? block.callId
+                        : undefined;
                 input.push(
-                    providerCallId === undefined
-                        ? native
-                        : withNativeCallId(native, mapCallId(providerCallId)),
+                    callId === undefined ? native : withNativeCallId(native, mapCallId(callId)),
                 );
                 continue;
             }
@@ -123,7 +117,7 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
             }
             if (block.type === "tool_result") continue;
 
-            const callId = mapCallId(providerToolCallId(block));
+            const callId = mapCallId(block.callId);
             const vendorType = toolVendorType(block.vendor);
             if (vendorType === "tool_search_call") {
                 try {

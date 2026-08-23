@@ -307,11 +307,7 @@ function contextFromCompactionInput(input: TraceInput[]): SessionContext {
                             callId: item.call_id ?? "",
                             name: item.name ?? "",
                             arguments: item.arguments ?? "",
-                            vendor: {
-                                provider: "grok",
-                                type: "function_call",
-                                providerCallId: item.call_id ?? "",
-                            },
+                            vendor: { provider: "grok", type: "function_call" },
                         },
                     ].map((call) => ({
                         type: "tool_call" as const,

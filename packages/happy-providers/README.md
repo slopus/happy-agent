@@ -756,7 +756,7 @@ interface SessionReasoningBlock {
 
 interface SessionToolCallBlock {
     readonly type: "tool_call";
-    /** Stable caller-owned identity; Happy Agent Base uses a CUID2. */
+    /** Stable correlation identity. Providers expose their native ID; callers may replace it. */
     readonly callId: string;
     readonly name: string;
     readonly namespace?: string;
@@ -764,13 +764,17 @@ interface SessionToolCallBlock {
     readonly arguments: string;
     /** The provider stopped before this call became executable — do not run it. */
     readonly incomplete?: boolean;
-    /** Opaque replay data and the only retained copy of the provider-native identity. */
-    readonly vendor: { readonly providerCallId: string; readonly [key: string]: unknown };
+    /** Optional opaque replay data unrelated to the call's correlation identity. */
+    readonly vendor?: unknown;
 }
 ```
 
-Your answer to a tool call, tied back by the same caller-owned `callId`. Do not copy the provider
-identity onto the result; the provider looks it up from the earlier tool-call block when replaying:
+Providers expose their native `callId` on stream events so starts, deltas, ends, and server-tool
+results can be correlated. A caller may replace that ID before storing the context, provided it
+uses the replacement consistently on the tool-call block and its result. Providers replay the
+context's ID directly and do not retain a second identity in `vendor`.
+
+Your answer to a tool call is tied back by that same `callId`:
 
 ```ts
 interface SessionToolResultMessage {

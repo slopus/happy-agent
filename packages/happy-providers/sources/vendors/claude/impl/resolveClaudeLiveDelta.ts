@@ -1,5 +1,4 @@
 import type { SessionMessage, SessionToolResultMessage } from "@/core/SessionContext.js";
-import { toProviderToolResultMessage } from "@/core/SessionToolCallId.js";
 
 /** The one turn a live Claude query can be handed without replaying the conversation. */
 export type ClaudeLiveDelta =
@@ -21,9 +20,8 @@ export function resolveClaudeLiveDelta(options: {
     incoming: readonly string[];
     sent: readonly string[] | undefined;
     pendingToolCallIds: readonly string[];
-    resolveProviderCallId: (callId: string) => string;
 }): ClaudeLiveDelta {
-    const { incoming, messages, pendingToolCallIds, resolveProviderCallId, sent } = options;
+    const { incoming, messages, pendingToolCallIds, sent } = options;
     if (sent === undefined) return { kind: "restart" };
     if (sent.length > incoming.length) return { kind: "restart" };
     if (!sent.every((identity, index) => identity === incoming[index])) return { kind: "restart" };
@@ -32,11 +30,8 @@ export function resolveClaudeLiveDelta(options: {
     if (pendingToolCallIds.length > 0) {
         const results = suffix.filter((message) => message.role === "tool");
         if (results.length !== suffix.length) return { kind: "restart" };
-        const providerResults = results.map((result) =>
-            toProviderToolResultMessage(resolveProviderCallId, result),
-        );
-        if (!coversExactly(pendingToolCallIds, providerResults)) return { kind: "restart" };
-        return { kind: "tool_results", results: providerResults };
+        if (!coversExactly(pendingToolCallIds, results)) return { kind: "restart" };
+        return { kind: "tool_results", results };
     }
     if (suffix.length !== 1) return { kind: "restart" };
     if (suffix[0]?.role === "tool") return { kind: "restart" };

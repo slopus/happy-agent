@@ -75,10 +75,7 @@ export interface SessionToolCallBlock {
     readonly arguments: string;
     /** The provider stopped before this call became executable. */
     readonly incomplete?: boolean;
-    /**
-     * Opaque provider replay metadata. Its `providerCallId` is the only retained copy of the
-     * provider-native call identity; `callId` is always the caller's stable identity.
-     */
+    /** Opaque provider replay metadata unrelated to the call's correlation identity. */
     readonly vendor?: any;
     /** The provider executed this call and settled it inside the assistant response. */
     readonly server?: true;
