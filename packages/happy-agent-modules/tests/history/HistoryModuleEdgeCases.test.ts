@@ -21,22 +21,28 @@ import {
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
-function scopeFor(agentId = "agent-a", values = new Map<string, unknown>()): AgentModuleScope {
+function scopeFor(
+    agentId = "agent-a",
+    runValues = new Map<string, unknown>(),
+    historyValues = runValues,
+): AgentModuleScope {
+    const store = (storeValues: Map<string, unknown>) => ({
+        delete: async (_ctx: unknown, key: string) => {
+            storeValues.delete(key);
+        },
+        read: async (_ctx: unknown, key: string) => storeValues.get(key),
+        write: async (_ctx: unknown, key: string, value: unknown) => {
+            storeValues.set(key, structuredClone(value));
+        },
+    });
     return {
         agent: {
             id: agentId,
             model: "model-a",
             provider: "provider-a",
         },
-        runKV: {
-            delete: async (_ctx: unknown, key: string) => {
-                values.delete(key);
-            },
-            read: async (_ctx: unknown, key: string) => values.get(key),
-            write: async (_ctx: unknown, key: string, value: unknown) => {
-                values.set(key, structuredClone(value));
-            },
-        },
+        historyKV: store(historyValues),
+        runKV: store(runValues),
     } as never;
 }
 
@@ -708,7 +714,7 @@ describe("HistoryModule edge cases", () => {
         }
     });
 
-    it("flushes pending blocks during settlement after an interrupted inference", async () => {
+    it("requires an identity when flushing an interrupted inference during settlement", async () => {
         const history = new HistoryModule();
         const database = moduleDatabase(history.migrations, "history-settlement-flush");
         await database.ready;
@@ -721,6 +727,13 @@ describe("HistoryModule edge cases", () => {
                 block: { text: "interrupted answer", type: "text" },
                 type: "text_end",
             } as never);
+            await expect(
+                hooks.afterAgentSettledTransact!(database.context, scope, {
+                    settlementId: "settlement-1",
+                } as never),
+            ).rejects.toThrow("missing or invalid pending inference identity");
+
+            values.set("pending_inference_id", "inference-interrupted-answer");
             await hooks.afterAgentSettledTransact!(database.context, scope, {
                 settlementId: "settlement-1",
             } as never);
@@ -729,9 +742,88 @@ describe("HistoryModule edge cases", () => {
             expect(page.messages).toHaveLength(1);
             expect(page.messages[0]?.message).toMatchObject({
                 blocks: [{ text: "interrupted answer", type: "text" }],
+                recordId: "inference-interrupted-answer",
                 role: "assistant",
             });
             expect(values.has("pending_blocks")).toBe(false);
+            expect(values.has("pending_inference_id")).toBe(false);
+        } finally {
+            database.close();
+        }
+    });
+
+    it("reconciles pending assistant tool calls before recovering their results", async () => {
+        const history = new HistoryModule();
+        const database = moduleDatabase(history.migrations, "history-tool-recovery-flush");
+        await database.ready;
+        const hooks = await resolveModuleHooks(database.context, history);
+        const historyValues = new Map<string, unknown>();
+        const runValues = new Map<string, unknown>([
+            [
+                "pending_blocks",
+                [
+                    {
+                        arguments: { command: "pwd" },
+                        callId: "callrecoveredtool",
+                        name: "exec_command",
+                        type: "tool_call",
+                    },
+                ],
+            ],
+            ["pending_inference_id", "inference-recovered-tool"],
+        ]);
+        const callValues = new Map<string, unknown>([["tool_name", "exec_command"]]);
+        const turnScope = scopeFor("agent-a", runValues, historyValues);
+        const callScope = scopeFor("agent-a", callValues, historyValues);
+
+        try {
+            // This is the released crash state: Base durably owns the call while History has
+            // only top-level run notes, with no assistant row or tool-call index yet.
+            await expect(history.read(database.context, "agent-a")).resolves.toMatchObject({
+                messages: [],
+            });
+
+            await hooks.afterAgentActivatedTransact?.(database.context, turnScope, {
+                restored: false,
+            });
+            await expect(history.read(database.context, "agent-a")).resolves.toMatchObject({
+                messages: [],
+            });
+
+            await hooks.afterAgentActivatedTransact?.(database.context, turnScope, {
+                restored: true,
+            });
+            await hooks.afterToolCallTransact!(database.context, callScope, {
+                callId: "callrecoveredtool",
+                content: [
+                    {
+                        text: "The tool call was interrupted by a restart and was not retried.",
+                        type: "text",
+                    },
+                ],
+                isError: true,
+                role: "tool",
+            });
+
+            const page = await history.read(database.context, "agent-a");
+            expect(page.messages).toHaveLength(1);
+            expect(page.messages[0]?.message).toMatchObject({
+                blocks: [
+                    {
+                        callId: "callrecoveredtool",
+                        type: "tool_call",
+                    },
+                    {
+                        callId: "callrecoveredtool",
+                        type: "tool_result",
+                    },
+                ],
+                recordId: "inference-recovered-tool",
+                role: "assistant",
+            });
+            expect(runValues.has("pending_blocks")).toBe(false);
+            expect(runValues.has("pending_inference_id")).toBe(false);
+            expect(historyValues.size).toBe(0);
         } finally {
             database.close();
         }

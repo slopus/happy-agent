@@ -20,6 +20,15 @@ generated CUID2 to the inference message that owns it, and the result and permis
 only that message. This keeps a call and its result together without turning the whole run into one
 mutable history row.
 
+When Agent Base reconstructs a tool call after a process interruption, its completed response
+blocks may still be in the run KV because inference completion was a later transaction. The
+reconstructed batch still lacks a durable History row. When Base transactionally reactivates the
+interrupted inference, History flushes the pending blocks before the recovered batch can run. The
+call index therefore exists before the recovered result can commit. Recovery follows Agent Base's
+durability rules; it never re-executes a tool merely to repair the history projection.
+Base retires the interrupted inference ID once a completed response block exists, so any provider
+request after recovered tool results receives a fresh identity and remains a separate history row.
+
 ## Run lifecycle belongs to History
 
 The run table is the durable authority for normal turns and standalone maintenance alike. Callers

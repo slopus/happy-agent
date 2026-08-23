@@ -120,7 +120,8 @@ The module also implements the `AgentModule` lifecycle hooks that do the recordi
 (records an accepted user message), `beforeToolCallTransact`/`afterToolCallTransact` (record one
 tool result per call on the message containing that call, including its one-line display summary),
 `afterInferenceTransact` (writes the finished response and, if inference failed, a separate
-`role: "error"` message), and
+`role: "error"` message), `afterAgentActivatedTransact` (reconciles response blocks left pending
+when Base restores interrupted work), and
 `afterAgentSettledTransact` (flushes any response blocks still pending after an interruption).
 These are not meant to be called directly.
 
@@ -133,19 +134,23 @@ not a module-owned replay signal. Agent Base owns durable tool retry and complet
 `HistoryRecord.position` is the original, stable position at which a message was written; cursors
 are positions rather than offsets.
 
-In-flight work — the part of a response not yet durable — is kept only in `scope.runKV`, the
-run-scoped Agent KV the Agent Base lends the module, under these keys:
+In-flight work — the part of a response not yet durable — is kept in the top-level `scope.runKV`,
+the run-scoped Agent KV that Agent Base lends the module, under these keys:
 
 - `pending_blocks` — the array of `HistoryBlock`s (text, thinking, tool calls) accumulated by
   `onEventTransact` since the last flush, up to `MAX_HISTORY_PENDING_BLOCKS` (2,048) entries.
 - `pending_inference_id` — the stable inference ID that becomes the next assistant message ID;
   retained until the pending blocks commit or settlement flushes them after interruption.
-- `tool_name` — the name of the tool currently dispatched, written by `beforeToolCallTransact` and
-  read back by `afterToolCallTransact`.
+
+Per-call presentation state uses that call's scoped `scope.runKV` instead: `tool_name` is written by
+`beforeToolCallTransact`, and `tool_presentation` is written after successful execution. Both are
+read by `afterToolCallTransact`; the run store clears them when the agent settles.
 
 The pending blocks are cleared in the same transaction that appends their message, so a crash
-cannot commit only one side. Every message, block, and argument value written to KV or the database
-is checked against the
+cannot commit only one side. Base retires that interrupted response's inference identity before it
+recovers the tool batch, so the provider request after the recovered results creates its own
+assistant message. Every message, block, and argument value written to KV or the database is
+checked against the
 bounds in `HistoryMessage.ts` (per-field lengths, `MAX_HISTORY_BLOCKS_PER_MESSAGE`,
 `MAX_HISTORY_MESSAGES_PER_APPEND`, and the overall JSON byte ceilings for a message and for one
 tool-argument value) before it is written, so a malformed or oversized value fails the write rather

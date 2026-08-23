@@ -974,6 +974,39 @@ export class HistoryModule implements AgentModule {
         await this.#appendToolResult(ctx, scope.agent.id, toolResultBlock);
     }
 
+    /**
+     * Finish an assistant response whose blocks reached Agent Base before inference completion.
+     *
+     * Block persistence and inference completion are separate Agent Base transactions. If the
+     * process stops between them, a restart can recover the unanswered tool call and dispatch it
+     * while this module still has only its pending blocks. Finalizing those blocks before the
+     * recovered call runs makes the call index and its eventual result one durable history chain.
+     */
+    async #flushPendingBlocks(ctx: Context, scope: AgentModuleScope): Promise<void> {
+        const blocks = await this.#pendingBlocks(ctx, scope);
+        if (blocks.length === 0) return;
+
+        const runId = this.#events?.activeRunId(scope.agent.id);
+        const pendingInferenceId = await scope.runKV.read(ctx, PENDING_INFERENCE_ID_KEY);
+        if (!Value.Check(historyRecordIdSchema, pendingInferenceId)) {
+            throw new Error(
+                "History module found a missing or invalid pending inference identity.",
+            );
+        }
+        const message: HistoryMessage = {
+            at: Date.now(),
+            blocks,
+            recordId: pendingInferenceId as string,
+            ...(scope.agent.model === undefined ? {} : { model: scope.agent.model }),
+            provider: scope.agent.provider,
+            role: "assistant",
+            ...(runId === undefined ? {} : { runId }),
+        };
+        await this.#append(ctx, scope.agent.id, message);
+        await scope.runKV.delete(ctx, PENDING_BLOCKS_KEY);
+        await scope.runKV.delete(ctx, PENDING_INFERENCE_ID_KEY);
+    }
+
     async #afterInference(
         ctx: Context,
         scope: AgentModuleScope,
@@ -1630,6 +1663,14 @@ export class HistoryModule implements AgentModule {
             }
         },
 
+        /** Reconcile an interrupted response before restored work can resume. */
+        afterAgentActivatedTransact: (
+            ctx: Context,
+            scope: AgentModuleScope,
+            activation,
+        ): Promise<void> =>
+            activation.restored ? this.#flushPendingBlocks(ctx, scope) : Promise.resolve(),
+
         /** Keep the current inference identity durable until its completed blocks are appended. */
         beforeInferenceTransact: async (ctx, scope, inference): Promise<void> => {
             await scope.runKV.write(ctx, PENDING_INFERENCE_ID_KEY, inference.inferenceId);
@@ -1725,31 +1766,7 @@ export class HistoryModule implements AgentModule {
             scope: AgentModuleScope,
             settlement: AgentBaseSettlement,
         ): Promise<void> => {
-            const blocks = await this.#pendingBlocks(ctx, scope);
-            if (blocks.length > 0) {
-                const runId = this.#events?.activeRunId(scope.agent.id);
-                const pendingInferenceId = await scope.runKV.read(ctx, PENDING_INFERENCE_ID_KEY);
-                if (
-                    pendingInferenceId !== undefined &&
-                    !Value.Check(historyRecordIdSchema, pendingInferenceId)
-                ) {
-                    throw new Error("History module found an invalid pending inference identity.");
-                }
-                const message: HistoryMessage = {
-                    at: Date.now(),
-                    blocks,
-                    recordId:
-                        pendingInferenceId === undefined
-                            ? createRecordId()
-                            : (pendingInferenceId as string),
-                    ...(scope.agent.model === undefined ? {} : { model: scope.agent.model }),
-                    provider: scope.agent.provider,
-                    role: "assistant",
-                    ...(runId === undefined ? {} : { runId }),
-                };
-                await this.#append(ctx, scope.agent.id, message);
-                await scope.runKV.delete(ctx, PENDING_BLOCKS_KEY);
-            }
+            await this.#flushPendingBlocks(ctx, scope);
             await scope.runKV.delete(ctx, PENDING_INFERENCE_ID_KEY);
             if (settlement.error !== undefined) {
                 await this.#recordSettlementFailure(
