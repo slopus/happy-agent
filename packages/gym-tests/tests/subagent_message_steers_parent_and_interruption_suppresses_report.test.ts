@@ -128,7 +128,9 @@ describe("subagent replies and interruption", () => {
         });
         const child = await gym.waitUntil(async () => {
             const candidate = (await gym.client.getAgentActivity(parentAgentId)).subagents[0];
-            return candidate?.status === "working" ? candidate : undefined;
+            return candidate?.status === "working" && candidate.id === childAgentId
+                ? candidate
+                : undefined;
         }, "the child to remain active after steering its parent");
         expect(child.id).toBe(childAgentId);
 

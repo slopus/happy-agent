@@ -240,20 +240,21 @@ describe("Scheduling waits", () => {
         const harness = await schedulingHarness("wait-tools", { agents });
         try {
             const toolsFor = async (id: string) =>
-                (
-                    await harness.hooks.tools?.(harness.database.context, {
-                        agent: { id },
-                    } as AgentModuleScope)
-                )?.map((tool) => tool.name) ?? [];
+                (await harness.hooks.tools?.(harness.database.context, {
+                    agent: { id },
+                } as AgentModuleScope)) ?? [];
+            const rootTools = await toolsFor(agentId);
+            const childTools = await toolsFor("childagent");
 
-            expect(await toolsFor(agentId)).toEqual([
+            expect(rootTools.map((tool) => tool.name)).toEqual([
                 "wait",
                 "wait_until",
                 "schedule_message",
                 "list_scheduled_messages",
                 "cancel_scheduled_message",
             ]);
-            expect(await toolsFor("childagent")).toEqual(["wait", "wait_until"]);
+            expect(childTools.map((tool) => tool.name)).toEqual(["wait", "wait_until"]);
+            expect(childTools.map((tool) => tool.steerable)).toEqual([true, true]);
         } finally {
             harness.close();
         }

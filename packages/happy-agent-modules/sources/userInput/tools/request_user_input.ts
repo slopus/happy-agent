@@ -47,10 +47,11 @@ type RequestUserInputToolParameters = Static<typeof requestUserInputToolParamete
  * results, module hooks, and permission evidence, and it remains stable across restarts, so a
  * resumed `request_user_input` re-resolves the same request.
  *
- * That is why the tool is durable. A person may take days to answer, and a daemon restart in the
- * meantime must not turn their question into a failed tool call. Executing it again is safe rather
- * than merely tolerable: `ask` creates or resumes the one request the Base call ID names, and
- * `wait` returns at once when it was already answered while the daemon was down.
+ * That is why the tool is durable and reloadable. A person may take days to answer, and a daemon
+ * restart in the meantime must not turn their question into a failed tool call or hold graceful
+ * shutdown open. Executing it again is safe rather than merely tolerable: `ask` creates or resumes
+ * the one request the Base call ID names, and `wait` returns at once when it was already answered
+ * while the daemon was down.
  */
 export function requestUserInputTool(userInput: UserInputModule, agentId: string) {
     return defineAgentTool({
@@ -60,6 +61,7 @@ export function requestUserInputTool(userInput: UserInputModule, agentId: string
         parameters: requestUserInputToolParametersSchema,
         returnType: requestUserInputToolResultSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { input }: RequestUserInputToolParameters, call) => {
             if ("requestId" in input) {

@@ -14,23 +14,17 @@ again, and its `wait` returns immediately when the person answered while the dae
 Deadlines are absolute — `autoResolutionMs` counts from `createdAt` — so a resumed wait cannot
 silently extend the window a restart interrupted.
 
-## A parked wait holds a graceful shutdown open, and that is what makes durability work
+## A parked wait is reloadable and does not hold graceful shutdown open
 
-Once the process is shutting down, Agent Base treats close as "stop at the next safe edge" and
-deliberately does not abort a tool that is already running. A wait parked on a question therefore
-keeps the agent's loop open until the shutdown coordinator times out and the process exits. That is
-the intended bound, and it is also what leaves the call unanswered in the store — which is exactly
-what a durable tool needs in order to be retried by the next daemon.
+`request_user_input` is both durable and reloadable. During graceful drain, Agent Base aborts the
+current execution lifetime without recording a tool result and leaves the same pending call in
+storage. The next daemon re-executes that call with the same Base CUID2, so `ask` rejoins the one
+durable request instead of creating another and `wait` returns immediately if the person answered
+while the daemon was down.
 
-Do not try to end the wait early to speed shutdown up. Returning or throwing from `execute` commits
-a tool result, and a committed result is a permanent answer: the question would come back as a
-failure after every restart instead of being asked again.
-
-A consequence for tests: the API gym cannot restart a daemon that has a question in flight. Its
-daemon runs in the test process, so when the shutdown times out the SQLite process lock is never
-released and the next daemon refuses to open the database. Cover this behavior at the module
-boundary — a fresh module instance replaying the same Base tool-call CUID2 over the same database
-is what a restart actually looks like.
+Do not turn drain into an ordinary return or thrown tool failure. Either would commit a permanent
+tool result and prevent the next daemon from resuming the question. The reloadable boundary is
+what makes shutdown prompt while preserving both the pending tool call and request identity.
 
 ## Agent questions use natural labels and relative timeouts
 
