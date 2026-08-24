@@ -1,30 +1,22 @@
 import AppKit
 
-/// One provider's plan windows: who they belong to, how much is spent, and a bar for each share.
+/// One provider's plan windows, stacked: who they belong to, how much is spent, and a bar each.
 ///
 /// Menu items only carry text, so the bars need a view of their own. The row never highlights and
-/// never accepts a click; it is a readout inside the menu. Session and week sit next to each
-/// other when both exist. A single window keeps the compact title-and-bar layout.
+/// never accepts a click; it is a readout inside the menu. Session and week each get a full-width
+/// line so the reset time is not cut off.
 final class PlanRowView: NSView {
     private let title = NSTextField(labelWithString: "")
-    private let detail = NSTextField(labelWithString: "")
     private let meters: [Meter]
-    private let singlePercent: Double?
-    private let exhausted: Bool
 
     static let width: CGFloat = 244
+    private static let meterHeight: CGFloat = 28
+    private static let meterGap: CGFloat = 4
 
     init(entry: PlanEntry) {
-        exhausted = entry.exhausted
-        let dual = entry.windows.count > 1
-        if dual {
-            meters = entry.windows.map { Meter(window: $0, exhausted: entry.exhausted) }
-            singlePercent = nil
-        } else {
-            meters = []
-            singlePercent = entry.windows.first.map { min(max($0.usedPercent, 0), 100) }
-        }
-        super.init(frame: NSRect(x: 0, y: 0, width: PlanRowView.width, height: dual ? 52 : 40))
+        meters = entry.windows.map { Meter(window: $0, exhausted: entry.exhausted) }
+        let height = PlanRowView.height(windowCount: meters.count)
+        super.init(frame: NSRect(x: 0, y: 0, width: PlanRowView.width, height: height))
         // Longer conversation titles widen the menu; the bars follow it rather than ending short.
         autoresizingMask = [.width]
 
@@ -35,54 +27,26 @@ final class PlanRowView: NSView {
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         title.translatesAutoresizingMaskIntoConstraints = false
         addSubview(title)
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 21),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
+            title.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+        ])
 
-        if dual {
+        var previous: NSView = title
+        for (index, meter) in meters.enumerated() {
+            meter.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(meter)
             NSLayoutConstraint.activate([
-                title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 21),
-                title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
-                title.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+                meter.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 21),
+                meter.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+                meter.heightAnchor.constraint(equalToConstant: PlanRowView.meterHeight),
+                meter.topAnchor.constraint(
+                    equalTo: previous.bottomAnchor,
+                    constant: index == 0 ? 2 : PlanRowView.meterGap
+                ),
             ])
-            for meter in meters {
-                meter.translatesAutoresizingMaskIntoConstraints = false
-                addSubview(meter)
-            }
-            let first = meters[0]
-            let second = meters[1]
-            NSLayoutConstraint.activate([
-                first.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 21),
-                first.topAnchor.constraint(greaterThanOrEqualTo: title.bottomAnchor, constant: 2),
-                first.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-                first.heightAnchor.constraint(equalToConstant: 24),
-                second.leadingAnchor.constraint(equalTo: first.trailingAnchor, constant: 12),
-                second.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-                second.topAnchor.constraint(equalTo: first.topAnchor),
-                second.bottomAnchor.constraint(equalTo: first.bottomAnchor),
-                first.widthAnchor.constraint(equalTo: second.widthAnchor),
-            ])
-            return
-        }
-
-        if let window = entry.windows.first {
-            detail.stringValue = labeledShare(window)
-            detail.font = .menuFont(ofSize: 11)
-            detail.textColor = .secondaryLabelColor
-            detail.alignment = .right
-            detail.setContentCompressionResistancePriority(.required, for: .horizontal)
-            detail.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(detail)
-            NSLayoutConstraint.activate([
-                title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 21),
-                title.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-                detail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-                detail.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
-                detail.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 21),
-                title.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
-                title.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            ])
+            previous = meter
         }
     }
 
@@ -91,16 +55,14 @@ final class PlanRowView: NSView {
         fatalError("PlanRowView is created in code.")
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let percent = singlePercent else { return }
-        drawPlanBar(
-            in: NSRect(x: 21, y: 7, width: bounds.width - 35, height: 3),
-            percent: percent,
-            exhausted: exhausted
-        )
+    private static func height(windowCount: Int) -> CGFloat {
+        let meters = CGFloat(max(windowCount, 0))
+        let gaps = CGFloat(max(windowCount - 1, 0)) * meterGap
+        // Title, then each window on its own line: label, percent, reset, bar.
+        return 4 + 18 + 2 + meters * meterHeight + gaps + 8
     }
 
-    /// One compact meter: the window's name, its spent share, and a bar.
+    /// One full-width window: name, spent share and reset, and a bar underneath.
     private final class Meter: NSView {
         private let percent: Double
         private let exhausted: Bool
@@ -132,7 +94,7 @@ final class PlanRowView: NSView {
                 name.topAnchor.constraint(equalTo: topAnchor),
                 value.trailingAnchor.constraint(equalTo: trailingAnchor),
                 value.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
-                value.leadingAnchor.constraint(greaterThanOrEqualTo: name.trailingAnchor, constant: 6),
+                value.leadingAnchor.constraint(greaterThanOrEqualTo: name.trailingAnchor, constant: 8),
             ])
         }
 
@@ -151,39 +113,39 @@ final class PlanRowView: NSView {
     }
 }
 
-private func labeledShare(_ window: PlanWindow) -> String {
-    let percent = "\(Int(window.usedPercent.rounded()))%"
-    guard let reset = resetPhrase(window) else { return "\(window.label) \(percent)" }
-    return "\(window.label) \(percent) · resets \(reset)"
-}
-
 private func share(_ window: PlanWindow) -> String {
     let percent = "\(Int(window.usedPercent.rounded()))%"
     guard let reset = resetPhrase(window) else { return percent }
     return "\(percent) · \(reset)"
 }
 
-/// Session always uses a clock time. Week and month use a weekday or date when the reset is not today.
+/// Clock time always. A weekday or date when the reset is not today. Remaining time when under 3 hours.
 private func resetPhrase(_ window: PlanWindow) -> String? {
     guard let date = window.resetsAt else { return nil }
-    if window.kind == .session {
-        return clockTime(date)
+    var parts = [resetWhen(date)]
+    let remaining = date.timeIntervalSinceNow
+    if remaining > 0 && remaining < 3 * 60 * 60 {
+        parts.append("in \(remainingDuration(remaining))")
     }
-    let calendar = Calendar.current
-    if calendar.isDateInToday(date) {
-        return clockTime(date)
-    }
-    let start = calendar.startOfDay(for: Date())
-    let end = calendar.startOfDay(for: date)
-    let days = calendar.dateComponents([.day], from: start, to: end).day ?? 0
-    if days > 0 && days < 7 {
-        let formatter = DateFormatter()
-        formatter.setLocalizedDateFormatFromTemplate("EEE")
-        return formatter.string(from: date)
-    }
+    return parts.joined(separator: " · ")
+}
+
+private func resetWhen(_ date: Date) -> String {
+    let time = clockTime(date)
+    if Calendar.current.isDateInToday(date) { return time }
+    return "\(resetDay(date)) \(time)"
+}
+
+private func resetDay(_ date: Date) -> String {
+    let start = Calendar.current.startOfDay(for: Date())
+    let end = Calendar.current.startOfDay(for: date)
+    let days = Calendar.current.dateComponents([.day], from: start, to: end).day ?? 0
     let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .none
+    if days > 0 && days < 7 {
+        formatter.setLocalizedDateFormatFromTemplate("EEE")
+    } else {
+        formatter.setLocalizedDateFormatFromTemplate("MMM d")
+    }
     return formatter.string(from: date)
 }
 
@@ -192,6 +154,15 @@ private func clockTime(_ date: Date) -> String {
     formatter.timeStyle = .short
     formatter.dateStyle = .none
     return formatter.string(from: date)
+}
+
+private func remainingDuration(_ interval: TimeInterval) -> String {
+    let totalSeconds = max(1, Int(interval.rounded(.up)))
+    let hours = totalSeconds / 3_600
+    let minutes = (totalSeconds % 3_600) / 60
+    if hours > 0 { return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m" }
+    if minutes > 0 { return "\(minutes)m" }
+    return "\(totalSeconds)s"
 }
 
 private func drawPlanBar(in track: NSRect, percent: Double, exhausted: Bool) {

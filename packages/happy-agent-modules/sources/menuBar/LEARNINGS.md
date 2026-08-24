@@ -45,12 +45,13 @@ not listed at all, not even collapsed into a count.
 
 The menu used to pick the single window closest to running out. That hid the week whenever the
 session was the tighter limit, which is the usual case. Every provider uses the same pair: the
-five-hour session and the week, side by side — Claude, Codex, and any named account of either.
-A monthly window is shown only when there is no session window, so a Grok-style week-and-month
-pair still has both numbers.
+five-hour session and the week, each on its own line so the reset time is not cut off. A monthly
+window is shown only when there is no session window, so a Grok-style week-and-month pair still
+has both numbers. Extra vendor meters such as Codex Spark are not shown.
 
-Session reset is always a clock time, even when that time falls tomorrow. A five-hour window that
-ends at 4:34 AM must read "4:34 AM", never "Mon". Week and month may use a weekday or a date.
+Reset always includes a clock time. A weekday or date is added only when the reset is not today.
+When the window ends in less than three hours, remaining time is added too, such as
+"4:34 PM · in 2h 14m".
 
 ## The glyph is a star, drawn at full strength
 
