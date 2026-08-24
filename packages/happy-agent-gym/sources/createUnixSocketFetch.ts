@@ -1,4 +1,4 @@
-import { request as httpRequest } from "node:http";
+import { Agent, request as httpRequest } from "node:http";
 import { Readable } from "node:stream";
 
 /**
@@ -10,6 +10,9 @@ import { Readable } from "node:stream";
  * the gym.
  */
 export function createUnixSocketFetch(socketPath: string): typeof globalThis.fetch {
+    // A replacement daemon reuses the same path. Its replacement client needs a fresh pool so it
+    // can never inherit an idle socket that belonged to the previous daemon lifetime.
+    const agent = new Agent({ keepAlive: true });
     return async (input, init = {}) => {
         const source = input instanceof Request ? input : undefined;
         const url = new URL(source?.url ?? String(input));
@@ -36,6 +39,7 @@ export function createUnixSocketFetch(socketPath: string): typeof globalThis.fet
             }
 
             const request = httpRequest({
+                agent,
                 headers: Object.fromEntries(headers),
                 method: init.method ?? source?.method ?? "GET",
                 path: `${url.pathname}${url.search}`,

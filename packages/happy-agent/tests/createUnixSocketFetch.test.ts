@@ -1,6 +1,7 @@
 import { createServer, type RequestListener, type Server } from "node:http";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { Socket } from "node:net";
 
 import { HappyAgentClient } from "@slopus/happy-agent-client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -87,6 +88,36 @@ describe("createUnixSocketFetch", () => {
         });
         await new Promise<void>((resolve) => setImmediate(resolve));
     });
+
+    it("does not share a stale socket across daemon client lifetimes", async () => {
+        let firstSocket: Socket | undefined;
+        let connectionCount = 0;
+        const { fetch, socketPath } = await serveFetch((request, response) => {
+            const chunks: Buffer[] = [];
+            request.on("data", (chunk: Buffer) => chunks.push(chunk));
+            request.on("end", () => {
+                response.end(Buffer.concat(chunks));
+            });
+        });
+        const server = servers.at(-1)!;
+        server.on("connection", (socket) => {
+            connectionCount += 1;
+            firstSocket ??= socket;
+        });
+
+        const first = await fetch("http://happy/first", { body: "first", method: "POST" });
+        await expect(first.text()).resolves.toBe("first");
+        firstSocket?.destroy();
+
+        const replacementFetch = createUnixSocketFetch(socketPath);
+        const second = await replacementFetch("http://happy/second", {
+            body: "second",
+            method: "POST",
+        });
+
+        await expect(second.text()).resolves.toBe("second");
+        expect(connectionCount).toBe(2);
+    });
 });
 
 async function serve(listener: RequestListener): Promise<{ client: HappyAgentClient }> {
@@ -100,7 +131,9 @@ async function serve(listener: RequestListener): Promise<{ client: HappyAgentCli
     };
 }
 
-async function serveFetch(listener: RequestListener): Promise<{ fetch: typeof globalThis.fetch }> {
+async function serveFetch(
+    listener: RequestListener,
+): Promise<{ fetch: typeof globalThis.fetch; socketPath: string }> {
     const localRoot = join(process.cwd(), "../../.local");
     await mkdir(localRoot, { recursive: true });
     const root = await mkdtemp(join(localRoot, "rig-fetch-"));
@@ -117,5 +150,6 @@ async function serveFetch(listener: RequestListener): Promise<{ fetch: typeof gl
     });
     return {
         fetch: createUnixSocketFetch(socketPath),
+        socketPath,
     };
 }
