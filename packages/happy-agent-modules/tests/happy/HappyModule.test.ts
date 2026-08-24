@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     createHappySyncDatabase,
     HappyModule,
+    happyProjectSyncMigrations,
     happySyncMigrations,
     type HappySpawnRequest,
 } from "../../sources/happy/index.js";
@@ -78,7 +79,7 @@ function targetRequest(
 
 async function fixture() {
     const database = moduleDatabase(
-        [...happySyncMigrations, ...happyIntegrationMigrations],
+        [...happySyncMigrations, ...happyIntegrationMigrations, ...happyProjectSyncMigrations],
         "happy-module-test",
     );
     databases.push(database);

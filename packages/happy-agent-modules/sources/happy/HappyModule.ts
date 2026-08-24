@@ -23,7 +23,7 @@ import { EventsModule } from "../events/index.js";
 import { GitModule, type GitChangeSnapshot, type GitTrackedEntity } from "../git/index.js";
 import { HistoryModule } from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
-import { ProjectsModule } from "../projects/index.js";
+import { ProjectsModule, type Project } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
@@ -57,6 +57,7 @@ import type {
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import { HappyMachineClient, type HappyMachineConnectionEvent } from "./HappyMachineClient.js";
 import { HappyPairing, HappyPairingError } from "./HappyPairing.js";
+import { HappyProjectClient } from "./HappyProjectClient.js";
 import {
     HappyMessageRefused,
     type HappyInboundMessage,
@@ -66,6 +67,10 @@ import {
 } from "./HappySession.js";
 import { HappySessionClient, type HappySessionOperations } from "./HappySessionClient.js";
 import { createHappySyncDatabase, happySyncMigrations } from "./HappySyncDatabase.js";
+import {
+    createHappyProjectSyncDatabase,
+    happyProjectSyncMigrations,
+} from "./HappyProjectSyncDatabase.js";
 import { HappyMessageMapper } from "./mapHappyMessages.js";
 import { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js";
 
@@ -157,7 +162,11 @@ export class HappyModule
     implements AgentModule<AnyAgentTool>, HappySessionOperations, HappySpawnOperations
 {
     readonly name = "happy";
-    readonly migrations = [...happySyncMigrations, ...happyIntegrationMigrations];
+    readonly migrations = [
+        ...happySyncMigrations,
+        ...happyIntegrationMigrations,
+        ...happyProjectSyncMigrations,
+    ];
     readonly #agents = new Map<string, ConnectedAgent>();
     readonly #config: ConfigModule;
     readonly #compute: ComputeModule;
@@ -170,6 +179,7 @@ export class HappyModule
     readonly #userInput: UserInputModule;
     readonly #workspaces: WorkspacesModule;
     readonly #sync = createHappySyncDatabase();
+    readonly #projectSync = createHappyProjectSyncDatabase();
     readonly #integrationDatabase = createHappyIntegrationDatabase();
     readonly #integrationListeners = new Set<HappyIntegrationListener>();
     readonly #served = new Map<string, HappySpawnResult>();
@@ -185,6 +195,7 @@ export class HappyModule
     #integration: HappyIntegration;
     #pairing: HappyPairing | undefined;
     #pairingGeneration = 0;
+    #projectClient: HappyProjectClient | undefined;
     #integrationStart: Promise<HappyIntegration> | undefined;
     #integrationUpdates: Promise<void> = Promise.resolve();
     #lifecycleUpdates: Promise<void> = Promise.resolve();
@@ -341,6 +352,7 @@ export class HappyModule
         this.#unwatchCatalog.push(
             this.#projects.onEvent((_eventCtx, event) => {
                 this.#runTask(async () => {
+                    await this.#syncProjectEvent(ctx, event.project);
                     if (event.type === "project_archived") {
                         await this.#archiveRemoteAgents(
                             ctx,
@@ -677,9 +689,18 @@ export class HappyModule
             version: this.#config.configuration.version,
         });
         this.#machine = machine;
+        this.#projectClient = new HappyProjectClient({
+            avatarAsset: async (assetCtx, projectId) =>
+                await this.#projects.avatarAsset(assetCtx, projectId),
+            configuration,
+            context: ctx,
+            sync: this.#projectSync,
+            version: this.#config.configuration.version,
+        });
         machine.start();
         this.#watchCatalog(ctx);
         const reconcile = (async () => {
+            await this.#reconcileProjects(ctx);
             await this.#reapArchived(ctx);
             await this.#reconcile(ctx);
         })().catch((error: unknown) => {
@@ -804,6 +825,7 @@ export class HappyModule
         if (this.#gitRenewalTimer !== undefined) clearInterval(this.#gitRenewalTimer);
         this.#gitRenewalTimer = undefined;
         for (const unwatch of this.#unwatchCatalog.splice(0)) unwatch();
+        this.#projectClient = undefined;
         this.#machine?.close();
         this.#machine = undefined;
         await this.#reconcilePromise?.catch(() => undefined);
@@ -1192,6 +1214,65 @@ export class HappyModule
         for (const attached of this.#agents.values()) attached.client.kick();
     }
 
+    /** Project sync is best effort and never participates in session event transactions. */
+    async #syncProjectEvent(ctx: Context, project: Project): Promise<void> {
+        const client = this.#projectClient;
+        if (client === undefined) return;
+        try {
+            await client.sync(project);
+        } catch (error) {
+            ctx.log.debug(
+                "Happy could not synchronize a project.",
+                { projectId: project.id },
+                error,
+            );
+        }
+    }
+
+    async #remoteProjectId(ctx: Context, localProjectId: string): Promise<string | undefined> {
+        const client = this.#projectClient;
+        if (client === undefined) return undefined;
+        try {
+            return await client.remoteProjectId(localProjectId);
+        } catch (error) {
+            ctx.log.debug(
+                "Happy could not read a project's remote identity.",
+                {
+                    projectId: localProjectId,
+                },
+                error,
+            );
+            return undefined;
+        }
+    }
+
+    /** Walks every local catalog page with one bounded remote request in flight at a time. */
+    async #reconcileProjects(ctx: Context): Promise<void> {
+        const client = this.#projectClient;
+        if (client === undefined) return;
+        let cursor: string | undefined;
+        do {
+            const page = await this.#projects.listCatalogPage(ctx, {
+                includeArchived: true,
+                ...(cursor === undefined ? {} : { cursor }),
+            });
+            for (const project of page.projects) {
+                try {
+                    await client.sync(project, { verifyRemote: true });
+                } catch (error) {
+                    ctx.log.debug(
+                        "Happy could not synchronize a project during startup.",
+                        {
+                            projectId: project.id,
+                        },
+                        error,
+                    );
+                }
+            }
+            cursor = page.nextCursor;
+        } while (cursor !== undefined);
+    }
+
     /**
      * Puts away every session whose place has been archived since it was published.
      *
@@ -1227,6 +1308,27 @@ export class HappyModule
         if (!(await this.#userVisible(ctx, agentId))) return undefined;
         const session = await this.session(ctx, agentId);
         if (session === undefined) return undefined;
+        const localProjectId = session.project?.id;
+        if (localProjectId !== undefined) {
+            const projectClient = this.#projectClient;
+            if (projectClient !== undefined) {
+                try {
+                    const project = await this.#projects.get(ctx, localProjectId);
+                    if (project !== undefined) {
+                        await projectClient.sync(project, { verifyRemote: true });
+                    }
+                } catch (error) {
+                    ctx.log.debug(
+                        "Happy project sync did not block session attachment.",
+                        {
+                            agentId,
+                            projectId: localProjectId,
+                        },
+                        error,
+                    );
+                }
+            }
+        }
         await this.#sync.ensureSession(
             ctx,
             {
@@ -1246,6 +1348,11 @@ export class HappyModule
                 configuration,
                 context,
                 operations: this,
+                ...(localProjectId === undefined
+                    ? {}
+                    : {
+                          projectId: async () => await this.#remoteProjectId(ctx, localProjectId),
+                      }),
                 sessionId: session.sessionId,
                 sync: this.#sync,
                 version: this.#config.configuration.version,

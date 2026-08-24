@@ -104,6 +104,26 @@ export {
     type HappyMachineConnectionEvent,
 } from "./HappyMachineClient.js";
 export {
+    HappyProjectClient,
+    HappyProjectHttpError,
+    type HappyProjectClientOptions,
+} from "./HappyProjectClient.js";
+export {
+    createHappyProjectSyncDatabase,
+    happyProjectSyncMigrations,
+    HAPPY_PROJECT_SYNC_MIGRATION_KEY,
+    type HappyProjectSyncDatabase,
+} from "./HappyProjectSyncDatabase.js";
+export {
+    happyProjectAvatarPreviewSchema,
+    happyProjectMetadataSchema,
+    happyProjectSyncStateSchema,
+    type HappyProjectAvatarPreview,
+    type HappyProjectMetadata,
+    type HappyProjectSyncInput,
+    type HappyProjectSyncState,
+} from "./HappyProjectSync.js";
+export {
     HAPPY_PAIRING_LIFETIME_MS,
     HappyPairing,
     HappyPairingError,
@@ -116,7 +136,7 @@ export {
     type HappyIntegrationListener,
 } from "./HappyModule.js";
 export { connectHappySocket } from "./connectHappySocket.js";
-export { decryptHappyBlob } from "./crypto/decryptHappyBlob.js";
+export { decryptHappyBlob, encryptHappyBlob } from "./crypto/decryptHappyBlob.js";
 export {
     decryptHappyAuthBundle,
     decryptHappyPayload,

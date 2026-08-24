@@ -103,6 +103,8 @@ export interface HappySessionClientOptions {
     readonly context: Context;
     readonly fetch?: typeof fetch;
     readonly operations: HappySessionOperations;
+    /** Account-scoped Happy project identity, when project reconciliation succeeded. */
+    readonly projectId?: () => Promise<string | undefined>;
     readonly sessionId: string;
     /** Only a test supplies this; left out, the client opens its own connection to Happy. */
     readonly socketFactory?: (url: string, options: Record<string, unknown>) => HappySocket;
@@ -175,6 +177,7 @@ export class HappySessionClient {
     #lastMetadata: string | undefined;
     #metadataBase: Record<string, unknown> = {};
     #metadataVersion: number | undefined;
+    #projectIdSent: string | undefined;
     #needsAnotherSync = false;
     #retryTimer: NodeJS.Timeout | undefined;
     #sentSessionEnd = false;
@@ -274,7 +277,13 @@ export class HappySessionClient {
         const ctx = this.#options.context;
         const current = await this.#options.sync.readSession(ctx, this.#options.agentId);
         if (current === undefined) return undefined;
-        if (this.#metadataVersion !== undefined && current.remoteSessionId !== undefined) {
+        const projectId =
+            this.#options.projectId === undefined ? undefined : await this.#options.projectId();
+        if (
+            this.#metadataVersion !== undefined &&
+            current.remoteSessionId !== undefined &&
+            projectId === this.#projectIdSent
+        ) {
             return current;
         }
         const metadata = await this.#metadata();
@@ -296,6 +305,7 @@ export class HappySessionClient {
                     agentState: null,
                     dataEncryptionKey: wrappedKey,
                     metadata: encoded,
+                    ...(this.#options.projectId === undefined ? {} : { projectId }),
                     tag: current.tag,
                 }),
                 method: "POST",
@@ -307,6 +317,7 @@ export class HappySessionClient {
         }
         const remote = body.session;
         this.#metadataVersion = remote.metadataVersion;
+        this.#projectIdSent = projectId;
         this.#agentStateVersion = remote.agentStateVersion ?? 0;
         // Creating by tag may answer with a session that already existed. State it
         // already holds must be reconciled rather than assumed to match.

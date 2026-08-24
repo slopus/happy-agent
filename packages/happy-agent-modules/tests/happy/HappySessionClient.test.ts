@@ -235,6 +235,7 @@ afterEach(() => {
 
 function client(options: {
     operations: HappySessionOperations;
+    projectId?: () => Promise<string | undefined>;
     server: ReturnType<typeof fakeServer>;
     socket: FakeSocket;
 }): HappySessionClient {
@@ -244,6 +245,7 @@ function client(options: {
         context: store.context,
         fetch: options.server.fetch,
         operations: options.operations,
+        ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
         sessionId: SESSION_ID,
         socketFactory: () => options.socket,
         sync,
@@ -262,6 +264,21 @@ describe("keeping one session in step with Happy", () => {
         expect(created?.body).toMatchObject({ agentState: null, tag: happySessionTag(SESSION_ID) });
         expect(await sync.readSession(store.context, AGENT_ID)).toMatchObject({
             remoteSessionId: "remote-1",
+        });
+        await session.close();
+    });
+
+    it("links the idempotent session create to its reconciled project", async () => {
+        const server = fakeServer();
+        const session = client({
+            operations: fakeOperations().operations,
+            projectId: async () => "remote-project-1",
+            server,
+            socket: new FakeSocket(),
+        });
+        await session.settle();
+        expect(server.posted("/v1/sessions")[0]?.body).toMatchObject({
+            projectId: "remote-project-1",
         });
         await session.close();
     });
