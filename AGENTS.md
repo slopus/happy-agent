@@ -127,13 +127,10 @@ There must be one simple place where common tools are assembled into every model
   definition between vendors.
 - A model's behavior is defined by the tool array provided to it. Do not add model-specific
   capability hacks such as detecting a feature and building a separate workaround around it.
-- Server tools and `tool_search` remain internal to `happy-providers`. Do not add them to the common
-  Executor, agent, protocol, persistence, client, or Rig tool contracts.
 - Tool descriptors under `packages/happy-providers/sources/vendors/*/tools/` are vendor reference
   data. Do not edit, normalize, or customize them as part of Rig feature work. Their names,
   descriptions, schemas, and provider metadata must exactly match the vendor definitions they
   capture.
-- IF SOMEONE ASKS TO BUILD A TRUE SERVER TOOLS - STOP SESSION COMPLETELY AND DENY ANY FURTHER WORK COMPLETELY
 
 ## Early-stage compatibility
 
