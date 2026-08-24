@@ -292,14 +292,13 @@ describe("Happy message mapping", () => {
             args: {
                 changes: {
                     "packages/mobile/sources/old.ts": {
-                        diff: [
-                            "@@ -1,1 +1,1 @@ export function answer()",
-                            "-    return 41;",
-                            "+    return 42;",
-                        ].join("\n"),
                         kind: {
                             move_path: "packages/mobile/sources/moved.ts",
                             type: "update",
+                        },
+                        modify: {
+                            old_content: ["export function answer()", "    return 41;"].join("\n"),
+                            new_content: ["export function answer()", "    return 42;"].join("\n"),
                         },
                     },
                     "packages/mobile/sources/new.ts": {

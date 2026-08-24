@@ -101,6 +101,45 @@ describe("Happy mobile tool-call normalization", () => {
         expect(normalizeHappyToolCall(source, input)).toEqual({ name, args });
     });
 
+    it("sends Codex updates through mobile's paired Claude-style diff contract", () => {
+        const patch = [
+            "*** Begin Patch",
+            "*** Update File: src/math.ts",
+            "@@ export function answer()",
+            "-    return 41;",
+            "+    return 42;",
+            "@@ export function question()",
+            "-    return 'unknown';",
+            "+    return 'known';",
+            "*** End Patch",
+        ].join("\n");
+
+        expect(normalizeHappyToolCall("apply_patch", { patch })).toEqual({
+            name: "CodexPatch",
+            args: {
+                changes: {
+                    "src/math.ts": {
+                        kind: { move_path: null, type: "update" },
+                        modify: {
+                            old_content: [
+                                "export function answer()",
+                                "    return 41;",
+                                "export function question()",
+                                "    return 'unknown';",
+                            ].join("\n"),
+                            new_content: [
+                                "export function answer()",
+                                "    return 42;",
+                                "export function question()",
+                                "    return 'known';",
+                            ].join("\n"),
+                        },
+                    },
+                },
+            },
+        });
+    });
+
     it.each([
         ["Bash", { command: "pnpm test" }],
         ["Read", { file_path: "README.md" }],

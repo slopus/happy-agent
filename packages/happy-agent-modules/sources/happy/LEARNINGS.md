@@ -9,6 +9,9 @@
 - Parse Codex `apply_patch` text inside Happy Agent and send the established mobile
   `CodexPatch { changes }` payload. Mobile clients should render structured file changes and must
   never need to parse Codex's patch grammar.
+- Send Codex update hunks as `modify { old_content, new_content }`, which mobile already routes
+  through the same paired, intra-line diff renderer as Claude `Edit`. A raw unified patch sends
+  native mobile down its simpler prefix-colored fallback instead.
 
 ## Pairing and public state
 

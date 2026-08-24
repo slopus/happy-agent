@@ -573,7 +573,6 @@ function mobilePatchChanges(
             continue;
         }
         changes[path] = {
-            diff: operation.hunks.map(mobilePatchHunk).join("\n"),
             kind: {
                 move_path:
                     operation.moveTo === undefined
@@ -581,19 +580,29 @@ function mobilePatchChanges(
                         : mobilePatchPath(operation.moveTo, workdir),
                 type: "update",
             },
+            modify: mobilePatchContentPair(operation.hunks),
         };
     }
     return changes;
 }
 
-function mobilePatchHunk(hunk: CodexPatchHunk): string {
-    const oldLines = hunk.lines.filter((line) => line.marker !== "+").length;
-    const newLines = hunk.lines.filter((line) => line.marker !== "-").length;
-    const anchor = hunk.anchor === undefined ? "" : ` ${hunk.anchor}`;
-    return [
-        `@@ -1,${String(oldLines)} +1,${String(newLines)} @@${anchor}`,
-        ...hunk.lines.map((line) => `${line.marker}${line.text}`),
-    ].join("\n");
+function mobilePatchContentPair(hunks: readonly CodexPatchHunk[]): {
+    readonly old_content: string;
+    readonly new_content: string;
+} {
+    const oldLines: string[] = [];
+    const newLines: string[] = [];
+    for (const hunk of hunks) {
+        if (hunk.anchor !== undefined) {
+            oldLines.push(hunk.anchor);
+            newLines.push(hunk.anchor);
+        }
+        for (const line of hunk.lines) {
+            if (line.marker !== "+") oldLines.push(line.text);
+            if (line.marker !== "-") newLines.push(line.text);
+        }
+    }
+    return { old_content: oldLines.join("\n"), new_content: newLines.join("\n") };
 }
 
 function mobilePatchPath(path: string, workdir: string | undefined): string {
