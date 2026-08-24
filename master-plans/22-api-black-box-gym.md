@@ -39,9 +39,10 @@ created in a workspace different from its parent agent's workspace is the one
 exception: it remains a child in Agent Base ancestry while appearing as a
 user-visible, agent-managed root in the destination workspace's series, and the
 user cannot send it messages. Visibility, agent management, and user messaging
-capability are separate explicit agent facts. Only user steering emits
-`run.boundary`; queued and incoming messages, notifications, and compaction do
-not.
+capability are separate explicit agent facts. Every accepted steering transition
+that durably closes a predecessor as `aborted/steering` and starts its successor
+emits `run.boundary`, including collaboration and system steering. Queued
+messages, notifications, and compaction do not.
 
 The gym must prove both ordinary success and deliberate failure. A project is
 registered or cloned, workspaces are created and nested, ordering and archival
@@ -161,7 +162,8 @@ After every action, including every rejection, the gym proves:
 - Versions and cursors advance legally; pull, SSE, bootstrap, event reduction,
   and fresh reads converge without visible duplicates.
 - Messages, runs, pending work, questions, processes, and terminal reasons
-  remain in a legal state machine; only user steering emits `run.boundary`.
+  remain in a legal state machine; every durable `aborted/steering` successor
+  transition emits `run.boundary`, regardless of message role or origin.
 - File bytes and hashes agree, failed CAS or confinement attempts preserve the
   prior bytes, and Git/watch state matches the real repository.
 - Restart preserves durable state and removes runtime state exactly as the

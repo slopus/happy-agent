@@ -24,12 +24,11 @@ things the runtime already does.
 
 ### How agents text each other
 
-`send_agent_message` follows the direction of the relationship. A creator's message to its
-collaborator calls `AgentSystemRef.send` and appends to the collaborator's durable queue. A
-collaborator's reply to its creator calls `AgentSystemRef.steer`, so an active creator continues its
-turn with the reply instead of finishing first. The message ID is the sender's own durable
-tool-call ID, so a retried tool call delivers the same message rather than a second one — Agent Base
-settles that, not this module.
+`send_agent_message` calls `AgentSystemRef.steer` in both directions. A creator's follow-up steers
+its collaborator, and a collaborator's reply steers its creator, so either recipient incorporates
+the message after its current response and complete tool batch. The message ID is the sender's own
+durable tool-call ID, so a retried tool call delivers the same message rather than a second one —
+Agent Base settles that, not this module.
 
 The recipient's model only ever sees text, so the delivered message names its sender:
 
@@ -118,9 +117,8 @@ report is made again the next time it settles rather than being lost.
 ### Messages are asynchronous, always
 
 Nothing here waits. There is no `wait_for_reply`, no reply obligation, and no record that an answer
-is owed. A message is delivered and the sending agent carries on with its turn. A reply from a
-collaborator steers its creator, so an active creator continues the same turn with it; a creator's
-message to a collaborator waits in that collaborator's queue.
+is owed. A message is delivered and the sending agent carries on with its turn. Messages in either
+direction steer an active recipient after its current response and complete tool batch.
 
 This is what makes the module small. A synchronous request/response would need the answer to reach
 an agent that is parked inside its own tool call — which its own run loop cannot deliver, because

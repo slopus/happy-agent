@@ -86,6 +86,32 @@ describe("finished subagent reporting", () => {
             return JSON.stringify(events).includes("PARENT_RECEIVED_REPORT") ? events : undefined;
         }, "the parent to answer after receiving the report");
         expect(JSON.stringify(parentAnswered)).toContain("PARENT_RECEIVED_REPORT");
+
+        const history = await gym.client.getMessages(parentAgentId);
+        expect(history.runs).toHaveLength(2);
+        expect(history.runs[0]).toMatchObject({ reason: "steering", status: "aborted" });
+        expect(history.runs[1]).toMatchObject({ reason: "completed", status: "completed" });
+        const report = history.runs[1]?.messages.find(
+            (message) => message.role === "agent" && message.metadata.senderAgentId !== undefined,
+        );
+        if (report === undefined)
+            throw new Error("The child report is absent from parent history.");
+
+        const boundaries = (await gym.client.getEvents({ limit: 10_000 })).events.filter(
+            (event) => event.type === "run.boundary" && event.payload.agentId === parentAgentId,
+        );
+        expect(boundaries).toHaveLength(1);
+        const boundary = boundaries[0];
+        if (boundary?.type !== "run.boundary") {
+            throw new Error("The collaboration steering transition emitted no run boundary.");
+        }
+        expect(boundary.payload.finishedRun).toMatchObject({
+            id: history.runs[0]?.id,
+            reason: "steering",
+            status: "aborted",
+        });
+        expect(boundary.payload.startedRun.id).toBe(history.runs[1]?.id);
+        expect(boundary.payload.acceptedMessageIds).toEqual([report.id]);
         expect(gym.errors).toEqual([]);
         expect(gym.inference.unscripted).toEqual([]);
     }, 30_000);

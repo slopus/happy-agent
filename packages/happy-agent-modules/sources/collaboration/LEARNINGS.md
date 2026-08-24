@@ -1,9 +1,10 @@
 # Collaboration learnings
 
-## Replies and interruption
+## Messages and interruption
 
-A child-to-parent message is steering, not ordinary queued input. The parent should incorporate it
-into an active turn and continue from there, while parent-to-child tasks remain queued for the child.
+Messages between a creator and collaborator are steering in both directions. After the opening task
+starts a collaborator, either recipient should incorporate a later message after its current
+response and complete tool batch rather than waiting for its active run to finish normally.
 
 An explicitly interrupted collaborator sends no automatic settlement report. Its creator already
 observed the interrupt result, and any earlier commentary is incomplete progress rather than a

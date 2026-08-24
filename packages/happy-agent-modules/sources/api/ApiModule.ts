@@ -1739,19 +1739,18 @@ export class ApiModule implements AgentModule {
         const fromUser = role === "user";
         const hidden = messageHiddenFromUser(message);
         if (!fromUser) {
-            if (hidden) return;
-            this.#journal.append(
-                "message.created",
-                {
-                    agentId,
-                    runId,
-                    message: projected,
-                },
-                event.occurredAt,
-            );
-            return;
-        }
-        if (!hidden && !this.#apiPendingMessageIds.has(id)) {
+            if (!hidden) {
+                this.#journal.append(
+                    "message.created",
+                    {
+                        agentId,
+                        runId,
+                        message: projected,
+                    },
+                    event.occurredAt,
+                );
+            }
+        } else if (!hidden && !this.#apiPendingMessageIds.has(id)) {
             this.#journal.append(
                 "message.created",
                 {

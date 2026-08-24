@@ -627,7 +627,9 @@ function reconcileRunModel(
         );
     }
     if (action.kind !== "steerFusion" && newBoundaries.length !== 0) {
-        throw new Error(`Only user steering may create run.boundary (step ${String(step)}).`);
+        throw new Error(
+            `Only the modeled steering action may create run.boundary (step ${String(step)}).`,
+        );
     }
 
     for (const boundary of newBoundaries) {

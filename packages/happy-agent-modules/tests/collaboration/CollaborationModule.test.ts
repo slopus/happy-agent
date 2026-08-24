@@ -696,7 +696,7 @@ describe("collaboration", () => {
         expect(collection.steered).toEqual([collection.delivered[1]]);
     });
 
-    it("keeps a creator's follow-up to its collaborator queued", async () => {
+    it("steers a creator's follow-up into its collaborator", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
         await module.createAgent(ctx, "parent", TASK, "child");
@@ -712,7 +712,7 @@ describe("collaboration", () => {
             toAgentId: "child",
             text: "Message from agent parent:\n\nPlease also check Windows.",
         });
-        expect(collection.steered).toHaveLength(0);
+        expect(collection.steered).toEqual([collection.delivered[1]]);
     });
 
     it("refuses a message between agents with no relationship", async () => {

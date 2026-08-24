@@ -45,8 +45,8 @@ import { sendMessageTool } from "./tools/send_message.js";
  * the supplied message ID. Its only migrations retire the schema it used to keep.
  *
  * Messages are asynchronous, in both directions and without exception. Nothing here waits for an
- * answer, and nothing records that one is owed. A task sent down to a collaborator joins its queue;
- * a reply sent up to its creator steers the creator so its active turn continues with it. An agent
+ * answer, and nothing records that one is owed. After the opening task starts a collaborator, every
+ * later message between a creator and collaborator steers the recipient's active turn. An agent
  * that wants to keep working while a collaborator thinks just keeps working.
  *
  * What a collaborator runs on is settled once, on the message that starts it, and no later message
@@ -157,10 +157,7 @@ export class CollaborationModule implements AgentModule {
         return { agentId };
     }
 
-    /**
-     * Send text to a collaborator this agent can already reach. A reply to the creator steers its
-     * active turn; a creator's follow-up to its collaborator joins that collaborator's queue.
-     */
+    /** Send text that steers either direction of an existing collaboration relationship. */
     async sendMessage(
         ctx: Context,
         actingAgentId: string,
@@ -169,14 +166,14 @@ export class CollaborationModule implements AgentModule {
     ): Promise<void> {
         this.#assert(collaborationAgentIdSchema, actingAgentId, "acting agent ID");
         this.#assert(collaborationSendInputSchema, input, "send message");
-        const relation = await this.#authorize(ctx, actingAgentId, input.toAgentId, "send to");
+        await this.#authorize(ctx, actingAgentId, input.toAgentId, "send to");
         await this.#deliver(
             ctx,
             actingAgentId,
             input.toAgentId,
             input.text,
             messageId,
-            relation === "creator" ? "steer" : "send",
+            "steer",
             undefined,
         );
     }

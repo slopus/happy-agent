@@ -17,7 +17,7 @@ export function sendMessageTool(collaboration: CollaborationModule, actingAgentI
         description: [
             "Send a message to a collaborator you created, or back to the agent that created you.",
             "",
-            "Messages are one-way. A reply to your creator steers its active turn so it can continue with the message; a message to your collaborator joins its queue. This returns as soon as the message is delivered, and there is nothing to wait on.",
+            "Messages are one-way and steer the recipient's active turn in either direction. This returns as soon as the message is delivered, and there is nothing to wait on.",
         ].join("\n"),
         parameters: collaborationSendInputSchema,
         returnType: Type.Void(),

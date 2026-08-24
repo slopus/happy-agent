@@ -112,16 +112,16 @@ export type QuestionUpdatedPayload = ResourceUpdate<Question> & { questionId: Cu
 export interface RunStartedPayload extends MutationEcho {
     agentId: Cuid2;
     run: Run;
-    /** Pending user messages accepted into the run, oldest first. */
+    /** Visible messages accepted into the run, oldest first. */
     acceptedMessageIds: Cuid2[];
 }
 
-/** User steering atomically closed one run and opened its successor. */
+/** Steering atomically closed one run and opened its successor. */
 export interface RunBoundaryPayload extends MutationEcho {
     agentId: Cuid2;
     finishedRun: Run;
     startedRun: Run;
-    /** Pending steering messages accepted into the successor, oldest first. */
+    /** Visible steering messages accepted into the successor, oldest first. */
     acceptedMessageIds: Cuid2[];
 }
 
