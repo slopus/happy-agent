@@ -181,9 +181,13 @@ interface ClaudeRateLimitPayload {
 interface ClaudeLimitPayload {
     group?: unknown;
     is_active?: unknown;
+    kind?: unknown;
     percent?: unknown;
     resets_at?: unknown;
     severity?: unknown;
+    scope?: {
+        model?: { display_name?: unknown } | null;
+    } | null;
 }
 
 interface ClaudeUsagePayload {
@@ -196,6 +200,7 @@ interface ClaudeUsagePayload {
     five_hour?: ClaudeRateLimitPayload | null;
     limits?: readonly ClaudeLimitPayload[] | null;
     seven_day?: ClaudeRateLimitPayload | null;
+    seven_day_fable?: ClaudeRateLimitPayload | null;
     subscription_type?: unknown;
 }
 
@@ -220,6 +225,7 @@ export function parseClaudeProviderUsage(
             fiveHour: parseClaudeWindow(body.five_hour, 5 * 60 * 60 * 1_000),
             weekly: parseClaudeWindow(body.seven_day, 7 * 24 * 60 * 60 * 1_000),
             monthly: null,
+            fableWeekly: parseClaudeFableWeekly(body),
         },
         credits,
     };
@@ -229,6 +235,24 @@ function claudePlanFromProfile(profile: unknown): string | null {
     const account = (profile as ClaudeProfilePayload | null)?.account;
     if (account?.has_claude_max === true) return "Max";
     if (account?.has_claude_pro === true) return "Pro";
+    return null;
+}
+
+function parseClaudeFableWeekly(body: ClaudeUsagePayload): ProviderUsage["windows"]["fiveHour"] {
+    const named = parseClaudeWindow(body.seven_day_fable, 7 * 24 * 60 * 60 * 1_000);
+    if (named !== null) return named;
+    for (const limit of body.limits ?? []) {
+        if (limit.kind !== "weekly_scoped") continue;
+        const name = limit.scope?.model?.display_name;
+        if (typeof name !== "string" || name.trim().toLowerCase() !== "fable") continue;
+        const resetsAt = epochMsFromIso(limit.resets_at);
+        return providerUsageWindow({
+            usedPercent: limit.percent,
+            resetsAt,
+            startsAt: resetsAt === null ? null : resetsAt - 7 * 24 * 60 * 60 * 1_000,
+            durationMs: 7 * 24 * 60 * 60 * 1_000,
+        });
+    }
     return null;
 }
 

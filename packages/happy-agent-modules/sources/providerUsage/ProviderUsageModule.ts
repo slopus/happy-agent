@@ -195,7 +195,32 @@ function mergeProviderUsage(
             fiveHour: carried(next.windows.fiveHour, previous.windows.fiveHour),
             weekly: carried(next.windows.weekly, previous.windows.weekly),
             monthly: carried(next.windows.monthly, previous.windows.monthly),
+            ...carryNamedWindow(next.windows, previous.windows, "fableWeekly", carried),
         },
         credits: next.credits ?? previous.credits,
     };
+}
+
+function carryNamedWindow(
+    next: ProviderUsage["windows"],
+    previous: ProviderUsage["windows"],
+    key: string,
+    carried: (
+        current: ProviderUsageWindow | null,
+        older: ProviderUsageWindow | null,
+    ) => ProviderUsageWindow | null,
+): Record<string, ProviderUsageWindow | null> {
+    const windows = (usage: ProviderUsage["windows"]): Record<string, ProviderUsageWindow | null> =>
+        usage as Record<string, ProviderUsageWindow | null>;
+    const current = windows(next)[key] ?? null;
+    const older = windows(previous)[key] ?? null;
+    const value = carried(current, older);
+    if (
+        value === null &&
+        windows(next)[key] === undefined &&
+        windows(previous)[key] === undefined
+    ) {
+        return {};
+    }
+    return { [key]: value };
 }

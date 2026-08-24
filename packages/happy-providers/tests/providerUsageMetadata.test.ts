@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { fetchClaudeProviderUsage } from "@/vendors/claude/fetchClaudeProviderUsage.js";
+import {
+    fetchClaudeProviderUsage,
+    parseClaudeProviderUsage,
+} from "@/vendors/claude/fetchClaudeProviderUsage.js";
 import { parseCodexProviderUsage } from "@/vendors/codex/fetchCodexProviderUsage.js";
 import { fetchGrokProviderUsage } from "@/vendors/grok/fetchGrokProviderUsage.js";
 import { GROK_OAUTH_SCOPE } from "@/vendors/grok/impl/auth.js";
@@ -55,6 +58,29 @@ describe("provider usage metadata", () => {
         });
 
         expect(usage?.windows.fiveHour?.usedPercent).toBe(42);
+    });
+
+    it("reads Claude's Fable weekly allowance from the scoped limits list", () => {
+        const usage = parseClaudeProviderUsage(
+            {
+                five_hour: { utilization: 5, resets_at: "2026-08-24T09:09:59.000Z" },
+                seven_day: { utilization: 89, resets_at: "2026-08-27T00:59:59.000Z" },
+                limits: [
+                    {
+                        kind: "weekly_scoped",
+                        percent: 100,
+                        resets_at: "2026-08-27T00:59:59.000Z",
+                        scope: { model: { display_name: "Fable" } },
+                    },
+                ],
+            },
+            { capturedAt: 1_000, providerId: "claude" },
+        );
+
+        expect(usage.windows.fiveHour?.usedPercent).toBe(5);
+        expect(usage.windows.weekly?.usedPercent).toBe(89);
+        expect(usage.windows.fableWeekly?.usedPercent).toBe(100);
+        expect(usage.windows.fableWeekly?.resetsAt).toBe(Date.parse("2026-08-27T00:59:59.000Z"));
     });
 
     it("surfaces Claude usage throttling without spending a fallback inference", async () => {

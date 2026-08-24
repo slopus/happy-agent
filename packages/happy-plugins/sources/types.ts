@@ -1268,6 +1268,9 @@ export const happyProviderUsageSchema = Type.Object(
                 fiveHour: Type.Union([happyProviderUsageWindowSchema, Type.Null()]),
                 monthly: Type.Union([happyProviderUsageWindowSchema, Type.Null()]),
                 weekly: Type.Union([happyProviderUsageWindowSchema, Type.Null()]),
+                fableWeekly: Type.Optional(
+                    Type.Union([happyProviderUsageWindowSchema, Type.Null()]),
+                ),
             },
             exact,
         ),

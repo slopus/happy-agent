@@ -20,12 +20,14 @@ enum PlanWindowKind {
     case session
     case week
     case month
+    case fable
 
     var label: String {
         switch self {
         case .session: return "Session"
         case .week: return "Week"
         case .month: return "Month"
+        case .fable: return "Fable"
         }
     }
 }
@@ -162,6 +164,9 @@ enum DaemonSnapshotReader {
         }
         if let week = window(windows["weekly"], kind: .week) {
             shown.append(week)
+        }
+        if let fable = window(windows["fableWeekly"], kind: .fable) {
+            shown.append(fable)
         }
         if shown.count < 2, let month = window(windows["monthly"], kind: .month) {
             shown.append(month)

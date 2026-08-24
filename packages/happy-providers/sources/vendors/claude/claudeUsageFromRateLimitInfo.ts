@@ -21,15 +21,16 @@ export function claudeUsageFromRateLimitInfo(
     info: SDKRateLimitInfo,
     context: { capturedAt: number; providerId: string },
 ): ProviderUsage | null {
-    // A model-scoped or overage limit measures something narrower than the
-    // account's own five-hour and weekly windows, so it is left unread rather
-    // than reported as one of them.
+    // Overage and other model-scoped windows stay unread, except Fable's
+    // weekly allowance, which is its own meter the account actually spends.
     const key =
         info.rateLimitType === "five_hour"
             ? "fiveHour"
             : info.rateLimitType === "seven_day"
               ? "weekly"
-              : null;
+              : info.rateLimitType === "seven_day_fable"
+                ? "fableWeekly"
+                : null;
     const resetsAt = epochMsFromSeconds(info.resetsAt);
     const durationMs = key === "fiveHour" ? FIVE_HOUR_MS : SEVEN_DAY_MS;
     const window =
@@ -58,6 +59,7 @@ export function claudeUsageFromRateLimitInfo(
             fiveHour: key === "fiveHour" ? window : null,
             weekly: key === "weekly" ? window : null,
             monthly: null,
+            fableWeekly: key === "fableWeekly" ? window : null,
         },
         credits,
     };

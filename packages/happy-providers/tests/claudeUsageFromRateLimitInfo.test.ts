@@ -72,4 +72,20 @@ describe("claudeUsageFromRateLimitInfo", () => {
         expect(usage?.windows.weekly).toBeNull();
         expect(usage?.exhausted).toBe(true);
     });
+
+    it("reads Fable's weekly allowance as its own window", () => {
+        const usage = claudeUsageFromRateLimitInfo(
+            {
+                status: "rejected",
+                rateLimitType: "seven_day_fable",
+                utilization: 1,
+                resetsAt: 1_785_844_800,
+            },
+            context,
+        );
+
+        expect(usage?.windows.fableWeekly?.usedPercent).toBe(100);
+        expect(usage?.windows.weekly).toBeNull();
+        expect(usage?.exhausted).toBe(true);
+    });
 });

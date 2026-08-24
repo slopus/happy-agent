@@ -3334,9 +3334,11 @@ Response — `200`:
   the request succeeded. `error` explains why no reading is available; a failed refresh does not
   discard an older successful reading.
 - A non-null `usage` keeps every normalized vendor value: the human-readable `planName`, current
-  `exhausted` state, five-hour, weekly, and monthly windows, and spendable `credits`. A window is
-  `null` only when the vendor did not report it. Window timestamps are epoch milliseconds,
-  `durationMs` is milliseconds, monetary amounts are USD cents, and percentages run from 0 to 100.
+  `exhausted` state, five-hour, weekly, and monthly windows, optional `fableWeekly` for Claude's
+  separate Fable weekly allowance, and spendable `credits`. A window is `null` only when the vendor
+  did not report it. `fableWeekly` is omitted or `null` when the vendor has no Fable meter. Window
+  timestamps are epoch milliseconds, `durationMs` is milliseconds, monetary amounts are USD cents,
+  and percentages run from 0 to 100.
 
 ## Events
 

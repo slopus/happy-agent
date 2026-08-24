@@ -44,6 +44,8 @@ export interface ProviderAccountUsage {
         fiveHour: ProviderAccountUsageWindow | null;
         weekly: ProviderAccountUsageWindow | null;
         monthly: ProviderAccountUsageWindow | null;
+        /** Claude's separate weekly Fable allowance. Omitted or null when unreported. */
+        fableWeekly?: ProviderAccountUsageWindow | null;
     };
     credits: ProviderAccountUsageCredits | null;
 }

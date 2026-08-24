@@ -45,7 +45,8 @@ not listed at all, not even collapsed into a count.
 
 The menu used to pick the single window closest to running out. That hid the week whenever the
 session was the tighter limit, which is the usual case. Every provider uses the same pair: the
-five-hour session and the week, each on its own line so the reset time is not cut off. A monthly
+five-hour session and the week, each on its own line so the reset time is not cut off. Claude
+also shows Fable's separate weekly allowance as a third row when Anthropic reports it. A monthly
 window is shown only when there is no session window, so a Grok-style week-and-month pair still
 has both numbers. Extra vendor meters such as Codex Spark are not shown.
 

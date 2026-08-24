@@ -4,9 +4,10 @@ export type ProviderUsageVendor = "claude" | "codex" | "grok";
  * One rate-limit or spend window a vendor reports.
  *
  * Vendors agree on the shape of a window but not on which ones exist: Codex
- * reports a rolling five-hour and weekly pair, Claude reports five-hour and
- * seven-day, and Grok reports a single weekly or monthly billing period. A
- * field is null when the vendor does not report it, never zero.
+ * reports a rolling five-hour and weekly pair, Claude reports five-hour,
+ * seven-day, and a separate Fable weekly allowance, and Grok reports a single
+ * weekly or monthly billing period. A field is null when the vendor does not
+ * report it, never zero.
  */
 export interface ProviderUsageWindow {
     /** Share of the window already consumed, from 0 to 100. */
@@ -51,6 +52,11 @@ export interface ProviderUsage {
         fiveHour: ProviderUsageWindow | null;
         weekly: ProviderUsageWindow | null;
         monthly: ProviderUsageWindow | null;
+        /**
+         * Claude's separate weekly Fable allowance. Optional so older readings
+         * and vendors that never report it stay valid. Null when unreported.
+         */
+        fableWeekly?: ProviderUsageWindow | null;
     };
     /** Spendable balance, or null when the vendor reports none. */
     credits: ProviderUsageCredits | null;
