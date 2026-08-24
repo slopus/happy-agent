@@ -70,7 +70,11 @@ const toolEndSchema = Type.Object(
         rigEvent: Type.Object(
             {
                 result: Type.Object(
-                    { toolCallId: Type.String({ minLength: 1 }) },
+                    {
+                        display: Type.Optional(Type.String()),
+                        isError: Type.Optional(Type.Boolean()),
+                        toolCallId: Type.String({ minLength: 1 }),
+                    },
                     { additionalProperties: true },
                 ),
                 type: Type.Literal("tool_execution_end"),
@@ -109,6 +113,26 @@ const settlementSchema = Type.Object(
 
 const loopSchema = Type.Object(
     { runId: Type.String({ minLength: 1 }) },
+    { additionalProperties: true },
+);
+
+const runWorkflowArgumentsSchema = Type.Object(
+    {
+        input: Type.Object(
+            { name: Type.Optional(Type.String({ minLength: 1 })) },
+            { additionalProperties: true },
+        ),
+    },
+    { additionalProperties: true },
+);
+
+const sendAgentMessageArgumentsSchema = Type.Object(
+    { toAgentId: Type.String({ minLength: 1 }) },
+    { additionalProperties: true },
+);
+
+const interruptAgentArgumentsSchema = Type.Object(
+    { targetAgentId: Type.String({ minLength: 1 }) },
     { additionalProperties: true },
 );
 
@@ -253,7 +277,7 @@ export class HappyMessageMapper {
             if (block.type === "tool_result") {
                 output.push(
                     this.#createMessage({
-                        ev: this.#toolResultEvent(block.callId),
+                        ev: this.#toolResultEvent(block.callId, block.display, block.isError),
                         id,
                         role: "agent",
                         time,
@@ -322,9 +346,13 @@ export class HappyMessageMapper {
             ];
         }
         if (Value.Check(toolEndSchema, event.payload)) {
-            const callId = event.payload.rigEvent.result.toolCallId;
+            const result = event.payload.rigEvent.result;
             return [
-                this.#agentMessage(event, `tool-result:${callId}`, this.#toolResultEvent(callId)),
+                this.#agentMessage(
+                    event,
+                    `tool-result:${result.toolCallId}`,
+                    this.#toolResultEvent(result.toolCallId, result.display, result.isError),
+                ),
             ];
         }
         return [];
@@ -335,19 +363,29 @@ export class HappyMessageMapper {
         id: string;
         name: string;
     }): Extract<HappySessionEvent, { t: "tool-call-start" }> {
-        const title = humanizeToolName(call.name);
+        const args = call.arguments === undefined ? {} : toRecord(call.arguments);
+        const presentation = toolCallPresentation(call.name, args);
         return {
-            args: call.arguments === undefined ? {} : toRecord(call.arguments),
+            args,
             call: call.id,
-            description: `Running ${title}`,
+            description: presentation.description,
             name: call.name,
             t: "tool-call-start",
-            title,
+            title: presentation.title,
         };
     }
 
-    #toolResultEvent(callId: string): Extract<HappySessionEvent, { t: "tool-call-end" }> {
-        return { call: callId, t: "tool-call-end" };
+    #toolResultEvent(
+        callId: string,
+        result?: string,
+        isError?: boolean,
+    ): Extract<HappySessionEvent, { t: "tool-call-end" }> {
+        return {
+            call: callId,
+            ...(result === undefined ? {} : { result }),
+            ...(isError === true ? { isError: true } : {}),
+            t: "tool-call-end",
+        };
     }
 
     #mapInference(event: AgentEvent): readonly HappySessionProtocolMessage[] {
@@ -485,6 +523,33 @@ function humanizeToolName(value: string): string {
               .split(/\s+/u)
               .map((part) => part[0]!.toUpperCase() + part.slice(1))
               .join(" ");
+}
+
+/** Gives Happy the useful human context Rig already has for its coordination tools. */
+function toolCallPresentation(
+    name: string,
+    args: Record<string, unknown>,
+): { title: string; description: string } {
+    const title = humanizeToolName(name);
+    if (name === "run_workflow") {
+        const workflow = Value.Check(runWorkflowArgumentsSchema, args)
+            ? args.input.name
+            : undefined;
+        return {
+            title,
+            description:
+                workflow === undefined
+                    ? "Starting a background workflow"
+                    : `Starting workflow ${workflow}`,
+        };
+    }
+    if (name === "send_agent_message" && Value.Check(sendAgentMessageArgumentsSchema, args)) {
+        return { title, description: `Sending a message to ${args.toAgentId}` };
+    }
+    if (name === "interrupt_agent" && Value.Check(interruptAgentArgumentsSchema, args)) {
+        return { title, description: `Interrupting ${args.targetAgentId}` };
+    }
+    return { title, description: `Running ${title}` };
 }
 
 function toRecord(value: unknown): Record<string, unknown> {

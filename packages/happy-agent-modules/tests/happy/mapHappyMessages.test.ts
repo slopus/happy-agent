@@ -187,7 +187,102 @@ describe("Happy message mapping", () => {
                 runId: RUN,
             }),
         );
-        expect(finished[0]?.content.ev).toEqual({ call: "call-1", t: "tool-call-end" });
+        expect(finished[0]?.content.ev).toEqual({
+            call: "call-1",
+            result: "ok",
+            t: "tool-call-end",
+        });
+    });
+
+    it("presents Happy Agent coordination tools in the terms a person needs", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+
+        const calls = [
+            {
+                arguments: { input: { name: "Security review", script: "{'ok': True}" } },
+                id: "workflow-1",
+                name: "run_workflow",
+            },
+            {
+                arguments: { text: "Check the authentication path.", toAgentId: "agent42" },
+                id: "message-1",
+                name: "send_agent_message",
+            },
+            {
+                arguments: { targetAgentId: "agent42" },
+                id: "interrupt-1",
+                name: "interrupt_agent",
+            },
+        ];
+
+        const presented = calls.map(
+            (toolCall) =>
+                mapper.map(
+                    event("tool.started", {
+                        rigEvent: {
+                            toolCall: { ...toolCall, type: "toolCall" },
+                            type: "tool_execution_start",
+                        },
+                        runId: RUN,
+                    }),
+                )[0]?.content.ev,
+        );
+
+        expect(presented).toEqual([
+            {
+                args: calls[0]?.arguments,
+                call: "workflow-1",
+                description: "Starting workflow Security review",
+                name: "run_workflow",
+                t: "tool-call-start",
+                title: "Run Workflow",
+            },
+            {
+                args: calls[1]?.arguments,
+                call: "message-1",
+                description: "Sending a message to agent42",
+                name: "send_agent_message",
+                t: "tool-call-start",
+                title: "Send Agent Message",
+            },
+            {
+                args: calls[2]?.arguments,
+                call: "interrupt-1",
+                description: "Interrupting agent42",
+                name: "interrupt_agent",
+                t: "tool-call-start",
+                title: "Interrupt Agent",
+            },
+        ]);
+    });
+
+    it("tells Happy when a tool failed and what it reported", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+
+        const finished = mapper.map(
+            event("tool.completed", {
+                callId: "call-failed",
+                rigEvent: {
+                    result: {
+                        display: "The collaborator could not be interrupted.",
+                        isError: true,
+                        toolCallId: "call-failed",
+                        type: "tool_result",
+                    },
+                    type: "tool_execution_end",
+                },
+                runId: RUN,
+            }),
+        );
+
+        expect(finished[0]?.content.ev).toEqual({
+            call: "call-failed",
+            isError: true,
+            result: "The collaborator could not be interrupted.",
+            t: "tool-call-end",
+        });
     });
 
     it("reports a tool the provider ran on its own side", () => {

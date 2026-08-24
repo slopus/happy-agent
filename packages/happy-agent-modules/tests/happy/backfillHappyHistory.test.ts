@@ -186,7 +186,7 @@ describe("mapping archived Happy history", () => {
                 turn: "history:tool-message",
             },
             {
-                ev: { call: "call-1", t: "tool-call-end" },
+                ev: { call: "call-1", result: "Read complete", t: "tool-call-end" },
                 id: "history:tool-message:2",
                 role: "agent",
                 time: 1_000,
