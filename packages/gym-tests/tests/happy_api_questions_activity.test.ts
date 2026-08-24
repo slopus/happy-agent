@@ -21,27 +21,25 @@ describe("public questions and activity API", () => {
                     content: [
                         {
                             arguments: {
-                                input: {
-                                    context: "The migration has two safe choices.",
-                                    questions: [
-                                        {
-                                            id: "database",
-                                            header: "Database",
-                                            question: "Which database should the service use?",
-                                            options: [
-                                                {
-                                                    description: "Zero-ops for this service.",
-                                                    label: "SQLite",
-                                                },
-                                                {
-                                                    description: "Matches the production stack.",
-                                                    label: "PostgreSQL",
-                                                },
-                                            ],
-                                            multiSelect: false,
-                                        },
-                                    ],
-                                },
+                                context: "The migration has two safe choices.",
+                                questions: [
+                                    {
+                                        id: "database",
+                                        header: "Database",
+                                        question: "Which database should the service use?",
+                                        options: [
+                                            {
+                                                description: "Zero-ops for this service.",
+                                                label: "SQLite",
+                                            },
+                                            {
+                                                description: "Matches the production stack.",
+                                                label: "PostgreSQL",
+                                            },
+                                        ],
+                                        multiSelect: false,
+                                    },
+                                ],
                             },
                             callId: "questioncall",
                             name: "request_user_input",
@@ -177,12 +175,12 @@ describe("public questions and activity API", () => {
                     content: [
                         {
                             arguments: {
-                                input: {
-                                    context: "The operation cannot continue without a decision.",
-                                    question: "Continue with the destructive migration?",
-                                    header: "Confirm",
-                                    options: {
-                                        choices: [
+                                context: "The operation cannot continue without a decision.",
+                                questions: [
+                                    {
+                                        question: "Continue with the destructive migration?",
+                                        header: "Confirm",
+                                        options: [
                                             {
                                                 description: "Apply the migration.",
                                                 label: "Continue",
@@ -194,7 +192,7 @@ describe("public questions and activity API", () => {
                                         ],
                                         multiSelect: false,
                                     },
-                                },
+                                ],
                             },
                             callId: "cancelquestion",
                             name: "request_user_input",

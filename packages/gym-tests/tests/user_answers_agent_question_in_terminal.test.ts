@@ -19,11 +19,11 @@ describe("a person answers the agent's question in the terminal", () => {
                         content: [
                             {
                                 arguments: {
-                                    input: {
-                                        context: "The migration can finish either way.",
-                                        header: "Migration",
-                                        options: {
-                                            choices: [
+                                    context: "The migration can finish either way.",
+                                    questions: [
+                                        {
+                                            header: "Migration",
+                                            options: [
                                                 {
                                                     description: "Rewrite the table in place.",
                                                     label: "Rewrite",
@@ -34,9 +34,9 @@ describe("a person answers the agent's question in the terminal", () => {
                                                 },
                                             ],
                                             multiSelect: false,
+                                            question: "How should the migration finish?",
                                         },
-                                        question: "How should the migration finish?",
-                                    },
+                                    ],
                                 },
                                 id: "ask-1",
                                 name: "request_user_input",

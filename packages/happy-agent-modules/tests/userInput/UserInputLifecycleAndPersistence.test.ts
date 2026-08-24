@@ -87,9 +87,14 @@ describe("UserInput durable lifecycle and persistence", () => {
             const presence = new ScriptedPresenceModule(onlinePresence());
             const restarted = createUserInputModule(presence);
             const tool = requestUserInputTool(restarted, agentId);
-            const resumed = tool.execute(database.context, { input }, {
-                id: "restarted-call",
-            } as never);
+            const resumed = tool.execute(
+                database.context,
+                {
+                    context: "The choice changes the implementation.",
+                    questions: [{ question: "Which option should I use?" }],
+                },
+                { id: "restarted-call" } as never,
+            );
             await vi.waitFor(() => expect(presence.subscriberCount).toBe(1));
             const answered = await restarted.answer(database.context, agentId, {
                 requestId: "restarted-call",
@@ -122,9 +127,14 @@ describe("UserInput durable lifecycle and persistence", () => {
 
             const restarted = createUserInputModule();
             const tool = requestUserInputTool(restarted, agentId);
-            const resumed = await tool.execute(database.context, { input }, {
-                id: "answered-while-down",
-            } as never);
+            const resumed = await tool.execute(
+                database.context,
+                {
+                    context: "The choice changes the implementation.",
+                    questions: [{ question: "Which option should I use?" }],
+                },
+                { id: "answered-while-down" } as never,
+            );
 
             expect(resumed).toMatchObject({
                 id: "answered-while-down",

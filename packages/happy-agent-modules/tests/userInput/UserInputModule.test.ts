@@ -15,6 +15,10 @@ const askInput = {
     question: "Which option should I use?",
     context: "The choice changes the implementation.",
 } as const;
+const agentAskInput = {
+    context: askInput.context,
+    questions: [{ question: askInput.question }],
+};
 
 describe("UserInputModule", () => {
     it("keeps the newest question creation time after that question settles", async () => {
@@ -89,7 +93,7 @@ describe("UserInputModule", () => {
             const tool = requestUserInputTool(module, agentId);
             expect(tool.durable).toBe(true);
             expect(tool.transactional).toBeUndefined();
-            const running = tool.execute(database.context, { input: askInput }, {
+            const running = tool.execute(database.context, agentAskInput, {
                 id: "tool-call",
             } as never);
 
@@ -121,7 +125,7 @@ describe("UserInputModule", () => {
             const tool = requestUserInputTool(module, agentId);
 
             await expect(
-                tool.execute(database.context, { input: askInput }, {
+                tool.execute(database.context, agentAskInput, {
                     id: "internal-away-call",
                 } as never),
             ).resolves.toMatchObject({ id: "internal-away-call", status: "away" });
@@ -220,7 +224,11 @@ describe("UserInputModule", () => {
             const tools = await hooks.tools!(database.context, {
                 agent: { id: agentId },
             } as never);
-            expect(tools.map((tool) => tool.name)).toEqual(["request_user_input", "cancel_ask"]);
+            expect(tools.map((tool) => tool.name)).toEqual([
+                "request_user_input",
+                "read_user_input",
+                "cancel_ask",
+            ]);
             const request = await module.ask(database.context, agentId, askInput, "cancel-call");
             const result = await cancelAskTool(module, agentId).execute(
                 database.context,
@@ -241,33 +249,31 @@ describe("UserInputModule", () => {
             const waiting = requestUserInputTool(module, agentId).execute(
                 database.context,
                 {
-                    input: {
-                        context: "Choose the scope and rollout.",
-                        questions: [
-                            {
-                                id: "scope",
-                                header: "Scope",
-                                question: "Which scope should I use?",
-                                options: [
-                                    { label: "Small", description: "Safer first step." },
-                                    { label: "Wide", description: "Faster broad rollout." },
+                    context: "Choose the scope and rollout.",
+                    questions: [
+                        {
+                            id: "scope",
+                            header: "Scope",
+                            question: "Which scope should I use?",
+                            options: [
+                                { label: "Small", description: "Safer first step." },
+                                { label: "Wide", description: "Faster broad rollout." },
+                            ],
+                            multiSelect: false,
+                        },
+                        {
+                            id: "rollout",
+                            header: "Rollout",
+                            question: "Should rollout be gradual?",
+                            options: {
+                                choices: [
+                                    { label: "Yes", description: "Reduce deployment risk." },
+                                    { label: "No", description: "Finish sooner." },
                                 ],
                                 multiSelect: false,
                             },
-                            {
-                                id: "rollout",
-                                header: "Rollout",
-                                question: "Should rollout be gradual?",
-                                options: {
-                                    choices: [
-                                        { label: "Yes", description: "Reduce deployment risk." },
-                                        { label: "No", description: "Finish sooner." },
-                                    ],
-                                    multiSelect: false,
-                                },
-                            },
-                        ],
-                    },
+                        },
+                    ],
                 },
                 { id: "internal-batch-call" } as never,
             );
@@ -307,12 +313,14 @@ describe("UserInputModule", () => {
             const waiting = requestUserInputTool(module, agentId).execute(
                 database.context,
                 {
-                    input: {
-                        question: "Should I continue?",
-                        context: "This is useful but not blocking.",
-                        header: "Continue",
-                        autoResolutionMs: 60_000,
-                    },
+                    context: "This is useful but not blocking.",
+                    questions: [
+                        {
+                            question: "Should I continue?",
+                            header: "Continue",
+                        },
+                    ],
+                    autoResolutionMs: 60_000,
                 },
                 { id: "internal-auto-call" } as never,
             );

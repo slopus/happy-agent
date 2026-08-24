@@ -25,23 +25,21 @@ describe("public API steering at a tool boundary", () => {
                         content: [
                             {
                                 arguments: {
-                                    input: {
-                                        context: "The active tool batch is waiting for one answer.",
-                                        questions: [
-                                            {
-                                                header: "Continue",
-                                                id: "continue",
-                                                multiSelect: false,
-                                                options: [
-                                                    {
-                                                        description: "Finish the tool batch.",
-                                                        label: "Continue",
-                                                    },
-                                                ],
-                                                question: "Continue to the next inference?",
-                                            },
-                                        ],
-                                    },
+                                    context: "The active tool batch is waiting for one answer.",
+                                    questions: [
+                                        {
+                                            header: "Continue",
+                                            id: "continue",
+                                            multiSelect: false,
+                                            options: [
+                                                {
+                                                    description: "Finish the tool batch.",
+                                                    label: "Continue",
+                                                },
+                                            ],
+                                            question: "Continue to the next inference?",
+                                        },
+                                    ],
                                 },
                                 callId: "steeringquestion",
                                 name: "request_user_input",

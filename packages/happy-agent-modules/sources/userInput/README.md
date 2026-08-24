@@ -36,18 +36,19 @@ choices, plus bounded Markdown context. They have a discriminated outcome: `pend
 labels plus text; batched requests settle with one answer map. Answer, cancellation, timeout, and
 away transitions are single-settlement operations.
 
-The `request_user_input` and `cancel_ask` tools never enter Auto-mode review. The request tool is
-durable and reloadable: a person may take days to answer, so a call interrupted by a restart is
-executed again rather than failed, while graceful shutdown can leave it pending without waiting.
-Running it again is safe because Agent Base's generated tool-call CUID2 is the request ID and Base
-restores it with the stored call — the second execution resumes the same request and returns
-immediately when it was answered while the daemon was down. It accepts an optional
-`autoResolutionMs` window from 60 to 240 seconds for questions where the model may continue with
-its best judgement, measured from when the request was created rather than from when a wait
-resumed. `cancel_ask` accepts `requestId` (and the legacy `ask_id` spelling) plus an optional reason.
-The tool creates or resumes that request in one transaction, then waits outside a transaction.
-After a terminal result, the same tool can read bounded detail pages by request ID and cursor so
-long answers remain available to the model.
+The `request_user_input`, `read_user_input`, and `cancel_ask` tools never enter Auto-mode review.
+The request tool takes one flat object with shared `context`, a `questions` array even for one
+question, and optional `autoResolutionMs`. It is durable and reloadable: a person may take days to
+answer, so a call interrupted by a restart is executed again rather than failed, while graceful
+shutdown can leave it pending without waiting. Running it again is safe because Agent Base's
+generated tool-call CUID2 is the request ID and Base restores it with the stored call — the second
+execution resumes the same request and returns immediately when it was answered while the daemon
+was down. The optional auto-resolution window runs from 60 to 240 seconds for questions where the
+model may continue with its best judgement, measured from when the request was created rather than
+from when a wait resumed. The tool creates or resumes that request in one transaction, then waits
+outside a transaction. `read_user_input` reads bounded detail pages by request ID and cursor so
+long answers remain available to the model. `cancel_ask` accepts `requestId` (and the legacy
+`ask_id` spelling) plus an optional reason.
 
 Host callers can use `ask`, `wait`, `listPage`/`list`, `get`/`getPage`, `answer`, `cancel`, and
 `complete`. `formatForModel`, `formatPageForModel`, `formatDetailPageForModel`, and

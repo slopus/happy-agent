@@ -9,6 +9,7 @@ import {
     formatDetailPageForModel,
     formatForModel,
     formatPageForModel,
+    readUserInputTool,
     requestUserInputTool,
     type UserInputEvent,
 } from "../../sources/userInput/index.js";
@@ -255,7 +256,7 @@ describe("UserInput events, tools, and output bounds", () => {
         expect(detailOutput).toContain(`Request ${request.id}:`);
     });
 
-    it("uses Base tool-call IDs for request identity and supports detail reads through the same tool", async () => {
+    it("uses Base tool-call IDs for request identity and reads detail through its own tool", async () => {
         const module = createUserInputModule();
         const database = createUserInputDatabase(module, "user-input-tools");
         await database.ready;
@@ -264,10 +265,8 @@ describe("UserInput events, tools, and output bounds", () => {
             const running = requestTool.execute(
                 database.context,
                 {
-                    input: {
-                        question: "What should I do?",
-                        context: "A durable context.",
-                    },
+                    context: "A durable context.",
+                    questions: [{ question: "What should I do?" }],
                 },
                 {
                     id: "internal-id",
@@ -285,14 +284,13 @@ describe("UserInput events, tools, and output bounds", () => {
                 status: "answered",
             });
 
-            const detail = await requestTool.execute(
+            const readTool = readUserInputTool(module, agentId);
+            const detail = await readTool.execute(
                 database.context,
                 {
-                    input: {
-                        requestId: "internal-id",
-                        cursor: "0",
-                        limit: 64,
-                    },
+                    requestId: "internal-id",
+                    cursor: "0",
+                    limit: 64,
                 },
                 {} as never,
             );
@@ -300,7 +298,7 @@ describe("UserInput events, tools, and output bounds", () => {
                 request: { id: "internal-id", status: "answered" },
                 cursor: 0,
             });
-            expect(requestTool.toLLM(detail as never)[0]).toMatchObject({ type: "text" });
+            expect(readTool.toLLM(detail)[0]).toMatchObject({ type: "text" });
 
             const cancelTool = cancelAskTool(module, agentId);
             const pending = await module.ask(

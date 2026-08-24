@@ -73,6 +73,7 @@ import {
 } from "./UserInputStore.js";
 import { createSqliteUserInputStorage, userInputMigrations } from "./SqliteUserInputStorage.js";
 import { cancelAskTool } from "./tools/cancel_ask.js";
+import { readUserInputTool } from "./tools/read_user_input.js";
 import { requestUserInputTool } from "./tools/request_user_input.js";
 
 /** The most requests one list page may return. */
@@ -126,6 +127,7 @@ export class UserInputModule implements AgentModule {
             this.#assertAgentId(scope.agent.id);
             return [
                 requestUserInputTool(this, scope.agent.id),
+                readUserInputTool(this, scope.agent.id),
                 cancelAskTool(this, scope.agent.id),
             ];
         },

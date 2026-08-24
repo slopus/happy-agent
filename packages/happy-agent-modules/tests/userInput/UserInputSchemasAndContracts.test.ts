@@ -20,6 +20,7 @@ import {
     formatDetailPageForModel,
     formatForModel,
     formatPageForModel,
+    readUserInputTool,
     requestUserInputTool,
     userInputAnswerObjectSchema,
     userInputAnswerSchema,
@@ -32,7 +33,6 @@ import {
     userInputListQuerySchema,
     MAX_USER_INPUT_OUTPUT_CHARACTERS,
     MAX_USER_INPUT_PAGE_SIZE,
-    userInputPageSchema,
     userInputRequestSchema,
     userInputTerminalRequestSchema,
     type UserInputRequest,
@@ -381,9 +381,10 @@ describe("UserInput runtime schemas and contracts", () => {
         ).toBe(false);
     });
 
-    it("exposes both common tools with closed parameters and no Auto review", () => {
+    it("exposes flat request and read tools with closed parameters and no Auto review", () => {
         const module = createUserInputModule();
         const requestTool = requestUserInputTool(module, agentId);
+        const readTool = readUserInputTool(module, agentId);
         const cancelTool = cancelAskTool(module, agentId);
 
         expect(requestTool).toMatchObject({
@@ -391,66 +392,80 @@ describe("UserInput runtime schemas and contracts", () => {
             durable: true,
             reloadable: true,
         });
+        expect(readTool).toMatchObject({
+            name: "read_user_input",
+            durable: true,
+        });
         expect(cancelTool).toMatchObject({
             name: "cancel_ask",
             durable: false,
         });
         expect(requestTool.shouldReviewInAutoMode({} as never, {} as never)).toBe(false);
+        expect(readTool.shouldReviewInAutoMode({} as never, {} as never)).toBe(false);
         expect(cancelTool.shouldReviewInAutoMode({} as never, {} as never)).toBe(false);
-        if (requestTool.parameters === undefined || cancelTool.parameters === undefined) {
+        if (
+            requestTool.parameters === undefined ||
+            readTool.parameters === undefined ||
+            cancelTool.parameters === undefined
+        ) {
             throw new Error("User input tools must expose parameter schemas.");
         }
         expect(
             Value.Check(requestTool.parameters, {
-                input: {
-                    question: "Question",
-                    header: "Release scope",
-                    context: "Context",
-                },
+                context: "Context",
+                questions: [{ question: "Question", header: "Release scope" }],
             }),
         ).toBe(true);
+        expect(
+            Value.Check(requestTool.parameters, {
+                input: {
+                    context: "Context",
+                    questions: [{ question: "Question" }],
+                },
+            }),
+        ).toBe(false);
         expect(MAX_USER_INPUT_HEADER_CHARACTERS).toBe(64);
         expect(
             Value.Check(requestTool.parameters, {
-                input: {
-                    question: "Question",
-                    header: "x".repeat(MAX_USER_INPUT_HEADER_CHARACTERS + 1),
-                    context: "Context",
-                },
+                context: "Context",
+                questions: [
+                    {
+                        question: "Question",
+                        header: "x".repeat(MAX_USER_INPUT_HEADER_CHARACTERS + 1),
+                    },
+                ],
             }),
         ).toBe(false);
         expect(
             Value.Check(requestTool.parameters, {
-                input: {
-                    question: "Question",
-                    context: "Context",
-                    deadlineAt: Date.now() + 60_000,
-                },
+                context: "Context",
+                questions: [{ question: "Question" }],
+                deadlineAt: Date.now() + 60_000,
             }),
         ).toBe(false);
         expect(
             Value.Check(requestTool.parameters, {
-                input: {
-                    question: "Question",
-                    context: "Context",
-                    autoResolutionMs: MIN_USER_INPUT_AUTO_RESOLUTION_MS,
-                },
+                context: "Context",
+                questions: [{ question: "Question" }],
+                autoResolutionMs: MIN_USER_INPUT_AUTO_RESOLUTION_MS,
             }),
         ).toBe(true);
         expect(
             Value.Check(requestTool.parameters, {
-                input: {
-                    requestId: "request-one",
-                    cursor: "0",
-                },
+                requestId: "request-one",
+                cursor: "0",
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(readTool.parameters, {
+                requestId: "request-one",
+                cursor: "0",
             }),
         ).toBe(true);
         expect(
-            Value.Check(requestTool.parameters, {
-                input: {
-                    requestId: "request-one",
-                    unknown: true,
-                },
+            Value.Check(readTool.parameters, {
+                requestId: "request-one",
+                unknown: true,
             }),
         ).toBe(false);
         expect(

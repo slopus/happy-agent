@@ -382,10 +382,8 @@ function ask(
         content: [
             {
                 arguments: {
-                    input: {
-                        context: "The answer is needed to continue this public API scenario.",
-                        questions: prompts,
-                    },
+                    context: "The answer is needed to continue this public API scenario.",
+                    questions: prompts,
                 },
                 callId,
                 name: "request_user_input",

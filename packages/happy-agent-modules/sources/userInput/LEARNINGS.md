@@ -37,6 +37,18 @@ The direct module API can accept an absolute `deadlineAt`, but the agent tool do
 An agent does not share the daemon's authoritative wall clock and should request the bounded
 relative `autoResolutionMs` instead, avoiding deadlines that precede request creation.
 
+## Model-facing questions stay flat and always use the questions array
+
+The request tool once wrapped a union of ask and detail-read inputs inside an `input` property so
+providers would see an object at the schema root. In a real Codex call, the model produced the
+complete valid ask object at the root and omitted only that artificial wrapper, so validation
+rejected the question before it could reach the person.
+
+`request_user_input` now has one flat object with shared `context`, a required `questions` array
+even for one question, and optional `autoResolutionMs`. Bounded detail paging belongs to the
+separate flat `read_user_input` tool. The module's direct API still accepts singular asks, but the
+agent surface favors one obvious provider-compatible shape over an overloaded tool contract.
+
 ## Asking is meaningful session activity
 
 A user-facing question advances a session's meaningful activity at the request's durable

@@ -343,10 +343,13 @@ export const userInputAskInputSchema = Type.Union([
     userInputBatchedAskInputSchema,
 ]);
 export const userInputToolInputSchema = userInputAskInputSchema;
-/** Agent calls use a relative timeout so they never have to invent the daemon's wall clock. */
-export const userInputAgentToolInputSchema = Type.Union([
-    Type.Omit(userInputSingleAskInputSchema, ["deadlineAt"]),
-    Type.Omit(userInputBatchedAskInputSchema, ["deadlineAt"]),
+/**
+ * Agent calls always use the batched shape, including for one question. This keeps the model-facing
+ * parameters as one ordinary object and uses a relative timeout so the model never has to invent
+ * the daemon's wall clock.
+ */
+export const userInputAgentToolInputSchema = Type.Omit(userInputBatchedAskInputSchema, [
+    "deadlineAt",
 ]);
 
 export const userInputWaitInputSchema = Type.Object(

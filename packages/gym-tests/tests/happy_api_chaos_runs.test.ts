@@ -728,27 +728,25 @@ async function runTurnForRequest(request: GymInferenceRequest): Promise<GymTurn>
             content: [
                 {
                     arguments: {
-                        input: {
-                            context: "The deterministic run needs one public decision.",
-                            questions: [
-                                {
-                                    header: "Choice",
-                                    id: "choice",
-                                    multiSelect: false,
-                                    options: [
-                                        {
-                                            description: "Use the first deterministic option.",
-                                            label: "Accept",
-                                        },
-                                        {
-                                            description: "Use the second deterministic option.",
-                                            label: "Decline",
-                                        },
-                                    ],
-                                    question: "Should the run continue?",
-                                },
-                            ],
-                        },
+                        context: "The deterministic run needs one public decision.",
+                        questions: [
+                            {
+                                header: "Choice",
+                                id: "choice",
+                                multiSelect: false,
+                                options: [
+                                    {
+                                        description: "Use the first deterministic option.",
+                                        label: "Accept",
+                                    },
+                                    {
+                                        description: "Use the second deterministic option.",
+                                        label: "Decline",
+                                    },
+                                ],
+                                question: "Should the run continue?",
+                            },
+                        ],
                     },
                     callId: `question${String(request.callIndex)}`,
                     name: "request_user_input",
