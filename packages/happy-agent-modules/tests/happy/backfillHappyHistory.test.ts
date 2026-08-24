@@ -147,7 +147,7 @@ describe("mapping archived Happy history", () => {
                 blocks: [
                     { text: "checking the config", type: "text" },
                     {
-                        arguments: { path: "/etc/hosts" },
+                        arguments: { file_path: "/etc/hosts" },
                         callId: "call-1",
                         name: "Read",
                         type: "tool_call",
@@ -173,9 +173,9 @@ describe("mapping archived Happy history", () => {
             },
             {
                 ev: {
-                    args: { path: "/etc/hosts" },
+                    args: { file_path: "/etc/hosts" },
                     call: "call-1",
-                    description: "Running Read",
+                    description: "Reading /etc/hosts",
                     name: "Read",
                     t: "tool-call-start",
                     title: "Read",

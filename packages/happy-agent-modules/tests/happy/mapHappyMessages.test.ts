@@ -151,7 +151,7 @@ describe("Happy message mapping", () => {
         expect(spoken).toEqual([]);
     });
 
-    it("names a tool the way a person reads it", () => {
+    it("keeps an unfamiliar tool in the canonical generic fallback", () => {
         const mapper = new HappyMessageMapper();
         mapper.map(blockStart());
         const started = mapper.map(
@@ -160,7 +160,7 @@ describe("Happy message mapping", () => {
                     toolCall: {
                         arguments: { path: "README.md" },
                         id: "call-1",
-                        name: "read_file",
+                        name: "custom_tool",
                         type: "toolCall",
                     },
                     type: "tool_execution_start",
@@ -171,10 +171,10 @@ describe("Happy message mapping", () => {
         expect(started[0]?.content.ev).toEqual({
             args: { path: "README.md" },
             call: "call-1",
-            description: "Running Read File",
-            name: "read_file",
+            description: "Running Custom Tool",
+            name: "custom_tool",
             t: "tool-call-start",
-            title: "Read File",
+            title: "Custom Tool",
         });
 
         const finished = mapper.map(

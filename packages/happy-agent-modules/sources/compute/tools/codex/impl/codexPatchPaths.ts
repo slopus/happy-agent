@@ -1,5 +1,5 @@
 import { resolveComputePath } from "../../../impl/resolveComputePath.js";
-import { parseCodexPatchDirective } from "./parseCodexPatch.js";
+import { parseCodexPatchDirective } from "../../../../impl/parseCodexPatch.js";
 
 /**
  * Every file a patch names, as absolute paths on the machine.
