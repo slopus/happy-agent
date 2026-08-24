@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { AgentKV } from "@slopus/happy-agent-base";
+import { agentDatabase, agentDatabaseConnection, type AgentKV } from "@slopus/happy-agent-base";
 import type { ComputeFileSystem, ComputePermissions } from "@slopus/happy-agent-compute";
 import type { Context, MapAsyncLock } from "@steve.kite/stdlib";
 
@@ -29,8 +29,9 @@ const MAX_REMEMBERED_READS = 512;
  *
  * The log belongs to the agent's conversation rather than to a run, which is what lets a write
  * interrupted by a restart simply be made again: the file it left behind is one this agent has
- * read. Every change runs under that agent's keyed lock, since two tool calls in one turn may both
- * be reading files.
+ * read. Every change enters its database-owned operation before taking that agent's keyed lock.
+ * Two tool calls in one turn may both be reading files, and keeping that one lock order prevents
+ * a transactional read from deadlocking with a nontransactional edit.
  */
 export class FileReadLog {
     /** The module's durable store for this one agent. */
@@ -48,8 +49,16 @@ export class FileReadLog {
 
     /** Remember that this agent now knows what the file holds. */
     async record(ctx: Context, path: string, mtimeMs: number): Promise<void> {
-        await this.#lock.runInLock(ctx, this.#agentId, async (lockCtx) => {
-            await this.#record(lockCtx, path, mtimeMs);
+        const database = agentDatabase(ctx);
+        const connection = database === undefined ? undefined : agentDatabaseConnection(database);
+        if (database !== undefined && connection !== undefined) {
+            await connection.operation(database, async () => {
+                await this.#recordInLock(ctx, path, mtimeMs);
+            });
+            return;
+        }
+        await this.#kv.transaction(ctx, async (_kv, txCtx) => {
+            await this.#recordInLock(txCtx, path, mtimeMs);
         });
     }
 
@@ -82,6 +91,12 @@ export class FileReadLog {
             const kept = readLog(current).filter((entry) => entry.path !== path);
             kept.push({ path, mtimeMs });
             return kept.slice(-MAX_REMEMBERED_READS);
+        });
+    }
+
+    async #recordInLock(ctx: Context, path: string, mtimeMs: number): Promise<void> {
+        await this.#lock.runInLock(ctx, this.#agentId, async (lockCtx) => {
+            await this.#record(lockCtx, path, mtimeMs);
         });
     }
 }

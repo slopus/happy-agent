@@ -217,11 +217,14 @@ through `scope.kv`, and keeps every agent's one-shot abort notice in the one col
 `record(ctx, path, mtimeMs)` removes any existing entry for `path`, appends the new one, and keeps
 only the most recent 512 entries (`MAX_REMEMBERED_READS`) — the log guards against changing stale
 remembered state, not a transcript, so only recently-observed files are worth keeping.
-`AgentKV.update` makes the read-decide-write operation durable, and the module's keyed lock
-serializes concurrent updates for the same agent before they reach that store. File mutations
-themselves are not serialized per path: frozen Agent Base exposes no tool lock, and this module
-does not add a module-level heap lock. Concurrent edits to one path remain future host-coordination
-debt.
+The Agent Database's owned-operation boundary keeps the `AgentKV.update` read-decide-write step
+together without opening another SQL transaction, and an existing tool transaction is reused. The
+database boundary is entered before the module's keyed lock serializes concurrent updates for the
+same agent. Keeping that order avoids a cycle between a transactional file read and a
+nontransactional edit recording its new state. A custom store without the production database
+boundary falls back to an `AgentKV.transaction` with the same order. File mutations themselves are
+not serialized per path: frozen Agent Base exposes no tool lock, and this module does not add a
+module-level heap lock. Concurrent edits to one path remain future host-coordination debt.
 The log belongs to the agent's conversation rather than to a single run, so a write interrupted by
 a restart can simply be retried — the file it left behind is already the state this agent recorded.
 

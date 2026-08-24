@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -80,6 +82,13 @@ describe("openHappyAgentDatabase", () => {
             await opened.close();
         }
     });
+
+    it("keeps unrelated database reads responsive during concurrent read_file and search_replace", async () => {
+        const directory = await createTestDirectory();
+        const databasePath = join(directory, "agent.sqlite");
+
+        await expect(runDeadlockProbe(databasePath)).resolves.toBeUndefined();
+    });
 });
 
 async function createTestDirectory(): Promise<string> {
@@ -99,4 +108,70 @@ function deferred<Value>(): {
         resolve = resolvePromise;
     });
     return { promise, resolve };
+}
+
+async function runDeadlockProbe(databasePath: string): Promise<void> {
+    const childPath = resolve(import.meta.dirname, "HappyAgentDatabaseDeadlock.child.ts");
+    const child = spawn(process.execPath, ["--import", "tsx", childPath, databasePath], {
+        cwd: resolve(import.meta.dirname, "../../../.."),
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    let errorOutput = "";
+    let exited = false;
+    let ready = false;
+    let settled = false;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    child.once("exit", () => {
+        exited = true;
+    });
+
+    try {
+        await new Promise<void>((resolveProbe, rejectProbe) => {
+            const finish = (error?: Error): void => {
+                if (settled) return;
+                settled = true;
+                if (watchdog !== undefined) clearTimeout(watchdog);
+                if (error === undefined) resolveProbe();
+                else rejectProbe(error);
+            };
+            watchdog = setTimeout(() => {
+                child.kill("SIGKILL");
+                finish(new Error("The database deadlock probe did not reach its gated batch."));
+            }, 4_000);
+            child.stdout!.setEncoding("utf8");
+            child.stderr!.setEncoding("utf8");
+            child.stdout!.on("data", (chunk: string) => {
+                output += chunk;
+                if (output.includes("READY\n") && !ready) {
+                    ready = true;
+                    clearTimeout(watchdog);
+                    watchdog = setTimeout(() => {
+                        child.kill("SIGKILL");
+                        finish(
+                            new Error(
+                                "The mixed tool batch deadlocked the global database; an unrelated read did not finish.",
+                            ),
+                        );
+                    }, 1_000);
+                }
+                if (output.includes("PASS\n")) finish();
+            });
+            child.stderr!.on("data", (chunk: string) => {
+                errorOutput += chunk;
+            });
+            child.once("error", (error) => finish(error));
+            child.once("exit", (code, signal) => {
+                if (settled) return;
+                finish(
+                    new Error(
+                        `The database deadlock probe exited before passing (code ${String(code)}, signal ${String(signal)}).${errorOutput.length === 0 ? "" : `\n${errorOutput}`}`,
+                    ),
+                );
+            });
+        });
+    } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        if (!exited && child.pid !== undefined) await once(child, "exit");
+    }
 }

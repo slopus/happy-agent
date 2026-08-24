@@ -16,3 +16,15 @@ History recognizes the validated `presentation` envelope after execution, keeps 
 call-scoped durable run store, and records it with the transactional tool result. This makes live
 and loaded API projections use one persisted value and keeps presentations intact across daemon
 restarts without adding tool-name dispatch or extra runtime wiring.
+
+## Read-log serialization follows the database lock
+
+`FileReadLog.record` enters the Agent Database's owned-operation boundary before taking the
+per-agent read-log lock. Transactional reads already hold the global database slot when they record
+a file, so letting a nontransactional edit take the read-log lock before requesting that slot
+creates the opposite order and can deadlock every queued database route. The database-first order
+keeps the read-log update together, composes with transactional read tool results, and leaves
+unrelated database work responsive. It does not open a new libSQL transaction for a
+nontransactional edit, because the local libSQL client rotates its native connection after each
+transaction; custom stores without the production database boundary use an Agent KV transaction as
+the safe fallback.

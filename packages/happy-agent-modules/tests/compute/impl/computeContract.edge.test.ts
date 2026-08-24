@@ -80,6 +80,12 @@ function readLog(persistence: MemoryPersistence): FileReadLog {
                 await persistence.writeValue(updateCtx, `${this.prefix}${key}`, value);
                 return value;
             }
+            async transaction<Result>(
+                transactionCtx: Context,
+                work: (kv: never, ctx: Context) => Promise<Result>,
+            ): Promise<Result> {
+                return await work(this as never, transactionCtx);
+            }
         })() as never,
         mapAsyncLock<string>(),
         "agent-a",
