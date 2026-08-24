@@ -27,6 +27,7 @@ export * from "./requestOptions.js";
 
 export * from "./protocol/agents.js";
 export * from "./protocol/bootstrap.js";
+export * from "./protocol/cloud.js";
 export * from "./protocol/common.js";
 export * from "./protocol/daemon.js";
 export * from "./protocol/events.js";

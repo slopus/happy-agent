@@ -18,6 +18,7 @@ import {
     resourceVersionSchema,
 } from "./common.js";
 import type { Agent, AgentDraftSnapshot } from "./agents.js";
+import type { Cloud } from "./cloud.js";
 import type { GitState } from "./git.js";
 import type { HappyIntegration } from "./integrations.js";
 import type { Message, Run } from "./messages.js";
@@ -187,6 +188,11 @@ export interface ProfileUpdatedPayload extends MutationEcho {
     profile: Profile;
 }
 
+/** Cloud state is a complete replacement rather than a version-chain diff. */
+export interface CloudUpdatedPayload extends MutationEcho {
+    cloud: Cloud;
+}
+
 /** Happy integration state is computed, so the payload is a complete replacement. */
 export interface HappyIntegrationUpdatedPayload {
     integration: HappyIntegration;
@@ -238,6 +244,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"message.deleted", MessageDeletedPayload>
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>
+    | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>
     | EventEnvelope<"sharing.updated", SharingUpdatedPayload>;
 

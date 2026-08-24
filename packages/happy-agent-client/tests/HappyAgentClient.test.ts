@@ -155,6 +155,82 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.body).toBeNull();
     });
 
+    it("manages Cloud authentication and mints verified access tokens", async () => {
+        const cloud = {
+            authorization: null,
+            environment: "production" as const,
+            error: null,
+            status: "connected" as const,
+            updatedAt: 1_755_400_000_000,
+            user: {
+                email: "person@example.com",
+                firstName: "Ada",
+                id: "user_01H",
+                lastName: "Lovelace",
+            },
+            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+        };
+        const { fetch, requests } = stubFetch((request) =>
+            request.url.endsWith("/access-token")
+                ? json({ accessToken: "access-token", cloud })
+                : json({ cloud }),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.getCloud()).resolves.toEqual({ cloud });
+        await expect(
+            client.startCloudAuthorization({
+                environment: "production",
+                mutationId: "start-1",
+                redirectUri: "happy-auth://callback",
+            }),
+        ).resolves.toEqual({ cloud });
+        await expect(
+            client.completeCloudAuthorization({
+                callbackUrl: "happy-auth://callback?code=code&state=state",
+                mutationId: "complete-1",
+            }),
+        ).resolves.toEqual({ cloud });
+        await expect(client.disconnectCloud({ mutationId: "disconnect-1" })).resolves.toEqual({
+            cloud,
+        });
+        await expect(client.mintCloudAccessToken({ mutationId: "mint-1" })).resolves.toEqual({
+            accessToken: "access-token",
+            cloud,
+        });
+
+        expect(requests.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
+            { body: null, method: "GET", url: "http://agent.local/v0/cloud" },
+            {
+                body: JSON.stringify({
+                    environment: "production",
+                    mutationId: "start-1",
+                    redirectUri: "happy-auth://callback",
+                }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/auth/start",
+            },
+            {
+                body: JSON.stringify({
+                    callbackUrl: "happy-auth://callback?code=code&state=state",
+                    mutationId: "complete-1",
+                }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/auth/complete",
+            },
+            {
+                body: JSON.stringify({ mutationId: "disconnect-1" }),
+                method: "DELETE",
+                url: "http://agent.local/v0/cloud/auth",
+            },
+            {
+                body: JSON.stringify({ mutationId: "mint-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/access-token",
+            },
+        ]);
+    });
+
     it("manages the Happy integration through its focused routes", async () => {
         const response = {
             integration: {

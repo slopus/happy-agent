@@ -3,6 +3,7 @@
 import { type Static, Type } from "@sinclair/typebox";
 
 import type { Agent, AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
+import { cloudSchema } from "./cloud.js";
 import { type EventCursor, eventCursorSchema } from "./common.js";
 import { daemonConfigSchema, onboardingStateSchema } from "./daemon.js";
 import { happyIntegrationSchema } from "./integrations.js";
@@ -46,6 +47,8 @@ export const desktopBootstrapResponseSchema = Type.Object({
      * from here leaves no window for a change to fall between the two.
      */
     cursor: eventCursorSchema,
+    /** Current Happy Cloud authentication state. Absent on older compatible daemons. */
+    cloud: Type.Optional(cloudSchema),
     /** Current Happy mobile connection state. Absent on older compatible daemons. */
     happyIntegration: Type.Optional(happyIntegrationSchema),
     onboarding: onboardingStateSchema,

@@ -141,6 +141,28 @@ describe("sharing protocol", () => {
         ).toBe(true);
     });
 
+    it("keeps Cloud optional and additive in protocol-22 desktop bootstrap", () => {
+        const bootstrap = desktopBootstrap();
+        const cloud = {
+            authorization: null,
+            environment: null,
+            error: null,
+            status: "disconnected" as const,
+            updatedAt,
+            user: null,
+            version,
+        };
+
+        expect(Value.Check(desktopBootstrapResponseSchema, bootstrap)).toBe(true);
+        expect(Value.Check(desktopBootstrapResponseSchema, { ...bootstrap, cloud })).toBe(true);
+        expect(
+            Value.Check(desktopBootstrapResponseSchema, {
+                ...bootstrap,
+                cloud: { ...cloud, futureField: "newer-daemon" },
+            }),
+        ).toBe(true);
+    });
+
     it("parses sharing.updated as a compact version invalidation", async () => {
         const event: HappyAgentEvent = {
             cursor: version,

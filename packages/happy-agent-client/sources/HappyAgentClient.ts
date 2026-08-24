@@ -22,6 +22,16 @@ import type {
 } from "./protocol/agents.js";
 import type { AgentBootstrapResponse, DesktopBootstrapResponse } from "./protocol/bootstrap.js";
 import type {
+    CloudAccessTokenResponse,
+    CloudAuthorizingResponse,
+    CloudConnectedResponse,
+    CloudDisconnectedResponse,
+    CloudMutationRequest,
+    CloudResponse,
+    CompleteCloudAuthorizationRequest,
+    StartCloudAuthorizationRequest,
+} from "./protocol/cloud.js";
+import type {
     ConfigPatch,
     ConfigResponse,
     DrainResponse,
@@ -316,6 +326,65 @@ export class HappyAgentClient {
         return await this.#json({
             method: "DELETE",
             path: "v0/debug/inspector",
+            signal: options.signal,
+        });
+    }
+
+    // Cloud
+
+    /** `GET /v0/cloud` — current Happy Cloud authentication state. */
+    async getCloud(options: RequestOptions = {}): Promise<CloudResponse> {
+        return await this.#json({ method: "GET", path: "v0/cloud", signal: options.signal });
+    }
+
+    /** `POST /v0/cloud/auth/start` — starts or joins WorkOS PKCE authorization. */
+    async startCloudAuthorization(
+        request: StartCloudAuthorizationRequest,
+        options: RequestOptions = {},
+    ): Promise<CloudAuthorizingResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/cloud/auth/start",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/cloud/auth/complete` — exchanges and verifies the WorkOS callback. */
+    async completeCloudAuthorization(
+        request: CompleteCloudAuthorizationRequest,
+        options: RequestOptions = {},
+    ): Promise<CloudConnectedResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/cloud/auth/complete",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/cloud/auth` — removes daemon-owned Cloud credentials. */
+    async disconnectCloud(
+        request: CloudMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudDisconnectedResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: "v0/cloud/auth",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/cloud/access-token` — refreshes, verifies, and returns one access token. */
+    async mintCloudAccessToken(
+        request: CloudMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudAccessTokenResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/cloud/access-token",
+            json: request,
             signal: options.signal,
         });
     }

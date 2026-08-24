@@ -55,8 +55,9 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   class. Common codes: `invalid_request` (400), `unauthorized` (401), `not_found` (404),
   `conflict` (409, the generic `If-Match` and state conflicts), `cursor_unavailable` (the
   events `409`), `hash_mismatch` (the file-write `409`), `not_initialized` (a workspace still
-  building), `draining` (503, the daemon no longer admits mutations), `too_large` (413),
-  `unsupported` (501), `internal` (500).
+  building), `cloud_not_authenticated` (409), `cloud_unauthorized` (409),
+  `cloud_unavailable` (503), `draining` (503, the daemon no longer admits mutations),
+  `too_large` (413), `unsupported` (501), `internal` (500).
 
 An error body may carry additional fields alongside `error` and `code` when the endpoint
 documents them. Unexpected internal failures return `500` with a generic message; internal
@@ -768,6 +769,208 @@ Response — `200`:
 Marks onboarding finished. Idempotent. Response — `200`: `{ "completed": true }` and a
 `config.updated` nudge is **not** emitted — clients that care watch their own flow; others
 read the flag on next bootstrap.
+
+## Cloud
+
+Cloud connects this Happy Agent installation to a person's Happy Cloud account. It is a separate
+feature from the Happy mobile integration: Cloud uses WorkOS authentication and Happy Cloud HTTP
+APIs, while the Happy integration manages the daemon's machine connection to the mobile app.
+
+The daemon owns Cloud authentication. It performs the WorkOS authorization-code flow with PKCE,
+stores the rotating refresh token in its owner-only durable database, and mints short-lived access
+tokens on demand. Refresh tokens, PKCE verifiers, and access tokens never appear in bootstrap,
+status responses, events, logs, or error bodies. A minted access token appears only in the direct
+successful response that requested it.
+
+### The Cloud object
+
+Disconnected:
+
+```json
+{
+    "status": "disconnected",
+    "environment": null,
+    "user": null,
+    "authorization": null,
+    "error": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+Authorizing:
+
+```json
+{
+    "status": "authorizing",
+    "environment": "production",
+    "user": null,
+    "authorization": {
+        "url": "https://api.workos.com/user_management/authorize?...",
+        "expiresAt": 1755400600000
+    },
+    "error": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+Connected:
+
+```json
+{
+    "status": "connected",
+    "environment": "production",
+    "user": {
+        "id": "user_01H...",
+        "email": "person@example.com",
+        "firstName": "Ada",
+        "lastName": "Lovelace"
+    },
+    "authorization": null,
+    "error": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+- `status` — exactly `"disconnected"`, `"authorizing"`, or `"connected"`.
+- `environment` — `"production"` or `"staging"` while authorizing or connected, and `null`
+  while disconnected. These select Happy's fixed WorkOS client and Cloud deployment; clients
+  cannot supply an endpoint or client ID.
+- `user` — the verified WorkOS user while connected and `null` otherwise. `firstName` and
+  `lastName` are each strings or `null`; `id` and `email` are strings.
+- `authorization` — present only while authorizing. `url` is the complete WorkOS URL to open and
+  `expiresAt` is its absolute ten-minute expiry. The client treats the URL as opaque.
+- `error` — `null`, or `{ "code": "...", "message": "..." }` on a disconnected snapshot.
+  Known codes are `authorization_expired`, `authorization_rejected`, and
+  `credentials_rejected`; clients tolerate unknown values. Transient WorkOS or Happy Cloud
+  availability failures are request errors and do not invalidate an otherwise connected
+  snapshot.
+- `version` — a UUIDv7 minted whenever the snapshot changes. `cloud.updated` carries the complete
+  object, so clients reconciling a REST snapshot with an event keep the greater version.
+- `updatedAt` — when any field in the snapshot last changed.
+
+The daemon durably preserves the Cloud version high-water mark. Every replacement is greater than
+every Cloud version that installation previously exposed, including across restarts and system
+clock rollback.
+
+The connected snapshot and its refresh token are durable. An authorization attempt and its PKCE
+verifier belong only to the running daemon process. A restart or ten-minute expiry abandons the
+attempt and replaces it with a disconnected `authorization_expired` snapshot. At most one attempt
+exists: selecting a different environment replaces the previous attempt; starting again with the
+same environment and redirect URI returns it unchanged.
+
+Start, completion, disconnect, authorization expiry, and token minting share one serialization
+boundary. Network calls do not hold a database transaction, but no later result may overwrite a
+newer serialized action: a replaced attempt rejects its old callback, a callback is consumed once,
+and work ordered before a completed disconnect cannot subsequently restore credentials or return
+an access token.
+
+### `GET /v0/cloud`
+
+Response — `200`: `{ "cloud": { ... } }` with the current Cloud object.
+
+This is a local status read. It performs no WorkOS refresh or Happy Cloud network request.
+
+### `POST /v0/cloud/auth/start`
+
+Starts or joins a WorkOS authorization-code flow with PKCE. Request:
+
+```json
+{
+    "environment": "production",
+    "redirectUri": "happy-auth://callback",
+    "mutationId": "optional-client-value"
+}
+```
+
+`redirectUri` is a valid absolute URI no longer than 2048 characters and must be registered for
+the selected WorkOS client. This supports distinct callbacks for desktop and future applications;
+the daemon passes the value to WorkOS unchanged and binds the PKCE attempt to it. The response
+returns immediately. The client opens the opaque authorization URL and later submits the complete
+URL received by that callback handler to the completion endpoint.
+
+Starting while connected returns `409` with code `conflict` and the current `cloud`; disconnect
+first to change accounts. Starting with the same environment and redirect URI while authorizing is
+idempotent. Selecting different parameters replaces the pending attempt. A changed snapshot emits
+one `cloud.updated`; an idempotent retry emits nothing.
+
+Response — `200`: `{ "cloud": { ... } }` with the authorizing Cloud object.
+
+### `POST /v0/cloud/auth/complete`
+
+Completes the one pending authorization attempt. Request:
+
+```json
+{
+    "callbackUrl": "happy-auth://callback?code=...&state=...",
+    "mutationId": "optional-client-value"
+}
+```
+
+`callbackUrl` is at most 4096 characters. It must have no fragment or user information, exactly one
+non-empty `state`, and either exactly one non-empty `code` or one OAuth `error`. Its scheme,
+authority, and path must exactly match the attempt's stored redirect URI, and its `state` must
+exactly match the state generated by the daemon. URI and state validation happen before the
+attempt is consumed: a malformed or wrong-state callback leaves the legitimate attempt active.
+
+A valid-state callback atomically consumes the attempt. An OAuth denial settles disconnected
+`authorization_rejected`. Otherwise the daemon exchanges the code and PKCE verifier through the
+WorkOS Node SDK, then calls the selected Happy Cloud deployment's authenticated `/v0/hello`. It
+accepts the login only when that response is successful and its `userId` exactly matches the WorkOS
+user ID. Only then does it durably store the refresh token and expose a connected snapshot.
+
+Response — `200`: `{ "cloud": { ... } }` with the connected Cloud object and one
+`cloud.updated` event.
+
+Malformed callbacks and URI/state mismatches return `400` with code `invalid_request`, include the
+current `cloud`, and leave an unexpired matching attempt untouched. An absent, expired, or
+already-consumed attempt also returns `400`; an expired attempt settles disconnected
+`authorization_expired`. An OAuth denial, WorkOS code rejection, or failed initial identity
+verification returns `409` with code `cloud_unauthorized`. A transient WorkOS or Happy Cloud
+failure returns `503` with code `cloud_unavailable`. These failures include the current `cloud`
+object, never store the new login, and always settle a callback they consumed into a disconnected
+snapshot. Authoritative rejection stores a display-safe error; transient failure leaves its
+`error` null. A changed snapshot emits one `cloud.updated`, and clients may start a new attempt.
+
+### `DELETE /v0/cloud/auth`
+
+Disconnects Cloud locally. The optional JSON body is `{ "mutationId": "..." }`; an empty body is
+equivalent to `{}`. It cancels an authorization attempt and removes the daemon-owned refresh token
+and account data. It does not revoke the person's WorkOS browser session or other applications.
+
+Response — `200`: `{ "cloud": { ... } }` with a clean disconnected Cloud object. A changed
+snapshot emits one `cloud.updated`; an already-clean disconnected snapshot emits nothing.
+
+### `POST /v0/cloud/access-token`
+
+Mints a short-lived Cloud access token. The optional JSON body is
+`{ "mutationId": "..." }`; an empty body is equivalent to `{}`. The daemon serializes minting so
+a rotating WorkOS refresh token is never used concurrently. It stores WorkOS's replacement refresh
+token before making the Happy Cloud verification request, then calls the selected deployment's
+authenticated `/v0/hello` and checks the returned user ID before releasing the access token.
+
+Response — `200`:
+
+```json
+{
+    "accessToken": "eyJ...",
+    "cloud": {
+        /* current connected Cloud object */
+    }
+}
+```
+
+No configured account returns `409` with code `cloud_not_authenticated` and the current `cloud`.
+An authoritative WorkOS refresh rejection removes the refresh token, replaces the snapshot with
+disconnected `credentials_rejected`, emits `cloud.updated`, and returns `409` with code
+`cloud_unauthorized` and the new `cloud`. A WorkOS transport failure, Happy Cloud transport or
+server failure, `/v0/hello` rejection, or user-ID mismatch returns `503` with code
+`cloud_unavailable` and preserves the replacement refresh token and connected snapshot. Happy
+Cloud's rejection alone is not treated as proof of revocation because its token-verification
+dependencies may themselves be temporarily unavailable. No access token is returned unless the
+verification succeeds.
 
 ## Happy integration
 
@@ -3387,13 +3590,18 @@ to a different daemon process.
     - `runId` (ID string).
     - `messageId` (ID string).
 
-**Configuration, profile, and Happy integration**
+**Configuration, profile, Cloud, and Happy integration**
 
 - `config.updated` — payload `{}`, deliberately empty. Something about the daemon's
   configuration changed — the effective config, the instructions document, or the security
   policy. It is a nudge to refetch the config endpoints whenever convenient.
 - `profile.updated` — the profile changed.
     - `profile` (full profile object).
+- `cloud.updated` — the installation-wide Cloud authentication state changed. This is a complete
+  replacement rather than a version-chain diff; clients keep the greater embedded `version` when
+  reconciling it with a snapshot.
+    - `cloud` (full Cloud object).
+    - `mutationId` — echoed when an API mutation caused the change.
 - `happy.integration.updated` — the installation-wide Happy connection state changed. This is
   a complete replacement rather than a version-chain diff; clients keep the greater embedded
   `version` when reconciling it with a snapshot.
@@ -3606,6 +3814,9 @@ Response — `200`:
     "onboarding": {
         /* exactly GET /v0/onboarding */
     },
+    "cloud": {
+        /* exactly GET /v0/cloud */
+    },
     "happyIntegration": {
         /* exactly GET /v0/integrations/happy */
     },
@@ -3622,10 +3833,10 @@ Response — `200`:
 }
 ```
 
-- `config`, `profile`, `onboarding`, `happyIntegration`, `sharing` — the full objects from
-  their own endpoints. `happyIntegration` and `sharing` are additive and may be absent on an
-  older compatible daemon; a daemon old enough to omit `sharing` does not serve the sharing
-  endpoints either.
+- `config`, `profile`, `onboarding`, `cloud`, `happyIntegration`, `sharing` — the full objects
+  from their own endpoints. `cloud`, `happyIntegration`, and `sharing` are additive and may be
+  absent on an older compatible daemon; a daemon old enough to omit one does not serve that
+  feature's endpoints either.
 - `projects` — every active project.
 - `workspaces` — deliberately shallow: each project's root workspace and the workspaces
   directly under it. Each returned project and workspace embeds its active top-level `agents`
