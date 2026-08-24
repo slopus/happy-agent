@@ -30,6 +30,7 @@ export class ProviderUsageModule implements AgentModule {
     readonly #config: ConfigModule;
     readonly #entries: Map<string, ProviderUsageEntry>;
     readonly #queues: Map<string, AsyncQueue>;
+    readonly #listeners = new Set<(entry: ProviderUsageEntry) => void>();
     readonly #loops: Promise<void>[] = [];
     /** When a provider asked to not be called again until some instant, per its own 429. */
     readonly #retryAfter = new Map<string, number>();
@@ -82,6 +83,12 @@ export class ProviderUsageModule implements AgentModule {
         }));
     }
 
+    /** Observes fresh account readings so consumers can republish advisory UI immediately. */
+    onChanged(listener: (entry: ProviderUsageEntry) => void): () => void {
+        this.#listeners.add(listener);
+        return () => this.#listeners.delete(listener);
+    }
+
     /**
      * Record a reading a provider volunteered during inference.
      *
@@ -94,12 +101,14 @@ export class ProviderUsageModule implements AgentModule {
         // A reading from an account this installation does not have configured is not ours.
         if (previous === undefined) return;
         const now = Date.now();
-        this.#entries.set(usage.providerId, {
+        const entry: ProviderUsageEntry = {
             providerId: usage.providerId,
             usage: mergeProviderUsage(previous.usage, usage, now),
             checkedAt: now,
             error: null,
-        });
+        };
+        this.#entries.set(usage.providerId, entry);
+        this.#notify(entry);
     }
 
     /** Ask one provider now; concurrent scheduled and direct reads remain serialized per account. */
@@ -128,6 +137,7 @@ export class ProviderUsageModule implements AgentModule {
                             : null,
                 };
                 this.#entries.set(providerId, entry);
+                this.#notify(entry);
                 return entry;
             } catch (error: unknown) {
                 if (ctx.lifetime?.aborted === true) return previous;
@@ -146,6 +156,7 @@ export class ProviderUsageModule implements AgentModule {
                             : null,
                 };
                 this.#entries.set(providerId, entry);
+                this.#notify(entry);
                 ctx.log.warn(
                     `Could not read account usage for provider "${providerId}".`,
                     {},
@@ -161,6 +172,10 @@ export class ProviderUsageModule implements AgentModule {
         this.#unsubscribe?.();
         this.#unsubscribe = undefined;
         await Promise.allSettled(this.#loops);
+    }
+
+    #notify(entry: ProviderUsageEntry): void {
+        for (const listener of this.#listeners) listener(entry);
     }
 }
 

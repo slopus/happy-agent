@@ -1,3 +1,5 @@
+import type { ProviderUsage, ProviderUsageWindow } from "@slopus/happy-providers";
+
 import type { UserInputRequest } from "../userInput/index.js";
 
 /**
@@ -30,6 +32,20 @@ export interface HappyResolvedCommunication {
 export interface HappyAgentState {
     communications: Record<string, HappyCommunication>;
     completedCommunications: Record<string, unknown>;
+    usageLimits?: HappyUsageLimits;
+}
+
+interface HappyUsageLimitWindow {
+    id: string;
+    label?: string;
+    resetsAt: number | null;
+    status: "allowed" | "allowed_warning" | "rejected";
+    utilization: number;
+}
+
+interface HappyUsageLimits {
+    capturedAt: number;
+    windows: HappyUsageLimitWindow[];
 }
 
 /**
@@ -67,6 +83,8 @@ export function createHappyAgentState(options: {
      */
     createdAt: (requestId: string) => number;
     pending: readonly UserInputRequest[];
+    /** Account quota for this session's selected provider. */
+    usage?: ProviderUsage | null;
 }): HappyAgentState | null {
     const communications: Record<string, HappyCommunication> = {};
     for (const request of options.pending) {
@@ -85,13 +103,48 @@ export function createHappyAgentState(options: {
         };
     }
 
+    const usageLimits = toHappyUsageLimits(options.usage);
     if (
         Object.keys(communications).length === 0 &&
-        Object.keys(completedCommunications).length === 0
+        Object.keys(completedCommunications).length === 0 &&
+        usageLimits === undefined
     ) {
         return null;
     }
-    return { communications, completedCommunications };
+    return {
+        communications,
+        completedCommunications,
+        ...(usageLimits === undefined ? {} : { usageLimits }),
+    };
+}
+
+/** Converts provider-neutral quota windows to the open window ids understood by Happy. */
+function toHappyUsageLimits(usage: ProviderUsage | null | undefined): HappyUsageLimits | undefined {
+    if (usage === null || usage === undefined) return undefined;
+    const windows: HappyUsageLimitWindow[] = [];
+    addUsageWindow(windows, "five_hour", usage.windows.fiveHour);
+    addUsageWindow(windows, "seven_day", usage.windows.weekly);
+    addUsageWindow(windows, "monthly", usage.windows.monthly);
+    addUsageWindow(windows, "seven_day_fable", usage.windows.fableWeekly, "Fable 7-day");
+    if (windows.length === 0) return undefined;
+    return { capturedAt: usage.capturedAt, windows };
+}
+
+function addUsageWindow(
+    windows: HappyUsageLimitWindow[],
+    id: string,
+    window: ProviderUsageWindow | null | undefined,
+    label?: string,
+): void {
+    if (window === null || window === undefined) return;
+    const utilization = Math.min(100, Math.max(0, window.usedPercent));
+    windows.push({
+        id,
+        ...(label === undefined ? {} : { label }),
+        resetsAt: window.resetsAt,
+        status: utilization >= 100 ? "rejected" : utilization >= 90 ? "allowed_warning" : "allowed",
+        utilization,
+    });
 }
 
 /**

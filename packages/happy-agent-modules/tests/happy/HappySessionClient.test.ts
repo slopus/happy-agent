@@ -154,6 +154,7 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
         },
         models: () => MODELS,
         pendingQuestions: async () => pending,
+        providerUsage: () => null,
         session: async () => snapshot,
         submit: async (_ctx, _agentId, message) => {
             calls.push({ detail: message, kind: "submit" });
@@ -562,6 +563,45 @@ describe("keeping one session in step with Happy", () => {
         const published = socket.emittedValues("update-state")[0] as { agentState: string };
         expect(decode(published.agentState)).toMatchObject({
             communications: { "req-1": { kind: "form", toolUseId: "req-1" } },
+        });
+        await session.close();
+    });
+
+    it("publishes Fable account quota where the native app reads session limits", async () => {
+        const socket = new FakeSocket();
+        const session = client({
+            operations: fakeOperations({
+                providerUsage: () =>
+                    ({
+                        capturedAt: 2_000,
+                        credits: null,
+                        exhausted: false,
+                        planName: "Max",
+                        providerId: "codex",
+                        vendor: "claude",
+                        windows: {
+                            fableWeekly: {
+                                durationMs: 604_800_000,
+                                resetsAt: 3_000,
+                                startsAt: 1_000,
+                                usedPercent: 64,
+                            },
+                            fiveHour: null,
+                            monthly: null,
+                            weekly: null,
+                        },
+                    }) as never,
+            }).operations,
+            server: fakeServer(),
+            socket,
+        });
+        await session.settle();
+        const published = socket.emittedValues("update-state")[0] as { agentState: string };
+        expect(decode(published.agentState)).toMatchObject({
+            usageLimits: {
+                capturedAt: 2_000,
+                windows: [{ id: "seven_day_fable", label: "Fable 7-day", utilization: 64 }],
+            },
         });
         await session.close();
     });

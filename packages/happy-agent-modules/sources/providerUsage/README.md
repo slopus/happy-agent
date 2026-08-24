@@ -22,3 +22,6 @@ poll is attempted until it passes.
 `list()` always includes every configured provider, including disabled providers and vendors such
 as Bedrock that expose no coding-account quota API. `ApiModule` combines these readings with the
 complete provider/model catalog in `GET /v0/usage`.
+
+`onChanged()` lets presentation modules republish advisory UI as soon as a poll or in-band reading
+changes. The snapshot remains owned here; consumers choose their own wire shape and refresh scope.

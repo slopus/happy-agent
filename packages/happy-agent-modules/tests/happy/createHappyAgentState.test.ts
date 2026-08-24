@@ -30,6 +30,46 @@ function resolved(id: string): HappyResolvedCommunication {
 }
 
 describe("publishing what a session is waiting on", () => {
+    it("publishes the selected provider's Fable allowance in the phone's usage-limit shape", () => {
+        const state = createHappyAgentState({
+            completed: new Map(),
+            createdAt: () => 1_000,
+            pending: [],
+            usage: {
+                capturedAt: 2_000,
+                credits: null,
+                exhausted: false,
+                planName: "Max",
+                providerId: "claude",
+                vendor: "claude",
+                windows: {
+                    fableWeekly: {
+                        durationMs: 604_800_000,
+                        resetsAt: 3_000,
+                        startsAt: 1_000,
+                        usedPercent: 64,
+                    },
+                    fiveHour: null,
+                    monthly: null,
+                    weekly: null,
+                },
+            } as never,
+        });
+
+        expect(state?.usageLimits).toEqual({
+            capturedAt: 2_000,
+            windows: [
+                {
+                    id: "seven_day_fable",
+                    label: "Fable 7-day",
+                    resetsAt: 3_000,
+                    status: "allowed",
+                    utilization: 64,
+                },
+            ],
+        });
+    });
+
     it("says nothing at all when nothing is being asked", () => {
         expect(
             createHappyAgentState({

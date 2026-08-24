@@ -227,6 +227,7 @@ async function fixture() {
             latestUserOrFinalAssistantTextMessageAt: async () => activity.textMessageAt,
         } as never,
         projectModule as never,
+        { list: () => [], onChanged: () => () => undefined } as never,
         { interruptWaits: () => undefined } as never,
         {
             latestQuestionAt: async () => activity.questionAt,
@@ -579,6 +580,7 @@ describe("archiving a Happy session", () => {
             } as never,
             { latestUserOrFinalAssistantTextMessageAt: async () => undefined } as never,
             projects as never,
+            { list: () => [], onChanged: () => () => undefined } as never,
             { interruptWaits: () => undefined } as never,
             {
                 latestQuestionAt: async () => undefined,

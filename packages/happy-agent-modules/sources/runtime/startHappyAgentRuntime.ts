@@ -424,6 +424,8 @@ export async function startHappyAgentRuntime(
         });
 
         const installation = new InstallationModule();
+        const providerUsage = new ProviderUsageModule(config);
+        registerShutdown("provider-usage", async () => await providerUsage.close());
         const happy = new HappyModule(
             config,
             compute.computeModule,
@@ -431,6 +433,7 @@ export async function startHappyAgentRuntime(
             git,
             history,
             projects,
+            providerUsage,
             scheduling,
             userInput,
             workspaces,
@@ -445,8 +448,6 @@ export async function startHappyAgentRuntime(
         const secrets = new SecretsModule();
         const tasks = new TasksModule();
         const usage = new UsageModule(events);
-        const providerUsage = new ProviderUsageModule(config);
-        registerShutdown("provider-usage", async () => await providerUsage.close());
         const compactions = new CompactionsModule(events, usage, history);
         const slashCommands = new SlashCommandsModule(events, compactions, compute.skillsModule);
         const contextWindow = new ContextWindowModule(config);

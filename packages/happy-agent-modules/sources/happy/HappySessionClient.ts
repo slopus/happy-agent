@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
+import type { ProviderUsage } from "@slopus/happy-providers";
 
 import type { UserInputRequest } from "../userInput/index.js";
 import {
@@ -84,6 +85,9 @@ export interface HappySessionOperations {
 
     /** The questions this agent is waiting on right now. */
     pendingQuestions: (ctx: Context, agentId: string) => Promise<readonly UserInputRequest[]>;
+
+    /** Latest advisory account quota for a provider, when one has been reported. */
+    providerUsage: (providerId: string) => ProviderUsage | null;
 
     /** One session as Happy needs to describe it, or nothing when it is gone. */
     session: (ctx: Context, agentId: string) => Promise<HappySessionSnapshot | undefined>;
@@ -257,7 +261,7 @@ export class HappySessionClient {
                 const snapshot = await this.#session();
                 await this.#syncMetadata(state, snapshot);
                 this.#sendKeepAlive(state.remoteSessionId, snapshot);
-                await this.#syncAgentState(state);
+                await this.#syncAgentState(state, snapshot);
             } catch (error) {
                 this.#options.context.log.debug("Happy synchronization will retry.", {}, error);
                 this.#scheduleRetry();
@@ -717,7 +721,7 @@ export class HappySessionClient {
      * Without this, a session that asks a question simply stops with nothing on
      * the phone to explain why.
      */
-    async #syncAgentState(state: HappySyncSession): Promise<void> {
+    async #syncAgentState(state: HappySyncSession, snapshot: HappySessionSnapshot): Promise<void> {
         if (this.#socket?.connected === false || this.#agentStateVersion === undefined) return;
         const pending = await this.#options.operations.pendingQuestions(
             this.#options.context,
@@ -731,6 +735,7 @@ export class HappySessionClient {
             completed: this.#completedQuestions,
             createdAt: (requestId) => this.#firstSeen(requestId),
             pending,
+            usage: this.#options.operations.providerUsage(snapshot.providerId),
         });
         const serialized = JSON.stringify(agentState);
         if (serialized === this.#lastAgentState) return;

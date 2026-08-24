@@ -24,6 +24,7 @@ import { GitModule, type GitChangeSnapshot, type GitTrackedEntity } from "../git
 import { HistoryModule } from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ProjectsModule } from "../projects/index.js";
+import { ProviderUsageModule } from "../providerUsage/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
@@ -165,6 +166,7 @@ export class HappyModule
     readonly #history: HistoryModule;
     readonly #scheduling: SchedulingModule;
     readonly #projects: ProjectsModule;
+    readonly #providerUsage: ProviderUsageModule;
     readonly #userInput: UserInputModule;
     readonly #workspaces: WorkspacesModule;
     readonly #sync = createHappySyncDatabase();
@@ -199,6 +201,7 @@ export class HappyModule
         git: GitModule,
         history: HistoryModule,
         projects: ProjectsModule,
+        providerUsage: ProviderUsageModule,
         scheduling: SchedulingModule,
         userInput: UserInputModule,
         workspaces: WorkspacesModule,
@@ -209,6 +212,7 @@ export class HappyModule
         this.#git = git;
         this.#history = history;
         this.#projects = projects;
+        this.#providerUsage = providerUsage;
         this.#scheduling = scheduling;
         this.#userInput = userInput;
         this.#workspaces = workspaces;
@@ -368,6 +372,11 @@ export class HappyModule
         this.#unwatchCatalog.push(
             this.#userInput.onEvent((_eventCtx, event) => {
                 this.#agents.get(event.request.askingAgentId)?.client.kick();
+            }),
+        );
+        this.#unwatchCatalog.push(
+            this.#providerUsage.onChanged(() => {
+                for (const connected of this.#agents.values()) connected.client.kick();
             }),
         );
     }
@@ -864,6 +873,14 @@ export class HappyModule
             providerId: model.providerId,
             serviceTiers: model.serviceTiers === undefined ? [] : [...model.serviceTiers],
         }));
+    }
+
+    /** Latest advisory account quota for the provider selected by a Happy session. */
+    providerUsage(providerId: string) {
+        return (
+            this.#providerUsage.list().find((entry) => entry.providerId === providerId)?.usage ??
+            null
+        );
     }
 
     /** One agent as Happy needs to describe it, or nothing when it is gone. */

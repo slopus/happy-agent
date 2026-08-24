@@ -21,6 +21,10 @@
 - A Socket.IO connection error is not proof that credentials are bad. Abandon that socket and repeat authenticated HTTP machine registration; only an HTTP 401 or 403 invalidates credentials, while other failures remain retryable.
 - Explicit retry must reload credentials and retry machine-identity creation instead of reusing a cached configuration that already lacks an identity.
 
+## Session state
+
+- Account quota and per-turn token usage are different projections. The native Happy app reads plan limits from each session's encrypted `agentState.usageLimits`, so Happy Agent maps the selected provider's latest account snapshot into the legacy open-window shape and republishes attached sessions whenever that snapshot changes. Fable's separate allowance uses Claude's native `seven_day_fable` id so current and older apps can render it without a new machine-metadata contract.
+
 ## Tests
 
 - AgentGym must enforce its isolated `HAPPY_HOME_DIR` after merging caller-supplied environment values. A default placed before that merge can be overridden accidentally, causing an API test to import the developer's real Happy credentials and register persistent machines against the production backend. The harness prevents the connection rather than relying on remote teardown.
