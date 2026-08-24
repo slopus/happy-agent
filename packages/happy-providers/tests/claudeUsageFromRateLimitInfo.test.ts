@@ -77,6 +77,7 @@ describe("claudeUsageFromRateLimitInfo", () => {
         const usage = claudeUsageFromRateLimitInfo(
             {
                 status: "rejected",
+                // @ts-expect-error Anthropic emits this before its SDK includes it in the union.
                 rateLimitType: "seven_day_fable",
                 utilization: 1,
                 resetsAt: 1_785_844_800,

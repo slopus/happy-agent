@@ -23,12 +23,13 @@ export function claudeUsageFromRateLimitInfo(
 ): ProviderUsage | null {
     // Overage and other model-scoped windows stay unread, except Fable's
     // weekly allowance, which is its own meter the account actually spends.
+    const rateLimitType: string | undefined = info.rateLimitType;
     const key =
-        info.rateLimitType === "five_hour"
+        rateLimitType === "five_hour"
             ? "fiveHour"
-            : info.rateLimitType === "seven_day"
+            : rateLimitType === "seven_day"
               ? "weekly"
-              : info.rateLimitType === "seven_day_fable"
+              : rateLimitType === "seven_day_fable"
                 ? "fableWeekly"
                 : null;
     const resetsAt = epochMsFromSeconds(info.resetsAt);
