@@ -195,6 +195,46 @@ describe("mapping archived Happy history", () => {
         ]);
     });
 
+    it("uses the same Codex patch wire shape for archived apply_patch calls", () => {
+        const queued = mapHistory([
+            historyMessage({
+                recordId: "patch-message",
+                blocks: [
+                    {
+                        arguments: {
+                            patch: [
+                                "*** Begin Patch",
+                                "*** Add File: note.txt",
+                                "+hello",
+                                "*** End Patch",
+                            ].join("\n"),
+                        },
+                        callId: "patch-call",
+                        name: "apply_patch",
+                        type: "tool_call",
+                    },
+                ],
+                role: "assistant",
+            }),
+        ]);
+
+        expect(shown(queued)[0]?.ev).toEqual({
+            args: {
+                changes: {
+                    "note.txt": {
+                        add: { content: "hello" },
+                        kind: { move_path: null, type: "add" },
+                    },
+                },
+            },
+            call: "patch-call",
+            description: "Applying patch to 1 file",
+            name: "CodexPatch",
+            t: "tool-call-start",
+            title: "Apply patch",
+        });
+    });
+
     it("leaves private reasoning out without disturbing the visible message identity", () => {
         const queued = mapHistory([
             historyMessage({

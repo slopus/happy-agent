@@ -1,6 +1,12 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { posix } from "node:path";
 
+import {
+    parseCodexPatch,
+    type CodexPatchHunk,
+    type CodexPatchOperation,
+} from "../compute/tools/codex/impl/parseCodexPatch.js";
 import type { AgentEvent } from "../events/index.js";
 import type { HistoryMessage } from "../history/index.js";
 import type {
@@ -133,6 +139,14 @@ const sendAgentMessageArgumentsSchema = Type.Object(
 
 const interruptAgentArgumentsSchema = Type.Object(
     { targetAgentId: Type.String({ minLength: 1 }) },
+    { additionalProperties: true },
+);
+
+const applyPatchArgumentsSchema = Type.Object(
+    {
+        patch: Type.String({ minLength: 1 }),
+        workdir: Type.Optional(Type.String()),
+    },
     { additionalProperties: true },
 );
 
@@ -364,12 +378,13 @@ export class HappyMessageMapper {
         name: string;
     }): Extract<HappySessionEvent, { t: "tool-call-start" }> {
         const args = call.arguments === undefined ? {} : toRecord(call.arguments);
-        const presentation = toolCallPresentation(call.name, args);
+        const normalized = normalizeToolCall(call.name, args);
+        const presentation = toolCallPresentation(normalized.name, normalized.args);
         return {
-            args,
+            args: normalized.args,
             call: call.id,
             description: presentation.description,
-            name: call.name,
+            name: normalized.name,
             t: "tool-call-start",
             title: presentation.title,
         };
@@ -530,6 +545,16 @@ function toolCallPresentation(
     name: string,
     args: Record<string, unknown>,
 ): { title: string; description: string } {
+    if (name === "CodexPatch") {
+        const fileCount = isRecord(args.changes) ? Object.keys(args.changes).length : 0;
+        return {
+            title: "Apply patch",
+            description:
+                fileCount === 1
+                    ? "Applying patch to 1 file"
+                    : `Applying patch to ${String(fileCount)} files`,
+        };
+    }
     const title = humanizeToolName(name);
     if (name === "run_workflow") {
         const workflow = Value.Check(runWorkflowArgumentsSchema, args)
@@ -552,8 +577,77 @@ function toolCallPresentation(
     return { title, description: `Running ${title}` };
 }
 
+function normalizeToolCall(
+    name: string,
+    args: Record<string, unknown>,
+): { name: string; args: Record<string, unknown> } {
+    if (name !== "apply_patch" || !Value.Check(applyPatchArgumentsSchema, args)) {
+        return { name, args };
+    }
+    try {
+        const operations = parseCodexPatch(args.patch);
+        return {
+            name: "CodexPatch",
+            args: { changes: mobilePatchChanges(operations, args.workdir) },
+        };
+    } catch {
+        return { name, args };
+    }
+}
+
+function mobilePatchChanges(
+    operations: readonly CodexPatchOperation[],
+    workdir: string | undefined,
+): Record<string, unknown> {
+    const changes: Record<string, unknown> = {};
+    for (const operation of operations) {
+        const path = mobilePatchPath(operation.path, workdir);
+        if (operation.kind === "add") {
+            changes[path] = {
+                add: { content: operation.lines.join("\n") },
+                kind: { move_path: null, type: "add" },
+            };
+            continue;
+        }
+        if (operation.kind === "delete") {
+            changes[path] = { kind: { move_path: null, type: "delete" } };
+            continue;
+        }
+        changes[path] = {
+            diff: operation.hunks.map(mobilePatchHunk).join("\n"),
+            kind: {
+                move_path:
+                    operation.moveTo === undefined
+                        ? null
+                        : mobilePatchPath(operation.moveTo, workdir),
+                type: "update",
+            },
+        };
+    }
+    return changes;
+}
+
+function mobilePatchHunk(hunk: CodexPatchHunk): string {
+    const oldLines = hunk.lines.filter((line) => line.marker !== "+").length;
+    const newLines = hunk.lines.filter((line) => line.marker !== "-").length;
+    const anchor = hunk.anchor === undefined ? "" : ` ${hunk.anchor}`;
+    return [
+        `@@ -1,${String(oldLines)} +1,${String(newLines)} @@${anchor}`,
+        ...hunk.lines.map((line) => `${line.marker}${line.text}`),
+    ].join("\n");
+}
+
+function mobilePatchPath(path: string, workdir: string | undefined): string {
+    if (!workdir || workdir === "." || posix.isAbsolute(path)) return path;
+    return posix.normalize(posix.join(workdir, path));
+}
+
 function toRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : { value };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }

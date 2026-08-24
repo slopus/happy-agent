@@ -257,6 +257,94 @@ describe("Happy message mapping", () => {
         ]);
     });
 
+    it("normalizes apply_patch into Happy's Codex patch tool shape", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+        const patch = [
+            "*** Begin Patch",
+            "*** Add File: sources/new.ts",
+            "+export const answer = 42;",
+            "*** Update File: sources/old.ts",
+            "*** Move to: sources/moved.ts",
+            "@@ export function answer()",
+            "-    return 41;",
+            "+    return 42;",
+            "*** Delete File: sources/unused.ts",
+            "*** End Patch",
+        ].join("\n");
+
+        const started = mapper.map(
+            event("tool.started", {
+                rigEvent: {
+                    toolCall: {
+                        arguments: { patch, workdir: "packages/mobile" },
+                        id: "patch-1",
+                        name: "apply_patch",
+                        type: "toolCall",
+                    },
+                    type: "tool_execution_start",
+                },
+                runId: RUN,
+            }),
+        );
+
+        expect(started[0]?.content.ev).toEqual({
+            args: {
+                changes: {
+                    "packages/mobile/sources/old.ts": {
+                        diff: [
+                            "@@ -1,1 +1,1 @@ export function answer()",
+                            "-    return 41;",
+                            "+    return 42;",
+                        ].join("\n"),
+                        kind: {
+                            move_path: "packages/mobile/sources/moved.ts",
+                            type: "update",
+                        },
+                    },
+                    "packages/mobile/sources/new.ts": {
+                        add: { content: "export const answer = 42;" },
+                        kind: { move_path: null, type: "add" },
+                    },
+                    "packages/mobile/sources/unused.ts": {
+                        kind: { move_path: null, type: "delete" },
+                    },
+                },
+            },
+            call: "patch-1",
+            description: "Applying patch to 3 files",
+            name: "CodexPatch",
+            t: "tool-call-start",
+            title: "Apply patch",
+        });
+    });
+
+    it("keeps malformed apply_patch calls on Happy's generic tool fallback", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+
+        const started = mapper.map(
+            event("tool.started", {
+                rigEvent: {
+                    toolCall: {
+                        arguments: { patch: "not a Codex patch" },
+                        id: "patch-bad",
+                        name: "apply_patch",
+                        type: "toolCall",
+                    },
+                    type: "tool_execution_start",
+                },
+                runId: RUN,
+            }),
+        );
+
+        expect(started[0]?.content.ev).toMatchObject({
+            args: { patch: "not a Codex patch" },
+            name: "apply_patch",
+            title: "Apply Patch",
+        });
+    });
+
     it("tells Happy when a tool failed and what it reported", () => {
         const mapper = new HappyMessageMapper();
         mapper.map(blockStart());
