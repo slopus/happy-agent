@@ -1,8 +1,8 @@
 # Menu bar
 
 A small native macOS app that puts the agents in the system menu bar. Clicking it shows how many
-agents are working and in which projects, how much of each provider's plan is spent, and the tokens
-spent in the last hour and day.
+agents are working and in which projects, how much of each provider's session and week is spent,
+and the tokens spent in the last hour and day.
 
 ```text
 MenuBarModule ──spawns──> happy-menu-bar (Swift, AppKit)

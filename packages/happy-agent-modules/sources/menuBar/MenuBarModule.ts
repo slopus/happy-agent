@@ -9,9 +9,9 @@ import { resolveMenuBarApp } from "./impl/resolveMenuBarApp.js";
  * The Happy Agent menu bar.
  *
  * A small native app shows what the agents are doing without anyone having to open a window: how
- * many are working, in which projects, and how much of each provider's plan is left. This module
- * owns that app completely — it decides whether this daemon has a menu bar at all, starts the
- * app, restarts it if it falls over, and stops it when the daemon shuts down.
+ * many are working, in which projects, and how much of each provider's session and week is spent.
+ * This module owns that app completely — it decides whether this daemon has a menu bar at all,
+ * starts the app, restarts it if it falls over, and stops it when the daemon shuts down.
  *
  * Only a released Happy Agent binary carries the app, so a daemon run from a checkout — during
  * development, or from a test — has no menu bar to start and says nothing about it.

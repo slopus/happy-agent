@@ -41,6 +41,13 @@ the module would start the app again. These were explicit product decisions, not
 Working agents grouped by project, provider plan usage, and rolling token totals. Idle agents are
 not listed at all, not even collapsed into a count.
 
+## Plan usage shows the session and the week
+
+The menu used to pick the single window closest to running out. That hid the week whenever the
+session was the tighter limit, which is the usual case. Each provider now shows the five-hour
+session and the week next to each other. A monthly window is shown only when there is no session
+window, so a Grok-style week-and-month pair still has both numbers.
+
 ## The glyph is a star, drawn at full strength
 
 The icon is a five-pointed star: still when nothing is running, turning slowly while agents work.

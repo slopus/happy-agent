@@ -15,12 +15,18 @@ struct ProjectEntry {
     let working: [AgentEntry]
 }
 
-/// The share of a provider's plan that has been spent, and when the window starts over.
+/// One named quota window: how much is spent, and when it starts over.
+struct PlanWindow {
+    let label: String
+    let usedPercent: Double
+    let resetsAt: Date?
+}
+
+/// A provider's plan, with the session and week windows the menu shows side by side.
 struct PlanEntry {
     let name: String
     let plan: String?
-    let usedPercent: Double
-    let resetsAt: Date?
+    let windows: [PlanWindow]
     let exhausted: Bool
 }
 
@@ -82,15 +88,13 @@ enum DaemonSnapshotReader {
             guard let id = provider["providerId"] as? String else { continue }
             guard provider["enabled"] as? Bool ?? true else { continue }
             guard let usage = provider["usage"] as? [String: Any] else { continue }
-            guard let window = constrainingWindow(usage["windows"] as? [String: Any]) else {
-                continue
-            }
+            let windows = usageWindows(usage["windows"] as? [String: Any])
+            guard !windows.isEmpty else { continue }
             plans.append(
                 PlanEntry(
                     name: providerName(id),
                     plan: usage["planName"] as? String,
-                    usedPercent: window.percent,
-                    resetsAt: window.resetsAt,
+                    windows: windows,
                     exhausted: usage["exhausted"] as? Bool ?? false
                 )
             )
@@ -131,25 +135,42 @@ enum DaemonSnapshotReader {
         }
     }
 
-    /// The window closest to running out, which is the one worth showing in a single row.
-    private static func constrainingWindow(
-        _ windows: [String: Any]?
-    ) -> (percent: Double, resetsAt: Date?)? {
-        guard let windows else { return nil }
-        var best: (percent: Double, resetsAt: Date?)?
-        for key in ["fiveHour", "weekly", "monthly"] {
-            guard let window = windows[key] as? [String: Any],
-                let percent = window["usedPercent"] as? Double
-            else {
-                continue
-            }
-            if let current = best, current.percent >= percent { continue }
-            let resetsAt = (window["resetsAt"] as? Double).map {
-                Date(timeIntervalSince1970: $0 / 1000)
-            }
-            best = (percent, resetsAt)
+    /// Session and week when the vendor reports them; a monthly window only when there is no
+    /// session, so a week-and-month pair still has both numbers.
+    private static func usageWindows(_ windows: [String: Any]?) -> [PlanWindow] {
+        guard let windows else { return [] }
+        var shown: [PlanWindow] = []
+        if let session = window(windows["fiveHour"], label: "Session") {
+            shown.append(session)
         }
-        return best
+        if let week = window(windows["weekly"], label: "Week") {
+            shown.append(week)
+        }
+        if shown.count < 2, let month = window(windows["monthly"], label: "Month") {
+            shown.append(month)
+        }
+        return shown
+    }
+
+    private static func window(_ raw: Any?, label: String) -> PlanWindow? {
+        guard let body = raw as? [String: Any], let percent = number(body["usedPercent"]) else {
+            return nil
+        }
+        return PlanWindow(label: label, usedPercent: percent, resetsAt: date(body["resetsAt"]))
+    }
+
+    /// JSONSerialization turns whole numbers into `NSNumber`/`Int`, so a direct `as? Double` misses
+    /// the percentages and timestamps a vendor reports as integers.
+    private static func number(_ value: Any?) -> Double? {
+        if let n = value as? NSNumber { return n.doubleValue }
+        if let n = value as? Double { return n }
+        if let n = value as? Int { return Double(n) }
+        return nil
+    }
+
+    private static func date(_ value: Any?) -> Date? {
+        guard let ms = number(value) else { return nil }
+        return Date(timeIntervalSince1970: ms / 1000)
     }
 
     private static func totals(_ window: Any?) -> TokenTotals {
