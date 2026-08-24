@@ -15,11 +15,28 @@ struct ProjectEntry {
     let working: [AgentEntry]
 }
 
+/// Which quota window this is. Session resets are a time of day; week and month can be a day.
+enum PlanWindowKind {
+    case session
+    case week
+    case month
+
+    var label: String {
+        switch self {
+        case .session: return "Session"
+        case .week: return "Week"
+        case .month: return "Month"
+        }
+    }
+}
+
 /// One named quota window: how much is spent, and when it starts over.
 struct PlanWindow {
-    let label: String
+    let kind: PlanWindowKind
     let usedPercent: Double
     let resetsAt: Date?
+
+    var label: String { kind.label }
 }
 
 /// A provider's plan, with the session and week windows the menu shows side by side.
@@ -135,28 +152,28 @@ enum DaemonSnapshotReader {
         }
     }
 
-    /// Session and week when the vendor reports them; a monthly window only when there is no
-    /// session, so a week-and-month pair still has both numbers.
+    /// Every provider uses the same windows: session and week when the vendor reports them, and a
+    /// monthly window only when there is no session, so a week-and-month pair still has both.
     private static func usageWindows(_ windows: [String: Any]?) -> [PlanWindow] {
         guard let windows else { return [] }
         var shown: [PlanWindow] = []
-        if let session = window(windows["fiveHour"], label: "Session") {
+        if let session = window(windows["fiveHour"], kind: .session) {
             shown.append(session)
         }
-        if let week = window(windows["weekly"], label: "Week") {
+        if let week = window(windows["weekly"], kind: .week) {
             shown.append(week)
         }
-        if shown.count < 2, let month = window(windows["monthly"], label: "Month") {
+        if shown.count < 2, let month = window(windows["monthly"], kind: .month) {
             shown.append(month)
         }
         return shown
     }
 
-    private static func window(_ raw: Any?, label: String) -> PlanWindow? {
+    private static func window(_ raw: Any?, kind: PlanWindowKind) -> PlanWindow? {
         guard let body = raw as? [String: Any], let percent = number(body["usedPercent"]) else {
             return nil
         }
-        return PlanWindow(label: label, usedPercent: percent, resetsAt: date(body["resetsAt"]))
+        return PlanWindow(kind: kind, usedPercent: percent, resetsAt: date(body["resetsAt"]))
     }
 
     /// JSONSerialization turns whole numbers into `NSNumber`/`Int`, so a direct `as? Double` misses

@@ -153,24 +153,25 @@ final class PlanRowView: NSView {
 
 private func labeledShare(_ window: PlanWindow) -> String {
     let percent = "\(Int(window.usedPercent.rounded()))%"
-    guard let resetsAt = window.resetsAt else { return "\(window.label) \(percent)" }
-    return "\(window.label) \(percent) · resets \(resetPhrase(until: resetsAt))"
+    guard let reset = resetPhrase(window) else { return "\(window.label) \(percent)" }
+    return "\(window.label) \(percent) · resets \(reset)"
 }
 
 private func share(_ window: PlanWindow) -> String {
     let percent = "\(Int(window.usedPercent.rounded()))%"
-    guard let resetsAt = window.resetsAt else { return percent }
-    return "\(percent) · \(resetPhrase(until: resetsAt))"
+    guard let reset = resetPhrase(window) else { return percent }
+    return "\(percent) · \(reset)"
 }
 
-/// A clock time when the window resets today, a weekday when it resets this week, otherwise a date.
-private func resetPhrase(until date: Date) -> String {
+/// Session always uses a clock time. Week and month use a weekday or date when the reset is not today.
+private func resetPhrase(_ window: PlanWindow) -> String? {
+    guard let date = window.resetsAt else { return nil }
+    if window.kind == .session {
+        return clockTime(date)
+    }
     let calendar = Calendar.current
     if calendar.isDateInToday(date) {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
+        return clockTime(date)
     }
     let start = calendar.startOfDay(for: Date())
     let end = calendar.startOfDay(for: date)
@@ -183,6 +184,13 @@ private func resetPhrase(until date: Date) -> String {
     let formatter = DateFormatter()
     formatter.dateStyle = .short
     formatter.timeStyle = .none
+    return formatter.string(from: date)
+}
+
+private func clockTime(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.timeStyle = .short
+    formatter.dateStyle = .none
     return formatter.string(from: date)
 }
 

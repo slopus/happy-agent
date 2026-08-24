@@ -44,9 +44,13 @@ not listed at all, not even collapsed into a count.
 ## Plan usage shows the session and the week
 
 The menu used to pick the single window closest to running out. That hid the week whenever the
-session was the tighter limit, which is the usual case. Each provider now shows the five-hour
-session and the week next to each other. A monthly window is shown only when there is no session
-window, so a Grok-style week-and-month pair still has both numbers.
+session was the tighter limit, which is the usual case. Every provider uses the same pair: the
+five-hour session and the week, side by side — Claude, Codex, and any named account of either.
+A monthly window is shown only when there is no session window, so a Grok-style week-and-month
+pair still has both numbers.
+
+Session reset is always a clock time, even when that time falls tomorrow. A five-hour window that
+ends at 4:34 AM must read "4:34 AM", never "Mon". Week and month may use a weekday or a date.
 
 ## The glyph is a star, drawn at full strength
 
