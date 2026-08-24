@@ -34,6 +34,16 @@ Feature state must live in the `AgentKV` key-value stores passed to the feature.
 A feature may use the agent hooks and anything else it needs to implement its
 behavior.
 
+## Nice to have: typed facet dependencies
+
+As an aspirational improvement, reduce runtime branching over partial feature
+contexts. When one context or scope facet requires another to be valid, express
+that dependency in the types so the first facet cannot be supplied without the
+second. For example, a durable `AgentKV` facet may require its matching owned
+Agent Database facet. The goal is to make invalid partial combinations
+unrepresentable while keeping the ordinary feature surface simple; this is a
+nice-to-have direction, not a requirement for current modules.
+
 ## Agent base boundary
 
 Changing `happy-agent-base` is forbidden. If something is genuinely missing
