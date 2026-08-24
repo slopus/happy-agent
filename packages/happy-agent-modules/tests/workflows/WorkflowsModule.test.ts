@@ -370,7 +370,7 @@ describe("workflow execution", () => {
     );
 
     it(
-        "pauses only the runs no process is executing any more",
+        "continues a restarted workflow by reattaching to its restored collaborator",
         async () => {
             const world = await workflowWorld("workflows-abandoned");
             try {
@@ -380,7 +380,7 @@ describe("workflow execution", () => {
                     { script: `agent("Review the parser.", ${agentOptions("Review")})` },
                     "run-abandoned",
                 );
-                await world.collaborators.waitFor(1);
+                const [collaborator] = await world.collaborators.waitFor(1);
 
                 // This process is still executing the run, so its own start leaves it alone.
                 await world.hooks.afterStart?.(world.ctx, undefined as never);
@@ -389,15 +389,30 @@ describe("workflow execution", () => {
                 ).toBe("running");
 
                 const restarted = await world.restart();
-                await restarted.hooks.afterStart?.(restarted.ctx, undefined as never);
 
-                const paused = await restarted.module.status(
+                // A restored agent may finish before module afterStart gets its turn. Its answer
+                // is already durable, so startup must consume it and finish without a waiter.
+                await restarted.answer(collaborator!, "The restored agent finished.");
+                await restarted.hooks.afterStart?.(restarted.ctx, undefined as never);
+                expect(
+                    (await restarted.module.status(restarted.ctx, WORKFLOW_OWNER, "run-abandoned"))
+                        ?.status,
+                ).not.toBe("paused");
+
+                await restarted.module.whenRunsSettle();
+
+                const completed = await restarted.module.status(
                     restarted.ctx,
                     WORKFLOW_OWNER,
                     "run-abandoned",
                 );
-                expect(paused?.status).toBe("paused");
-                expect(paused).toMatchObject({ agentCount: 1, workflow: "dynamic-workflow" });
+                expect(completed).toMatchObject({
+                    agentCount: 1,
+                    output: "The restored agent finished.",
+                    status: "completed",
+                    workflow: "dynamic-workflow",
+                });
+                expect(restarted.collaborators.started).toHaveLength(0);
             } finally {
                 world.close();
             }
@@ -406,7 +421,7 @@ describe("workflow execution", () => {
     );
 
     it(
-        "pauses a run its process left behind, then resumes it without paying for answered agents again",
+        "automatically resumes a restarted workflow without repeating answered or active agents",
         async () => {
             const world = await workflowWorld("workflows-resume");
             try {
@@ -432,34 +447,25 @@ describe("workflow execution", () => {
                 const restarted = await world.restart();
                 await restarted.hooks.afterStart?.(restarted.ctx, undefined as never);
 
-                const paused = await restarted.module.status(
+                const recovered = await restarted.module.status(
                     restarted.ctx,
                     WORKFLOW_OWNER,
                     "run-resume",
                 );
-                expect(paused?.status).toBe("paused");
-                expect(paused?.status === "paused" ? paused.pausedAt : undefined).toBe(
-                    paused?.updatedAt,
-                );
+                expect(recovered?.status).toBe("running");
 
-                const resumed = await restarted.module.resume(
-                    restarted.ctx,
-                    WORKFLOW_OWNER,
-                    "run-resume",
-                );
-                expect(resumed.status).toBe("running");
-
-                const second = await restarted.collaborators.byTitle("two");
-                await restarted.answer(second, "Second answer.");
+                // The first call already answered durably. Agent Base restored the second call's
+                // original collaborator, so finishing that identity must unblock the script.
+                await restarted.answer(started[1]!, "Second answer.");
                 const summary = await restarted.collaborators.byTitle("summary");
                 await restarted.answer(summary, "Both checks passed.");
                 await restarted.module.whenRunsSettle();
 
-                // The agent that already answered is not started again; only the call that was
-                // still outstanding and the one after it are.
+                // Neither the answered call nor the restored active call is started again. Only
+                // the stage the script reaches after both answers creates a collaborator.
                 expect(
                     restarted.collaborators.started.map((collaborator) => collaborator.input.title),
-                ).toEqual(["two", "summary"]);
+                ).toEqual(["summary"]);
                 expect(summary.input.text).toContain("First answer. Second answer.");
 
                 const run = await restarted.module.status(
@@ -468,6 +474,7 @@ describe("workflow execution", () => {
                     "run-resume",
                 );
                 expect(run?.status).toBe("completed");
+                expect(run?.agentCount).toBe(3);
                 expect(JSON.parse(run?.status === "completed" ? run.output : "")).toEqual({
                     answers: ["First answer.", "Second answer."],
                     summary: "Both checks passed.",

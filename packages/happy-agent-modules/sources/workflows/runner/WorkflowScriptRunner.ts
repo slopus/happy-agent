@@ -71,7 +71,6 @@ export interface WorkflowScriptRunnerOptions {
     readonly args: unknown;
     /** Start one collaborator and resolve with what it finally said. */
     startAgent(start: WorkflowAgentStart, signal: AbortSignal): Promise<string>;
-    onAgentCall(): void;
     onAgentResult(callIndex: number, result: WorkflowAgentResult): void | Promise<void>;
     onCheckpoint(checkpoint: WorkflowScriptCheckpoint): void | Promise<void>;
     onLog(message: string): void;
@@ -183,7 +182,6 @@ export class WorkflowScriptRunner {
             return cached.output;
         }
 
-        this.#options.onAgentCall();
         const title = options.label ?? this.#phase;
         const answer = await this.#options.startAgent(
             {

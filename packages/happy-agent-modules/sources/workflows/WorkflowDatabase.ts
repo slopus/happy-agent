@@ -37,6 +37,7 @@ type CheckpointRow = {
 type AgentCallRow = {
     readonly run_id: string;
     readonly call_index: number | string;
+    readonly collaborator_id: string;
     readonly signature: string;
     readonly output_json: string | null;
     readonly error: string | null;
@@ -53,6 +54,8 @@ export interface WorkflowCheckpoint {
 export interface WorkflowAgentCall {
     readonly runId: string;
     readonly callIndex: number;
+    /** The durable agent identity that owns this call, including while it is still working. */
+    readonly collaboratorId: string;
     /** What was asked, so a changed prompt or model is re-run rather than silently reused. */
     readonly signature: string;
     readonly output?: unknown;
@@ -387,7 +390,7 @@ export async function completeWorkflowAgentCall(
     const row = (
         await agentDatabaseRows<AgentCallRow & { readonly agent_id: string }>(
             ctx.db,
-            sql`SELECT agent_id, run_id, call_index, signature, output_json, error
+            sql`SELECT agent_id, run_id, call_index, collaborator_id, signature, output_json, error
                 FROM ${sql.raw(WORKFLOW_AGENT_CALLS_TABLE)}
                 WHERE collaborator_id = ${collaboratorId}
                 LIMIT 1`,
@@ -404,10 +407,35 @@ export async function completeWorkflowAgentCall(
     return {
         runId: row.run_id,
         callIndex: Number(row.call_index),
+        collaboratorId,
         signature: row.signature,
         ...(result.output === undefined ? {} : { output: result.output }),
         ...(result.error === undefined ? {} : { error: result.error }),
     };
+}
+
+/**
+ * One exact call, including an unanswered one whose restored collaborator is still working.
+ *
+ * Reading this after registering an in-memory waiter closes the startup race where the agent
+ * settles between the recovery pass finding the run and its script reaching the external call.
+ */
+export async function readWorkflowAgentCall(
+    ctx: Context,
+    agentId: string,
+    runId: string,
+    callIndex: number,
+): Promise<WorkflowAgentCall | undefined> {
+    const row = (
+        await agentDatabaseRows<AgentCallRow>(
+            ctx.db,
+            sql`SELECT run_id, call_index, collaborator_id, signature, output_json, error
+                FROM ${sql.raw(WORKFLOW_AGENT_CALLS_TABLE)}
+                WHERE agent_id = ${agentId} AND run_id = ${runId} AND call_index = ${callIndex}
+                LIMIT 1`,
+        )
+    )[0];
+    return row === undefined ? undefined : decodeAgentCall(row);
 }
 
 /** Everything a resumed run may reuse, in the order the script asked for it. */
@@ -418,7 +446,7 @@ export async function readWorkflowAgentCalls(
 ): Promise<readonly (WorkflowAgentCall | undefined)[]> {
     const rows = await agentDatabaseRows<AgentCallRow>(
         ctx.db,
-        sql`SELECT run_id, call_index, signature, output_json, error
+        sql`SELECT run_id, call_index, collaborator_id, signature, output_json, error
             FROM ${sql.raw(WORKFLOW_AGENT_CALLS_TABLE)}
             WHERE agent_id = ${agentId} AND run_id = ${runId}
             ORDER BY call_index`,
@@ -437,6 +465,7 @@ export async function readWorkflowAgentCalls(
         calls[Number(row.call_index)] = {
             runId: row.run_id,
             callIndex: Number(row.call_index),
+            collaboratorId: row.collaborator_id,
             signature: row.signature,
             output,
         };
@@ -464,7 +493,7 @@ export async function readUnansweredWorkflowCollaborators(
     return rows.map((row) => row.collaborator_id);
 }
 
-/** Runs this agent left behind when its process stopped, which are the ones worth pausing. */
+/** Durable running scripts this process must recover during module startup. */
 export async function readUnfinishedWorkflowRuns(ctx: Context): Promise<readonly WorkflowRun[]> {
     const rows = await agentDatabaseRows<JsonRow>(
         ctx.db,
@@ -474,6 +503,25 @@ export async function readUnfinishedWorkflowRuns(ctx: Context): Promise<readonly
             ORDER BY agent_id, id`,
     );
     return rows.map(decodeRun).filter((run) => !isWorkflowTerminalStatus(run.status));
+}
+
+function decodeAgentCall(row: AgentCallRow): WorkflowAgentCall {
+    let output: unknown;
+    if (row.output_json !== null) {
+        try {
+            output = JSON.parse(row.output_json);
+        } catch {
+            throw new Error("A stored workflow agent result is not valid JSON.");
+        }
+    }
+    return {
+        runId: row.run_id,
+        callIndex: Number(row.call_index),
+        collaboratorId: row.collaborator_id,
+        signature: row.signature,
+        ...(row.output_json === null ? {} : { output }),
+        ...(row.error === null ? {} : { error: row.error }),
+    };
 }
 
 function decodeRun(row: JsonRow): WorkflowRun {

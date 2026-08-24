@@ -44,13 +44,17 @@ settling transaction, before anything in memory is told about it, so it survives
 Inline scripts are capped at 524,288 characters, arguments are finite-depth JSON capped at 65,536
 encoded bytes, and a run may start at most 1,000 agents.
 
-## Pausing and resuming
+## Restart recovery and resuming
 
-A run whose process stopped is paused, not lost. `afterStart` finds every run still marked running
-by a process that is gone and marks it `paused`. `resume_workflow` continues it from its last
-durable checkpoint and reuses the agent answers already stored, so a resumed run does not pay for
-the same agent twice. `resumeFromRunId` does the same across runs, for a script that has not
-changed.
+`afterStart` runs after Agent Base has restored every active collaborator. It finds each workflow
+still marked running, restores the script from its latest durable checkpoint, reuses calls that
+already answered, and reattaches unanswered calls to their original collaborator identities. A
+daemon restart therefore leaves the workflow running without paying for the active agents again.
+
+A legacy run that has no stored executable launch cannot be reconstructed automatically and is
+marked `paused` instead. `resume_workflow` continues a paused run when its launch is available.
+`resumeFromRunId` reuses a prior run's checkpoint and answered calls across runs, for a script that
+has not changed.
 
 ## Tools
 

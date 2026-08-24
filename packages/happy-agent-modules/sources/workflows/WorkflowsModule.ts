@@ -28,7 +28,6 @@ import {
     MAX_WORKFLOW_LOG_LINE_LENGTH,
     MAX_WORKFLOW_NAME_LENGTH,
     MAX_WORKFLOW_OUTPUT_CHARACTERS,
-    MAX_WORKFLOW_PAGE_SIZE,
     MAX_WORKFLOW_SCRIPT_LENGTH,
     describeWorkflowStatus,
     isWorkflowTerminalStatus,
@@ -38,7 +37,6 @@ import {
     workflowLaunchInputSchema,
     workflowLogQuerySchema,
     workflowPageQuerySchema,
-    workflowTimestampSchema,
     type WorkflowLaunchInput,
     type WorkflowLaunchRequest,
     type WorkflowLogPage,
@@ -67,6 +65,7 @@ import {
     completeWorkflowAgentCall,
     readUnansweredWorkflowCollaborators,
     readUnfinishedWorkflowRuns,
+    readWorkflowAgentCall,
     readWorkflowAgentCalls,
     readWorkflowCheckpoint,
     readWorkflowLaunch,
@@ -302,16 +301,20 @@ export class WorkflowsModule implements AgentModule {
             ];
         },
 
-        /**
-         * A run whose process stopped is paused, not lost. Its script checkpointed itself at its
-         * last agent call, so the work already paid for is still there and `resume_workflow`
-         * continues from it.
-         */
+        /** Continue every running script after Agent Base has restored its active collaborators. */
         afterStart: async (ctx: Context): Promise<void> => {
             if (!this.#enabled) return;
-            const abandoned = await readUnfinishedWorkflowRuns(ctx);
-            for (const run of abandoned) {
+            const unfinished = await readUnfinishedWorkflowRuns(ctx);
+            for (const run of unfinished) {
                 if (this.#live.has(run.id)) continue;
+                const request = await readWorkflowLaunch(ctx, run.agentId, run.id);
+                if (request !== undefined) {
+                    this.#start(ctx, run.agentId, request, run.id);
+                    continue;
+                }
+                // Runs written before executable launches were persisted cannot be reconstructed.
+                // Keep that exceptional legacy state inspectable as paused rather than preventing
+                // every newer workflow from recovering at daemon startup.
                 await ctx.inTx(async (txCtx) => {
                     const at = this.#now();
                     await this.#store(txCtx, {
@@ -718,9 +721,6 @@ export class WorkflowsModule implements AgentModule {
             args: request.args ?? null,
             startAgent: (start, signal) =>
                 this.#startAgent(ctx, agentId, request.id, start, signal),
-            onAgentCall: () => {
-                void this.#note(ctx, agentId, request.id, { agentStarted: true });
-            },
             onAgentResult: async (callIndex, result) => {
                 await this.#rememberAgentResult(ctx, agentId, request.id, callIndex, result);
             },
@@ -766,6 +766,20 @@ export class WorkflowsModule implements AgentModule {
         start: WorkflowAgentStart,
         signal: AbortSignal,
     ): Promise<string> {
+        const existing = await readWorkflowAgentCall(ctx, agentId, runId, start.callIndex);
+        if (existing?.signature === start.signature) {
+            return await this.#awaitRestoredAgentCall(
+                ctx,
+                agentId,
+                runId,
+                start,
+                existing.collaboratorId,
+                signal,
+            );
+        }
+        if (existing !== undefined) {
+            throw new Error("The restored workflow agent call no longer matches its checkpoint.");
+        }
         const collaboratorId = this.#newCollaboratorId();
         const answer = new Promise<string>((resolve, reject) => {
             this.#waiters.set(collaboratorId, { resolve, reject });
@@ -778,6 +792,7 @@ export class WorkflowsModule implements AgentModule {
                     collaboratorId,
                     signature: start.signature,
                 });
+                await this.#note(txCtx, agentId, runId, { agentStarted: true });
                 await this.#collaboration.createAgent(
                     txCtx,
                     agentId,
@@ -803,6 +818,49 @@ export class WorkflowsModule implements AgentModule {
             return await raceWithLifetime(answer, signal);
         } finally {
             this.#waiters.delete(collaboratorId);
+        }
+    }
+
+    /**
+     * Wait on the collaborator Agent Base restored instead of creating the same call again.
+     *
+     * The waiter is installed before the call is reread. If the agent already settled, the
+     * durable result wins; if it settles after registration, the settlement hook resolves the
+     * waiter. Those two paths may race, but promises settle only once and both carry the same
+     * database-first result.
+     */
+    async #awaitRestoredAgentCall(
+        ctx: Context,
+        agentId: string,
+        runId: string,
+        start: WorkflowAgentStart,
+        collaboratorId: string,
+        signal: AbortSignal,
+    ): Promise<string> {
+        let resolveAnswer = (_answer: string): void => undefined;
+        let rejectAnswer = (_error: Error): void => undefined;
+        const answer = new Promise<string>((resolve, reject) => {
+            resolveAnswer = resolve;
+            rejectAnswer = reject;
+        });
+        const waiter = { resolve: resolveAnswer, reject: rejectAnswer };
+        this.#waiters.set(collaboratorId, waiter);
+        try {
+            const current = await readWorkflowAgentCall(ctx, agentId, runId, start.callIndex);
+            if (
+                current === undefined ||
+                current.collaboratorId !== collaboratorId ||
+                current.signature !== start.signature
+            ) {
+                throw new Error("The restored workflow agent call changed during recovery.");
+            }
+            if (current.error !== undefined) throw new Error(current.error);
+            if (current.output !== undefined) return serializeWorkflowValue(current.output);
+            return await raceWithLifetime(answer, signal);
+        } finally {
+            if (this.#waiters.get(collaboratorId) === waiter) {
+                this.#waiters.delete(collaboratorId);
+            }
         }
     }
 

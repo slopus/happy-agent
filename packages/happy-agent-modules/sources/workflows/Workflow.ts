@@ -103,8 +103,9 @@ export const workflowAccumulatedLogSchema = Type.String({
 /**
  * Where a run is in its life.
  *
- * `paused` is what a run left behind by a stopped process becomes: the script's own state was
- * checkpointed at its last agent call, so the work is not lost and `resume_workflow` continues it.
+ * A running workflow recovers automatically after a process restart. `paused` is reserved for a
+ * run whose executable launch cannot be reconstructed automatically; `resume_workflow` continues
+ * it when that launch is available.
  */
 export const workflowStatusSchema = Type.Union([
     Type.Literal("running"),
