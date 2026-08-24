@@ -12,7 +12,7 @@
         "dev": "pnpm build && node scripts/seedDevConfig.mjs && HAPPY_HOME_DIR=\"$PWD/.happy-terminal-dev/.happy\" node packages/happy-agent/dist/cli.js reload && HAPPY_HOME_DIR=\"$PWD/.happy-terminal-dev/.happy\" pnpm start",
         "format": "oxfmt --write .",
         "format:check": "oxfmt --check .",
-        "link:global": "pnpm build:bun && pnpm --dir packages/happy-terminal link --global && pnpm --dir packages/happy-terminal exec tsx scripts/install-local-agent.ts --reload",
+        "link:global": "pnpm build:bun && pnpm --dir packages/happy-terminal link --global && pnpm --dir packages/happy-terminal exec tsx scripts/install-local-agent.ts && node .agent/skills/local-agent/reload.mjs",
         "lint": "oxlint .",
         "observability:down": "node scripts/observability.mjs down",
         "observability:restart": "node scripts/observability.mjs restart",
