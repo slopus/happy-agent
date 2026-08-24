@@ -1,15 +1,18 @@
 /** Bootstrap: one request that gets a desktop client on screen instantly. */
 
+import { type Static, Type } from "@sinclair/typebox";
+
 import type { Agent, AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
-import type { EventCursor } from "./common.js";
-import type { DaemonConfig, OnboardingState } from "./daemon.js";
-import type { HappyIntegration } from "./integrations.js";
+import { type EventCursor, eventCursorSchema } from "./common.js";
+import { daemonConfigSchema, onboardingStateSchema } from "./daemon.js";
+import { happyIntegrationSchema } from "./integrations.js";
 import type { UserMessage } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
-import type { Profile } from "./profile.js";
-import type { Project } from "./projects.js";
+import { profileSchema } from "./profile.js";
+import { projectSchema } from "./projects.js";
+import { sharingSchema } from "./sharing.js";
 import type { AgentUsageResponse } from "./usage.js";
-import type { Workspace } from "./workspaces.js";
+import { workspaceSchema } from "./workspaces.js";
 
 /**
  * `GET /v0/agents/:agentId/bootstrap`
@@ -36,19 +39,22 @@ export interface AgentBootstrapResponse
  * own. There is no separate global agent list: each included project and
  * workspace carries its own ordered top-level agents.
  */
-export interface DesktopBootstrapResponse {
-    config: DaemonConfig;
-    profile: Profile;
-    onboarding: OnboardingState;
-    /** Current Happy mobile connection state. Absent on older compatible daemons. */
-    happyIntegration?: HappyIntegration;
-    /** Every active project, in catalog order. */
-    projects: Project[];
-    /** Each project's root workspace and the workspaces directly under it. */
-    workspaces: Workspace[];
+export const desktopBootstrapResponseSchema = Type.Object({
+    config: daemonConfigSchema,
     /**
      * The newest event cursor as of this snapshot. Opening the event stream
      * from here leaves no window for a change to fall between the two.
      */
-    cursor: EventCursor;
-}
+    cursor: eventCursorSchema,
+    /** Current Happy mobile connection state. Absent on older compatible daemons. */
+    happyIntegration: Type.Optional(happyIntegrationSchema),
+    onboarding: onboardingStateSchema,
+    profile: profileSchema,
+    /** Every active project, in catalog order. */
+    projects: Type.Array(projectSchema),
+    /** Current sharing state. Absent on older compatible protocol-22 daemons. */
+    sharing: Type.Optional(sharingSchema),
+    /** Each project's root workspace and the workspaces directly under it. */
+    workspaces: Type.Array(workspaceSchema),
+});
+export type DesktopBootstrapResponse = Static<typeof desktopBootstrapResponseSchema>;

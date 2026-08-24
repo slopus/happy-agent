@@ -71,9 +71,11 @@ CUID2s do not sort by creation time. Clients compare IDs for equality and nothin
 ID is used as a paging cursor, the daemon resolves its position — the client never needs to
 order IDs itself.
 
-Two kinds of identifier are the exception, and both are **UUIDv7** — time-ordered, so greater
-means newer: event cursors (defined in the events chapter) and resource versions (next
-section).
+Two version-like kinds of identifier are the exception, and both are **UUIDv7** — time-ordered,
+so greater means newer: event cursors (defined in the events chapter) and resource versions (next
+section). Sharing public identities are another documented exception: opaque 43-character
+base64url strings. Sharing invitation capabilities use the same encoding but are short-lived
+secrets rather than identities.
 
 ### Resource versions and `If-Match`
 
@@ -121,8 +123,8 @@ identifies that exceptional ancestry through its agent capability flags.
 
 ### `mutationId`
 
-Every mutation emits a change event to all connected clients, including the one that made the
-change. Mutation bodies therefore accept an optional `mutationId`: an opaque client-chosen
+Every state-changing mutation emits a change event to all connected clients, including the one
+that made the change. Mutation bodies therefore accept an optional `mutationId`: an opaque client-chosen
 string the daemon echoes verbatim in the change events that mutation produces. A client doing
 optimistic updates checks arriving events against its in-flight mutation IDs — a match means
 "that is my own change coming back," no match means someone else's. The daemon never interprets
@@ -140,7 +142,9 @@ their history and can be inspected. Only agents can be unarchived for now; an ar
 is revived by registering its path again, and an archived workspace stays archived. There are
 no hard-delete endpoints. The only things that end are runtime state — a terminal, a background process — and
 the transcript resets described under `message.deleted`, none of which is a client deleting a
-durable resource.
+durable resource. Sharing is the one deliberate exception: removing a contact or resetting the
+sharing identity really does discard those relationships, because a contact is a commitment to
+another machine rather than work history — see the sharing chapter.
 
 ## Endpoints
 
@@ -906,6 +910,310 @@ they change state. When disabled, the request returns `503` with code `unsupport
 integration. When Happy cannot create the fresh authorization request, it returns `503` with code
 `happy_unavailable` and the now-unlinked `"disconnected"` integration; the previous credentials
 remain removed so a later retry cannot silently reconnect the account the person chose to replace.
+
+## Sharing
+
+Sharing connects this installation with other people's installations as **contacts** — a
+person-to-person address book built on the profile. Two people exchange an invitation, one
+accepts the other's request, and from then on each sees the other's public profile. It is
+deliberately contacts-only: there is no folder or workspace sharing behind it, it contributes
+no onboarding step, and it exposes no tools to models.
+
+The daemon reaches other installations through a managed sharing service. That service is an
+internal detail: its address, credentials, and wire protocol never appear in this API. Ordinary
+outages surface as the `connection` state below while the daemon keeps running and retries; an
+operation that cannot complete temporarily uses the documented `sharing_unavailable` error.
+
+Sharing is opt-in through this API. An installation begins unenrolled — every sharing read
+answers with a stable unenrolled snapshot — and a client enrolls it once with
+`POST /v0/sharing/enroll`. Enrollment is durable: from then on every daemon start ensures the
+sharing identity exists and connects on its own, with nothing to configure. There is no
+configuration toggle and no separate identity resource to manage — the identity below is the
+whole public surface of it.
+
+### The sharing object
+
+Sharing state is installation-wide runtime-plus-durable state, like the Happy integration: one
+current snapshot, replaced whole, not an `If-Match` resource. The shape is discriminated on
+`status`.
+
+Unenrolled:
+
+```json
+{
+    "status": "unenrolled",
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+Enrolled:
+
+```json
+{
+    "status": "enrolled",
+    "connection": "connected",
+    "identity": "3q2LrgP9XenocXNBhZ0Jv5uW8dTGkxwm4AiY1cFsRHo",
+    "contacts": [
+        {
+            "identity": "Zt7hK2mQfXcVbN9pLw4RyD8sJaG6uE1oTiP0xM5nCkA",
+            "profile": {
+                "name": "Kirill Dubovitskiy",
+                "email": "kirill@example.com",
+                "photo": { "thumbhash": "3OcRJYB4d3h/iIeHeEh3eIhw+j3A" },
+                "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+                "updatedAt": 1755399990000
+            },
+            "status": "active"
+        }
+    ],
+    "incomingRequests": [
+        {
+            "id": "incoming-request-opaque-id",
+            "identity": "Uv3mB8xQnR7tKpH2wLcY5dJ9zF4gS1eAoN6iVrT0MkE",
+            "profile": null
+        }
+    ],
+    "outgoingRequests": [
+        {
+            "id": "Ks4pX7vNqR2mJ9cLd5wHb8tYe1zAf6oUi3gE0kSVWnQ",
+            "identity": "Pw9cD4rT2yUqLm6vXk1sHj8bZf3nEa7gRoK5tCiW0Nd"
+        }
+    ],
+    "version": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f",
+    "updatedAt": 1755400000000
+}
+```
+
+- `status` — `"unenrolled"` until the installation's one successful enrollment, `"enrolled"`
+  ever after; nothing unenrolls an installation, not even reset. The unenrolled shape is
+  stable and still useful: its `version` and `updatedAt` are the durable sharing state this
+  installation last held, so a client can render "sharing is not set up" and cache it without
+  special cases. Daemon initialization mints and persists the first version; reads themselves do
+  not change state, and the enrollment transition advances the version like any other change.
+- `connection` — `"connecting"`, `"connected"`, or `"disconnected"`. Runtime state, never
+  durable: an enrolled daemon starts at `"connecting"`, and a restart always passes through it
+  again. `"disconnected"` means the link to the sharing service failed or dropped; the daemon
+  retries on its own with backoff, and connection trouble never fails a request that does not
+  need the live link.
+- `identity` — this installation's public sharing identity: a 43-character base64url string.
+  It is public by design — invitations are how it reaches other people — carries no personal
+  information, is opaque, and is compared only for equality. It is stable until explicitly
+  reset.
+- `contacts` — established, mutual connections, each `{ "identity", "profile", "status" }`.
+  `status` is `"active"` or `"removing"`; the latter is a durable removal still propagating to
+  the other installation. Bounded at **10,000**.
+- `incomingRequests` — pending requests from peers who redeemed one of this installation's
+  invitations, each `{ "id", "identity", "profile" }`, waiting to be accepted or rejected.
+  `id` is an opaque 1–256 character request identifier used by those mutation routes; it is not
+  a profile or session ID and has no ordering semantics. Bounded at **1,000**; while full, the
+  daemon declines further incoming requests until room frees.
+- `outgoingRequests` — pending requests this installation created by submitting someone's
+  invitation, each `{ "id", "identity" }`. Both values are 43-character base64url strings. An
+  outgoing request ID is a separately minted, non-secret identifier and never contains or reuses
+  the invitation capability. An entry leaves the list when the peer accepts — it becomes a
+  contact — or rejects, in which case it simply disappears. Bounded at **1,000**.
+
+A peer appears in at most one of `contacts`, `incomingRequests`, and `outgoingRequests` at a
+time.
+
+Every peer `profile` is the same public projection as this installation's own profile object —
+`name`, `email`, `photo` (the ThumbHash placeholder, or `null`), `version`, `updatedAt` — and
+nothing else. Internal profile IDs, owner installation IDs, contact session IDs, photo hashes and
+dimensions are never exposed. The projection is `null` when the peer's profile is not readable.
+Peer photos travel as metadata only; there is no peer-photo bytes endpoint, so clients render the
+placeholder. Peer profiles refresh through the sharing connection, and a refreshed profile
+advances the snapshot `version` like any other change.
+
+- `version` — a **UUIDv7** minted whenever any part of the sharing state changes, including
+  `connection` moves. It is durable and monotonic: every replacement is greater than every
+  sharing version this installation previously exposed, including across daemon restarts,
+  identity resets, and system-clock rollback. Clients reconcile any two copies of the snapshot
+  by keeping the greater version.
+- `updatedAt` — when any field in this snapshot last changed.
+
+Enrollment, the identity, contacts, and pending requests are durable: a restart preserves them
+all and re-establishes the connection; only `connection` starts over. Invitations remain usable
+until their stated expiry across an ordinary daemon restart, but are never part of the sharing
+snapshot.
+
+### Sharing errors
+
+Sharing mutations use stable codes, and every sharing error body carries the authoritative
+current `sharing` object alongside `error` and `code`, so even a failed mutation converges the
+client:
+
+- `sharing_not_enrolled` (409) — the installation has not enrolled in sharing yet. Every
+  sharing mutation except enrollment returns it; reading the unenrolled state still succeeds.
+- `sharing_unavailable` (503) — a temporary sharing-service operation required by this request
+  could not complete. The connection state alone does not predetermine the result; nothing changed
+  and no event was emitted.
+- `invalid_invitation` (400) — the submitted invitation is malformed, expired, already
+  redeemed, unknown to the sharing service, or names this installation itself.
+- `not_found` (404) — the request ID or contact identity in the path is not in the state the
+  operation targets, usually because of a race with a peer action or another client.
+- `conflict` (409) — the operation contradicts the current state, such as rejecting a request
+  that was accepted in the meantime.
+- `sharing_full` (409) — the bounded list the operation would grow is at its limit.
+
+### Mutations, retries, and no-ops
+
+Every state-changing sharing mutation accepts an optional `mutationId` and every such success returns
+`{ "sharing": { ... } }` — the authoritative post-mutation snapshot. There is no `If-Match`:
+the natural request or contact target plus the returned snapshot make optimistic concurrency
+unnecessary.
+
+An endpoint explicitly documented as idempotent returns `200` with the current snapshot when its
+desired end state already holds, mints no version, and emits no event. Otherwise a lost-response
+retry may receive the documented `not_found` or `conflict` race error; that error includes the
+authoritative snapshot for reconciliation. `mutationId` is an event echo, not an idempotency key.
+
+### Realtime convergence
+
+Sharing announces changes through one compact journal event, `sharing.updated`, carrying only
+the resulting `version` (and the `mutationId` echo when a client mutation caused it) — never a
+snapshot or diff. It participates in the ordinary journal: it is pulled, streamed, cursored,
+and replayed like every other event, and peer-driven bursts may **coalesce** into fewer events
+carrying only the later versions.
+
+Convergence is exact:
+
+- A client keeps the last sharing object it read — from `GET /v0/sharing`, desktop bootstrap,
+  or a mutation response — and compares versions on every `sharing.updated`.
+- An event version equal to or older than the cached version is already applied; ignore it.
+- An event version newer than the cached version means the cache is behind: refetch
+  `GET /v0/sharing`. The fetched snapshot's version is at least the event's version — later
+  changes simply fold in.
+- A mutation response and that mutation's event agree: the response snapshot carries version
+  `V`, the event carries `V` with the echoed `mutationId`, so a client that adopted the
+  response sees the event as already applied. The daemon may coalesce adjacent peer- or
+  connection-originated changes, but never coalesces away an API mutation or its supplied
+  `mutationId`; correctness still depends on version comparison rather than the echo.
+- Desktop bootstrap captures its event cursor before reading, so any sharing change racing the
+  snapshot arrives as a `sharing.updated` to compare against the snapshot's version.
+- A journal cursor gap — the pull `409` or an SSE `gap` hello — requires refetching
+  `GET /v0/sharing` along with the other snapshots, exactly like any resync.
+
+### `GET /v0/sharing`
+
+Response — `200`: `{ "sharing": { ... } }`. Always succeeds, enrolled or not.
+
+### `POST /v0/sharing/enroll`
+
+Enrolls this installation in sharing. The body is optional: `{ "mutationId": "..." }`.
+
+The first successful call does everything at once: it materializes the singleton profile if it
+was never touched, mints the sharing identity and binds it to that profile, starts connecting
+immediately, and records the enrollment durably — every later daemon start reconnects on its
+own. Nothing here needs the sharing service to be reachable: the identity is minted locally,
+and the connection settles through the ordinary `connection` states afterwards.
+
+The operation is idempotent: an already-enrolled installation gets its current snapshot back,
+no version is minted, and no event is emitted. Only the actual unenrolled-to-enrolled
+transition advances the version and emits one `sharing.updated`.
+
+Response — `200`: `{ "sharing": { ... } }` — enrolled, typically still `"connecting"`.
+
+### `POST /v0/sharing/invitations`
+
+Mints one ephemeral invitation for another person to submit to their own daemon. No request
+body.
+
+Response — `200`:
+
+```json
+{
+    "invitation": "Fh6sN2vXpQ9rKt4wLb8mYc1zJd7gAe3oTiU5xMnB0Wk",
+    "expiresAt": 1755400300000
+}
+```
+
+- `invitation` — a 43-character base64url **single-use capability**. Whoever submits it to
+  their own daemon before it expires becomes a pending incoming request here. It is sensitive:
+  the daemon never journals, logs, or snapshots it, it appears in no sharing object and no
+  event, and it exists only in this response. Clients show it, hand it off, and forget it.
+- `expiresAt` — five minutes after creation, absolute epoch milliseconds.
+
+Creating an invitation changes nothing in the sharing object: no version is minted and no
+`sharing.updated` is emitted. Several invitations may be outstanding at once, each independent
+and intended for one use. Each expires exactly five minutes after creation, including across an
+ordinary daemon restart.
+
+Errors — `sharing_not_enrolled` (409), `sharing_unavailable` (503).
+
+### `POST /v0/sharing/requests`
+
+Submits an invitation received from another person, redeeming it through the sharing service
+and creating one outgoing request to the inviter.
+
+```json
+{
+    "invitation": "Fh6sN2vXpQ9rKt4wLb8mYc1zJd7gAe3oTiU5xMnB0Wk",
+    "mutationId": "..."
+}
+```
+
+Response — `200`: `{ "sharing": { ... } }` with the new `outgoingRequests` entry, and one
+`sharing.updated`. Repeating the same still-valid invitation while the same outgoing request is
+pending returns the current snapshot without duplicating the request or emitting another event.
+Submitting an invitation for the local identity, an existing contact, or a peer with an
+incompatible pending relationship is `409` with code `conflict`.
+
+Errors — `invalid_invitation` (400); `conflict`, `sharing_not_enrolled`, or `sharing_full`
+(409, the latter when `outgoingRequests` is at 1,000); `sharing_unavailable` (503).
+
+### `POST /v0/sharing/requests/:requestId/accept`
+
+Accepts the pending incoming request named by `requestId`; the peer becomes a contact on both
+sides. Acceptance is durable immediately and propagates to the peer when the connection allows,
+so it works while disconnected. URL-encode the opaque request ID in the path. Body optional:
+`{ "mutationId": "..." }`.
+
+Response — `200`: `{ "sharing": { ... } }` and one `sharing.updated`.
+
+Errors — `not_found` (404) when the request is absent, was withdrawn by a peer reset, or was
+resolved by another client; the error includes the current sharing snapshot.
+`sharing_full` (409) when contacts are at 10,000, in which case the incoming request stays
+pending; `sharing_not_enrolled` (409).
+
+### `POST /v0/sharing/requests/:requestId/reject`
+
+Removes the pending incoming request named by `requestId`. The peer's outgoing entry disappears
+without explanation. URL-encode the opaque request ID in the path. Body optional:
+`{ "mutationId": "..." }`.
+
+Response — `200`: `{ "sharing": { ... } }` and one `sharing.updated`.
+
+Errors — `not_found` (404) when the request is absent or was already resolved; the error includes
+the current sharing snapshot. `sharing_not_enrolled` is `409`.
+
+### `DELETE /v0/sharing/contacts/:identity`
+
+Removes the contact. The relationship ends for both installations: the peer's matching contact
+entry is removed through the sharing service when the connection allows. No request body is
+required; an optional `{ "mutationId": "..." }` body is accepted.
+
+Response — `200`: `{ "sharing": { ... } }` and one `sharing.updated`. Repeating removal while
+the same contact is still `"removing"` is an idempotent no-op. An absent or already removed
+identity is `404` with code `not_found` and the current sharing snapshot. An unenrolled
+installation is `409` with code `sharing_not_enrolled`.
+
+### `POST /v0/sharing/reset`
+
+Abandons this installation's sharing identity and mints a fresh one. Contacts, incoming
+requests, and outgoing requests all clear, and every outstanding invitation is invalidated.
+Peers are informed through the sharing service when possible, but reset never waits for that:
+it takes effect locally, at once, durably. An unreachable peer simply finds the old identity
+gone. Body optional: `{ "mutationId": "..." }`.
+
+Reset is not a no-op: every call mints a fresh identity, and the installation stays enrolled
+throughout — reset renews the identity, it never unenrolls. The sharing `version` keeps
+climbing across a reset — it belongs to the installation, not to the identity.
+
+Response — `200`: `{ "sharing": { ... } }` with the fresh identity and empty lists, and one
+`sharing.updated`.
+
+Errors — `sharing_not_enrolled` (409).
 
 ## Projects and workspaces
 
@@ -2867,7 +3175,9 @@ part of the protocol — a client that was offline for a while should expect it.
 
 ### Event types
 
-There are two payload shapes, and every versioned resource uses them the same way.
+Version-chained resources use the two payload shapes below. Explicitly documented current-state
+events such as `git.updated`, `files.updated`, `happy.integration.updated`, and `sharing.updated`
+use complete replacements or compact invalidations instead.
 
 **`*.created` carries the resource in full** — the same JSON the corresponding `GET` returns,
 so a client inserts it into its cache with no follow-up read. The object carries its own `id`
@@ -3085,6 +3395,23 @@ to a different daemon process.
   `version` when reconciling it with a snapshot.
     - `integration` (full Happy integration object).
 
+**Sharing**
+
+- `sharing.updated` — something about sharing changed: the installation enrolled, the
+  connection state moved, a contact or a request in either direction appeared or resolved, a
+  peer profile refreshed, or a reset minted a fresh identity. The payload is deliberately
+  compact — an invalidation, not the object — because synchronizing after time offline delivers
+  bursts of changes that coalesce into few events, and a client only needs to know the state
+  moved.
+    - `version` — the sharing object's version after the change, a UUIDv7.
+    - `mutationId` — echoed when an API mutation caused the change.
+
+    A client holding a sharing object whose `version` is greater than or equal to the event's is
+    current and does nothing. Otherwise it refetches `GET /v0/sharing`; the object it gets back
+    carries a version at least as great as the event's, so refetching on the newest event always
+    converges. Sharing mutations return the complete resulting object, which closes the same
+    race for the client that made the change — its own echoed event needs no refetch.
+
 The set grows with the product; clients skip event types they do not recognize.
 
 ### `GET /v0/events`
@@ -3278,6 +3605,9 @@ Response — `200`:
     "happyIntegration": {
         /* exactly GET /v0/integrations/happy */
     },
+    "sharing": {
+        /* exactly GET /v0/sharing */
+    },
     "projects": [
         /* all project objects, catalog order */
     ],
@@ -3288,14 +3618,16 @@ Response — `200`:
 }
 ```
 
-- `config`, `profile`, `onboarding`, `happyIntegration` — the full objects from their own
-  endpoints. `happyIntegration` is additive and may be absent on an older compatible daemon.
+- `config`, `profile`, `onboarding`, `happyIntegration`, `sharing` — the full objects from
+  their own endpoints. `happyIntegration` and `sharing` are additive and may be absent on an
+  older compatible daemon; a daemon old enough to omit `sharing` does not serve the sharing
+  endpoints either.
 - `projects` — every active project.
 - `workspaces` — deliberately shallow: each project's root workspace and the workspaces
   directly under it. Each returned project and workspace embeds its active top-level `agents`
   series. Deeper nesting and archived resources are loaded on demand through their owner or
   resource endpoints when the user opens a project.
-- `cursor` — the newest event cursor as of this snapshot. The client opens
+- `cursor` — the event cursor captured before the composed snapshot reads. The client opens
   `GET /v0/events/stream` from here and everything it just read stays current; there is no
   window for a change to fall between the snapshot and the stream.
 

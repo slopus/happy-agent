@@ -14,6 +14,8 @@ import {
     type EventCursor,
     type ResourceVersion,
     type Timestamp,
+    mutationIdSchema,
+    resourceVersionSchema,
 } from "./common.js";
 import type { Agent, AgentDraftSnapshot } from "./agents.js";
 import type { GitState } from "./git.js";
@@ -190,6 +192,13 @@ export interface HappyIntegrationUpdatedPayload {
     integration: HappyIntegration;
 }
 
+/** Compact sharing invalidation; clients refetch only when this version is newer. */
+export const sharingUpdatedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    version: resourceVersionSchema,
+});
+export type SharingUpdatedPayload = Static<typeof sharingUpdatedPayloadSchema>;
+
 /** One event on the journal. */
 export interface EventEnvelope<TType extends string, TPayload> {
     /** This event's place in the journal; never a resource identity. */
@@ -229,7 +238,8 @@ export type HappyAgentEvent =
     | EventEnvelope<"message.deleted", MessageDeletedPayload>
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>
-    | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>;
+    | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>
+    | EventEnvelope<"sharing.updated", SharingUpdatedPayload>;
 
 /** The name of an event this client build knows. */
 export type HappyAgentEventType = HappyAgentEvent["type"];

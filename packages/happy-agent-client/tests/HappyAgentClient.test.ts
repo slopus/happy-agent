@@ -191,6 +191,69 @@ describe("HappyAgentClient", () => {
         expect(requests[4]?.body).toBeNull();
     });
 
+    it("manages sharing through the complete contacts surface", async () => {
+        const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const invitation = "Fh6sN2vXpQ9rKt4wLb8mYc1zJd7gAe3oTiU5xMnB0Wk";
+        const sharing = { status: "unenrolled" as const, updatedAt: 1, version };
+        const { fetch, requests } = stubFetch((request) =>
+            request.url.endsWith("/invitations")
+                ? json({ expiresAt: 301_000, invitation })
+                : json({ sharing }),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.getSharing()).resolves.toEqual({ sharing });
+        await expect(client.enrollSharing()).resolves.toEqual({ sharing });
+        await expect(client.createSharingInvitation()).resolves.toEqual({
+            expiresAt: 301_000,
+            invitation,
+        });
+        await expect(
+            client.submitSharingRequest({ invitation, mutationId: "submit-1" }),
+        ).resolves.toEqual({ sharing });
+        await expect(client.acceptSharingRequest("incoming/request")).resolves.toEqual({ sharing });
+        await expect(
+            client.rejectSharingRequest("incoming request", { mutationId: "reject-1" }),
+        ).resolves.toEqual({ sharing });
+        await expect(client.removeSharingContact("peer/identity")).resolves.toEqual({ sharing });
+        await expect(client.resetSharing({ mutationId: "reset-1" })).resolves.toEqual({ sharing });
+
+        expect(requests.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
+            { body: null, method: "GET", url: "http://agent.local/v0/sharing" },
+            { body: "{}", method: "POST", url: "http://agent.local/v0/sharing/enroll" },
+            {
+                body: null,
+                method: "POST",
+                url: "http://agent.local/v0/sharing/invitations",
+            },
+            {
+                body: JSON.stringify({ invitation, mutationId: "submit-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/sharing/requests",
+            },
+            {
+                body: "{}",
+                method: "POST",
+                url: "http://agent.local/v0/sharing/requests/incoming%2Frequest/accept",
+            },
+            {
+                body: JSON.stringify({ mutationId: "reject-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/sharing/requests/incoming%20request/reject",
+            },
+            {
+                body: "{}",
+                method: "DELETE",
+                url: "http://agent.local/v0/sharing/contacts/peer%2Fidentity",
+            },
+            {
+                body: JSON.stringify({ mutationId: "reset-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/sharing/reset",
+            },
+        ]);
+    });
+
     it("requests provider verification at the selected strength", async () => {
         const response = {
             checkedAt: 1,
