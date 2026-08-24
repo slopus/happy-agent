@@ -4,6 +4,83 @@ import type { SessionContext } from "@/core/SessionContext.js";
 import { createClaudeSessionReplay } from "@/vendors/claude/impl/createClaudeSessionReplay.js";
 
 describe("Claude session replay reasoning", () => {
+    it("replays inline provider-owned results between assistant segments", () => {
+        const replay = createClaudeSessionReplay({
+            context: context([
+                {
+                    role: "user",
+                    content: [{ type: "text" as const, text: "Find a tool." }],
+                },
+                {
+                    role: "assistant",
+                    content: [
+                        {
+                            type: "tool_call",
+                            callId: "base-call",
+                            name: "DiscoverTools",
+                            namespace: "search",
+                            arguments: '{"query":"weather"}',
+                            server: true,
+                            vendor: { type: "claude_tool_use", wireName: "ToolSearch" },
+                        },
+                        {
+                            type: "tool_result",
+                            callId: "base-call",
+                            content: [{ type: "text", text: "matched RareTool" }],
+                            vendor: {
+                                outputBlock: JSON.stringify({
+                                    type: "tool_result",
+                                    tool_use_id: "provider-call",
+                                    content: "matched RareTool",
+                                }),
+                            },
+                        },
+                        { type: "text", text: "Found it." },
+                    ],
+                },
+                {
+                    role: "user",
+                    content: [{ type: "text" as const, text: "Continue." }],
+                },
+            ]),
+            model: "claude-opus-4-8",
+            sessionId: "replay-session",
+        });
+        const entries = replay.entries();
+
+        expect(entries.map((entry) => entry.type)).toEqual([
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ]);
+        expect(entries[1]?.message).toMatchObject({
+            role: "assistant",
+            content: [
+                {
+                    type: "tool_use",
+                    id: "base-call",
+                    name: "ToolSearch",
+                    input: { query: "weather" },
+                },
+            ],
+        });
+        expect(entries[2]?.message).toEqual({
+            role: "user",
+            content: [
+                {
+                    type: "tool_result",
+                    tool_use_id: "base-call",
+                    content: "matched RareTool",
+                },
+            ],
+        });
+        expect(entries[3]?.message).toMatchObject({
+            role: "assistant",
+            content: [{ type: "text", text: "Found it." }],
+        });
+    });
+
     it("replays the thinking a turn was signed with", () => {
         const replay = createClaudeSessionReplay({
             context: context([

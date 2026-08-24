@@ -9,6 +9,7 @@ import type {
 
 import type {
     SessionAgentMessage,
+    SessionAssistantBlock,
     SessionAssistantMessage,
     SessionContext,
     SessionImageBlock,
@@ -18,6 +19,7 @@ import type {
     SessionSystemMessage,
     SessionTextBlock,
     SessionToolResultMessage,
+    SessionToolResultBlock,
     SessionUserMessage,
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
@@ -157,29 +159,81 @@ function toSessionStoreEntries(
             version: "happy-providers",
         };
         if (message.role === "assistant") {
-            const sdkMessage = toSdkAssistantMessage(message, options.model, uuid);
-            // This must match Claude Code's transcript shape exactly. Streaming persists one
-            // assistant entry per content block, each with its own transcript UUID but with the
-            // same API message.id. Resume first reconstructs the parentUuid chain, then
-            // normalizeMessagesForAPI merges adjacent assistant entries by that shared message.id.
-            // Combining the blocks into one synthetic entry, changing the id between siblings, or
-            // failing to link every sibling can make resume discard an orphaned thinking block or
-            // lose one branch of a parallel tool-use turn.
-            for (const [blockIndex, block] of sdkMessage.content.entries()) {
-                const blockUuid =
-                    blockIndex === 0
+            let contentIndex = 0;
+            let entryIndex = 0;
+            const nextEntryUuid = (): string => {
+                const entryUuid =
+                    entryIndex === 0
                         ? uuid
-                        : stableContentBlockUuid(options.sessionId, index, blockIndex);
-                entries.push({
-                    ...base,
-                    parentUuid: blockIndex === 0 ? base.parentUuid : parentUuid,
-                    uuid: blockUuid,
-                    message: { ...sdkMessage, content: [block] },
-                    type: "assistant",
-                });
-                parentUuid = blockUuid;
-                if (typeof block === "object" && block !== null && block.type === "tool_use") {
-                    assistantUuidByToolCallId.set(block.id, blockUuid);
+                        : stableContentBlockUuid(options.sessionId, index, entryIndex);
+                entryIndex += 1;
+                return entryUuid;
+            };
+            while (contentIndex < message.content.length) {
+                const assistantBlocks: SessionAssistantBlock[] = [];
+                while (
+                    contentIndex < message.content.length &&
+                    message.content[contentIndex]?.type !== "tool_result"
+                ) {
+                    const block = message.content[contentIndex];
+                    if (block !== undefined) assistantBlocks.push(block);
+                    contentIndex += 1;
+                }
+                if (assistantBlocks.length > 0) {
+                    const segmentUuid = nextEntryUuid();
+                    const sdkMessage = toSdkAssistantMessage(
+                        { role: "assistant", content: assistantBlocks },
+                        options.model,
+                        segmentUuid,
+                    );
+                    // Streaming persists one assistant entry per block. Siblings within one
+                    // segment share the API message ID so Claude merges them on resume; an inline
+                    // provider result ends that segment and becomes the intervening user entry.
+                    for (const [blockIndex, block] of sdkMessage.content.entries()) {
+                        const blockUuid = blockIndex === 0 ? segmentUuid : nextEntryUuid();
+                        entries.push({
+                            ...base,
+                            parentUuid,
+                            uuid: blockUuid,
+                            message: { ...sdkMessage, content: [block] },
+                            type: "assistant",
+                        });
+                        parentUuid = blockUuid;
+                        if (
+                            typeof block === "object" &&
+                            block !== null &&
+                            block.type === "tool_use"
+                        ) {
+                            assistantUuidByToolCallId.set(block.id, blockUuid);
+                        }
+                    }
+                }
+
+                const toolResults: SessionToolResultBlock[] = [];
+                while (message.content[contentIndex]?.type === "tool_result") {
+                    toolResults.push(message.content[contentIndex] as SessionToolResultBlock);
+                    contentIndex += 1;
+                }
+                if (toolResults.length > 0) {
+                    const resultUuid = nextEntryUuid();
+                    const sourceToolAssistantUUID = assistantUuidByToolCallId.get(
+                        toolResults[0]!.callId,
+                    );
+                    entries.push({
+                        ...base,
+                        isMeta: true,
+                        parentUuid,
+                        uuid: resultUuid,
+                        message: {
+                            role: "user",
+                            content: toolResults.map(toInlineToolResultBlock),
+                        },
+                        ...(sourceToolAssistantUUID === undefined
+                            ? {}
+                            : { sourceToolAssistantUUID }),
+                        type: "user",
+                    });
+                    parentUuid = resultUuid;
                 }
             }
             continue;
@@ -239,7 +293,7 @@ function toSdkAssistantMessage(message: SessionAssistantMessage, model: string, 
                 {
                     type: "tool_use" as const,
                     id: block.callId,
-                    name: block.name,
+                    name: claudeToolWireName(block),
                     input: parseArguments(block.arguments),
                 },
             ];
@@ -262,6 +316,18 @@ function toSdkAssistantMessage(message: SessionAssistantMessage, model: string, 
             cache_creation: null,
         },
     };
+}
+
+function claudeToolWireName(block: { name: string; vendor?: unknown }): string {
+    const vendor = block.vendor;
+    return typeof vendor === "object" &&
+        vendor !== null &&
+        "type" in vendor &&
+        vendor.type === "claude_tool_use" &&
+        "wireName" in vendor &&
+        typeof vendor.wireName === "string"
+        ? vendor.wireName
+        : block.name;
 }
 
 function toThinkingBlock(
@@ -290,6 +356,40 @@ function toToolResultBlock(message: SessionToolResultMessage) {
         content: toSdkContent(message.content),
         ...(message.isError === undefined ? {} : { is_error: message.isError }),
     };
+}
+
+function toInlineToolResultBlock(block: SessionToolResultBlock) {
+    const native = nativeClaudeToolResult(block.vendor);
+    return native === undefined
+        ? {
+              type: "tool_result" as const,
+              tool_use_id: block.callId,
+              content: toSdkContent(block.content),
+              ...(block.isError === undefined ? {} : { is_error: block.isError }),
+          }
+        : { ...native, tool_use_id: block.callId };
+}
+
+function nativeClaudeToolResult(vendor: unknown): Record<string, unknown> | undefined {
+    if (
+        typeof vendor !== "object" ||
+        vendor === null ||
+        !("outputBlock" in vendor) ||
+        typeof vendor.outputBlock !== "string"
+    ) {
+        return undefined;
+    }
+    try {
+        const block: unknown = JSON.parse(vendor.outputBlock);
+        return typeof block === "object" &&
+            block !== null &&
+            "type" in block &&
+            block.type === "tool_result"
+            ? (block as Record<string, unknown>)
+            : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 function toSdkContent(content: readonly SessionInputBlock[]) {

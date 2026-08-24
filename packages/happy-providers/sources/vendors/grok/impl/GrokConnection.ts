@@ -83,7 +83,19 @@ export class GrokConnection {
             requireTerminalEvent: true,
             vendor: "grok",
             serverToolNames: new Set(
-                tools.filter((tool) => tool.server !== undefined).map((tool) => tool.name),
+                tools.flatMap((tool) => (tool.server === undefined ? [] : [tool.server.type])),
+            ),
+            serverToolDisplayNames: new Map(
+                tools.flatMap((tool) =>
+                    tool.server === undefined ? [] : [[tool.server.type, tool.name] as const],
+                ),
+            ),
+            serverToolDisplayNamespaces: new Map(
+                tools.flatMap((tool) =>
+                    tool.server === undefined || tool.namespace === undefined
+                        ? []
+                        : [[tool.server.type, tool.namespace] as const],
+                ),
             ),
         });
     }

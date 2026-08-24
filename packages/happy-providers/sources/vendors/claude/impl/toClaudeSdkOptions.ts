@@ -38,14 +38,18 @@ export function toClaudeSdkOptions(options: {
 }): ClaudeSdkOptions {
     const clientTools = options.tools.filter((tool) => tool.server === undefined);
     const mcpToolNames = clientTools.map((tool) => `mcp__${RIG_MCP_SERVER_NAME}__${tool.name}`);
-    const toolSearchEnabled = hasDeferredClaudeTools(options.tools);
+    const toolSearchEnabled = hasClaudeToolSearch(options.tools);
     const builtInToolNames = claudeSdkBuiltInToolNames(options.tools);
     const { abortController, cleanup } = toAbortController(options.abort);
     options.registerAbortCleanup?.(cleanup);
     return {
         allowedTools: [...mcpToolNames, ...builtInToolNames],
         mcpServers: {
-            [RIG_MCP_SERVER_NAME]: createClaudeMcpServer(clientTools, options.callTool),
+            [RIG_MCP_SERVER_NAME]: createClaudeMcpServer(
+                clientTools,
+                options.callTool,
+                toolSearchEnabled,
+            ),
         },
         ...(options.compaction ? { maxTurns: 1 } : {}),
         model: options.model,
@@ -131,6 +135,7 @@ function credentialEnvironment(credential: ClaudeCredential): NodeJS.ProcessEnv 
 function createClaudeMcpServer(
     tools: readonly SessionTool[],
     callTool?: (toolUseId: string) => Promise<CallToolResult>,
+    toolSearchEnabled = false,
 ) {
     const instance = new McpServer(
         {
@@ -142,7 +147,7 @@ function createClaudeMcpServer(
         },
     );
     instance.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: tools.map(toClaudeMcpToolDefinition),
+        tools: tools.map((tool) => toClaudeMcpToolDefinition(tool, toolSearchEnabled)),
     }));
     instance.server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (callTool === undefined) {
@@ -179,26 +184,36 @@ const claudeToolCallMetaSchema = Type.Object({
 });
 
 export function claudeSdkBuiltInToolNames(tools: readonly SessionTool[]): string[] {
-    return [
-        ...tools.flatMap((tool) => (tool.server === undefined ? [] : [tool.server.type])),
-        ...(hasDeferredClaudeTools(tools) ? ["ToolSearch"] : []),
-    ];
+    return tools.flatMap((tool) => (tool.server === undefined ? [] : [tool.server.type]));
 }
 
-function hasDeferredClaudeTools(tools: readonly SessionTool[]): boolean {
-    return tools.some((tool) => tool.server === undefined && tool.defer === true);
+function hasClaudeToolSearch(tools: readonly SessionTool[]): boolean {
+    return tools.some((tool) => tool.server?.type === "ToolSearch");
 }
 
-export function toClaudeMcpToolDefinition(tool: SessionTool) {
+export function toClaudeMcpToolDefinition(tool: SessionTool, toolSearchEnabled = false) {
+    const description = claudeMcpToolDescription(tool);
     return {
         name: tool.name,
-        description:
-            tool.description === undefined || tool.description.trim().length === 0
-                ? `Run ${tool.name} through Rig.`
-                : tool.description,
+        description,
         inputSchema: toLlmParametersSchema(tool.parameters),
-        ...(tool.defer === true ? {} : { _meta: { "anthropic/alwaysLoad": true } }),
+        ...(toolSearchEnabled && tool.defer === true
+            ? {}
+            : { _meta: { "anthropic/alwaysLoad": true } }),
     };
+}
+
+function claudeMcpToolDescription(tool: SessionTool): string {
+    const description =
+        tool.description === undefined || tool.description.trim().length === 0
+            ? `Run ${tool.name} through Rig.`
+            : tool.description;
+    const keywords = [...new Set((tool.searchKeywords ?? []).map((value) => value.trim()))].filter(
+        Boolean,
+    );
+    return keywords.length === 0
+        ? description
+        : `${description}\n\nSearch keywords: ${keywords.join(", ")}`;
 }
 
 function toAbortController(signal: AbortSignal | undefined): {

@@ -42,6 +42,7 @@ export function searchCodexTools<T extends SessionTool>(
         add(tool.name);
         add(tool.name.replaceAll("_", " "));
         add(tool.description);
+        for (const keyword of tool.searchKeywords ?? []) add(keyword);
 
         const pending: unknown[] = [tool.parameters];
         const seen = new Set<object>();

@@ -1,28 +1,17 @@
-import { Type } from "@sinclair/typebox";
 import type { SessionTool } from "@/core/SessionTool.js";
 import { toLlmParametersSchema } from "@/tools/sanitizeSchema.js";
 import type { NamespaceTool, Tool } from "openai/resources/responses/responses.js";
-
-const clientToolSearch = {
-    type: "tool_search",
-    execution: "client",
-    description:
-        "# Tool discovery\n\nSearches deferred tools and returns matching definitions for the next model call.\n\nSome tools may not have been provided upfront. Use `tool_search` to discover a relevant deferred tool.",
-    parameters: Type.Object(
-        {
-            limit: Type.Optional(
-                Type.Number({ description: "Maximum number of tools to return. Defaults to 8." }),
-            ),
-            query: Type.String({ description: "Search query for deferred tools." }),
-        },
-        { additionalProperties: false },
-    ),
-} as const satisfies Tool;
 
 export function toCodexToolDefinitions(
     tools: readonly SessionTool[],
     options: { includeDeferred?: boolean } = {},
 ): Tool[] {
+    for (const tool of tools) assertCodexToolSearchDefinition(tool);
+    // Discovery is selected by the explicit provider-native descriptor supplied by the caller.
+    // Without it, deferred tools are ordinary eager tools so a provider that does not support
+    // discovery still receives the complete catalog.
+    const discoveryEnabled =
+        options.includeDeferred === true || tools.some(isCodexToolSearchDefinition);
     const nativeNamespaceDescriptions = new Map([
         ["image_gen", "Tools in the image_gen namespace."],
         ["collaboration", "Tools for spawning and managing sub-agents."],
@@ -31,9 +20,11 @@ export function toCodexToolDefinitions(
     const namespaces = new Map<string, NamespaceTool>();
 
     for (const tool of tools) {
-        if (tool.defer === true && options.includeDeferred !== true) continue;
-        const definition = toCodexTool(tool);
-        if (tool.namespace === undefined) {
+        const definition = toCodexTool(tool, discoveryEnabled);
+        // A server descriptor is already provider-native and stays top-level. Its SessionTool
+        // namespace is the caller-facing identity Base uses for policy, not an OpenAI namespace
+        // wrapper around the native server tool.
+        if (tool.namespace === undefined || tool.server !== undefined) {
             output.push(definition);
             continue;
         }
@@ -58,9 +49,6 @@ export function toCodexToolDefinitions(
         }
         namespace.tools.push(definition);
     }
-    if (options.includeDeferred !== true && tools.some((tool) => tool.defer === true) && true) {
-        output.push(clientToolSearch);
-    }
     return output;
 }
 
@@ -68,7 +56,7 @@ function humanizeNamespace(namespace: string): string {
     return namespace.replaceAll("_", " ");
 }
 
-function toCodexTool(tool: SessionTool): Tool {
+function toCodexTool(tool: SessionTool, discoveryEnabled: boolean): Tool {
     if (tool.server !== undefined) {
         const server = structuredClone(tool.server) as Tool & {
             parameters?: unknown;
@@ -95,7 +83,18 @@ function toCodexTool(tool: SessionTool): Tool {
         name: tool.name,
         ...(tool.description === undefined ? {} : { description: tool.description }),
         strict: false,
-        ...(tool.defer === true ? { defer_loading: true } : {}),
+        ...(discoveryEnabled && tool.defer === true ? { defer_loading: true } : {}),
         parameters: tool.parameters === undefined ? null : toLlmParametersSchema(tool.parameters),
     };
+}
+
+export function isCodexToolSearchDefinition(tool: SessionTool): boolean {
+    return tool.server?.type === "tool_search";
+}
+
+function assertCodexToolSearchDefinition(tool: SessionTool): void {
+    if (!isCodexToolSearchDefinition(tool)) return;
+    const execution = tool.server?.execution;
+    if (execution === undefined || execution === "client" || execution === "server") return;
+    throw new Error("Codex tool_search execution must be 'client' or 'server'.");
 }

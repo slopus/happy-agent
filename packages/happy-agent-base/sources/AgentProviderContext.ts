@@ -31,9 +31,13 @@ export function baseSessionEvent(
         const { callId: _callId, vendor: _vendor, ...rest } = event;
         return { ...rest, callId: id };
     }
+    if (event.type === "toolcall_end") {
+        const { callId: _callId, ...rest } = event;
+        const { vendor: _vendor, ...publicRest } = rest as typeof rest & { vendor?: unknown };
+        return { ...publicRest, callId: requireBaseId(responseToolIds, event.callId) };
+    }
     if (
         event.type === "toolcall_delta" ||
-        event.type === "toolcall_end" ||
         event.type === "toolcall_result_delta" ||
         event.type === "toolcall_result_end"
     ) {

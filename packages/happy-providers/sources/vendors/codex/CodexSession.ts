@@ -19,6 +19,7 @@ import type { SessionModelConfiguration } from "@/core/SessionModelConfiguration
 import type { SessionReasoningEffort, SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import { mapOpenAIResponseStream } from "@/protocol/responses/mapOpenAIResponseStream.js";
+import { responsesServerToolName } from "@/protocol/responses/toResponsesToolDefinitions.js";
 import { isBedrockCredential, type CodexProviderCredential } from "@/vendors/VendorCredential.js";
 import {
     classifyCodexError,
@@ -56,6 +57,7 @@ import { resolveCodexReasoningEffort } from "@/vendors/codex/impl/resolveCodexRe
 import { resolveCodexSessionModelId } from "@/vendors/codex/impl/resolveCodexSessionModelId.js";
 import { BEDROCK_DEFAULT_REGION } from "@/vendors/bedrock/impl/bedrockConstants.js";
 import { settleCodexToolSearch } from "@/vendors/codex/impl/settleCodexToolSearch.js";
+import { isCodexToolSearchDefinition } from "@/vendors/codex/impl/toCodexToolDefinitions.js";
 import {
     resolveCodexStreamIdleTimeout,
     waitForCodexCompactionRetry,
@@ -524,17 +526,42 @@ export class CodexSession extends BaseSession {
         let unauthorizedRecoveryStep = 0;
 
         for (;;) {
-            const turnTools = configuration.tools ?? [];
+            const turnTools = codexTurnTools(
+                configuration.tools ?? [],
+                isBedrockCredential(this.credential),
+            );
+            const clientToolSearchTool = turnTools.find(
+                (tool) => tool.server?.type === "tool_search" && tool.server.execution === "client",
+            );
+            const clientToolSearchEnabled = clientToolSearchTool !== undefined;
+            const turnConfiguration = { ...configuration, tools: turnTools };
             const payload = this.createRequest(
                 this.context,
-                configuration,
+                turnConfiguration,
                 model,
                 effort,
                 request.serviceTier,
                 request.structuredOutput,
             );
             const serverToolNames = new Set(
-                turnTools.filter((tool) => tool.server !== undefined).map((tool) => tool.name),
+                turnTools.flatMap((tool) => {
+                    const name = responsesServerToolName(tool);
+                    return name === undefined ? [] : [name];
+                }),
+            );
+            const serverToolDisplayNames = new Map(
+                turnTools.flatMap((tool) => {
+                    const name = responsesServerToolName(tool);
+                    return name === undefined ? [] : [[name, tool.name] as const];
+                }),
+            );
+            const serverToolDisplayNamespaces = new Map(
+                turnTools.flatMap((tool) => {
+                    const name = responsesServerToolName(tool);
+                    return name === undefined || tool.namespace === undefined
+                        ? []
+                        : [[name, tool.namespace] as const];
+                }),
             );
             const attemptUsage: Extract<SessionEvent, { type: "token_usage" }>[] = [];
             yield { type: "block_start" };
@@ -554,6 +581,8 @@ export class CodexSession extends BaseSession {
                 const mapped = mapOpenAIResponseStream(responseStream, {
                     failureMessage: `${model} failed to generate a response.`,
                     serverToolNames,
+                    serverToolDisplayNames,
+                    serverToolDisplayNamespaces,
                     requireTerminalEvent: true,
                     vendor: "codex",
                     ...(signal === undefined ? {} : { signal }),
@@ -575,14 +604,29 @@ export class CodexSession extends BaseSession {
                         attemptUsage.push(event);
                         continue;
                     }
-                    if (event.type === "toolcall_start" && event.name === "tool_search") {
+                    if (
+                        clientToolSearchEnabled &&
+                        event.type === "toolcall_start" &&
+                        event.name === "tool_search"
+                    ) {
                         internalToolSearchCallIds.add(event.callId);
+                        // Client-executed discovery is still provider-owned from Agent Base's
+                        // perspective: Codex settles it below and the caller never executes it.
+                        yield {
+                            ...event,
+                            name: clientToolSearchTool?.name ?? event.name,
+                            ...(clientToolSearchTool?.namespace === undefined
+                                ? {}
+                                : { namespace: clientToolSearchTool.namespace }),
+                            server: true,
+                        };
                         continue;
                     }
                     if (
                         (event.type === "toolcall_delta" || event.type === "toolcall_end") &&
                         internalToolSearchCallIds.has(event.callId)
                     ) {
+                        yield event;
                         continue;
                     }
                     yield event;
@@ -613,6 +657,18 @@ export class CodexSession extends BaseSession {
                         ? settleCodexToolSearch(result, turnTools)
                         : undefined;
                 if (settled !== undefined) result = settled.result;
+                for (const settlement of settled?.settlements ?? []) {
+                    yield {
+                        type: "toolcall_result_start",
+                        callId: settlement.call.callId,
+                        vendor: { outputItem: settlement.outputItem },
+                    };
+                    yield {
+                        type: "toolcall_result_end",
+                        callId: settlement.call.callId,
+                        content: [],
+                    };
+                }
                 for (const event of attemptUsage) yield event;
                 if (result !== undefined && "assistantText" in result) {
                     if (settled?.settled === true && result.toolCalls.length === 0) {
@@ -638,11 +694,7 @@ export class CodexSession extends BaseSession {
                     }
                     const assistantMessage = {
                         role: "assistant" as const,
-                        content: [...carriedContent, ...result.message.content].filter(
-                            (block) =>
-                                (block.type !== "tool_call" && block.type !== "tool_result") ||
-                                !internalToolSearchCallIds.has(block.callId),
-                        ),
+                        content: [...carriedContent, ...result.message.content],
                     };
                     if (assistantMessage.content.length > 0) {
                         this.context = {
@@ -870,6 +922,11 @@ export class CodexSession extends BaseSession {
             `Codex model '${model}' requires a model configuration supplied when the session is created.`,
         );
     }
+}
+
+/** Bedrock's OpenAI transport has no documented native tool-search support. */
+function codexTurnTools(tools: readonly SessionTool[], bedrock: boolean): readonly SessionTool[] {
+    return bedrock ? tools.filter((tool) => !isCodexToolSearchDefinition(tool)) : tools;
 }
 
 function cloneConfiguration(configuration: SessionModelConfiguration): SessionModelConfiguration {

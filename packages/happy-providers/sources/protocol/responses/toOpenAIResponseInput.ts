@@ -119,7 +119,18 @@ export function toOpenAIResponseInput(context: SessionContext): ResponseInput {
 
             const callId = mapCallId(block.callId);
             const vendorType = toolVendorType(block.vendor);
-            if (vendorType === "tool_search_call") {
+            if (isServerToolSearchCall(block.vendor, block.server)) {
+                try {
+                    input.push({
+                        type: "tool_search_call",
+                        call_id: callId,
+                        execution: "server",
+                        arguments: JSON.parse(block.arguments),
+                    } as ResponseInputItem);
+                } catch {
+                    // Malformed optional server tool-search arguments are omitted from replay.
+                }
+            } else if (vendorType === "tool_search_call") {
                 try {
                     input.push({
                         type: "tool_search_call",
@@ -193,4 +204,13 @@ function toolVendorType(vendor: any): ResponsesToolCallType | undefined {
         vendor?.type === "tool_search_call"
         ? vendor.type
         : undefined;
+}
+
+function isServerToolSearchCall(vendor: any, server: true | undefined): boolean {
+    return (
+        server === true &&
+        (vendor?.provider === "codex" || vendor?.provider === "responses") &&
+        vendor?.type === "server_tool_call" &&
+        vendor?.nativeType === "tool_search_call"
+    );
 }

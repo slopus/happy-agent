@@ -31,7 +31,7 @@ describe("Grok server tool goldens", () => {
 
     it("sends server tools alongside the tools Rig executes", async () => {
         const captured = await captureRequest({ serverTools: grok_server_tools });
-        expect(captured.tools).toEqual([
+        expect(captured.body.tools).toEqual([
             { type: "function", name: "read_file", description: "Read a file." },
             { type: "web_search" },
             { type: "x_search" },
@@ -40,7 +40,7 @@ describe("Grok server tool goldens", () => {
 
     it("sends no server tools when a session does not define them", async () => {
         const captured = await captureRequest({});
-        expect(captured.tools).toEqual([
+        expect(captured.body.tools).toEqual([
             { type: "function", name: "read_file", description: "Read a file." },
         ]);
     });
@@ -50,10 +50,57 @@ describe("Grok server tool goldens", () => {
             serverTools: grok_server_tools,
             compaction: true,
         });
-        expect(captured.tools).toEqual([
+        expect(captured.body.tools).toEqual([
             { type: "function", name: "read_file", description: "Read a file." },
         ]);
-        expect(captured.temperature).toBe(1);
+        expect(captured.body.temperature).toBe(1);
+    });
+
+    it("reports a native server call through its configured name and namespace", async () => {
+        const captured = await captureRequest({
+            serverTools: [
+                {
+                    name: "SearchWeb",
+                    namespace: "search",
+                    server: { type: "web_search" },
+                },
+            ],
+            responseEvents: [
+                {
+                    type: "response.output_item.added",
+                    output_index: 0,
+                    item: {
+                        type: "web_search_call",
+                        id: "ws_alias",
+                        action: { type: "search", query: "Rig" },
+                    },
+                },
+                {
+                    type: "response.completed",
+                    response: {
+                        output: [
+                            {
+                                type: "web_search_call",
+                                id: "ws_alias",
+                                status: "completed",
+                                action: { type: "search", query: "Rig" },
+                            },
+                        ],
+                        usage: { total_tokens: 1 },
+                    },
+                },
+            ],
+        });
+
+        expect(captured.events).toContainEqual(
+            expect.objectContaining({
+                type: "toolcall_start",
+                callId: "ws_alias",
+                name: "SearchWeb",
+                namespace: "search",
+                server: true,
+            }),
+        );
     });
 
     it("reports captured X search as provider-executed rather than a call Rig must answer", async () => {
@@ -236,11 +283,13 @@ describe("Grok server tool goldens", () => {
             name: "web_search",
             server: true,
         });
-        expect(events).toContainEqual({
-            type: "toolcall_end",
-            callId: "ws_complete",
-            arguments: '{"type":"search","query":"Rig"}',
-        });
+        expect(events).toContainEqual(
+            expect.objectContaining({
+                type: "toolcall_end",
+                callId: "ws_complete",
+                arguments: '{"type":"search","query":"Rig"}',
+            }),
+        );
         expect(
             events.find((event) => event.type === "toolcall_end" && event.callId === "ws_complete"),
         ).not.toHaveProperty("incomplete");
@@ -291,11 +340,13 @@ describe("Grok server tool goldens", () => {
             name: "x_keyword_search",
             server: true,
         });
-        expect(events).toContainEqual({
-            type: "toolcall_end",
-            callId: "xs_call-1",
-            arguments: '{"query":"Claude Code"}',
-        });
+        expect(events).toContainEqual(
+            expect.objectContaining({
+                type: "toolcall_end",
+                callId: "xs_call-1",
+                arguments: '{"query":"Claude Code"}',
+            }),
+        );
     });
 
     it("rejects a malformed custom call before invalid fields reach durable events", async () => {
@@ -487,11 +538,11 @@ describe("Grok server tool goldens", () => {
         // Exactly one pair, carrying the arguments the terminal payload settled.
         expect(serverToolCallStarts(events)).toHaveLength(1);
         expect(serverToolCallEnds(events)).toEqual([
-            {
+            expect.objectContaining({
                 type: "toolcall_end",
                 callId: "xs_1",
                 arguments: '{"query":"Claude Code","limit":"5"}',
-            },
+            }),
         ]);
     });
 
@@ -761,11 +812,13 @@ describe("Grok server tool goldens", () => {
             next = await mapped.next();
         }
 
-        expect(events).toContainEqual({
-            type: "toolcall_end",
-            callId: "ws_terminal_race",
-            arguments: '{"type":"search","query":"Rig"}',
-        });
+        expect(events).toContainEqual(
+            expect.objectContaining({
+                type: "toolcall_end",
+                callId: "ws_terminal_race",
+                arguments: '{"type":"search","query":"Rig"}',
+            }),
+        );
         expect(next.value.assistantText).toBe("Terminal answer.");
         expect(next.value.stopReason).toBe("stop");
     });
@@ -820,12 +873,14 @@ describe("Grok server tool goldens", () => {
             { serverToolNames: new Set(["web_search"]) },
         );
 
-        expect(events).toContainEqual({
-            type: "toolcall_end",
-            callId: "ws_failed",
-            arguments: '{"type":"search","query":"Rig"}',
-            incomplete: true,
-        });
+        expect(events).toContainEqual(
+            expect.objectContaining({
+                type: "toolcall_end",
+                callId: "ws_failed",
+                arguments: '{"type":"search","query":"Rig"}',
+                incomplete: true,
+            }),
+        );
     });
 
     it("rejects a malformed supplied server-call id", async () => {
@@ -985,26 +1040,31 @@ async function replay(golden: any) {
 async function captureRequest(options: {
     serverTools?: readonly SessionTool[];
     compaction?: boolean;
+    responseEvents?: readonly unknown[];
 }) {
     let capturedBody: any;
+    const events: SessionEvent[] = [];
     const summary = `<summary>${"Summarized session state. ".repeat(40)}</summary>`;
     const server = createServer(async (request, response) => {
         capturedBody = JSON.parse(await readBody(request));
         response.writeHead(200, { "content-type": "text/event-stream" });
-        response.end(
-            `${sse({
+        const responseEvents = options.responseEvents ?? [
+            {
                 type: "response.output_item.added",
                 output_index: 0,
                 item: { type: "message", id: "msg", role: "assistant", content: [] },
-            })}${sse({
+            },
+            {
                 type: "response.output_text.delta",
                 output_index: 0,
                 delta: summary,
-            })}${sse({
+            },
+            {
                 type: "response.completed",
                 response: { id: "response", output: [], usage: { total_tokens: 1 } },
-            })}data: [DONE]\n\n`,
-        );
+            },
+        ];
+        response.end(`${responseEvents.map(sse).join("")}data: [DONE]\n\n`);
     });
     server.listen(0, "127.0.0.1");
     await new Promise<void>((resolve, reject) => {
@@ -1025,7 +1085,7 @@ async function captureRequest(options: {
             instructions: "System prompt.",
             tools: [readFileTool, ...(options.serverTools ?? [])],
         });
-        for await (const _event of session.run(testContext, {
+        for await (const event of session.run(testContext, {
             context: {
                 instructions: "",
                 messages: [
@@ -1036,7 +1096,7 @@ async function captureRequest(options: {
                 ],
             },
         })) {
-            // Drained so the request completes.
+            events.push(event);
         }
         if (options.compaction === true) {
             capturedBody = undefined;
@@ -1053,7 +1113,7 @@ async function captureRequest(options: {
             });
             expect(compacted.status).toBe("completed");
         }
-        return capturedBody;
+        return { body: capturedBody, events };
     } finally {
         server.close();
     }

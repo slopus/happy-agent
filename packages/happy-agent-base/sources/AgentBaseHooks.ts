@@ -252,11 +252,12 @@ export interface AgentBaseToolOutcome {
  * receives the agent's context, including its immutable AgentConfig and current selection.
  */
 export interface AgentBaseHooks {
-    /** Called and awaited for every session event the provider emits, for observation only. */
+    /** Called and awaited for published provider session events, for observation only. */
     readonly onEvent?: (ctx: Context, event: SessionEvent) => MaybePromise<unknown>;
     /**
-     * Called only for a completed assistant block, inside the transaction that appends it to
-     * durable history. A failure rolls the append and every write made by this hook back.
+     * Called only for a published completed assistant block, inside the transaction that appends
+     * it to durable history. A context-only provider call is omitted while Base still appends the
+     * private model-context block. A failure rolls the append and every hook write back.
      */
     readonly onEventTransact?: (ctx: Context, event: AgentBasePersistedEvent) => MaybePromise<void>;
     /**
@@ -266,11 +267,11 @@ export interface AgentBaseHooks {
      */
     readonly instructions?: (ctx: Context) => MaybePromise<string>;
     /**
-     * Extends `state.tools` for the session, consulted before each inference and tool
-     * execution. This is a correctness hook: a failure — including duplicate tool names in
-     * the merged list — fails the turn loudly instead of silently running with wrong tools.
-     * When the merged descriptors change between inferences, the provider session is
-     * recreated so the model sees the current tools.
+     * Extends `state.tools` for the session, consulted once before each inference and compaction,
+     * and before tool execution. This is a correctness hook: a failure — including duplicate
+     * tool names in the merged list — fails the turn loudly instead of silently running with
+     * wrong tools. When the merged descriptors change between inferences, the provider session
+     * is recreated so the model sees the current tools.
      */
     readonly tools?: (ctx: Context) => MaybePromise<readonly AnyAgentTool[]>;
     /** Called immediately before the provider is asked to compact the current history. */
@@ -336,12 +337,10 @@ export interface AgentBaseHooks {
      * the call it answers, so what a module concludes about the result and the result itself
      * become durable together.
      *
-     * Every result the conversation records reaches this, including the ones no execution
-     * produced: a call settled as an error because an abort, a shutdown, a restart, or a failed
-     * turn ended it. It receives the public result under Base's CUID2 with opaque provider replay
-     * metadata removed; the transaction privately appends the provider-context result at the same
-     * time. A failure rolls that commit back, leaving the call unanswered — which ends a running
-     * batch and the turn with it, and leaves a settlement for a later attempt to make.
+     * Every Base-executed result the conversation records reaches this, including results no
+     * execution produced: a call settled as an error because an abort, shutdown, restart, or
+     * failed turn ended it. It receives the public result under Base's CUID2 with opaque provider
+     * replay metadata removed. A failure rolls that commit back, leaving the call unanswered.
      */
     readonly afterToolCallTransact?: (
         ctx: Context,

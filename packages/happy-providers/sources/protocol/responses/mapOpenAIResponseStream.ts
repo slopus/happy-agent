@@ -42,6 +42,57 @@ interface ActiveOutputItem {
     streamedText?: string;
 }
 
+interface ServerToolMappingOptions {
+    /** Native server-tool names carried by this exact request. */
+    serverToolNames?: ReadonlySet<string> | undefined;
+    /** Native name to caller-configured tool identity. */
+    serverToolDisplayNames?: ReadonlyMap<string, string> | undefined;
+    /** Native name to caller-configured namespace. */
+    serverToolDisplayNamespaces?: ReadonlyMap<string, string> | undefined;
+}
+
+/** Pairs nullable hosted-search result IDs with their preceding call in output order. */
+class ServerToolSearchPairing {
+    readonly #callIds = new Map<string, string>();
+    readonly #resultCallIds = new Map<string, string>();
+    readonly #pendingCallIds: string[] = [];
+    readonly #scope: string;
+
+    constructor(scope: string) {
+        this.#scope = scope;
+    }
+
+    callId(item: unknown, outputIndex: number): string {
+        const parsed = asOutputItem(item);
+        if (parsed?.call_id != null) return parsed.call_id;
+        const key = parsed?.id ?? `call:${String(outputIndex)}`;
+        const existing = this.#callIds.get(key);
+        if (existing !== undefined) return existing;
+        const callId = parsed?.id ?? `server_tool_call_${this.#scope}_${String(outputIndex)}`;
+        this.#callIds.set(key, callId);
+        this.#pendingCallIds.push(callId);
+        return callId;
+    }
+
+    resultCallId(item: unknown, outputIndex: number): string {
+        const parsed = asOutputItem(item);
+        if (parsed?.call_id != null) return parsed.call_id;
+        const key = parsed?.id ?? `result:${String(outputIndex)}`;
+        const existing = this.#resultCallIds.get(key);
+        if (existing !== undefined) return existing;
+        const callId =
+            this.#pendingCallIds.shift() ??
+            parsed?.id ??
+            `server_tool_result_${this.#scope}_${String(outputIndex)}`;
+        this.#resultCallIds.set(key, callId);
+        return callId;
+    }
+
+    fallbackCallId(outputIndex: number): string {
+        return `server_tool_call_${this.#scope}_${String(outputIndex)}`;
+    }
+}
+
 export interface OpenAIResponseRunResult {
     assistantText: string;
     message: SessionAssistantMessage;
@@ -68,9 +119,7 @@ export async function* mapOpenAIResponseStream(
         failureMessage: string;
         requireTerminalEvent?: boolean;
         vendor?: "codex" | "grok" | "responses";
-        /** Names of the `server: true` tools carried by this exact request. */
-        serverToolNames?: ReadonlySet<string>;
-    },
+    } & ServerToolMappingOptions,
 ): AsyncGenerator<SessionEvent, OpenAIResponseRunResult> {
     const activeItems = new Map<number, ActiveOutputItem>();
     let assistantText = "";
@@ -81,9 +130,11 @@ export async function* mapOpenAIResponseStream(
     const toolCalls: CollectedToolCall[] = [];
     const outputItems = new Map<number, string>();
     const finishedServerToolCalls = new Set<string>();
+    const finishedServerToolResults = new Set<string>();
     const finishedMessageItems = new Set<number>();
     const finishedReasoningItems = new Set<number>();
     const fallbackCallIdScope = randomUUID();
+    const serverToolSearchPairing = new ServerToolSearchPairing(fallbackCallIdScope);
     let usage: SessionUsage = { ...EMPTY_SESSION_USAGE };
     let outputTokensReported = false;
 
@@ -97,7 +148,7 @@ export async function* mapOpenAIResponseStream(
                 orderedOutputItems,
                 toolCalls,
                 options,
-                fallbackCallIdScope,
+                serverToolSearchPairing,
             ),
             outputTokensReported,
             outputItems: orderedOutputItems,
@@ -121,7 +172,7 @@ export async function* mapOpenAIResponseStream(
                     [],
                     finishedServerToolCalls,
                     options,
-                    fallbackCallIdScope,
+                    serverToolSearchPairing,
                     true,
                 );
                 return finish("stop");
@@ -243,14 +294,30 @@ export async function* mapOpenAIResponseStream(
                         const callId = serverToolCallId(
                             event.item,
                             event.output_index,
-                            fallbackCallIdScope,
+                            serverToolSearchPairing,
                         );
+                        const namespace = serverExecutedItemNamespace(event.item, options);
                         activeItems.set(event.output_index, {
                             type: "server_tool_call",
                             callId,
                             name,
+                            ...(namespace === undefined ? {} : { namespace }),
                         });
-                        yield { type: "toolcall_start", callId, name, server: true };
+                        yield {
+                            type: "toolcall_start",
+                            callId,
+                            name,
+                            ...(namespace === undefined ? {} : { namespace }),
+                            server: true,
+                            ...(event.item.type === "tool_search_call"
+                                ? {
+                                      vendor: responseServerToolVendor(
+                                          options.vendor,
+                                          "tool_search_call",
+                                      ),
+                                  }
+                                : {}),
+                        };
                     }
                 }
                 continue;
@@ -332,6 +399,25 @@ export async function* mapOpenAIResponseStream(
                 assertServerCallWasDeclared(event.item, options);
                 const activeItem = activeItems.get(event.output_index);
                 outputItems.set(event.output_index, JSON.stringify(event.item));
+                if (isServerToolSearchOutputItem(event.item, options)) {
+                    const callId = serverToolSearchOutputCallId(
+                        event.item,
+                        event.output_index,
+                        serverToolSearchPairing,
+                    );
+                    const incomplete = isIncompleteServerToolCall(event.item);
+                    yield* emitToolCallResult(callId, serverToolSearchOutputResult(event.item), {
+                        ...(incomplete ? { incomplete: true } : {}),
+                        vendor: {
+                            provider: options.vendor ?? "grok",
+                            type: "server_tool_result",
+                            outputItem: JSON.stringify(event.item),
+                        },
+                    });
+                    finishedServerToolResults.add(callId);
+                    activeItems.delete(event.output_index);
+                    continue;
+                }
                 if (event.item.type === "reasoning") {
                     encryptedReasoning = JSON.stringify(event.item);
                     if (activeItem?.type !== "reasoning") yield { type: "reasoning_start" };
@@ -366,15 +452,26 @@ export async function* mapOpenAIResponseStream(
                 if (serverToolName !== undefined) {
                     const callId =
                         activeItem?.callId ??
-                        serverToolCallId(event.item, event.output_index, fallbackCallIdScope);
+                        serverToolCallId(event.item, event.output_index, serverToolSearchPairing);
                     const argumentsJson = serverToolCallArguments(event.item);
                     const incomplete = isIncompleteServerToolCall(event.item);
+                    const namespace =
+                        activeItem?.namespace ?? serverExecutedItemNamespace(event.item, options);
                     if (activeItem === undefined) {
                         yield {
                             type: "toolcall_start",
                             callId,
                             name: serverToolName,
+                            ...(namespace === undefined ? {} : { namespace }),
                             server: true,
+                            ...(event.item.type === "tool_search_call"
+                                ? {
+                                      vendor: responseServerToolVendor(
+                                          options.vendor,
+                                          "tool_search_call",
+                                      ),
+                                  }
+                                : {}),
                         };
                     }
                     yield {
@@ -382,6 +479,7 @@ export async function* mapOpenAIResponseStream(
                         callId,
                         arguments: argumentsJson,
                         ...(incomplete ? { incomplete: true as const } : {}),
+                        vendor: responseCompletedServerToolVendor(options.vendor, event.item),
                     };
                     // Sources and other provider-owned outcomes ride beside the call, not inside
                     // the executor tool loop. Emit them only when the item actually carries a
@@ -527,7 +625,14 @@ export async function* mapOpenAIResponseStream(
                     event.response.output ?? [],
                     finishedServerToolCalls,
                     options,
-                    fallbackCallIdScope,
+                    serverToolSearchPairing,
+                    true,
+                );
+                yield* settleServerToolResults(
+                    event.response.output ?? [],
+                    finishedServerToolResults,
+                    options,
+                    serverToolSearchPairing,
                     true,
                 );
                 yield* settleTerminalReasoningBlocks(
@@ -618,7 +723,13 @@ export async function* mapOpenAIResponseStream(
                     event.response.output ?? [],
                     finishedServerToolCalls,
                     options,
-                    fallbackCallIdScope,
+                    serverToolSearchPairing,
+                );
+                yield* settleServerToolResults(
+                    event.response.output ?? [],
+                    finishedServerToolResults,
+                    options,
+                    serverToolSearchPairing,
                 );
                 yield* settleTerminalReasoningBlocks(
                     activeItems,
@@ -716,7 +827,7 @@ export async function* mapOpenAIResponseStream(
                     [],
                     finishedServerToolCalls,
                     options,
-                    fallbackCallIdScope,
+                    serverToolSearchPairing,
                     true,
                 );
                 throw responseStreamError(event, options.failureMessage);
@@ -728,7 +839,7 @@ export async function* mapOpenAIResponseStream(
                     event.response.output ?? [],
                     finishedServerToolCalls,
                     options,
-                    fallbackCallIdScope,
+                    serverToolSearchPairing,
                     true,
                 );
                 throw responseStreamError(event, options.failureMessage);
@@ -740,7 +851,7 @@ export async function* mapOpenAIResponseStream(
             [],
             finishedServerToolCalls,
             options,
-            fallbackCallIdScope,
+            serverToolSearchPairing,
             true,
         );
         throw error;
@@ -752,7 +863,7 @@ export async function* mapOpenAIResponseStream(
             [],
             finishedServerToolCalls,
             options,
-            fallbackCallIdScope,
+            serverToolSearchPairing,
             true,
         );
         throw new Error("Response stream closed before completion.");
@@ -769,11 +880,8 @@ export async function* mapOpenAIResponseStream(
 function toSessionAssistantMessage(
     outputItems: readonly string[],
     toolCalls: readonly CollectedToolCall[],
-    options: {
-        vendor?: "codex" | "grok" | "responses";
-        serverToolNames?: ReadonlySet<string>;
-    },
-    fallbackCallIdScope: string,
+    options: { vendor?: "codex" | "grok" | "responses" } & ServerToolMappingOptions,
+    serverToolSearchPairing: ServerToolSearchPairing,
 ): SessionAssistantMessage {
     const stripCitations = createServerCitationFilter();
     const content = outputItems.flatMap((encoded, outputIndex): SessionAssistantBlock[] => {
@@ -797,9 +905,29 @@ function toSessionAssistantMessage(
             const text = outputMessageText(item);
             return text === undefined ? [] : [{ type: "text", text: stripCitations(text) }];
         }
+        if (isServerToolSearchOutputItem(item, options)) {
+            return [
+                {
+                    type: "tool_result",
+                    callId: serverToolSearchOutputCallId(
+                        item,
+                        outputIndex,
+                        serverToolSearchPairing,
+                    ),
+                    content: [{ type: "text", text: serverToolSearchOutputResult(item) }],
+                    ...(isIncompleteServerToolCall(item) ? { incomplete: true } : {}),
+                    vendor: {
+                        provider: options.vendor ?? "grok",
+                        type: "server_tool_result",
+                        outputItem: encoded,
+                    },
+                },
+            ];
+        }
         const serverName = serverExecutedItemName(item, options);
         if (serverName !== undefined) {
-            const callId = serverToolCallId(item, outputIndex, fallbackCallIdScope);
+            const callId = serverToolCallId(item, outputIndex, serverToolSearchPairing);
+            const namespace = serverExecutedItemNamespace(item, options);
             const incomplete = isIncompleteServerToolCall(item);
             const result = serverToolCallResult(item);
             return [
@@ -807,6 +935,7 @@ function toSessionAssistantMessage(
                     type: "tool_call",
                     callId,
                     name: serverName,
+                    ...(namespace === undefined ? {} : { namespace }),
                     arguments: serverToolCallArguments(item),
                     server: true,
                     ...(incomplete ? { incomplete: true } : {}),
@@ -829,7 +958,7 @@ function toSessionAssistantMessage(
             ];
         }
         const parsed = asOutputItem(item);
-        const callId = parsed?.call_id;
+        const callId = parsed?.call_id ?? undefined;
         if (callId === undefined) return [];
         const call = toolCalls.find((candidate) => candidate.callId === callId);
         return call === undefined ? [] : [{ type: "tool_call", ...call }];
@@ -893,8 +1022,8 @@ function* settleServerToolCalls(
     activeItems: Map<number, ActiveOutputItem>,
     terminalOutput: readonly unknown[],
     finished: Set<string>,
-    options: { serverToolNames?: ReadonlySet<string> | undefined },
-    fallbackCallIdScope: string,
+    options: { vendor?: "codex" | "grok" | "responses" } & ServerToolMappingOptions,
+    serverToolSearchPairing: ServerToolSearchPairing,
     incomplete = false,
 ): Generator<SessionEvent> {
     for (const [outputIndex, activeItem] of activeItems) {
@@ -909,7 +1038,7 @@ function* settleServerToolCalls(
         const terminal = terminalOutput.find(
             (item, terminalIndex) =>
                 serverExecutedItemName(item, options) !== undefined &&
-                serverToolCallId(item, terminalIndex, fallbackCallIdScope) === callId,
+                serverToolCallId(item, terminalIndex, serverToolSearchPairing) === callId,
         );
         const settled =
             terminal === undefined
@@ -925,6 +1054,9 @@ function* settleServerToolCalls(
             callId,
             arguments: settled ?? activeItem.argumentsJson ?? "",
             ...(callIncomplete ? { incomplete: true as const } : {}),
+            ...(terminal === undefined
+                ? {}
+                : { vendor: responseCompletedServerToolVendor(options.vendor, terminal) }),
         };
         const result = terminal === undefined ? undefined : serverToolCallResult(terminal);
         if (result !== undefined) {
@@ -939,16 +1071,29 @@ function* settleServerToolCalls(
     for (const [terminalIndex, item] of terminalOutput.entries()) {
         const name = serverExecutedItemName(item, options);
         if (name === undefined) continue;
-        const callId = serverToolCallId(item, terminalIndex, fallbackCallIdScope);
+        const callId = serverToolCallId(item, terminalIndex, serverToolSearchPairing);
+        const namespace = serverExecutedItemNamespace(item, options);
         if (finished.has(callId)) continue;
         const callIncomplete =
             isIncompleteServerToolCall(item) || (incomplete && isIncompleteOutputItem(item));
-        yield { type: "toolcall_start", callId, name, server: true };
+        yield {
+            type: "toolcall_start",
+            callId,
+            name,
+            ...(namespace === undefined ? {} : { namespace }),
+            server: true,
+            ...(isItemType(item, "tool_search_call")
+                ? {
+                      vendor: responseServerToolVendor(options.vendor, "tool_search_call"),
+                  }
+                : {}),
+        };
         yield {
             type: "toolcall_end",
             callId,
             arguments: serverToolCallArguments(item),
             ...(callIncomplete ? { incomplete: true as const } : {}),
+            vendor: responseCompletedServerToolVendor(options.vendor, item),
         };
         const result = serverToolCallResult(item);
         if (result !== undefined) {
@@ -960,6 +1105,31 @@ function* settleServerToolCalls(
     }
 }
 
+function* settleServerToolResults(
+    terminalOutput: readonly unknown[],
+    finished: Set<string>,
+    options: { vendor?: "codex" | "grok" | "responses" } & ServerToolMappingOptions,
+    serverToolSearchPairing: ServerToolSearchPairing,
+    incomplete = false,
+): Generator<SessionEvent> {
+    for (const [outputIndex, item] of terminalOutput.entries()) {
+        if (!isServerToolSearchOutputItem(item, options)) continue;
+        const callId = serverToolSearchOutputCallId(item, outputIndex, serverToolSearchPairing);
+        if (finished.has(callId)) continue;
+        const resultIncomplete =
+            isIncompleteServerToolCall(item) || (incomplete && isIncompleteOutputItem(item));
+        yield* emitToolCallResult(callId, serverToolSearchOutputResult(item), {
+            ...(resultIncomplete ? { incomplete: true } : {}),
+            vendor: {
+                provider: options.vendor ?? "grok",
+                type: "server_tool_result",
+                outputItem: JSON.stringify(item),
+            },
+        });
+        finished.add(callId);
+    }
+}
+
 function emptyToUndefined(value: string): string | undefined {
     return value.length === 0 ? undefined : value;
 }
@@ -967,8 +1137,8 @@ function emptyToUndefined(value: string): string | undefined {
 /**
  * Names the server tool behind an output item the provider executed itself.
  *
- * Two shapes reach us, and each has to be positively recognized. A server search with its own
- * item type is unambiguous. Grok's X search instead reports its backend sub-calls as ordinary
+ * Three shapes reach us, and each has to be positively recognized. Hosted web and tool search
+ * have their own item types. Grok's X search instead reports its backend sub-calls as ordinary
  * custom tool calls, which look exactly like a call the client must answer, so classification
  * rests on two facts that are true only of a server call: the request asked for server tools at
  * all — nothing runs upstream that was never enabled, which also keeps compaction, which sends
@@ -982,39 +1152,94 @@ function emptyToUndefined(value: string): string | undefined {
  */
 function serverExecutedItemName(
     item: unknown,
-    options: { serverToolNames?: ReadonlySet<string> | undefined },
+    options: ServerToolMappingOptions,
 ): string | undefined {
     const parsed = asOutputItem(item);
     if (parsed === undefined) return undefined;
-    const { type, name, call_id } = parsed;
-    if (type === "web_search_call") {
+    const nativeName = serverExecutedNativeName(parsed, options);
+    if (nativeName === undefined) return undefined;
+    return (
+        options.serverToolDisplayNames?.get(nativeName) ??
+        (nativeName === "x_search" ? parsed.name : nativeName)
+    );
+}
+
+function serverExecutedItemNamespace(
+    item: unknown,
+    options: ServerToolMappingOptions,
+): string | undefined {
+    const parsed = asOutputItem(item);
+    if (parsed === undefined) return undefined;
+    const nativeName = serverExecutedNativeName(parsed, options);
+    return nativeName === undefined
+        ? undefined
+        : options.serverToolDisplayNamespaces?.get(nativeName);
+}
+
+function serverExecutedNativeName(
+    item: OutputItem,
+    options: ServerToolMappingOptions,
+): "web_search" | "tool_search" | "x_search" | undefined {
+    if (item.type === "web_search_call") {
         return options.serverToolNames?.has("web_search") === true ? "web_search" : undefined;
     }
-    if (type !== "custom_tool_call" || name === undefined) return undefined;
-    return options.serverToolNames?.has("x_search") === true &&
-        call_id?.startsWith(HOSTED_SEARCH_CALL_PREFIX) === true
-        ? name
+    if (item.type === "tool_search_call") {
+        return item.execution === "server" && options.serverToolNames?.has("tool_search") === true
+            ? "tool_search"
+            : undefined;
+    }
+    return item.type === "custom_tool_call" &&
+        options.serverToolNames?.has("x_search") === true &&
+        item.call_id?.startsWith(HOSTED_SEARCH_CALL_PREFIX) === true
+        ? "x_search"
         : undefined;
 }
 
 /**
- * Identifies a server call. Grok's X search carries a `call_id` and its web search only an `id`;
- * the output index stands in for anything that reports neither, so two concurrent calls can never
- * collide under one empty identifier.
+ * Identifies a server call. Tool search and Grok's X search carry a `call_id`, while web search
+ * carries only an `id`; the output index stands in for anything that reports neither, so two
+ * concurrent calls can never collide under one empty identifier.
  */
-function serverToolCallId(item: unknown, outputIndex: number, fallbackCallIdScope: string): string {
+function serverToolCallId(
+    item: unknown,
+    outputIndex: number,
+    serverToolSearchPairing: ServerToolSearchPairing,
+): string {
     const parsed = asOutputItem(item);
-    return (
-        parsed?.call_id ??
-        parsed?.id ??
-        `server_tool_call_${fallbackCallIdScope}_${String(outputIndex)}`
-    );
+    if (parsed?.type === "tool_search_call" && parsed.execution === "server") {
+        return serverToolSearchPairing.callId(item, outputIndex);
+    }
+    return parsed?.call_id ?? parsed?.id ?? serverToolSearchPairing.fallbackCallId(outputIndex);
 }
 
 function serverToolCallArguments(item: unknown): string {
     const parsed = asOutputItem(item);
     if (parsed?.input !== undefined) return parsed.input;
+    if (parsed?.type === "tool_search_call" && parsed.arguments !== undefined) {
+        return JSON.stringify(parsed.arguments);
+    }
     return parsed?.action === undefined ? "" : JSON.stringify(parsed.action);
+}
+
+function isServerToolSearchOutputItem(item: unknown, options: ServerToolMappingOptions): boolean {
+    const parsed = asOutputItem(item);
+    return (
+        parsed?.type === "tool_search_output" &&
+        parsed.execution === "server" &&
+        options.serverToolNames?.has("tool_search") === true
+    );
+}
+
+function serverToolSearchOutputCallId(
+    item: unknown,
+    outputIndex: number,
+    serverToolSearchPairing: ServerToolSearchPairing,
+): string {
+    return serverToolSearchPairing.resultCallId(item, outputIndex);
+}
+
+function serverToolSearchOutputResult(item: unknown): string {
+    return JSON.stringify(asOutputItem(item)?.tools ?? []);
 }
 
 /**
@@ -1240,9 +1465,12 @@ const outputItemSchema = Type.Object(
         type: Type.Optional(Type.String()),
         name: Type.Optional(Type.String()),
         id: Type.Optional(Type.String()),
-        call_id: Type.Optional(Type.String()),
+        call_id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         input: Type.Optional(Type.String()),
         action: Type.Optional(Type.Unknown()),
+        arguments: Type.Optional(Type.Unknown()),
+        execution: Type.Optional(Type.Union([Type.Literal("server"), Type.Literal("client")])),
+        tools: Type.Optional(Type.Array(Type.Unknown())),
     },
     { additionalProperties: true },
 );
@@ -1357,13 +1585,17 @@ function assertValidToolCallItem(
     }
 }
 
-function assertServerCallWasDeclared(
-    item: unknown,
-    options: { serverToolNames?: ReadonlySet<string> | undefined },
-): void {
+function assertServerCallWasDeclared(item: unknown, options: ServerToolMappingOptions): void {
     const parsed = asOutputItem(item);
     if (parsed?.type === "web_search_call" && options.serverToolNames?.has("web_search") !== true) {
         throw new Error("Provider returned web_search_call without a declared server tool.");
+    }
+    if (
+        (parsed?.type === "tool_search_call" || parsed?.type === "tool_search_output") &&
+        parsed.execution === "server" &&
+        options.serverToolNames?.has("tool_search") !== true
+    ) {
+        throw new Error("Provider returned server tool search without a declared server tool.");
     }
     if (
         parsed?.type === "custom_tool_call" &&
@@ -1396,6 +1628,24 @@ function responseToolVendor(
     return type === "tool_search_call"
         ? { provider, type, execution: "client" }
         : { provider, type };
+}
+
+function responseServerToolVendor(
+    vendor: "codex" | "grok" | "responses" | undefined,
+    nativeType: "tool_search_call",
+): Record<string, string> {
+    return { provider: vendor ?? "grok", type: "server_tool_call", nativeType };
+}
+
+function responseCompletedServerToolVendor(
+    vendor: "codex" | "grok" | "responses" | undefined,
+    item: unknown,
+): Record<string, string> {
+    return {
+        provider: vendor ?? "grok",
+        type: "server_tool_call",
+        outputItem: JSON.stringify(item),
+    };
 }
 
 function isIncompleteOutputItem(item: unknown): boolean {

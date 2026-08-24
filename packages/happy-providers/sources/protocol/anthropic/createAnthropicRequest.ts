@@ -5,7 +5,10 @@ import type { SessionReasoningEffort, SessionStructuredOutput } from "@/core/Ses
 import type { SessionTool } from "@/core/SessionTool.js";
 import { toAnthropicMessages } from "@/protocol/anthropic/toAnthropicMessages.js";
 import { toAnthropicSystem } from "@/protocol/anthropic/toAnthropicSystem.js";
-import { toAnthropicTools } from "@/protocol/anthropic/toAnthropicTools.js";
+import {
+    isAnthropicToolSearchTool,
+    toAnthropicTools,
+} from "@/protocol/anthropic/toAnthropicTools.js";
 
 export type AnthropicRequest = MessageCreateParamsStreaming;
 
@@ -28,6 +31,9 @@ export function createAnthropicRequest(options: {
     const betas = ["context-1m-2025-08-07", "interleaved-thinking-2025-05-14"];
     if (usesCompaction) betas.push("compact-2026-01-12");
     if (options.structuredOutput !== undefined) betas.push("structured-outputs-2025-12-15");
+    if (options.tools.some(isAnthropicToolSearchTool)) {
+        betas.push("tool-search-tool-2025-10-19");
+    }
     return {
         betas,
         ...(!usesCompaction

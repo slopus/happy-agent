@@ -546,8 +546,14 @@ describe("CodexProvider credential behavior", () => {
                 expect(captured?.headers["x-codex-beta-features"]).toBe("remote_compaction_v2");
                 expect(captured?.headers.originator).toBe("codex_exec");
                 expect(captured?.headers["user-agent"]).toBe(golden.http.headers["user-agent"]);
+                const expectedTools = (golden.request.tools as Record<string, unknown>[]).filter(
+                    (tool) => tool.type !== "tool_search",
+                );
                 expect(normalizePayload(captured!.payload)).toEqual(
-                    normalizePayload(golden.request),
+                    normalizePayload({ ...golden.request, tools: expectedTools }),
+                );
+                expect(captured!.payload.tools).not.toContainEqual(
+                    expect.objectContaining({ type: "tool_search" }),
                 );
                 expect(session.transport).toBe("sse");
                 session.destroy();

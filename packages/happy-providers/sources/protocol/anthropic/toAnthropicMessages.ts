@@ -100,6 +100,8 @@ function toAssistantBlock(block: SessionAssistantBlock): BetaContentBlockParam[]
             },
         ];
     }
+    const outputBlock = parseOutputBlock(block.vendor);
+    if (outputBlock !== undefined) return [withAnthropicCallId(outputBlock, block.callId)];
     return [
         {
             type: "tool_use",
@@ -140,6 +142,10 @@ function withAnthropicToolUseId(
     callId: string,
 ): BetaContentBlockParam {
     return "tool_use_id" in block ? { ...block, tool_use_id: callId } : block;
+}
+
+function withAnthropicCallId(block: BetaContentBlockParam, callId: string): BetaContentBlockParam {
+    return "id" in block ? { ...block, id: callId } : block;
 }
 
 function toToolResultContentBlock(

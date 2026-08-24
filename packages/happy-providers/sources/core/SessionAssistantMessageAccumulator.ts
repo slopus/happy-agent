@@ -126,6 +126,7 @@ export class SessionAssistantMessageAccumulator {
             const block = this.toolCalls.get(event.callId);
             if (block === undefined) throw new Error("Tool-call end arrived without a start.");
             block.arguments = event.arguments;
+            if (event.vendor !== undefined) block.vendor = event.vendor;
             if (event.incomplete === true) block.incomplete = true;
             this.toolCalls.delete(event.callId);
             return;

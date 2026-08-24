@@ -12,6 +12,7 @@ import type { SessionEvent } from "@/core/SessionEvent.js";
 import { collectSessionEvents, textFromSessionEvents } from "../helpers/collectSessionEvents.js";
 
 const web_search = { name: "WebSearch", server: { type: "WebSearch" } } as const;
+const tool_search = { name: "ToolSearch", server: { type: "ToolSearch" } } as const;
 const read = { name: "Read" };
 
 describe("Claude server tools", () => {
@@ -46,8 +47,23 @@ describe("Claude server tools", () => {
         expect(options.tools).toEqual([]);
     });
 
-    it("enables native ToolSearch when a client tool is deferred", () => {
+    it("enables native ToolSearch only when its server descriptor is supplied", () => {
         const deferred = { name: "RareTool", defer: true };
+        const fallback = toClaudeSdkOptions({
+            context: { instructions: "", messages: [] },
+            credential: { name: "claude-code", credential: undefined },
+            env: {},
+            model: "claude-sonnet-5",
+            sessionId: "fallback-session",
+            systemPrompt: "",
+            tools: [read, deferred],
+        });
+        expect(fallback.tools).toEqual([]);
+        expect(fallback.env?.ENABLE_TOOL_SEARCH).toBeUndefined();
+        expect(toClaudeMcpToolDefinition(deferred)._meta).toEqual({
+            "anthropic/alwaysLoad": true,
+        });
+
         const options = toClaudeSdkOptions({
             context: { instructions: "", messages: [] },
             credential: { name: "claude-code", credential: undefined },
@@ -55,7 +71,7 @@ describe("Claude server tools", () => {
             model: "claude-sonnet-5",
             sessionId: "session",
             systemPrompt: "",
-            tools: [read, deferred],
+            tools: [read, deferred, tool_search],
         });
 
         expect(options.tools).toEqual(["ToolSearch"]);
@@ -64,7 +80,18 @@ describe("Claude server tools", () => {
         expect(toClaudeMcpToolDefinition(read)._meta).toEqual({
             "anthropic/alwaysLoad": true,
         });
-        expect(toClaudeMcpToolDefinition(deferred)).not.toHaveProperty("_meta");
+        expect(toClaudeMcpToolDefinition(deferred, true)).not.toHaveProperty("_meta");
+    });
+
+    it("adds custom search keywords to Claude's searchable MCP description", () => {
+        expect(
+            toClaudeMcpToolDefinition({
+                name: "RareTool",
+                description: "A specialized tool.",
+                searchKeywords: ["phonograph", "vinyl"],
+                defer: true,
+            }).description,
+        ).toBe("A specialized tool.\n\nSearch keywords: phonograph, vinyl");
     });
 
     it("reports a built-in Claude Code answers itself without ending the turn for the executor", async () => {
@@ -137,7 +164,15 @@ describe("Claude server tools", () => {
             credential,
             model: "sonnet[1m]",
             query,
-            tools: [read, { name: "RareTool", defer: true }],
+            tools: [
+                read,
+                { name: "RareTool", defer: true },
+                {
+                    name: "DiscoverTools",
+                    namespace: "search",
+                    server: { type: "ToolSearch" },
+                },
+            ],
         });
 
         const events = await collectSessionEvents(
@@ -157,9 +192,15 @@ describe("Claude server tools", () => {
         expect(events).toContainEqual({
             type: "toolcall_start",
             callId: "srvtoolu_1",
-            name: "ToolSearch",
+            name: "DiscoverTools",
+            namespace: "search",
             server: true,
-            vendor: { type: "claude_tool_use" },
+            vendor: { type: "claude_tool_use", wireName: "ToolSearch" },
+        });
+        expect(events).toContainEqual({
+            type: "toolcall_result_end",
+            callId: "srvtoolu_1",
+            content: [{ type: "text", text: "matched RareTool" }],
         });
         expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
     });
@@ -191,6 +232,22 @@ function serverToolQuery(name = "WebSearch"): ReturnType<ClaudeSdkQuery> {
             delta: { type: "input_json_delta", partial_json: '{"query":"Rig"}' },
         });
         yield streamEvent({ type: "content_block_stop", index: 0 });
+        yield {
+            type: "user",
+            message: {
+                role: "user",
+                content: [
+                    {
+                        type: "tool_result",
+                        tool_use_id: "srvtoolu_1",
+                        content: "matched RareTool",
+                    },
+                ],
+            },
+            parent_tool_use_id: null,
+            uuid: "server-tool-result",
+            session_id: "server-tool-session",
+        };
         // Claude Code can continue after a built-in in a new Anthropic message. Content indexes
         // restart for that message, so the text block may reuse the completed tool's index.
         yield streamEvent({

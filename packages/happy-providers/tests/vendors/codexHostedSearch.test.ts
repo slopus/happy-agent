@@ -9,7 +9,7 @@ import { CodexSession } from "@/vendors/codex/CodexSession.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import { mapOpenAIResponseStream } from "@/protocol/responses/mapOpenAIResponseStream.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
-import { codex_server_tools, web_search } from "@/vendors/codex/tools/index.js";
+import { codex_server_tools, tool_search, web_search } from "@/vendors/codex/tools/index.js";
 import { toCodexToolDefinitions } from "@/vendors/codex/impl/toCodexToolDefinitions.js";
 
 /**
@@ -94,11 +94,13 @@ describe("Codex server tools", () => {
             name: "web_search",
             server: true,
         });
-        expect(events).toContainEqual({
-            type: "toolcall_end",
-            callId: "ws_1",
-            arguments: '{"type":"search","query":"Node.js current stable version"}',
-        });
+        expect(events).toContainEqual(
+            expect.objectContaining({
+                type: "toolcall_end",
+                callId: "ws_1",
+                arguments: '{"type":"search","query":"Node.js current stable version"}',
+            }),
+        );
         expect(result.stopReason).toBe("stop");
     });
 
@@ -148,6 +150,7 @@ describe("Codex server tools", () => {
                     parameters: Type.Object({ city: Type.String() }),
                     defer: true,
                 },
+                tool_search,
             ],
             async (session) => {
                 await session
@@ -257,6 +260,11 @@ describe("Codex server tools", () => {
                         parameters: Type.Object({ city: Type.String() }),
                         defer: true,
                     },
+                    {
+                        ...tool_search,
+                        name: "discover_tools",
+                        namespace: "search",
+                    },
                 ],
                 transport: "sse",
                 userAgent: "rig-test",
@@ -278,11 +286,20 @@ describe("Codex server tools", () => {
                 events.push(event);
             }
 
-            expect(
-                events.some(
-                    (event) => event.type === "toolcall_start" && event.name === "tool_search",
-                ),
-            ).toBe(false);
+            expect(events).toContainEqual(
+                expect.objectContaining({
+                    type: "toolcall_start",
+                    name: "discover_tools",
+                    namespace: "search",
+                    server: true,
+                }),
+            );
+            expect(events).toContainEqual(
+                expect.objectContaining({
+                    type: "toolcall_result_end",
+                    content: [],
+                }),
+            );
             expect(events).toContainEqual({
                 type: "text_delta",
                 delta: "Forecast tool loaded.",
@@ -291,15 +308,20 @@ describe("Codex server tools", () => {
             expect(bodies).toHaveLength(2);
             const firstRequestTools = requestTools(bodies[0] ?? {});
             const secondRequestTools = requestTools(bodies[1] ?? {});
-            expect(firstRequestTools).not.toContainEqual(
-                expect.objectContaining({ name: "weather_forecast" }),
+            expect(firstRequestTools).toContainEqual(
+                expect.objectContaining({ name: "weather_forecast", defer_loading: true }),
             );
             expect(firstRequestTools).toContainEqual(
                 expect.objectContaining({ type: "tool_search", execution: "client" }),
             );
-            expect(JSON.stringify(firstRequestTools)).not.toContain("AllTrails");
-            expect(secondRequestTools).not.toContainEqual(
-                expect.objectContaining({ name: "weather_forecast" }),
+            expect(firstRequestTools).toContainEqual(
+                expect.objectContaining({
+                    type: "tool_search",
+                    description: tool_search.server.description,
+                }),
+            );
+            expect(secondRequestTools).toContainEqual(
+                expect.objectContaining({ name: "weather_forecast", defer_loading: true }),
             );
             expect(
                 bodies[1]?.input.find((item: any) => item.type === "tool_search_output"),
@@ -364,6 +386,7 @@ describe("Codex server tools", () => {
                         parameters: Type.Object({ city: Type.String() }),
                         defer: true,
                     },
+                    tool_search,
                 ],
                 transport: "sse",
                 userAgent: "rig-test",

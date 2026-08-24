@@ -188,6 +188,14 @@ interface ToolBatchEntry {
     readonly committed?: SessionToolResultMessage;
 }
 
+/** The publication policy fixed when one provider tool call begins. */
+interface ToolPublicationPolicy {
+    readonly persistInHistory: boolean;
+    /** A hidden provider settlement commits its call and result as one context pair when present. */
+    readonly persistWithResult: boolean;
+    readonly visibleToUser: boolean;
+}
+
 const storedToolCallSchema = Type.Object({
     id: cuid2Schema,
     call: Type.Object({
@@ -1609,15 +1617,25 @@ export class AgentBase {
     }
 
     /**
-     * The system prompt for the next request: the mutable state extended by the hook's answer.
-     * Instructions and tools are correctness hooks — a failure here fails the turn loudly
-     * instead of silently running with a wrong configuration.
+     * Resolve one complete provider configuration. Sharing this snapshot between instructions,
+     * the provider descriptor array, and streamed-call policy keeps one inference or compaction
+     * internally consistent even when a hook computes its tools dynamically.
      */
-    async #instructions(ctx: Context): Promise<string> {
-        const hooked = await this.#hooks.instructions?.(this.#workContext(ctx));
-        return [this.state.instructions, hooked ?? ""]
+    async #configuration(ctx: Context): Promise<{
+        readonly instructions: string;
+        readonly tools: readonly AnyAgentTool[];
+    }> {
+        // Preserve the established correctness-hook order: instructions first, then tools.
+        const hookedInstructions = await this.#hooks.instructions?.(this.#workContext(ctx));
+        const tools = await this.#tools(ctx);
+        const instructions = [
+            this.state.instructions,
+            hookedInstructions ?? "",
+            toolCapabilityInstructions(tools),
+        ]
             .filter((text) => text.length > 0)
             .join("\n\n");
+        return { instructions, tools };
     }
 
     /**
@@ -1630,6 +1648,14 @@ export class AgentBase {
         const tools = [...this.state.tools, ...(hooked ?? [])];
         const names = new Set<string>();
         for (const tool of tools) {
+            if (
+                tool.server === undefined &&
+                (tool.persistInHistory === false || tool.visibleToUser === false)
+            ) {
+                throw new Error(
+                    `Tool "${tool.name}" may hide publication only when the provider owns it through a server descriptor.`,
+                );
+            }
             const key = `${tool.namespace ?? ""}\u0000${tool.name}`;
             if (names.has(key)) {
                 throw new Error(
@@ -2561,8 +2587,7 @@ export class AgentBase {
           }
         | undefined
     > {
-        const instructions = await this.#instructions(ctx);
-        const tools = await this.#tools(ctx);
+        const { instructions, tools } = await this.#configuration(ctx);
         const session = await this.#ensureSession(instructions, tools);
         // Nothing from the previous response may still be holding the session — but that
         // unwinding was detached from an earlier abort precisely so it could never hold a
@@ -2607,6 +2632,7 @@ export class AgentBase {
             ctx,
             stream,
             abortPromise,
+            tools,
         );
         // A cancellation or a stream ending without a done event did not answer an appended
         // notice. Keep that obligation and reopen it under a fresh turn scope. Every terminal
@@ -2753,8 +2779,8 @@ export class AgentBase {
         if (pending === undefined) return;
         try {
             await this.#enterStage(ctx, "compaction");
-            const instructions = await this.#instructions(ctx);
-            const session = await this.#ensureSession(instructions, await this.#tools(ctx));
+            const { instructions, tools } = await this.#configuration(ctx);
+            const session = await this.#ensureSession(instructions, tools);
             const snapshot = this.#messagesForProvider(this.#messages);
             await this.#settled();
             const compactionStart: AgentBaseCompactionStart = {
@@ -2945,9 +2971,9 @@ export class AgentBase {
                             toolContextRecord(result, this.#providerToolIds),
                         );
                         await this.#persistence.deleteValue(txCtx, entry.key);
-                        // A result the conversation records is a result the hook sees, however
-                        // little of a run produced it. A hook that fails here leaves the calls
-                        // unsettled, which is what lets a later attempt answer them properly.
+                        // Every Base-executed result reaches correctness and security observers.
+                        // Publication suppression is intentionally limited to provider-owned
+                        // server calls, which never enter the execution path.
                         await this.#invokeToolTransactHook(
                             txCtx,
                             entry.id,
@@ -4250,6 +4276,7 @@ export class AgentBase {
         ctx: Context,
         stream: AsyncIterable<SessionEvent>,
         abortPromise: Promise<typeof ABORTED>,
+        tools: readonly AnyAgentTool[],
     ): Promise<{
         readonly content: SessionAssistantBlock[];
         readonly state: SessionDoneState | undefined;
@@ -4263,6 +4290,14 @@ export class AgentBase {
         const persisted: SessionAssistantBlock[] = [];
         const toolCallIndexes = new Map<string, number>();
         const toolResultIndexes = new Map<string, number>();
+        const toolPolicies = new Map<string, ToolPublicationPolicy>();
+        const deferredToolCalls = new Map<
+            string,
+            {
+                readonly block: SessionToolCallBlock;
+                readonly event: AgentBasePersistedEvent;
+            }
+        >();
         // Provider IDs remain only in the private context blocks. Every event and transactional
         // projection leaving this method uses the generated Base ID instead.
         const responseToolIds = new Map<string, string>();
@@ -4285,6 +4320,32 @@ export class AgentBase {
                 }
             });
             persisted.push(block);
+        };
+        const persistPair = async (
+            call: SessionToolCallBlock,
+            callEvent: AgentBasePersistedEvent | undefined,
+            result: SessionToolResultBlock,
+        ): Promise<void> => {
+            const callRecord = assistantContextRecord(call, this.#providerToolIds);
+            const resultRecord = assistantContextRecord(result, this.#providerToolIds);
+            await this.#runPersistenceStep(this.#workContext(ctx), (lockCtx) =>
+                this.#recordTransaction(lockCtx, async (txCtx) => {
+                    await this.#appendRecord(txCtx, callRecord);
+                    await this.#appendRecord(txCtx, resultRecord);
+                    if (callEvent !== undefined) {
+                        await this.#withTransactionalContext(txCtx, (hookCtx) =>
+                            this.#hooks.onEventTransact?.(hookCtx, callEvent),
+                        );
+                    }
+                }),
+            );
+            persisted.push(call, result);
+        };
+        const flushCompletedCallOnlyTools = async (): Promise<void> => {
+            for (const deferred of deferredToolCalls.values()) {
+                await persist(deferred.block, undefined);
+            }
+            deferredToolCalls.clear();
         };
         const iterator = stream[Symbol.asyncIterator]();
         // A response usually ends before its stream does — at the done event, or at an abort —
@@ -4311,7 +4372,24 @@ export class AgentBase {
                     responseToolIds,
                     this.#providerToolIds,
                 );
-                await this.#emit(ctx, event);
+                if (event.type === "toolcall_start") {
+                    const tool = tools.find(
+                        (candidate) =>
+                            candidate.name === event.name &&
+                            candidate.namespace === event.namespace,
+                    );
+                    const policy = {
+                        persistInHistory: event.server !== true || tool?.persistInHistory !== false,
+                        persistWithResult:
+                            event.server === true && tool?.persistInHistory === false,
+                        visibleToUser: event.server !== true || tool?.visibleToUser !== false,
+                    } satisfies ToolPublicationPolicy;
+                    toolPolicies.set(event.callId, policy);
+                }
+                const policyCallId = toolLifecycleCallId(event);
+                const toolPolicy =
+                    policyCallId === undefined ? undefined : toolPolicies.get(policyCallId);
+                if (toolPolicy?.visibleToUser !== false) await this.#emit(ctx, event);
                 switch (event.type) {
                     case "text_start":
                         content.push({ type: "text", text: "" });
@@ -4328,6 +4406,10 @@ export class AgentBase {
                     }
                     case "text_end": {
                         const last = content[content.length - 1];
+                        // Provider-owned results precede the model synthesis. If the provider
+                        // exposes no result block, commit its completed call immediately before
+                        // that synthesis so restart replay preserves the logical output order.
+                        await flushCompletedCallOnlyTools();
                         await persist(
                             last?.type === "text" ? last : undefined,
                             last?.type === "text" ? { ...event, block: last } : undefined,
@@ -4357,6 +4439,7 @@ export class AgentBase {
                                     : { reasoning: event.reasoning }),
                             };
                             content[content.length - 1] = finished;
+                            await flushCompletedCallOnlyTools();
                             await persist(finished, { ...event, block: finished });
                         }
                         break;
@@ -4382,22 +4465,38 @@ export class AgentBase {
                         break;
                     }
                     case "toolcall_end": {
+                        if (providerEvent.type !== "toolcall_end") {
+                            throw new Error("The provider tool-call end changed event type.");
+                        }
                         const index = toolCallIndexes.get(event.callId);
                         const block = index === undefined ? undefined : content[index];
                         if (index !== undefined && block?.type === "tool_call") {
+                            const finalVendor = (
+                                providerEvent as typeof providerEvent & { vendor?: unknown }
+                            ).vendor;
                             const finished = {
                                 ...block,
                                 arguments: event.arguments,
+                                ...(finalVendor === undefined ? {} : { vendor: finalVendor }),
                                 ...(event.incomplete === undefined
                                     ? {}
                                     : { incomplete: event.incomplete }),
                             };
                             content[index] = finished;
                             const { vendor: _vendor, ...publicBlock } = finished;
-                            await persist(finished, {
-                                ...event,
-                                block: publicBlock,
-                            });
+                            const persistedEvent = { ...event, block: publicBlock } as const;
+                            const policy = toolPolicies.get(event.callId);
+                            if (policy?.persistWithResult === true) {
+                                deferredToolCalls.set(event.callId, {
+                                    block: finished,
+                                    event: persistedEvent,
+                                });
+                            } else {
+                                await persist(
+                                    finished,
+                                    policy?.persistInHistory === false ? undefined : persistedEvent,
+                                );
+                            }
                         }
                         break;
                     }
@@ -4443,10 +4542,37 @@ export class AgentBase {
                                 : { incomplete: event.incomplete }),
                         };
                         content[resultIndex] = finished;
-                        await persist(finished, undefined);
+                        const policy = toolPolicies.get(event.callId);
+                        if (policy?.persistWithResult === true) {
+                            const deferred = deferredToolCalls.get(event.callId);
+                            if (deferred === undefined) {
+                                throw new Error(
+                                    "A provider-local tool result has no completed call to persist.",
+                                );
+                            }
+                            await persistPair(
+                                deferred.block,
+                                policy.persistInHistory ? deferred.event : undefined,
+                                finished,
+                            );
+                            deferredToolCalls.delete(event.callId);
+                        } else {
+                            await persist(finished, undefined);
+                        }
                         break;
                     }
                     case "done":
+                        if (
+                            event.state === "normal" ||
+                            event.state === "tool_call" ||
+                            event.state === "length"
+                        ) {
+                            // Some provider-owned tools, notably Claude Code built-ins, consume
+                            // their result internally and expose only a completed call. Keep that
+                            // call after a successful response, while an interrupted response
+                            // retains neither half of a call/result pair.
+                            await flushCompletedCallOnlyTools();
+                        }
                         return {
                             // Only blocks that finished, which are exactly the blocks that were
                             // durably appended. A response ending mid-block leaves half of
@@ -4525,6 +4651,41 @@ export class AgentBase {
     }
 }
 
+/** A model-facing section derived from one resolved tool array. */
+function toolCapabilityInstructions(tools: readonly AnyAgentTool[]): string {
+    const capabilities: string[] = [];
+    const seen = new Set<string>();
+    for (const tool of tools) {
+        for (const raw of tool.capabilities ?? []) {
+            const capability = raw.trim();
+            if (capability.length === 0) continue;
+            const key = capability.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            capabilities.push(capability);
+        }
+    }
+    if (capabilities.length === 0) return "";
+    return ["Tool capabilities:", ...capabilities.map((capability) => `- ${capability}`)].join(
+        "\n",
+    );
+}
+
+/** The Base call identity carried by provider call/result lifecycle events. */
+function toolLifecycleCallId(event: SessionEvent): string | undefined {
+    switch (event.type) {
+        case "toolcall_start":
+        case "toolcall_delta":
+        case "toolcall_end":
+        case "toolcall_result_start":
+        case "toolcall_result_delta":
+        case "toolcall_result_end":
+            return event.callId;
+        default:
+            return undefined;
+    }
+}
+
 /** The result that stands in for a call the agent could not, or must not, carry out. */
 function toolFailure(id: string, reason: string): SessionToolResultMessage {
     return {
@@ -4557,6 +4718,7 @@ function sessionConfigKey(
             tool.description ?? null,
             tool.parameters ?? null,
             tool.defer ?? null,
+            tool.searchKeywords ?? null,
             tool.server ?? null,
             tool.grammar ?? null,
         ]),

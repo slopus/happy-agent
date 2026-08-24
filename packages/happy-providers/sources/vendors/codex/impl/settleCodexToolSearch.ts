@@ -21,12 +21,20 @@ export interface CodexToolSearchResult {
     toolCalls: readonly Omit<SessionToolCallBlock, "type">[];
 }
 
+export interface CodexToolSearchSettlement {
+    readonly call: Omit<SessionToolCallBlock, "type">;
+    readonly outputItem: string;
+}
+
 export function settleCodexToolSearch<T extends CodexToolSearchResult>(
     result: T,
     tools: readonly SessionTool[],
-): { result: T; settled: boolean } {
+): { result: T; settled: boolean; settlements: readonly CodexToolSearchSettlement[] } {
+    if (!tools.some(isClientToolSearchDefinition)) {
+        return { result, settled: false, settlements: [] };
+    }
     const searches = result.toolCalls.filter(isClientToolSearchCall);
-    if (searches.length === 0) return { result, settled: false };
+    if (searches.length === 0) return { result, settled: false, settlements: [] };
     const deferredTools = tools.filter((tool) => tool.server === undefined && tool.defer === true);
     const outputs = searches.map((call) => {
         let matched: readonly SessionTool[] = [];
@@ -50,13 +58,19 @@ export function settleCodexToolSearch<T extends CodexToolSearchResult>(
     });
     return {
         settled: true,
+        settlements: searches.map((call, index) => ({ call, outputItem: outputs[index]! })),
         result: {
             ...result,
             outputItems: [...result.outputItems, ...outputs],
             message: {
                 role: "assistant",
                 content: [
-                    ...result.message.content,
+                    ...result.message.content.map((block) =>
+                        block.type === "tool_call" &&
+                        searches.some((search) => search.callId === block.callId)
+                            ? { ...block, server: true as const }
+                            : block,
+                    ),
                     ...outputs.map((output, index) => ({
                         type: "tool_result" as const,
                         callId: searches[index]!.callId,
@@ -68,6 +82,10 @@ export function settleCodexToolSearch<T extends CodexToolSearchResult>(
             toolCalls: result.toolCalls.filter((call) => !isClientToolSearchCall(call)),
         } as T,
     };
+}
+
+function isClientToolSearchDefinition(tool: SessionTool): boolean {
+    return tool.server?.type === "tool_search" && tool.server.execution === "client";
 }
 
 function isClientToolSearchCall(call: Omit<SessionToolCallBlock, "type">): boolean {

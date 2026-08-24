@@ -44,7 +44,14 @@ export type SessionEvent =
           vendor?: any;
       }
     | { type: "toolcall_delta"; callId: string; delta: string }
-    | { type: "toolcall_end"; callId: string; arguments: string; incomplete?: boolean }
+    | {
+          type: "toolcall_end";
+          callId: string;
+          arguments: string;
+          incomplete?: boolean;
+          /** Final opaque metadata when it was unavailable at toolcall_start. */
+          vendor?: any;
+      }
     /**
      * The provider-owned result of a server tool call.
      *

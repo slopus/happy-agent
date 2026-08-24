@@ -28,12 +28,26 @@ const tools = [
     },
 ] as const satisfies readonly SessionTool[];
 
+const clientToolSearch = {
+    name: "tool_search",
+    server: { type: "tool_search", execution: "client" },
+} as const satisfies SessionTool;
+
 describe("Codex tool search", () => {
     it("ranks tool names, descriptions, and parameter metadata", () => {
         expect(searchCodexTools(tools, "create calendar meeting")).toEqual([tools[0]]);
         expect(searchCodexTools(tools, "IANA timezones")).toEqual([tools[0]]);
         expect(searchCodexTools(tools, "finding", 1)).toEqual([tools[2]]);
         expect(searchCodexTools(tools, "weather forecast")).toEqual([]);
+    });
+
+    it("includes caller-supplied BM25 keywords", () => {
+        const keywordTool = {
+            ...tools[2],
+            searchKeywords: ["phonograph", "vinyl"],
+        } as const satisfies SessionTool;
+
+        expect(searchCodexTools([keywordTool], "phonograph")).toEqual([keywordTool]);
     });
 
     it("settles client discovery with native output and removes it from executor work", () => {
@@ -69,11 +83,24 @@ describe("Codex tool search", () => {
                     },
                 ],
             },
-            tools,
+            [...tools, clientToolSearch],
         );
 
         expect(settled.settled).toBe(true);
+        expect(settled.settlements).toEqual([
+            expect.objectContaining({
+                call: expect.objectContaining({ callId: "search-1" }),
+                outputItem: expect.any(String),
+            }),
+        ]);
         expect(settled.result.toolCalls).toEqual([]);
+        expect(settled.result.message.content).toContainEqual(
+            expect.objectContaining({
+                type: "tool_call",
+                callId: "search-1",
+                server: true,
+            }),
+        );
         expect(JSON.parse(settled.result.outputItems.at(-1)!)).toMatchObject({
             type: "tool_search_output",
             call_id: "search-1",
@@ -128,7 +155,7 @@ describe("Codex tool search", () => {
                     },
                 ],
             },
-            tools,
+            [...tools, clientToolSearch],
         );
 
         expect(settled.result.toolCalls).toEqual([
@@ -139,5 +166,38 @@ describe("Codex tool search", () => {
                 (item) => JSON.parse(item).type === "tool_search_output",
             ),
         ).toHaveLength(1);
+    });
+
+    it("does not settle a search call unless the caller supplied client discovery", () => {
+        const input = {
+            assistantText: "",
+            outputItems: [],
+            message: {
+                role: "assistant" as const,
+                content: [
+                    {
+                        type: "tool_call" as const,
+                        callId: "search-1",
+                        name: "tool_search",
+                        arguments: '{"query":"calendar"}',
+                        vendor: { provider: "codex", type: "tool_search_call" },
+                    },
+                ],
+            },
+            toolCalls: [
+                {
+                    callId: "search-1",
+                    name: "tool_search",
+                    arguments: '{"query":"calendar"}',
+                    vendor: { provider: "codex", type: "tool_search_call" },
+                },
+            ],
+        };
+
+        expect(settleCodexToolSearch(input, tools)).toEqual({
+            result: input,
+            settled: false,
+            settlements: [],
+        });
     });
 });

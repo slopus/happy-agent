@@ -66,6 +66,25 @@ export interface AgentTool<Args extends TSchema = TSchema, Result extends TSchem
     /** Provider-neutral request to expose this tool through native tool discovery. */
     readonly defer?: boolean;
     /**
+     * Human-readable capabilities this tool contributes to the model's instructions. Values are
+     * trimmed and de-duplicated case-insensitively across the resolved tool set; first occurrence
+     * order is preserved.
+     */
+    readonly capabilities?: readonly string[];
+    /** Provider-facing terms used by native tool discovery to find this deferred tool. */
+    readonly searchKeywords?: readonly string[];
+    /**
+     * Whether a provider-owned call is published to durable history observers. Defaults to true.
+     * Base always retains its private model context. Setting this to false on an executable tool
+     * is rejected so security and correctness hooks can never be hidden from client work.
+     */
+    readonly persistInHistory?: boolean;
+    /**
+     * Whether a provider-owned call's live events are published to ordinary observers. Defaults
+     * to true and is independent of durable-history publication. Executable tools cannot hide.
+     */
+    readonly visibleToUser?: boolean;
+    /**
      * Ignored by providers that do not support grammar-based tools. A tool that declares one is
      * freeform: it takes no parameters of its own, and its `execute` is handed the grammar's own
      * text under `input`. Use `defineAgentTool`, which types those arguments from this field.

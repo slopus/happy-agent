@@ -220,13 +220,13 @@ export interface AgentModuleHooks<
         scope: AgentModuleSystemScope<Database>,
         agent: AgentModuleAgentLifecycle,
     ) => MaybePromise<void>;
-    /** Observes every session event; the run awaits it and contains its failure. */
+    /** Observes published session events; context-only provider lifecycles are omitted. */
     readonly onEvent?: (
         ctx: Context,
         scope: AgentModuleScope<Database>,
         event: SessionEvent,
     ) => MaybePromise<unknown>;
-    /** Runs inside the transaction committing a completed assistant block. */
+    /** Runs inside a published assistant-block transaction; context-only provider calls are omitted. */
     readonly onEventTransact?: (
         ctx: Context,
         scope: AgentModuleScope<Database>,
@@ -286,8 +286,8 @@ export interface AgentModuleHooks<
         outcome: AgentBaseToolOutcome,
     ) => MaybePromise<void>;
     /**
-     * Runs inside the transaction appending one tool result to the durable conversation. Modules
-     * run in array order and a failure propagates, rolling that commit back.
+     * Runs inside the transaction appending one Base-executed tool result to the durable
+     * conversation. Modules run in array order and a failure propagates, rolling that commit back.
      */
     readonly afterToolCallTransact?: (
         ctx: Context,

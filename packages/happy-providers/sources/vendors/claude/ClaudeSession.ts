@@ -461,6 +461,25 @@ export class ClaudeSession extends BaseSession {
         // Claude Code runs a server tool inside its own process and answers it there, so Rig
         // reports these calls without ever collecting them as work for the executor.
         const serverToolNames = new Set(claudeSdkBuiltInToolNames(tools));
+        const serverToolIdentities = new Map(
+            tools.flatMap((tool) =>
+                tool.server === undefined || !serverToolNames.has(tool.server.type)
+                    ? []
+                    : [
+                          [
+                              tool.server.type,
+                              {
+                                  name: tool.name,
+                                  ...(tool.namespace === undefined
+                                      ? {}
+                                      : { namespace: tool.namespace }),
+                              },
+                          ] as const,
+                      ],
+            ),
+        );
+        const serverToolCallIds = new Set<string>();
+        const completedServerToolResultIds = new Set<string>();
         this.lastQueryToolCalls = [];
         let sawToolCall = false;
         let sawText = false;
@@ -570,6 +589,20 @@ export class ClaudeSession extends BaseSession {
                         message.compact_error ?? "Claude native compaction failed.";
                     continue;
                 }
+                if (message.type === "user" && Array.isArray(message.message.content)) {
+                    for (const block of message.message.content) {
+                        if (
+                            !isClaudeSdkToolResultBlock(block) ||
+                            !serverToolCallIds.has(block.tool_use_id) ||
+                            completedServerToolResultIds.has(block.tool_use_id)
+                        ) {
+                            continue;
+                        }
+                        yield* emitClaudeServerToolResult(block.tool_use_id, block);
+                        completedServerToolResultIds.add(block.tool_use_id);
+                    }
+                    continue;
+                }
                 if (message.type === "stream_event") {
                     const event = message.event;
                     if (event.type === "message_start") {
@@ -636,23 +669,34 @@ export class ClaudeSession extends BaseSession {
                         const nativeServer = event.content_block.type === "server_tool_use";
                         const server =
                             nativeServer || serverToolNames.has(event.content_block.name);
+                        const wireName = event.content_block.name;
+                        const identity = serverToolIdentities.get(wireName);
+                        const name = identity?.name ?? wireName;
+                        const namespace = identity?.namespace;
+                        const vendor = {
+                            type: "claude_tool_use" as const,
+                            ...(name === wireName ? {} : { wireName }),
+                        };
+                        if (server) serverToolCallIds.add(event.content_block.id);
                         if (!server) {
                             sawToolCall = true;
                             this.activeToolBridge?.register(event.content_block.id);
                         }
                         activeTools.set(event.index, {
                             callId: event.content_block.id,
-                            name: event.content_block.name,
+                            name,
+                            ...(namespace === undefined ? {} : { namespace }),
                             arguments: "",
-                            vendor: { type: "claude_tool_use" },
+                            vendor,
                             ...(server ? { server: true as const } : {}),
                         });
                         yield {
                             type: "toolcall_start",
                             callId: event.content_block.id,
-                            name: event.content_block.name,
+                            name,
+                            ...(namespace === undefined ? {} : { namespace }),
                             ...(server ? { server: true as const } : {}),
-                            vendor: { type: "claude_tool_use" },
+                            vendor,
                         };
                         // server_tool_use carries its full input on the start block; tool_use
                         // streams input_json_delta instead.
@@ -662,9 +706,10 @@ export class ClaudeSession extends BaseSession {
                             );
                             activeTools.set(event.index, {
                                 callId: event.content_block.id,
-                                name: event.content_block.name,
+                                name,
+                                ...(namespace === undefined ? {} : { namespace }),
                                 arguments: input,
-                                vendor: { type: "claude_tool_use" },
+                                vendor,
                             });
                             if (input.length > 0) {
                                 yield {
@@ -761,17 +806,10 @@ export class ClaudeSession extends BaseSession {
                         isClaudeServerToolResultBlock(event.content_block)
                     ) {
                         const callId = event.content_block.tool_use_id;
-                        const result = JSON.stringify(event.content_block.content ?? null);
-                        const vendor = { outputBlock: JSON.stringify(event.content_block) };
-                        yield { type: "toolcall_result_start", callId, vendor };
-                        if (result.length > 0) {
-                            yield { type: "toolcall_result_delta", callId, delta: result };
+                        if (!completedServerToolResultIds.has(callId)) {
+                            yield* emitClaudeServerToolResult(callId, event.content_block);
+                            completedServerToolResultIds.add(callId);
                         }
-                        yield {
-                            type: "toolcall_result_end",
-                            callId,
-                            content: [{ type: "text", text: result }],
-                        };
                         continue;
                     }
                     if (event.type === "message_stop" && sawToolCall) {
@@ -1054,6 +1092,38 @@ function isClaudeServerToolResultBlock(
         return false;
     }
     return "tool_use_id" in block && typeof block.tool_use_id === "string";
+}
+
+function isClaudeSdkToolResultBlock(
+    block: unknown,
+): block is { type: "tool_result"; tool_use_id: string; content?: unknown; is_error?: boolean } {
+    return (
+        typeof block === "object" &&
+        block !== null &&
+        "type" in block &&
+        block.type === "tool_result" &&
+        "tool_use_id" in block &&
+        typeof block.tool_use_id === "string"
+    );
+}
+
+function* emitClaudeServerToolResult(
+    callId: string,
+    outputBlock: { content?: unknown; is_error?: boolean },
+): Generator<SessionEvent> {
+    const result =
+        typeof outputBlock.content === "string"
+            ? outputBlock.content
+            : JSON.stringify(outputBlock.content ?? null);
+    const vendor = { outputBlock: JSON.stringify(outputBlock) };
+    yield { type: "toolcall_result_start", callId, vendor };
+    if (result.length > 0) yield { type: "toolcall_result_delta", callId, delta: result };
+    yield {
+        type: "toolcall_result_end",
+        callId,
+        content: [{ type: "text", text: result }],
+        ...(outputBlock.is_error === undefined ? {} : { isError: outputBlock.is_error }),
+    };
 }
 
 function* closeClaudeOutputBlocks(

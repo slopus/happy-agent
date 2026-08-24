@@ -25,6 +25,7 @@ import { createOpenAIResponseRequest } from "@/protocol/responses/createOpenAIRe
 import { classifyResponsesError } from "@/protocol/responses/classifyResponsesError.js";
 import { mapOpenAIResponseStream } from "@/protocol/responses/mapOpenAIResponseStream.js";
 import { toOpenAIResponseInput } from "@/protocol/responses/toOpenAIResponseInput.js";
+import { responsesServerToolName } from "@/protocol/responses/toResponsesToolDefinitions.js";
 import { toSessionUsage } from "@/protocol/responses/toSessionUsage.js";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -207,9 +208,24 @@ export class ResponsesSession extends BaseSession {
                     requireTerminalEvent: true,
                     vendor: "responses",
                     serverToolNames: new Set(
-                        this.tools
-                            .filter((tool) => tool.server !== undefined)
-                            .map((tool) => tool.name),
+                        this.tools.flatMap((tool) => {
+                            const name = responsesServerToolName(tool);
+                            return name === undefined ? [] : [name];
+                        }),
+                    ),
+                    serverToolDisplayNames: new Map(
+                        this.tools.flatMap((tool) => {
+                            const name = responsesServerToolName(tool);
+                            return name === undefined ? [] : [[name, tool.name] as const];
+                        }),
+                    ),
+                    serverToolDisplayNamespaces: new Map(
+                        this.tools.flatMap((tool) => {
+                            const name = responsesServerToolName(tool);
+                            return name === undefined || tool.namespace === undefined
+                                ? []
+                                : [[name, tool.namespace] as const];
+                        }),
                     ),
                     ...(abort === undefined ? {} : { signal: abort }),
                 });

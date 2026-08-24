@@ -427,26 +427,33 @@ describe("Codex response items", () => {
         ]);
     });
 
-    it("hides deferred functions behind a concise native tool search", () => {
-        const definitions = toCodexToolDefinitions([
-            {
-                name: "rare_tool",
-                description: "Perform a rare operation.",
-                parameters: Type.Object({}),
-                defer: true,
-            },
-        ]);
+    it("defers functions only when the caller supplies native tool search", () => {
+        const rareTool = {
+            name: "rare_tool",
+            description: "Perform a rare operation.",
+            parameters: Type.Object({}),
+            defer: true,
+        } as const;
 
-        expect(definitions).toEqual([
+        expect(toCodexToolDefinitions([rareTool])).toEqual([
             expect.objectContaining({
-                type: "tool_search",
-                execution: "client",
+                type: "function",
+                name: "rare_tool",
             }),
         ]);
-        expect(definitions).not.toContainEqual(
-            expect.objectContaining({ type: "function", name: "rare_tool" }),
+        expect(toCodexToolDefinitions([rareTool])[0]).not.toHaveProperty("defer_loading");
+
+        const definitions = toCodexToolDefinitions([rareTool, tool_search]);
+        expect(definitions).toContainEqual(
+            expect.objectContaining({
+                type: "function",
+                name: "rare_tool",
+                defer_loading: true,
+            }),
         );
-        expect(JSON.stringify(definitions)).not.toContain("AllTrails");
+        expect(definitions).toContainEqual(
+            expect.objectContaining({ type: "tool_search", execution: "client" }),
+        );
     });
 
     it("preserves ordered reasoning, commentary, normal tool search, and final text", async () => {

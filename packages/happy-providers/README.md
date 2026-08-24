@@ -283,6 +283,12 @@ the wire verbatim instead of deriving a native tool type from the name, and the 
 inside the provider's own response. Never execute a server-tool call yourself or send a tool
 result for it.
 
+Deferred loading follows the same ownership rule. Set `defer: true` on tools that may be
+discovered, and select the provider/model's native server tool-search descriptor alongside them.
+That provider owns the complete search call and result. A provider/model tool array with no native
+search descriptor sends every deferred tool eagerly. `searchKeywords` adds caller-selected terms
+to provider-owned local search indexes (and to Claude's searchable MCP description).
+
 ## Compaction
 
 When a transcript gets long, `compact()` asks the provider to produce a shorter replacement
@@ -843,6 +849,8 @@ interface SessionTool {
     readonly parameters?: TSchema; // a TypeBox schema
     /** Provider-neutral request to expose this tool through native tool discovery. */
     readonly defer?: boolean;
+    /** Extra terms for provider-owned local discovery indexes. */
+    readonly searchKeywords?: readonly string[];
     /** OpenAI-style Lark grammar; ignored by providers that do not support grammar tools. */
     readonly grammar?: SessionToolLarkGrammar;
 }

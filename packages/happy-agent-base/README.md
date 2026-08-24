@@ -79,9 +79,12 @@ runs inside the transaction that makes a dispatched batch durable; `beforeToolCa
 one validated call may do — leave it alone, run another tool, other arguments, or another
 permission mode for that one execution, or answer the model directly so the tool never runs;
 `afterToolCall` observes what the call produced; and `afterToolCallTransact` runs inside the
-transaction that appends the result. Nothing outside the loop ever executes a tool: a hook that
-drove execution would be deciding inside machinery that also commits results, resumes interrupted
-batches, and settles cancelled ones.
+transaction that appends a result. A provider-owned server tool may set `visibleToUser: false` to
+suppress its live call/result events and `persistInHistory: false` to suppress normal history
+publication; Base still retains its call and result in private model context. Executable tools
+cannot hide from correctness or security observers. Nothing outside the loop ever executes a tool:
+a hook that drove execution would be deciding inside machinery that also commits results, resumes
+interrupted batches, and settles cancelled ones.
 
 Every tool call receives a Base-generated cuid2 `id`; executable calls also receive a call-bound
 `kv`. Events, hooks, task context, modules, results, and execution use that ID. The provider-native
