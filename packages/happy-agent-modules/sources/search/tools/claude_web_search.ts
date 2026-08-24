@@ -24,6 +24,9 @@ export function claudeWebSearchTool(
 ) {
     return defineAgentTool({
         name: "claude_web_search",
+        defer: true,
+        capabilities: ["Search the web and fetch individual web pages."],
+        searchKeywords: ["Claude web search", "internet current information", "Anthropic search"],
         description: isPreferred
             ? "This is the preferred web search for this agent because Claude is its current provider. Omit provider_id to use the current Claude account. Use it for recent facts and documentation, and cite returned sources."
             : "Search the current web through Claude. Use it for recent facts and documentation, and cite returned sources.",

@@ -23,6 +23,10 @@ const MAXIMUM_POLL_WAIT_MS = 300_000;
 export function codexWriteStdinTool(compute: Compute) {
     return defineAgentTool({
         name: "write_stdin",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Writes to an existing shell session and returns recent output. Use it for REPLs started by exec_command; end each cell with a newline. Leave chars empty to poll a session without typing anything into it.",
         parameters: Type.Object(

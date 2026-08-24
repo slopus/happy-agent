@@ -9,6 +9,10 @@ import { codexSessionId } from "./impl/codexSessionId.js";
 export function codexKillSessionTool(compute: Compute) {
     return defineAgentTool({
         name: "kill_session",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "Stops a running shell session and everything it started. The session is asked to stop first and forced a couple of seconds later. Stopping a session that has already ended is not an error; you are simply told it had ended.",
         parameters: Type.Object(

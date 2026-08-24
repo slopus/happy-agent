@@ -24,6 +24,10 @@ const CLAUDE_GLOB_DESCRIPTION = `- Fast file pattern matching tool that works wi
 export function claudeGlobTool(compute: Compute) {
     return defineAgentTool({
         name: "Glob",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_GLOB_DESCRIPTION,
         parameters: Type.Object(
             {

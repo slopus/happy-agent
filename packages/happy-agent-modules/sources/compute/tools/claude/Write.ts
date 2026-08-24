@@ -22,6 +22,10 @@ Usage:
 export function claudeWriteTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "Write",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_WRITE_DESCRIPTION,
         parameters: Type.Object(
             {

@@ -12,6 +12,10 @@ import { shouldReviewComputePath } from "../../impl/shouldReviewComputePath.js";
 export function grokSearchReplaceTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "search_replace",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Replace an exact string in a file.
 
 - read_file prefixes each line with "LINE_NUMBER→". That prefix is not part of the file: match only what comes after the →, with its exact indentation.

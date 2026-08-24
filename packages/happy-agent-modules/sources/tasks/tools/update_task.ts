@@ -52,6 +52,9 @@ const updateTaskToolResultSchema = Type.Union([
 export function updateTaskTool(tasks: TasksModule, agentId: string) {
     return defineAgentTool({
         name: "update_task",
+        defer: true,
+        capabilities: ["Create, inspect, update, complete, and remove persistent tasks."],
+        searchKeywords: ["edit task", "change task status", "assign work", "task dependencies"],
         description:
             "Update a task's title, detail, assignment, metadata, status, or dependencies. Use complete_task when the task is finished; use deleted status to remove it.",
         parameters: updateTaskInputSchema,

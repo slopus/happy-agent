@@ -59,6 +59,14 @@ export function runWorkflowTool(
 ) {
     return defineAgentTool({
         name: "run_workflow",
+        defer: true,
+        capabilities: ["Run, inspect, pause, resume, and cancel multi-agent workflows."],
+        searchKeywords: [
+            "start workflow",
+            "multi-agent orchestration",
+            "parallel pipeline",
+            "ultracode",
+        ],
         description: RUN_WORKFLOW_DESCRIPTION,
         parameters: runWorkflowToolParametersSchema,
         returnType: workflowRunSchema,

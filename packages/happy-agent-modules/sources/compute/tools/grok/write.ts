@@ -12,6 +12,10 @@ import { writeComputeTextFile } from "../../impl/writeComputeTextFile.js";
 export function grokWriteTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "write",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Create or overwrite a file.
 
 - Writing to an existing path replaces the file.

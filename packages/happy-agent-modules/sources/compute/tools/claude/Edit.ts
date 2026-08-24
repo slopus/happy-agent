@@ -26,6 +26,10 @@ Usage:
 export function claudeEditTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "Edit",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_EDIT_DESCRIPTION,
         parameters: Type.Object(
             {

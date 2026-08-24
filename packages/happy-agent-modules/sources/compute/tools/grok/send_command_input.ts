@@ -19,6 +19,10 @@ const MAX_OUTPUT_CHARACTERS = 40_000;
 export function grokSendCommandInputTool(compute: Compute) {
     return defineAgentTool({
         name: "send_command_input",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Type into a running background command and read what it prints back.
 
 Use it to answer a prompt, drive a REPL, or interrupt with Ctrl-C ("\\u0003"). End a line with a newline, the way you would when typing. Only the output that arrived since your last read comes back.`,

@@ -19,6 +19,14 @@ const getWorkspaceResultSchema = workspaceDetailPageSchema;
 export function getWorkspaceTool(workspaces: WorkspacesModule, agentId: string) {
     return defineAgentTool({
         name: "get_workspace",
+        defer: true,
+        capabilities: ["Create, inspect, rename, and archive Git workspaces and branches."],
+        searchKeywords: [
+            "workspace details",
+            "worktree folder",
+            "branch status",
+            "workspace setup",
+        ],
         description:
             "Read one persistent workspace by ID, including its branch, folder, base, Git state, status, ownership, and timestamps. Follow the returned cursor when the workspace is too large for one response.",
         parameters: getWorkspaceInputSchema,

@@ -18,6 +18,14 @@ const branchMetadataInputSchema = Type.Object(
 export function getBranchMetadataTool(workspaces: WorkspacesModule, agentId: string) {
     return defineAgentTool({
         name: "get_workspace_branch_metadata",
+        defer: true,
+        capabilities: ["Create, inspect, rename, and archive Git workspaces and branches."],
+        searchKeywords: [
+            "Git branch metadata",
+            "ahead behind",
+            "workspace HEAD",
+            "upstream branch",
+        ],
         description:
             "Read the current branch metadata reported by the host for one workspace. Follow the returned cursor to read complete branch, head, upstream, and ahead/behind values. Git, worktrees, and paths remain outside the module.",
         parameters: branchMetadataInputSchema,

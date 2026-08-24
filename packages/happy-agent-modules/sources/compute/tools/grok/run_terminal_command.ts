@@ -21,6 +21,10 @@ const MAX_OUTPUT_CHARACTERS = 40_000;
 export function grokRunTerminalCommandTool(compute: Compute) {
     return defineAgentTool({
         name: "run_terminal_command",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Run a bash command in the current working directory and return its output.
 
 Usage notes:

@@ -30,6 +30,9 @@ export function createMcpTool(
     const qualifiedName = `mcp__${normalizeMcpName(serverName)}__${normalizeMcpName(tool.name)}`;
     return defineAgentTool({
         name: qualifiedName,
+        defer: true,
+        capabilities: ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        searchKeywords: ["MCP direct tool", serverName, tool.name],
         description: tool.description ?? `Use ${tool.name} from ${serverName}.`,
         // Preserve the server's JSON Schema for providers while intentionally treating it as
         // opaque to TypeBox's ordinary argument checker. MCP itself validates the arguments at

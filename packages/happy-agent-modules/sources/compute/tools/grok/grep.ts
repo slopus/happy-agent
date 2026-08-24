@@ -20,6 +20,10 @@ const MAX_CHARACTERS = 40_000;
 export function grokGrepTool(compute: Compute) {
     return defineAgentTool({
         name: "grep",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Search file contents with regular expressions (ripgrep).
 
 - Use full regular-expression syntax and pass the pattern without surrounding quotes.

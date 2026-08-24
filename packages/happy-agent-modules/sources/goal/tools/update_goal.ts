@@ -9,6 +9,9 @@ import { sessionGoalSchema } from "../SessionGoal.js";
 export function updateGoalTool(goals: GoalModule, agentId: string, maxOutputCharacters: number) {
     return defineAgentTool({
         name: "update_goal",
+        defer: true,
+        capabilities: ["Create, inspect, update, and clear persistent long-running goals."],
+        searchKeywords: ["complete persistent goal", "block goal", "finish objective"],
         description: `Mark the persistent goal complete or blocked.
 Use complete only when the full objective is achieved and verified with no required work remaining.
 Use blocked only when meaningful progress cannot continue without user input or an external state change.

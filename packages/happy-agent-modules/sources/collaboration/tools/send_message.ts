@@ -11,6 +11,9 @@ import {
 export function sendMessageTool(collaboration: CollaborationModule, actingAgentId: string) {
     return defineAgentTool({
         name: "send_agent_message",
+        defer: true,
+        capabilities: ["Create, message, and coordinate coding subagents."],
+        searchKeywords: ["message subagent", "reply to parent agent", "steer collaborator"],
         description: [
             "Send a message to a collaborator you created, or back to the agent that created you.",
             "",

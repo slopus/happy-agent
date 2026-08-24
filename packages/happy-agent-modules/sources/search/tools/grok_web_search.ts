@@ -23,6 +23,9 @@ export function grokWebSearchTool(
 ) {
     return defineAgentTool({
         name: "grok_web_search",
+        defer: true,
+        capabilities: ["Search the web and fetch individual web pages."],
+        searchKeywords: ["Grok web search", "internet current information", "xAI search"],
         description: isPreferred
             ? "This is the preferred web search for this agent because Grok is its current provider. Omit provider_id to use the current Grok account. Search published web pages; use Grok X search for posts and social reaction."
             : "Search published web pages through Grok. Use Grok X search for posts and social reaction.",

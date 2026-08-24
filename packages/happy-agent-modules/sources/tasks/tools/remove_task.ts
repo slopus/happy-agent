@@ -21,6 +21,9 @@ const removeTaskResultSchema = Type.Union([
 export function removeTaskTool(tasks: TasksModule, agentId: string) {
     return defineAgentTool({
         name: "remove_task",
+        defer: true,
+        capabilities: ["Create, inspect, update, complete, and remove persistent tasks."],
+        searchKeywords: ["delete task", "remove todo", "discard work item"],
         description:
             "Remove an obsolete task from this agent's persistent task list and unlink its dependencies.",
         parameters: removeTaskInputSchema,

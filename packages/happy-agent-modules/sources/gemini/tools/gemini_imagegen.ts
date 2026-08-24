@@ -26,6 +26,9 @@ export function geminiGenerateImageTool(
 ) {
     return defineAgentTool({
         name: "gemini_imagegen",
+        defer: true,
+        capabilities: ["Generate and analyze images, audio, music, and other media with Gemini."],
+        searchKeywords: ["Gemini image generation", "create picture", "generate visual"],
         description:
             "Generate a new PNG image with Gemini 3.1 Flash Image and save it to the local filesystem. Use a detailed visual prompt and an output path ending in .png.",
         parameters: Type.Object({

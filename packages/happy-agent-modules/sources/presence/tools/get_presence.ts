@@ -7,6 +7,9 @@ import { presenceStateSchema } from "../PresenceState.js";
 export function getPresenceTool(presence: PresenceModule) {
     return defineAgentTool({
         name: "get_presence",
+        defer: true,
+        capabilities: ["Read and update the user's presence and availability."],
+        searchKeywords: ["current presence", "availability status", "online away offline"],
         description: "Read the user's current presence status and optional status message.",
         parameters: Type.Object({}, { additionalProperties: false }),
         returnType: Type.Object(

@@ -26,6 +26,9 @@ export function geminiGenerateMusicTool(
 ) {
     return defineAgentTool({
         name: "gemini_generate_music",
+        defer: true,
+        capabilities: ["Generate and analyze images, audio, music, and other media with Gemini."],
+        searchKeywords: ["Gemini music generation", "create audio", "compose music"],
         description:
             "Generate MP3 music with Lyria 3 and save it locally. Clip mode creates a 30-second preview; song mode creates a longer full song and may cost more.",
         parameters: Type.Object({

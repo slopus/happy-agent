@@ -9,6 +9,9 @@ import { sessionGoalSchema } from "../SessionGoal.js";
 export function getGoalTool(goals: GoalModule, agentId: string, maxOutputCharacters: number) {
     return defineAgentTool({
         name: "get_goal",
+        defer: true,
+        capabilities: ["Create, inspect, update, and clear persistent long-running goals."],
+        searchKeywords: ["inspect current goal", "goal status", "read objective"],
         description: "Get the persistent goal for this agent, including its objective and status.",
         parameters: Type.Object({}, { additionalProperties: false }),
         returnType: Type.Object({ goal: Type.Union([sessionGoalSchema, Type.Null()]) }),

@@ -10,6 +10,9 @@ import {
 export function waitTool(scheduling: SchedulingModule, agentId: string) {
     return defineAgentTool({
         name: "wait",
+        defer: true,
+        capabilities: ["Wait and schedule durable messages for future delivery."],
+        searchKeywords: ["pause duration", "timer", "wait for time"],
         description:
             "Pause for up to 24 hours. Give the duration in seconds, minutes, hours, or days, as fields or as text such as '90 seconds' or '1h 30m'. The wait survives a restart, and any new message in this chat ends it early; the result says how much time actually passed.",
         parameters: schedulingWaitToolInputSchema,

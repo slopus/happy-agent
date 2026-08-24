@@ -13,6 +13,10 @@ const MAX_ENTRIES = 500;
 export function grokListDirTool(compute: Compute) {
     return defineAgentTool({
         name: "list_dir",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Lists files and directories in a given path. The target_directory parameter can be relative to the workspace root or absolute.
 
 Other details:

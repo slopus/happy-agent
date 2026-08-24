@@ -75,6 +75,10 @@ const claudeReadResultSchema = Type.Union([
 export function claudeReadTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "Read",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_READ_DESCRIPTION,
         parameters: Type.Object(
             {

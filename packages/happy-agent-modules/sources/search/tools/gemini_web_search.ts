@@ -19,6 +19,9 @@ type Input = Static<typeof inputSchema>;
 export function geminiWebSearchTool(search: SearchModule, agentId: string) {
     return defineAgentTool({
         name: "gemini_web_search",
+        defer: true,
+        capabilities: ["Search the web and fetch individual web pages."],
+        searchKeywords: ["Gemini web search", "internet current information", "Google search"],
         description:
             "Search the live web through Gemini grounding and return its answer with the sources it cited.",
         parameters: inputSchema,

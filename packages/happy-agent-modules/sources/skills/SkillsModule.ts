@@ -268,6 +268,9 @@ export class SkillsModule implements AgentModule {
             return [
                 defineAgentTool({
                     name: "list_skills",
+                    defer: true,
+                    capabilities: ["Discover and read installed agent skills."],
+                    searchKeywords: ["available skills", "specialized workflows", "skill catalog"],
                     description: "List the skills available to this agent.",
                     parameters: skillListInputSchema,
                     returnType: skillListResultSchema,
@@ -277,6 +280,9 @@ export class SkillsModule implements AgentModule {
                 }),
                 defineAgentTool({
                     name: "read_skill",
+                    defer: true,
+                    capabilities: ["Discover and read installed agent skills."],
+                    searchKeywords: ["read skill instructions", "SKILL.md", "specialized guidance"],
                     description: "Read the complete instructions for one available skill.",
                     parameters: skillReadInputSchema,
                     returnType: skillDocumentSchema,

@@ -9,6 +9,10 @@ import { parseGrokTaskId } from "./impl/parseGrokTaskId.js";
 export function grokKillCommandOrSubagentTool(compute: Compute) {
     return defineAgentTool({
         name: "kill_command_or_subagent",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Terminate a running background command by task ID.
 
 Usage notes:

@@ -28,6 +28,10 @@ const viewImageResultSchema = Type.Object(
 export function codexViewImageTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "view_image",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description:
             "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk. PNG, JPEG, GIF, WebP, and BMP files are supported.",
         parameters: Type.Object(

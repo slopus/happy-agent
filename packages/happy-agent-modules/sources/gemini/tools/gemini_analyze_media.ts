@@ -24,6 +24,9 @@ export function geminiAnalyzeMediaTool(
 ) {
     return defineAgentTool({
         name: "gemini_analyze_media",
+        defer: true,
+        capabilities: ["Generate and analyze images, audio, music, and other media with Gemini."],
+        searchKeywords: ["analyze media file", "inspect audio or video", "understand image"],
         description:
             "Analyze a local image, audio, video, or PDF file up to 15 MiB with Gemini 3.5 Flash. Use it to describe, transcribe, summarize, extract details, or answer questions about media.",
         parameters: Type.Object({

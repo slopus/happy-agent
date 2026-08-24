@@ -20,6 +20,10 @@ const MAXIMUM_YIELD_TIME_MS = 30_000;
 export function codexExecCommandTool(compute: Compute) {
     return defineAgentTool({
         name: "exec_command",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: "Runs a command, returning output or a session ID for ongoing interaction.",
         parameters: Type.Object(
             {

@@ -7,6 +7,9 @@ import type { GoalModule } from "../GoalModule.js";
 export function clearGoalTool(goals: GoalModule, agentId: string) {
     return defineAgentTool({
         name: "clear_goal",
+        defer: true,
+        capabilities: ["Create, inspect, update, and clear persistent long-running goals."],
+        searchKeywords: ["abandon goal", "clear persistent objective", "remove goal"],
         description:
             "Clear the persistent goal when the user explicitly abandons it. Use update_goal with blocked when work cannot continue but the objective should remain recorded.",
         parameters: Type.Object({}, { additionalProperties: false }),

@@ -28,6 +28,9 @@ type DetachSecretResult = Static<typeof detachSecretResultSchema>;
 export function detachSecretTool(secrets: SecretsModule, actingAgentId: string) {
     return defineAgentTool({
         name: "detach_secret",
+        defer: true,
+        capabilities: ["List and attach registered secret references without revealing values."],
+        searchKeywords: ["detach credentials", "disable secret scope", "remove secret reference"],
         description:
             "Detach a secret reference from an opaque host scope. The result contains only identifiers and never the secret value.",
         parameters: detachSecretInputSchema,

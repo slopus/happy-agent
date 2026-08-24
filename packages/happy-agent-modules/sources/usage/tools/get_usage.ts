@@ -46,6 +46,9 @@ export function getUsageTool(module: UsageModule, agentId?: string) {
 function getAgentUsageTool(module: UsageModule, agentId: string) {
     return defineAgentTool({
         name: "get_usage",
+        defer: true,
+        capabilities: ["Inspect agent token and timing usage."],
+        searchKeywords: ["token usage", "timing", "model consumption", "usage breakdown"],
         description:
             "Read this agent's bounded token and timing usage. Set aggregate=true to group the totals, and follow a returned cursor to continue.",
         parameters: getAgentUsageInputSchema,
@@ -87,6 +90,9 @@ function getAgentUsageTool(module: UsageModule, agentId: string) {
 function getHostUsageTool(module: UsageModule) {
     return defineAgentTool({
         name: "get_usage",
+        defer: true,
+        capabilities: ["Inspect agent token and timing usage."],
+        searchKeywords: ["token usage", "timing", "model consumption", "usage breakdown"],
         description:
             "Read bounded token and timing usage for one target or the whole collection from a host-neutral context.",
         parameters: getUsageInputSchema,

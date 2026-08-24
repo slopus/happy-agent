@@ -14,6 +14,9 @@ type WorkflowStatusParameters = Static<typeof workflowStatusParametersSchema>;
 export function workflowStatusTool(module: WorkflowsModule, agentId: string) {
     return defineAgentTool({
         name: "workflow_status",
+        defer: true,
+        capabilities: ["Run, inspect, pause, resume, and cancel multi-agent workflows."],
+        searchKeywords: ["workflow progress", "running agents", "orchestration status"],
         description:
             "Read one workflow: where it got to, how many agents it has started, what it is doing now, and its latest progress notes.",
         parameters: workflowStatusParametersSchema,

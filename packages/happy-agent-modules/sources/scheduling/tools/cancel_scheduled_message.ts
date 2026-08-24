@@ -10,6 +10,9 @@ import {
 export function cancelScheduledMessageTool(scheduling: SchedulingModule, agentId: string) {
     return defineAgentTool({
         name: "cancel_scheduled_message",
+        defer: true,
+        capabilities: ["Wait and schedule durable messages for future delivery."],
+        searchKeywords: ["cancel reminder", "withdraw future message", "stop scheduled delivery"],
         description:
             "Withdraw a message you scheduled, by ID. A message already delivered stays delivered.",
         parameters: schedulingCancelInputSchema,

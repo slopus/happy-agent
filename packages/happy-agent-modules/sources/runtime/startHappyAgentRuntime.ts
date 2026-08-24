@@ -62,6 +62,7 @@ import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { TerminalsModule } from "../terminals/index.js";
 import { TitlesModule } from "../titles/index.js";
+import { ToolDiscoveryModule } from "../toolDiscovery/index.js";
 import { UsageModule } from "../usage/index.js";
 import { UserInputModule } from "../userInput/index.js";
 import { WorkflowsModule } from "../workflows/index.js";
@@ -147,6 +148,7 @@ export interface HappyAgentRuntimeModules {
     readonly tasks: TasksModule;
     readonly terminals: TerminalsModule;
     readonly titles: TitlesModule;
+    readonly toolDiscovery: ToolDiscoveryModule;
     readonly usage: UsageModule;
     readonly userInput: UserInputModule;
     readonly workflows: WorkflowsModule;
@@ -438,6 +440,7 @@ export async function startHappyAgentRuntime(
         const menuBar = new MenuBarModule(config);
         registerShutdown("menu-bar", async () => await menuBar.close());
         const modelSwitch = new ModelSwitchModule(history);
+        const toolDiscovery = new ToolDiscoveryModule();
         const search = new SearchModule(config);
         const secrets = new SecretsModule();
         const tasks = new TasksModule();
@@ -506,6 +509,7 @@ export async function startHappyAgentRuntime(
             tasks,
             terminals,
             titles,
+            toolDiscovery,
             usage,
             userInput,
             workflows,
@@ -520,6 +524,7 @@ export async function startHappyAgentRuntime(
             providerScan,
             observation,
             systemPrompt,
+            toolDiscovery,
             history,
             modelSwitch,
             permissions,

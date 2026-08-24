@@ -26,6 +26,9 @@ export function codexImageGenerationTool(
 ) {
     return defineAgentTool({
         name: "codex_imagegen",
+        defer: true,
+        capabilities: ["Generate new images and edit existing images."],
+        searchKeywords: ["image generation", "edit image", "create picture", "modify visual"],
         description: `The \`codex_imagegen\` tool enables image generation from descriptions and editing of existing images based on specific instructions. Use it when:
 
 - The user requests an image based on a scene description, such as a diagram, portrait, comic, meme, or any other visual.

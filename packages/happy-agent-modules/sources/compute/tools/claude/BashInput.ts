@@ -22,6 +22,10 @@ Use it to answer a prompt, drive a REPL, or interrupt with Ctrl-C ("\\u0003"). E
 export function claudeBashInputTool(compute: Compute) {
     return defineAgentTool({
         name: "BashInput",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_BASH_INPUT_DESCRIPTION,
         parameters: Type.Object(
             {

@@ -43,6 +43,8 @@ type CancelAskToolParameters = Static<typeof cancelAskToolParametersSchema>;
 export function cancelAskTool(userInput: UserInputModule, agentId: string) {
     return defineAgentTool({
         name: "cancel_ask",
+        defer: false,
+        capabilities: ["Ask the user structured questions and manage pending requests."],
         description:
             "Withdraw a question you asked the user that is still waiting for an answer. Use this when you continued without the user and the answer is no longer needed. The request ID is reported when a question stops waiting.",
         parameters: cancelAskToolParametersSchema,

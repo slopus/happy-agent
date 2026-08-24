@@ -9,6 +9,9 @@ const MAX_MODEL_CATALOG_TEXT = 100_000;
 export function listPresenceTool(presence: PresenceModule) {
     return defineAgentTool({
         name: "list_presences",
+        defer: true,
+        capabilities: ["Read and update the user's presence and availability."],
+        searchKeywords: ["presence states", "availability options", "do not disturb status"],
         description: "List the configured presence states and their waiting guidance.",
         parameters: Type.Object({}, { additionalProperties: false }),
         returnType: Type.Object(

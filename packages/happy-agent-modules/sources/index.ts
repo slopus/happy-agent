@@ -16,6 +16,9 @@ export { FileReadLog } from "./impl/FileReadLog.js";
 export { createTimedSignal, type TimedSignal } from "./impl/createTimedSignal.js";
 export { quoteVisibleExact } from "./impl/quoteVisibleExact.js";
 
+// Tool discovery: provider-owned native search plus Happy Agent's deferred/eager tool policy.
+export * from "./toolDiscovery/index.js";
+
 // Files: safe, project- and workspace-rooted filesystem access.
 export * from "./files/index.js";
 

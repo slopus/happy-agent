@@ -29,6 +29,10 @@ const taskOutputSchema = Type.Object({
 export function grokGetCommandOrSubagentOutputTool(compute: Compute) {
     return defineAgentTool({
         name: "get_command_or_subagent_output",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Get output and status for one or more background commands.
 
 Usage notes:

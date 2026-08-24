@@ -21,6 +21,9 @@ type ScheduleMessageToolParameters = Static<typeof scheduleMessageToolParameters
 export function scheduleMessageTool(scheduling: SchedulingModule, agentId: string) {
     return defineAgentTool({
         name: "schedule_message",
+        defer: true,
+        capabilities: ["Wait and schedule durable messages for future delivery."],
+        searchKeywords: ["schedule future message", "durable reminder", "delayed agent message"],
         description:
             "Send a message at a future time to any agent whose ID you know, including yourself. Give the time as a duration in `in`, or as a date in `at` written as ISO 8601, RFC 2822, or a Unix timestamp. The message is kept and delivered even if this session restarts first.",
         parameters: scheduleMessageToolParametersSchema,

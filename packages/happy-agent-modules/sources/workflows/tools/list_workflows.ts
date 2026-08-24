@@ -18,6 +18,9 @@ type ListWorkflowsToolParameters = Static<typeof listWorkflowsToolParametersSche
 export function listWorkflowsTool(module: WorkflowsModule, agentId: string) {
     return defineAgentTool({
         name: "list_workflows",
+        defer: true,
+        capabilities: ["Run, inspect, pause, resume, and cancel multi-agent workflows."],
+        searchKeywords: ["workflow catalog", "workflow runs", "orchestration history"],
         description:
             "List this agent's workflows, a page at a time. Ask from=end for the most recent page, and follow the cursor a page reports to read further.",
         parameters: listWorkflowsToolParametersSchema,

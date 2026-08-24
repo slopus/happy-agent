@@ -59,6 +59,11 @@ export function createMcpProtocolTools(
     return [
         defineAgentTool({
             name: "list_mcp_tools",
+            defer: true,
+            capabilities: [
+                "Discover and use configured MCP servers, resources, prompts, and tools.",
+            ],
+            searchKeywords: ["list MCP tools", "live remote tool catalog"],
             description: `Lists the current live tool catalog from an MCP server, including tools added after the session started. Available servers: ${serverNames}.`,
             parameters: mcpListToolsInputSchema,
             returnType: mcpToolPageSchema,
@@ -75,6 +80,11 @@ export function createMcpProtocolTools(
         }),
         defineAgentTool({
             name: "call_mcp_tool",
+            defer: true,
+            capabilities: [
+                "Discover and use configured MCP servers, resources, prompts, and tools.",
+            ],
+            searchKeywords: ["call MCP tool", "invoke remote server tool"],
             description: `Calls a tool from an MCP server by its live server-side name. Use list_mcp_tools for tools added after session startup. Available servers: ${serverNames}.`,
             parameters: mcpCallToolInputSchema,
             returnType: mcpToolResultSchema,
@@ -96,6 +106,11 @@ export function createMcpProtocolTools(
         }),
         defineAgentTool({
             name: "list_mcp_resources",
+            defer: true,
+            capabilities: [
+                "Discover and use configured MCP servers, resources, prompts, and tools.",
+            ],
+            searchKeywords: ["list MCP resources", "remote resource catalog"],
             description: `Lists resources exposed by an MCP server. Available servers: ${serverNames}. Use the returned next cursor to continue pagination.`,
             parameters: mcpListResourcesInputSchema,
             returnType: mcpResourcePageSchema,
@@ -112,6 +127,11 @@ export function createMcpProtocolTools(
         }),
         defineAgentTool({
             name: "list_mcp_resource_templates",
+            defer: true,
+            capabilities: [
+                "Discover and use configured MCP servers, resources, prompts, and tools.",
+            ],
+            searchKeywords: ["MCP resource templates", "parameterized remote resource"],
             description: `Lists parameterized resource templates exposed by an MCP server. Available servers: ${serverNames}. Use the returned next cursor to continue pagination.`,
             parameters: mcpListResourcesInputSchema,
             returnType: mcpResourceTemplatePageSchema,
@@ -133,6 +153,11 @@ export function createMcpProtocolTools(
         }),
         defineAgentTool({
             name: "read_mcp_resource",
+            defer: true,
+            capabilities: [
+                "Discover and use configured MCP servers, resources, prompts, and tools.",
+            ],
+            searchKeywords: ["read MCP resource", "load remote URI"],
             description: `Reads a resource from an MCP server. Available servers: ${serverNames}. Use a URI returned by list_mcp_resources or constructed from a listed resource template.`,
             parameters: mcpReadResourceInputSchema,
             returnType: mcpReadResourceResultSchema,
@@ -146,6 +171,11 @@ export function createMcpProtocolTools(
         }),
         defineAgentTool({
             name: "list_mcp_prompts",
+            defer: true,
+            capabilities: [
+                "Discover and use configured MCP servers, resources, prompts, and tools.",
+            ],
+            searchKeywords: ["list MCP prompts", "remote reusable prompts"],
             description: `Lists reusable prompts exposed by an MCP server. Available servers: ${serverNames}. Use the returned next cursor to continue pagination.`,
             parameters: mcpListPromptsInputSchema,
             returnType: mcpPromptPageSchema,
@@ -159,6 +189,11 @@ export function createMcpProtocolTools(
         }),
         defineAgentTool({
             name: "get_mcp_prompt",
+            defer: true,
+            capabilities: [
+                "Discover and use configured MCP servers, resources, prompts, and tools.",
+            ],
+            searchKeywords: ["get MCP prompt", "load remote prompt"],
             description: `Gets a reusable prompt from an MCP server. Available servers: ${serverNames}.`,
             parameters: mcpGetPromptInputSchema,
             returnType: mcpGetPromptResultSchema,

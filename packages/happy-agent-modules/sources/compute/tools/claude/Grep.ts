@@ -37,6 +37,10 @@ const CLAUDE_GREP_DESCRIPTION = `A powerful search tool for file contents
 export function claudeGrepTool(compute: Compute) {
     return defineAgentTool({
         name: "Grep",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_GREP_DESCRIPTION,
         parameters: Type.Object(
             {

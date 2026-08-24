@@ -18,6 +18,9 @@ type WorkflowLogsToolParameters = Static<typeof workflowLogsToolParametersSchema
 export function workflowLogsTool(module: WorkflowsModule, agentId: string) {
     return defineAgentTool({
         name: "workflow_logs",
+        defer: true,
+        capabilities: ["Run, inspect, pause, resume, and cancel multi-agent workflows."],
+        searchKeywords: ["workflow progress notes", "orchestration logs", "agent pipeline output"],
         description:
             "Read a workflow's progress notes, a page at a time. Ask from=end for the latest notes, and follow the cursor a page reports to read further back.",
         parameters: workflowLogsToolParametersSchema,

@@ -12,6 +12,9 @@ export type GetAgentTreeUsageInput = Static<typeof getAgentTreeUsageInputSchema>
 export function getAgentTreeUsageTool(module: UsageModule, agentId: string) {
     return defineAgentTool({
         name: "get_agent_tree_usage",
+        defer: true,
+        capabilities: ["Inspect agent token and timing usage."],
+        searchKeywords: ["agent tree tokens", "subagent usage", "lifetime token total"],
         description:
             "Report exact lifetime token usage for this agent and every recursively linked descendant, including hidden and delegated agents. Access requires host authorization; completed agents remain in the bounded snapshot.",
         parameters: getAgentTreeUsageInputSchema,

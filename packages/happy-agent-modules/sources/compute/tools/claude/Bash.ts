@@ -40,6 +40,10 @@ Output is truncated to the last ${String(MAX_CLAUDE_SHELL_OUTPUT_CHARACTERS)} ch
 export function claudeBashTool(compute: Compute) {
     return defineAgentTool({
         name: "Bash",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_BASH_DESCRIPTION,
         parameters: Type.Object(
             {

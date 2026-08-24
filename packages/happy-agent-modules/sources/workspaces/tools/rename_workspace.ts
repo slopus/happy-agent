@@ -11,6 +11,9 @@ import type { WorkspacesModule } from "../WorkspacesModule.js";
 export function renameWorkspaceTool(workspaces: WorkspacesModule, agentId: string) {
     return defineAgentTool({
         name: "rename_workspace",
+        defer: true,
+        capabilities: ["Create, inspect, rename, and archive Git workspaces and branches."],
+        searchKeywords: ["rename workspace", "rename branch", "change worktree name"],
         description:
             "Rename one workspace you own. The name is the only name a workspace has, so the Git branch moves with it and the workspace is never renamed again by its first chat. Write a short title rather than a slug or a path.",
         parameters: workspaceRenameToolInputSchema,

@@ -67,6 +67,9 @@ const historyAgentSummaryResponseSchema = Type.Object(
 export function readAgentHistoryTool(history: HistoryModule, agentId: string) {
     return defineAgentTool({
         name: "read_agent_history",
+        defer: true,
+        capabilities: ["Read the agent's durable conversation and tool history."],
+        searchKeywords: ["prior messages", "previous tool calls", "agent conversation history"],
         description:
             "Read or search the durable low-level history of any agent. The response lists the agents it concerns with their stable IDs, message counts, paths, and statuses; any stable Agent ID may be read, including one that has recorded nothing yet. Use this to investigate prior requests, decisions, reasoning, tool activity, and subagent work after a model change or whenever earlier context matters. This is not a user-facing chat export. Search examines stored block content, but each response is simplified and capped at 80,000 characters: provider-hidden reasoning is unavailable, only exposed thinking is readable, tool calls are summarized, tool outputs are truncated, and images are represented only by metadata. A requested message limit may therefore return fewer messages; continue with next_cursor or previous_cursor.",
         parameters: Type.Object({

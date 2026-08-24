@@ -16,6 +16,9 @@ type InterruptAgentInput = Static<typeof interruptAgentInputSchema>;
 export function interruptAgentTool(collaboration: CollaborationModule, actingAgentId: string) {
     return defineAgentTool({
         name: "interrupt_agent",
+        defer: true,
+        capabilities: ["Create, message, and coordinate coding subagents."],
+        searchKeywords: ["stop subagent", "abort collaborator", "cancel agent work"],
         description:
             "Immediately abort a collaborator's current turn and every running descendant. Nothing waits for them to settle, and the agents remain available for follow-up work later.",
         parameters: interruptAgentInputSchema,

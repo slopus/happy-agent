@@ -15,6 +15,13 @@ export function createGoalTool(
 ) {
     return defineAgentTool({
         name: "create_goal",
+        defer: true,
+        capabilities: ["Create, inspect, update, and clear persistent long-running goals."],
+        searchKeywords: [
+            "start persistent goal",
+            "long-running objective",
+            "continue autonomously",
+        ],
         description: `Create a persistent goal only when the user explicitly asks for long-running goal execution.
 Do not infer a goal from an ordinary task. A new goal cannot replace an unfinished goal.`,
         parameters: Type.Object(

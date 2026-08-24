@@ -77,6 +77,10 @@ export function codexApplyPatchTool(compute: Compute, reads: FileReadLog) {
 
     return defineAgentTool({
         name: "apply_patch",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Use the \`apply_patch\` tool to edit files. Put the patch text in the \`patch\` field as an ordinary JSON string.
 
 A patch is a sequence of file sections between a \`*** Begin Patch\` line and an \`*** End Patch\` line:

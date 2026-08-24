@@ -7,6 +7,9 @@ import type { SecretsModule } from "../SecretsModule.js";
 export function listSecretsTool(secrets: SecretsModule, actingAgentId: string) {
     return defineAgentTool({
         name: "list_secrets",
+        defer: true,
+        capabilities: ["List and attach registered secret references without revealing values."],
+        searchKeywords: ["secret catalog", "credential references", "environment variable names"],
         description:
             "List bounded secret references and environment-variable names. Secret values are never available to the model.",
         parameters: secretListInputSchema,

@@ -22,6 +22,9 @@ type ReferenceSecretResult = Static<typeof referenceSecretResultSchema>;
 export function referenceSecretTool(secrets: SecretsModule, actingAgentId: string) {
     return defineAgentTool({
         name: "reference_secret",
+        defer: true,
+        capabilities: ["List and attach registered secret references without revealing values."],
+        searchKeywords: ["secret metadata", "credential description", "environment variables"],
         description:
             "Read one secret reference, including its description and environment-variable names. The secret value is never returned.",
         parameters: referenceSecretInputSchema,

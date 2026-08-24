@@ -15,6 +15,9 @@ const completeTaskResultSchema = Type.Union([
 export function completeTaskTool(tasks: TasksModule, agentId: string) {
     return defineAgentTool({
         name: "complete_task",
+        defer: true,
+        capabilities: ["Create, inspect, update, complete, and remove persistent tasks."],
+        searchKeywords: ["finish task", "mark todo complete", "complete work item"],
         description: "Mark a task completed after its work has been finished and verified.",
         parameters: completeTaskInputSchema,
         returnType: completeTaskResultSchema,

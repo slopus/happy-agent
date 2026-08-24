@@ -32,6 +32,9 @@ export function listMcpServersTool(
     );
     return defineAgentTool({
         name: "list_mcp_servers",
+        defer: true,
+        capabilities: ["Discover and use configured MCP servers, resources, prompts, and tools."],
+        searchKeywords: ["list MCP servers", "connected external servers", "MCP configuration"],
         description:
             "List configured MCP servers and their current connection status. Results are bounded and cursor-paged.",
         parameters: mcpServerPageQuerySchema,

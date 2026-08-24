@@ -22,6 +22,10 @@ Only what the command has produced since your last read comes back; you already 
 export function claudeBashOutputTool(compute: Compute) {
     return defineAgentTool({
         name: "BashOutput",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_BASH_OUTPUT_DESCRIPTION,
         parameters: Type.Object(
             {

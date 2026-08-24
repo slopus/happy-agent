@@ -22,6 +22,9 @@ export function bedrockWebSearchTool(
 ) {
     return defineAgentTool({
         name: "bedrock_web_search",
+        defer: true,
+        capabilities: ["Search the web and fetch individual web pages."],
+        searchKeywords: ["Bedrock web search", "internet current information", "AWS search"],
         description: isPreferred
             ? "This is the preferred web search for this agent because Amazon Bedrock is its current provider. Omit provider_id to use the current Bedrock account. Search its hosted web index and return the cited sources."
             : "Search Amazon Bedrock's hosted web index and return its answer with the sources it cited.",

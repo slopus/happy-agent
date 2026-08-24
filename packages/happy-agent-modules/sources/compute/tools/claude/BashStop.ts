@@ -15,6 +15,10 @@ The command is asked to stop first and forced a moment later. Stopping one that 
 export function claudeBashStopTool(compute: Compute) {
     return defineAgentTool({
         name: "BashStop",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: CLAUDE_BASH_STOP_DESCRIPTION,
         parameters: Type.Object(
             { bash_id: Type.String({ description: "The background shell identifier." }) },

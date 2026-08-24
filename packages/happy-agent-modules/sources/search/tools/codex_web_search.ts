@@ -23,6 +23,9 @@ export function codexWebSearchTool(
 ) {
     return defineAgentTool({
         name: "codex_web_search",
+        defer: true,
+        capabilities: ["Search the web and fetch individual web pages."],
+        searchKeywords: ["Codex web search", "internet current information", "OpenAI search"],
         description: isPreferred
             ? "This is the preferred web search for this agent because Codex is its current provider. Omit provider_id to use the current Codex account. Use it when current documentation, releases, or facts need direct sources."
             : "Research the live web through Codex when current documentation, releases, or facts need direct sources.",

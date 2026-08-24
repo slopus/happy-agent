@@ -18,6 +18,10 @@ const MAX_CHARACTERS = 60_000;
 export function grokReadFileTool(compute: Compute, reads: FileReadLog) {
     return defineAgentTool({
         name: "read_file",
+        defer: false,
+        capabilities: [
+            "Read and modify files, run shell commands, inspect images, and manage background processes.",
+        ],
         description: `Read a file.
 
 Usage:

@@ -11,6 +11,9 @@ import type { WorkspacesModule } from "../WorkspacesModule.js";
 export function listWorkspacesTool(workspaces: WorkspacesModule, agentId: string) {
     return defineAgentTool({
         name: "list_workspaces",
+        defer: true,
+        capabilities: ["Create, inspect, rename, and archive Git workspaces and branches."],
+        searchKeywords: ["workspace catalog", "worktrees", "branches", "archived workspaces"],
         description:
             "List a bounded page of the persistent workspaces someone can still work in. Archived workspaces are history and are left out unless you pass includeArchived. Use nextCursor to continue reading the host catalog.",
         parameters: workspacePageQuerySchema,

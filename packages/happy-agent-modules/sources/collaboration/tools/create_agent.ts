@@ -18,6 +18,9 @@ export function createAgentTool(
 ) {
     return defineAgentTool({
         name: "create_agent",
+        defer: true,
+        capabilities: ["Create, message, and coordinate coding subagents."],
+        searchKeywords: ["spawn subagent", "delegate work", "parallel collaborator"],
         description: createAgentDescription(models, maxCollaborators, maxCollaborationDepth),
         parameters: collaborationCreateInputSchema,
         returnType: collaborationCreateResultSchema,

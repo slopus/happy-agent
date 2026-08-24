@@ -7,6 +7,9 @@ import { fetchInputSchema, fetchResultSchema, type FetchInput } from "../Search.
 export function webFetchTool(search: SearchModule, agentId: string) {
     return defineAgentTool({
         name: "web_fetch",
+        defer: true,
+        capabilities: ["Search the web and fetch individual web pages."],
+        searchKeywords: ["fetch URL", "read web page", "download page text"],
         description: "Fetch one web page and read it as bounded text. HTML comes back as markdown.",
         parameters: fetchInputSchema,
         returnType: fetchResultSchema,

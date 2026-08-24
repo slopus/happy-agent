@@ -14,6 +14,9 @@ type ResumeWorkflowParameters = Static<typeof resumeWorkflowParametersSchema>;
 export function resumeWorkflowTool(module: WorkflowsModule, agentId: string) {
     return defineAgentTool({
         name: "resume_workflow",
+        defer: true,
+        capabilities: ["Run, inspect, pause, resume, and cancel multi-agent workflows."],
+        searchKeywords: ["continue workflow", "resume paused orchestration", "reuse agent calls"],
         description:
             "Continue a paused workflow from its last checkpoint. Every agent that already answered is reused rather than paid for again. A workflow that is already running is left alone.",
         parameters: resumeWorkflowParametersSchema,

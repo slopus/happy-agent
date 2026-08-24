@@ -27,6 +27,15 @@ export function attachSecretTool(secrets: SecretsModule, actingAgentId: string) 
     return {
         ...defineAgentTool({
             name: "attach_secret",
+            defer: true,
+            capabilities: [
+                "List and attach registered secret references without revealing values.",
+            ],
+            searchKeywords: [
+                "attach credentials",
+                "enable secret scope",
+                "secret reference availability",
+            ],
             description:
                 "Attach a registered secret reference to an opaque host scope. This changes availability only; it never returns the secret value.",
             parameters: attachSecretInputSchema,

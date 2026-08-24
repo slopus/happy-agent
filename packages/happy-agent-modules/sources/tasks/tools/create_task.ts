@@ -38,6 +38,9 @@ const createTaskToolResultSchema = Type.Union([
 export function createTaskTool(tasks: TasksModule, agentId: string) {
     return defineAgentTool({
         name: "create_task",
+        defer: true,
+        capabilities: ["Create, inspect, update, complete, and remove persistent tasks."],
+        searchKeywords: ["add task", "create todo", "work item", "task dependency"],
         description: "Create one persistent task in this agent's task list.",
         parameters: taskToolCreateInputSchema,
         returnType: createTaskToolResultSchema,

@@ -14,6 +14,9 @@ type CancelWorkflowParameters = Static<typeof cancelWorkflowParametersSchema>;
 export function cancelWorkflowTool(module: WorkflowsModule, agentId: string) {
     return defineAgentTool({
         name: "cancel_workflow",
+        defer: true,
+        capabilities: ["Run, inspect, pause, resume, and cancel multi-agent workflows."],
+        searchKeywords: ["stop workflow", "abort orchestration", "cancel running agents"],
         description:
             "Stop one running or paused workflow. The agents it started are stopped too, and everything it already recorded stays readable. A workflow that has already finished is left alone.",
         parameters: cancelWorkflowParametersSchema,

@@ -21,6 +21,9 @@ const getTaskInputSchema = Type.Object(
 export function getTaskTool(tasks: TasksModule, agentId: string) {
     return defineAgentTool({
         name: "get_task",
+        defer: true,
+        capabilities: ["Create, inspect, update, complete, and remove persistent tasks."],
+        searchKeywords: ["inspect task", "task detail", "task dependencies"],
         description:
             "Read one persistent task by id. Follow detail and dependency offsets to inspect long detail or dependency lists.",
         parameters: getTaskInputSchema,

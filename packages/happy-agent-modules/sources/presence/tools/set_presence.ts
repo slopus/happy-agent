@@ -18,6 +18,14 @@ type SetPresenceToolParameters = Static<typeof setPresenceToolParametersSchema>;
 export function setPresenceTool(presence: PresenceModule) {
     return defineAgentTool({
         name: "set_presence",
+        defer: true,
+        capabilities: ["Read and update the user's presence and availability."],
+        searchKeywords: [
+            "change presence",
+            "set away",
+            "set do not disturb",
+            "availability expiry",
+        ],
         description:
             "Set the user's presence only when the user explicitly asked you to change it. You may set an absolute expiry with until and choose a fallbackPresenceId. Never infer consent from conversation context.",
         parameters: setPresenceToolParametersSchema,
