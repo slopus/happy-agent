@@ -1,5 +1,16 @@
 # Compute module learnings
 
+## Codex command output follows the model policy after capture
+
+Codex command sessions request a Codex-only 1 MiB capture ceiling for each compute output stream,
+using the same ceiling value as vanilla unified exec without changing the collection limits of
+Claude or Grok. `exec_command` and `write_stdin` then apply the smaller of the model-requested
+`max_output_tokens` and Codex's 10,000-token model policy. The default request is also 10,000
+tokens. A larger request therefore cannot multiply context pressure, while output dropped during
+collection or model-facing truncation continues to be disclosed. Every OpenAI model in Happy
+Agent's current curated catalog publishes that token policy; this is not a provider-global
+assumption for arbitrary future models, whose metadata must be checked when the catalog changes.
+
 ## File-edit presentations belong to structured tool results
 
 Every successful built-in file mutation returns the exact bounded `file_diff` presentation in its

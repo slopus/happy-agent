@@ -34,6 +34,7 @@ describe("Claude's Bash", () => {
         expect(result.stdout).toBe("12 tests passed\n");
         expect(result.exitCode).toBe(0);
         expect(result.bash_id).toBeUndefined();
+        expect(compute.startedOptions[0]?.maxOutputBytes).toBe(512_000);
         expect(tool("Bash").isError?.(result)).toBe(false);
     });
 

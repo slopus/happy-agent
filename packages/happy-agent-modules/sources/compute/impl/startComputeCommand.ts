@@ -3,7 +3,7 @@ import type { Context } from "@steve.kite/stdlib";
 import type { Compute, ComputeSessionSnapshot } from "../Compute.js";
 import { computePermissionsForContext } from "./computePermissionsForContext.js";
 
-/** How much of a command's output the machine captures while it runs. */
+/** How much of a command's output the machine captures unless its vendor asks for another limit. */
 export const COMPUTE_COMMAND_CAPTURE_MAX_BYTES = 512_000;
 
 /**
@@ -36,6 +36,7 @@ export async function startComputeCommand(
         readonly shell?: string;
         readonly tty?: boolean;
         readonly background?: boolean;
+        readonly maxOutputBytes?: number;
         readonly waitMs: number;
     },
 ): Promise<ComputeCommandOutcome> {
@@ -45,7 +46,7 @@ export async function startComputeCommand(
         command: options.command,
         permissions,
         ...(options.workdir === undefined ? {} : { cwd: options.workdir }),
-        maxOutputBytes: COMPUTE_COMMAND_CAPTURE_MAX_BYTES,
+        maxOutputBytes: options.maxOutputBytes ?? COMPUTE_COMMAND_CAPTURE_MAX_BYTES,
         ...(options.tty === undefined ? {} : { tty: options.tty }),
         ...(options.shell === undefined ? {} : { shell: options.shell }),
     });

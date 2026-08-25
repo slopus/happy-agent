@@ -28,6 +28,7 @@ describe("Grok's compute command tools", () => {
 
         expect(result.text).toBe("hello\n");
         expect(result.task_id).toBeUndefined();
+        expect(compute.startedOptions[0]?.maxOutputBytes).toBe(512_000);
     });
 
     it("reports a failed command as an error the model can read", async () => {

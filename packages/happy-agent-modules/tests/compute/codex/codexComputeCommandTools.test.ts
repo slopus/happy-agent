@@ -53,6 +53,7 @@ describe("codex compute command tools", () => {
         expect(compute.startedOptions[0]).toMatchObject({
             command: "printf hello",
             cwd: "/workspace/app",
+            maxOutputBytes: 1024 * 1024,
             shell: "/bin/zsh",
             tty: true,
         });
@@ -169,6 +170,21 @@ describe("codex compute command tools", () => {
         expect(result.output).toContain("Warning: truncated output (original token count: 2250)");
         expect(result.output).toContain("… output truncated …");
         expect(result.output.length).toBeLessThan(9_000);
+    });
+
+    it("clamps a larger requested budget to Codex's model output policy", async () => {
+        const { compute, tool, call } = await machine();
+        compute.script("cat huge.log", { chunks: ["x".repeat(50_000)], exitCode: 0 });
+
+        const result = await tool("exec_command").execute(
+            ctx,
+            { cmd: "cat huge.log", max_output_tokens: 40_000 },
+            call,
+        );
+
+        expect(result.original_token_count).toBe(12_500);
+        expect(result.output).toContain("Warning: truncated output (original token count: 12500)");
+        expect(result.output.length).toBeLessThanOrEqual(10_000 * 4);
     });
 
     it("says nothing about a token count when the whole output fitted", async () => {

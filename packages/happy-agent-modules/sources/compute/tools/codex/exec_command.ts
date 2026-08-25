@@ -12,6 +12,9 @@ import {
 /** How long Codex waits for a command when the model does not say. */
 const DEFAULT_YIELD_TIME_MS = 10_000;
 
+/** Vanilla Codex keeps up to 1 MiB per unified-exec output stream before model truncation. */
+const CODEX_UNIFIED_EXEC_CAPTURE_MAX_BYTES = 1024 * 1024;
+
 /** The window Codex allows around that wait. Beyond it the command is simply left running. */
 const MINIMUM_YIELD_TIME_MS = 250;
 const MAXIMUM_YIELD_TIME_MS = 30_000;
@@ -102,6 +105,7 @@ export function codexExecCommandTool(compute: Compute) {
                 ...(workdir === undefined ? {} : { workdir }),
                 ...(shell === undefined ? {} : { shell }),
                 ...(tty === undefined ? {} : { tty }),
+                maxOutputBytes: CODEX_UNIFIED_EXEC_CAPTURE_MAX_BYTES,
                 waitMs: Math.max(
                     MINIMUM_YIELD_TIME_MS,
                     Math.min(MAXIMUM_YIELD_TIME_MS, yield_time_ms ?? DEFAULT_YIELD_TIME_MS),

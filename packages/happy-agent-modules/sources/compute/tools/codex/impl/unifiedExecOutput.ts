@@ -5,6 +5,9 @@ import type { ComputeSessionSnapshot } from "../../../Compute.js";
 /** The output budget Codex assumes when the model does not name one. */
 export const CODEX_DEFAULT_OUTPUT_TOKENS = 10_000;
 
+/** The tool-output policy published by the Codex models Happy Agent supports. */
+export const CODEX_MODEL_OUTPUT_POLICY_TOKENS = 10_000;
+
 /** Codex states its budget in tokens; the machine hands back characters. */
 const CHARACTERS_PER_OUTPUT_TOKEN = 4;
 
@@ -56,7 +59,10 @@ export function createUnifiedExecOutput(
     );
     const maxCharacters = Math.max(
         MINIMUM_OUTPUT_CHARACTERS,
-        Math.floor(maxOutputTokens * CHARACTERS_PER_OUTPUT_TOKEN),
+        Math.floor(
+            Math.min(maxOutputTokens, CODEX_MODEL_OUTPUT_POLICY_TOKENS) *
+                CHARACTERS_PER_OUTPUT_TOKEN,
+        ),
     );
     const truncated = produced.length > maxCharacters;
     const shown = truncated
