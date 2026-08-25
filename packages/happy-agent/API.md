@@ -988,7 +988,7 @@ After registration it is:
 ```
 
 `username` is 3–24 lowercase ASCII letters, digits, or underscores. `firstName` is required and
-`lastName` is optional; each is 1–64 visible characters with no ASCII control characters. Names
+`lastName` is optional; each is 1–64 nonblank characters with no ASCII control characters. Names
 are public display text. A registered username is exclusive while it remains current. When a user
 changes username, the previous username may be reused by another user; Happy Cloud resolves the
 race atomically.
@@ -1026,10 +1026,12 @@ Registers or replaces the connected user's Cloud profile. Request:
 `lastName` and `mutationId` are optional. Unknown fields, malformed usernames, whitespace-only
 names, control characters, and values beyond the stated limits return `400` with code
 `invalid_request` without contacting Happy Cloud. A username currently owned by another user
-returns `409` with code `conflict`. Response — `200`: `{ "profile": { ... } }` with Happy Cloud's
-authoritative normalized profile. `mutationId` is accepted for consistency with other client
-mutations but is not an idempotency key and no event is emitted solely for a remote profile
-change.
+returns `409` with code `conflict` and the current `cloud`. A well-formed `invalid_profile`
+rejection from Happy Cloud after the daemon accepted the same input is contract drift and returns
+`503` with code `cloud_unavailable`, not a user-input error. Response — `200`:
+`{ "profile": { ... } }` with Happy Cloud's authoritative normalized profile. The successful
+mutation emits one `cloud.profile.updated` event; its compact payload contains only the optional
+`mutationId`, and clients refetch this endpoint.
 
 ## Happy integration
 
@@ -3663,6 +3665,10 @@ to a different daemon process.
   reconciling it with a snapshot.
     - `cloud` (full Cloud object).
     - `mutationId` — echoed when an API mutation caused the change.
+- `cloud.profile.updated` — the durable remote Cloud profile changed through this daemon. The
+  payload is a compact invalidation because Happy Cloud remains authoritative and another
+  application may also change it. Clients refetch `GET /v0/cloud/profile`.
+    - `mutationId` — echoed when the API mutation supplied one.
 - `happy.integration.updated` — the installation-wide Happy connection state changed. This is
   a complete replacement rather than a version-chain diff; clients keep the greater embedded
   `version` when reconciling it with a snapshot.

@@ -193,6 +193,9 @@ export interface CloudUpdatedPayload extends MutationEcho {
     cloud: Cloud;
 }
 
+/** Happy Cloud owns the profile, so this event is a compact refetch invalidation. */
+export type CloudProfileUpdatedPayload = MutationEcho;
+
 /** Happy integration state is computed, so the payload is a complete replacement. */
 export interface HappyIntegrationUpdatedPayload {
     integration: HappyIntegration;
@@ -245,6 +248,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
+    | EventEnvelope<"cloud.profile.updated", CloudProfileUpdatedPayload>
     | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>
     | EventEnvelope<"sharing.updated", SharingUpdatedPayload>;
 

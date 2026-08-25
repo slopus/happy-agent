@@ -174,7 +174,13 @@ describe("Cloud protocol", () => {
         ).toBe(true);
         expect(
             Value.Check(cloudProfileResponseSchema, {
-                profile: { firstName: "Ada", lastName: "Lovelace", username: "ada_1" },
+                futureResponseField: true,
+                profile: {
+                    firstName: "Ada",
+                    futureProfileField: true,
+                    lastName: "Lovelace",
+                    username: "ada_1",
+                },
             }),
         ).toBe(true);
         expect(
@@ -224,6 +230,25 @@ describe("Cloud protocol", () => {
             throw new Error("Expected a cloud.updated event.");
         }
         expect(parsed.event.payload).toEqual({ cloud, mutationId: "mutation-3" });
+    });
+
+    it("parses cloud.profile.updated as a compact mutation invalidation", async () => {
+        const event: HappyAgentEvent = {
+            cursor: version,
+            occurredAt: updatedAt,
+            payload: { mutationId: "profile-3" },
+            type: "cloud.profile.updated",
+        };
+        const frames = [];
+        for await (const frame of readEventStream(
+            streamOf(
+                `id: ${version}\nevent: cloud.profile.updated\ndata: ${JSON.stringify(event)}\n\n`,
+            ),
+        )) {
+            frames.push(frame);
+        }
+
+        expect(frames).toEqual([{ cursor: version, event, kind: "event" }]);
     });
 });
 
