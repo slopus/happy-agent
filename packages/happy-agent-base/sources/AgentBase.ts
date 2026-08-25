@@ -4301,6 +4301,9 @@ export class AgentBase {
         // Provider IDs remain only in the private context blocks. Every event and transactional
         // projection leaving this method uses the generated Base ID instead.
         const responseToolIds = new Map<string, string>();
+        // Tool identities whose blocks were durably appended. A provider block_reset rolls back
+        // only the unfinished remainder, so these keep their provider mapping.
+        const persistedToolIds = new Set<string>();
         const persist = async (
             block: SessionAssistantBlock | undefined,
             event: AgentBasePersistedEvent | undefined,
@@ -4320,6 +4323,9 @@ export class AgentBase {
                 }
             });
             persisted.push(block);
+            if (block.type === "tool_call" || block.type === "tool_result") {
+                persistedToolIds.add(block.callId);
+            }
         };
         const persistPair = async (
             call: SessionToolCallBlock,
@@ -4340,6 +4346,7 @@ export class AgentBase {
                 }),
             );
             persisted.push(call, result);
+            persistedToolIds.add(call.callId);
         };
         const flushCompletedCallOnlyTools = async (): Promise<void> => {
             for (const deferred of deferredToolCalls.values()) {
@@ -4371,7 +4378,14 @@ export class AgentBase {
                     providerEvent,
                     responseToolIds,
                     this.#providerToolIds,
+                    persistedToolIds,
                 );
+                if (event.type === "block_reset") {
+                    // The reset discarded the mappings of every unpersisted call, and the replay
+                    // re-streams those calls under fresh identities. A deferred call held for its
+                    // result must not be flushed later with an identity that no longer exists.
+                    deferredToolCalls.clear();
+                }
                 if (event.type === "toolcall_start") {
                     const tool = tools.find(
                         (candidate) =>

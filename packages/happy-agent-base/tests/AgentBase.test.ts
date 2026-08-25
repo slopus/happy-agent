@@ -497,6 +497,91 @@ describe("AgentBase", () => {
         await agent.close();
     });
 
+    it("keeps persisted tool identities across a provider block_reset replay", async () => {
+        const provider = new ScriptedProvider([
+            [
+                { type: "toolcall_start", callId: "srv-1", name: "web_search", server: true },
+                { type: "toolcall_end", callId: "srv-1", arguments: '{"query":"weather"}' },
+                { type: "toolcall_result_start", callId: "srv-1" },
+                {
+                    type: "toolcall_result_end",
+                    callId: "srv-1",
+                    content: [{ type: "text", text: "sunny" }],
+                },
+                // The connection dropped mid-response after the server tool call and result
+                // were durably persisted; the provider rolls the unfinished block back and
+                // streams the rest of the response from a replayed attempt.
+                { type: "block_reset" },
+                { type: "toolcall_start", callId: "call-1", name: "read_file" },
+                { type: "toolcall_end", callId: "call-1", arguments: '{"path":"a.txt"}' },
+                { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            ],
+            textTurn("It is sunny."),
+        ]);
+        const events: SessionEvent[] = [];
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks: { onEvent: (_hookCtx, event) => events.push(event) },
+            initialState: {
+                tools: [
+                    defineAgentTool({
+                        name: "read_file",
+                        parameters: Type.Object({ path: Type.String() }),
+                        returnType: Type.Object({ contents: Type.String() }),
+                        shouldReviewInAutoMode: () => false,
+                        execute: () => Promise.resolve({ contents: "file contents" }),
+                        toLLM: (result) => [{ type: "text", text: result.contents }],
+                    }),
+                ],
+            },
+        });
+
+        await agent.send(ctx, user("weather?"));
+        await agent.waitForIdle();
+
+        // The turn survives the mid-response reset: the follow-up request in the same turn
+        // still translates the persisted server tool identity back to its provider ID.
+        expect(events.filter((event) => event.type === "done")).toEqual([
+            { type: "done", state: "tool_call", tokens: { input: 1, output: 1 } },
+            { type: "done", state: "normal", tokens: { input: 1, output: 1 } },
+        ]);
+        expect(provider.sessions[0]?.requests[1]?.context.messages).toEqual([
+            user("weather?"),
+            {
+                role: "assistant",
+                content: [
+                    {
+                        type: "tool_call",
+                        callId: "srv-1",
+                        name: "web_search",
+                        arguments: '{"query":"weather"}',
+                        server: true,
+                    },
+                    {
+                        type: "tool_result",
+                        callId: "srv-1",
+                        content: [{ type: "text", text: "sunny" }],
+                    },
+                    {
+                        type: "tool_call",
+                        callId: "call-1",
+                        name: "read_file",
+                        arguments: '{"path":"a.txt"}',
+                    },
+                ],
+            },
+            {
+                role: "tool",
+                callId: "call-1",
+                content: [{ type: "text", text: "file contents" }],
+            },
+        ]);
+        await agent.close();
+    });
+
     it("fails the turn when the provider ID is not registered", async () => {
         const persistence = new InMemoryPersistence();
         const events: SessionEvent[] = [];

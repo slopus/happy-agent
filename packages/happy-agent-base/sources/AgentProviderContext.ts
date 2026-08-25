@@ -15,9 +15,15 @@ export function baseSessionEvent(
     event: SessionEvent,
     responseToolIds: Map<string, string>,
     contextToolIds: Map<string, string>,
+    persistedToolIds: ReadonlySet<string>,
 ): SessionEvent {
     if (event.type === "block_reset") {
-        for (const id of responseToolIds.values()) contextToolIds.delete(id);
+        // A reset discards only what the response has not durably persisted. A tool block
+        // already appended to the store stays in the context, so its provider mapping must
+        // survive for the next request to translate it.
+        for (const id of responseToolIds.values()) {
+            if (!persistedToolIds.has(id)) contextToolIds.delete(id);
+        }
         responseToolIds.clear();
         return event;
     }
