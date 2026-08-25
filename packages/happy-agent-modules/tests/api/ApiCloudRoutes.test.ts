@@ -144,6 +144,16 @@ describe("Cloud HTTP API", () => {
         await expect(
             fixture.client.mintCloudAccessToken({ mutationId: "cloud-mint-1" }),
         ).resolves.toEqual({ accessToken: "access-token", cloud: connected });
+        await expect(fixture.client.getCloudProfile()).resolves.toEqual({
+            profile: { firstName: null, username: null },
+        });
+        await expect(
+            fixture.client.updateCloudProfile({
+                firstName: "Ada",
+                mutationId: "cloud-profile-1",
+                username: "ada",
+            }),
+        ).resolves.toEqual({ profile: { firstName: "Ada", username: "ada" } });
 
         const events = await fixture.client.getEvents({ after: before });
         expect(events.events).toEqual([
@@ -154,6 +164,10 @@ describe("Cloud HTTP API", () => {
             expect.objectContaining({
                 payload: { cloud: connected, mutationId: "cloud-complete-1" },
                 type: "cloud.updated",
+            }),
+            expect.objectContaining({
+                payload: { mutationId: "cloud-profile-1" },
+                type: "cloud.profile.updated",
             }),
         ]);
         expect(JSON.stringify(events)).not.toContain("access-token");
@@ -213,6 +227,47 @@ describe("Cloud HTTP API", () => {
         expect(fixture.cloud.disconnect).toHaveBeenCalledTimes(1);
     });
 
+    it("rejects malformed profile input before invoking Cloud", async () => {
+        const fixture = await apiFixture(connected);
+
+        const error = await fixture.client
+            .updateCloudProfile({ firstName: "Ada", username: "UPPERCASE" })
+            .catch((caught: unknown) => caught);
+
+        expect(error).toMatchObject({ code: "invalid_request", status: 400 });
+        expect(fixture.cloud.updateProfile).not.toHaveBeenCalled();
+    });
+
+    it("returns the connected snapshot when a Cloud username is unavailable", async () => {
+        const fixture = await apiFixture(connected);
+        const before = fixture.api.cursor();
+        fixture.cloud.updateProfile.mockRejectedValueOnce(
+            new CloudOperationError(
+                409,
+                "conflict",
+                "The Cloud username is unavailable.",
+                connected,
+            ),
+        );
+
+        const error = await fixture.client
+            .updateCloudProfile({
+                firstName: "Ada",
+                mutationId: "cloud-profile-conflict",
+                username: "taken_name",
+            })
+            .catch((caught: unknown) => caught);
+
+        expect(error).toMatchObject({
+            body: { cloud: connected, code: "conflict" },
+            code: "conflict",
+            status: 409,
+        });
+        await expect(fixture.client.getEvents({ after: before })).resolves.toMatchObject({
+            events: [],
+        });
+    });
+
     it("carries the real Cloud module through completion, minting, and API events", async () => {
         const fixture = await actualCloudApiFixture();
         const before = fixture.api.cursor();
@@ -237,6 +292,42 @@ describe("Cloud HTTP API", () => {
             "refresh-b",
         );
 
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: "access-c",
+            refreshToken: "refresh-c",
+            user,
+        });
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(Response.json({ message: "hello", userId: user.id }))
+            .mockResolvedValueOnce(Response.json({ firstName: null, username: null }));
+        await expect(fixture.client.getCloudProfile()).resolves.toEqual({
+            profile: { firstName: null, username: null },
+        });
+
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: "access-d",
+            refreshToken: "refresh-d",
+            user,
+        });
+        vi.mocked(fetch)
+            .mockResolvedValueOnce(Response.json({ message: "hello", userId: user.id }))
+            .mockResolvedValueOnce(
+                Response.json({ firstName: "Ada", lastName: "Lovelace", username: "ada" }),
+            );
+        await expect(
+            fixture.client.updateCloudProfile({
+                firstName: "Ada",
+                lastName: "Lovelace",
+                mutationId: "cloud-real-profile",
+                username: "ada",
+            }),
+        ).resolves.toEqual({
+            profile: { firstName: "Ada", lastName: "Lovelace", username: "ada" },
+        });
+        expect((await createCloudDatabase().read(fixture.context))?.session?.refreshToken).toBe(
+            "refresh-d",
+        );
+
         const events = await fixture.client.getEvents({ after: before });
         expect(events.events).toEqual([
             expect.objectContaining({
@@ -247,11 +338,19 @@ describe("Cloud HTTP API", () => {
                 payload: { cloud: completed.cloud, mutationId: "cloud-real-complete" },
                 type: "cloud.updated",
             }),
+            expect.objectContaining({
+                payload: { mutationId: "cloud-real-profile" },
+                type: "cloud.profile.updated",
+            }),
         ]);
         expect(JSON.stringify(events)).not.toContain("access-a");
         expect(JSON.stringify(events)).not.toContain("access-b");
+        expect(JSON.stringify(events)).not.toContain("access-c");
+        expect(JSON.stringify(events)).not.toContain("access-d");
         expect(JSON.stringify(events)).not.toContain("refresh-a");
         expect(JSON.stringify(events)).not.toContain("refresh-b");
+        expect(JSON.stringify(events)).not.toContain("refresh-c");
+        expect(JSON.stringify(events)).not.toContain("refresh-d");
     });
 });
 
@@ -260,6 +359,7 @@ async function apiFixture(initial: Cloud = disconnected) {
     const context = createRootContext().named("cloud-api-test");
     let current = initial;
     let updated: CloudUpdatedListener | undefined;
+    let profileUpdated: ((ctx: Context) => void) | undefined;
     const cloud = {
         complete: vi.fn(async (ctx: Context) => {
             current = connected;
@@ -272,10 +372,17 @@ async function apiFixture(initial: Cloud = disconnected) {
             return disconnected;
         }),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
+        getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
         onUpdated: vi.fn((listener: CloudUpdatedListener) => {
             updated = listener;
             return () => {
                 updated = undefined;
+            };
+        }),
+        onProfileUpdated: vi.fn((listener: (ctx: Context) => void) => {
+            profileUpdated = listener;
+            return () => {
+                profileUpdated = undefined;
             };
         }),
         start: vi.fn(async (ctx: Context) => {
@@ -284,6 +391,10 @@ async function apiFixture(initial: Cloud = disconnected) {
             return authorizing;
         }),
         status: vi.fn(() => current),
+        updateProfile: vi.fn(async (ctx: Context) => {
+            profileUpdated?.(ctx);
+            return { profile: { firstName: "Ada", username: "ada" } };
+        }),
     };
     const subscriptions = new Proxy(
         {},

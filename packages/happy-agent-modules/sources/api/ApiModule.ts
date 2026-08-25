@@ -155,6 +155,7 @@ import {
     startCloudAuthorizationRequestSchema,
     terminalCreateBodySchema,
     terminalResizeBodySchema,
+    updateCloudProfileRequestSchema,
     workspaceCreateBodySchema,
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
@@ -670,6 +671,27 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, result);
                 return;
             }
+            if (request.method === "GET" && url.pathname === "/v0/cloud/profile") {
+                sendJson(
+                    response,
+                    200,
+                    await this.#cloudOperation(() => this.#cloud.getProfile(ctx)),
+                );
+                return;
+            }
+            if (request.method === "PUT" && url.pathname === "/v0/cloud/profile") {
+                const body = await bodyAs(
+                    request,
+                    updateCloudProfileRequestSchema,
+                    "Cloud profile",
+                    8 * 1_024,
+                );
+                const result = await this.#withMutationId(body.mutationId, async () => {
+                    return await this.#cloudOperation(() => this.#cloud.updateProfile(ctx, body));
+                });
+                sendJson(response, 200, result);
+                return;
+            }
             if (request.method === "GET" && url.pathname === "/v0/integrations/happy") {
                 sendJson(response, 200, { integration: this.#happy.integration(ctx) });
                 return;
@@ -1078,6 +1100,9 @@ export class ApiModule implements AgentModule {
             }),
             this.#cloud.onUpdated((_eventCtx, cloud) => {
                 this.#journal.append("cloud.updated", { cloud }, cloud.updatedAt);
+            }),
+            this.#cloud.onProfileUpdated(() => {
+                this.#journal.append("cloud.profile.updated", {});
             }),
             this.#happy.onIntegrationUpdated((_eventCtx, integration) => {
                 this.#journal.append(

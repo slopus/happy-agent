@@ -7,6 +7,7 @@ export {
     completeCloudAuthorizationRequestSchema,
     invokeSlashCommandRequestSchema,
     startCloudAuthorizationRequestSchema,
+    updateCloudProfileRequestSchema,
 } from "@slopus/happy-agent-client";
 
 import { createTerminalInputSchema, resizeTerminalInputSchema } from "../terminals/index.js";

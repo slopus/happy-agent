@@ -7,10 +7,14 @@ import type {
     CloudConnected,
     CloudDisconnected,
     CloudEnvironment,
+    CloudProfile,
+    CloudProfileResponse,
     CloudUser,
     CompleteCloudAuthorizationRequest,
     StartCloudAuthorizationRequest,
+    UpdateCloudProfileRequest,
 } from "@slopus/happy-agent-client";
+import { updateCloudProfileRequestSchema } from "@slopus/happy-agent-client";
 import {
     agentDatabase,
     withAgentDatabase,
@@ -19,20 +23,25 @@ import {
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import { afterCommit, asyncLock, detach, type AsyncLock, type Context } from "@steve.kite/stdlib";
+import { Value } from "@sinclair/typebox/value";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import {
     cloudMigrations,
     cloudSession,
     createCloudDatabase,
+    type CloudSession,
     type CloudStoredState,
     type CloudStoredValue,
 } from "./CloudDatabase.js";
 import {
     CloudCredentialsRejectedError,
     CloudIdentityMismatchError,
+    CloudProfileRejectedError,
     CloudServiceUnavailableError,
+    CloudUsernameUnavailableError,
     CloudWorkOS,
+    type CloudAuthentication,
 } from "./CloudWorkOS.js";
 import { createCloudVersion } from "./createCloudVersion.js";
 
@@ -54,9 +63,15 @@ interface CloudReplacementOptions {
     readonly onCommit?: () => void;
 }
 
+interface MintedCloudCredential extends CloudAccessTokenResponse {
+    readonly authenticated: CloudAuthentication;
+    readonly session: CloudSession;
+}
+
 type CloudStoredReplacement = CloudStoredValue;
 
 export type CloudUpdatedListener = (ctx: Context, cloud: Cloud) => void;
+export type CloudProfileUpdatedListener = (ctx: Context) => void;
 
 export type CloudOperationErrorCode =
     | "cloud_not_authenticated"
@@ -85,13 +100,14 @@ export class CloudOperationError extends Error {
     }
 }
 
-/** Owns Happy Cloud WorkOS authentication, refresh-token storage, and token minting. */
+/** Owns Happy Cloud authentication, refresh-token storage, token minting, and profile access. */
 export class CloudModule implements AgentModule {
     readonly name = "cloud";
     readonly migrations = cloudMigrations;
 
     readonly #database = createCloudDatabase();
     readonly #listeners = new Set<CloudUpdatedListener>();
+    readonly #profileListeners = new Set<CloudProfileUpdatedListener>();
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #clients = new Map<CloudEnvironment, CloudWorkOS>();
     #attempt: CloudAttempt | undefined;
@@ -150,6 +166,13 @@ export class CloudModule implements AgentModule {
         this.#listeners.add(listener);
         return () => {
             this.#listeners.delete(listener);
+        };
+    }
+
+    onProfileUpdated(listener: CloudProfileUpdatedListener): () => void {
+        this.#profileListeners.add(listener);
+        return () => {
+            this.#profileListeners.delete(listener);
         };
     }
 
@@ -373,101 +396,193 @@ export class CloudModule implements AgentModule {
         const ctx = this.#ownedContext();
         return await this.#lock.runInLock(ctx, async () => {
             this.#assertRunning();
-            const stored = await this.#readOwned(ctx);
-            const session = stored?.session;
-            if (session === null || session === undefined || this.#cloud.status !== "connected") {
-                throw this.#error(
-                    409,
-                    "cloud_not_authenticated",
-                    "Cloud is not authenticated on this Happy Agent.",
-                );
-            }
+            const minted = await this.#mintInLock(ctx, true);
+            return { accessToken: minted.accessToken, cloud: minted.cloud };
+        });
+    }
 
-            let authenticated;
+    async getProfile(_ctx: Context): Promise<CloudProfileResponse> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const minted = await this.#mintInLock(ctx, true);
             try {
-                authenticated = await this.#client(session.environment).refresh(
-                    session.refreshToken,
-                );
+                return {
+                    profile: await this.#client(minted.cloud.environment).getProfile(
+                        minted.accessToken,
+                    ),
+                };
             } catch (error: unknown) {
-                logCloudFailure(ctx, "token", session.environment, "workos-refresh", error);
-                if (error instanceof CloudCredentialsRejectedError) {
-                    const cloud = await this.#replace(ctx, {
-                        error: {
-                            code: "credentials_rejected",
-                            message: "Cloud authorization has expired.",
-                        },
-                        pending: false,
-                        session: null,
-                    });
-                    throw new CloudOperationError(
-                        409,
-                        "cloud_unauthorized",
-                        "Cloud authorization has expired.",
-                        cloud,
-                    );
-                }
-                throw this.#error(
-                    503,
-                    "cloud_unavailable",
-                    "Cloud authentication is temporarily unavailable.",
-                );
-            }
-
-            await this.#database.rotateRefreshToken(
-                ctx,
-                session.refreshToken,
-                authenticated.refreshToken,
-            );
-            if (authenticated.user.id !== session.user.id) {
                 logCloudFailure(
                     ctx,
-                    "token",
-                    session.environment,
-                    "workos-refresh",
-                    new CloudIdentityMismatchError(),
+                    "profile",
+                    minted.cloud.environment,
+                    "cloud-profile-read",
+                    error,
                 );
                 throw this.#error(
                     503,
                     "cloud_unavailable",
-                    "Cloud returned an unexpected account.",
+                    "The Cloud profile is temporarily unavailable.",
                 );
             }
+        });
+    }
+
+    async updateProfile(
+        _ctx: Context,
+        request: UpdateCloudProfileRequest,
+    ): Promise<CloudProfileResponse> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            if (!Value.Check(updateCloudProfileRequestSchema, request)) {
+                throw this.#error(400, "invalid_request", "The Cloud profile is invalid.");
+            }
+            const minted = await this.#mintInLock(ctx, false);
+            let profile: CloudProfile;
             try {
-                await this.#client(session.environment).verify(
-                    authenticated.accessToken,
-                    session.user.id,
+                profile = await this.#client(minted.cloud.environment).updateProfile(
+                    minted.accessToken,
+                    request,
                 );
             } catch (error: unknown) {
-                logCloudFailure(ctx, "token", session.environment, "cloud-hello", error);
-                if (
-                    !(error instanceof CloudServiceUnavailableError) &&
-                    !(error instanceof CloudIdentityMismatchError)
-                ) {
-                    throw error;
+                logCloudFailure(
+                    ctx,
+                    "profile",
+                    minted.cloud.environment,
+                    "cloud-profile-update",
+                    error,
+                );
+                if (error instanceof CloudProfileRejectedError) {
+                    throw this.#error(
+                        503,
+                        "cloud_unavailable",
+                        "The Cloud profile is temporarily unavailable.",
+                    );
                 }
-                throw this.#error(
-                    503,
-                    "cloud_unavailable",
-                    "Cloud could not verify the access token.",
-                );
+                if (error instanceof CloudUsernameUnavailableError) {
+                    throw this.#error(409, "conflict", "The Cloud username is unavailable.");
+                }
+                if (error instanceof CloudServiceUnavailableError) {
+                    throw this.#error(
+                        503,
+                        "cloud_unavailable",
+                        "The Cloud profile is temporarily unavailable.",
+                    );
+                }
+                throw error;
             }
-
-            let cloud = connected(this.#cloud);
-            if (!sameUser(session.user, authenticated.user)) {
-                cloud = connected(
-                    await this.#replace(ctx, {
-                        error: null,
-                        pending: false,
-                        session: cloudSession(
-                            session.environment,
-                            authenticated.refreshToken,
-                            authenticated.user,
-                        ),
-                    }),
-                );
-            }
-            return { accessToken: authenticated.accessToken, cloud };
+            await this.#publishUserChangeAfterProfile(ctx, minted);
+            for (const listener of this.#profileListeners) listener(ctx);
+            return { profile };
         });
+    }
+
+    async #mintInLock(ctx: Context, publishUserChange: boolean): Promise<MintedCloudCredential> {
+        const stored = await this.#readOwned(ctx);
+        const session = stored?.session;
+        if (session === null || session === undefined || this.#cloud.status !== "connected") {
+            throw this.#error(
+                409,
+                "cloud_not_authenticated",
+                "Cloud is not authenticated on this Happy Agent.",
+            );
+        }
+
+        let authenticated;
+        try {
+            authenticated = await this.#client(session.environment).refresh(session.refreshToken);
+        } catch (error: unknown) {
+            logCloudFailure(ctx, "token", session.environment, "workos-refresh", error);
+            if (error instanceof CloudCredentialsRejectedError) {
+                const cloud = await this.#replace(ctx, {
+                    error: {
+                        code: "credentials_rejected",
+                        message: "Cloud authorization has expired.",
+                    },
+                    pending: false,
+                    session: null,
+                });
+                throw new CloudOperationError(
+                    409,
+                    "cloud_unauthorized",
+                    "Cloud authorization has expired.",
+                    cloud,
+                );
+            }
+            throw this.#error(
+                503,
+                "cloud_unavailable",
+                "Cloud authentication is temporarily unavailable.",
+            );
+        }
+
+        await this.#database.rotateRefreshToken(
+            ctx,
+            session.refreshToken,
+            authenticated.refreshToken,
+        );
+        if (authenticated.user.id !== session.user.id) {
+            logCloudFailure(
+                ctx,
+                "token",
+                session.environment,
+                "workos-refresh",
+                new CloudIdentityMismatchError(),
+            );
+            throw this.#error(503, "cloud_unavailable", "Cloud returned an unexpected account.");
+        }
+        try {
+            await this.#client(session.environment).verify(
+                authenticated.accessToken,
+                session.user.id,
+            );
+        } catch (error: unknown) {
+            logCloudFailure(ctx, "token", session.environment, "cloud-hello", error);
+            if (
+                !(error instanceof CloudServiceUnavailableError) &&
+                !(error instanceof CloudIdentityMismatchError)
+            ) {
+                throw error;
+            }
+            throw this.#error(503, "cloud_unavailable", "Cloud could not verify the access token.");
+        }
+
+        const minted = {
+            accessToken: authenticated.accessToken,
+            authenticated,
+            cloud: connected(this.#cloud),
+            session,
+        };
+        if (publishUserChange) await this.#publishUserChange(ctx, minted);
+        return { ...minted, cloud: connected(this.#cloud) };
+    }
+
+    async #publishUserChange(ctx: Context, minted: MintedCloudCredential): Promise<void> {
+        if (sameUser(minted.session.user, minted.authenticated.user)) return;
+        await this.#replace(ctx, {
+            error: null,
+            pending: false,
+            session: cloudSession(
+                minted.session.environment,
+                minted.authenticated.refreshToken,
+                minted.authenticated.user,
+            ),
+        });
+    }
+
+    async #publishUserChangeAfterProfile(
+        ctx: Context,
+        minted: MintedCloudCredential,
+    ): Promise<void> {
+        try {
+            await this.#publishUserChange(ctx, minted);
+        } catch (error: unknown) {
+            // The remote profile mutation already succeeded. A secondary WorkOS metadata write
+            // must not turn that success into a retry that could overwrite a newer Cloud profile.
+            logCloudFailure(ctx, "profile", minted.cloud.environment, "workos-user-update", error);
+        }
     }
 
     async #initialize(ctx: Context): Promise<void> {
@@ -623,7 +738,7 @@ export class CloudModule implements AgentModule {
 
 function logCloudFailure(
     ctx: Context,
-    operation: "authorization" | "token",
+    operation: "authorization" | "profile" | "token",
     environment: CloudEnvironment,
     phase: string,
     error: unknown,
@@ -641,6 +756,8 @@ function cloudFailureDiagnostic(error: unknown): {
 } {
     if (error instanceof CloudCredentialsRejectedError) return { reason: "credentials-rejected" };
     if (error instanceof CloudIdentityMismatchError) return { reason: "identity-mismatch" };
+    if (error instanceof CloudProfileRejectedError) return { reason: "profile-rejected" };
+    if (error instanceof CloudUsernameUnavailableError) return { reason: "username-unavailable" };
     if (error instanceof CloudServiceUnavailableError) {
         return error.status === undefined
             ? { reason: error.reason }

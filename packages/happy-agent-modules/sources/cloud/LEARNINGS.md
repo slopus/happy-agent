@@ -56,3 +56,21 @@
   the database boundary so a serialized refresh token cannot reach generic API logging.
 - Durable errors use an exact private schema and public projection. API schemas are intentionally
   permissive for compatibility and must not be reused as the storage validation boundary.
+
+## Cloud profiles
+
+- Happy Cloud, not Happy Agent, is the durable authority for the public username and display
+  names. Do not copy the profile into the local Cloud snapshot or confuse it with WorkOS user
+  metadata.
+- Profile reads and writes refresh a rotating WorkOS token, verify it through Cloud hello, and call
+  the fixed deployment while holding Cloud's serialization lock. The access token never crosses
+  the profile API.
+- Validate profile mutations before refresh, strip the local mutation echo from the upstream body,
+  and parse every Cloud response with a bounded schema. A current username conflict is distinct;
+  upstream profile validation after local acceptance is service-contract drift, not a user error.
+- Persist refresh-token rotation before downstream verification. A failed profile write may change
+  only that private token: defer public WorkOS metadata updates so a rejected mutation emits no
+  public state event.
+- CloudModule owns the successful profile-change signal so every caller gets the same behavior;
+  the API translates it into `cloud.profile.updated` as a compact invalidation. Clients refetch
+  Happy Cloud's authoritative profile; the daemon does not invent a local profile version.

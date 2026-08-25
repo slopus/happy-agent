@@ -118,6 +118,19 @@ describe("Happy Cloud API", () => {
                 code: "cloud_not_authenticated",
                 status: 409,
             });
+            await expect(gym.client.getCloudProfile()).rejects.toMatchObject({
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
+            await expect(
+                gym.client.updateCloudProfile({ firstName: "Ada", username: "ada" }),
+            ).rejects.toMatchObject({
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
+            await expect(
+                gym.client.updateCloudProfile({ firstName: "Ada", username: "UPPERCASE" }),
+            ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
             await expect(
                 gym.client.startCloudAuthorization({
                     environment: "production",
@@ -127,7 +140,8 @@ describe("Happy Cloud API", () => {
 
             expect(
                 (await gym.client.getEvents({ after: baseline })).events.filter(
-                    (event) => event.type === "cloud.updated",
+                    (event) =>
+                        event.type === "cloud.updated" || event.type === "cloud.profile.updated",
                 ),
             ).toEqual([]);
             await expect(gym.client.getCloud()).resolves.toMatchObject({

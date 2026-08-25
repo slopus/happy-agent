@@ -156,6 +156,168 @@ describe("CloudModule", () => {
         unsubscribe();
     });
 
+    it("reads and updates the durable Cloud profile through rotated credentials", async () => {
+        const { database, module } = await fixture("cloud-module-profile");
+        const updates: string[] = [];
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            expect(url.href).toBe("https://cloud.cluster-fluster.com/v0/profile");
+            if (init?.method === "PUT") {
+                return Response.json({ firstName: "Ada", username: "ada_next" });
+            }
+            return Response.json({ firstName: null, username: null });
+        });
+        await connect(module, database);
+        module.onUpdated(() => updates.push("cloud"));
+        module.onProfileUpdated(() => updates.push("profile"));
+
+        await expect(module.getProfile(database.context)).resolves.toEqual({
+            profile: { firstName: null, username: null },
+        });
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: "access-c",
+            refreshToken: "refresh-c",
+            user: { ...user, firstName: "Changed upstream" },
+        });
+        await expect(
+            module.updateProfile(database.context, {
+                firstName: "Ada",
+                mutationId: "profile-update",
+                username: "ada_next",
+            }),
+        ).resolves.toEqual({ profile: { firstName: "Ada", username: "ada_next" } });
+
+        expect(workos.refresh).toHaveBeenNthCalledWith(1, { refreshToken: "refresh-a" });
+        expect(workos.refresh).toHaveBeenNthCalledWith(2, { refreshToken: "refresh-b" });
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-c",
+        );
+        expect(module.status(database.context).user).toEqual({
+            ...user,
+            firstName: "Changed upstream",
+        });
+        expect(updates).toEqual(["cloud", "profile"]);
+    });
+
+    it("rejects invalid direct profile input before refreshing or contacting Cloud", async () => {
+        const { database, module } = await fixture("cloud-module-profile-validation");
+        await connect(module, database);
+        workos.refresh.mockClear();
+        vi.mocked(fetch).mockClear();
+
+        await expect(
+            module.updateProfile(database.context, {
+                firstName: "Ada",
+                username: "UPPERCASE",
+            }),
+        ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
+        expect(workos.refresh).not.toHaveBeenCalled();
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("preserves rotated credentials and public state when a username is unavailable", async () => {
+        const { database, module } = await fixture("cloud-module-profile-conflict");
+        await connect(module, database);
+        const updates: unknown[] = [];
+        const profileUpdates: unknown[] = [];
+        module.onUpdated((_ctx, cloud) => updates.push(cloud));
+        module.onProfileUpdated((ctx) => profileUpdates.push(ctx));
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: "access-b",
+            refreshToken: "refresh-b",
+            user: { ...user, firstName: "Changed upstream" },
+        });
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = new URL(String(input));
+            return url.pathname === "/v0/hello"
+                ? Response.json({ message: "hello", userId: user.id })
+                : Response.json({ error: "username_unavailable" }, { status: 409 });
+        });
+
+        await expect(
+            module.updateProfile(database.context, { firstName: "Ada", username: "taken_name" }),
+        ).rejects.toMatchObject({
+            cloud: { status: "connected", user },
+            code: "conflict",
+            status: 409,
+        });
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-b",
+        );
+        expect(module.status(database.context).user).toEqual(user);
+        expect(updates).toEqual([]);
+        expect(profileUpdates).toEqual([]);
+    });
+
+    it("orders disconnect after an in-flight profile update", async () => {
+        const { database, module } = await fixture("cloud-module-profile-linearization");
+        await connect(module, database);
+        let releaseProfile!: () => void;
+        let profileStarted = false;
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            profileStarted = true;
+            await new Promise<void>((resolve) => {
+                releaseProfile = resolve;
+            });
+            return Response.json({ firstName: "Ada", username: "ada" });
+        });
+
+        const updating = module.updateProfile(database.context, {
+            firstName: "Ada",
+            username: "ada",
+        });
+        await vi.waitFor(() => expect(profileStarted).toBe(true));
+        const disconnecting = module.disconnect(database.context);
+        releaseProfile();
+
+        await expect(updating).resolves.toEqual({
+            profile: { firstName: "Ada", username: "ada" },
+        });
+        await expect(disconnecting).resolves.toMatchObject({ status: "disconnected" });
+        expect(module.status(database.context).status).toBe("disconnected");
+    });
+
+    it("treats an upstream profile validation rejection as contract drift", async () => {
+        const { database, module } = await fixture("cloud-module-profile-contract-drift");
+        await connect(module, database);
+        const updates: unknown[] = [];
+        const profileUpdates: unknown[] = [];
+        module.onUpdated((_ctx, cloud) => updates.push(cloud));
+        module.onProfileUpdated((ctx) => profileUpdates.push(ctx));
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: "access-b",
+            refreshToken: "refresh-b",
+            user: { ...user, firstName: "Changed upstream" },
+        });
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = new URL(String(input));
+            return url.pathname === "/v0/hello"
+                ? Response.json({ message: "hello", userId: user.id })
+                : Response.json({ error: "invalid_profile" }, { status: 400 });
+        });
+
+        await expect(
+            module.updateProfile(database.context, { firstName: "Ada", username: "ada" }),
+        ).rejects.toMatchObject({
+            cloud: { status: "connected", user },
+            code: "cloud_unavailable",
+            status: 503,
+        });
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-b",
+        );
+        expect(module.status(database.context).user).toEqual(user);
+        expect(updates).toEqual([]);
+        expect(profileUpdates).toEqual([]);
+    });
+
     it("returns one immutable snapshot when the same application joins authorization", async () => {
         const { database, module } = await fixture("cloud-module-join");
         const events: unknown[] = [];

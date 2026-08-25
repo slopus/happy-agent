@@ -1,4 +1,11 @@
-import { cloudEnvironmentSchema, type CloudEnvironment } from "@slopus/happy-agent-client";
+import {
+    cloudEnvironmentSchema,
+    cloudProfileSchema,
+    updateCloudProfileRequestSchema,
+    type CloudEnvironment,
+    type CloudProfile,
+    type UpdateCloudProfileRequest,
+} from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import {
@@ -17,14 +24,14 @@ import {
 
 const WORKOS_TIMEOUT_MS = 15_000;
 const MAX_WORKOS_RESPONSE_BYTES = 1024 * 1_024;
-const CLOUD_HELLO_TIMEOUT_MS = 15_000;
-const MAX_HELLO_RESPONSE_BYTES = 8 * 1_024;
+const CLOUD_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_CLOUD_RESPONSE_BYTES = 8 * 1_024;
 
 const deployments: Readonly<
     Record<CloudEnvironment, { readonly cloudUrl: string; readonly workosClientId: string }>
 > = {
     production: {
-        cloudUrl: "https://happy-cloud.bulka-llc.workers.dev",
+        cloudUrl: "https://cloud.cluster-fluster.com",
         workosClientId: "client_01KZD3XE9YAFAMT0P8TD4HP73E",
     },
     staging: {
@@ -67,6 +74,16 @@ const helloSchema = Type.Object(
     { additionalProperties: false },
 );
 
+const invalidProfileSchema = Type.Object(
+    { error: Type.Literal("invalid_profile") },
+    { additionalProperties: false },
+);
+
+const usernameUnavailableSchema = Type.Object(
+    { error: Type.Literal("username_unavailable") },
+    { additionalProperties: false },
+);
+
 const workOSParseErrorSchema = Type.Object(
     {
         name: Type.Literal("ParseError"),
@@ -90,6 +107,20 @@ export class CloudIdentityMismatchError extends Error {
     constructor() {
         super("Happy Cloud returned a different authenticated user.");
         this.name = "CloudIdentityMismatchError";
+    }
+}
+
+export class CloudProfileRejectedError extends Error {
+    constructor() {
+        super("Happy Cloud rejected the profile.");
+        this.name = "CloudProfileRejectedError";
+    }
+}
+
+export class CloudUsernameUnavailableError extends Error {
+    constructor() {
+        super("The Happy Cloud username is unavailable.");
+        this.name = "CloudUsernameUnavailableError";
     }
 }
 
@@ -189,12 +220,69 @@ export class CloudWorkOS {
 
     /** Verifies the minted token against Happy Cloud without treating its 401 as revocation. */
     async verify(accessToken: string, expectedUserId: string): Promise<void> {
-        const signal = AbortSignal.timeout(CLOUD_HELLO_TIMEOUT_MS);
+        const result = await this.#request("/v0/hello", accessToken, "GET");
+        if (result.status < 200 || result.status >= 300) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        if (!Value.Check(helloSchema, result.body)) throw new CloudServiceUnavailableError();
+        if (result.body.userId !== expectedUserId) throw new CloudIdentityMismatchError();
+    }
+
+    async getProfile(accessToken: string): Promise<CloudProfile> {
+        const result = await this.#request("/v0/profile", accessToken, "GET");
+        if (result.status < 200 || result.status >= 300) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        return cloudProfile(result.body);
+    }
+
+    async updateProfile(
+        accessToken: string,
+        request: UpdateCloudProfileRequest,
+    ): Promise<CloudProfile> {
+        if (!Value.Check(updateCloudProfileRequestSchema, request)) {
+            throw new CloudProfileRejectedError();
+        }
+        const result = await this.#request(
+            "/v0/profile",
+            accessToken,
+            "PUT",
+            {
+                firstName: request.firstName,
+                ...(request.lastName === undefined ? {} : { lastName: request.lastName }),
+                username: request.username,
+            },
+            [400, 409],
+        );
+        if (result.status === 400 && Value.Check(invalidProfileSchema, result.body)) {
+            throw new CloudProfileRejectedError();
+        }
+        if (result.status === 409 && Value.Check(usernameUnavailableSchema, result.body)) {
+            throw new CloudUsernameUnavailableError();
+        }
+        if (result.status < 200 || result.status >= 300) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        return cloudProfile(result.body);
+    }
+
+    async #request(
+        path: string,
+        accessToken: string,
+        method: "GET" | "PUT",
+        body?: Readonly<Record<string, string>>,
+        parsedErrorStatuses: readonly number[] = [],
+    ): Promise<{ readonly body: unknown; readonly status: number }> {
+        const signal = AbortSignal.timeout(CLOUD_REQUEST_TIMEOUT_MS);
         let response: Response;
         try {
-            response = await fetch(`${this.#cloudUrl}/v0/hello`, {
-                headers: { authorization: `Bearer ${accessToken}` },
-                method: "GET",
+            response = await fetch(`${this.#cloudUrl}${path}`, {
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                headers: {
+                    authorization: `Bearer ${accessToken}`,
+                    ...(body === undefined ? {} : { "content-type": "application/json" }),
+                },
+                method,
                 signal,
             });
         } catch {
@@ -202,24 +290,32 @@ export class CloudWorkOS {
                 signal.aborted ? "request-timed-out" : "request-failed",
             );
         }
-        if (!response.ok) {
+        if (!response.ok && !parsedErrorStatuses.includes(response.status)) {
             await response.body?.cancel().catch(() => undefined);
-            throw new CloudServiceUnavailableError("response-rejected", response.status);
+            return { body: undefined, status: response.status };
         }
         try {
-            const bytes = await readBounded(response, MAX_HELLO_RESPONSE_BYTES, signal);
-            const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-            if (!Value.Check(helloSchema, parsed)) throw new CloudServiceUnavailableError();
-            if (parsed.userId !== expectedUserId) throw new CloudIdentityMismatchError();
+            const bytes = await readBounded(response, MAX_CLOUD_RESPONSE_BYTES, signal);
+            return {
+                body: JSON.parse(new TextDecoder().decode(bytes)) as unknown,
+                status: response.status,
+            };
         } catch (error: unknown) {
-            if (signal.aborted) {
-                throw new CloudServiceUnavailableError("request-timed-out");
-            }
-            if (error instanceof CloudIdentityMismatchError) throw error;
+            if (signal.aborted) throw new CloudServiceUnavailableError("request-timed-out");
             if (error instanceof CloudServiceUnavailableError) throw error;
-            throw new CloudServiceUnavailableError("response-invalid");
+            throw new CloudServiceUnavailableError("response-invalid", response.status);
         }
     }
+}
+
+function cloudProfile(value: unknown): CloudProfile {
+    if (!Value.Check(cloudProfileSchema, value)) throw new CloudServiceUnavailableError();
+    if (value.username === null) return { firstName: null, username: null };
+    return {
+        firstName: value.firstName,
+        ...(value.lastName === undefined ? {} : { lastName: value.lastName }),
+        username: value.username,
+    };
 }
 
 function authentication(value: unknown): CloudAuthentication {
