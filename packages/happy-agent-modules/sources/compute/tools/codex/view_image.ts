@@ -49,6 +49,7 @@ export function codexViewImageTool(compute: Compute, reads: FileReadLog) {
         returnType: viewImageResultSchema,
         // Looking at a file changes nothing, so an interrupted call may simply look again.
         durable: true,
+        reloadable: true,
         // The read it records must commit with the result, or the agent could be told it has seen
         // a file the log never learned about.
         transactional: true,

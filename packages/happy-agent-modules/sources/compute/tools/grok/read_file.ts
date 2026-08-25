@@ -63,6 +63,7 @@ Usage:
         // Reading the same file again reads the same file, and the read it records is the same
         // read, so the record may commit with the result.
         durable: true,
+        reloadable: true,
         transactional: true,
         describeAutoPermissionAction: ({ target_file }) =>
             describeComputePathAction(compute, target_file, "reading"),

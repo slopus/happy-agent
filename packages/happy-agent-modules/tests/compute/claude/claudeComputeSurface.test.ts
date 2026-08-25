@@ -161,12 +161,16 @@ describe("Claude compute surface", () => {
 
         // Reading the same file, names, or contents again finds the same thing.
         expect(tool("Read").durable).toBe(true);
+        expect(tool("Read").reloadable).toBe(true);
         expect(tool("Read").transactional).toBe(true);
         expect(tool("Glob").durable).toBe(true);
+        expect(tool("Glob").reloadable).toBe(true);
         expect(tool("Grep").durable).toBe(true);
+        expect(tool("Grep").reloadable).toBe(true);
         // Everything that changes the machine or consumes command output cannot simply be replayed.
         for (const name of ["Write", "Edit", "Bash", "BashOutput", "BashInput", "BashStop"]) {
             expect(tool(name).durable, name).toBe(false);
+            expect(tool(name).reloadable, name).not.toBe(true);
         }
     });
 });

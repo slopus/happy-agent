@@ -272,10 +272,15 @@ describe("Grok's compute file tools", () => {
         const { tool } = await project();
 
         expect(tool("read_file").durable).toBe(true);
+        expect(tool("read_file").reloadable).toBe(true);
         expect(tool("read_file").transactional).toBe(true);
         expect(tool("list_dir").durable).toBe(true);
+        expect(tool("list_dir").reloadable).toBe(true);
         expect(tool("grep").durable).toBe(true);
+        expect(tool("grep").reloadable).toBe(true);
         expect(tool("write").durable).toBe(false);
+        expect(tool("write").reloadable).not.toBe(true);
         expect(tool("search_replace").durable).toBe(false);
+        expect(tool("search_replace").reloadable).not.toBe(true);
     });
 });

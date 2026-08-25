@@ -18,6 +18,7 @@ export function listProjectsTool(projects: ProjectsModule, agentId: string) {
         parameters: projectPageQuerySchema,
         returnType: projectPageSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, query: ProjectPageQuery) => await projects.list(ctx, query),
         toLLM: (page) => [{ type: "text", text: projects.formatPageForModel(page) }],

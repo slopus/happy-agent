@@ -16,6 +16,7 @@ export function getGoalTool(goals: GoalModule, agentId: string, maxOutputCharact
         parameters: Type.Object({}, { additionalProperties: false }),
         returnType: Type.Object({ goal: Type.Union([sessionGoalSchema, Type.Null()]) }),
         durable: true,
+        reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx) => ({ goal: (await goals.goal(ctx, agentId)) ?? null }),

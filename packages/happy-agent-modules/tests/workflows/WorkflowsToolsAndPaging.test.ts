@@ -157,6 +157,12 @@ describe("workflow tools", () => {
                         .map((tool) => tool.name)
                         .sort(),
                 ).toEqual(["list_workflows", "workflow_logs", "workflow_status"]);
+                expect(
+                    tools
+                        .filter((tool) => tool.reloadable)
+                        .map((tool) => tool.name)
+                        .sort(),
+                ).toEqual(["list_workflows", "workflow_logs", "workflow_status"]);
             } finally {
                 world.close();
             }

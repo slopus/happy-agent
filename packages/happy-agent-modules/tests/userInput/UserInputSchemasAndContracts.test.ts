@@ -395,6 +395,7 @@ describe("UserInput runtime schemas and contracts", () => {
         expect(readTool).toMatchObject({
             name: "read_user_input",
             durable: true,
+            reloadable: true,
         });
         expect(cancelTool).toMatchObject({
             name: "cancel_ask",

@@ -187,6 +187,7 @@ export function readAgentHistoryTool(history: HistoryModule, agentId: string) {
         }),
         // Reading history changes nothing and reaches nothing outside the agent's own store.
         durable: true,
+        reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, args) => {

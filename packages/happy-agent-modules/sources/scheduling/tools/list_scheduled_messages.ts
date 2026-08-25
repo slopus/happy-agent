@@ -18,6 +18,7 @@ export function listScheduledMessagesTool(scheduling: SchedulingModule, agentId:
         parameters: schedulingScheduleToolPageQuerySchema,
         returnType: schedulingSchedulePageSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: SchedulingScheduleToolPageQuery) =>
             await scheduling.listSchedulePage(ctx, agentId, input),

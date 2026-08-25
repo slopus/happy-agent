@@ -697,6 +697,7 @@ describe("UsageModule edge cases", () => {
                 ),
             ).resolves.toMatchObject({ agentId: "agent-1", totalTokens: 5 });
             expect(agentTool.durable).toBe(true);
+            expect(agentTool.reloadable).toBe(true);
             expect(agentTool.shouldReviewInAutoMode?.({} as never, {} as never)).toBe(false);
         });
     });
@@ -1181,6 +1182,7 @@ describe("UsageModule edge cases", () => {
             const tool = getAgentTreeUsageTool(module, "agent-1");
             expect(tool.name).toBe("get_agent_tree_usage");
             expect(tool.durable).toBe(true);
+            expect(tool.reloadable).toBe(true);
             expect(tool.shouldReviewInAutoMode?.({} as never, {} as never)).toBe(false);
             const result = await tool.execute(
                 agentContext(database.context),

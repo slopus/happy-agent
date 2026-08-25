@@ -22,6 +22,7 @@ export function workflowStatusTool(module: WorkflowsModule, agentId: string) {
         parameters: workflowStatusParametersSchema,
         returnType: Type.Union([workflowRunSchema, Type.Undefined()]),
         durable: true,
+        reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { id }: WorkflowStatusParameters) =>

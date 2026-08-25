@@ -14,6 +14,7 @@ export function webFetchTool(search: SearchModule, agentId: string) {
         parameters: fetchInputSchema,
         returnType: fetchResultSchema,
         durable: false,
+        reloadable: true,
         requiresAutoOrFullAccess: true,
         shouldReviewInAutoMode: () => true,
         describeAutoPermissionAction: ({ url }) =>

@@ -67,6 +67,7 @@ export function createMcpProtocolTools(
             description: `Lists the current live tool catalog from an MCP server, including tools added after the session started. Available servers: ${serverNames}.`,
             parameters: mcpListToolsInputSchema,
             returnType: mcpToolPageSchema,
+            reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input: McpListToolsInput): Promise<McpToolPage> => {
@@ -114,6 +115,7 @@ export function createMcpProtocolTools(
             description: `Lists resources exposed by an MCP server. Available servers: ${serverNames}. Use the returned next cursor to continue pagination.`,
             parameters: mcpListResourcesInputSchema,
             returnType: mcpResourcePageSchema,
+            reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input: McpListResourcesInput): Promise<McpResourcePage> => {
@@ -135,6 +137,7 @@ export function createMcpProtocolTools(
             description: `Lists parameterized resource templates exposed by an MCP server. Available servers: ${serverNames}. Use the returned next cursor to continue pagination.`,
             parameters: mcpListResourcesInputSchema,
             returnType: mcpResourceTemplatePageSchema,
+            reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
             execute: async (
@@ -161,6 +164,7 @@ export function createMcpProtocolTools(
             description: `Reads a resource from an MCP server. Available servers: ${serverNames}. Use a URI returned by list_mcp_resources or constructed from a listed resource template.`,
             parameters: mcpReadResourceInputSchema,
             returnType: mcpReadResourceResultSchema,
+            reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input): Promise<McpReadResourceResult> => {
@@ -179,6 +183,7 @@ export function createMcpProtocolTools(
             description: `Lists reusable prompts exposed by an MCP server. Available servers: ${serverNames}. Use the returned next cursor to continue pagination.`,
             parameters: mcpListPromptsInputSchema,
             returnType: mcpPromptPageSchema,
+            reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input: McpListPromptsInput) => {

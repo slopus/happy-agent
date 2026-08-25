@@ -27,6 +27,7 @@ export function geminiWebSearchTool(search: SearchModule, agentId: string) {
         parameters: inputSchema,
         returnType: searchAnswerSchema,
         durable: false,
+        reloadable: true,
         requiresAutoOrFullAccess: true,
         shouldReviewInAutoMode: () => true,
         describeAutoPermissionAction: ({ query }) =>

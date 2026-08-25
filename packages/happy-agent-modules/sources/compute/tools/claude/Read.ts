@@ -103,6 +103,7 @@ export function claudeReadTool(compute: Compute, reads: FileReadLog) {
         returnType: claudeReadResultSchema,
         // Reading the same file again reads the same file, and the read it records commits with it.
         durable: true,
+        reloadable: true,
         transactional: true,
         describeAutoPermissionAction: ({ file_path }) =>
             describeComputePathAction(compute, file_path, "reading"),

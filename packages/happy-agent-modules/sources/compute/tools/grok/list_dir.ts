@@ -40,6 +40,7 @@ Other details:
         }),
         // Listing the same directory again lists the same directory.
         durable: true,
+        reloadable: true,
         describeAutoPermissionAction: ({ target_directory }) =>
             describeComputePathAction(compute, target_directory, "listing"),
         shouldReviewInAutoMode: ({ target_directory }, ctx) =>

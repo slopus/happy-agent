@@ -15,6 +15,7 @@ export function listTasksTool(tasks: TasksModule, agentId: string) {
         parameters: taskPageQuerySchema,
         returnType: taskPageSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, query: TaskPageQuery) => await tasks.listPage(ctx, agentId, query),
         toLLM: (page) => [

@@ -1,5 +1,16 @@
 # Compute module learnings
 
+## Reloadable reads must be replay-safe in every permission mode
+
+Idempotent file inspection tools are both durable and reloadable. A graceful daemon reload may
+leave their pending call for the next process, which can safely read the file, directory, image, or
+search result again.
+
+Do not infer reloadability from a read-oriented name or from the restricted mode a particular
+caller happens to use. Shell and command-input definitions can mutate when the same tools run in a
+wider permission mode, while background command-output reads consume the delta they return. Those
+tools must keep producing an interrupted result instead of replaying after a restart.
+
 ## Codex command output follows the model policy after capture
 
 Codex command sessions request a Codex-only 1 MiB capture ceiling for each compute output stream,

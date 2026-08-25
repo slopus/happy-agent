@@ -95,6 +95,7 @@ export function grokGrepTool(compute: Compute) {
         }),
         // Searching the same tree again searches the same tree.
         durable: true,
+        reloadable: true,
         describeAutoPermissionAction: ({ path }) =>
             describeComputePathAction(compute, path ?? ".", "searching"),
         shouldReviewInAutoMode: ({ path }, ctx) =>

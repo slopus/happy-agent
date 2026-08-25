@@ -29,6 +29,7 @@ export function getTaskTool(tasks: TasksModule, agentId: string) {
         parameters: getTaskInputSchema,
         returnType: taskDetailPageSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { id, ...query }: { id: string } & TaskDetailQuery) =>
             await tasks.getPage(ctx, agentId, id, query),

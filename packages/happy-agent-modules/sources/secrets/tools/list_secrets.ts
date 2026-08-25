@@ -15,6 +15,7 @@ export function listSecretsTool(secrets: SecretsModule, actingAgentId: string) {
         parameters: secretListInputSchema,
         returnType: secretPageSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, query: SecretListInput) =>
             await secrets.list(ctx, actingAgentId, query),

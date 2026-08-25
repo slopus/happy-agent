@@ -26,6 +26,7 @@ export function listWorkflowsTool(module: WorkflowsModule, agentId: string) {
         parameters: listWorkflowsToolParametersSchema,
         returnType: workflowPageSchema,
         durable: true,
+        reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { input }: ListWorkflowsToolParameters) =>

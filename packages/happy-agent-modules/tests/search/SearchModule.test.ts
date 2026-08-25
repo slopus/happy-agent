@@ -115,6 +115,7 @@ describe("SearchModule", () => {
         expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
         for (const tool of tools) {
             expect(tool.durable).toBe(false);
+            expect(tool.reloadable).toBe(true);
             expect(tool.transactional).not.toBe(true);
             expect(tool.requiresAutoOrFullAccess).toBe(true);
             expect(tool.shouldReviewInAutoMode({}, ctx)).toBe(true);

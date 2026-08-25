@@ -51,6 +51,7 @@ export function claudeGlobTool(compute: Compute) {
         ),
         // Looking for the same names again looks at the same tree.
         durable: true,
+        reloadable: true,
         describeAutoPermissionAction: ({ path }) =>
             describeComputePathAction(compute, path ?? ".", "searching"),
         shouldReviewInAutoMode: ({ path }, ctx) =>

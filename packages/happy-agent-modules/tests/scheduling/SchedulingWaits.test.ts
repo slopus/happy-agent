@@ -255,6 +255,9 @@ describe("Scheduling waits", () => {
             ]);
             expect(childTools.map((tool) => tool.name)).toEqual(["wait", "wait_until"]);
             expect(childTools.map((tool) => tool.steerable)).toEqual([true, true]);
+            expect(rootTools.filter((tool) => tool.reloadable).map((tool) => tool.name)).toEqual([
+                "list_scheduled_messages",
+            ]);
         } finally {
             harness.close();
         }

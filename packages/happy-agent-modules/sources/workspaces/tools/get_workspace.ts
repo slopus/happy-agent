@@ -32,6 +32,7 @@ export function getWorkspaceTool(workspaces: WorkspacesModule, agentId: string) 
         parameters: getWorkspaceInputSchema,
         returnType: getWorkspaceResultSchema,
         durable: false,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (
             ctx,

@@ -424,6 +424,15 @@ describe("MCP dynamic tools and protocol tools", () => {
         const module = new McpModule({ host: baseHost() });
         const protocol = createMcpProtocolTools(module, "agent", [{ name: "docs" }]);
         const byName = new Map(protocol.map((candidate) => [candidate.name, candidate]));
+        expect(
+            protocol.filter((candidate) => candidate.reloadable).map((candidate) => candidate.name),
+        ).toEqual([
+            "list_mcp_tools",
+            "list_mcp_resources",
+            "list_mcp_resource_templates",
+            "read_mcp_resource",
+            "list_mcp_prompts",
+        ]);
         expect(await byName.get("list_mcp_tools")?.shouldReviewInAutoMode?.({}, ctx)).toBe(false);
         expect(await byName.get("list_mcp_resources")?.shouldReviewInAutoMode?.({}, ctx)).toBe(
             false,

@@ -54,6 +54,7 @@ function getAgentUsageTool(module: UsageModule, agentId: string) {
         parameters: getAgentUsageInputSchema,
         returnType: usageSummarySchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: GetAgentUsageInput): Promise<UsageSummary> => {
             const owner = contextAgentId(ctx);
@@ -98,6 +99,7 @@ function getHostUsageTool(module: UsageModule) {
         parameters: getUsageInputSchema,
         returnType: usageSummarySchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: GetUsageInput): Promise<UsageSummary> => {
             const owner = contextAgentId(ctx);

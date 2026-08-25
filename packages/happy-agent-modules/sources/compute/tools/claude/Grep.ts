@@ -134,6 +134,7 @@ export function claudeGrepTool(compute: Compute) {
         ),
         // Searching the same tree for the same pattern finds the same thing.
         durable: true,
+        reloadable: true,
         describeAutoPermissionAction: ({ path }) =>
             describeComputePathAction(compute, path ?? ".", "searching"),
         shouldReviewInAutoMode: ({ path }, ctx) =>

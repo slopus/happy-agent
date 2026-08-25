@@ -233,6 +233,7 @@ describe("SkillsModule", () => {
         const tools = await hooks.tools!(ctx, scope);
         expect(tools.map((tool) => tool.name)).toEqual(["list_skills", "read_skill"]);
         for (const tool of tools) {
+            expect(tool.reloadable).toBe(true);
             expect(tool.shouldReviewInAutoMode({ name: "anything" } as never, ctx)).toBe(false);
             expect(tool.requiresAutoOrFullAccess).toBeUndefined();
             expect(tool.shouldRunInFullAccessInAutoMode).toBeUndefined();

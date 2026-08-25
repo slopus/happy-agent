@@ -117,6 +117,15 @@ describe("codex compute tool surface", () => {
         }
     });
 
+    it("reloads image reads without making command or mutation tools replayable", async () => {
+        const { tool } = await machine();
+
+        expect(tool("view_image").reloadable).toBe(true);
+        for (const name of ["exec_command", "write_stdin", "kill_session", "apply_patch"]) {
+            expect(tool(name).reloadable, name).not.toBe(true);
+        }
+    });
+
     it("takes apply_patch as ordinary JSON rather than as a freeform grammar tool", async () => {
         const { tool } = await machine();
         const applyPatch = tool("apply_patch");

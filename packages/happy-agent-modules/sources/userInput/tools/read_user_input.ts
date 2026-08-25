@@ -29,6 +29,7 @@ export function readUserInputTool(userInput: UserInputModule, agentId: string) {
         parameters: readUserInputToolParametersSchema,
         returnType: userInputDetailPageSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { requestId, ...query }: ReadUserInputToolParameters) =>
             await userInput.getPage(ctx, agentId, requestId, query),

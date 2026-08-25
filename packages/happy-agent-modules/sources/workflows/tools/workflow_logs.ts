@@ -26,6 +26,7 @@ export function workflowLogsTool(module: WorkflowsModule, agentId: string) {
         parameters: workflowLogsToolParametersSchema,
         returnType: workflowLogPageSchema,
         durable: true,
+        reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, { input }: WorkflowLogsToolParameters) =>

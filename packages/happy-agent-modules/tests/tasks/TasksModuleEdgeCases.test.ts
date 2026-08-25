@@ -508,6 +508,10 @@ describe("TasksModule edge cases", () => {
                 "remove_task",
             ]);
             expect(tools.every((tool) => tool.durable)).toBe(true);
+            expect(tools.filter((tool) => tool.reloadable).map((tool) => tool.name)).toEqual([
+                "list_tasks",
+                "get_task",
+            ]);
             expect(
                 tools.every(
                     (tool) => tool.shouldReviewInAutoMode({} as never, database.context) === false,

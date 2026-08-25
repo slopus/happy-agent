@@ -88,11 +88,18 @@ describe("GoalModule", () => {
             const tools = await hooks.tools!(test.database.context, {
                 agent: { id: "agent-tool" },
             } as never);
-            expect(tools.map((tool) => [tool.name, tool.durable, tool.transactional])).toEqual([
-                ["create_goal", true, true],
-                ["get_goal", true, true],
-                ["update_goal", true, true],
-                ["clear_goal", true, true],
+            expect(
+                tools.map((tool) => [
+                    tool.name,
+                    tool.durable,
+                    tool.reloadable ?? false,
+                    tool.transactional,
+                ]),
+            ).toEqual([
+                ["create_goal", true, false, true],
+                ["get_goal", true, true, true],
+                ["update_goal", true, false, true],
+                ["clear_goal", true, false, true],
             ]);
         } finally {
             test.database.close();

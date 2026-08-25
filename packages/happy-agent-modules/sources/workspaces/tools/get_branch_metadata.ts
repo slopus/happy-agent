@@ -31,6 +31,7 @@ export function getBranchMetadataTool(workspaces: WorkspacesModule, agentId: str
         parameters: branchMetadataInputSchema,
         returnType: workspaceBranchMetadataPageSchema,
         durable: false,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (
             ctx,

@@ -89,6 +89,11 @@ describe("WorkspacesModule", () => {
                 "archive_workspace",
                 "get_workspace_branch_metadata",
             ]);
+            expect(tools?.filter((tool) => tool.reloadable).map((tool) => tool.name)).toEqual([
+                "list_workspaces",
+                "get_workspace",
+                "get_workspace_branch_metadata",
+            ]);
         } finally {
             database.close();
         }

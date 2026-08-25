@@ -33,6 +33,7 @@ export function claudeWebSearchTool(
         parameters: inputSchema,
         returnType: searchAnswerSchema,
         durable: false,
+        reloadable: true,
         requiresAutoOrFullAccess: true,
         shouldReviewInAutoMode: () => true,
         describeAutoPermissionAction: ({ query }) =>

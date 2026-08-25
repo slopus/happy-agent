@@ -39,6 +39,7 @@ export function listMcpServersTool(
             "List configured MCP servers and their current connection status. Results are bounded and cursor-paged.",
         parameters: mcpServerPageQuerySchema,
         returnType: mcpServerPageSchema,
+        reloadable: true,
         requiresAutoOrFullAccess: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, query: McpServerPageQuery): Promise<McpServerPage> => {

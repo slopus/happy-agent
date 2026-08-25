@@ -214,6 +214,10 @@ describe("SecretsModule event and tool contracts", () => {
                 ),
             ).toBe(true);
             expect(tools.every((tool) => tool.durable === true)).toBe(true);
+            expect(tools.filter((tool) => tool.reloadable).map((tool) => tool.name)).toEqual([
+                "list_secrets",
+                "reference_secret",
+            ]);
             expect(toolByName(tools, "list_secrets").transactional).not.toBe(true);
             expect(toolByName(tools, "reference_secret").transactional).not.toBe(true);
             expect(toolByName(tools, "attach_secret").transactional).toBe(true);

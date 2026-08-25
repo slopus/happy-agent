@@ -20,6 +20,7 @@ export function getAgentTreeUsageTool(module: UsageModule, agentId: string) {
         parameters: getAgentTreeUsageInputSchema,
         returnType: usageAgentTreeSchema,
         durable: true,
+        reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (_ctx, _input: GetAgentTreeUsageInput): Promise<UsageAgentTree> =>
             await module.readAgentTreeUsage(_ctx, agentId),
