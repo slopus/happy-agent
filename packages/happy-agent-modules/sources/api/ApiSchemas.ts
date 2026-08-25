@@ -2,7 +2,12 @@ import { Type } from "@sinclair/typebox";
 import { cuid2Schema } from "@slopus/happy-agent-base";
 import { clientMetadataSchema } from "@slopus/happy-agent-client";
 
-export { invokeSlashCommandRequestSchema } from "@slopus/happy-agent-client";
+export {
+    cloudMutationRequestSchema,
+    completeCloudAuthorizationRequestSchema,
+    invokeSlashCommandRequestSchema,
+    startCloudAuthorizationRequestSchema,
+} from "@slopus/happy-agent-client";
 
 import { createTerminalInputSchema, resizeTerminalInputSchema } from "../terminals/index.js";
 

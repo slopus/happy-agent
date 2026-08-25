@@ -1,0 +1,526 @@
+import { OauthException } from "@workos-inc/node";
+import { agentDatabaseRun } from "@slopus/happy-agent-base";
+import { sql } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+    CloudModule,
+    CloudOperationError,
+    type CloudUpdatedListener,
+} from "../../sources/cloud/CloudModule.js";
+import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
+import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
+
+const workos = vi.hoisted(() => ({
+    authorization: vi.fn(),
+    create: vi.fn(),
+    exchange: vi.fn(),
+    refresh: vi.fn(),
+}));
+
+vi.mock("@workos-inc/node", async (importOriginal) => {
+    const original = await importOriginal<typeof import("@workos-inc/node")>();
+    return {
+        ...original,
+        WorkOS: class {
+            readonly userManagement = {
+                authenticateWithCode: workos.exchange,
+                authenticateWithRefreshToken: workos.refresh,
+                getAuthorizationUrlWithPKCE: workos.authorization,
+            };
+
+            constructor(options: unknown) {
+                workos.create(options);
+            }
+
+            createHttpClient(): object {
+                return {};
+            }
+        },
+    };
+});
+
+const user = {
+    email: "person@example.com",
+    firstName: "Ada",
+    id: "user_01H",
+    lastName: "Lovelace",
+};
+
+const databases: ModuleDatabase[] = [];
+const modules: CloudModule[] = [];
+let authorizationNumber = 0;
+
+beforeEach(() => {
+    authorizationNumber = 0;
+    workos.authorization.mockReset();
+    workos.exchange.mockReset();
+    workos.refresh.mockReset();
+    workos.create.mockReset();
+    workos.authorization.mockImplementation(async () => {
+        authorizationNumber += 1;
+        return {
+            codeVerifier: `verifier-${"x".repeat(42)}-${String(authorizationNumber)}`,
+            state: `state-${"x".repeat(16)}-${String(authorizationNumber)}`,
+            url: `https://api.workos.example/authorize?attempt=${String(authorizationNumber)}`,
+        };
+    });
+    workos.exchange.mockResolvedValue({
+        accessToken: "access-a",
+        refreshToken: "refresh-a",
+        user,
+    });
+    workos.refresh.mockResolvedValue({
+        accessToken: "access-b",
+        refreshToken: "refresh-b",
+        user,
+    });
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ message: "hello", userId: user.id }, { status: 200 })),
+    );
+});
+
+afterEach(async () => {
+    for (const module of modules.splice(0)) await module.stop();
+    for (const database of databases.splice(0)) database.close();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+});
+
+async function fixture(name: string) {
+    const module = new CloudModule();
+    modules.push(module);
+    const database = moduleDatabase(module.migrations, name);
+    databases.push(database);
+    await database.ready;
+    await module.beforeStart(database.context, {} as never);
+    return { database, module };
+}
+
+async function connect(
+    module: CloudModule,
+    database: ModuleDatabase,
+    environment = "production" as const,
+) {
+    const authorizing = await module.start(database.context, {
+        environment,
+        redirectUri: "happy-auth://callback",
+    });
+    const state = new URL(authorizing.authorization.url).searchParams.get("attempt");
+    const attempt = Number(state);
+    const callbackState = `state-${"x".repeat(16)}-${String(attempt)}`;
+    return await module.complete(database.context, {
+        callbackUrl: `happy-auth://callback?code=code-a&state=${encodeURIComponent(callbackState)}`,
+    });
+}
+
+describe("CloudModule", () => {
+    it("completes PKCE, verifies hello, persists refresh, and mints with rotation", async () => {
+        const { database, module } = await fixture("cloud-module-complete");
+        const events: unknown[] = [];
+        const unsubscribe = module.onUpdated((_ctx, cloud) => events.push(cloud));
+
+        const connected = await connect(module, database);
+        expect(connected.status).toBe("connected");
+        expect(connected.user).toEqual(user);
+        expect(Object.isFrozen(connected.user)).toBe(true);
+        expect(workos.create).toHaveBeenCalledWith({
+            clientId: "client_01KZD3XE9YAFAMT0P8TD4HP73E",
+            fetchFn: expect.any(Function),
+            maxRetries: 0,
+            timeout: 15_000,
+        });
+        const stored = await createCloudDatabase().read(database.context);
+        expect(stored?.session?.refreshToken).toBe("refresh-a");
+        expect(JSON.stringify(connected)).not.toContain("refresh-a");
+        expect(JSON.stringify(connected)).not.toContain("access-a");
+
+        const minted = await module.mint(database.context);
+        expect(minted.accessToken).toBe("access-b");
+        expect(minted.cloud).toEqual(connected);
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-b",
+        );
+        expect(workos.refresh).toHaveBeenCalledWith({ refreshToken: "refresh-a" });
+        expect(events).toHaveLength(2);
+        unsubscribe();
+    });
+
+    it("returns one immutable snapshot when the same application joins authorization", async () => {
+        const { database, module } = await fixture("cloud-module-join");
+        const events: unknown[] = [];
+        module.onUpdated((_ctx, cloud) => events.push(cloud));
+        const request = {
+            environment: "production" as const,
+            redirectUri: "happy-auth://callback",
+        };
+
+        const first = await module.start(database.context, request);
+        const second = await module.start(database.context, request);
+
+        expect(second).toBe(first);
+        expect(workos.authorization).toHaveBeenCalledTimes(1);
+        expect(events).toHaveLength(1);
+        expect(Object.isFrozen(first)).toBe(true);
+        expect(Object.isFrozen(first.authorization)).toBe(true);
+    });
+
+    it("rejects an ambient caller transaction before consuming WorkOS credentials", async () => {
+        const { database, module } = await fixture("cloud-module-owned-transaction");
+
+        await database.context.inTx(async (transactionCtx) => {
+            await expect(
+                module.start(transactionCtx, {
+                    environment: "production",
+                    redirectUri: "happy-auth://callback",
+                }),
+            ).rejects.toThrow("transaction");
+        });
+        expect(workos.authorization).not.toHaveBeenCalled();
+        expect(module.status(database.context).status).toBe("disconnected");
+
+        await connect(module, database);
+        await database.context.inTx(async (transactionCtx) => {
+            await expect(module.mint(transactionCtx)).rejects.toThrow("transaction");
+        });
+        expect(workos.refresh).not.toHaveBeenCalled();
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-a",
+        );
+    });
+
+    it("keeps the legitimate attempt active after a wrong-state callback", async () => {
+        const { database, module } = await fixture("cloud-module-state");
+        const authorizing = await module.start(database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+
+        await expect(
+            module.complete(database.context, {
+                callbackUrl: "happy-auth://callback?code=stolen&state=wrong-state",
+            }),
+        ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
+        expect(module.status(database.context)).toEqual(authorizing);
+
+        const callbackState = `state-${"x".repeat(16)}-1`;
+        await expect(
+            module.complete(database.context, {
+                callbackUrl: `happy-auth://callback?code=code-a&state=${encodeURIComponent(callbackState)}`,
+            }),
+        ).resolves.toMatchObject({ status: "connected" });
+    });
+
+    it("settles expiration before inspecting a stale callback", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(1_000);
+        const { database, module } = await fixture("cloud-module-expired-callback");
+        await module.start(database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        vi.setSystemTime(10 * 60 * 1_000 + 1_000);
+
+        await expect(
+            module.complete(database.context, {
+                callbackUrl: "happy-auth://callback?code=stolen&state=wrong-state",
+            }),
+        ).rejects.toMatchObject({
+            cloud: { error: { code: "authorization_expired" }, status: "disconnected" },
+            code: "invalid_request",
+            status: 400,
+        });
+        expect(module.status(database.context)).toMatchObject({
+            error: { code: "authorization_expired" },
+            status: "disconnected",
+        });
+    });
+
+    it("rearms an authorization timer that fires early after clock rollback", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(10_000);
+        const { database, module } = await fixture("cloud-module-expiry-clock-rollback");
+        await module.start(database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        vi.setSystemTime(0);
+
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+        expect(module.status(database.context).status).toBe("authorizing");
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(module.status(database.context)).toMatchObject({
+            error: { code: "authorization_expired" },
+            status: "disconnected",
+        });
+    });
+
+    it("retries authorization expiry after a transient storage failure", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const { database, module } = await fixture("cloud-module-expiry-storage-retry");
+        await module.start(database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        await agentDatabaseRun(
+            database.context.db,
+            sql.raw(`CREATE TRIGGER fail_cloud_expiry
+                BEFORE INSERT ON happy_agent_cloud_state
+                BEGIN SELECT RAISE(FAIL, 'temporary'); END`),
+        );
+
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+        expect(module.status(database.context).status).toBe("authorizing");
+        await agentDatabaseRun(database.context.db, sql.raw("DROP TRIGGER fail_cloud_expiry"));
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(module.status(database.context)).toMatchObject({
+            error: { code: "authorization_expired" },
+            status: "disconnected",
+        });
+    });
+
+    it("distinguishes user denial from a temporary OAuth callback failure", async () => {
+        const denied = await fixture("cloud-module-oauth-denied");
+        await denied.module.start(denied.database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        const firstState = encodeURIComponent(`state-${"x".repeat(16)}-1`);
+        await expect(
+            denied.module.complete(denied.database.context, {
+                callbackUrl: `happy-auth://callback?error=access_denied&state=${firstState}`,
+            }),
+        ).rejects.toMatchObject({
+            cloud: { error: { code: "authorization_rejected" } },
+            code: "cloud_unauthorized",
+            status: 409,
+        });
+
+        const unavailable = await fixture("cloud-module-oauth-unavailable");
+        await unavailable.module.start(unavailable.database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        const secondState = encodeURIComponent(`state-${"x".repeat(16)}-2`);
+        await expect(
+            unavailable.module.complete(unavailable.database.context, {
+                callbackUrl: `happy-auth://callback?error=server_error&state=${secondState}`,
+            }),
+        ).rejects.toMatchObject({
+            cloud: { error: null, status: "disconnected" },
+            code: "cloud_unavailable",
+            status: 503,
+        });
+    });
+
+    it("does not replay a callback or activate memory when credential storage fails", async () => {
+        const { database, module } = await fixture("cloud-module-storage-failure");
+        await module.start(database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        await agentDatabaseRun(
+            database.context.db,
+            sql.raw(`CREATE TRIGGER fail_cloud_write
+                BEFORE INSERT ON happy_agent_cloud_state
+                BEGIN SELECT RAISE(FAIL, 'sensitive database detail'); END`),
+        );
+        const state = encodeURIComponent(`state-${"x".repeat(16)}-1`);
+        const callbackUrl = `happy-auth://callback?code=code-a&state=${state}`;
+
+        const failure = await module
+            .complete(database.context, { callbackUrl })
+            .catch((error: unknown) => error);
+        expect(failure).toMatchObject({
+            message: "The Cloud authentication state could not be stored.",
+        });
+        expect(JSON.stringify(failure)).not.toContain("sensitive database detail");
+        expect(module.status(database.context).status).toBe("authorizing");
+        expect(workos.exchange).toHaveBeenCalledTimes(1);
+
+        await expect(module.complete(database.context, { callbackUrl })).rejects.toMatchObject({
+            code: "invalid_request",
+            status: 400,
+        });
+        expect(workos.exchange).toHaveBeenCalledTimes(1);
+
+        await agentDatabaseRun(database.context.db, sql.raw("DROP TRIGGER fail_cloud_write"));
+        const replacement = await module.start(database.context, {
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        expect(replacement.authorization.url).toContain("attempt=2");
+        expect(module.status(database.context)).toBe(replacement);
+    });
+
+    it("accepts application redirects while rejecting unsafe transports", async () => {
+        const { database, module } = await fixture("cloud-module-redirects");
+
+        await expect(
+            module.start(database.context, {
+                environment: "production",
+                redirectUri: "http://127.0.0.1:43121/callback",
+            }),
+        ).resolves.toMatchObject({ status: "authorizing" });
+        await module.disconnect(database.context);
+        await expect(
+            module.start(database.context, {
+                environment: "production",
+                redirectUri: "desktop-app://workos/callback",
+            }),
+        ).resolves.toMatchObject({ status: "authorizing" });
+        await module.disconnect(database.context);
+
+        for (const redirectUri of [
+            "http://example.com/callback",
+            "javascript:alert(1)",
+            "file:///tmp/callback",
+        ]) {
+            await expect(
+                module.start(database.context, { environment: "production", redirectUri }),
+            ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
+        }
+    });
+
+    it("preserves the replacement refresh token when hello is unavailable", async () => {
+        const { database, module } = await fixture("cloud-module-hello-failure");
+        await connect(module, database);
+        vi.mocked(fetch).mockResolvedValueOnce(new Response("unavailable", { status: 401 }));
+
+        await expect(module.mint(database.context)).rejects.toMatchObject({
+            cloud: { status: "connected" },
+            code: "cloud_unavailable",
+            status: 503,
+        });
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-b",
+        );
+
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: "access-c",
+            refreshToken: "refresh-c",
+            user,
+        });
+        await expect(module.mint(database.context)).resolves.toMatchObject({
+            accessToken: "access-c",
+        });
+        expect(workos.refresh).toHaveBeenLastCalledWith({ refreshToken: "refresh-b" });
+    });
+
+    it("rejects an initial user mismatch but preserves a rotated session mismatch", async () => {
+        const first = await fixture("cloud-module-initial-mismatch");
+        vi.mocked(fetch).mockResolvedValueOnce(
+            Response.json({ message: "hello", userId: "another-user" }),
+        );
+
+        await expect(connect(first.module, first.database)).rejects.toMatchObject({
+            cloud: { status: "disconnected" },
+            code: "cloud_unauthorized",
+            status: 409,
+        });
+        expect((await createCloudDatabase().read(first.database.context))?.session).toBeNull();
+
+        const second = await fixture("cloud-module-refresh-mismatch");
+        await connect(second.module, second.database);
+        vi.mocked(fetch).mockResolvedValueOnce(
+            Response.json({ message: "hello", userId: "another-user" }),
+        );
+
+        await expect(second.module.mint(second.database.context)).rejects.toMatchObject({
+            cloud: { status: "connected" },
+            code: "cloud_unavailable",
+            status: 503,
+        });
+        expect(
+            (await createCloudDatabase().read(second.database.context))?.session?.refreshToken,
+        ).toBe("refresh-b");
+    });
+
+    it("cancels an oversized hello response without storing the attempted login", async () => {
+        const { database, module } = await fixture("cloud-module-oversized-hello");
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+            cancel: () => {
+                cancelled = true;
+            },
+            start: (controller) => {
+                controller.enqueue(new Uint8Array(8 * 1_024 + 1));
+            },
+        });
+        vi.mocked(fetch).mockResolvedValueOnce(new Response(body));
+
+        await expect(connect(module, database)).rejects.toMatchObject({
+            cloud: { status: "disconnected" },
+            code: "cloud_unavailable",
+            status: 503,
+        });
+        expect(cancelled).toBe(true);
+        expect((await createCloudDatabase().read(database.context))?.session).toBeNull();
+    });
+
+    it("clears authentication and emits an update on definitive WorkOS revocation", async () => {
+        const { database, module } = await fixture("cloud-module-revoked");
+        await connect(module, database);
+        const events: Parameters<CloudUpdatedListener>[1][] = [];
+        module.onUpdated((_ctx, cloud) => events.push(cloud));
+        workos.refresh.mockRejectedValueOnce(
+            new OauthException(400, "request-id", "invalid_grant", "expired", {}),
+        );
+
+        const error = await module.mint(database.context).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(CloudOperationError);
+        expect(error).toMatchObject({
+            cloud: {
+                error: { code: "credentials_rejected" },
+                status: "disconnected",
+            },
+            code: "cloud_unauthorized",
+            status: 409,
+        });
+        expect((await createCloudDatabase().read(database.context))?.session).toBeNull();
+        expect(events).toHaveLength(1);
+    });
+
+    it("settles a process-local pending attempt as expired after restart", async () => {
+        const { database, module } = await fixture("cloud-module-restart");
+        const authorizing = await module.start(database.context, {
+            environment: "staging",
+            redirectUri: "another-app://oauth/callback",
+        });
+        await module.stop();
+
+        const restarted = new CloudModule();
+        modules.push(restarted);
+        await restarted.beforeStart(database.context, {} as never);
+
+        expect(restarted.status(database.context)).toMatchObject({
+            error: { code: "authorization_expired" },
+            status: "disconnected",
+        });
+        expect(restarted.status(database.context).version > authorizing.version).toBe(true);
+    });
+
+    it("orders a concurrent disconnect after in-flight minting without restoring credentials", async () => {
+        const { database, module } = await fixture("cloud-module-linearization");
+        await connect(module, database);
+        let releaseRefresh!: (value: unknown) => void;
+        workos.refresh.mockImplementationOnce(
+            async () =>
+                await new Promise((resolve) => {
+                    releaseRefresh = resolve;
+                }),
+        );
+
+        const minting = module.mint(database.context);
+        await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalledTimes(1));
+        const disconnecting = module.disconnect(database.context);
+        releaseRefresh({ accessToken: "access-c", refreshToken: "refresh-c", user });
+
+        await expect(minting).resolves.toMatchObject({ accessToken: "access-c" });
+        await expect(disconnecting).resolves.toMatchObject({ status: "disconnected" });
+        expect(module.status(database.context).status).toBe("disconnected");
+        expect((await createCloudDatabase().read(database.context))?.session).toBeNull();
+    });
+});

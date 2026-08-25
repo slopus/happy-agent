@@ -35,6 +35,7 @@ import {
 } from "../compactions/index.js";
 import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
+import { CloudModule, CloudOperationError } from "../cloud/index.js";
 import { EventsModule, eventIdSchema, type AgentEvent } from "../events/index.js";
 import {
     fileReadQuerySchema,
@@ -126,6 +127,8 @@ import {
     abortBodySchema,
     agentCreateBodySchema,
     apiIdSchema,
+    cloudMutationRequestSchema,
+    completeCloudAuthorizationRequestSchema,
     documentBodySchema,
     draftBodySchema,
     emptyMutationBodySchema,
@@ -140,6 +143,7 @@ import {
     renameBodySchema,
     reorderBodySchema,
     securityDocumentBodySchema,
+    startCloudAuthorizationRequestSchema,
     terminalCreateBodySchema,
     terminalResizeBodySchema,
     workspaceCreateBodySchema,
@@ -234,6 +238,7 @@ export class ApiModule implements AgentModule {
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
     readonly #events: EventsModule;
+    readonly #cloud: CloudModule;
     readonly #compactions: CompactionsModule;
     readonly #projects: ProjectsModule;
     readonly #workspaces: WorkspacesModule;
@@ -307,6 +312,7 @@ export class ApiModule implements AgentModule {
         abort: AbortModule,
         config: ConfigModule,
         events: EventsModule,
+        cloud: CloudModule,
         compactions: CompactionsModule,
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
@@ -327,6 +333,7 @@ export class ApiModule implements AgentModule {
         this.#abort = abort;
         this.#config = config;
         this.#events = events;
+        this.#cloud = cloud;
         this.#compactions = compactions;
         this.#projects = projects;
         this.#workspaces = workspaces;
@@ -589,6 +596,66 @@ export class ApiModule implements AgentModule {
             if (request.method === "POST" && url.pathname === "/v0/onboarding/complete") {
                 await writeOwnerOnlyDocument(this.#onboardingMarker(), "complete\n");
                 sendJson(response, 200, { completed: true });
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/v0/cloud") {
+                sendJson(response, 200, { cloud: this.#cloud.status(ctx) });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/cloud/auth/start") {
+                const body = await bodyAs(
+                    request,
+                    startCloudAuthorizationRequestSchema,
+                    "Cloud authorization request",
+                    8 * 1_024,
+                );
+                const cloud = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await this.#cloudOperation(() => this.#cloud.start(ctx, body)),
+                );
+                sendJson(response, 200, { cloud });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/cloud/auth/complete") {
+                const body = await bodyAs(
+                    request,
+                    completeCloudAuthorizationRequestSchema,
+                    "Cloud authorization callback",
+                    8 * 1_024,
+                );
+                const cloud = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await this.#cloudOperation(() => this.#cloud.complete(ctx, body)),
+                );
+                sendJson(response, 200, { cloud });
+                return;
+            }
+            if (request.method === "DELETE" && url.pathname === "/v0/cloud/auth") {
+                const body = await optionalBodyAs(
+                    request,
+                    cloudMutationRequestSchema,
+                    "Cloud disconnect request",
+                    2 * 1_024,
+                );
+                const cloud = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await this.#cloudOperation(() => this.#cloud.disconnect(ctx)),
+                );
+                sendJson(response, 200, { cloud });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/cloud/access-token") {
+                const body = await optionalBodyAs(
+                    request,
+                    cloudMutationRequestSchema,
+                    "Cloud access-token request",
+                    2 * 1_024,
+                );
+                const result = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await this.#cloudOperation(() => this.#cloud.mint(ctx)),
+                );
+                sendJson(response, 200, result);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/integrations/happy") {
@@ -975,6 +1042,9 @@ export class ApiModule implements AgentModule {
                     version: event.data.version,
                     profile,
                 });
+            }),
+            this.#cloud.onUpdated((_eventCtx, cloud) => {
+                this.#journal.append("cloud.updated", { cloud }, cloud.updatedAt);
             }),
             this.#happy.onIntegrationUpdated((_eventCtx, integration) => {
                 this.#journal.append(
@@ -3807,6 +3877,19 @@ export class ApiModule implements AgentModule {
             : await this.#mutationIds.run(mutationId, operation);
     }
 
+    async #cloudOperation<Value>(operation: () => Promise<Value>): Promise<Value> {
+        try {
+            return await operation();
+        } catch (error: unknown) {
+            if (error instanceof CloudOperationError) {
+                throw new ApiError(error.status, error.code, error.message, {
+                    cloud: error.cloud,
+                });
+            }
+            throw error;
+        }
+    }
+
     async #handleProfilePatch(
         ctx: Context,
         request: IncomingMessage,
@@ -3876,6 +3959,7 @@ export class ApiModule implements AgentModule {
             config: this.#sanitizedConfig(),
             profile: profileResource(profile),
             onboarding,
+            cloud: this.#cloud.status(ctx),
             happyIntegration: this.#happy.integration(ctx),
             projects: await Promise.all(
                 projects.map(
@@ -4408,20 +4492,25 @@ function decodePathSegment(value: string, name: string): string {
     }
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
-    const contentType = request.headers["content-type"]?.split(";")[0]?.trim();
-    if (contentType !== "application/json") {
-        throw invalidRequest("The request content type must be application/json.");
-    }
+async function readJson(
+    request: IncomingMessage,
+    maximum: number = MAX_JSON_BODY_BYTES,
+    allowEmpty = false,
+): Promise<unknown> {
     const chunks: Buffer[] = [];
     let bytes = 0;
     for await (const chunk of request) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
         bytes += buffer.byteLength;
-        if (bytes > MAX_JSON_BODY_BYTES) {
+        if (bytes > maximum) {
             throw new ApiError(413, "too_large", "The request body is too large.");
         }
         chunks.push(buffer);
+    }
+    if (bytes === 0 && allowEmpty) return {};
+    const contentType = request.headers["content-type"]?.split(";")[0]?.trim();
+    if (contentType !== "application/json") {
+        throw invalidRequest("The request content type must be application/json.");
     }
     try {
         return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
@@ -4434,11 +4523,23 @@ async function bodyAs<Schema extends TSchema>(
     request: IncomingMessage,
     schema: Schema,
     name: string,
+    maximum: number = MAX_JSON_BODY_BYTES,
 ): Promise<Static<Schema>> {
-    const value = await readJson(request);
+    const value = await readJson(request, maximum);
     if (!Value.Check(schema, value)) {
         throw invalidRequest(`The ${name} is invalid.`);
     }
+    return value as Static<Schema>;
+}
+
+async function optionalBodyAs<Schema extends TSchema>(
+    request: IncomingMessage,
+    schema: Schema,
+    name: string,
+    maximum: number,
+): Promise<Static<Schema>> {
+    const value = await readJson(request, maximum, true);
+    if (!Value.Check(schema, value)) throw invalidRequest(`The ${name} is invalid.`);
     return value as Static<Schema>;
 }
 

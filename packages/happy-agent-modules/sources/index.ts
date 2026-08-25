@@ -24,6 +24,9 @@ export * from "./files/index.js";
 
 // Happy: the optional mobile connection and its durable remote projection.
 export * from "./happy/index.js";
+
+// Cloud: daemon-owned WorkOS authentication and Happy Cloud access-token minting.
+export * from "./cloud/index.js";
 export * from "./api/index.js";
 export * from "./runtime/index.js";
 

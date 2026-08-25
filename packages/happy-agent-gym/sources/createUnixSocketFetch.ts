@@ -31,6 +31,14 @@ export function createUnixSocketFetch(socketPath: string): typeof globalThis.fet
         ) {
             throw new TypeError("Unix-socket fetch supports buffered request bodies.");
         }
+        if (
+            body !== undefined &&
+            body !== null &&
+            !headers.has("content-length") &&
+            !headers.has("transfer-encoding")
+        ) {
+            headers.set("content-length", String(bufferedBodyLength(body)));
+        }
 
         return await new Promise<Response>((resolve, reject) => {
             if (signal?.aborted === true) {
@@ -113,4 +121,10 @@ export function createUnixSocketFetch(socketPath: string): typeof globalThis.fet
             }
         });
     };
+}
+
+function bufferedBodyLength(body: string | Uint8Array | ArrayBuffer | URLSearchParams): number {
+    if (typeof body === "string") return Buffer.byteLength(body, "utf8");
+    if (body instanceof URLSearchParams) return Buffer.byteLength(body.toString(), "utf8");
+    return body.byteLength;
 }

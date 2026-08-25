@@ -370,6 +370,9 @@ importers:
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
+      '@workos-inc/node':
+        specifier: ^10.10.0
+        version: 10.10.0
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@electric-sql/pglite@0.5.5)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(postgres@3.4.9)(sql.js@1.14.1)
@@ -2436,6 +2439,10 @@ packages:
 
   '@vitest/utils@3.2.6':
     resolution: {integrity: sha512-lI23nIs4bnT3T8NIoh+vFaz5s2/DdP0Jgt2jxwgWljvwn82cLJtyi/If+fjFyoLMGIOz0U/fKvWE0d4jsNQEfg==}
+
+  '@workos-inc/node@10.10.0':
+    resolution: {integrity: sha512-qAf00a0DaIFD2yX4D11jCnMsk8w5FpE4Oif8EDBxGnPR1WNelqPeQqRrwX4/9xUpQV0asI6SFkdaffEj6IO33Q==}
+    engines: {node: '>=22.11.0'}
 
   '@yuuang/ffi-rs-android-arm64@1.3.7':
     resolution: {integrity: sha512-t6Wx3Xll6c07Nuk0k3xnZsxKFxlshm92i0U/BiTHc6kQbvu+fMJF+gKsj4yEj886jH51CM3EqZT9Xdhq9CdUVw==}
@@ -5781,6 +5788,8 @@ snapshots:
       '@vitest/pretty-format': 3.2.6
       loupe: 3.2.1
       tinyrainbow: 2.0.0
+
+  '@workos-inc/node@10.10.0': {}
 
   '@yuuang/ffi-rs-android-arm64@1.3.7':
     optional: true

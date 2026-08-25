@@ -28,6 +28,7 @@ import { ApiModule } from "../api/index.js";
 import { AutoModule } from "../auto/index.js";
 import { CollaborationModule } from "../collaboration/index.js";
 import { CompactionsModule } from "../compactions/index.js";
+import { CloudModule } from "../cloud/index.js";
 import { ComputeModule, createComputeModules, type HostCompute } from "../compute/index.js";
 import {
     ConfigModule,
@@ -118,6 +119,7 @@ export interface HappyAgentRuntimeModules {
     readonly api: ApiModule;
     readonly auto: AutoModule;
     readonly collaboration: CollaborationModule;
+    readonly cloud: CloudModule;
     readonly compactions: CompactionsModule;
     readonly compute: ComputeModule;
     readonly config: ConfigModule;
@@ -316,6 +318,7 @@ export async function startHappyAgentRuntime(
             await system?.close(shutdownCtx);
             await settleRuntimeShutdownTasks(shutdownCtx, shutdownTasks, [
                 "files",
+                "cloud",
                 "happy",
                 "murmur",
                 "projects-and-workspaces",
@@ -424,6 +427,7 @@ export async function startHappyAgentRuntime(
         });
 
         const installation = new InstallationModule();
+        const cloud = new CloudModule();
         const providerUsage = new ProviderUsageModule(config);
         registerShutdown("provider-usage", async () => await providerUsage.close());
         const happy = new HappyModule(
@@ -456,6 +460,7 @@ export async function startHappyAgentRuntime(
             abort,
             config,
             events,
+            cloud,
             compactions,
             projects,
             workspaces,
@@ -480,6 +485,7 @@ export async function startHappyAgentRuntime(
             api: apiModule,
             auto: autoModule,
             collaboration,
+            cloud,
             compactions,
             compute: compute.computeModule,
             config,
@@ -521,6 +527,7 @@ export async function startHappyAgentRuntime(
             // API must subscribe before any later module restores state or emits an event.
             apiModule,
             abort,
+            cloud,
             config,
             providerScan,
             observation,
@@ -607,6 +614,7 @@ export async function startHappyAgentRuntime(
             progress: () => autoModule.drainProgress(),
         });
         registerShutdown("titles", async () => await titles.close());
+        registerShutdown("cloud", async () => await cloud.stop());
         registerShutdown("happy", async () => await happy.stop());
 
         git.onSnapshot(async (snapshotCtx, entity, snapshot) => {
