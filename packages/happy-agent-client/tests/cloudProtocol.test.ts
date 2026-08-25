@@ -7,9 +7,11 @@ import {
     cloudAuthorizingResponseSchema,
     cloudConnectedResponseSchema,
     cloudDisconnectedResponseSchema,
+    cloudProfileResponseSchema,
     cloudResponseSchema,
     completeCloudAuthorizationRequestSchema,
     startCloudAuthorizationRequestSchema,
+    updateCloudProfileRequestSchema,
 } from "../sources/protocol/cloud.js";
 import type { HappyAgentEvent } from "../sources/protocol/events.js";
 import { readEventStream } from "../sources/readEventStream.js";
@@ -162,6 +164,36 @@ describe("Cloud protocol", () => {
                 cloud: disconnected,
             }),
         ).toBe(false);
+    });
+
+    it("validates registered, unregistered, and update profile shapes", () => {
+        expect(
+            Value.Check(cloudProfileResponseSchema, {
+                profile: { firstName: null, username: null },
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(cloudProfileResponseSchema, {
+                profile: { firstName: "Ada", lastName: "Lovelace", username: "ada_1" },
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(updateCloudProfileRequestSchema, {
+                firstName: "Ada",
+                mutationId: "profile-1",
+                username: "ada_1",
+            }),
+        ).toBe(true);
+
+        for (const invalid of [
+            { firstName: "Ada", username: "No" },
+            { firstName: "   ", username: "valid_name" },
+            { firstName: "Ada\n", username: "valid_name" },
+            { firstName: "Ada", username: "ab" },
+            { firstName: "Ada", lastName: null, username: "valid_name" },
+        ]) {
+            expect(Value.Check(updateCloudProfileRequestSchema, invalid)).toBe(false);
+        }
     });
 
     it("parses cloud.updated as a complete replacement with a mutation echo", async () => {

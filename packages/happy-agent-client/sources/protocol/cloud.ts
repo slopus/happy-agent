@@ -135,3 +135,54 @@ export const cloudAccessTokenResponseSchema = Type.Object({
     cloud: cloudConnectedSchema,
 });
 export type CloudAccessTokenResponse = Static<typeof cloudAccessTokenResponseSchema>;
+
+const cloudVisibleNameSchema = Type.String({
+    minLength: 1,
+    maxLength: 64,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+});
+
+/** A public profile that has not yet been registered in Happy Cloud. */
+export const cloudUnregisteredProfileSchema = Type.Object(
+    {
+        firstName: Type.Null(),
+        username: Type.Null(),
+    },
+    { additionalProperties: false },
+);
+export type CloudUnregisteredProfile = Static<typeof cloudUnregisteredProfileSchema>;
+
+/** The public identity stored durably by Happy Cloud for one WorkOS user. */
+export const cloudRegisteredProfileSchema = Type.Object(
+    {
+        firstName: cloudVisibleNameSchema,
+        lastName: Type.Optional(cloudVisibleNameSchema),
+        username: Type.String({ minLength: 3, maxLength: 24, pattern: "^[a-z0-9_]+$" }),
+    },
+    { additionalProperties: false },
+);
+export type CloudRegisteredProfile = Static<typeof cloudRegisteredProfileSchema>;
+
+export const cloudProfileSchema = Type.Union([
+    cloudUnregisteredProfileSchema,
+    cloudRegisteredProfileSchema,
+]);
+export type CloudProfile = Static<typeof cloudProfileSchema>;
+
+export const cloudProfileResponseSchema = Type.Object(
+    { profile: cloudProfileSchema },
+    { additionalProperties: false },
+);
+export type CloudProfileResponse = Static<typeof cloudProfileResponseSchema>;
+
+/** Registers or replaces the connected WorkOS user's public Happy Cloud profile. */
+export const updateCloudProfileRequestSchema = Type.Object(
+    {
+        firstName: cloudVisibleNameSchema,
+        lastName: Type.Optional(cloudVisibleNameSchema),
+        mutationId: Type.Optional(mutationIdSchema),
+        username: Type.String({ minLength: 3, maxLength: 24, pattern: "^[a-z0-9_]+$" }),
+    },
+    { additionalProperties: false },
+);
+export type UpdateCloudProfileRequest = Static<typeof updateCloudProfileRequestSchema>;

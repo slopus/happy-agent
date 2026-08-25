@@ -170,11 +170,14 @@ describe("HappyAgentClient", () => {
             },
             version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
         };
-        const { fetch, requests } = stubFetch((request) =>
-            request.url.endsWith("/access-token")
-                ? json({ accessToken: "access-token", cloud })
-                : json({ cloud }),
-        );
+        const profile = { firstName: "Ada", lastName: "Lovelace", username: "ada" };
+        const { fetch, requests } = stubFetch((request) => {
+            if (request.url.endsWith("/access-token")) {
+                return json({ accessToken: "access-token", cloud });
+            }
+            if (request.url.endsWith("/profile")) return json({ profile });
+            return json({ cloud });
+        });
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
 
         await expect(client.getCloud()).resolves.toEqual({ cloud });
@@ -198,6 +201,15 @@ describe("HappyAgentClient", () => {
             accessToken: "access-token",
             cloud,
         });
+        await expect(client.getCloudProfile()).resolves.toEqual({ profile });
+        await expect(
+            client.updateCloudProfile({
+                firstName: "Ada",
+                lastName: "Lovelace",
+                mutationId: "profile-1",
+                username: "ada",
+            }),
+        ).resolves.toEqual({ profile });
 
         expect(requests.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
             { body: null, method: "GET", url: "http://agent.local/v0/cloud" },
@@ -227,6 +239,17 @@ describe("HappyAgentClient", () => {
                 body: JSON.stringify({ mutationId: "mint-1" }),
                 method: "POST",
                 url: "http://agent.local/v0/cloud/access-token",
+            },
+            { body: null, method: "GET", url: "http://agent.local/v0/cloud/profile" },
+            {
+                body: JSON.stringify({
+                    firstName: "Ada",
+                    lastName: "Lovelace",
+                    mutationId: "profile-1",
+                    username: "ada",
+                }),
+                method: "PUT",
+                url: "http://agent.local/v0/cloud/profile",
             },
         ]);
     });

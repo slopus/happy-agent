@@ -27,9 +27,11 @@ import type {
     CloudConnectedResponse,
     CloudDisconnectedResponse,
     CloudMutationRequest,
+    CloudProfileResponse,
     CloudResponse,
     CompleteCloudAuthorizationRequest,
     StartCloudAuthorizationRequest,
+    UpdateCloudProfileRequest,
 } from "./protocol/cloud.js";
 import type {
     ConfigPatch,
@@ -384,6 +386,28 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/cloud/access-token",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cloud/profile` — reads the connected user's durable Cloud profile. */
+    async getCloudProfile(options: RequestOptions = {}): Promise<CloudProfileResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/cloud/profile",
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/cloud/profile` — registers or replaces the public Cloud profile. */
+    async updateCloudProfile(
+        request: UpdateCloudProfileRequest,
+        options: RequestOptions = {},
+    ): Promise<CloudProfileResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: "v0/cloud/profile",
             json: request,
             signal: options.signal,
         });

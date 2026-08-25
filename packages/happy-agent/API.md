@@ -972,6 +972,65 @@ Cloud's rejection alone is not treated as proof of revocation because its token-
 dependencies may themselves be temporarily unavailable. No access token is returned unless the
 verification succeeds.
 
+### Cloud profile
+
+The Cloud profile is the public identity stored durably by Happy Cloud for the connected WorkOS
+user. It is separate from the daemon's local human profile. Before registration it is:
+
+```json
+{ "username": null, "firstName": null }
+```
+
+After registration it is:
+
+```json
+{ "username": "ada", "firstName": "Ada", "lastName": "Lovelace" }
+```
+
+`username` is 3–24 lowercase ASCII letters, digits, or underscores. `firstName` is required and
+`lastName` is optional; each is 1–64 visible characters with no ASCII control characters. Names
+are public display text. A registered username is exclusive while it remains current. When a user
+changes username, the previous username may be reused by another user; Happy Cloud resolves the
+race atomically.
+
+Cloud profile operations mint and verify an access token exactly as `POST /v0/cloud/access-token`
+does, including durable refresh-token rotation and Cloud authentication error behavior. The access
+token is used internally and is never returned by these endpoints. No configured account,
+authoritative refresh rejection, and transient WorkOS or Happy Cloud failure return the same
+`cloud_not_authenticated`, `cloud_unauthorized`, and `cloud_unavailable` errors documented for
+access-token minting, including the authoritative current `cloud` object.
+
+#### `GET /v0/cloud/profile`
+
+Reads the connected user's current durable Cloud profile. Response — `200`:
+
+```json
+{ "profile": { "username": "ada", "firstName": "Ada", "lastName": "Lovelace" } }
+```
+
+An unregistered user receives `{ "profile": { "username": null, "firstName": null } }`.
+
+#### `PUT /v0/cloud/profile`
+
+Registers or replaces the connected user's Cloud profile. Request:
+
+```json
+{
+    "username": "ada",
+    "firstName": "Ada",
+    "lastName": "Lovelace",
+    "mutationId": "optional-client-value"
+}
+```
+
+`lastName` and `mutationId` are optional. Unknown fields, malformed usernames, whitespace-only
+names, control characters, and values beyond the stated limits return `400` with code
+`invalid_request` without contacting Happy Cloud. A username currently owned by another user
+returns `409` with code `conflict`. Response — `200`: `{ "profile": { ... } }` with Happy Cloud's
+authoritative normalized profile. `mutationId` is accepted for consistency with other client
+mutations but is not an idempotency key and no event is emitted solely for a remote profile
+change.
+
 ## Happy integration
 
 The Happy integration connects this daemon to the Happy mobile app. Its state is runtime,
