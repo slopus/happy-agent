@@ -190,10 +190,11 @@ Compute uses per-agent and shared Agent KV, while system prompt and titles use A
 terminals stores nothing anywhere because a terminal ends with the process behind it, and
 collaboration's migrations exist only to retire the tables it used to keep.
 
-Murmur owns two tables rather than one: a single row saying which person its identity belongs to,
-and the key–value table Murmur itself writes its cryptographic state into. They share a database
-so that a reset can throw both away in one transaction, leaving behind no record of an identity
-whose keys are gone.
+Murmur owns three tables: a single row saying which person its identity belongs to, the key–value
+table Murmur itself writes its cryptographic state into, and the authoritative public projection
+plus its private recovery intents. They share a database so reset can stage a replacement first,
+then atomically install its keys, binding, and public snapshot while enrollment and version
+ordering survive restarts.
 
 Migrations are immutable once released. A schema change is a new keyed migration, never an edit to
 an existing one.

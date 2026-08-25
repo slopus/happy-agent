@@ -34,4 +34,21 @@ describe("MutationAwareApiEventJournal", () => {
             { workspaceId: "w1" },
         ]);
     });
+
+    it("keeps delayed background invalidations mutationless inside a mutation async chain", () => {
+        const mutationIds = new AsyncLocalStorage<string>();
+        const journal = new MutationAwareApiEventJournal(mutationIds);
+
+        mutationIds.run("direct-mutation", () => {
+            journal.append("sharing.updated", { version: "direct" });
+            journal.appendOutsideMutation("sharing.updated", { version: "background" });
+        });
+
+        expect(
+            journal.replay(undefined, undefined, 10)?.events.map((event) => event.payload),
+        ).toEqual([
+            { mutationId: "direct-mutation", version: "direct" },
+            { version: "background" },
+        ]);
+    });
 });

@@ -15,8 +15,8 @@ import type { ProfileModule } from "../profile/ProfileModule.js";
 
 import { readMurmurBinding, bindMurmurProfile } from "./MurmurDatabase.js";
 import {
+    MURMUR_RELATIONSHIP_LIMIT,
     murmurCarriedProfileSchema,
-    type MurmurChangedEvent,
     type MurmurConnection,
     type MurmurContactRecord,
     type MurmurIncomingRequest,
@@ -45,6 +45,7 @@ export interface MurmurClientFacade {
     outgoingContactRequests(): Promise<readonly MurmurOutgoingContactRequest[]>;
     rejectContact(sessionId: Uint8Array): Promise<void>;
     removeContact(identity: Uint8Array): Promise<void>;
+    revokeInvitations(signal?: AbortSignal): Promise<void>;
     resolveInvitation(
         invitation: Uint8Array,
         signal?: AbortSignal,
@@ -54,8 +55,19 @@ export interface MurmurClientFacade {
         profile: MurmurContactProfile,
         signal?: AbortSignal,
     ): Promise<{ readonly id: Uint8Array }>;
-    synchronize(options?: MurmurSynchronizeOptions): Promise<MurmurSynchronizeResult>;
+    synchronize(
+        options?: MurmurSynchronizeOptions,
+        lifecycle?: Pick<
+            MurmurSyncOptions,
+            | "onUpdates"
+            | "onContactRequested"
+            | "onContactAdded"
+            | "onContactUpdated"
+            | "onContactRemoved"
+        >,
+    ): Promise<MurmurSynchronizeResult>;
     sync(options?: MurmurSyncOptions): Promise<void>;
+    updateContactProfile(profile: MurmurContactProfile): Promise<void>;
 }
 
 export interface MurmurServiceOptions {
@@ -69,7 +81,7 @@ export interface MurmurServiceOptions {
     readonly lifetime: RootContext;
     /** The catalog holding the one person this installation shares as. */
     readonly profile: ProfileModule;
-    readonly publish: (ctx: Context, event: MurmurChangedEvent) => void;
+    readonly publish: (ctx: Context) => void;
 }
 
 /**
@@ -84,9 +96,8 @@ export class MurmurService {
     readonly #activeOperations = new Set<Promise<unknown>>();
     readonly #client: MurmurClientFacade;
     readonly #identity: string;
-    readonly #nextVersion: () => string;
     readonly #profile: ProfileModule;
-    readonly #publish: (ctx: Context, event: MurmurChangedEvent) => void;
+    readonly #publish: (ctx: Context) => void;
     readonly #root: RootContext;
     #closePromise: Promise<void> | undefined;
     #closing = false;
@@ -94,16 +105,13 @@ export class MurmurService {
     #publishTimer: ReturnType<typeof setTimeout> | undefined;
     #started = false;
     #sync: Promise<void> | undefined;
-    #version: string;
 
     constructor(options: MurmurServiceOptions) {
         this.#client = options.client;
         this.#identity = encodeBytes(options.client.identity);
-        this.#nextVersion = createOrderedIdFactory();
         this.#profile = options.profile;
         this.#publish = options.publish;
         this.#root = options.lifetime;
-        this.#version = this.#nextVersion();
     }
 
     /** The identity every contact of this installation knows it by. */
@@ -132,7 +140,7 @@ export class MurmurService {
     }
 
     async snapshot(ctx: Context): Promise<MurmurSnapshot> {
-        return this.#run(ctx, async (ctx) => {
+        return this.#run(ctx, async () => {
             const [contacts, incomingRequests, outgoingRequests, binding] = await Promise.all([
                 this.#client.contacts(),
                 this.#client.contactRequests(),
@@ -141,12 +149,15 @@ export class MurmurService {
             ]);
             return {
                 connection: this.#connection,
-                contacts: contacts.map(toContactRecord),
+                contacts: contacts.slice(0, MURMUR_RELATIONSHIP_LIMIT).map(toContactRecord),
                 identity: this.#identity,
-                incomingRequests: incomingRequests.map(toIncomingRequest),
-                outgoingRequests: outgoingRequests.map(toOutgoingRequest),
+                incomingRequests: incomingRequests
+                    .slice(0, MURMUR_RELATIONSHIP_LIMIT)
+                    .map(toIncomingRequest),
+                outgoingRequests: outgoingRequests
+                    .slice(0, MURMUR_RELATIONSHIP_LIMIT)
+                    .map(toOutgoingRequest),
                 profileId: binding?.profileId ?? null,
-                version: this.#version,
             };
         });
     }
@@ -157,8 +168,7 @@ export class MurmurService {
         if (profile === undefined || !(await this.#profile.isLocal(ctx, profileId))) {
             throw new Error("Sharing requires a profile owned by this installation.");
         }
-        const result = await bindMurmurProfile(ctx, profileId, this.#identity, Date.now());
-        if (result === "created") this.#changed(ctx);
+        await bindMurmurProfile(ctx, profileId, this.#identity, Date.now());
     }
 
     async createInvitation(ctx: Context, signal?: AbortSignal): Promise<MurmurInvitation> {
@@ -176,49 +186,71 @@ export class MurmurService {
     async requestContact(
         ctx: Context,
         invitation: string,
+        identity: string,
         signal?: AbortSignal,
     ): Promise<MurmurOutgoingRequest> {
         const profile = encodeProfile(await this.#requireLocalProfile(ctx));
-        return this.#run(ctx, async (ctx) => {
+        const resolvedIdentity = encodeBytes(decodeBytes(identity));
+        return this.#run(ctx, async () => {
             const decodedInvitation = decodeBytes(invitation);
             const operationSignal = this.#operationSignal(signal);
-            const bundle = await this.#client.resolveInvitation(decodedInvitation, operationSignal);
-            const identity = encodeBytes(bundle.identityKey);
             const session = await this.#client.requestContact(
                 decodedInvitation,
                 profile,
                 operationSignal,
             );
-            this.#changed(ctx);
             const sessionId = encodeBytes(session.id);
-            return { id: sessionId, identity, sessionId };
+            return { id: sessionId, identity: resolvedIdentity, sessionId };
+        });
+    }
+
+    /** Resolves an invitation to its identity without exposing the discovery bundle. */
+    async resolveInvitation(invitation: string, signal?: AbortSignal): Promise<string> {
+        return await this.#run(this.#root, async () => {
+            const bundle = await this.#client.resolveInvitation(
+                decodeBytes(invitation),
+                this.#operationSignal(signal),
+            );
+            return encodeBytes(bundle.identityKey);
         });
     }
 
     async acceptContact(ctx: Context, requestId: string): Promise<void> {
         const profile = encodeProfile(await this.#requireLocalProfile(ctx));
-        await this.#run(ctx, async (ctx) => {
+        await this.#run(ctx, async () => {
             const request = await this.#request(requestId);
             if (decodeProfile(request.profile) === null) {
                 throw new Error("The contact request does not contain a valid profile.");
             }
             await this.#client.acceptContact(request.sessionId, profile);
-            this.#changed(ctx);
         });
     }
 
     async rejectContact(ctx: Context, requestId: string): Promise<void> {
-        await this.#run(ctx, async (ctx) => {
+        await this.#run(ctx, async () => {
             const request = await this.#request(requestId);
             await this.#client.rejectContact(request.sessionId);
-            this.#changed(ctx);
         });
     }
 
     async removeContact(ctx: Context, identity: string): Promise<void> {
-        await this.#run(ctx, async (ctx) => {
+        await this.#run(ctx, async () => {
             await this.#client.removeContact(decodeBytes(identity));
-            this.#changed(ctx);
+        });
+    }
+
+    /** Revoke every owner-created relay invitation without changing Happy's durable projection. */
+    async revokeInvitations(ctx: Context, signal?: AbortSignal): Promise<void> {
+        await this.#run(ctx, async () => {
+            await this.#client.revokeInvitations(this.#operationSignal(signal));
+        });
+    }
+
+    /** Atomically retain and queue the latest local profile to every active contact. */
+    async publishProfile(ctx: Context): Promise<void> {
+        const profile = await this.#requireLocalProfile(ctx);
+        await this.#run(ctx, async () => {
+            await this.#client.updateContactProfile(encodeProfile(profile));
         });
     }
 
@@ -250,23 +282,37 @@ export class MurmurService {
      */
     async #synchronize(): Promise<void> {
         let retryMilliseconds = SYNC_RETRY_INITIAL_MILLISECONDS;
+        const contactLifecycle = {
+            onContactAdded: () => this.#scheduleChanged(),
+            onContactRemoved: () => this.#scheduleChanged(),
+            onContactRequested: () => this.#scheduleChanged(),
+            onContactUpdated: () => this.#scheduleChanged(),
+            onUpdates: () => undefined,
+        } satisfies Pick<
+            MurmurSyncOptions,
+            | "onUpdates"
+            | "onContactRequested"
+            | "onContactAdded"
+            | "onContactUpdated"
+            | "onContactRemoved"
+        >;
         while (!this.#abort.signal.aborted) {
             try {
                 await this.#worker("murmur-synchronize", async () => {
-                    await this.#client.synchronize({ signal: this.#abort.signal });
+                    await this.#client.synchronize(
+                        { signal: this.#abort.signal },
+                        contactLifecycle,
+                    );
                 });
                 await this.#client.sync({
                     abort: this.#abort.signal,
+                    ...contactLifecycle,
                     onConnected: () =>
                         this.#worker("murmur-connected", async (workerCtx) => {
                             retryMilliseconds = SYNC_RETRY_INITIAL_MILLISECONDS;
                             this.#setConnection(workerCtx, "connected");
                         }),
-                    onContactAdded: () => this.#scheduleChanged(),
-                    onContactRemoved: () => this.#scheduleChanged(),
-                    onContactRequested: () => this.#scheduleChanged(),
                     onDisconnected: () => void this.#setConnectionFromWorker("disconnected"),
-                    onUpdates: () => undefined,
                 });
                 if (this.#abort.signal.aborted) return;
                 throw new Error("Murmur synchronization stopped unexpectedly.");
@@ -363,14 +409,7 @@ export class MurmurService {
     }
 
     #changed(ctx: Context): void {
-        const id = this.#nextVersion();
-        this.#version = id;
-        this.#publish(ctx, {
-            createdAt: Date.now(),
-            data: { version: id },
-            id,
-            type: "murmur_changed",
-        });
+        this.#publish(ctx);
     }
 
     /**
@@ -430,21 +469,4 @@ function decodeBytes(value: string): Uint8Array {
         throw new Error("The Murmur identity or invitation is invalid.");
     }
     return decoded;
-}
-
-/**
- * Time-ordered ids for the sharing version.
- *
- * A client compares versions to find out whether what it holds is current, so two changes in
- * the same millisecond must still be distinguishable and correctly ordered.
- */
-function createOrderedIdFactory(): () => string {
-    let lastMilliseconds = 0;
-    let counter = 0;
-    return () => {
-        const milliseconds = Math.max(Date.now(), lastMilliseconds);
-        counter = milliseconds === lastMilliseconds ? counter + 1 : 0;
-        lastMilliseconds = milliseconds;
-        return `${milliseconds.toString(36).padStart(9, "0")}-${counter.toString(36).padStart(5, "0")}`;
-    };
 }

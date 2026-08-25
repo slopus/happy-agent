@@ -107,12 +107,6 @@ const traceEndpointSchema = Type.String({
     pattern: "^https?://[^\\s]+$",
 });
 
-const relayUrlSchema = Type.String({
-    minLength: 1,
-    maxLength: 2_048,
-    pattern: "^https?://[^\\s]+$",
-});
-
 const defaultsInputSchema = Type.Object(
     {
         effort: Type.Optional(configStringSchema),
@@ -422,15 +416,6 @@ const partialValuesSchema = Type.Object(
         provider_default_enable: Type.Optional(Type.Boolean()),
         providers: Type.Optional(providerMapInputSchema),
         settings: Type.Optional(settingsInputSchema),
-        sharing: Type.Optional(
-            Type.Object(
-                {
-                    enabled: Type.Optional(Type.Boolean()),
-                    relay_url: Type.Optional(relayUrlSchema),
-                },
-                { additionalProperties: false },
-            ),
-        ),
         theme: Type.Optional(
             Type.Object(
                 {
@@ -767,13 +752,6 @@ const resolvedValuesSchema = Type.Object(
             },
             { additionalProperties: false },
         ),
-        sharing: Type.Object(
-            {
-                enabled: Type.Boolean(),
-                relayUrl: relayUrlSchema,
-            },
-            { additionalProperties: false },
-        ),
         theme: Type.Object(
             {
                 accent: configStringSchema,
@@ -951,12 +929,6 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         showReasoning: false,
         showUsage: false,
         toolResultRetentionDays: 7,
-    },
-    // Sharing is off until someone turns it on: an identity that reaches a relay and accepts
-    // contact requests is not something an installation should acquire by default.
-    sharing: {
-        enabled: false,
-        relayUrl: "https://murmur.cluster-fluster.com/",
     },
     theme: {
         accent: "cyan",
@@ -1742,7 +1714,6 @@ export function parseHappyAgentConfigToml(source: string): {
         "presence",
         "providers",
         "settings",
-        "sharing",
         "theme",
         "workspace",
     ]);
@@ -1761,7 +1732,6 @@ export function parseHappyAgentConfigToml(source: string): {
     const p2p = readP2p(table.p2p, recordUnknown);
     const permissions = readPermissions(table.permissions, recordUnknown);
     const presence = readPresence(table.presence, recordUnknown);
-    const sharing = readSharing(table.sharing, recordUnknown);
     const theme = readTheme(table.theme, recordUnknown);
     const providerDefaultEnable =
         table.providers !== undefined && isTable(table.providers)
@@ -1782,7 +1752,6 @@ export function parseHappyAgentConfigToml(source: string): {
             : { provider_default_enable: providerDefaultEnable }),
         ...(providers === undefined ? {} : { providers }),
         ...(settings === undefined ? {} : { settings }),
-        ...(sharing === undefined ? {} : { sharing }),
         ...(theme === undefined ? {} : { theme }),
         ...(workspace === undefined ? {} : { workspace }),
     };
@@ -1841,7 +1810,6 @@ function normalizeSourceValues(values: PartialValues): Record<string, unknown> {
                   ),
               }),
         ...(values.settings === undefined ? {} : { settings: normalizeSettings(values.settings) }),
-        ...(values.sharing === undefined ? {} : { sharing: normalizeSharing(values.sharing) }),
         ...(values.theme === undefined ? {} : { theme: values.theme }),
         ...(values.workspace === undefined
             ? {}
@@ -1982,9 +1950,6 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (partial.settings !== undefined) {
             Object.assign(merged.settings, normalizeSettings(partial.settings));
         }
-        if (partial.sharing !== undefined) {
-            Object.assign(merged.sharing, normalizeSharing(partial.sharing));
-        }
         if (partial.theme !== undefined) Object.assign(merged.theme, partial.theme);
         if (partial.workspace !== undefined) {
             Object.assign(merged.workspace, normalizeWorkspace(partial.workspace));
@@ -2026,13 +1991,6 @@ function normalizeFeatures(value: NonNullable<PartialValues["features"]>): Recor
         ...(value.cross_workspace === undefined ? {} : { crossWorkspace: value.cross_workspace }),
         ...(value.workflows === undefined ? {} : { workflows: value.workflows }),
         ...(value.workspaces === undefined ? {} : { workspaces: value.workspaces }),
-    };
-}
-
-function normalizeSharing(value: NonNullable<PartialValues["sharing"]>): Record<string, unknown> {
-    return {
-        ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
-        ...(value.relay_url === undefined ? {} : { relayUrl: value.relay_url }),
     };
 }
 
@@ -2431,10 +2389,6 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         p2p: _p2p,
         provider_default_enable: _providerDefaultEnable,
         providers: _providers,
-        // Sharing is dropped for the same reason as observation: a checked-in project file that
-        // turned sharing on and named its own relay would give this machine an identity, and a
-        // place to reach, that nobody here asked for.
-        sharing: _sharing,
         defaults,
         settings,
         ...rest
@@ -2501,10 +2455,6 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
             show_usage: "showUsage",
             tool_result_retention_days: "toolResultRetentionDays",
         },
-        sharing: {
-            enabled: "enabled",
-            relay_url: "relayUrl",
-        },
         workspace: {
             keep_copies_on_archive: "keepCopiesOnArchive",
             keep_worktrees_on_archive: "keepWorktreesOnArchive",
@@ -2525,7 +2475,6 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                 section === "settings" ||
                 section === "features" ||
                 section === "observation" ||
-                section === "sharing" ||
                 section === "workspace"
             ) {
                 for (const key of Object.keys(source[section] ?? {})) {
@@ -2594,19 +2543,6 @@ function readFeatures(
             { additionalProperties: false },
         ),
     ) as PartialValues["features"];
-}
-
-function readSharing(
-    value: TomlValue | undefined,
-    unknown: (path: string) => void,
-): PartialValues["sharing"] {
-    return readTableValues(
-        value,
-        "sharing",
-        unknown,
-        ["enabled", "relay_url"],
-        partialValuesSchema.properties.sharing!,
-    ) as PartialValues["sharing"];
 }
 
 function readWorkspace(

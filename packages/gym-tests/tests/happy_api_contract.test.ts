@@ -183,7 +183,6 @@ describe("the closed Happy Agent API contract", () => {
             "/v0/events/trim",
             "/v0/provider-usage",
             "/v0/profiles",
-            "/v0/sharing",
             "/v0/secrets",
             "/v0/file-paths",
             `/v0/projects/${project.id}/workspaces`,

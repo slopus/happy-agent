@@ -1266,17 +1266,17 @@ Enrolled:
   reset.
 - `contacts` — established, mutual connections, each `{ "identity", "profile", "status" }`.
   `status` is `"active"` or `"removing"`; the latter is a durable removal still propagating to
-  the other installation. Bounded at **10,000**.
+  the other installation. Bounded at **256**.
 - `incomingRequests` — pending requests from peers who redeemed one of this installation's
   invitations, each `{ "id", "identity", "profile" }`, waiting to be accepted or rejected.
   `id` is an opaque 1–256 character request identifier used by those mutation routes; it is not
-  a profile or session ID and has no ordering semantics. Bounded at **1,000**; while full, the
+  a profile or session ID and has no ordering semantics. Bounded at **256**; while full, the
   daemon declines further incoming requests until room frees.
 - `outgoingRequests` — pending requests this installation created by submitting someone's
   invitation, each `{ "id", "identity" }`. Both values are 43-character base64url strings. An
   outgoing request ID is a separately minted, non-secret identifier and never contains or reuses
   the invitation capability. An entry leaves the list when the peer accepts — it becomes a
-  contact — or rejects, in which case it simply disappears. Bounded at **1,000**.
+  contact — or rejects, in which case it simply disappears. Bounded at **256**.
 
 A peer appears in at most one of `contacts`, `incomingRequests`, and `outgoingRequests` at a
 time.
@@ -1310,8 +1310,9 @@ client:
 - `sharing_not_enrolled` (409) — the installation has not enrolled in sharing yet. Every
   sharing mutation except enrollment returns it; reading the unenrolled state still succeeds.
 - `sharing_unavailable` (503) — a temporary sharing-service operation required by this request
-  could not complete. The connection state alone does not predetermine the result; nothing changed
-  and no event was emitted.
+  could not complete. The connection state alone does not predetermine the result; the failed
+  request made no public change and emitted no event. Reset additionally retains its private
+  revocation intent for the documented retry below.
 - `invalid_invitation` (400) — the submitted invitation is malformed, expired, already
   redeemed, unknown to the sharing service, or names this installation itself.
 - `not_found` (404) — the request ID or contact identity in the path is not in the state the
@@ -1424,7 +1425,7 @@ Submitting an invitation for the local identity, an existing contact, or a peer 
 incompatible pending relationship is `409` with code `conflict`.
 
 Errors — `invalid_invitation` (400); `conflict`, `sharing_not_enrolled`, or `sharing_full`
-(409, the latter when `outgoingRequests` is at 1,000); `sharing_unavailable` (503).
+(409, the latter when `outgoingRequests` is at 256); `sharing_unavailable` (503).
 
 ### `POST /v0/sharing/requests/:requestId/accept`
 
@@ -1437,7 +1438,7 @@ Response — `200`: `{ "sharing": { ... } }` and one `sharing.updated`.
 
 Errors — `not_found` (404) when the request is absent, was withdrawn by a peer reset, or was
 resolved by another client; the error includes the current sharing snapshot.
-`sharing_full` (409) when contacts are at 10,000, in which case the incoming request stays
+`sharing_full` (409) when contacts are at 256, in which case the incoming request stays
 pending; `sharing_not_enrolled` (409).
 
 ### `POST /v0/sharing/requests/:requestId/reject`
@@ -1464,11 +1465,19 @@ installation is `409` with code `sharing_not_enrolled`.
 
 ### `POST /v0/sharing/reset`
 
-Abandons this installation's sharing identity and mints a fresh one. Contacts, incoming
-requests, and outgoing requests all clear, and every outstanding invitation is invalidated.
-Peers are informed through the sharing service when possible, but reset never waits for that:
-it takes effect locally, at once, durably. An unreachable peer simply finds the old identity
-gone. Body optional: `{ "mutationId": "..." }`.
+Abandons this installation's sharing identity and mints a fresh one. Before replacing anything
+locally, the daemon revokes every outstanding invitation through the managed sharing service. If
+that revocation cannot be confirmed, reset fails with `sharing_unavailable`: the existing
+identity, contacts, requests, and invitations all remain intact, no version is minted, and no
+event is emitted for that request. The private reset intent remains durable and is retried by a
+later reset call or the next daemon start. If that retry succeeds, the fresh identity is installed
+and a `sharing.updated` event is emitted; a restart-driven retry has no `mutationId`. This makes
+each attempt all-or-nothing instead of leaving an invitation usable for a discarded identity.
+
+After revocation succeeds, contacts, incoming requests, and outgoing requests all clear and the
+fresh identity becomes durable locally. Peers are informed through the sharing service when
+possible, but reset does not wait for peer delivery; an unreachable peer simply finds the old
+identity gone. Body optional: `{ "mutationId": "..." }`.
 
 Reset is not a no-op: every call mints a fresh identity, and the installation stays enrolled
 throughout — reset renews the identity, it never unenrolls. The sharing `version` keeps
@@ -1477,7 +1486,8 @@ climbing across a reset — it belongs to the installation, not to the identity.
 Response — `200`: `{ "sharing": { ... } }` with the fresh identity and empty lists, and one
 `sharing.updated`.
 
-Errors — `sharing_not_enrolled` (409).
+Errors — `sharing_not_enrolled` (409); `sharing_unavailable` (503) when invitation revocation
+cannot be confirmed, carrying the unchanged authoritative sharing snapshot.
 
 ## Projects and workspaces
 

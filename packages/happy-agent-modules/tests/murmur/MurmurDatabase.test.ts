@@ -4,12 +4,16 @@ import { describe, expect, it } from "vitest";
 
 import {
     MURMUR_BINDING_MIGRATION_KEY,
+    MURMUR_PUBLIC_STATE_MIGRATION_KEY,
     MURMUR_STORE_MIGRATION_KEY,
     MURMUR_STORE_TABLE,
+    advanceMurmurPublicState,
     bindMurmurProfile,
-    discardMurmurIdentity,
+    ensureMurmurPublicState,
     murmurMigrations,
     readMurmurBinding,
+    readMurmurPublicState,
+    replaceMurmurIdentity,
 } from "../../sources/murmur/MurmurDatabase.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
@@ -26,6 +30,7 @@ describe("murmur binding", () => {
             expect(murmurMigrations.map(([key]) => key)).toEqual([
                 MURMUR_BINDING_MIGRATION_KEY,
                 MURMUR_STORE_MIGRATION_KEY,
+                MURMUR_PUBLIC_STATE_MIGRATION_KEY,
             ]);
             await expect(readMurmurBinding(test.context)).resolves.toBeUndefined();
 
@@ -71,49 +76,99 @@ describe("murmur binding", () => {
         }
     });
 
-    it("keeps the person when the identity is forgotten and adopts the next one", async () => {
-        const test = moduleDatabase(murmurMigrations, "murmur-binding-clear");
+    it("persists stable unenrolled state and strictly advances through clock rollback", async () => {
+        const test = moduleDatabase(murmurMigrations, "murmur-public-high-water");
+        await test.ready;
+        try {
+            const first = await ensureMurmurPublicState(test.context, () => 1_000);
+            expect(first).toMatchObject({ enrolled: false, updatedAt: 1_000 });
+            await expect(ensureMurmurPublicState(test.context, () => 500)).resolves.toEqual(first);
+
+            const second = await advanceMurmurPublicState(
+                test.context,
+                (current) => {
+                    const { updatedAt: _updatedAt, version: _version, ...content } = current;
+                    return { ...content, enrolled: true };
+                },
+                () => 900,
+            );
+            expect(second.updatedAt).toBe(1_001);
+            expect(second.version > first.version).toBe(true);
+            await expect(readMurmurPublicState(test.context)).resolves.toEqual(second);
+        } finally {
+            test.close();
+        }
+    });
+
+    it("atomically replaces the keys, binding, and authoritative public projection", async () => {
+        const test = moduleDatabase(murmurMigrations, "murmur-binding-replace");
         await test.ready;
         try {
             await bindMurmurProfile(test.context, PROFILE, IDENTITY, 1_000);
+            await ensureMurmurPublicState(test.context, () => 1_000);
             await agentDatabaseRun(
                 test.context.db,
                 sql`INSERT INTO ${sql.raw(MURMUR_STORE_TABLE)} (key, value_base64)
                     VALUES ('murmur/session-states/1', 'AQID')`,
             );
 
-            await discardMurmurIdentity(test.context);
-            // The keys and the record of who they belonged to go together.
+            const replaced = await replaceMurmurIdentity(
+                test.context,
+                {
+                    identity: REPLACEMENT_IDENTITY,
+                    profileId: PROFILE,
+                    store: new Map([["murmur/session-states/2", Uint8Array.from([4, 5, 6])]]),
+                    transform: (current) => ({
+                        connection: "connecting",
+                        contacts: [],
+                        enrolled: true,
+                        identity: REPLACEMENT_IDENTITY,
+                        incomingRequests: [],
+                        localProfileVersion: null,
+                        outgoingRequests: [],
+                        pendingOperations: current.pendingOperations,
+                        profileId: PROFILE,
+                    }),
+                },
+                () => 2_000,
+            );
+
+            expect(replaced).toMatchObject({
+                identity: REPLACEMENT_IDENTITY,
+                profileId: PROFILE,
+                updatedAt: 2_000,
+            });
             await expect(
                 agentDatabaseRows<{ key: string }>(
                     test.context.db,
-                    sql`SELECT key FROM ${sql.raw(MURMUR_STORE_TABLE)}`,
+                    sql`SELECT key FROM ${sql.raw(MURMUR_STORE_TABLE)} ORDER BY key`,
                 ),
-            ).resolves.toEqual([]);
-            await expect(readMurmurBinding(test.context)).resolves.toEqual({
-                createdAt: 1_000,
-                murmurIdentity: null,
-                profileId: PROFILE,
-            });
-
-            await expect(
-                bindMurmurProfile(test.context, PROFILE, REPLACEMENT_IDENTITY, 3_000),
-            ).resolves.toBe("unchanged");
+            ).resolves.toEqual([{ key: "murmur/session-states/2" }]);
             await expect(readMurmurBinding(test.context)).resolves.toEqual({
                 createdAt: 1_000,
                 murmurIdentity: REPLACEMENT_IDENTITY,
                 profileId: PROFILE,
             });
+            await expect(readMurmurPublicState(test.context)).resolves.toEqual(replaced);
         } finally {
             test.close();
         }
     });
 
-    it("forgets nothing when sharing was never bound", async () => {
-        const test = moduleDatabase(murmurMigrations, "murmur-binding-clear-empty");
+    it("refuses replacement before a profile is bound", async () => {
+        const test = moduleDatabase(murmurMigrations, "murmur-binding-replace-unbound");
         await test.ready;
         try {
-            await expect(discardMurmurIdentity(test.context)).resolves.toBeUndefined();
+            await expect(
+                replaceMurmurIdentity(test.context, {
+                    identity: REPLACEMENT_IDENTITY,
+                    profileId: PROFILE,
+                    store: new Map(),
+                    transform: () => {
+                        throw new Error("must not transform");
+                    },
+                }),
+            ).rejects.toThrow("without its existing profile");
             await expect(readMurmurBinding(test.context)).resolves.toBeUndefined();
         } finally {
             test.close();

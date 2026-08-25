@@ -409,7 +409,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>();
-        const murmur = new MurmurModule<LibSQLDatabase>(config, profile);
+        const murmur = new MurmurModule<LibSQLDatabase>(profile);
         const collaboration = new CollaborationModule(config, abort);
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
@@ -475,6 +475,7 @@ export async function startHappyAgentRuntime(
             providerScan,
             happy,
             profile,
+            murmur,
             compute.computeModule,
             slashCommands,
         );
@@ -643,11 +644,7 @@ export async function startHappyAgentRuntime(
 
         profile.open(installation.epoch);
         registerShutdown("murmur", async () => await murmur.close(withDatabase(ctx)));
-        const person = await profile.get(withDatabase(ctx));
-        await murmur.open(
-            withDatabase(ctx),
-            ...(person === undefined ? [] : ([person.id] as const)),
-        );
+        await murmur.open(withDatabase(ctx));
 
         await apiModule.markReady();
 

@@ -2,6 +2,7 @@ import type {
     MurmurContact,
     MurmurContactProfile,
     MurmurContactRequested,
+    MurmurContactUpdated,
     MurmurOutgoingContactRequest,
     MurmurSynchronizeOptions,
     MurmurSynchronizeResult,
@@ -46,11 +47,28 @@ export function peerProfile(overrides: Partial<MurmurPeerProfile> = {}): MurmurP
 }
 
 export interface FakeMurmurClientOptions {
+    readonly acceptFailureAfterMutation?: FakeMutationFailure;
+    readonly connects?: boolean;
     readonly contacts?: readonly MurmurContact[];
     readonly identity?: Uint8Array;
     readonly incoming?: readonly MurmurContactRequested[];
     readonly invitationWaitsForAbort?: boolean;
+    readonly outgoing?: readonly MurmurOutgoingContactRequest[];
+    readonly profileUpdateErrors?: readonly unknown[];
+    readonly rejectFailureAfterMutation?: FakeMutationFailure;
+    readonly removeFailureAfterMutation?: FakeMutationFailure;
+    readonly requestFailureAfterMutation?: FakeMutationFailure;
+    readonly revocationErrors?: readonly unknown[];
+    readonly revocationWaitsForAbort?: boolean;
+    readonly onRevokeInvitations?: (signal?: AbortSignal) => Promise<void> | void;
+    readonly resolveErrors?: readonly unknown[];
+    readonly resolvedIdentity?: Uint8Array;
     readonly syncErrors?: readonly unknown[];
+}
+
+export interface FakeMutationFailure {
+    readonly operation: unknown;
+    readonly reconciliation: unknown;
 }
 
 /**
@@ -64,21 +82,53 @@ export class FakeMurmurClient implements MurmurClientFacade {
     closed = false;
     readonly identity: Uint8Array;
     invitationSignal: AbortSignal | undefined;
+    profileUpdateCalls = 0;
+    readonly publishedProfiles: MurmurContactProfile[] = [];
+    revocationCalls = 0;
+    readonly revocationSignals: (AbortSignal | undefined)[] = [];
+    resolveCalls = 0;
     /** Every profile this installation put on the wire, newest last. */
     readonly sentProfiles: MurmurContactProfile[] = [];
     syncCalls = 0;
+    readonly #acceptFailureAfterMutation: FakeMutationFailure | undefined;
+    readonly #contactReadErrors: unknown[] = [];
     readonly #contacts: MurmurContact[];
+    readonly #connects: boolean;
     readonly #incoming: MurmurContactRequested[];
+    readonly #incomingReadErrors: unknown[] = [];
     readonly #invitationWaitsForAbort: boolean;
-    readonly #outgoing: MurmurOutgoingContactRequest[] = [];
+    readonly #outgoing: MurmurOutgoingContactRequest[];
+    readonly #outgoingReadErrors: unknown[] = [];
+    readonly #profileUpdateErrors: unknown[];
+    readonly #rejectFailureAfterMutation: FakeMutationFailure | undefined;
+    readonly #removeFailureAfterMutation: FakeMutationFailure | undefined;
+    readonly #requestFailureAfterMutation: FakeMutationFailure | undefined;
+    readonly #revocationErrors: unknown[];
+    readonly #revocationWaitsForAbort: boolean;
+    readonly #onRevokeInvitations: ((signal?: AbortSignal) => Promise<void> | void) | undefined;
+    readonly #resolveErrors: unknown[];
+    readonly #resolvedIdentity: Uint8Array;
     readonly #syncErrors: unknown[];
     #contactsGate: Promise<void> | undefined;
+    #syncOptions: MurmurSyncOptions | undefined;
 
     constructor(options: FakeMurmurClientOptions = {}) {
+        this.#acceptFailureAfterMutation = options.acceptFailureAfterMutation;
         this.#contacts = [...(options.contacts ?? [])];
+        this.#connects = options.connects ?? true;
         this.identity = options.identity ?? SELF;
         this.#incoming = [...(options.incoming ?? [])];
         this.#invitationWaitsForAbort = options.invitationWaitsForAbort ?? false;
+        this.#outgoing = [...(options.outgoing ?? [])];
+        this.#profileUpdateErrors = [...(options.profileUpdateErrors ?? [])];
+        this.#rejectFailureAfterMutation = options.rejectFailureAfterMutation;
+        this.#removeFailureAfterMutation = options.removeFailureAfterMutation;
+        this.#requestFailureAfterMutation = options.requestFailureAfterMutation;
+        this.#revocationErrors = [...(options.revocationErrors ?? [])];
+        this.#revocationWaitsForAbort = options.revocationWaitsForAbort ?? false;
+        this.#onRevokeInvitations = options.onRevokeInvitations;
+        this.#resolveErrors = [...(options.resolveErrors ?? [])];
+        this.#resolvedIdentity = options.resolvedIdentity ?? REMOTE;
         this.#syncErrors = [...(options.syncErrors ?? [])];
     }
 
@@ -107,6 +157,10 @@ export class FakeMurmurClient implements MurmurClientFacade {
             sessionId: request.sessionId,
             status: "active",
         });
+        if (this.#acceptFailureAfterMutation !== undefined) {
+            this.#contactReadErrors.push(this.#acceptFailureAfterMutation.reconciliation);
+            throw this.#acceptFailureAfterMutation.operation;
+        }
     }
 
     close(): void {
@@ -114,11 +168,15 @@ export class FakeMurmurClient implements MurmurClientFacade {
     }
 
     async contactRequests(): Promise<readonly MurmurContactRequested[]> {
+        const error = this.#incomingReadErrors.shift();
+        if (error !== undefined) throw error;
         return this.#incoming;
     }
 
     async contacts(): Promise<readonly MurmurContact[]> {
         await this.#contactsGate;
+        const error = this.#contactReadErrors.shift();
+        if (error !== undefined) throw error;
         return this.#contacts;
     }
 
@@ -141,13 +199,23 @@ export class FakeMurmurClient implements MurmurClientFacade {
     }
 
     async outgoingContactRequests(): Promise<readonly MurmurOutgoingContactRequest[]> {
+        const error = this.#outgoingReadErrors.shift();
+        if (error !== undefined) throw error;
         return this.#outgoing;
+    }
+
+    seedOutgoing(requests: readonly MurmurOutgoingContactRequest[]): void {
+        this.#outgoing.push(...requests);
     }
 
     async rejectContact(sessionId: Uint8Array): Promise<void> {
         const index = this.#requestIndex(sessionId);
         if (index < 0) throw new Error("Unknown request");
         this.#incoming.splice(index, 1);
+        if (this.#rejectFailureAfterMutation !== undefined) {
+            this.#incomingReadErrors.push(this.#rejectFailureAfterMutation.reconciliation);
+            throw this.#rejectFailureAfterMutation.operation;
+        }
     }
 
     async removeContact(identity: Uint8Array): Promise<void> {
@@ -156,10 +224,35 @@ export class FakeMurmurClient implements MurmurClientFacade {
         );
         if (index < 0) throw new Error("Unknown contact");
         this.#contacts.splice(index, 1);
+        if (this.#removeFailureAfterMutation !== undefined) {
+            this.#contactReadErrors.push(this.#removeFailureAfterMutation.reconciliation);
+            throw this.#removeFailureAfterMutation.operation;
+        }
+    }
+
+    async revokeInvitations(signal?: AbortSignal): Promise<void> {
+        this.revocationCalls += 1;
+        this.revocationSignals.push(signal);
+        await this.#onRevokeInvitations?.(signal);
+        if (this.#revocationWaitsForAbort) {
+            await new Promise<void>((_resolve, reject) => {
+                const aborted = (): void => reject(new DOMException("Aborted", "AbortError"));
+                if (signal?.aborted === true) {
+                    aborted();
+                    return;
+                }
+                signal?.addEventListener("abort", aborted, { once: true });
+            });
+        }
+        const error = this.#revocationErrors.shift();
+        if (error !== undefined) throw error;
     }
 
     async resolveInvitation(): Promise<{ readonly identityKey: Uint8Array }> {
-        return { identityKey: REMOTE };
+        this.resolveCalls += 1;
+        const error = this.#resolveErrors.shift();
+        if (error !== undefined) throw error;
+        return { identityKey: this.#resolvedIdentity };
     }
 
     async requestContact(
@@ -167,11 +260,29 @@ export class FakeMurmurClient implements MurmurClientFacade {
         profile: MurmurContactProfile,
     ): Promise<{ readonly id: Uint8Array }> {
         this.sentProfiles.push(profile);
-        this.#outgoing.push({ createdAt: 1_000, identity: REMOTE, sessionId: SESSION });
+        this.#outgoing.push({
+            createdAt: 1_000,
+            identity: this.#resolvedIdentity,
+            sessionId: SESSION,
+        });
+        if (this.#requestFailureAfterMutation !== undefined) {
+            this.#outgoingReadErrors.push(this.#requestFailureAfterMutation.reconciliation);
+            throw this.#requestFailureAfterMutation.operation;
+        }
         return { id: SESSION };
     }
 
-    async synchronize(_options?: MurmurSynchronizeOptions): Promise<MurmurSynchronizeResult> {
+    async synchronize(
+        _options?: MurmurSynchronizeOptions,
+        _lifecycle?: Pick<
+            MurmurSyncOptions,
+            | "onUpdates"
+            | "onContactRequested"
+            | "onContactAdded"
+            | "onContactUpdated"
+            | "onContactRemoved"
+        >,
+    ): Promise<MurmurSynchronizeResult> {
         return {
             inbox: { cursor: null, exhausted: true, processed: 0, rejected: 0 },
             issues: [],
@@ -184,15 +295,45 @@ export class FakeMurmurClient implements MurmurClientFacade {
 
     async sync(options: MurmurSyncOptions = {}): Promise<void> {
         this.syncCalls += 1;
+        this.#syncOptions = options;
         const error = this.#syncErrors.shift();
         if (error !== undefined) throw error;
-        await options.onConnected?.();
+        if (this.#connects) await options.onConnected?.();
         if (options.abort?.aborted !== true) {
             await new Promise<void>((resolve) => {
                 options.abort?.addEventListener("abort", () => resolve(), { once: true });
             });
         }
         await options.onDisconnected?.();
+        this.#syncOptions = undefined;
+    }
+
+    async updateContactProfile(profile: MurmurContactProfile): Promise<void> {
+        this.profileUpdateCalls += 1;
+        const error = this.#profileUpdateErrors.shift();
+        if (error !== undefined) throw error;
+        this.publishedProfiles.push(structuredClone(profile));
+        for (let index = 0; index < this.#contacts.length; index += 1) {
+            const contact = this.#contacts[index];
+            if (contact?.status !== "active") continue;
+            this.#contacts[index] = { ...contact, localProfile: structuredClone(profile) };
+        }
+    }
+
+    async updateRemoteContactProfile(
+        identity: Uint8Array,
+        profile: MurmurContactProfile,
+        id = "contact-profile-update",
+    ): Promise<void> {
+        const index = this.#contacts.findIndex((contact) =>
+            Buffer.from(contact.identity).equals(Buffer.from(identity)),
+        );
+        const current = this.#contacts[index];
+        if (current === undefined) throw new Error("Unknown contact");
+        const contact: MurmurContact = { ...current, profile: structuredClone(profile) };
+        this.#contacts[index] = contact;
+        const update: MurmurContactUpdated = { contact, id };
+        await this.#syncOptions?.onContactUpdated?.([update]);
     }
 
     #requestIndex(sessionId: Uint8Array): number {

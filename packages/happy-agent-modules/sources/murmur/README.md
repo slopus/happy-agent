@@ -1,109 +1,116 @@
 # Murmur
 
-Contacts over one Murmur identity: the people this installation has accepted, and the requests
-either side is still waiting on. A client calls this sharing.
-
-The module owns no file and no socket. Murmur's cryptographic state lives in the agent database
-like everything else this agent knows, next to one row saying which person the identity belongs
-to, so the two can never disagree about who this installation is.
+Murmur owns Happy Agent's opt-in contact sharing: one installation identity, mutual contacts,
+incoming requests, outgoing requests, short-lived invitations, and relay connection state.
+`ApiModule` calls it sharing and is the only public serialization boundary.
 
 ```ts
-import { MurmurModule } from "@slopus/happy-agent-modules";
+const murmur = new MurmurModule(profileModule);
+await murmur.open(ctx);
 
-const murmur = new MurmurModule(config, profileModule);
-murmur.onEvent((ctx, event) => {
-    void events.record(ctx, { type: "sharing.changed", payload: event });
-});
-await murmur.open(ctx, person?.id);
+// Only an explicit public enrollment call creates the identity.
+const sharing = await murmur.enroll(ctx);
 ```
 
-Sharing is off unless the configuration turns it on. Nothing reaches a relay, and no identity is
-created, until someone says so.
+The constructor takes only the profile module. The managed relay is an internal product detail;
+there is no configuration toggle or configurable relay. A historical `[sharing]` section has no
+authority and cannot enroll an installation. `open(ctx)` creates only the stable unenrolled
+high-water row unless durable public state already says the installation enrolled earlier.
 
-## Dependencies
+Enrollment ensures the singleton local profile, opens a local Murmur client without waiting for
+the relay, binds its identity, durably advances public state, and publishes the resulting version.
+Repeating enrollment is a read-only no-op. An enrolled installation reopens automatically on
+restart and always moves through `connecting` with a newer durable version.
 
-The constructor takes modules and nothing else.
+## Public-state discipline
 
-- **`config`** — the [configuration](../config/README.md) module. Whether sharing runs at all
-  (`sharing.enabled`) and which relay it reaches (`sharing.relayUrl`) are settings, not arguments:
-  an identity on a relay is not something an installation should acquire because a caller passed a
-  flag. `enabled` is read live, so it is always what configuration currently says.
-- **`profile`** — the [profile](../profile/README.md) catalog itself. Sharing puts a person on the
-  wire so a contact sees a name rather than a key, and whether this installation may act as that
-  person is that catalog's decision rather than something restated here.
+The module snapshot intentionally retains private Murmur fields for its direct API dependency:
+profile and session IDs, carried-profile fields, and internal session handles. `ApiModule` makes
+the explicit public projection and validates it with `@slopus/happy-agent-client` schemas. Private
+IDs, photo storage metadata, session IDs, and invitation capabilities never enter a sharing
+snapshot or event.
 
-The lifetime the relay loop and the store run on is derived by the module itself, the first time
-sharing opens: the caller's context is detached and the agent database carried back onto it. Both
-outlive every call that touches them, so neither may borrow a request's context. Opening sharing
-without an agent database throws `Sharing was opened without an agent database.`
+Outgoing request IDs are random 32-byte base64url values minted separately from both the
+invitation and Murmur session ID. A SHA-256 digest, never the invitation capability itself, records
+which pending outgoing request already redeemed an invitation so duplicate submissions are
+durable no-ops.
 
-The clock is `Date.now`. Background failures — a relay that will not answer, a subscriber that
-throws — go to `ctx.log` on the lifetime they happened on, because there is no caller left to hand
-them back to.
+Every actual public change first commits migration `003-murmur-public-state`'s singleton row. It
+stores the complete authoritative sharing projection, bounded outgoing-ID mappings, private
+recovery intents, local-profile publication high water, and UUIDv7 `version`/`updatedAt`
+high-water values.
+API reads and error bodies use this row even if the live Murmur client is temporarily unreadable.
+Versions remain strictly increasing across same-millisecond changes, restarts, and clock rollback.
+Reads and private intent writes never advance them. Only after a public commit does
+`murmur_changed` publish the exact resulting version. API mutations therefore return the same
+snapshot version their event names, while bursts of peer-driven relay callbacks may coalesce.
 
-`openClient` is a `protected` method holding the one call that needs a network. A test subclasses
-the module and overrides it; nothing in the product does. It is handed the store the module
-opened, and the module owns the lifetime of whatever it returns.
+## Operations
 
-## Events
+- `snapshot(ctx)` always returns an unenrolled or enrolled snapshot.
+- `enroll(ctx)` explicitly opts in and is idempotent.
+- `createInvitation(ctx)` uploads a five-minute, single-use capability without changing public
+  state.
+- `requestContact`, `acceptContact`, `rejectContact`, and `removeContact` enforce public bounds,
+  conflicts, missing-target errors, and documented no-ops before changing durable state. Contacts,
+  incoming requests, and outgoing requests are each capped at Murmur 0.4.5's complete-scan limit
+  of 256, so no accepted public entry can be hidden beyond the dependency's read window.
+- Accept, reject, and remove operate on local durable Murmur state while offline.
+- `reset(ctx)` remains enrolled, clears relationships and request mappings, binds a new identity to
+  the same profile, and advances the public version. It first opens the replacement against a
+  transactional in-memory store, then calls Murmur 0.4.5's authenticated identity-wide invitation
+  revocation against a bounded clone of the old store. Only confirmed revocation permits the
+  atomic durable swap. Replacement staging or revocation failure discards temporary clients,
+  reopens the unchanged old identity, returns `unavailable`, mints no version, and emits no event
+  for that attempt. Its private intent remains durable for a later reset call or startup retry.
+- `close(ctx)` drains the client and store without changing enrollment.
 
-`onEvent(listener)` subscribes and returns the function that ends the subscription. Subscribers are
-told after the change has happened, so one that throws is logged and the rest still hear it.
+Local profile changes retain their latest ProfileModule version as private scheduling high water
+and call Murmur 0.4.5's `updateContactProfile`. Murmur atomically retains the carried profile and
+one authenticated outbox per active contact, so publication converges after disconnection or
+restart. Remote `onContactUpdated` lifecycle callbacks trigger a fresh authoritative Murmur read;
+the resulting contact profile commits into the sharing projection, advances its UUIDv7, and emits
+a mutationless `sharing.updated` through ApiModule. No Happy-specific session, packet protocol, or
+peer-profile overlay exists.
 
-## Direct operations
+`MurmurOperationError` is the module seam for expected domain failures. The API maps it to the
+stable sharing error codes and always includes the current authoritative snapshot.
 
-- `open(ctx, profileId?)` starts sharing when it is enabled and there is someone to be. Enabled
-  with nobody named is not an error; it resolves when `bindProfile` is called.
-- `bindProfile(ctx, profileId)` names the person this installation shares as. This replaces the
-  onboarding step the legacy daemon had.
-- `snapshot(ctx)` — connection state, contacts, both request directions, the bound profile, and
-  a version that changes whenever any of it does.
-- `createInvitation(ctx, signal?)` — a capability another installation can resolve, and when it
-  stops being resolvable.
-- `requestContact`, `acceptContact`, `rejectContact`, `removeContact`.
-- `reset(ctx)` throws away the Murmur identity and starts again as the same person: the stored
-  keys go, the binding keeps the profile and forgets the identity, and a fresh client binds to
-  them. Every contact is lost, because a contact is a relationship with the discarded identity.
-  Both halves happen in one transaction, so an interrupted reset cannot leave a record of an
-  identity whose keys are gone.
-- `close(ctx)` drains work already in flight and starts nothing new.
+## Connection and lifetime
 
-Rejecting or accepting a request that is not there throws exactly `Contact request not found.`,
-which is what the HTTP layer turns into a 404.
+The client store and relay loop use a named lifetime derived from the first database context, not
+the API request that happened to open them. Relay loss changes connection state to `disconnected`,
+backs off from one second to one minute, and retries. Relay availability is never required to
+enroll or perform local relationship decisions. Reset deliberately requires connectivity to a
+compatible managed relay so invitation revocation can be confirmed before the old identity moves.
 
-## Connection
-
-The relay loop runs for as long as sharing is on. A dropped connection is ordinary — a laptop
-closes, a network changes — so the loop reports it, backs off from one second to a minute, and
-tries again. Only closing ends it. The snapshot reports `connecting`, `connected`, or
-`disconnected` while it lasts; none of it is durable.
-
-## What an event says
-
-Every change publishes a `murmur_changed` event carrying the version that resulted. A burst of
-relay callbacks — synchronizing after a while offline delivers many at once — collapses into one
-event, because a client only needs to know the state moved. The host is what renames it to
-`sharing_changed` and puts it on its event stream.
+`openClient` is the protected test seam for the one network-aware dependency. Product code uses
+the managed relay; tests substitute a facade without adding a host object or configuration input.
 
 ## Storage
 
-Migration `001-murmur-binding` creates `happy_agent_murmur_binding`, a single row linking the
-profile to the Murmur identity. Binding refuses to move to another person, and refuses an
-identity that disagrees with the one already stored: a store and a record that disagree about who
-this is must be caught here rather than halfway through a contact exchange.
+- `001-murmur-binding` owns the singleton profile/identity binding.
+- `002-murmur-store` owns Murmur's cryptographic key-value state through `SqliteMurmurStore`.
+- `003-murmur-public-state` owns the authoritative projection, recovery intents, and public high
+  water.
 
-Migration `002-murmur-store` creates `happy_agent_murmur_store`, the key–value table Murmur keeps
-its own state in. `SqliteMurmurStore` is its only reader. Murmur's store API carries no caller
-context, so the store is built on the lifetime the module derived and every statement runs there.
-Values are base64 text rather than blobs, which keeps the same statements working on either
-database this package supports. Scans order and paginate with `COLLATE BINARY`, because Murmur's
-keys carry base64url identities whose case and punctuation a linguistic collation would fold
-together.
+Reset opens the replacement client before touching durable state, then replaces the key-value
+store, identity binding, and public projection in one database transaction. Before that swap,
+revocation runs on a bounded copy because Murmur intentionally records a failed revocation for
+retry in whichever store it operates on. Discarding the copy on failure keeps the real old store
+and its invitations unchanged. Existing migrations are immutable.
 
-## Deliberately not here
+## Profile transaction blocker
 
-- **Folder sharing.** Legacy Happy Agent shared folders over the same identity. The snapshot a client
-  reads still has a `folderShares` field, and the host answers with an empty list.
-- **Onboarding.** Enabling sharing is a configuration decision and naming the person is
-  `bindProfile`. There is no state machine and no `/v0/onboarding/murmur`.
-- **Model-facing tools.** This is a host capability. The model is not given contacts.
+The profile module publishes `profile_changed` only after its profile write transaction has
+committed. Its public seam exposes no in-transaction participant or durable outbox hook, so Murmur
+cannot atomically advance Sharing's local-profile version in the same commit. The current flow is
+crash-safe and convergent: Murmur durably advances after the profile commit, and startup always
+advances Sharing and publishes the latest stored profile. A process crash in that narrow gap can
+delay the Sharing version/event until restart. Exact cross-module atomicity requires ProfileModule
+to expose an in-transaction change hook or persist a shared outbox intent before commit.
+
+## Deliberate exclusions
+
+There is no folder sharing, likes or approval system, onboarding state machine, model-facing tool,
+configuration toggle, or configurable relay. Those are outside the public Sharing API.

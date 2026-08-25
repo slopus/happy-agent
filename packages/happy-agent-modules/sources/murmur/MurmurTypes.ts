@@ -1,7 +1,8 @@
 import { Type, type Static } from "@sinclair/typebox";
+import { resourceVersionSchema } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 
-import { profileIdSchema, profileSchema } from "../profile/ProfileTypes.js";
+import { profileIdSchema, profileSchema, profileVersionSchema } from "../profile/ProfileTypes.js";
 
 const exact = { additionalProperties: false } as const;
 
@@ -26,6 +27,9 @@ export const murmurConnectionSchema = Type.Union([
 export type MurmurConnection = Static<typeof murmurConnectionSchema>;
 
 const timestampSchema = Type.Integer({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 });
+
+/** Murmur 0.4.5's complete public relationship scan and profile fanout ceiling. */
+export const MURMUR_RELATIONSHIP_LIMIT = 256;
 
 /**
  * The person behind one Murmur identity, as it travels between contacts.
@@ -92,16 +96,167 @@ export type MurmurOutgoingRequest = Static<typeof murmurOutgoingRequestSchema>;
 export const murmurSnapshotSchema = Type.Object(
     {
         connection: murmurConnectionSchema,
-        contacts: Type.Array(murmurContactRecordSchema, { maxItems: 10_000 }),
+        contacts: Type.Array(murmurContactRecordSchema, { maxItems: MURMUR_RELATIONSHIP_LIMIT }),
         identity: murmurIdentitySchema,
-        incomingRequests: Type.Array(murmurIncomingRequestSchema, { maxItems: 1_000 }),
-        outgoingRequests: Type.Array(murmurOutgoingRequestSchema, { maxItems: 1_000 }),
+        incomingRequests: Type.Array(murmurIncomingRequestSchema, {
+            maxItems: MURMUR_RELATIONSHIP_LIMIT,
+        }),
+        outgoingRequests: Type.Array(murmurOutgoingRequestSchema, {
+            maxItems: MURMUR_RELATIONSHIP_LIMIT,
+        }),
         profileId: Type.Union([profileIdSchema, Type.Null()]),
-        version: Type.String({ maxLength: 256, minLength: 1 }),
     },
     exact,
 );
 export type MurmurSnapshot = Static<typeof murmurSnapshotSchema>;
+
+const invitationDigestSchema = Type.String({ pattern: "^[0-9a-f]{64}$" });
+
+const murmurPendingOutgoingRequestSchema = Type.Object(
+    {
+        id: murmurIdentitySchema,
+        identity: Type.Union([murmurIdentitySchema, Type.Null()]),
+        invitationDigest: invitationDigestSchema,
+        sessionId: Type.Null(),
+        status: Type.Literal("pending"),
+    },
+    exact,
+);
+
+const murmurActiveOutgoingRequestSchema = Type.Object(
+    {
+        id: murmurIdentitySchema,
+        identity: murmurIdentitySchema,
+        invitationDigest: Type.Union([invitationDigestSchema, Type.Null()]),
+        sessionId: murmurIdentitySchema,
+        status: Type.Literal("active"),
+    },
+    exact,
+);
+
+export const murmurDurableOutgoingRequestSchema = Type.Union([
+    murmurPendingOutgoingRequestSchema,
+    murmurActiveOutgoingRequestSchema,
+]);
+export type MurmurDurableOutgoingRequest = Static<typeof murmurDurableOutgoingRequestSchema>;
+
+const pendingOperationIdSchema = murmurIdentitySchema;
+export const murmurPendingOperationSchema = Type.Union([
+    Type.Object({ id: pendingOperationIdSchema, type: Type.Literal("enroll") }, exact),
+    Type.Object({ id: pendingOperationIdSchema, type: Type.Literal("reset") }, exact),
+    Type.Object(
+        {
+            id: pendingOperationIdSchema,
+            identity: murmurIdentitySchema,
+            requestId: Type.String({ maxLength: 256, minLength: 1 }),
+            sessionId: murmurIdentitySchema,
+            type: Type.Literal("accept"),
+        },
+        exact,
+    ),
+    Type.Object(
+        {
+            id: pendingOperationIdSchema,
+            identity: murmurIdentitySchema,
+            requestId: Type.String({ maxLength: 256, minLength: 1 }),
+            sessionId: murmurIdentitySchema,
+            type: Type.Literal("reject"),
+        },
+        exact,
+    ),
+    Type.Object(
+        {
+            id: pendingOperationIdSchema,
+            identity: murmurIdentitySchema,
+            type: Type.Literal("remove"),
+        },
+        exact,
+    ),
+]);
+export type MurmurPendingOperation = Static<typeof murmurPendingOperationSchema>;
+
+/**
+ * Durable authoritative sharing projection plus its private recovery metadata.
+ *
+ * API reads never rebuild public state from a live Murmur client. A crash may leave one of the
+ * private operations pending, but the last public fields and their version remain self-contained
+ * and readable until startup reconciliation finishes it.
+ */
+export const murmurPublicStateSchema = Type.Object(
+    {
+        connection: murmurConnectionSchema,
+        contacts: Type.Array(murmurContactRecordSchema, { maxItems: MURMUR_RELATIONSHIP_LIMIT }),
+        enrolled: Type.Boolean(),
+        identity: Type.Union([murmurIdentitySchema, Type.Null()]),
+        incomingRequests: Type.Array(murmurIncomingRequestSchema, {
+            maxItems: MURMUR_RELATIONSHIP_LIMIT,
+        }),
+        localProfileVersion: Type.Union([profileVersionSchema, Type.Null()]),
+        outgoingRequests: Type.Array(murmurDurableOutgoingRequestSchema, {
+            maxItems: MURMUR_RELATIONSHIP_LIMIT,
+        }),
+        pendingOperations: Type.Array(murmurPendingOperationSchema, { maxItems: 1_000 }),
+        profileId: Type.Union([profileIdSchema, Type.Null()]),
+        updatedAt: timestampSchema,
+        version: resourceVersionSchema,
+    },
+    exact,
+);
+export type MurmurPublicState = Static<typeof murmurPublicStateSchema>;
+
+/** The persisted shape without its monotonic public high-water fields. */
+export type MurmurPublicStateContent = Omit<MurmurPublicState, "updatedAt" | "version">;
+
+/** Internal event origin used to keep background callbacks out of API mutation scopes. */
+export const murmurEventOriginSchema = Type.Union([
+    Type.Literal("mutation"),
+    Type.Literal("background"),
+]);
+export type MurmurEventOrigin = Static<typeof murmurEventOriginSchema>;
+
+/*
+ * Keep private session handles in the module snapshot. ApiModule owns the one sanitizing public
+ * projection and never serializes them.
+ */
+export const murmurEnrolledSnapshotSchema = Type.Object(
+    {
+        connection: murmurConnectionSchema,
+        contacts: Type.Array(murmurContactRecordSchema, { maxItems: MURMUR_RELATIONSHIP_LIMIT }),
+        identity: murmurIdentitySchema,
+        incomingRequests: Type.Array(murmurIncomingRequestSchema, {
+            maxItems: MURMUR_RELATIONSHIP_LIMIT,
+        }),
+        outgoingRequests: Type.Array(murmurOutgoingRequestSchema, {
+            maxItems: MURMUR_RELATIONSHIP_LIMIT,
+        }),
+        profileId: Type.Union([profileIdSchema, Type.Null()]),
+        status: Type.Literal("enrolled"),
+        updatedAt: timestampSchema,
+        version: resourceVersionSchema,
+    },
+    exact,
+);
+
+/** Stable public state before this installation explicitly enrolls. */
+export const murmurUnenrolledSnapshotSchema = Type.Object(
+    {
+        status: Type.Literal("unenrolled"),
+        updatedAt: timestampSchema,
+        version: resourceVersionSchema,
+    },
+    exact,
+);
+
+export const murmurSharingSnapshotSchema = Type.Union([
+    murmurUnenrolledSnapshotSchema,
+    murmurEnrolledSnapshotSchema,
+]);
+export type MurmurSharingSnapshot = Static<typeof murmurSharingSnapshotSchema>;
+
+/*
+ * Legacy aliases below used to describe only the two request-ID maps. They intentionally no
+ * longer exist: each pending or active outgoing request is exactly one bounded durable entry.
+ */
 
 /** A fresh invitation and the moment it stops being resolvable. */
 export const murmurInvitationSchema = Type.Object(
@@ -123,7 +278,10 @@ export type MurmurContactRequestResult = Static<typeof murmurContactRequestResul
 export const murmurChangedEventSchema = Type.Object(
     {
         createdAt: timestampSchema,
-        data: Type.Object({ version: Type.String({ maxLength: 256, minLength: 1 }) }, exact),
+        data: Type.Object(
+            { origin: murmurEventOriginSchema, version: resourceVersionSchema },
+            exact,
+        ),
         id: Type.String({ maxLength: 256, minLength: 1 }),
         type: Type.Literal("murmur_changed"),
     },
@@ -132,7 +290,7 @@ export const murmurChangedEventSchema = Type.Object(
 export type MurmurChangedEvent = Static<typeof murmurChangedEventSchema>;
 
 /** Told that sharing changed, after the change has happened. */
-export type MurmurEventListener = (ctx: Context, event: MurmurChangedEvent) => void;
+export type MurmurEventListener = (ctx: Context, event: MurmurChangedEvent) => Promise<void> | void;
 
 /** Ends one subscription. Calling it twice is harmless. */
 export type MurmurUnsubscribe = () => void;
@@ -147,3 +305,22 @@ export const murmurProfileBindingSchema = Type.Object(
     exact,
 );
 export type MurmurProfileBinding = Static<typeof murmurProfileBindingSchema>;
+
+export type MurmurOperationErrorCode =
+    | "conflict"
+    | "full"
+    | "invalid_invitation"
+    | "not_enrolled"
+    | "not_found"
+    | "unavailable";
+
+/** A sharing-domain failure that the local API can map without exposing Murmur internals. */
+export class MurmurOperationError extends Error {
+    readonly code: MurmurOperationErrorCode;
+
+    constructor(code: MurmurOperationErrorCode, message: string, options?: ErrorOptions) {
+        super(message, options);
+        this.name = "MurmurOperationError";
+        this.code = code;
+    }
+}

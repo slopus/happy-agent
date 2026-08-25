@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import { murmurMigrations, readMurmurBinding } from "../../sources/murmur/MurmurDatabase.js";
 import { MurmurService } from "../../sources/murmur/MurmurService.js";
 import {
+    MURMUR_RELATIONSHIP_LIMIT,
     murmurInvitationSchema,
     murmurSnapshotSchema,
-    type MurmurChangedEvent,
 } from "../../sources/murmur/MurmurTypes.js";
 import { ProfileModule } from "../../sources/profile/ProfileModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
@@ -30,14 +30,13 @@ async function createFixture(name: string, client = new FakeMurmurClient()) {
     const test = moduleDatabase([...murmurMigrations, ...profiles.migrations], name);
     await test.ready;
     profiles.open(LOCAL_INSTANCE_ID);
-    const events: MurmurChangedEvent[] = [];
     const service = new MurmurService({
         client,
         lifetime: test.rootContext,
         profile: profiles,
-        publish: (_ctx, event) => events.push(event),
+        publish: () => undefined,
     });
-    return { client, events, profiles, service, test };
+    return { client, profiles, service, test };
 }
 
 async function createLocalProfile(fixture: Awaited<ReturnType<typeof createFixture>>) {
@@ -80,6 +79,41 @@ describe("MurmurService", () => {
                 profile: peerProfile(),
                 sessionId: encodeIdentity(SESSION),
             });
+        } finally {
+            await fixture.service.close(fixture.test.context);
+            fixture.test.close();
+        }
+    });
+
+    it("keeps every public relationship collection within Murmur's complete read window", async () => {
+        const count = MURMUR_RELATIONSHIP_LIMIT + 1;
+        const client = new FakeMurmurClient({
+            contacts: Array.from({ length: count }, () => ({
+                identity: REMOTE,
+                localProfile: carriedProfile(peerProfile()),
+                profile: carriedProfile(peerProfile()),
+                sessionId: SESSION,
+                status: "active" as const,
+            })),
+            incoming: Array.from({ length: count }, (_, index) => ({
+                id: `request-${index}`,
+                identity: REMOTE,
+                profile: carriedProfile(peerProfile()),
+                sessionId: SESSION,
+            })),
+            outgoing: Array.from({ length: count }, (_, index) => ({
+                createdAt: index,
+                identity: REMOTE,
+                sessionId: SESSION,
+            })),
+        });
+        const fixture = await createFixture("murmur-service-relationship-limit", client);
+        try {
+            const snapshot = await fixture.service.snapshot(fixture.test.context);
+            expect(Value.Check(murmurSnapshotSchema, snapshot)).toBe(true);
+            expect(snapshot.contacts).toHaveLength(MURMUR_RELATIONSHIP_LIMIT);
+            expect(snapshot.incomingRequests).toHaveLength(MURMUR_RELATIONSHIP_LIMIT);
+            expect(snapshot.outgoingRequests).toHaveLength(MURMUR_RELATIONSHIP_LIMIT);
         } finally {
             await fixture.service.close(fixture.test.context);
             fixture.test.close();
@@ -150,6 +184,26 @@ describe("MurmurService", () => {
         }
     });
 
+    it("uses Murmur's public profile publication and identity-wide revocation primitives", async () => {
+        const fixture = await createFixture("murmur-service-public-contact-primitives");
+        const ctx = fixture.test.context;
+        try {
+            const profile = await createLocalProfile(fixture);
+            await fixture.service.bindProfile(ctx, profile.id);
+            await fixture.service.publishProfile(ctx);
+            const signal = new AbortController().signal;
+            await fixture.service.revokeInvitations(ctx, signal);
+
+            expect(fixture.client.publishedProfiles).toEqual([{ profile, version: 1 }]);
+            expect(fixture.client.revocationCalls).toBe(1);
+            expect(fixture.client.revocationSignals[0]).not.toBe(signal);
+            expect(fixture.client.revocationSignals[0]?.aborted).toBe(false);
+        } finally {
+            await fixture.service.close(ctx);
+            fixture.test.close();
+        }
+    });
+
     it("abandons an invitation that is still being uploaded when sharing closes", async () => {
         const client = new FakeMurmurClient({ invitationWaitsForAbort: true });
         const fixture = await createFixture("murmur-service-invitation-abort", client);
@@ -194,8 +248,6 @@ describe("MurmurService", () => {
         try {
             const profile = await createLocalProfile(fixture);
             await fixture.service.bindProfile(ctx, profile.id);
-            const initialVersion = (await fixture.service.snapshot(ctx)).version;
-
             await fixture.service.acceptContact(ctx, "request-1");
             expect(client.sentProfiles.at(-1)).toEqual({ profile, version: 1 });
             expect((await fixture.service.snapshot(ctx)).contacts).toEqual([
@@ -208,7 +260,11 @@ describe("MurmurService", () => {
             await fixture.service.removeContact(ctx, encodeIdentity(REMOTE));
             expect((await fixture.service.snapshot(ctx)).contacts).toEqual([]);
 
-            const outgoing = await fixture.service.requestContact(ctx, encodeIdentity(INVITATION));
+            const outgoing = await fixture.service.requestContact(
+                ctx,
+                encodeIdentity(INVITATION),
+                encodeIdentity(REMOTE),
+            );
             expect(outgoing).toEqual({
                 id: encodeIdentity(SESSION),
                 identity: encodeIdentity(REMOTE),
@@ -218,9 +274,7 @@ describe("MurmurService", () => {
             const snapshot = await fixture.service.snapshot(ctx);
             expect(Value.Check(murmurSnapshotSchema, snapshot)).toBe(true);
             expect(snapshot.outgoingRequests).toContainEqual(outgoing);
-            expect(snapshot.version).not.toBe(initialVersion);
-            expect(fixture.events.map((event) => event.type)).toContain("murmur_changed");
-            expect(fixture.events.at(-1)?.data.version).toBe(snapshot.version);
+            // MurmurModule owns the durable public version and event projection.
         } finally {
             await fixture.service.close(ctx);
             fixture.test.close();

@@ -1,9 +1,9 @@
 import { Value } from "@sinclair/typebox/value";
-import { toolPresentationSchema } from "@slopus/happy-agent-client";
+import { sharingSchema, toolPresentationSchema } from "@slopus/happy-agent-client";
 import { describe, expect, it } from "vitest";
 
 import { eventIdSchema } from "../../sources/events/index.js";
-import { apiResourceVersion } from "../../sources/api/ApiResourceProjection.js";
+import { apiResourceVersion, sharingResource } from "../../sources/api/ApiResourceProjection.js";
 import {
     messageHiddenFromUser,
     messageResource,
@@ -26,6 +26,102 @@ describe("apiResourceVersion", () => {
 
     it("keeps resource identities distinct at the same timestamp and counter", () => {
         expect(apiResourceVersion(1, 1, "a")).not.toBe(apiResourceVersion(1, 1, "b"));
+    });
+});
+
+describe("sharingResource", () => {
+    it("removes every Murmur and profile-storage field at the public boundary", () => {
+        const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const localIdentity = "A".repeat(43);
+        const contactIdentity = "B".repeat(43);
+        const outgoingIdentity = "C".repeat(43);
+        const outgoingId = "D".repeat(43);
+        const internalSessionId = "E".repeat(43);
+        const internalProfileId = "aremoteprofile0000000001";
+        const internalInstanceId = "aremoteinstance000000001";
+        const profile = {
+            createdAt: 1,
+            email: "remote@example.test",
+            id: internalProfileId,
+            name: "Remote",
+            parentInstanceId: internalInstanceId,
+            photo: {
+                contentHash: "f".repeat(64),
+                height: 32,
+                thumbhash: "AQIDBA==",
+                width: 32,
+            },
+            updatedAt: 2,
+            version,
+        };
+
+        const sharing = sharingResource({
+            connection: "connected",
+            contacts: [{ identity: contactIdentity, profile, status: "active" }],
+            identity: localIdentity,
+            incomingRequests: [
+                {
+                    id: "incoming-request",
+                    identity: contactIdentity,
+                    profile,
+                    sessionId: internalSessionId,
+                },
+            ],
+            outgoingRequests: [
+                {
+                    id: outgoingId,
+                    identity: outgoingIdentity,
+                    sessionId: internalSessionId,
+                },
+            ],
+            profileId: internalProfileId,
+            status: "enrolled",
+            updatedAt: 3,
+            version,
+        });
+
+        expect(Value.Check(sharingSchema, sharing)).toBe(true);
+        expect(sharing).toEqual({
+            connection: "connected",
+            contacts: [
+                {
+                    identity: contactIdentity,
+                    profile: {
+                        email: "remote@example.test",
+                        name: "Remote",
+                        photo: { thumbhash: "AQIDBA==" },
+                        updatedAt: 2,
+                        version,
+                    },
+                    status: "active",
+                },
+            ],
+            identity: localIdentity,
+            incomingRequests: [
+                {
+                    id: "incoming-request",
+                    identity: contactIdentity,
+                    profile: {
+                        email: "remote@example.test",
+                        name: "Remote",
+                        photo: { thumbhash: "AQIDBA==" },
+                        updatedAt: 2,
+                        version,
+                    },
+                },
+            ],
+            outgoingRequests: [{ id: outgoingId, identity: outgoingIdentity }],
+            status: "enrolled",
+            updatedAt: 3,
+            version,
+        });
+        const serialized = JSON.stringify(sharing);
+        expect(serialized).not.toContain(internalSessionId);
+        expect(serialized).not.toContain(internalProfileId);
+        expect(serialized).not.toContain(internalInstanceId);
+        expect(serialized).not.toContain("contentHash");
+        expect(serialized).not.toContain("height");
+        expect(serialized).not.toContain("width");
     });
 });
 
