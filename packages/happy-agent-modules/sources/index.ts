@@ -593,6 +593,9 @@ export * from "./workspaces/index.js";
 // Scheduling: messages the agent asks to be delivered later, and waits it can take.
 export * from "./scheduling/index.js";
 
+// Durable Functions: transactional fire-and-forget procedures recovered after restart.
+export * from "./durableFunctions/index.js";
+
 // Projects: the durable places work happens, with their own settings.
 export * from "./projects/index.js";
 
