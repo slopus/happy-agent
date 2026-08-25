@@ -1,5 +1,6 @@
 import { OauthException } from "@workos-inc/node";
 import { agentDatabaseRun } from "@slopus/happy-agent-base";
+import { withLogger, type LogContext, type Logger } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,6 +52,11 @@ const databases: ModuleDatabase[] = [];
 const modules: CloudModule[] = [];
 let authorizationNumber = 0;
 
+interface CloudLogRecord {
+    readonly level: keyof Logger;
+    readonly message: string;
+}
+
 beforeEach(() => {
     authorizationNumber = 0;
     workos.authorization.mockReset();
@@ -88,13 +94,16 @@ afterEach(async () => {
     vi.useRealTimers();
 });
 
-async function fixture(name: string) {
+async function fixture(name: string, logs?: CloudLogRecord[]) {
     const module = new CloudModule();
     modules.push(module);
     const database = moduleDatabase(module.migrations, name);
     databases.push(database);
     await database.ready;
-    await module.beforeStart(database.context, {} as never);
+    await module.beforeStart(
+        logs === undefined ? database.context : withLogger(database.context, recordingLogger(logs)),
+        {} as never,
+    );
     return { database, module };
 }
 
@@ -315,6 +324,35 @@ describe("CloudModule", () => {
         });
     });
 
+    it("logs the safe failure phase and status when Happy Cloud rejects a callback token", async () => {
+        const logs: CloudLogRecord[] = [];
+        const { database, module } = await fixture("cloud-module-hello-log", logs);
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+            cancel: () => {
+                cancelled = true;
+            },
+            start: (controller) => {
+                controller.enqueue(new TextEncoder().encode("access-a refresh-a code-a"));
+            },
+        });
+        vi.mocked(fetch).mockResolvedValueOnce(new Response(body, { status: 401 }));
+
+        await expect(connect(module, database)).rejects.toMatchObject({
+            code: "cloud_unavailable",
+            status: 503,
+        });
+        expect(logs).toEqual([
+            {
+                level: "warn",
+                message:
+                    "cloud:authorization:error environment=production phase=cloud-hello reason=response-rejected status=401",
+            },
+        ]);
+        expect(cancelled).toBe(true);
+        expect(JSON.stringify(logs)).not.toMatch(/access-a|refresh-a|code-a/);
+    });
+
     it("does not replay a callback or activate memory when credential storage fails", async () => {
         const { database, module } = await fixture("cloud-module-storage-failure");
         await module.start(database.context, {
@@ -524,3 +562,19 @@ describe("CloudModule", () => {
         expect((await createCloudDatabase().read(database.context))?.session).toBeNull();
     });
 });
+
+function recordingLogger(records: CloudLogRecord[]): Logger {
+    const write =
+        (level: keyof Logger) =>
+        (_context: LogContext, ...args: readonly unknown[]) => {
+            records.push({ level, message: args.map(String).join(" ") });
+        };
+    return {
+        debug: write("debug"),
+        error: write("error"),
+        fatal: write("fatal"),
+        info: write("info"),
+        trace: write("trace"),
+        warn: write("warn"),
+    };
+}

@@ -1,7 +1,19 @@
 import { cloudEnvironmentSchema, type CloudEnvironment } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { OauthException, WorkOS, type PublicWorkOS, type WorkOSOptions } from "@workos-inc/node";
+import {
+    AuthenticationException,
+    BadRequestException,
+    ConflictException,
+    GenericServerException,
+    NotFoundException,
+    OauthException,
+    UnauthorizedException,
+    UnprocessableEntityException,
+    WorkOS,
+    type PublicWorkOS,
+    type WorkOSOptions,
+} from "@workos-inc/node";
 
 const WORKOS_TIMEOUT_MS = 15_000;
 const MAX_WORKOS_RESPONSE_BYTES = 1024 * 1_024;
@@ -55,6 +67,14 @@ const helloSchema = Type.Object(
     { additionalProperties: false },
 );
 
+const workOSParseErrorSchema = Type.Object(
+    {
+        name: Type.Literal("ParseError"),
+        rawStatus: Type.Integer({ minimum: 100, maximum: 599 }),
+    },
+    { additionalProperties: true },
+);
+
 export type CloudAuthorizationSecret = Static<typeof authorizationSchema>;
 export type CloudAuthentication = Static<typeof workosAuthenticationSchema>;
 
@@ -73,10 +93,21 @@ export class CloudIdentityMismatchError extends Error {
     }
 }
 
+export type CloudServiceUnavailableReason =
+    | "request-failed"
+    | "request-timed-out"
+    | "response-invalid"
+    | "response-rejected";
+
 export class CloudServiceUnavailableError extends Error {
-    constructor() {
+    readonly reason: CloudServiceUnavailableReason;
+    readonly status: number | undefined;
+
+    constructor(reason: CloudServiceUnavailableReason = "response-invalid", status?: number) {
         super("Cloud authentication is temporarily unavailable.");
         this.name = "CloudServiceUnavailableError";
+        this.reason = reason;
+        this.status = status;
     }
 }
 
@@ -124,7 +155,7 @@ export class CloudWorkOS {
             return structuredClone(authorization) as CloudAuthorizationSecret;
         } catch (error: unknown) {
             if (error instanceof CloudServiceUnavailableError) throw error;
-            throw new CloudServiceUnavailableError();
+            throw workOSUnavailable(error);
         }
     }
 
@@ -136,7 +167,8 @@ export class CloudWorkOS {
         } catch (error: unknown) {
             if (isTerminalCodeRejection(error)) throw new CloudCredentialsRejectedError();
             if (error instanceof CloudCredentialsRejectedError) throw error;
-            throw new CloudServiceUnavailableError();
+            if (error instanceof CloudServiceUnavailableError) throw error;
+            throw workOSUnavailable(error);
         }
     }
 
@@ -150,28 +182,42 @@ export class CloudWorkOS {
                 throw new CloudCredentialsRejectedError();
             }
             if (error instanceof CloudCredentialsRejectedError) throw error;
-            throw new CloudServiceUnavailableError();
+            if (error instanceof CloudServiceUnavailableError) throw error;
+            throw workOSUnavailable(error);
         }
     }
 
     /** Verifies the minted token against Happy Cloud without treating its 401 as revocation. */
     async verify(accessToken: string, expectedUserId: string): Promise<void> {
         const signal = AbortSignal.timeout(CLOUD_HELLO_TIMEOUT_MS);
+        let response: Response;
         try {
-            const response = await fetch(`${this.#cloudUrl}/v0/hello`, {
+            response = await fetch(`${this.#cloudUrl}/v0/hello`, {
                 headers: { authorization: `Bearer ${accessToken}` },
                 method: "GET",
                 signal,
             });
-            if (!response.ok) throw new CloudServiceUnavailableError();
-            const bytes = await readBounded(response, MAX_HELLO_RESPONSE_BYTES);
+        } catch {
+            throw new CloudServiceUnavailableError(
+                signal.aborted ? "request-timed-out" : "request-failed",
+            );
+        }
+        if (!response.ok) {
+            await response.body?.cancel().catch(() => undefined);
+            throw new CloudServiceUnavailableError("response-rejected", response.status);
+        }
+        try {
+            const bytes = await readBounded(response, MAX_HELLO_RESPONSE_BYTES, signal);
             const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
             if (!Value.Check(helloSchema, parsed)) throw new CloudServiceUnavailableError();
             if (parsed.userId !== expectedUserId) throw new CloudIdentityMismatchError();
         } catch (error: unknown) {
+            if (signal.aborted) {
+                throw new CloudServiceUnavailableError("request-timed-out");
+            }
             if (error instanceof CloudIdentityMismatchError) throw error;
             if (error instanceof CloudServiceUnavailableError) throw error;
-            throw new CloudServiceUnavailableError();
+            throw new CloudServiceUnavailableError("response-invalid");
         }
     }
 }
@@ -202,6 +248,48 @@ function isTerminalCodeRejection(error: unknown): boolean {
     );
 }
 
+function workOSUnavailable(error: unknown): CloudServiceUnavailableError {
+    const preserved = cloudUnavailableCause(error);
+    if (preserved !== undefined) return preserved;
+    const status = workOSResponseStatus(error);
+    if (status === 408) return new CloudServiceUnavailableError("request-timed-out");
+    if (status !== undefined) {
+        return new CloudServiceUnavailableError("response-rejected", status);
+    }
+    return new CloudServiceUnavailableError("request-failed");
+}
+
+function cloudUnavailableCause(error: unknown): CloudServiceUnavailableError | undefined {
+    let current = error;
+    for (let depth = 0; depth < 4; depth += 1) {
+        if (current instanceof CloudServiceUnavailableError) return current;
+        if (!(current instanceof Error)) return undefined;
+        if (Value.Check(workOSParseErrorSchema, current)) {
+            const parsed = current as Static<typeof workOSParseErrorSchema>;
+            return new CloudServiceUnavailableError("response-invalid", parsed.rawStatus);
+        }
+        current = current.cause;
+    }
+    return undefined;
+}
+
+function workOSResponseStatus(error: unknown): number | undefined {
+    const status =
+        error instanceof AuthenticationException ||
+        error instanceof BadRequestException ||
+        error instanceof ConflictException ||
+        error instanceof GenericServerException ||
+        error instanceof NotFoundException ||
+        error instanceof OauthException ||
+        error instanceof UnauthorizedException ||
+        error instanceof UnprocessableEntityException
+            ? error.status
+            : undefined;
+    return status !== undefined && Number.isInteger(status) && status >= 100 && status <= 599
+        ? status
+        : undefined;
+}
+
 /** Internal WorkOS transport exported only for direct boundary tests. */
 export const boundedWorkOSFetch: typeof fetch = async (input, init) => {
     const deadline = AbortSignal.timeout(WORKOS_TIMEOUT_MS);
@@ -209,16 +297,23 @@ export const boundedWorkOSFetch: typeof fetch = async (input, init) => {
         init?.signal === null || init?.signal === undefined
             ? deadline
             : AbortSignal.any([deadline, init.signal]);
-    const response = await fetch(input, { ...init, signal });
-    const body =
-        response.body === null
-            ? null
-            : await readBounded(response, MAX_WORKOS_RESPONSE_BYTES, signal);
-    return new Response(body, {
-        headers: response.headers,
-        status: response.status,
-        statusText: response.statusText,
-    });
+    try {
+        const response = await fetch(input, { ...init, signal });
+        const body =
+            response.body === null
+                ? null
+                : await readBounded(response, MAX_WORKOS_RESPONSE_BYTES, signal);
+        return new Response(body, {
+            headers: response.headers,
+            status: response.status,
+            statusText: response.statusText,
+        });
+    } catch (error: unknown) {
+        if (signal.aborted) {
+            throw new CloudServiceUnavailableError("request-timed-out");
+        }
+        throw error;
+    }
 };
 
 async function readBounded(

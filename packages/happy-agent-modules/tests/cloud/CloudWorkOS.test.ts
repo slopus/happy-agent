@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+    boundedWorkOSFetch,
     CloudCredentialsRejectedError,
     CloudServiceUnavailableError,
     CloudWorkOS,
@@ -50,9 +51,68 @@ describe("CloudWorkOS", () => {
         await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
         deadline.abort();
 
-        await expect(refresh).rejects.toBeInstanceOf(CloudServiceUnavailableError);
+        await expect(refresh).rejects.toMatchObject({
+            reason: "request-timed-out",
+        });
         await vi.waitFor(() => expect(cancelled).toBe(true));
     });
+
+    it("preserves a WorkOS-owned timeout that fires before the transport deadline", async () => {
+        const workosDeadline = new AbortController();
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(new ReadableStream<Uint8Array>({}))),
+        );
+
+        const request = boundedWorkOSFetch("https://api.workos.test/user_management/authenticate", {
+            signal: workosDeadline.signal,
+        });
+        workosDeadline.abort();
+
+        await expect(request).rejects.toMatchObject({
+            reason: "request-timed-out",
+        });
+    });
+
+    it.each([401, 429, 503])("preserves safe WorkOS response status %i", async (status) => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json(
+                    { message: "provider detail must not become a diagnostic" },
+                    { status },
+                ),
+            ),
+        );
+
+        await expect(new CloudWorkOS("production").refresh("refresh-token")).rejects.toMatchObject({
+            reason: "response-rejected",
+            status,
+        });
+    });
+
+    it.each([200, 503])(
+        "classifies malformed WorkOS JSON at status %i without retaining its body",
+        async (status) => {
+            vi.stubGlobal(
+                "fetch",
+                vi.fn(
+                    async () =>
+                        new Response("provider detail must not become a diagnostic", {
+                            headers: { "content-type": "application/json" },
+                            status,
+                        }),
+                ),
+            );
+
+            await expect(
+                new CloudWorkOS("production").refresh("refresh-token"),
+            ).rejects.toMatchObject({
+                reason: "response-invalid",
+                status,
+            });
+        },
+    );
 
     it("never inherits or transmits an ambient WorkOS server API key", async () => {
         const syntheticSecret = "synthetic-workos-server-secret";

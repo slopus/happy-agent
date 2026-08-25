@@ -49,6 +49,9 @@
 - Refresh tokens live only in the owner-only database. Access tokens appear only in a successful
   mint response. Neither token, PKCE verifier, callback URL, raw WorkOS error, nor hello body belongs
   in status, events, bootstrap, or logs.
+- Authentication failures log only the operation, deployment, phase, bounded reason, and safe HTTP
+  status. This distinguishes WorkOS exchange failures from Happy Cloud verification failures while
+  keeping OAuth codes, tokens, provider errors, and response bodies out of every log.
 - Database adapters may copy SQL parameters into thrown errors. Storage replaces write failures at
   the database boundary so a serialized refresh token cannot reach generic API logging.
 - Durable errors use an exact private schema and public projection. API schemas are intentionally

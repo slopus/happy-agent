@@ -189,7 +189,14 @@ export class CloudModule implements AgentModule {
 
             const secret = await this.#client(request.environment)
                 .authorization(redirectUri)
-                .catch(() => {
+                .catch((error: unknown) => {
+                    logCloudFailure(
+                        ctx,
+                        "authorization",
+                        request.environment,
+                        "workos-start",
+                        error,
+                    );
                     throw this.#error(
                         503,
                         "cloud_unavailable",
@@ -251,6 +258,11 @@ export class CloudModule implements AgentModule {
 
             if (callback.kind === "error") {
                 const rejected = callback.error === "access_denied";
+                if (!rejected) {
+                    ctx.log.warn(
+                        `cloud:authorization:error environment=${attempt.environment} phase=oauth-callback reason=provider-error`,
+                    );
+                }
                 const cloud = await this.#settleAttempt(
                     ctx,
                     rejected
@@ -276,16 +288,19 @@ export class CloudModule implements AgentModule {
             }
 
             let authenticated;
+            let phase = "workos-exchange";
             try {
                 authenticated = await this.#client(attempt.environment).exchange(
                     callback.code,
                     attempt.codeVerifier,
                 );
+                phase = "cloud-hello";
                 await this.#client(attempt.environment).verify(
                     authenticated.accessToken,
                     authenticated.user.id,
                 );
             } catch (error: unknown) {
+                logCloudFailure(ctx, "authorization", attempt.environment, phase, error);
                 const rejected =
                     error instanceof CloudCredentialsRejectedError ||
                     error instanceof CloudIdentityMismatchError;
@@ -374,6 +389,7 @@ export class CloudModule implements AgentModule {
                     session.refreshToken,
                 );
             } catch (error: unknown) {
+                logCloudFailure(ctx, "token", session.environment, "workos-refresh", error);
                 if (error instanceof CloudCredentialsRejectedError) {
                     const cloud = await this.#replace(ctx, {
                         error: {
@@ -403,6 +419,13 @@ export class CloudModule implements AgentModule {
                 authenticated.refreshToken,
             );
             if (authenticated.user.id !== session.user.id) {
+                logCloudFailure(
+                    ctx,
+                    "token",
+                    session.environment,
+                    "workos-refresh",
+                    new CloudIdentityMismatchError(),
+                );
                 throw this.#error(
                     503,
                     "cloud_unavailable",
@@ -415,6 +438,7 @@ export class CloudModule implements AgentModule {
                     session.user.id,
                 );
             } catch (error: unknown) {
+                logCloudFailure(ctx, "token", session.environment, "cloud-hello", error);
                 if (
                     !(error instanceof CloudServiceUnavailableError) &&
                     !(error instanceof CloudIdentityMismatchError)
@@ -595,6 +619,34 @@ export class CloudModule implements AgentModule {
     async #readOwned(ctx: Context): Promise<CloudStoredState | undefined> {
         return await ctx.inTx(async (txCtx) => await this.#database.read(txCtx));
     }
+}
+
+function logCloudFailure(
+    ctx: Context,
+    operation: "authorization" | "token",
+    environment: CloudEnvironment,
+    phase: string,
+    error: unknown,
+): void {
+    const diagnostic = cloudFailureDiagnostic(error);
+    const status = diagnostic.status === undefined ? "" : ` status=${String(diagnostic.status)}`;
+    ctx.log.warn(
+        `cloud:${operation}:error environment=${environment} phase=${phase} reason=${diagnostic.reason}${status}`,
+    );
+}
+
+function cloudFailureDiagnostic(error: unknown): {
+    readonly reason: string;
+    readonly status?: number;
+} {
+    if (error instanceof CloudCredentialsRejectedError) return { reason: "credentials-rejected" };
+    if (error instanceof CloudIdentityMismatchError) return { reason: "identity-mismatch" };
+    if (error instanceof CloudServiceUnavailableError) {
+        return error.status === undefined
+            ? { reason: error.reason }
+            : { reason: error.reason, status: error.status };
+    }
+    return { reason: "unexpected" };
 }
 
 function project(stored: CloudStoredState, attempt?: CloudAttempt): Cloud {
