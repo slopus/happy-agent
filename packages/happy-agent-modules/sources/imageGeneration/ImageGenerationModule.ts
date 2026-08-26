@@ -147,10 +147,15 @@ export class ImageGenerationModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        /** One image tool, the same for every model, because one Codex path backs all of them. */
-        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
-            codexImageGenerationTool(this, scope.agent.id, scope.agent.provider),
-        ],
+        /**
+         * One image tool, the same for every model, because one Codex path backs all of them.
+         * Without an enabled Codex account there is nothing behind the tool, so it is not
+         * offered at all rather than failing every call.
+         */
+        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] =>
+            this.accountCount === 0
+                ? []
+                : [codexImageGenerationTool(this, scope.agent.id, scope.agent.provider)],
 
         /** An image a person attached is one an edit may target, so it is remembered here. */
         messageAccepted: (

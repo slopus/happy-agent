@@ -55,9 +55,10 @@ async function codexAccount(): Promise<CodexProvider> {
  */
 async function moduleWith(
     accounts: Readonly<Record<string, CodexProvider>>,
+    type: "codex" | "bedrock" = "codex",
 ): Promise<ImageGenerationModule> {
     const providers = new AgentProviders();
-    for (const [id, provider] of Object.entries(accounts)) providers.add(id, provider, "codex");
+    for (const [id, provider] of Object.entries(accounts)) providers.add(id, provider, type);
     return new ImageGenerationModule(
         await ConfigModule.load(join(happyRoot, ".happy"), {
             inference: { models: [], providers },
@@ -252,5 +253,19 @@ describe("ImageGenerationModule", () => {
         await expect(
             module.generate(ctx, AGENT_ID, { prompt: "A small orange fox" }, { turnId: "call-8" }),
         ).rejects.toThrow("No Codex account is configured");
+    });
+
+    it("offers no image tool when no Codex account is configured", async () => {
+        const module = await moduleWith({});
+        const hooks = await resolveModuleHooks(ctx, module);
+
+        expect(await hooks.tools!(ctx, scope("anthropic/opus-5"))).toEqual([]);
+    });
+
+    it("offers no image tool when only non-Codex accounts exist", async () => {
+        const module = await moduleWith({ bedrock: await codexAccount() }, "bedrock");
+        const hooks = await resolveModuleHooks(ctx, module);
+
+        expect(await hooks.tools!(ctx, scope("anthropic/opus-5"))).toEqual([]);
     });
 });
