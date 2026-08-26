@@ -39,8 +39,8 @@ import type {
     CloudProfileResponse,
     CloudResponse,
     CompleteCloudAuthorizationRequest,
+    EnrollCloudProfileRequest,
     StartCloudAuthorizationRequest,
-    UpdateCloudProfileRequest,
 } from "./protocol/cloud.js";
 import type {
     ConfigPatch,
@@ -409,9 +409,9 @@ export class HappyAgentClient {
         });
     }
 
-    /** `PUT /v0/cloud/profile` — registers or replaces the public Cloud profile. */
-    async updateCloudProfile(
-        request: UpdateCloudProfileRequest,
+    /** `PUT /v0/cloud/profile` — enrolls using the local profile and supplied username. */
+    async enrollCloudProfile(
+        request: EnrollCloudProfileRequest,
         options: RequestOptions = {},
     ): Promise<CloudProfileResponse> {
         return await this.#json({

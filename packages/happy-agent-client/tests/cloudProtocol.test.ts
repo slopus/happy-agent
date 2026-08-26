@@ -10,8 +10,8 @@ import {
     cloudProfileResponseSchema,
     cloudResponseSchema,
     completeCloudAuthorizationRequestSchema,
+    enrollCloudProfileRequestSchema,
     startCloudAuthorizationRequestSchema,
-    updateCloudProfileRequestSchema,
 } from "../sources/protocol/cloud.js";
 import type { HappyAgentEvent } from "../sources/protocol/events.js";
 import { readEventStream } from "../sources/readEventStream.js";
@@ -166,7 +166,7 @@ describe("Cloud protocol", () => {
         ).toBe(false);
     });
 
-    it("validates registered, unregistered, and update profile shapes", () => {
+    it("validates registered, unregistered, and enrollment profile shapes", () => {
         expect(
             Value.Check(cloudProfileResponseSchema, {
                 profile: { firstName: null, username: null },
@@ -184,21 +184,20 @@ describe("Cloud protocol", () => {
             }),
         ).toBe(true);
         expect(
-            Value.Check(updateCloudProfileRequestSchema, {
-                firstName: "Ada",
-                mutationId: "profile-1",
+            Value.Check(enrollCloudProfileRequestSchema, {
+                mutationId: "enroll-1",
                 username: "ada_1",
             }),
         ).toBe(true);
+        expect(
+            Value.Check(enrollCloudProfileRequestSchema, {
+                firstName: "Ada",
+                username: "ada_1",
+            }),
+        ).toBe(false);
 
-        for (const invalid of [
-            { firstName: "Ada", username: "No" },
-            { firstName: "   ", username: "valid_name" },
-            { firstName: "Ada\n", username: "valid_name" },
-            { firstName: "Ada", username: "ab" },
-            { firstName: "Ada", lastName: null, username: "valid_name" },
-        ]) {
-            expect(Value.Check(updateCloudProfileRequestSchema, invalid)).toBe(false);
+        for (const invalid of [{}, { username: "No" }, { username: "ab" }]) {
+            expect(Value.Check(enrollCloudProfileRequestSchema, invalid)).toBe(false);
         }
     });
 

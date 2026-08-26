@@ -142,6 +142,12 @@ const cloudVisibleNameSchema = Type.String({
     pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
 });
 
+export const cloudUsernameSchema = Type.String({
+    minLength: 3,
+    maxLength: 24,
+    pattern: "^[a-z0-9_]+$",
+});
+
 /** A public profile that has not yet been registered in Happy Cloud. */
 export const cloudUnregisteredProfileSchema = Type.Object({
     firstName: Type.Null(),
@@ -153,7 +159,7 @@ export type CloudUnregisteredProfile = Static<typeof cloudUnregisteredProfileSch
 export const cloudRegisteredProfileSchema = Type.Object({
     firstName: cloudVisibleNameSchema,
     lastName: Type.Optional(cloudVisibleNameSchema),
-    username: Type.String({ minLength: 3, maxLength: 24, pattern: "^[a-z0-9_]+$" }),
+    username: cloudUsernameSchema,
 });
 export type CloudRegisteredProfile = Static<typeof cloudRegisteredProfileSchema>;
 
@@ -166,14 +172,12 @@ export type CloudProfile = Static<typeof cloudProfileSchema>;
 export const cloudProfileResponseSchema = Type.Object({ profile: cloudProfileSchema });
 export type CloudProfileResponse = Static<typeof cloudProfileResponseSchema>;
 
-/** Registers or replaces the connected WorkOS user's public Happy Cloud profile. */
-export const updateCloudProfileRequestSchema = Type.Object(
+/** Enrolls the connected account using the local Happy Agent profile and a Cloud username. */
+export const enrollCloudProfileRequestSchema = Type.Object(
     {
-        firstName: cloudVisibleNameSchema,
-        lastName: Type.Optional(cloudVisibleNameSchema),
         mutationId: Type.Optional(mutationIdSchema),
-        username: Type.String({ minLength: 3, maxLength: 24, pattern: "^[a-z0-9_]+$" }),
+        username: cloudUsernameSchema,
     },
     { additionalProperties: false },
 );
-export type UpdateCloudProfileRequest = Static<typeof updateCloudProfileRequestSchema>;
+export type EnrollCloudProfileRequest = Static<typeof enrollCloudProfileRequestSchema>;

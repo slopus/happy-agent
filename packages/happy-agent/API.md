@@ -972,10 +972,12 @@ Cloud's rejection alone is not treated as proof of revocation because its token-
 dependencies may themselves be temporarily unavailable. No access token is returned unless the
 verification succeeds.
 
-### Cloud profile
+### Cloud profile and enrollment
 
 The Cloud profile is the public identity stored durably by Happy Cloud for the connected WorkOS
-user. It is separate from the daemon's local human profile. Before registration it is:
+user. Cloud enrollment links that account to the daemon's local human profile: the existing local
+display name is the profile source, and the only additional value the person chooses is a Cloud
+username. Before registration it is:
 
 ```json
 { "username": null, "firstName": null }
@@ -984,14 +986,27 @@ user. It is separate from the daemon's local human profile. Before registration 
 After registration it is:
 
 ```json
-{ "username": "ada", "firstName": "Ada", "lastName": "Lovelace" }
+{ "username": "ada", "firstName": "Ada Lovelace" }
 ```
 
-`username` is 3–24 lowercase ASCII letters, digits, or underscores. `firstName` is required and
-`lastName` is optional; each is 1–64 nonblank characters with no ASCII control characters. Names
-are public display text. A registered username is exclusive while it remains current. When a user
-changes username, the previous username may be reused by another user; Happy Cloud resolves the
-race atomically.
+`username` is 3–24 lowercase ASCII letters, digits, or underscores. In Cloud responses,
+`firstName` is required and `lastName` is optional; each is 1–64 nonblank characters with no ASCII
+control characters. Names are public display text. A registered username is exclusive while it
+remains current. When a user changes username, the previous username may be reused by another
+user; Happy Cloud resolves the race atomically.
+
+A successful username-only enrollment durably stores the enrolled username and the synchronized
+local profile version beside the connected account. While enrolled, local profile-name changes
+schedule durable Cloud profile synchronization; the complete local `name` is sent as Cloud
+`firstName`, and `lastName` is omitted. Local email and photo are not part of Happy Cloud's current
+profile contract.
+
+At daemon startup, the module first loads its local enrollment record, then durably reconciles it
+with `GET /v0/profile` in Happy Cloud. An online registered profile repairs the locally stored
+username when necessary; an online unregistered profile clears stale local enrollment. This
+online-to-local reconciliation never overwrites the Happy Agent human profile. After reconciling
+enrollment, the local human profile remains the display-name authority and is synchronized back to
+Happy Cloud when needed.
 
 Cloud profile operations mint and verify an access token exactly as `POST /v0/cloud/access-token`
 does, including durable refresh-token rotation and Cloud authentication error behavior. The access
@@ -1005,33 +1020,36 @@ access-token minting, including the authoritative current `cloud` object.
 Reads the connected user's current durable Cloud profile. Response — `200`:
 
 ```json
-{ "profile": { "username": "ada", "firstName": "Ada", "lastName": "Lovelace" } }
+{ "profile": { "username": "ada", "firstName": "Ada Lovelace" } }
 ```
 
 An unregistered user receives `{ "profile": { "username": null, "firstName": null } }`.
 
 #### `PUT /v0/cloud/profile`
 
-Registers or replaces the connected user's Cloud profile. Request:
+Enrolls the connected user using the daemon's local human profile. Request:
 
 ```json
 {
     "username": "ada",
-    "firstName": "Ada",
-    "lastName": "Lovelace",
     "mutationId": "optional-client-value"
 }
 ```
 
-`lastName` and `mutationId` are optional. Unknown fields, malformed usernames, whitespace-only
-names, control characters, and values beyond the stated limits return `400` with code
-`invalid_request` without contacting Happy Cloud. A username currently owned by another user
-returns `409` with code `conflict` and the current `cloud`. A well-formed `invalid_profile`
-rejection from Happy Cloud after the daemon accepted the same input is contract drift and returns
-`503` with code `cloud_unavailable`, not a user-input error. Response — `200`:
-`{ "profile": { ... } }` with Happy Cloud's authoritative normalized profile. The successful
-mutation emits one `cloud.profile.updated` event; its compact payload contains only the optional
-`mutationId`, and clients refetch this endpoint.
+`mutationId` is optional. The local profile must already have a non-null `name` that Happy Cloud
+can represent as a valid display name. The daemon sends that complete name as `firstName`, omits
+`lastName`, and persists enrollment only after Happy Cloud accepts the profile. A missing or
+unrepresentable local name returns `409` with code `conflict` without contacting Happy Cloud.
+
+Unknown fields or malformed usernames return `400` with code `invalid_request` without contacting
+Happy Cloud. A username currently owned by another user returns `409` with code `conflict` and the
+current `cloud`. A well-formed `invalid_profile` rejection from Happy Cloud after the daemon
+accepted the same input is contract drift and returns `503` with code `cloud_unavailable`, not a
+user-input error.
+
+Response — `200`: `{ "profile": { ... } }` with Happy Cloud's authoritative normalized profile.
+The successful mutation emits one `cloud.profile.updated` event; its compact payload contains only
+the optional `mutationId`, and clients refetch this endpoint.
 
 ## Happy integration
 

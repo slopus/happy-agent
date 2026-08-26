@@ -203,12 +203,7 @@ describe("HappyAgentClient", () => {
         });
         await expect(client.getCloudProfile()).resolves.toEqual({ profile });
         await expect(
-            client.updateCloudProfile({
-                firstName: "Ada",
-                lastName: "Lovelace",
-                mutationId: "profile-1",
-                username: "ada",
-            }),
+            client.enrollCloudProfile({ mutationId: "enroll-1", username: "ada" }),
         ).resolves.toEqual({ profile });
 
         expect(requests.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
@@ -242,12 +237,7 @@ describe("HappyAgentClient", () => {
             },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/profile" },
             {
-                body: JSON.stringify({
-                    firstName: "Ada",
-                    lastName: "Lovelace",
-                    mutationId: "profile-1",
-                    username: "ada",
-                }),
+                body: JSON.stringify({ mutationId: "enroll-1", username: "ada" }),
                 method: "PUT",
                 url: "http://agent.local/v0/cloud/profile",
             },
