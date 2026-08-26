@@ -34,17 +34,22 @@ const server = new Server(
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-        {
-            name: "echo",
-            description: `Echo through ${label}.`,
-            inputSchema: {
-                type: "object",
-                properties: { text: { type: "string" } },
-                required: ["text"],
-            },
-        },
-    ],
+    tools:
+        label === "mixed-tools"
+            ? [
+                  echoTool(),
+                  {
+                      name: "nested",
+                      description: "A valid tool whose schema reaches the supported JSON depth.",
+                      inputSchema: nestedObjectInputSchema(6),
+                  },
+                  {
+                      name: "too_deep",
+                      description: "A broken tool whose schema exceeds the supported JSON depth.",
+                      inputSchema: nestedObjectInputSchema(7),
+                  },
+              ]
+            : [echoTool()],
 }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => ({
     content: [
@@ -74,3 +79,27 @@ server.setRequestHandler(GetPromptRequestSchema, async () => ({
 }));
 
 await server.connect(new StdioServerTransport());
+
+function echoTool() {
+    return {
+        name: "echo",
+        description: `Echo through ${label}.`,
+        inputSchema: {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"],
+        },
+    };
+}
+
+/**
+ * Each object-schema level contributes its schema object and its `properties` object to JSON
+ * nesting. Six levels therefore reach twelve collections below the MCP input-schema root.
+ */
+function nestedObjectInputSchema(levels) {
+    let schema = { type: "string" };
+    for (let level = 0; level < levels; level += 1) {
+        schema = { type: "object", properties: { child: schema } };
+    }
+    return schema;
+}

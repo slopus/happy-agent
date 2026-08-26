@@ -18,6 +18,15 @@ Workspace `mcp.toml` is intentionally treated as trusted project configuration a
 automatically when a durable session creates demand. Tool allow/deny policy is catalog-local and
 does not split otherwise identical pooled processes.
 
+## Invalid tools are isolated from the catalog
+
+An MCP server's tool descriptors are untrusted independently of the connection itself. Validate
+each listed tool before assembling a page, omit only descriptors that are invalid or outside the
+bounded protocol shape, and keep the server and its healthy tools connected. Model-facing tool
+conversion has the same per-tool failure boundary, matching Codex's behavior of logging and
+skipping a tool whose spec cannot be built. MCP JSON values permit twelve nested collections;
+deeper values remain excluded so validation work stays finite.
+
 ## Configuration edits reload through the same bounded path
 
 Model-driven global changes update one named server so unrelated records are preserved, then use

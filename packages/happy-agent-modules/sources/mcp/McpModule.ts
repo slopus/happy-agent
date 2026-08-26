@@ -42,6 +42,7 @@ import {
     mcpToolPolicySchema,
     mcpToolPageQuerySchema,
     mcpToolPageSchema,
+    mcpToolSchema,
     mcpToolResultSchema,
     mcpAgentIdSchema,
     mcpElicitationRequestSchema,
@@ -265,7 +266,13 @@ export class McpModule implements AgentModule {
                         );
                         continue;
                     }
-                    loadedTools.push(createMcpTool(this, agentId, server.name, tool));
+                    try {
+                        loadedTools.push(createMcpTool(this, agentId, server.name, tool));
+                    } catch (error) {
+                        ctx.log.warn(
+                            `The ${tool.name} tool from ${server.name} is unavailable: ${errorMessage(error)}`,
+                        );
+                    }
                 }
             }
             const merged = mergeMcpTools([], { servers: connected, tools: loadedTools });
@@ -1228,13 +1235,24 @@ export class McpModule implements AgentModule {
                 ),
             (page) => page.tools,
         );
-        return values.map((tool) => ({
-            name: tool.name,
-            ...(tool.description === undefined ? {} : { description: tool.description }),
-            inputSchema: structuredClone(tool.inputSchema),
-            ...(tool.title === undefined ? {} : { title: tool.title }),
-            ...(tool._meta === undefined ? {} : { _meta: structuredClone(tool._meta) }),
-        }));
+        const tools: McpTool[] = [];
+        for (const tool of values) {
+            const candidate = {
+                name: tool.name,
+                ...(tool.description === undefined ? {} : { description: tool.description }),
+                inputSchema: structuredClone(tool.inputSchema),
+                ...(tool.title === undefined ? {} : { title: tool.title }),
+                ...(tool._meta === undefined ? {} : { _meta: structuredClone(tool._meta) }),
+            };
+            if (!Value.Check(mcpToolSchema, candidate)) {
+                ctx.log.warn(
+                    `The ${tool.name} tool from ${connection.name} is unavailable: its definition is invalid or exceeds the MCP limits.`,
+                );
+                continue;
+            }
+            tools.push(candidate);
+        }
+        return tools;
     }
 
     async #allResources(ctx: Context, connection: McpClientConnection) {

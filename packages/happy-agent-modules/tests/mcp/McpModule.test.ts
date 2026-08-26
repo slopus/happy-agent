@@ -64,6 +64,27 @@ describe("McpModule production discovery", () => {
         }
     });
 
+    it("keeps healthy tools when one server tool exceeds the JSON depth bound", async () => {
+        const { module } = await configuredModule({ mixed: stdio("mixed-tools") });
+        try {
+            const hooks = await resolveModuleHooks(ctx, module);
+            const tools = await hooks.tools!(ctx, scope());
+
+            expect(tools.map((tool) => tool.name)).toEqual(
+                expect.arrayContaining(["mcp__mixed__echo", "mcp__mixed__nested"]),
+            );
+            expect(tools.map((tool) => tool.name)).not.toContain("mcp__mixed__too_deep");
+            await expect(module.listServerPage(ctx, "agent-a")).resolves.toMatchObject({
+                servers: [{ name: "mixed", status: "connected", toolCount: 2 }],
+            });
+            await expect(echo(module, "agent-a", "mixed", "still working")).resolves.toBe(
+                "mixed-tools:still working",
+            );
+        } finally {
+            await module.close();
+        }
+    });
+
     it("reloads edits online and isolates failed servers", async () => {
         const { config, module } = await configuredModule({ first: stdio("first") });
         try {

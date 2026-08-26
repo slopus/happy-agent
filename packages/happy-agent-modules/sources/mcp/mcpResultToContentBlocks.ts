@@ -1,6 +1,11 @@
 import type { SessionOutputBlock } from "@slopus/happy-providers";
 
-import { MAX_MCP_IMAGE_BASE64_BYTES, MAX_MCP_TEXT_BYTES, type McpToolResult } from "./Mcp.js";
+import {
+    MAX_MCP_IMAGE_BASE64_BYTES,
+    MAX_MCP_JSON_DEPTH,
+    MAX_MCP_TEXT_BYTES,
+    type McpToolResult,
+} from "./Mcp.js";
 
 const MAXIMUM_RESULT_BLOCKS = 128;
 const MAXIMUM_IMAGE_BLOCKS = 4;
@@ -190,7 +195,6 @@ function safeString(value: unknown): string {
     }
 }
 
-const MAXIMUM_JSON_DEPTH = 8;
 const MAXIMUM_JSON_NODES = 128;
 const TRUNCATED_JSON_VALUE = "... [truncated]";
 
@@ -230,7 +234,7 @@ function preview(value: unknown, state: PreviewState, depth: number): unknown {
     if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
         return undefined;
     }
-    if (depth >= MAXIMUM_JSON_DEPTH) return TRUNCATED_JSON_VALUE;
+    if (depth >= MAX_MCP_JSON_DEPTH) return TRUNCATED_JSON_VALUE;
     if (state.seen.has(value)) return "[Circular]";
 
     state.seen.add(value);
