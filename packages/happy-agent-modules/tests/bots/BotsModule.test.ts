@@ -93,6 +93,7 @@ describe("BotsModule", () => {
             expect((await stat(first.path)).isDirectory()).toBe(true);
             expect(fixture.agents.configs.get(first.agentId)).toMatchObject({
                 environment: { workingDirectory: first.path },
+                metadata: { title: "Research Assistant" },
                 modules: { compute: { cwd: first.path } },
             });
 
@@ -153,6 +154,17 @@ describe("BotsModule", () => {
             );
             expect(renamed.username).toBe(first.username);
             expect(renamed.workspaceVersion).toBe(first.workspaceVersion);
+            expect(fixture.agents.configs.get(first.agentId)?.metadata?.["title"]).toBe(
+                "First Research Bot",
+            );
+
+            const unchanged = await fixture.bots.rename(
+                fixture.database.context,
+                first.id,
+                "First Research Bot",
+                renamed.version,
+            );
+            expect(unchanged).toEqual(renamed);
 
             const archived = await fixture.bots.archive(
                 fixture.database.context,

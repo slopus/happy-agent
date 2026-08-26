@@ -40,6 +40,10 @@ describe("persistent bots through the public API", () => {
                     managedByAnotherAgent: false,
                     orderKey: null,
                     status: "idle",
+                    // A bot is one conversation, so its session is named after the bot from birth
+                    // and automatic naming never writes over it.
+                    title: "Research Assistant",
+                    titleStatus: "ready",
                     userVisible: true,
                     workspaceId: created.workspaceId,
                 },
@@ -150,6 +154,23 @@ describe("persistent bots through the public API", () => {
                 "The restored bot answered again.",
             );
 
+            const renamed = (
+                await gym.client.renameBot(
+                    restored.id,
+                    { name: "Research Buddy", mutationId: "rename-research-bot" },
+                    { ifMatch: restored.version },
+                )
+            ).bot;
+            expect(renamed).toMatchObject({
+                name: "Research Buddy",
+                // The folder never moves, so only the display name and the session title follow.
+                username: "research_assistant",
+                agent: { title: "Research Buddy", titleStatus: "ready" },
+            });
+            await expect(gym.client.getAgent(renamed.agent.id)).resolves.toMatchObject({
+                agent: { title: "Research Buddy" },
+            });
+
             const events = (await gym.client.getEvents({ after: baseline })).events;
             expect(events).toEqual(
                 expect.arrayContaining([
@@ -158,8 +179,69 @@ describe("persistent bots through the public API", () => {
                     expect.objectContaining({ type: "agent.created" }),
                     expect.objectContaining({ type: "bot.updated" }),
                     expect.objectContaining({ type: "workspace.updated" }),
+                    expect.objectContaining({
+                        type: "agent.updated",
+                        payload: expect.objectContaining({
+                            agentId: renamed.agent.id,
+                            changes: expect.objectContaining({
+                                title: "Research Buddy",
+                                titleStatus: "ready",
+                            }),
+                        }),
+                    }),
                 ]),
             );
+            expect(gym.errors).toEqual([]);
+        },
+    );
+
+    it(
+        "derives distinct usernames and refuses a rename that presents a stale version",
+        { timeout: 60_000 },
+        async () => {
+            const gym = await createAgentGym({ inference: [], timeoutMs: 20_000 });
+            running.add(gym);
+
+            // Two creations of the same display name compete for one derived username. Each reads
+            // the catalog inside its own transaction, so the second must see the first and step
+            // aside. This asserts the outcome; it does not by itself force the two to interleave.
+            const [first, second] = await Promise.all([
+                gym.client.createBot({ name: "Racing Bot" }),
+                gym.client.createBot({ name: "Racing Bot" }),
+            ]);
+            expect(new Set([first.bot.username, second.bot.username])).toEqual(
+                new Set(["racing_bot", "racing_bot_2"]),
+            );
+            expect(new Set([first.bot.id, second.bot.id]).size).toBe(2);
+            for (const created of [first.bot, second.bot]) {
+                if (created.compute.type !== "host") throw new Error("Bot compute must be local.");
+                expect((await stat(created.compute.path)).isDirectory()).toBe(true);
+            }
+
+            // Two renames present the same version. Exactly one may win, and the loser must be
+            // told it conflicted rather than failing some other way — the version check lives
+            // inside the transaction that writes, so no lock is needed to produce that answer.
+            const target = first.bot;
+            const outcomes = await Promise.allSettled([
+                gym.client.renameBot(target.id, { name: "Winner A" }, { ifMatch: target.version }),
+                gym.client.renameBot(target.id, { name: "Winner B" }, { ifMatch: target.version }),
+            ]);
+            const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
+            const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
+            expect(fulfilled).toHaveLength(1);
+            expect(rejected).toHaveLength(1);
+            expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+                code: "conflict",
+                status: 409,
+            });
+
+            // The winner's name and its conversation title agree, and nothing landed in between.
+            const settled = (await gym.client.getBot(target.id)).bot;
+            expect(["Winner A", "Winner B"]).toContain(settled.name);
+            expect(settled.agent.title).toBe(settled.name);
+            await expect(gym.client.getAgent(target.agent.id)).resolves.toMatchObject({
+                agent: { title: settled.name },
+            });
             expect(gym.errors).toEqual([]);
         },
     );

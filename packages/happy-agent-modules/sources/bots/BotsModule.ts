@@ -1,4 +1,4 @@
-import { mkdir, rmdir, stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -11,7 +11,7 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
-import { afterCommit, asyncLock, type Context } from "@steve.kite/stdlib";
+import { afterCommit, type Context } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
@@ -60,7 +60,6 @@ export class BotsModule implements AgentModule {
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
     readonly #listeners = new Set<BotEventListener>();
-    readonly #mutations = asyncLock({ reentry: "allow" });
     #agents: AgentSystemRef | undefined;
 
     constructor(config: ConfigModule, abort: AbortModule) {
@@ -116,29 +115,69 @@ export class BotsModule implements AgentModule {
         return structuredClone(await readBotByAgent(ctx, agentId));
     }
 
-    /** Create the row and ordinary root agent in one database transaction. */
+    /**
+     * Create the row, its folder, and its ordinary root agent in one database transaction.
+     *
+     * Every read that justifies the write happens inside that transaction, so the identities and
+     * the username it settles on cannot go stale before the insert. The folder is made last:
+     * a name the database refuses aborts the transaction before anything reaches the disk.
+     */
     async create(ctx: Context, input: CreateBotInput): Promise<BotRecord> {
         if (!Value.Check(createBotInputSchema, input)) {
             throw new Error("Bot creation input is invalid.");
         }
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
+        return await ctx.inTx(async (txCtx) => {
             if (input.id !== undefined) {
-                const existing = await readBot(lockCtx, input.id);
+                const existing = await readBot(txCtx, input.id);
                 if (existing !== undefined) return existing;
             }
             const agents = this.#requireAgents();
-            const botId = input.id ?? (await this.#unusedIdentity(lockCtx, new Set()));
+            const botId = input.id ?? (await this.#unusedIdentity(txCtx, new Set()));
             if (
-                (await readBotByWorkspace(lockCtx, botId)) !== undefined ||
-                (await readBotByAgent(lockCtx, botId)) !== undefined ||
-                (await agents.config(lockCtx, botId)) !== undefined
+                (await readBotByWorkspace(txCtx, botId)) !== undefined ||
+                (await readBotByAgent(txCtx, botId)) !== undefined ||
+                (await agents.config(txCtx, botId)) !== undefined
             ) {
                 throw new BotConflictError("The requested bot ID is already in use.");
             }
-            const username = await this.#chooseUsername(lockCtx, input.name, input.username);
+            const username = await this.#chooseUsername(txCtx, input.name, input.username);
             const path = this.#config.botPath(username);
-            const workspaceId = await this.#unusedIdentity(lockCtx, new Set([botId]));
-            const agentId = await this.#unusedIdentity(lockCtx, new Set([botId, workspaceId]));
+            const workspaceId = await this.#unusedIdentity(txCtx, new Set([botId]));
+            const agentId = await this.#unusedIdentity(txCtx, new Set([botId, workspaceId]));
+            const now = Date.now();
+            const config: AgentConfig = {
+                provenance: { createdAt: now },
+                environment: {
+                    ...currentAgentEnvironment(),
+                    workingDirectory: path,
+                },
+                // A bot's conversation is the bot. It is called what the bot is called
+                // from birth, which also settles the title and keeps automatic naming
+                // from writing one over it.
+                metadata: { title: input.name, updatedAt: now, version: 1 },
+                modules: { compute: { cwd: path } },
+            };
+            const agent = await agents.create(txCtx, config, { id: agentId, parent: null });
+            const ordered = await readBots(txCtx);
+            const bot: BotRecord = {
+                id: botId,
+                name: input.name,
+                username,
+                workspaceId,
+                workspaceVersion: 1,
+                workspaceUpdatedAt: now,
+                agentId: agent.id,
+                path,
+                status: "active",
+                orderKey: orderKeyBetween(ordered.at(-1)?.orderKey ?? null, null),
+                version: 1,
+                createdAt: now,
+                updatedAt: now,
+            };
+            await insertBot(txCtx, bot);
+            // The unique username, path, workspace, and agent columns have all accepted this bot
+            // by now, so the folder is the last thing that can fail. An existing directory is the
+            // folder of a creation that was rolled back after making it, and is taken up again.
             const existingFolder = await stat(path).catch((error: NodeJS.ErrnoException) => {
                 if (error.code === "ENOENT") return undefined;
                 throw error;
@@ -147,52 +186,13 @@ export class BotsModule implements AgentModule {
                 throw new BotConflictError("The bot folder path is already in use.");
             }
             await mkdir(path, { recursive: true, mode: 0o755 });
-            const createdFolder = existingFolder === undefined;
-            try {
-                return await lockCtx.inTx(async (txCtx) => {
-                    const now = Date.now();
-                    const config: AgentConfig = {
-                        provenance: { createdAt: now },
-                        environment: {
-                            ...currentAgentEnvironment(),
-                            workingDirectory: path,
-                        },
-                        metadata: { updatedAt: now, version: 1 },
-                        modules: { compute: { cwd: path } },
-                    };
-                    const agent = await agents.create(txCtx, config, {
-                        id: agentId,
-                        parent: null,
-                    });
-                    const ordered = await readBots(txCtx);
-                    const bot: BotRecord = {
-                        id: botId,
-                        name: input.name,
-                        username,
-                        workspaceId,
-                        workspaceVersion: 1,
-                        workspaceUpdatedAt: now,
-                        agentId: agent.id,
-                        path,
-                        status: "active",
-                        orderKey: orderKeyBetween(ordered.at(-1)?.orderKey ?? null, null),
-                        version: 1,
-                        createdAt: now,
-                        updatedAt: now,
-                    };
-                    await insertBot(txCtx, bot);
-                    this.#publish(txCtx, {
-                        eventId: globalThis.crypto.randomUUID(),
-                        at: now,
-                        type: "bot_created",
-                        bot,
-                    });
-                    return structuredClone(bot);
-                });
-            } catch (error) {
-                if (createdFolder) await rmdir(path).catch(() => undefined);
-                throw error;
-            }
+            this.#publish(txCtx, {
+                eventId: globalThis.crypto.randomUUID(),
+                at: now,
+                type: "bot_created",
+                bot,
+            });
+            return structuredClone(bot);
         });
     }
 
@@ -238,15 +238,24 @@ export class BotsModule implements AgentModule {
         return structuredClone(bot);
     }
 
+    /**
+     * Renames the bot and the conversation with it. A bot is one continuous chat, so its session
+     * is called whatever the bot is called. The immutable username, folder, and workspace do not
+     * move, and the agent's own version advances separately from the bot's.
+     */
     async rename(
         ctx: Context,
         botId: string,
         name: string,
         expectedVersion: number,
     ): Promise<BotRecord> {
-        return await this.#change(ctx, botId, expectedVersion, (bot) =>
-            bot.name === name ? undefined : { ...bot, name },
-        );
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, botId);
+            this.#assertVersion(current, expectedVersion);
+            if (current.name === name) return current;
+            await this.#setAgentTitle(txCtx, current.agentId, name);
+            return await this.#change(txCtx, current, (bot) => ({ ...bot, name }));
+        });
     }
 
     async reorder(
@@ -256,10 +265,10 @@ export class BotsModule implements AgentModule {
         expectedVersion: number,
     ): Promise<BotRecord> {
         if (afterId === botId) throw new BotConflictError("A bot cannot be placed after itself.");
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
-            const current = await this.#required(lockCtx, botId);
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
-            const ordered = (await readBots(lockCtx)).filter((bot) => bot.id !== botId);
+            const ordered = (await readBots(txCtx)).filter((bot) => bot.id !== botId);
             const afterIndex =
                 afterId === null ? -1 : ordered.findIndex((candidate) => candidate.id === afterId);
             if (afterId !== null && afterIndex < 0) {
@@ -269,41 +278,37 @@ export class BotsModule implements AgentModule {
                 afterIndex < 0 ? null : (ordered[afterIndex]?.orderKey ?? null),
                 ordered[afterIndex + 1]?.orderKey ?? null,
             );
-            return await this.#changeUnlocked(lockCtx, current, (bot) =>
+            return await this.#change(txCtx, current, (bot) =>
                 bot.orderKey === orderKey ? undefined : { ...bot, orderKey },
             );
         });
     }
 
     async archive(ctx: Context, botId: string, expectedVersion: number): Promise<BotRecord> {
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
-            const current = await this.#required(lockCtx, botId);
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
             if (current.status === "archived") return current;
-            return await lockCtx.inTx(async (txCtx) => {
-                await this.#abort.abort(txCtx, current.agentId);
-                await this.#setAgentArchived(txCtx, current.agentId, true);
-                return await this.#changeUnlocked(txCtx, current, (bot) => ({
-                    ...bot,
-                    status: "archived",
-                    archivedAt: Date.now(),
-                }));
-            });
+            await this.#abort.abort(txCtx, current.agentId);
+            await this.#setAgentArchived(txCtx, current.agentId, true);
+            return await this.#change(txCtx, current, (bot) => ({
+                ...bot,
+                status: "archived",
+                archivedAt: Date.now(),
+            }));
         });
     }
 
     async unarchive(ctx: Context, botId: string, expectedVersion: number): Promise<BotRecord> {
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
-            const current = await this.#required(lockCtx, botId);
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
             if (current.status === "active") return current;
-            return await lockCtx.inTx(async (txCtx) => {
-                await this.#setAgentArchived(txCtx, current.agentId, false);
-                return await this.#changeUnlocked(txCtx, current, (bot) => {
-                    const active: BotRecord = { ...bot, status: "active" };
-                    delete active.archivedAt;
-                    return active;
-                });
+            await this.#setAgentArchived(txCtx, current.agentId, false);
+            return await this.#change(txCtx, current, (bot) => {
+                const active: BotRecord = { ...bot, status: "active" };
+                delete active.archivedAt;
+                return active;
             });
         });
     }
@@ -315,11 +320,14 @@ export class BotsModule implements AgentModule {
         contentType: "image/jpeg" | "image/png" | "image/webp",
         expectedVersion: number,
     ): Promise<BotRecord> {
+        // Re-encoding happens before the transaction opens. Every transaction on this database
+        // runs to completion before the next one begins, so holding one open across image work
+        // would stall every other writer for as long as the picture takes.
         const asset = await normalizeBotAvatar(bytes, contentType);
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
-            const current = await this.#required(lockCtx, botId);
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
-            return await this.#writeAvatarUnlocked(lockCtx, current, asset, "user");
+            return await this.#writeAvatar(txCtx, current, asset, "user");
         });
     }
 
@@ -329,45 +337,41 @@ export class BotsModule implements AgentModule {
      */
     async setOwnAvatar(ctx: Context, agentId: string, bytes: Uint8Array): Promise<BotRecord> {
         const asset = await normalizeBotAvatar(bytes);
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
-            const current = await readBotByAgent(lockCtx, agentId);
+        return await ctx.inTx(async (txCtx) => {
+            const current = await readBotByAgent(txCtx, agentId);
             if (current === undefined) {
                 throw new BotNotFoundError("Only a bot can set its own avatar.");
             }
             if (current.status === "archived") {
                 throw new BotConflictError("An archived bot cannot change its avatar.");
             }
-            return await this.#writeAvatarUnlocked(lockCtx, current, asset, "generated");
+            return await this.#writeAvatar(txCtx, current, asset, "generated");
         });
     }
 
-    async #writeAvatarUnlocked(
+    async #writeAvatar(
         ctx: Context,
         current: BotRecord,
         asset: BotAvatarAsset,
         source: "user" | "generated",
     ): Promise<BotRecord> {
-        return await ctx.inTx(async (txCtx) => {
-            await writeBotAvatar(txCtx, current.id, asset);
-            return await this.#changeUnlocked(txCtx, current, (bot) => ({
-                ...bot,
-                avatar: { kind: "image", source, thumbhash: asset.thumbhash },
-            }));
-        });
+        await writeBotAvatar(ctx, current.id, asset);
+        return await this.#change(ctx, current, (bot) => ({
+            ...bot,
+            avatar: { kind: "image", source, thumbhash: asset.thumbhash },
+        }));
     }
 
     async clearAvatar(ctx: Context, botId: string, expectedVersion: number): Promise<BotRecord> {
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
-            const current = await this.#required(lockCtx, botId);
+        return await ctx.inTx(async (txCtx) => {
+            const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
             if (current.avatar === undefined) return current;
-            return await lockCtx.inTx(async (txCtx) => {
-                await deleteBotAvatar(txCtx, botId);
-                return await this.#changeUnlocked(txCtx, current, (bot) => {
-                    const without: BotRecord = { ...bot };
-                    delete without.avatar;
-                    return without;
-                });
+            await deleteBotAvatar(txCtx, botId);
+            return await this.#change(txCtx, current, (bot) => {
+                const without: BotRecord = { ...bot };
+                delete without.avatar;
+                return without;
             });
         });
     }
@@ -378,20 +382,13 @@ export class BotsModule implements AgentModule {
         return structuredClone(await readBotAvatar(ctx, botId));
     }
 
+    /**
+     * Apply one decided change to a bot that was read in this same transaction.
+     *
+     * The stored version is asserted again by the update itself, so a row that moved between the
+     * read and the write is refused rather than overwritten.
+     */
     async #change(
-        ctx: Context,
-        botId: string,
-        expectedVersion: number,
-        decide: (bot: BotRecord) => BotRecord | undefined,
-    ): Promise<BotRecord> {
-        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
-            const current = await this.#required(lockCtx, botId);
-            this.#assertVersion(current, expectedVersion);
-            return await this.#changeUnlocked(lockCtx, current, decide);
-        });
-    }
-
-    async #changeUnlocked(
         ctx: Context,
         current: BotRecord,
         decide: (bot: BotRecord) => BotRecord | undefined,
@@ -422,16 +419,28 @@ export class BotsModule implements AgentModule {
     }
 
     async #setAgentArchived(ctx: Context, agentId: string, archived: boolean): Promise<void> {
+        await this.#updateAgentMetadata(ctx, agentId, {
+            archivedAt: archived ? Date.now() : null,
+        });
+    }
+
+    /** Keep the conversation's title equal to the bot's display name. */
+    async #setAgentTitle(ctx: Context, agentId: string, title: string): Promise<void> {
+        await this.#updateAgentMetadata(ctx, agentId, { title });
+    }
+
+    /** Write bot-owned agent metadata, advancing the agent's own version and timestamp. */
+    async #updateAgentMetadata(
+        ctx: Context,
+        agentId: string,
+        update: Readonly<Record<string, unknown>>,
+    ): Promise<void> {
         const agents = this.#requireAgents();
         const config = await agents.config(ctx, agentId);
         if (config === undefined) throw new Error("The bot agent was not found.");
         const version =
             typeof config.metadata?.["version"] === "number" ? config.metadata["version"] + 1 : 1;
-        await agents.updateMetadata(ctx, agentId, {
-            archivedAt: archived ? Date.now() : null,
-            updatedAt: Date.now(),
-            version,
-        });
+        await agents.updateMetadata(ctx, agentId, { ...update, updatedAt: Date.now(), version });
     }
 
     async #chooseUsername(ctx: Context, name: string, supplied?: string): Promise<string> {

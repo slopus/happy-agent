@@ -1,11 +1,54 @@
 # Bots — learnings
 
+## The module holds no lock; one transaction is the whole guarantee
+
+The catalog is stateless apart from its event listeners, so it serializes nothing itself. Every
+mutation is one `ctx.inTx`, and every read that justifies a write happens inside that transaction:
+the current row and its version, the username scan, the order-key neighbours, the identity
+collision checks. Nothing is read before the transaction opens and trusted after it.
+
+That is sufficient because `AgentStorage` registers every database with `AgentDatabaseConnection`,
+whose `#enqueue` runs root transactions strictly one at a time to completion. A module lock on top
+of that is a weaker serializer wrapped around a stronger one. The unique `username`, `workspace_id`,
+`agent_id`, and `path` columns and the version compare-and-swap in `updateBot` are the durable
+backstops, so a stale version raises `BotConflictError` and becomes a 409 rather than a lost update.
+
+Two rules follow and must be kept. Slow or external work stays outside the transaction, because
+holding one open stalls every other writer on the connection — avatar re-encoding runs before
+`inTx` opens. And within creation the folder is made last, after the unique columns have accepted
+the row, so a name the database refuses never reaches the disk; an existing directory is taken up
+again rather than treated as a conflict, which is what a rolled-back creation leaves behind.
+
+## `inTx` joins the transaction it finds; it does not open a second one
+
+Writing agent metadata from inside a bot transaction is atomic with the bot row. `inTx` returns
+`work(ctx)` when the context already carries the ambient transaction, and Agent Base's
+`AgentPersistence.transaction` is itself `inTx`, so `agents.updateMetadata(txCtx, …)` joins rather
+than starting its own. Agent configuration is not a separate store: it lives in `happy_agent_values`
+in this same database, scoped by `owner_id`.
+
+The transaction context must therefore be passed through. Handing such a call a context that does
+not carry the open transaction makes `inTx` throw rather than silently writing around it.
+
 ## Bot workspaces are intentionally outside the project workspace tree
 
 A bot folder has no project, parent, branch, or sibling workspace series. Its dedicated workspace
 identity is durable in the bot catalog and projected through the workspace API, but is absent from
 project workspace listings and bootstrap's workspace array. This also keeps bot routes operational
 when the optional project-workspaces feature is disabled.
+
+## A bot's session is named after the bot, not by the title model
+
+A bot is one continuous conversation with an identity, so a generated chat title says nothing a
+person wants. Bot agent creation writes the bot's display name as the agent's title, and renaming
+the bot rewrites that title in the same transaction that records the new name. That also turns
+automatic naming off for bots by the titles module's own rule: a title present at creation has no
+generated-title provenance, so neither first-message naming nor the second-message refinement may
+write over it.
+
+Only the title moves on rename. The username, folder, and dedicated workspace are immutable, so a
+rename still leaves `workspaceVersion` alone; the agent's metadata version advances on its own and
+reaches clients as `agent.updated`, never as part of the bot's version.
 
 ## Bot agents receive their live bot identity
 
