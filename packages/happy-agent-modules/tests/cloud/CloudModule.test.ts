@@ -1,5 +1,9 @@
 import { OauthException } from "@workos-inc/node";
-import { agentDatabaseRun } from "@slopus/happy-agent-base";
+import {
+    agentDatabaseRows,
+    agentDatabaseRun,
+    ensureAgentDatabaseConnection,
+} from "@slopus/happy-agent-base";
 import { withLogger, type LogContext, type Logger } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +14,9 @@ import {
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
+import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
+import { resolveModuleHooks } from "../support/moduleHooks.js";
 
 const workos = vi.hoisted(() => ({
     authorization: vi.fn(),
@@ -49,7 +55,10 @@ const user = {
 };
 
 const databases: ModuleDatabase[] = [];
-const modules: CloudModule[] = [];
+const modules: Array<{
+    readonly cloud: CloudModule;
+    readonly durableFunctions: DurableFunctionsModule;
+}> = [];
 let authorizationNumber = 0;
 
 interface CloudLogRecord {
@@ -88,23 +97,37 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-    for (const module of modules.splice(0)) await module.stop();
+    for (const module of modules.splice(0)) {
+        await module.cloud.stop();
+        module.durableFunctions.stop();
+    }
     for (const database of databases.splice(0)) database.close();
     vi.unstubAllGlobals();
     vi.useRealTimers();
 });
 
 async function fixture(name: string, logs?: CloudLogRecord[]) {
-    const module = new CloudModule();
-    modules.push(module);
-    const database = moduleDatabase(module.migrations, name);
+    const durableFunctions = new DurableFunctionsModule();
+    const module = new CloudModule(durableFunctions);
+    modules.push({ cloud: module, durableFunctions });
+    const database = moduleDatabase([...module.migrations, ...durableFunctions.migrations], name);
+    ensureAgentDatabaseConnection(database.database);
     databases.push(database);
     await database.ready;
-    await module.beforeStart(
-        logs === undefined ? database.context : withLogger(database.context, recordingLogger(logs)),
-        {} as never,
+    const ctx =
+        logs === undefined ? database.context : withLogger(database.context, recordingLogger(logs));
+    await resolveModuleHooks(ctx, module);
+    const durableHooks = await resolveModuleHooks(ctx, durableFunctions);
+    await durableHooks.afterStart?.(ctx, {} as never);
+    return { database, durableFunctions, module };
+}
+
+async function pendingDurableCallCount(database: ModuleDatabase): Promise<number> {
+    const rows = await agentDatabaseRows<{ readonly count: number }>(
+        database.context.db,
+        sql`SELECT COUNT(*) AS count FROM durable_function_calls`,
     );
-    return { database, module };
+    return rows[0]?.count ?? 0;
 }
 
 async function connect(
@@ -144,6 +167,7 @@ describe("CloudModule", () => {
         expect(stored?.session?.refreshToken).toBe("refresh-a");
         expect(JSON.stringify(connected)).not.toContain("refresh-a");
         expect(JSON.stringify(connected)).not.toContain("access-a");
+        expect(await pendingDurableCallCount(database)).toBe(0);
 
         const minted = await module.mint(database.context);
         expect(minted.accessToken).toBe("access-b");
@@ -684,22 +708,30 @@ describe("CloudModule", () => {
     });
 
     it("settles a process-local pending attempt as expired after restart", async () => {
-        const { database, module } = await fixture("cloud-module-restart");
+        const { database, durableFunctions, module } = await fixture("cloud-module-restart");
         const authorizing = await module.start(database.context, {
             environment: "staging",
             redirectUri: "another-app://oauth/callback",
         });
+        expect(await pendingDurableCallCount(database)).toBe(1);
         await module.stop();
+        durableFunctions.stop();
 
-        const restarted = new CloudModule();
-        modules.push(restarted);
-        await restarted.beforeStart(database.context, {} as never);
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions);
+        modules.push({ cloud: restarted, durableFunctions: restartedDurableFunctions });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
 
         expect(restarted.status(database.context)).toMatchObject({
             error: { code: "authorization_expired" },
             status: "disconnected",
         });
-        expect(restarted.status(database.context).version > authorizing.version).toBe(true);
+        await vi.waitFor(() => {
+            expect(restarted.status(database.context).version > authorizing.version).toBe(true);
+        });
+        expect(await pendingDurableCallCount(database)).toBe(0);
     });
 
     it("orders a concurrent disconnect after in-flight minting without restoring credentials", async () => {

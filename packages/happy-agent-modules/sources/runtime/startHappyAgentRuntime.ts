@@ -437,7 +437,7 @@ export async function startHappyAgentRuntime(
         });
 
         const installation = new InstallationModule(projects);
-        const cloud = new CloudModule();
+        const cloud = new CloudModule(durableFunctions);
         const providerUsage = new ProviderUsageModule(config);
         registerShutdown("provider-usage", async () => await providerUsage.close());
         const happy = new HappyModule(

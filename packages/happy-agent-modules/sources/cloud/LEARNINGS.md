@@ -40,9 +40,10 @@
   before contacting WorkOS so an accidental ambient transaction is rejected before consumption.
 - Treat an explicit `access_denied` callback as user rejection. OAuth service and client failures
   are temporary unavailability and must not be presented as a user denial.
-- An authorization timer can fire early after clock rollback, and its expiry write can fail. Rearm
-  early timers for the true deadline and retry failed expiry persistence with a bounded delay so a
-  process-local attempt cannot remain authorizing forever.
+- Authorization expiry is a Durable Function created in the same transaction as the pending Cloud
+  state. It waits again after clock rollback, retries failed expiry persistence with a bounded
+  delay, and is cancelled transactionally when the attempt settles or is replaced. Recovery expires
+  it immediately because the process-local PKCE verifier no longer exists after restart.
 
 ## Secret boundaries
 

@@ -12,6 +12,7 @@ import {
     type CloudConnected,
     type CloudDisconnected,
 } from "@slopus/happy-agent-client";
+import { ensureAgentDatabaseConnection } from "@slopus/happy-agent-base";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,7 +23,9 @@ import {
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
+import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { resolveModuleHooks } from "../support/moduleHooks.js";
 
 const workos = vi.hoisted(() => ({
     authorization: vi.fn(),
@@ -429,10 +432,17 @@ async function apiFixture(initial: Cloud = disconnected) {
 
 async function actualCloudApiFixture() {
     const directory = await mkdtemp(join(tmpdir(), "happy-cloud-api-real-"));
-    const cloud = new CloudModule();
-    const database = moduleDatabase(cloud.migrations, "cloud-api-real");
+    const durableFunctions = new DurableFunctionsModule();
+    const cloud = new CloudModule(durableFunctions);
+    const database = moduleDatabase(
+        [...cloud.migrations, ...durableFunctions.migrations],
+        "cloud-api-real",
+    );
+    ensureAgentDatabaseConnection(database.database);
     await database.ready;
-    await cloud.beforeStart(database.context, {} as never);
+    await resolveModuleHooks(database.context, cloud);
+    const durableHooks = await resolveModuleHooks(database.context, durableFunctions);
+    await durableHooks.afterStart?.(database.context, {} as never);
     const subscriptions = new Proxy(
         {},
         {
@@ -460,6 +470,7 @@ async function actualCloudApiFixture() {
     cleanups.push(async () => {
         await api.close();
         await cloud.stop();
+        durableFunctions.stop();
         database.close();
         await rm(directory, { force: true, recursive: true });
     });

@@ -22,9 +22,18 @@ import {
     type AgentModuleHooks,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
-import { afterCommit, asyncLock, detach, type AsyncLock, type Context } from "@steve.kite/stdlib";
+import {
+    afterCommit,
+    asyncLock,
+    delay,
+    detach,
+    type AsyncLock,
+    type Context,
+} from "@steve.kite/stdlib";
 import { Value } from "@sinclair/typebox/value";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
+
+import { DurableFunctionsModule } from "../durableFunctions/index.js";
 
 import {
     cloudMigrations,
@@ -34,6 +43,14 @@ import {
     type CloudStoredState,
     type CloudStoredValue,
 } from "./CloudDatabase.js";
+import {
+    CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
+    CLOUD_AUTHORIZATION_EXPIRY_OPERATION,
+    CLOUD_AUTHORIZATION_LOCK,
+    cloudAuthorizationExpiryArgumentsSchema,
+    cloudAuthorizationExpiryResultSchema,
+    type CloudAuthorizationExpiryArguments,
+} from "./CloudDurableFunctions.js";
 import {
     CloudCredentialsRejectedError,
     CloudIdentityMismatchError,
@@ -56,10 +73,14 @@ interface CloudAttempt {
     readonly redirectUri: string;
     readonly state: string;
     readonly url: string;
+    readonly version: string;
 }
+
+type CloudAttemptDraft = Omit<CloudAttempt, "version">;
 
 interface CloudReplacementOptions {
     readonly attempt?: CloudAttempt;
+    readonly cancelAuthorizationExpiry?: boolean;
     readonly onCommit?: () => void;
 }
 
@@ -106,6 +127,7 @@ export class CloudModule implements AgentModule {
     readonly migrations = cloudMigrations;
 
     readonly #database = createCloudDatabase();
+    readonly #durableFunctions: DurableFunctionsModule;
     readonly #listeners = new Set<CloudUpdatedListener>();
     readonly #profileListeners = new Set<CloudProfileUpdatedListener>();
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
@@ -113,10 +135,10 @@ export class CloudModule implements AgentModule {
     #attempt: CloudAttempt | undefined;
     #cloud: Cloud;
     #context: Context | undefined;
-    #expiryTimer: NodeJS.Timeout | undefined;
     #stopping = false;
 
-    constructor() {
+    constructor(durableFunctions: DurableFunctionsModule) {
+        this.#durableFunctions = durableFunctions;
         const updatedAt = Date.now();
         this.#cloud = freezeCloud({
             authorization: null,
@@ -126,6 +148,15 @@ export class CloudModule implements AgentModule {
             updatedAt,
             user: null,
             version: createCloudVersion(undefined, () => updatedAt),
+        });
+        durableFunctions.register({
+            name: CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
+            argumentsSchema: cloudAuthorizationExpiryArgumentsSchema,
+            resultSchema: cloudAuthorizationExpiryResultSchema,
+            executor: async (ctx, call) => {
+                await this.#executeAuthorizationExpiry(ctx, call.arguments);
+                return null;
+            },
         });
     }
 
@@ -147,13 +178,11 @@ export class CloudModule implements AgentModule {
         const ctx = this.#context;
         if (ctx === undefined) {
             this.#stopping = true;
-            this.#clearExpiry();
             this.#attempt = undefined;
             return;
         }
         await this.#lock.runInLock(ctx, async () => {
             this.#stopping = true;
-            this.#clearExpiry();
             this.#attempt = undefined;
         });
     }
@@ -226,25 +255,14 @@ export class CloudModule implements AgentModule {
                         "Cloud authorization is temporarily unavailable.",
                     );
                 });
-            const attempt: CloudAttempt = {
+            const attempt: CloudAttemptDraft = {
                 ...secret,
                 environment: request.environment,
                 expiresAt: Date.now() + AUTHORIZATION_LIFETIME_MS,
                 phase: "active",
                 redirectUri,
             };
-            const cloud = await this.#replace(
-                ctx,
-                { error: null, pending: true, session: null },
-                {
-                    attempt,
-                    onCommit: () => {
-                        this.#clearExpiry();
-                        this.#attempt = attempt;
-                        this.#scheduleExpiry(attempt);
-                    },
-                },
-            );
+            const cloud = await this.#beginAttempt(ctx, attempt);
             return authorizing(cloud);
         });
     }
@@ -276,7 +294,6 @@ export class CloudModule implements AgentModule {
             const callback = parseCallback(request.callbackUrl, attempt, this.#cloud);
             await this.#readOwned(ctx);
             const consumed: CloudAttempt = { ...attempt, phase: "consumed" };
-            this.#clearExpiry();
             this.#attempt = consumed;
 
             if (callback.kind === "error") {
@@ -382,8 +399,8 @@ export class CloudModule implements AgentModule {
                     ctx,
                     { error: null, pending: false, session: null },
                     {
+                        cancelAuthorizationExpiry: true,
                         onCommit: () => {
-                            this.#clearExpiry();
                             this.#attempt = undefined;
                         },
                     },
@@ -597,16 +614,31 @@ export class CloudModule implements AgentModule {
             return;
         }
         this.#cloud = project(stored);
-        if (stored.pending) {
-            await this.#replace(ctx, {
-                error: {
-                    code: "authorization_expired",
-                    message: "Cloud authorization expired when Happy Agent restarted.",
-                },
-                pending: false,
+    }
+
+    async #beginAttempt(ctx: Context, draft: CloudAttemptDraft): Promise<Cloud> {
+        return await ctx.inTx(async (txCtx) => {
+            await this.#durableFunctions.cancel(txCtx, CLOUD_AUTHORIZATION_EXPIRY_OPERATION);
+            const stored = await this.#database.replace(txCtx, {
+                error: null,
+                pending: true,
                 session: null,
             });
-        }
+            const attempt: CloudAttempt = { ...draft, version: stored.version };
+            const cloud = project(stored, attempt);
+            afterCommit(txCtx, (postCommitCtx) => {
+                this.#attempt = attempt;
+                this.#cloud = cloud;
+                for (const listener of this.#listeners) listener(postCommitCtx, cloud);
+            });
+            await this.#durableFunctions.invoke(txCtx, {
+                function: CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
+                arguments: { expiresAt: attempt.expiresAt, version: attempt.version },
+                operationId: CLOUD_AUTHORIZATION_EXPIRY_OPERATION,
+                lockKeys: [CLOUD_AUTHORIZATION_LOCK],
+            });
+            return cloud;
+        });
     }
 
     async #replace(
@@ -615,6 +647,9 @@ export class CloudModule implements AgentModule {
         options: CloudReplacementOptions = {},
     ): Promise<Cloud> {
         return await ctx.inTx(async (txCtx) => {
+            if (options.cancelAuthorizationExpiry === true) {
+                await this.#durableFunctions.cancel(txCtx, CLOUD_AUTHORIZATION_EXPIRY_OPERATION);
+            }
             const stored = await this.#database.replace(txCtx, value);
             const cloud = project(stored, options.attempt);
             afterCommit(txCtx, (postCommitCtx) => {
@@ -632,6 +667,7 @@ export class CloudModule implements AgentModule {
         consumed: CloudAttempt,
     ): Promise<Cloud> {
         return await this.#replace(ctx, value, {
+            cancelAuthorizationExpiry: true,
             onCommit: () => {
                 if (this.#attempt === consumed) this.#attempt = undefined;
             },
@@ -652,9 +688,9 @@ export class CloudModule implements AgentModule {
                     session: null,
                 },
                 {
+                    cancelAuthorizationExpiry: true,
                     onCommit: () => {
                         if (this.#attempt !== attempt) return;
-                        this.#clearExpiry();
                         this.#attempt = undefined;
                     },
                 },
@@ -662,42 +698,47 @@ export class CloudModule implements AgentModule {
         );
     }
 
-    #scheduleExpiry(attempt: CloudAttempt, retryAfter?: number): void {
-        const delay = retryAfter ?? Math.max(1, attempt.expiresAt - Date.now());
-        this.#expiryTimer = setTimeout(() => {
-            this.#expiryTimer = undefined;
-            const ctx = this.#context;
-            if (ctx === undefined || this.#stopping) return;
-            void this.#lock
-                .runInLock(ctx, async () => {
-                    if (this.#stopping) return;
-                    if (
-                        this.#attempt === attempt &&
-                        attempt.phase === "active" &&
-                        Date.now() >= attempt.expiresAt
-                    ) {
-                        await this.#expire(ctx, attempt);
-                    } else if (this.#attempt === attempt && attempt.phase === "active") {
-                        this.#scheduleExpiry(attempt);
-                    }
-                })
-                .catch((error: unknown) => {
-                    ctx.log.warn("Cloud authorization expiry could not be stored.", {}, error);
-                    if (
-                        !this.#stopping &&
-                        this.#attempt === attempt &&
-                        attempt.phase === "active"
-                    ) {
-                        this.#scheduleExpiry(attempt, AUTHORIZATION_EXPIRY_RETRY_MS);
-                    }
+    async #executeAuthorizationExpiry(
+        ctx: Context,
+        input: CloudAuthorizationExpiryArguments,
+    ): Promise<void> {
+        if (this.#attempt?.version === input.version) {
+            for (;;) {
+                const remaining = input.expiresAt - Date.now();
+                if (remaining <= 0) break;
+                await delay(ctx, Math.max(1, remaining));
+            }
+        }
+        for (;;) {
+            try {
+                await this.#lock.runInLock(ctx, async () => {
+                    const stored = await this.#readOwned(ctx);
+                    if (stored?.pending !== true || stored.version !== input.version) return;
+                    await this.#replace(
+                        ctx,
+                        {
+                            error: {
+                                code: "authorization_expired",
+                                message: "Cloud authorization expired.",
+                            },
+                            pending: false,
+                            session: null,
+                        },
+                        {
+                            onCommit: () => {
+                                if (this.#attempt?.version === input.version) {
+                                    this.#attempt = undefined;
+                                }
+                            },
+                        },
+                    );
                 });
-        }, delay);
-        this.#expiryTimer.unref();
-    }
-
-    #clearExpiry(): void {
-        if (this.#expiryTimer !== undefined) clearTimeout(this.#expiryTimer);
-        this.#expiryTimer = undefined;
+                return;
+            } catch (error: unknown) {
+                ctx.log.warn("Cloud authorization expiry could not be stored.", {}, error);
+                await delay(ctx, AUTHORIZATION_EXPIRY_RETRY_MS);
+            }
+        }
     }
 
     #client(environment: CloudEnvironment): CloudWorkOS {

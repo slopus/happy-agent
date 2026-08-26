@@ -40,6 +40,8 @@ A module is a self-contained feature. It carries everything that feature needs t
 
 A module may take only other modules as arguments. Not configuration objects, path strings, clients, callbacks, or loose handles. When a module needs something, it takes the module that owns that thing and asks it. This keeps the dependency graph a graph of features, and keeps a module's collaborators visible in its constructor rather than assembled by whoever happens to build it.
 
+New modules must use Durable Functions for durable execution from the start. Take the Durable Functions module as a dependency and register durable work there instead of hand-rolling module-local recovery machinery.
+
 Modules do not import from each other beyond the seam that joins them. A module may import another module's class and the public types that module exports from its `index.ts` — enough to declare it as a constructor dependency and to speak about the values it returns. Nothing else crosses the boundary: helper functions, `impl/` internals, stores, schemas, migrations, and prompt text belong to the module that owns them. A module that needs such behavior asks the owning module instance for it instead of importing the file, and when there is no method to ask, the method is added to the owning module rather than reached past.
 
 The config module is what that rule leans on most. It is not merely parsed configuration: it resolves and owns the paths the product runs against, and it instantiates the providers. A module that needs a path or a provider depends on the config module and takes it from there, instead of deriving paths itself or constructing a provider of its own.

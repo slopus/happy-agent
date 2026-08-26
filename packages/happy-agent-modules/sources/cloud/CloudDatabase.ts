@@ -21,6 +21,8 @@ const CLOUD_STATE_TABLE = "happy_agent_cloud_state";
 const UUID_V7_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
 const exact = { additionalProperties: false } as const;
 
+export const cloudVersionSchema = Type.String({ pattern: UUID_V7_PATTERN });
+
 const storedErrorSchema = Type.Object(
     {
         code: Type.String({ minLength: 1, maxLength: 256 }),
@@ -51,7 +53,7 @@ export type CloudSession = Static<typeof cloudSessionSchema>;
 
 const snapshotFields = {
     updatedAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-    version: Type.String({ pattern: UUID_V7_PATTERN }),
+    version: cloudVersionSchema,
 };
 
 const cloudStoredValueSchema = Type.Union([
