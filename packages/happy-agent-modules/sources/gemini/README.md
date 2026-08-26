@@ -14,8 +14,8 @@ const agent = await Agent.create(ctx, { ...options, modules: [gemini] });
 ```
 
 `config` is where the key comes from: Gemini is not one of the accounts a chat runs on, so it has no
-provider entry, and `ConfigModule.geminiApiKey` resolves `GEMINI_API_KEY` on behalf of every module
-that needs it. `compute` is the compute module itself: it is how this module finds one agent's
+provider entry, and `ConfigModule.geminiApiKey` resolves the `[gemini] api_key` setting in the user
+`happy.toml`, falling back to `GEMINI_API_KEY`, on behalf of every module that needs it. `compute` is the compute module itself: it is how this module finds one agent's
 machine and works through that machine's boundary — permissions, resolved paths, whether a path
 needs review — rather than a host integration.
 

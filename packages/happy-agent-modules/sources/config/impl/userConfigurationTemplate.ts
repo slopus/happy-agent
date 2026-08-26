@@ -141,6 +141,11 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # region = "us-east-1"
 # transport = "mantle"
 
+# Gemini powers the universal media and search tools rather than chat models, so it has no
+# [providers.*] entry. The key written here wins over the GEMINI_API_KEY environment variable.
+# [gemini]
+# api_key = "your-gemini-api-key"
+
 # [docker]
 # Choose exactly one of image or container.
 # image = "my-project-dev:latest"

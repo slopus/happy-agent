@@ -313,6 +313,14 @@ const partialValuesSchema = Type.Object(
                 { additionalProperties: false },
             ),
         ),
+        gemini: Type.Optional(
+            Type.Object(
+                {
+                    api_key: Type.Optional(configStringSchema),
+                },
+                { additionalProperties: false },
+            ),
+        ),
         mcp_servers: Type.Optional(mcpInputSchema),
         network: Type.Optional(
             Type.Object(
@@ -581,6 +589,12 @@ const resolvedValuesSchema = Type.Object(
                 crossWorkspace: Type.Boolean(),
                 workflows: Type.Boolean(),
                 workspaces: Type.Boolean(),
+            },
+            { additionalProperties: false },
+        ),
+        gemini: Type.Object(
+            {
+                apiKey: Type.Optional(configStringSchema),
             },
             { additionalProperties: false },
         ),
@@ -891,6 +905,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         workflows: true,
         workspaces: true,
     },
+    gemini: {},
     mcpServers: {},
     observation: {
         historyDump: false,
@@ -1435,16 +1450,19 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * The Gemini key, when this installation's environment carries one.
+     * The Gemini key, when this installation carries one.
      *
      * Gemini is not one of the accounts a chat runs on: it answers over its own HTTP API, so it has
-     * no `[providers.*]` entry and no setting of its own. The key is whatever `GEMINI_API_KEY` says,
-     * and it is read here because configuration is what owns credentials — a module that wants
-     * Gemini asks for this rather than reading the environment behind config's back. It is read on
-     * every call, so a key exported after startup reaches the next request. Blank, whitespace, or
-     * longer than any other configured string, and there is no Gemini key at all.
+     * no `[providers.*]` entry. The key comes from `[gemini] api_key` in the user `happy.toml`, or
+     * failing that from `GEMINI_API_KEY`, and it is read here because configuration is what owns
+     * credentials — a module that wants Gemini asks for this rather than reading the environment
+     * behind config's back. The environment is read on every call, so a key exported after startup
+     * reaches the next request. Blank, whitespace, or longer than any other configured string, and
+     * there is no Gemini key at all.
      */
     get geminiApiKey(): string | undefined {
+        const configured = this.configuration.values.gemini.apiKey?.trim();
+        if (configured !== undefined && configured.length > 0) return configured;
         const value = this.#environmentValue("GEMINI_API_KEY")?.trim();
         if (value === undefined || value.length === 0) return undefined;
         return value.length > MAX_CONFIG_STRING_LENGTH ? undefined : value;
@@ -1878,6 +1896,7 @@ export function parseHappyAgentConfigToml(source: string): {
     const providers = readProviders(table.providers, recordUnknown);
     const settings = readSettings(table.settings, recordUnknown);
     const features = readFeatures(table.features, recordUnknown);
+    const gemini = readGemini(table.gemini, recordUnknown);
     const workspace = readWorkspace(table.workspace, recordUnknown);
     const docker = readDocker(table.docker, recordUnknown);
     const mcpServers = readMcpServers(table.mcp_servers, recordUnknown);
@@ -1895,6 +1914,7 @@ export function parseHappyAgentConfigToml(source: string): {
         ...(defaults === undefined ? {} : { defaults }),
         ...(features === undefined ? {} : { features }),
         ...(docker === undefined ? {} : { docker }),
+        ...(gemini === undefined ? {} : { gemini }),
         ...(mcpServers === undefined ? {} : { mcp_servers: mcpServers }),
         ...(network === undefined ? {} : { network }),
         ...(observation === undefined ? {} : { observation }),
@@ -1953,6 +1973,7 @@ function normalizeSourceValues(values: PartialValues): Record<string, unknown> {
         ...(values.docker === undefined ? {} : { docker: normalizeDocker(values.docker) }),
         ...(values.defaults === undefined ? {} : { defaults: normalizeDefaults(values.defaults) }),
         ...(values.features === undefined ? {} : { features: normalizeFeatures(values.features) }),
+        ...(values.gemini === undefined ? {} : { gemini: normalizeGemini(values.gemini) }),
         ...(values.mcp_servers === undefined
             ? {}
             : { mcpServers: normalizeMcpServers(values.mcp_servers) }),
@@ -2082,6 +2103,8 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         }
         if (partial.features !== undefined)
             Object.assign(merged.features, normalizeFeatures(partial.features));
+        if (partial.gemini !== undefined)
+            Object.assign(merged.gemini, normalizeGemini(partial.gemini));
         if (partial.mcp_servers !== undefined) {
             Object.assign(merged.mcpServers, normalizeMcpServers(partial.mcp_servers));
         }
@@ -2154,6 +2177,12 @@ function normalizeDefaults(value: PartialValues["defaults"]): Record<string, unk
         ...(value.service_tier === undefined || value.service_tier === "default"
             ? {}
             : { serviceTier: value.service_tier }),
+    };
+}
+
+function normalizeGemini(value: NonNullable<PartialValues["gemini"]>): Record<string, unknown> {
+    return {
+        ...(value.api_key === undefined ? {} : { apiKey: value.api_key }),
     };
 }
 
@@ -2553,6 +2582,9 @@ function inferProviderType(id: string, type: unknown): "bedrock" | "claude" | "c
 function withoutProjectMachineSettings(values: PartialValues): PartialValues {
     const {
         docker: _docker,
+        // A credential is this machine's, never a repository's: a checked-in project file must not
+        // choose which Gemini account this installation's tools bill against.
+        gemini: _gemini,
         // Observation is dropped along with the other machine settings, and for a sharper reason:
         // a checked-in project file that turns tracing on and names its own endpoint would send
         // this machine's traces wherever the repository asked.
@@ -2719,6 +2751,19 @@ function readFeatures(
             { additionalProperties: false },
         ),
     ) as PartialValues["features"];
+}
+
+function readGemini(
+    value: TomlValue | undefined,
+    unknown: (path: string) => void,
+): PartialValues["gemini"] {
+    return readTableValues(
+        value,
+        "gemini",
+        unknown,
+        ["api_key"],
+        partialValuesSchema.properties.gemini!,
+    ) as PartialValues["gemini"];
 }
 
 function readWorkspace(

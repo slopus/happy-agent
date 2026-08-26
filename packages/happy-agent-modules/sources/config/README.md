@@ -101,16 +101,17 @@ where the agent starts, because a scripted account has to reach every module tha
 ### The Gemini key
 
 Gemini is the one vendor Happy Agent reaches that is not an account a chat runs on: it answers over its own
-HTTP API rather than through a configured chat provider. So it has no `[providers.gemini]` entry, no
-TOML section of its own, and nothing was added to the configuration schema for it. `geminiApiKey` is
-a getter that reads `GEMINI_API_KEY` from the environment, trims it, and answers with nothing when
-it is missing, blank, or longer than any other configured string. It is read on each call, so a key
-exported after startup reaches the next request.
+HTTP API rather than through a configured chat provider. So it has no `[providers.gemini]` entry;
+instead the user `happy.toml` carries a small `[gemini]` table whose `api_key` is the key itself.
+`geminiApiKey` is a getter that answers with that configured key first, falls back to
+`GEMINI_API_KEY` from the environment, trims either, and answers with nothing when the result is
+missing, blank, or longer than any other configured string. The environment is read on each call,
+so a key exported after startup reaches the next request; the section is a machine setting, so a
+project `happy.toml` cannot set it.
 
 It lives here for the same reason the accounts do: credentials are configuration's, and the search
-and Gemini modules ask this module for the key rather than reading the environment behind its back.
-If a person ever wants to write the key down instead of exporting it, this getter is the one place
-that has to learn a second source.
+and Gemini modules ask this module for the key rather than reading the file or the environment
+behind its back.
 
 ## What else this module answers
 

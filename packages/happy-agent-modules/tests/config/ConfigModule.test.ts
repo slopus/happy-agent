@@ -248,6 +248,53 @@ describe("ConfigModule", () => {
         }
     });
 
+    it("prefers the configured Gemini key over the environment", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-gemini-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            ["[gemini]", 'api_key = "configured-gemini-key"'].join("\n"),
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"), {
+            environment: { GEMINI_API_KEY: "environment-gemini-key" },
+        });
+
+        expect(module.geminiApiKey).toBe("configured-gemini-key");
+        expect(module.configuration.provenance.gemini).toBe("global");
+    });
+
+    it("falls back to the GEMINI_API_KEY environment variable without a configured key", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-gemini-env-"));
+        temporaryDirectories.push(root);
+
+        const module = await ConfigModule.load(join(root, ".happy"), {
+            environment: { GEMINI_API_KEY: "environment-gemini-key" },
+        });
+
+        expect(module.geminiApiKey).toBe("environment-gemini-key");
+    });
+
+    it("ignores a Gemini key written in a project happy.toml", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-gemini-project-"));
+        temporaryDirectories.push(root);
+        await writeFile(
+            join(root, "happy.toml"),
+            ["[gemini]", 'api_key = "project-gemini-key"'].join("\n"),
+        );
+
+        const previousCwd = process.cwd();
+        process.chdir(root);
+        try {
+            const module = await ConfigModule.load(join(root, ".happy"));
+
+            expect(module.geminiApiKey).toBeUndefined();
+        } finally {
+            process.chdir(previousCwd);
+        }
+    });
+
     it("resolves the complete Happy Agent-shaped configuration into bounded camelCase values", () => {
         const parsed = parseHappyAgentConfigToml(
             [

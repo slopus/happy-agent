@@ -2,7 +2,7 @@
 
 Web search and page fetch, run by the module itself. There is no injected backend and no host
 boundary: the module owns the routing, the vendor call, and the fetch. Every model receives the
-same fixed base tool array, with Gemini web search added only when `GEMINI_API_KEY` is configured.
+same fixed base tool array, with Gemini web search added only when a Gemini API key is configured.
 The vendor names select which account the search runs on; they do not lift a provider's server tool
 into Agent Base.
 
@@ -41,7 +41,8 @@ The fixed base array matches Happy Agent:
 - **`grok_web_search`**
 - **`grok_x_search`**
 
-**`gemini_web_search`** is added to that array only when `GEMINI_API_KEY` resolves to a usable key.
+**`gemini_web_search`** is added to that array only when a Gemini API key resolves to a usable
+value, from `[gemini] api_key` in the user `happy.toml` or from `GEMINI_API_KEY`.
 It is absent when the key is missing or blank, so a model cannot select a tool that is guaranteed
 to fail authentication. The available tools are shared by Claude, Codex, Grok, Bedrock, and future
 providers. A vendor search spends one bounded call on that vendor's own search — Codex's
@@ -92,7 +93,7 @@ contrast, is prose and may be cut with an `[Answer truncated.]` marker to keep t
   use to turn a validated answer or fetch result into model-visible text, exposed so a host can
   render the same output outside a tool call. Both throw if given a value that fails its schema.
 - **`search.tools(ctx, scope)`** — returns the fixed base array above for every provider and adds
-  `gemini_web_search` when `GEMINI_API_KEY` is configured.
+  `gemini_web_search` when a Gemini API key is configured.
 
 None of these functions emit events or take listeners; every call resolves or rejects within the
 single search or fetch it performs.

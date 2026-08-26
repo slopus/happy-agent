@@ -17,6 +17,15 @@ may persist a scripted provider's compatibility protocol (for example, `gym` as 
 must not add the protocol's curated production models to the scripted provider after a restart.
 For every provider ID represented by scripted models, expose exactly those scripted routes.
 
+## Gemini has a config key without a provider entry
+
+Requiring `GEMINI_API_KEY` in the daemon environment was the only way to enable the Gemini media
+and search tools, which made the key awkward to keep with the rest of the machine's settings. The
+user `happy.toml` now accepts `[gemini] api_key`, and `ConfigModule.geminiApiKey` prefers that
+configured value over the environment variable. Gemini stays out of `[providers.*]` because it
+powers tools rather than chat models, and the section is a machine setting: a project `happy.toml`
+cannot set it, since a repository must not choose which account this installation bills against.
+
 ## MCP has dedicated global and workspace sources
 
 Combining MCP records into `happy.toml` made MCP look configured while provider and runtime wiring

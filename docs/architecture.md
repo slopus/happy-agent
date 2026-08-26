@@ -308,8 +308,8 @@ selection is still the user's or the caller's choice.
   per-provider work.
 - Collaboration tools (subagents, workflows, messaging) are selected the same
   way, in the vendor's shape.
-- Optional universal tools are additive: the Gemini tools when `GEMINI_API_KEY`
-  is set, and image generation behind a vendor-shaped surface.
+- Optional universal tools are additive: the Gemini tools when a Gemini API key
+  is configured, and image generation behind a vendor-shaped surface.
 
 Both entry points are routed from the same place. A model's tools are never
 assembled by branching on a provider key or a tool-name list elsewhere.
@@ -451,10 +451,6 @@ fixing production code, and only then add lower-level tests.
 Some of Happy Agent's stated direction is ahead of what ships today. Where that gap
 matters in practice, it is worth naming:
 
-- **Kimi Code.** A `kimi` provider using Moonshot's Chat Completions API is
-  described in some product material, but there is no Kimi provider: the provider
-  `type` union is `codex | claude | grok | bedrock`. Treat Kimi as intent, not
-  current behavior.
 - **Pi as a tool surface.** A Pi `bash` tool is sometimes described alongside the
   Codex, Claude, and Grok surfaces. The implemented vendor tool surfaces are
   Claude, Codex, and Grok; Pi appears as the TUI library

@@ -41,7 +41,7 @@ export async function geminiWebSearch(
     const apiKey = search.geminiApiKey;
     if (apiKey === undefined) {
         throw new Error(
-            "Gemini search needs a Gemini API key. Set GEMINI_API_KEY to use gemini_web_search.",
+            "Gemini search needs a Gemini API key. Set [gemini] api_key in the user happy.toml or GEMINI_API_KEY to use gemini_web_search.",
         );
     }
     const startedAt = performance.now();
