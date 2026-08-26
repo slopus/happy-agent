@@ -1,4 +1,5 @@
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createRootContext } from "@steve.kite/stdlib";
@@ -117,7 +118,7 @@ describe("the Gemini module's tools", () => {
         expect(result.description).toBe("A quiet mountain lake.");
         expect(await readFile(result.path)).toEqual(bytes);
         expect(requestBody(request)).toMatchObject({
-            input: "A quiet mountain lake",
+            input: [{ type: "text", text: "A quiet mountain lake" }],
             model: "gemini-3.1-flash-image",
             response_format: { aspect_ratio: "16:9", image_size: "2K", type: "image" },
         });
@@ -131,14 +132,104 @@ describe("the Gemini module's tools", () => {
         await rm(result.path, { force: true });
     });
 
-    it("refuses to publish an answer that is not a real PNG", async () => {
+    it("publishes a JPEG answer as a .jpg, since Gemini picks the encoding", async () => {
+        const bytes = await sharp({
+            create: { width: 8, height: 8, channels: 3, background: { r: 10, g: 90, b: 10 } },
+        })
+            .jpeg()
+            .toBuffer();
+        const { tool } = await machine(() =>
+            interaction({
+                type: "image",
+                mime_type: "image/jpeg",
+                data: bytes.toString("base64"),
+            }),
+        );
+
+        const result = await tool("gemini_imagegen").execute(ctx, { prompt: "A quiet lake" });
+
+        expect(result.path).toBe(
+            join(testConfig.configuration.paths.generatedPath, "geminitestcall.jpg"),
+        );
+        expect(result.media_type).toBe("image/jpeg");
+        expect(await readFile(result.path)).toEqual(bytes);
+        expect(tool("gemini_imagegen").toLLM(result)).toContainEqual({
+            type: "image",
+            mimeType: "image/jpeg",
+            data: result.image_base64,
+        });
+        await rm(result.path, { force: true });
+    });
+
+    it("sends reference images alongside the prompt and reports the model used", async () => {
+        const source = await png();
+        const directory = await mkdtemp(join(tmpdir(), "gemini-refs-"));
+        const referencePath = join(directory, "source.png");
+        await writeFile(referencePath, source);
+        const generated = await png();
+        const { request, tool } = await machine(() =>
+            interaction({
+                type: "image",
+                mime_type: "image/png",
+                data: generated.toString("base64"),
+            }),
+        );
+
+        const result = await tool("gemini_imagegen").execute(ctx, {
+            prompt: "Add a party hat",
+            model: "gemini-3-pro-image",
+            reference_image_paths: [referencePath],
+            aspect_ratio: "21:9",
+            image_size: "4K",
+            output_format: "image/png",
+        });
+
+        const body = requestBody(request);
+        expect(body.model).toBe("gemini-3-pro-image");
+        expect(body.response_format).toMatchObject({
+            aspect_ratio: "21:9",
+            image_size: "4K",
+            mime_type: "image/png",
+            type: "image",
+        });
+        const input = body.input as { type: string; mime_type?: string }[];
+        expect(input[0]).toMatchObject({ type: "text", text: "Add a party hat" });
+        expect(input[1]).toMatchObject({ type: "image", mime_type: "image/png" });
+        expect(result.model).toBe("gemini-3-pro-image");
+        await rm(directory, { force: true, recursive: true });
+        await rm(result.path, { force: true });
+    });
+
+    it("refuses a ratio or size the chosen model cannot produce, before spending a generation", async () => {
+        const { request, tool } = await machine();
+
+        // 1:4 is a Gemini 3.1 Flash Image ratio only.
+        await expect(
+            tool("gemini_imagegen").execute(ctx, {
+                prompt: "A quiet lake",
+                model: "gemini-3-pro-image",
+                aspect_ratio: "1:4",
+            }),
+        ).rejects.toThrow("does not support the 1:4 aspect ratio");
+        // Gemini 2.5 Flash Image generates one fixed size.
+        await expect(
+            tool("gemini_imagegen").execute(ctx, {
+                prompt: "A quiet lake",
+                model: "gemini-2.5-flash-image",
+                image_size: "4K",
+            }),
+        ).rejects.toThrow("generates one fixed image size");
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it("refuses to publish an answer that is not a real image", async () => {
         const { tool } = await machine(() =>
             interaction({ type: "image", mime_type: "image/png", data: "AQID" }),
         );
 
         await expect(
             tool("gemini_imagegen").execute(ctx, { prompt: "A quiet mountain lake" }),
-        ).rejects.toThrow("not a PNG image");
+        ).rejects.toThrow("not a PNG or JPEG image");
     });
 
     it("reports the exact action and boundary a reviewer decides on", async () => {
@@ -150,7 +241,16 @@ describe("the Gemini module's tools", () => {
                 ctx,
             ),
         ).toBe(
-            'sending "A \\"quiet\\"\\nlake" to Gemini image generation. Access: external Gemini API and local filesystem write',
+            'sending "A \\"quiet\\"\\nlake" to Gemini image generation. Access: external Gemini API',
+        );
+        // A generation built from local files discloses that it reads them.
+        expect(
+            tool("gemini_imagegen").describeAutoPermissionAction!(
+                { prompt: "A lake", reference_image_paths: ["a.png", "b.png"] },
+                ctx,
+            ),
+        ).toBe(
+            'sending "A lake" and 2 local image reference(s) to Gemini image generation. Access: external Gemini API and local filesystem read',
         );
         expect(
             tool("gemini_analyze_media").describeAutoPermissionAction!(
@@ -265,7 +365,19 @@ describe("the Gemini module's tools", () => {
     it("keeps work inside the workspace out of Full access, and everything else in it", async () => {
         const { tool } = await machine();
 
-        expect(tool("gemini_imagegen").shouldRunInFullAccessInAutoMode).toBeUndefined();
+        // A prompt alone reaches nothing local; reading reference files off this machine does.
+        expect(
+            await tool("gemini_imagegen").shouldRunInFullAccessInAutoMode!(
+                { prompt: "A lake" },
+                ctx,
+            ),
+        ).toBe(false);
+        expect(
+            await tool("gemini_imagegen").shouldRunInFullAccessInAutoMode!(
+                { prompt: "A lake", reference_image_paths: ["/etc/photo.png"] },
+                ctx,
+            ),
+        ).toBe(true);
         expect(
             await tool("gemini_analyze_media").shouldRunInFullAccessInAutoMode!(
                 { path: "/etc/hosts", prompt: "Describe this" },

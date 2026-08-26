@@ -31,11 +31,20 @@ product never overrides it.
 
 ## Tools
 
-- **`gemini_imagegen`** — a PNG from Gemini 3.1 Flash Image, published the same way
-  `codex_imagegen` publishes: proven to be a real PNG, written into the shared generated-files
-  folder under the tool call's name, and handed back to the model as both the path and the image
-  itself. `aspect_ratio` and `image_size` are optional; whatever Gemini wrote about the image comes
-  back as its description.
+- **`gemini_imagegen`** — an image from any of Gemini's three image models, published the same way
+  `codex_imagegen` publishes: decoded to prove it is a real image, written into the shared
+  generated-files folder under the tool call's name, and handed back to the model as both the path
+  and the image itself. Whatever Gemini wrote about the image comes back as its description.
+
+    `model` chooses between `gemini-3.1-flash-image` (Nano Banana 2, the default),
+    `gemini-3-pro-image` (Nano Banana Pro), and `gemini-2.5-flash-image` (Nano Banana).
+    `reference_image_paths` names local pictures the result is built from — editing, composition,
+    character consistency, or style. `aspect_ratio`, `image_size`, and `output_format` are optional,
+    and are checked against the chosen model's own published limits before a generation is spent:
+    the panoramic ratios and 0.5K belong to 3.1 Flash Image alone, and 2.5 Flash Image has one fixed
+    size. `GeminiImageModels.ts` is that catalog, hardcoded rather than discovered, because Rig never
+    asks a provider what it offers.
+
 - **`gemini_generate_music`** — an MP3 from Lyria 3, saved to `output_path`, which must end in
   `.mp3`. `mode` defaults to `clip` for a short preview; `song` generates a longer full track and
   may cost more. Lyrics and structure come back with the result when Gemini writes them.
@@ -48,8 +57,9 @@ interrupted call is reported rather than run a second time. All three require Au
 and always request Auto review, because they reach an external API outside the local sandbox. The
 approval text quotes the model's own prompt and path exactly, with terminal and bidi controls made
 visible. For the music and analysis tools, writing or reading outside the workspace, or writing a
-protected path, additionally runs the approved call in Full access; image generation writes only
-into the shared generated-files folder and needs no elevation.
+protected path, additionally runs the approved call in Full access. Image generation writes only
+into the shared generated-files folder, so it elevates only when it was given reference images to
+read off this machine.
 
 ## Files
 

@@ -3,6 +3,14 @@ import { readBoundedResponseText } from "./readBoundedResponseText.js";
 
 const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
+/**
+ * The Interactions API revision every request is pinned to.
+ *
+ * The API is in beta and Google's own examples send this, so a later revision that changes the
+ * request or response shape cannot silently break Rig's calls.
+ */
+const GEMINI_API_REVISION = "2026-05-20";
+
 export interface RequestGeminiInteractionOptions {
     apiKey: string;
     body: unknown;
@@ -28,6 +36,7 @@ export async function requestGeminiInteraction(
         const response = await (options.fetch ?? fetch)(GEMINI_INTERACTIONS_URL, {
             body: JSON.stringify(options.body),
             headers: {
+                "Api-Revision": GEMINI_API_REVISION,
                 "Content-Type": "application/json",
                 "x-goog-api-key": options.apiKey,
             },

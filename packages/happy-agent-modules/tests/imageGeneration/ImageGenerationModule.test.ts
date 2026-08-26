@@ -206,6 +206,25 @@ describe("ImageGenerationModule", () => {
         ).rejects.toThrow("not a PNG image");
     });
 
+    it("refuses a decodable image that is not the format this path publishes", async () => {
+        const jpeg = await sharp({
+            create: { width: 8, height: 8, channels: 3, background: { r: 40, g: 40, b: 200 } },
+        })
+            .jpeg()
+            .toBuffer();
+        responses = [imageResponse(jpeg.toString("base64"))];
+        const module = await moduleWith({ work: await codexAccount() });
+
+        await expect(
+            module.generate(
+                ctx,
+                AGENT_ID,
+                { prompt: "A small orange fox" },
+                { turnId: "call-9", preferredProviderId: "work" },
+            ),
+        ).rejects.toThrow("returned a JPEG image, but only PNG is accepted");
+    });
+
     it("says so when it was asked for more conversation images than it was shown", async () => {
         const module = await moduleWith({ work: await codexAccount() });
 

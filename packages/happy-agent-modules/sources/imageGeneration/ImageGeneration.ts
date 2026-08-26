@@ -3,12 +3,6 @@ import { Type, type Static } from "@sinclair/typebox";
 /** How many images one edit may be built from, in either selector. */
 export const MAX_EDIT_IMAGES = 5;
 
-/** The encoded request stays within what the image endpoints accept. */
-export const MAX_EDIT_IMAGES_ENCODED_BYTES = 48 * 1024 * 1024;
-
-/** The largest source image, and the largest aggregate of them, that an edit may be built from. */
-export const MAX_PROMPT_IMAGE_INPUT_BYTES = 32 * 1024 * 1024;
-
 /**
  * What both image surfaces accept.
  *

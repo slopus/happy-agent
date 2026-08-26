@@ -1,6 +1,6 @@
-import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../ImageGeneration.js";
-import { getImageProcessor } from "../../impl/images/getImageProcessor.js";
+import { getImageProcessor } from "./getImageProcessor.js";
 import { ImageProcessingError } from "./ImageProcessingError.js";
+import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "./referenceImageLimits.js";
 import {
     promptImageOutputDimensions,
     type PromptImageResizeLimits,

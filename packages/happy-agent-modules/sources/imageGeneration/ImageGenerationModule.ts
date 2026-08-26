@@ -16,7 +16,7 @@ import {
     type ImageGenerationArguments,
     type ImageGenerationResult,
 } from "./ImageGeneration.js";
-import { decodeAndValidatePng } from "../impl/images/decodeAndValidatePng.js";
+import { decodeAndValidateImage } from "../impl/images/decodeAndValidateImage.js";
 import { writeGeneratedImageFile } from "../impl/images/writeGeneratedImageFile.js";
 import { codexImageProviderIds, generateImageWithCodex } from "./impl/generateImageWithCodex.js";
 import {
@@ -109,7 +109,8 @@ export class ImageGenerationModule implements AgentModule {
             turnId: request.turnId,
             ...(request.signal === undefined ? {} : { signal: request.signal }),
         });
-        const bytes = await decodeAndValidatePng(generated.base64);
+        // The Codex images API answers in PNG, so anything else is a failed generation.
+        const { bytes } = await decodeAndValidateImage(generated.base64, ["png"]);
         const fileName = `${request.turnId.replaceAll(/[^A-Za-z0-9_-]/gu, "_")}.png`;
         const path = await writeGeneratedImageFile(
             this.#config.configuration.paths.generatedPath,

@@ -20,7 +20,7 @@ function requestBody(request: ReturnType<typeof vi.fn>): Record<string, unknown>
 }
 
 describe("Gemini media APIs", () => {
-    it("generates a configured PNG image through the Interactions API", async () => {
+    it("generates a configured image through the Interactions API", async () => {
         const request = vi.fn().mockResolvedValue(
             jsonResponse({
                 steps: [
@@ -28,7 +28,7 @@ describe("Gemini media APIs", () => {
                         type: "model_output",
                         content: [
                             { type: "text", text: "A moonlit harbor." },
-                            { type: "image", mime_type: "image/png", data: "AQID" },
+                            { type: "image", mime_type: "image/jpeg", data: "AQID" },
                         ],
                     },
                 ],
@@ -40,25 +40,30 @@ describe("Gemini media APIs", () => {
             aspectRatio: "16:9",
             fetch: request as unknown as typeof fetch,
             imageSize: "2K",
+            mimeType: "image/jpeg",
             prompt: "A moonlit harbor",
         });
 
         expect(result).toEqual({
             bytes: Buffer.from([1, 2, 3]),
-            mimeType: "image/png",
+            mimeType: "image/jpeg",
             text: "A moonlit harbor.",
         });
         expect(requestBody(request)).toMatchObject({
-            input: "A moonlit harbor",
+            input: [{ type: "text", text: "A moonlit harbor" }],
             model: "gemini-3.1-flash-image",
             response_format: {
                 aspect_ratio: "16:9",
                 image_size: "2K",
-                mime_type: "image/png",
+                mime_type: "image/jpeg",
                 type: "image",
             },
         });
-        expect(requestInit(request).headers).toMatchObject({ "x-goog-api-key": "secret-key" });
+        // The beta Interactions API is pinned to the revision Rig was written against.
+        expect(requestInit(request).headers).toMatchObject({
+            "Api-Revision": "2026-05-20",
+            "x-goog-api-key": "secret-key",
+        });
     });
 
     it("selects Lyria Clip or Pro and parses MP3 output with lyrics", async () => {
