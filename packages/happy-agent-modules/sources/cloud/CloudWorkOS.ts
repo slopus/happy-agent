@@ -82,7 +82,7 @@ const helloSchema = Type.Object(
         message: Type.Literal("hello"),
         userId: Type.String({ minLength: 1, maxLength: 256 }),
     },
-    { additionalProperties: false },
+    { additionalProperties: true },
 );
 
 const invalidProfileSchema = Type.Object(

@@ -18,6 +18,27 @@ afterEach(() => {
 });
 
 describe("CloudWorkOS", () => {
+    it("verifies the authenticated user when hello includes Cloud profile metadata", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    message: "hello",
+                    profile: {
+                        firstName: "Ada",
+                        lastName: "Lovelace",
+                        profilePictureUrl: null,
+                    },
+                    userId: "user-a",
+                }),
+            ),
+        );
+
+        await expect(
+            new CloudWorkOS("production").verify("access-token", "user-a"),
+        ).resolves.toBeUndefined();
+    });
+
     it("loads one version-consistent social snapshot and hydrates every public profile", async () => {
         const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
         const graceVersion = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";

@@ -21,6 +21,9 @@
 - Clear credentials only when WorkOS explicitly rejects refresh with `invalid_grant`. Happy Cloud's
   current `/v0/hello` maps verifier infrastructure failures to `401`, so any hello failure is
   unavailable rather than authoritative revocation.
+- `/v0/hello` may add account metadata such as the WorkOS profile. Verification projects only the
+  required `message` and `userId` fields and tolerates additive response fields so unrelated Cloud
+  enrichment cannot break an otherwise valid local login.
 - A successful hello naming a different user is distinct from an unavailable or rejected hello.
   It rejects a new login before credentials are stored; during refresh it still preserves the
   rotated token and connected snapshot while withholding the access token.
