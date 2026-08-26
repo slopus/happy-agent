@@ -81,14 +81,6 @@ import type {
 import type { GitStateResponse, WatchGitRequest, WatchGitResponse } from "./protocol/git.js";
 import type { HappyIntegrationResponse } from "./protocol/integrations.js";
 import type {
-    SharingIdentity,
-    SharingInvitationResponse,
-    SharingMutationRequest,
-    SharingRequestId,
-    SharingRequestSubmission,
-    SharingResponse,
-} from "./protocol/sharing.js";
-import type {
     MessageHistoryQuery,
     MessageHistoryResponse,
     SendMessageRequest,
@@ -562,105 +554,6 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/integrations/happy/re-pair",
-            signal: options.signal,
-        });
-    }
-
-    // Sharing
-
-    /** `GET /v0/sharing` — current contacts state, enrolled or not. */
-    async getSharing(options: RequestOptions = {}): Promise<SharingResponse> {
-        return await this.#json({ method: "GET", path: "v0/sharing", signal: options.signal });
-    }
-
-    /** `POST /v0/sharing/enroll` — opts in once; later calls are idempotent. */
-    async enrollSharing(
-        request: SharingMutationRequest = {},
-        options: RequestOptions = {},
-    ): Promise<SharingResponse> {
-        return await this.#json({
-            method: "POST",
-            path: "v0/sharing/enroll",
-            json: request,
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/sharing/invitations` — returns a sensitive five-minute capability. */
-    async createSharingInvitation(
-        options: RequestOptions = {},
-    ): Promise<SharingInvitationResponse> {
-        return await this.#json({
-            method: "POST",
-            path: "v0/sharing/invitations",
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/sharing/requests` — redeems another person's invitation. */
-    async submitSharingRequest(
-        request: SharingRequestSubmission,
-        options: RequestOptions = {},
-    ): Promise<SharingResponse> {
-        return await this.#json({
-            method: "POST",
-            path: "v0/sharing/requests",
-            json: request,
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/sharing/requests/:requestId/accept` — makes the peer a contact. */
-    async acceptSharingRequest(
-        requestId: SharingRequestId,
-        request: SharingMutationRequest = {},
-        options: RequestOptions = {},
-    ): Promise<SharingResponse> {
-        return await this.#json({
-            method: "POST",
-            path: `v0/sharing/requests/${encodeURIComponent(requestId)}/accept`,
-            json: request,
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/sharing/requests/:requestId/reject` — declines the pending request. */
-    async rejectSharingRequest(
-        requestId: SharingRequestId,
-        request: SharingMutationRequest = {},
-        options: RequestOptions = {},
-    ): Promise<SharingResponse> {
-        return await this.#json({
-            method: "POST",
-            path: `v0/sharing/requests/${encodeURIComponent(requestId)}/reject`,
-            json: request,
-            signal: options.signal,
-        });
-    }
-
-    /** `DELETE /v0/sharing/contacts/:identity` — ends the relationship on both sides. */
-    async removeSharingContact(
-        identity: SharingIdentity,
-        request: SharingMutationRequest = {},
-        options: RequestOptions = {},
-    ): Promise<SharingResponse> {
-        return await this.#json({
-            method: "DELETE",
-            path: `v0/sharing/contacts/${encodeURIComponent(identity)}`,
-            json: request,
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/sharing/reset` — replaces the identity and clears every relationship. */
-    async resetSharing(
-        request: SharingMutationRequest = {},
-        options: RequestOptions = {},
-    ): Promise<SharingResponse> {
-        return await this.#json({
-            method: "POST",
-            path: "v0/sharing/reset",
-            json: request,
             signal: options.signal,
         });
     }

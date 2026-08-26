@@ -226,13 +226,6 @@ export interface HappyIntegrationUpdatedPayload {
     integration: HappyIntegration;
 }
 
-/** Compact sharing invalidation; clients refetch only when this version is newer. */
-export const sharingUpdatedPayloadSchema = Type.Object({
-    mutationId: Type.Optional(mutationIdSchema),
-    version: resourceVersionSchema,
-});
-export type SharingUpdatedPayload = Static<typeof sharingUpdatedPayloadSchema>;
-
 /** One event on the journal. */
 export interface EventEnvelope<TType extends string, TPayload> {
     /** This event's place in the journal; never a resource identity. */
@@ -277,8 +270,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"cloud.profile.updated", CloudProfileUpdatedPayload>
     | EventEnvelope<"cloud.social.updated", CloudSocialUpdatedPayload>
-    | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>
-    | EventEnvelope<"sharing.updated", SharingUpdatedPayload>;
+    | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>;
 
 /** The name of an event this client build knows. */
 export type HappyAgentEventType = HappyAgentEvent["type"];

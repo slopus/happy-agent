@@ -16,7 +16,7 @@ import {
  * A daemon reports its own number through `GET /v0/health`; a client that reads
  * a different one refuses to talk to that daemon.
  */
-export const HAPPY_AGENT_PROTOCOL_VERSION = 22;
+export const HAPPY_AGENT_PROTOCOL_VERSION = 23;
 
 /** `GET /` — a greeting confirming the caller reached a Happy agent. */
 export const greetingResponseSchema = Type.Object({ text: Type.String() });

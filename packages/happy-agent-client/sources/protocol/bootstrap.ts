@@ -12,7 +12,6 @@ import type { UserMessage } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
 import { profileSchema } from "./profile.js";
 import { projectSchema } from "./projects.js";
-import { sharingSchema } from "./sharing.js";
 import type { AgentUsageResponse } from "./usage.js";
 import { workspaceSchema } from "./workspaces.js";
 
@@ -60,8 +59,6 @@ export const desktopBootstrapResponseSchema = Type.Object({
     profile: profileSchema,
     /** Every active project, in catalog order. */
     projects: Type.Array(projectSchema),
-    /** Current sharing state. Absent on older compatible protocol-22 daemons. */
-    sharing: Type.Optional(sharingSchema),
     /** Each project's root workspace and the workspaces directly under it. */
     workspaces: Type.Array(workspaceSchema),
 });

@@ -12,11 +12,11 @@ const readyHealth = {
     healthy: true,
     ready: true,
     status: "ready",
-    version: { daemon: "1.2.3", protocol: 22 },
+    version: { daemon: "1.2.3", protocol: 23 },
 } as const;
 
 describe("healthResponseSchema", () => {
-    it("accepts protocol-22 health responses without shutdown progress", () => {
+    it("accepts protocol-23 health responses without shutdown progress", () => {
         expect(Value.Check(healthResponseSchema, readyHealth)).toBe(true);
     });
 
