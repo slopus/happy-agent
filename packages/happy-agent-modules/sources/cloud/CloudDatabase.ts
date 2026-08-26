@@ -1,5 +1,6 @@
 import {
     cloudEnvironmentSchema,
+    cloudUsernameSchema,
     type CloudEnvironment,
     type CloudUser,
 } from "@slopus/happy-agent-client";
@@ -12,6 +13,8 @@ import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
+
+import { profileVersionSchema, type ProfileVersion } from "../profile/index.js";
 
 import { createCloudVersion } from "./createCloudVersion.js";
 
@@ -41,8 +44,18 @@ const storedUserSchema = Type.Object(
     exact,
 );
 
+export const cloudEnrollmentSchema = Type.Object(
+    {
+        profileVersion: Type.Union([Type.Null(), profileVersionSchema]),
+        username: cloudUsernameSchema,
+    },
+    exact,
+);
+export type CloudEnrollment = Static<typeof cloudEnrollmentSchema>;
+
 const cloudSessionSchema = Type.Object(
     {
+        enrollment: Type.Optional(Type.Union([Type.Null(), cloudEnrollmentSchema])),
         environment: cloudEnvironmentSchema,
         refreshToken: Type.String({ minLength: 1, maxLength: 32_768 }),
         user: storedUserSchema,
@@ -197,6 +210,29 @@ export function createCloudDatabase() {
                 return state;
             });
         },
+
+        /** Changes private enrollment state without advancing the public Cloud snapshot. */
+        async updateEnrollment(
+            ctx: Context,
+            expectedUserId: string,
+            enrollment: CloudEnrollment | null,
+        ): Promise<CloudStoredState> {
+            return await ctx.inTx(async (txCtx) => {
+                const current = await read(txCtx);
+                if (current?.session === null || current?.session === undefined) {
+                    throw new Error("The Cloud session changed while enrollment was being stored.");
+                }
+                if (current.session.user.id !== expectedUserId) {
+                    throw new Error("The Cloud account changed while enrollment was being stored.");
+                }
+                const state: CloudStoredState = {
+                    ...current,
+                    session: { ...current.session, enrollment },
+                };
+                await write(txCtx, state);
+                return state;
+            });
+        },
     };
 }
 
@@ -206,12 +242,24 @@ export function cloudSession(
     environment: CloudEnvironment,
     refreshToken: string,
     user: CloudUser,
+    enrollment: CloudEnrollment | null = null,
 ): CloudSession {
-    const session = { environment, refreshToken, user };
+    const session = { enrollment, environment, refreshToken, user };
     if (!Value.Check(cloudSessionSchema, session)) {
         throw new Error("WorkOS returned invalid Cloud session data.");
     }
     return structuredClone(session) as CloudSession;
+}
+
+export function cloudEnrollment(
+    username: string,
+    profileVersion: ProfileVersion | null,
+): CloudEnrollment {
+    const enrollment = { profileVersion, username };
+    if (!Value.Check(cloudEnrollmentSchema, enrollment)) {
+        throw new Error("The Cloud enrollment state is invalid.");
+    }
+    return structuredClone(enrollment) as CloudEnrollment;
 }
 
 async function write(ctx: Context, state: CloudStoredState): Promise<void> {

@@ -24,6 +24,7 @@ import {
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
+import { ProfileModule } from "../../sources/profile/index.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -151,8 +152,7 @@ describe("Cloud HTTP API", () => {
             profile: { firstName: null, username: null },
         });
         await expect(
-            fixture.client.updateCloudProfile({
-                firstName: "Ada",
+            fixture.client.enrollCloudProfile({
                 mutationId: "cloud-profile-1",
                 username: "ada",
             }),
@@ -234,17 +234,17 @@ describe("Cloud HTTP API", () => {
         const fixture = await apiFixture(connected);
 
         const error = await fixture.client
-            .updateCloudProfile({ firstName: "Ada", username: "UPPERCASE" })
+            .enrollCloudProfile({ username: "UPPERCASE" })
             .catch((caught: unknown) => caught);
 
         expect(error).toMatchObject({ code: "invalid_request", status: 400 });
-        expect(fixture.cloud.updateProfile).not.toHaveBeenCalled();
+        expect(fixture.cloud.enrollProfile).not.toHaveBeenCalled();
     });
 
     it("returns the connected snapshot when a Cloud username is unavailable", async () => {
         const fixture = await apiFixture(connected);
         const before = fixture.api.cursor();
-        fixture.cloud.updateProfile.mockRejectedValueOnce(
+        fixture.cloud.enrollProfile.mockRejectedValueOnce(
             new CloudOperationError(
                 409,
                 "conflict",
@@ -254,8 +254,7 @@ describe("Cloud HTTP API", () => {
         );
 
         const error = await fixture.client
-            .updateCloudProfile({
-                firstName: "Ada",
+            .enrollCloudProfile({
                 mutationId: "cloud-profile-conflict",
                 username: "taken_name",
             })
@@ -314,19 +313,18 @@ describe("Cloud HTTP API", () => {
         });
         vi.mocked(fetch)
             .mockResolvedValueOnce(Response.json({ message: "hello", userId: user.id }))
-            .mockResolvedValueOnce(
-                Response.json({ firstName: "Ada", lastName: "Lovelace", username: "ada" }),
-            );
+            .mockResolvedValueOnce(Response.json({ firstName: "Ada Lovelace", username: "ada" }));
         await expect(
-            fixture.client.updateCloudProfile({
-                firstName: "Ada",
-                lastName: "Lovelace",
+            fixture.client.enrollCloudProfile({
                 mutationId: "cloud-real-profile",
                 username: "ada",
             }),
         ).resolves.toEqual({
-            profile: { firstName: "Ada", lastName: "Lovelace", username: "ada" },
+            profile: { firstName: "Ada Lovelace", username: "ada" },
         });
+        expect(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body).toBe(
+            JSON.stringify({ firstName: "Ada Lovelace", username: "ada" }),
+        );
         expect((await createCloudDatabase().read(fixture.context))?.session?.refreshToken).toBe(
             "refresh-d",
         );
@@ -394,7 +392,7 @@ async function apiFixture(initial: Cloud = disconnected) {
             return authorizing;
         }),
         status: vi.fn(() => current),
-        updateProfile: vi.fn(async (ctx: Context) => {
+        enrollProfile: vi.fn(async (ctx: Context) => {
             profileUpdated?.(ctx);
             return { profile: { firstName: "Ada", username: "ada" } };
         }),
@@ -433,9 +431,11 @@ async function apiFixture(initial: Cloud = disconnected) {
 async function actualCloudApiFixture() {
     const directory = await mkdtemp(join(tmpdir(), "happy-cloud-api-real-"));
     const durableFunctions = new DurableFunctionsModule();
-    const cloud = new CloudModule(durableFunctions);
+    const profile = new ProfileModule();
+    profile.open("test-instance");
+    const cloud = new CloudModule(durableFunctions, profile);
     const database = moduleDatabase(
-        [...cloud.migrations, ...durableFunctions.migrations],
+        [...cloud.migrations, ...profile.migrations, ...durableFunctions.migrations],
         "cloud-api-real",
     );
     ensureAgentDatabaseConnection(database.database);
@@ -443,6 +443,8 @@ async function actualCloudApiFixture() {
     await resolveModuleHooks(database.context, cloud);
     const durableHooks = await resolveModuleHooks(database.context, durableFunctions);
     await durableHooks.afterStart?.(database.context, {} as never);
+    const local = await profile.ensure(database.context);
+    await profile.update(database.context, local.id, { name: "Ada Lovelace" });
     const subscriptions = new Proxy(
         {},
         {

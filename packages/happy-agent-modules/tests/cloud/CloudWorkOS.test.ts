@@ -39,7 +39,7 @@ describe("CloudWorkOS", () => {
         expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-token");
     });
 
-    it("updates a profile without forwarding the local mutation ID", async () => {
+    it("updates a profile with the local display name and Cloud username", async () => {
         const request = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) =>
             Response.json({
                 firstName: "Ada",
@@ -52,7 +52,6 @@ describe("CloudWorkOS", () => {
         await expect(
             new CloudWorkOS("production").updateProfile("access-token", {
                 firstName: "Ada",
-                mutationId: "local-only",
                 username: "ada_next",
             }),
         ).resolves.toEqual({ firstName: "Ada", username: "ada_next" });

@@ -156,6 +156,7 @@ import {
     documentBodySchema,
     draftBodySchema,
     emptyMutationBodySchema,
+    enrollCloudProfileRequestSchema,
     gitWatchBodySchema,
     invokeSlashCommandRequestSchema,
     messageSendBodySchema,
@@ -170,7 +171,6 @@ import {
     startCloudAuthorizationRequestSchema,
     terminalCreateBodySchema,
     terminalResizeBodySchema,
-    updateCloudProfileRequestSchema,
     workspaceCreateBodySchema,
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
@@ -700,12 +700,12 @@ export class ApiModule implements AgentModule {
             if (request.method === "PUT" && url.pathname === "/v0/cloud/profile") {
                 const body = await bodyAs(
                     request,
-                    updateCloudProfileRequestSchema,
-                    "Cloud profile",
+                    enrollCloudProfileRequestSchema,
+                    "Cloud enrollment",
                     8 * 1_024,
                 );
                 const result = await this.#withMutationId(body.mutationId, async () => {
-                    return await this.#cloudOperation(() => this.#cloud.updateProfile(ctx, body));
+                    return await this.#cloudOperation(() => this.#cloud.enrollProfile(ctx, body));
                 });
                 sendJson(response, 200, result);
                 return;

@@ -107,6 +107,11 @@ describe("Happy Cloud API", () => {
         "returns stable disconnected failures without events and keeps the client usable",
         async () => {
             const gym = await start();
+            const initialProfile = await gym.client.getProfile();
+            await gym.client.updateProfile(
+                { name: "Ada" },
+                { ifMatch: initialProfile.profile.version },
+            );
             const baseline = (await gym.client.getEvents({ limit: 1 })).latestCursor;
 
             await expect(
@@ -122,14 +127,12 @@ describe("Happy Cloud API", () => {
                 code: "cloud_not_authenticated",
                 status: 409,
             });
-            await expect(
-                gym.client.updateCloudProfile({ firstName: "Ada", username: "ada" }),
-            ).rejects.toMatchObject({
+            await expect(gym.client.enrollCloudProfile({ username: "ada" })).rejects.toMatchObject({
                 code: "cloud_not_authenticated",
                 status: 409,
             });
             await expect(
-                gym.client.updateCloudProfile({ firstName: "Ada", username: "UPPERCASE" }),
+                gym.client.enrollCloudProfile({ username: "UPPERCASE" }),
             ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
             await expect(
                 gym.client.startCloudAuthorization({

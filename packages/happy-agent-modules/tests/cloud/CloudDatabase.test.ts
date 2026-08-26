@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+    cloudEnrollment,
     cloudMigrations,
     cloudSession,
     createCloudDatabase,
@@ -70,6 +71,29 @@ describe("Cloud storage", () => {
         await expect(
             store.rotateRefreshToken(database.context, "refresh-a", "refresh-c"),
         ).rejects.toThrow("changed while it was refreshing");
+    });
+
+    it("stores enrollment beside the connected account without changing the public version", async () => {
+        const { database, store } = await fixture("cloud-storage-enrollment");
+        const connected = await store.replace(database.context, {
+            error: null,
+            pending: false,
+            session: cloudSession("production", "refresh-a", user),
+        });
+        const profileVersion = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+
+        const enrolled = await store.updateEnrollment(
+            database.context,
+            user.id,
+            cloudEnrollment("ada", profileVersion),
+        );
+
+        expect(enrolled.version).toBe(connected.version);
+        expect(enrolled.updatedAt).toBe(connected.updatedAt);
+        expect(enrolled.session?.enrollment).toEqual({ profileVersion, username: "ada" });
+        await expect(
+            store.updateEnrollment(database.context, "another-user", null),
+        ).rejects.toThrow("account changed");
     });
 
     it("rejects malformed durable state", async () => {

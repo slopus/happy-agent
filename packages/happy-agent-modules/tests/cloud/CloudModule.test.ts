@@ -15,6 +15,7 @@ import {
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
+import { ProfileModule } from "../../sources/profile/index.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -58,6 +59,7 @@ const databases: ModuleDatabase[] = [];
 const modules: Array<{
     readonly cloud: CloudModule;
     readonly durableFunctions: DurableFunctionsModule;
+    readonly profile: ProfileModule;
 }> = [];
 let authorizationNumber = 0;
 
@@ -108,9 +110,14 @@ afterEach(async () => {
 
 async function fixture(name: string, logs?: CloudLogRecord[]) {
     const durableFunctions = new DurableFunctionsModule();
-    const module = new CloudModule(durableFunctions);
-    modules.push({ cloud: module, durableFunctions });
-    const database = moduleDatabase([...module.migrations, ...durableFunctions.migrations], name);
+    const profile = new ProfileModule();
+    profile.open("test-instance");
+    const module = new CloudModule(durableFunctions, profile);
+    modules.push({ cloud: module, durableFunctions, profile });
+    const database = moduleDatabase(
+        [...module.migrations, ...profile.migrations, ...durableFunctions.migrations],
+        name,
+    );
     ensureAgentDatabaseConnection(database.database);
     databases.push(database);
     await database.ready;
@@ -119,7 +126,9 @@ async function fixture(name: string, logs?: CloudLogRecord[]) {
     await resolveModuleHooks(ctx, module);
     const durableHooks = await resolveModuleHooks(ctx, durableFunctions);
     await durableHooks.afterStart?.(ctx, {} as never);
-    return { database, durableFunctions, module };
+    const local = await profile.ensure(ctx);
+    await profile.update(ctx, local.id, { name: "Ada" });
+    return { database, durableFunctions, module, profile };
 }
 
 async function pendingDurableCallCount(database: ModuleDatabase): Promise<number> {
@@ -207,8 +216,7 @@ describe("CloudModule", () => {
             user: { ...user, firstName: "Changed upstream" },
         });
         await expect(
-            module.updateProfile(database.context, {
-                firstName: "Ada",
+            module.enrollProfile(database.context, {
                 mutationId: "profile-update",
                 username: "ada_next",
             }),
@@ -226,17 +234,121 @@ describe("CloudModule", () => {
         expect(updates).toEqual(["cloud", "profile"]);
     });
 
-    it("rejects invalid direct profile input before refreshing or contacting Cloud", async () => {
+    it("requires a compatible local profile name before contacting Cloud enrollment", async () => {
+        const { database, module, profile } = await fixture("cloud-module-profile-name-required");
+        const local = await profile.get(database.context);
+        if (local === undefined) throw new Error("Expected a local profile.");
+        await profile.update(database.context, local.id, { name: null });
+        await connect(module, database);
+        workos.refresh.mockClear();
+        vi.mocked(fetch).mockClear();
+
+        await expect(
+            module.enrollProfile(database.context, { username: "ada" }),
+        ).rejects.toMatchObject({ code: "conflict", status: 409 });
+        expect(workos.refresh).not.toHaveBeenCalled();
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("durably synchronizes later local profile names while preserving the Cloud username", async () => {
+        const { database, module, profile } = await fixture("cloud-module-profile-sync");
+        let online = { firstName: "Ada", username: "ada" };
+        const profileWrites: Array<Record<string, unknown>> = [];
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            if (init?.method === "PUT") {
+                const body = JSON.parse(String(init.body)) as {
+                    firstName: string;
+                    username: string;
+                };
+                profileWrites.push(body);
+                online = body;
+            }
+            return Response.json(online);
+        });
+        await connect(module, database);
+        await module.enrollProfile(database.context, { username: "ada" });
+        const local = await profile.get(database.context);
+        if (local === undefined) throw new Error("Expected a local profile.");
+
+        const changed = await profile.update(database.context, local.id, { name: "Grace Hopper" });
+        if (changed === undefined) throw new Error("Expected the profile update to succeed.");
+
+        await vi.waitFor(async () => {
+            expect(
+                (await createCloudDatabase().read(database.context))?.session?.enrollment,
+            ).toEqual({ profileVersion: changed.version, username: "ada" });
+        });
+        expect(online).toEqual({ firstName: "Grace Hopper", username: "ada" });
+        expect(profileWrites).toEqual([
+            { firstName: "Ada", username: "ada" },
+            { firstName: "Grace Hopper", username: "ada" },
+        ]);
+    });
+
+    it("reconciles the online enrollment on restart before syncing the local profile back", async () => {
+        const { database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-profile-reconcile",
+        );
+        let online: { firstName: string; lastName?: string; username: string } = {
+            firstName: "Ada",
+            username: "ada",
+        };
+        const profileWrites: Array<Record<string, unknown>> = [];
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            if (init?.method === "PUT") {
+                const body = JSON.parse(String(init.body)) as {
+                    firstName: string;
+                    username: string;
+                };
+                profileWrites.push(body);
+                online = body;
+            }
+            return Response.json(online);
+        });
+        await connect(module, database);
+        await module.enrollProfile(database.context, { username: "ada" });
+        await module.stop();
+        durableFunctions.stop();
+        online = { firstName: "Remote name", lastName: "Remote surname", username: "ada_online" };
+
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
+        const local = await profile.get(database.context);
+        if (local === undefined) throw new Error("Expected a local profile.");
+
+        await vi.waitFor(async () => {
+            expect(
+                (await createCloudDatabase().read(database.context))?.session?.enrollment,
+            ).toEqual({ profileVersion: local.version, username: "ada_online" });
+        });
+        expect(online).toEqual({ firstName: "Ada", username: "ada_online" });
+        expect(profileWrites.at(-1)).toEqual({ firstName: "Ada", username: "ada_online" });
+    });
+
+    it("rejects an invalid enrollment username before refreshing or contacting Cloud", async () => {
         const { database, module } = await fixture("cloud-module-profile-validation");
         await connect(module, database);
         workos.refresh.mockClear();
         vi.mocked(fetch).mockClear();
 
         await expect(
-            module.updateProfile(database.context, {
-                firstName: "Ada",
-                username: "UPPERCASE",
-            }),
+            module.enrollProfile(database.context, { username: "UPPERCASE" }),
         ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
         expect(workos.refresh).not.toHaveBeenCalled();
         expect(fetch).not.toHaveBeenCalled();
@@ -262,7 +374,7 @@ describe("CloudModule", () => {
         });
 
         await expect(
-            module.updateProfile(database.context, { firstName: "Ada", username: "taken_name" }),
+            module.enrollProfile(database.context, { username: "taken_name" }),
         ).rejects.toMatchObject({
             cloud: { status: "connected", user },
             code: "conflict",
@@ -293,10 +405,7 @@ describe("CloudModule", () => {
             return Response.json({ firstName: "Ada", username: "ada" });
         });
 
-        const updating = module.updateProfile(database.context, {
-            firstName: "Ada",
-            username: "ada",
-        });
+        const updating = module.enrollProfile(database.context, { username: "ada" });
         await vi.waitFor(() => expect(profileStarted).toBe(true));
         const disconnecting = module.disconnect(database.context);
         releaseProfile();
@@ -328,7 +437,7 @@ describe("CloudModule", () => {
         });
 
         await expect(
-            module.updateProfile(database.context, { firstName: "Ada", username: "ada" }),
+            module.enrollProfile(database.context, { username: "ada" }),
         ).rejects.toMatchObject({
             cloud: { status: "connected", user },
             code: "cloud_unavailable",
@@ -718,8 +827,10 @@ describe("CloudModule", () => {
         durableFunctions.stop();
 
         const restartedDurableFunctions = new DurableFunctionsModule();
-        const restarted = new CloudModule(restartedDurableFunctions);
-        modules.push({ cloud: restarted, durableFunctions: restartedDurableFunctions });
+        const profile = new ProfileModule();
+        profile.open("test-instance");
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({ cloud: restarted, durableFunctions: restartedDurableFunctions, profile });
         await resolveModuleHooks(database.context, restarted);
         const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
         await durableHooks.afterStart?.(database.context, {} as never);

@@ -1,10 +1,9 @@
 import {
     cloudEnvironmentSchema,
     cloudProfileSchema,
-    updateCloudProfileRequestSchema,
+    cloudUsernameSchema,
     type CloudEnvironment,
     type CloudProfile,
-    type UpdateCloudProfileRequest,
 } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -83,6 +82,19 @@ const usernameUnavailableSchema = Type.Object(
     { error: Type.Literal("username_unavailable") },
     { additionalProperties: false },
 );
+
+const cloudProfileUpdateSchema = Type.Object(
+    {
+        firstName: Type.String({
+            minLength: 1,
+            maxLength: 64,
+            pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        }),
+        username: cloudUsernameSchema,
+    },
+    { additionalProperties: false },
+);
+type CloudProfileUpdate = Static<typeof cloudProfileUpdateSchema>;
 
 const workOSParseErrorSchema = Type.Object(
     {
@@ -236,11 +248,8 @@ export class CloudWorkOS {
         return cloudProfile(result.body);
     }
 
-    async updateProfile(
-        accessToken: string,
-        request: UpdateCloudProfileRequest,
-    ): Promise<CloudProfile> {
-        if (!Value.Check(updateCloudProfileRequestSchema, request)) {
+    async updateProfile(accessToken: string, request: CloudProfileUpdate): Promise<CloudProfile> {
+        if (!Value.Check(cloudProfileUpdateSchema, request)) {
             throw new CloudProfileRejectedError();
         }
         const result = await this.#request(
@@ -249,7 +258,6 @@ export class CloudWorkOS {
             "PUT",
             {
                 firstName: request.firstName,
-                ...(request.lastName === undefined ? {} : { lastName: request.lastName }),
                 username: request.username,
             },
             [400, 409],

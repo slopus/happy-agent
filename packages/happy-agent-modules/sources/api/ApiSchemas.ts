@@ -5,9 +5,9 @@ import { clientMetadataSchema } from "@slopus/happy-agent-client";
 export {
     cloudMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
+    enrollCloudProfileRequestSchema,
     invokeSlashCommandRequestSchema,
     startCloudAuthorizationRequestSchema,
-    updateCloudProfileRequestSchema,
 } from "@slopus/happy-agent-client";
 
 import { createTerminalInputSchema, resizeTerminalInputSchema } from "../terminals/index.js";

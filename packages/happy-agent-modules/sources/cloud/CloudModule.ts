@@ -11,10 +11,10 @@ import type {
     CloudProfileResponse,
     CloudUser,
     CompleteCloudAuthorizationRequest,
+    EnrollCloudProfileRequest,
     StartCloudAuthorizationRequest,
-    UpdateCloudProfileRequest,
 } from "@slopus/happy-agent-client";
-import { updateCloudProfileRequestSchema } from "@slopus/happy-agent-client";
+import { enrollCloudProfileRequestSchema } from "@slopus/happy-agent-client";
 import {
     agentDatabase,
     withAgentDatabase,
@@ -30,15 +30,19 @@ import {
     type AsyncLock,
     type Context,
 } from "@steve.kite/stdlib";
+import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { ProfileModule, type Profile, type ProfileUnsubscribe } from "../profile/index.js";
 
 import {
     cloudMigrations,
+    cloudEnrollment,
     cloudSession,
     createCloudDatabase,
+    type CloudEnrollment,
     type CloudSession,
     type CloudStoredState,
     type CloudStoredValue,
@@ -47,9 +51,14 @@ import {
     CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
     CLOUD_AUTHORIZATION_EXPIRY_OPERATION,
     CLOUD_AUTHORIZATION_LOCK,
+    CLOUD_PROFILE_SYNC_FUNCTION,
+    CLOUD_PROFILE_SYNC_LOCK,
     cloudAuthorizationExpiryArgumentsSchema,
     cloudAuthorizationExpiryResultSchema,
+    cloudProfileSyncArgumentsSchema,
+    cloudProfileSyncResultSchema,
     type CloudAuthorizationExpiryArguments,
+    type CloudProfileSyncArguments,
 } from "./CloudDurableFunctions.js";
 import {
     CloudCredentialsRejectedError,
@@ -64,6 +73,12 @@ import { createCloudVersion } from "./createCloudVersion.js";
 
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1_000;
 const AUTHORIZATION_EXPIRY_RETRY_MS = 5_000;
+const PROFILE_SYNC_RETRY_MS = 5_000;
+const cloudProfileNameSchema = Type.String({
+    minLength: 1,
+    maxLength: 64,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+});
 
 interface CloudAttempt {
     readonly codeVerifier: string;
@@ -128,6 +143,8 @@ export class CloudModule implements AgentModule {
 
     readonly #database = createCloudDatabase();
     readonly #durableFunctions: DurableFunctionsModule;
+    readonly #profile: ProfileModule;
+    readonly #profileUnsubscribe: ProfileUnsubscribe;
     readonly #listeners = new Set<CloudUpdatedListener>();
     readonly #profileListeners = new Set<CloudProfileUpdatedListener>();
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
@@ -137,8 +154,9 @@ export class CloudModule implements AgentModule {
     #context: Context | undefined;
     #stopping = false;
 
-    constructor(durableFunctions: DurableFunctionsModule) {
+    constructor(durableFunctions: DurableFunctionsModule, profile: ProfileModule) {
         this.#durableFunctions = durableFunctions;
+        this.#profile = profile;
         const updatedAt = Date.now();
         this.#cloud = freezeCloud({
             authorization: null,
@@ -158,6 +176,18 @@ export class CloudModule implements AgentModule {
                 return null;
             },
         });
+        durableFunctions.register({
+            name: CLOUD_PROFILE_SYNC_FUNCTION,
+            argumentsSchema: cloudProfileSyncArgumentsSchema,
+            resultSchema: cloudProfileSyncResultSchema,
+            executor: async (ctx, call) => {
+                await this.#executeProfileSync(ctx, call.arguments);
+                return null;
+            },
+        });
+        this.#profileUnsubscribe = profile.onEvent(async (ctx, event) => {
+            await this.#scheduleChangedProfileSync(ctx, event.data.version);
+        });
     }
 
     readonly beforeStart = async (
@@ -175,6 +205,7 @@ export class CloudModule implements AgentModule {
     };
 
     async stop(): Promise<void> {
+        this.#profileUnsubscribe();
         const ctx = this.#context;
         if (ctx === undefined) {
             this.#stopping = true;
@@ -446,22 +477,31 @@ export class CloudModule implements AgentModule {
         });
     }
 
-    async updateProfile(
+    async enrollProfile(
         _ctx: Context,
-        request: UpdateCloudProfileRequest,
+        request: EnrollCloudProfileRequest,
     ): Promise<CloudProfileResponse> {
         const ctx = this.#ownedContext();
         return await this.#lock.runInLock(ctx, async () => {
             this.#assertRunning();
-            if (!Value.Check(updateCloudProfileRequestSchema, request)) {
+            if (!Value.Check(enrollCloudProfileRequestSchema, request)) {
                 throw this.#error(400, "invalid_request", "The Cloud profile is invalid.");
+            }
+            const localProfile = await this.#profile.get(ctx);
+            const name = localProfileName(localProfile);
+            if (localProfile === undefined || name === undefined) {
+                throw this.#error(
+                    409,
+                    "conflict",
+                    "Set a compatible Happy Agent profile name before enrolling in Cloud.",
+                );
             }
             const minted = await this.#mintInLock(ctx, false);
             let profile: CloudProfile;
             try {
                 profile = await this.#client(minted.cloud.environment).updateProfile(
                     minted.accessToken,
-                    request,
+                    { firstName: name, username: request.username },
                 );
             } catch (error: unknown) {
                 logCloudFailure(
@@ -490,7 +530,18 @@ export class CloudModule implements AgentModule {
                 }
                 throw error;
             }
-            await this.#publishUserChangeAfterProfile(ctx, minted);
+            if (profile.username === null) {
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "The Cloud profile is temporarily unavailable.",
+                );
+            }
+            await this.#persistSessionAfterProfile(
+                ctx,
+                minted,
+                cloudEnrollment(profile.username, localProfile.version),
+            );
             for (const listener of this.#profileListeners) listener(ctx);
             return { profile };
         });
@@ -585,21 +636,164 @@ export class CloudModule implements AgentModule {
                 minted.session.environment,
                 minted.authenticated.refreshToken,
                 minted.authenticated.user,
+                minted.session.enrollment ?? null,
             ),
         });
     }
 
-    async #publishUserChangeAfterProfile(
+    async #persistSessionAfterProfile(
         ctx: Context,
         minted: MintedCloudCredential,
+        enrollment: CloudEnrollment | null,
     ): Promise<void> {
-        try {
-            await this.#publishUserChange(ctx, minted);
-        } catch (error: unknown) {
-            // The remote profile mutation already succeeded. A secondary WorkOS metadata write
-            // must not turn that success into a retry that could overwrite a newer Cloud profile.
-            logCloudFailure(ctx, "profile", minted.cloud.environment, "workos-user-update", error);
+        const stored = await this.#readOwned(ctx);
+        if (stored?.session === null || stored?.session === undefined) {
+            throw new Error("The Cloud session changed while enrollment was being stored.");
         }
+        if (stored.session.user.id !== minted.session.user.id) {
+            throw new Error("The Cloud account changed while enrollment was being stored.");
+        }
+        if (sameUser(stored.session.user, minted.authenticated.user)) {
+            await this.#database.updateEnrollment(ctx, stored.session.user.id, enrollment);
+            return;
+        }
+        await this.#replace(ctx, {
+            error: null,
+            pending: false,
+            session: cloudSession(
+                stored.session.environment,
+                stored.session.refreshToken,
+                minted.authenticated.user,
+                enrollment,
+            ),
+        });
+    }
+
+    async #scheduleChangedProfileSync(ctx: Context, profileVersion: string): Promise<void> {
+        if (this.#stopping || this.#context === undefined) return;
+        const stored = await this.#database.read(ctx);
+        if (stored?.session?.enrollment === null || stored?.session?.enrollment === undefined) {
+            return;
+        }
+        await this.#scheduleProfileSync(
+            ctx,
+            stored.session.user.id,
+            `cloud.profile-change:${profileVersion}`,
+        );
+    }
+
+    async #scheduleProfileSync(ctx: Context, userId: string, operationId?: string): Promise<void> {
+        await this.#durableFunctions.invoke(ctx, {
+            function: CLOUD_PROFILE_SYNC_FUNCTION,
+            arguments: { userId },
+            ...(operationId === undefined ? {} : { operationId }),
+            lockKeys: [CLOUD_PROFILE_SYNC_LOCK],
+        });
+    }
+
+    async #executeProfileSync(ctx: Context, input: CloudProfileSyncArguments): Promise<void> {
+        for (;;) {
+            try {
+                const synchronized = await this.#lock.runInLock(
+                    ctx,
+                    async () => await this.#synchronizeProfileOnce(ctx, input.userId),
+                );
+                if (synchronized) return;
+            } catch (error: unknown) {
+                if (
+                    error instanceof CloudOperationError &&
+                    (error.code === "cloud_not_authenticated" ||
+                        error.code === "cloud_unauthorized")
+                ) {
+                    return;
+                }
+                const environment =
+                    this.#cloud.status === "connected" ? this.#cloud.environment : "unknown";
+                const diagnostic = cloudFailureDiagnostic(error);
+                const status =
+                    diagnostic.status === undefined ? "" : ` status=${String(diagnostic.status)}`;
+                ctx.log.warn(
+                    `cloud:profile:error environment=${environment} phase=durable-profile-sync reason=${diagnostic.reason}${status}`,
+                );
+            }
+            await delay(ctx, PROFILE_SYNC_RETRY_MS);
+        }
+    }
+
+    async #synchronizeProfileOnce(ctx: Context, expectedUserId: string): Promise<boolean> {
+        this.#assertRunning();
+        const stored = await this.#readOwned(ctx);
+        if (
+            stored?.session === null ||
+            stored?.session === undefined ||
+            stored.session.user.id !== expectedUserId
+        ) {
+            return true;
+        }
+
+        const minted = await this.#mintInLock(ctx, false);
+        const client = this.#client(minted.cloud.environment);
+        let online: CloudProfile;
+        try {
+            online = await client.getProfile(minted.accessToken);
+        } catch (error: unknown) {
+            logCloudFailure(
+                ctx,
+                "profile",
+                minted.cloud.environment,
+                "cloud-profile-reconcile",
+                error,
+            );
+            throw error;
+        }
+
+        if (online.username === null) {
+            await this.#persistSessionAfterProfile(ctx, minted, null);
+            return true;
+        }
+
+        const localProfile = await this.#profile.get(ctx);
+        const name = localProfileName(localProfile);
+        if (localProfile === undefined || name === undefined) {
+            await this.#persistSessionAfterProfile(
+                ctx,
+                minted,
+                cloudEnrollment(online.username, null),
+            );
+            return true;
+        }
+
+        if (online.firstName === name && online.lastName === undefined) {
+            await this.#persistSessionAfterProfile(
+                ctx,
+                minted,
+                cloudEnrollment(online.username, localProfile.version),
+            );
+            return true;
+        }
+
+        let synchronized: CloudProfile;
+        try {
+            synchronized = await client.updateProfile(minted.accessToken, {
+                firstName: name,
+                username: online.username,
+            });
+        } catch (error: unknown) {
+            logCloudFailure(ctx, "profile", minted.cloud.environment, "cloud-profile-sync", error);
+            throw error;
+        }
+        if (synchronized.username === null) {
+            throw new CloudServiceUnavailableError();
+        }
+        await this.#persistSessionAfterProfile(
+            ctx,
+            minted,
+            cloudEnrollment(synchronized.username, localProfile.version),
+        );
+        for (const listener of this.#profileListeners) listener(ctx);
+
+        const latest = await this.#profile.get(ctx);
+        return latest?.version === localProfile.version;
     }
 
     async #initialize(ctx: Context): Promise<void> {
@@ -614,6 +808,9 @@ export class CloudModule implements AgentModule {
             return;
         }
         this.#cloud = project(stored);
+        if (stored.session !== null) {
+            await this.#scheduleProfileSync(ctx, stored.session.user.id);
+        }
     }
 
     async #beginAttempt(ctx: Context, draft: CloudAttemptDraft): Promise<Cloud> {
@@ -795,6 +992,7 @@ function cloudFailureDiagnostic(error: unknown): {
     readonly reason: string;
     readonly status?: number;
 } {
+    if (error instanceof CloudOperationError) return { reason: error.code, status: error.status };
     if (error instanceof CloudCredentialsRejectedError) return { reason: "credentials-rejected" };
     if (error instanceof CloudIdentityMismatchError) return { reason: "identity-mismatch" };
     if (error instanceof CloudProfileRejectedError) return { reason: "profile-rejected" };
@@ -965,6 +1163,11 @@ function sameUser(left: CloudUser, right: CloudUser): boolean {
         left.firstName === right.firstName &&
         left.lastName === right.lastName
     );
+}
+
+function localProfileName(profile: Profile | undefined): string | undefined {
+    const name = profile?.name;
+    return Value.Check(cloudProfileNameSchema, name) ? name : undefined;
 }
 
 function freezeCloud(cloud: Cloud): Cloud {

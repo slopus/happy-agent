@@ -60,18 +60,26 @@
 
 ## Cloud profiles
 
-- Happy Cloud, not Happy Agent, is the durable authority for the public username and display
-  names. Do not copy the profile into the local Cloud snapshot or confuse it with WorkOS user
-  metadata.
+- Happy Agent's local human profile is the display-name authority. Enrollment asks only for a
+  Cloud username, sends the complete local name as `firstName`, and never derives display text from
+  WorkOS metadata. Happy Cloud remains authoritative for username ownership and normalization.
+- Store enrollment beside the connected account as the Cloud username plus the local profile
+  version last synchronized. Disconnecting or changing accounts therefore clears enrollment while
+  refresh-token rotation preserves it.
 - Profile reads and writes refresh a rotating WorkOS token, verify it through Cloud hello, and call
   the fixed deployment while holding Cloud's serialization lock. The access token never crosses
   the profile API.
-- Validate profile mutations before refresh, strip the local mutation echo from the upstream body,
-  and parse every Cloud response with a bounded schema. A current username conflict is distinct;
-  upstream profile validation after local acceptance is service-contract drift, not a user error.
+- Validate the username and local display name before refresh, strip the local mutation echo from
+  the upstream body, and parse every Cloud response with a bounded schema. A current username
+  conflict is distinct; upstream profile validation after local acceptance is service-contract
+  drift, not a user error.
 - Persist refresh-token rotation before downstream verification. A failed profile write may change
   only that private token: defer public WorkOS metadata updates so a rejected mutation emits no
   public state event.
-- CloudModule owns the successful profile-change signal so every caller gets the same behavior;
-  the API translates it into `cloud.profile.updated` as a compact invalidation. Clients refetch
-  Happy Cloud's authoritative profile; the daemon does not invent a local profile version.
+- Profile changes and startup reconciliation are Durable Functions. Each execution first reads the
+  online profile to repair the local username or clear stale enrollment, never overwrites the local
+  human profile, then pushes the latest compatible local name back with the online username.
+  Transient authentication or Cloud failures retry inside the executor; account changes terminate
+  stale work safely.
+- CloudModule owns the successful remote profile-change signal so every caller gets the same
+  behavior; the API translates it into `cloud.profile.updated` as a compact invalidation.

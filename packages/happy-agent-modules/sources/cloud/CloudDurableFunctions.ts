@@ -5,6 +5,8 @@ import { cloudVersionSchema } from "./CloudDatabase.js";
 export const CLOUD_AUTHORIZATION_EXPIRY_FUNCTION = "cloud.expire-authorization";
 export const CLOUD_AUTHORIZATION_EXPIRY_OPERATION = "cloud.authorization-expiry";
 export const CLOUD_AUTHORIZATION_LOCK = "cloud.authorization";
+export const CLOUD_PROFILE_SYNC_FUNCTION = "cloud.sync-profile";
+export const CLOUD_PROFILE_SYNC_LOCK = "cloud.profile";
 
 export const cloudAuthorizationExpiryArgumentsSchema = Type.Object(
     {
@@ -19,3 +21,14 @@ export const cloudAuthorizationExpiryResultSchema = Type.Null();
 export type CloudAuthorizationExpiryArguments = Static<
     typeof cloudAuthorizationExpiryArgumentsSchema
 >;
+
+export const cloudProfileSyncArgumentsSchema = Type.Object(
+    {
+        userId: Type.String({ minLength: 1, maxLength: 256 }),
+    },
+    { additionalProperties: false },
+);
+
+export const cloudProfileSyncResultSchema = Type.Null();
+
+export type CloudProfileSyncArguments = Static<typeof cloudProfileSyncArgumentsSchema>;
