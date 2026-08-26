@@ -41,6 +41,7 @@ import { ContextWindowModule } from "../contextWindow/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { EventsModule } from "../events/index.js";
 import { ProjectFilesModule } from "../files/index.js";
+import { GeminiModule } from "../gemini/index.js";
 import { GitModule } from "../git/index.js";
 import { GoalModule } from "../goal/index.js";
 import { HappyModule } from "../happy/index.js";
@@ -131,6 +132,7 @@ export interface HappyAgentRuntimeModules {
     readonly durableFunctions: DurableFunctionsModule;
     readonly events: EventsModule;
     readonly files: ProjectFilesModule;
+    readonly gemini: GeminiModule;
     readonly goal: GoalModule;
     readonly happy: HappyModule;
     readonly history: HistoryModule;
@@ -453,6 +455,7 @@ export async function startHappyAgentRuntime(
             workspaces,
         );
         const goal = new GoalModule();
+        const gemini = new GeminiModule(config, compute.computeModule);
         const imageGeneration = new ImageGenerationModule(config);
         const menuBar = new MenuBarModule(config);
         registerShutdown("menu-bar", async () => await menuBar.close());
@@ -506,6 +509,7 @@ export async function startHappyAgentRuntime(
             durableFunctions,
             events,
             files,
+            gemini,
             goal,
             happy,
             history,
@@ -577,6 +581,7 @@ export async function startHappyAgentRuntime(
             userInput,
             mcp,
             search,
+            gemini,
             imageGeneration,
             compute.skillsModule,
             compute.computeModule,
