@@ -46,6 +46,7 @@ import {
     updateBot,
     writeBotAvatar,
 } from "./BotStore.js";
+import { formatBotIdentityPrompt } from "./impl/formatBotIdentityPrompt.js";
 import { createBotTool } from "./tools/create_bot.js";
 import { listBotsTool } from "./tools/list_bots.js";
 import { sendBotMessageTool } from "./tools/send_bot_message.js";
@@ -68,6 +69,10 @@ export class BotsModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
+        instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
+            const bot = await readBotByAgent(ctx, scope.agent.id);
+            return bot === undefined ? "" : formatBotIdentityPrompt(bot);
+        },
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             const roster = [
                 listBotsTool(this),

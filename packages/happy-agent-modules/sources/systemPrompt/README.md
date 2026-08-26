@@ -1,8 +1,10 @@
 # System prompt
 
-`SystemPromptModule` is the single instruction module for an agent. It selects the native prompt
-for the model in force, substitutes Happy Agent's own identity, appends truthful host environment details,
-and supplies the global, security, and project `AGENTS.md` instruction chain.
+`SystemPromptModule` owns the shared instruction foundation for an agent. It selects the native
+prompt for the model in force, substitutes Happy Agent's own runtime identity, appends truthful
+host environment details, and supplies the global, security, and project `AGENTS.md` instruction
+chain. Feature modules may append their own scoped instructions after this foundation; for
+example, the bots module adds a bot's persistent identity only to that bot's agent.
 
 ```text
 vendor/model prompt

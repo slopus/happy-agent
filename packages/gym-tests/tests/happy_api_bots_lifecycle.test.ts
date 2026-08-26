@@ -89,6 +89,18 @@ describe("persistent bots through the public API", () => {
             expect(JSON.stringify(await gym.sessionEvents(created.agent.id))).toContain(
                 "The bot answered its first request.",
             );
+            const botRequest = gym.inference.requests.find(
+                (request) => request.sessionId === created.agent.id,
+            );
+            expect(botRequest?.instructions).toContain(
+                [
+                    "# Bot identity",
+                    "",
+                    'You are the persistent bot named "Research Assistant". Use this bot identity when referring to yourself. Happy Agent is the runtime that powers you, not your bot name.',
+                    "- Bot ID: `researchassistant`",
+                    "- Username: `research_assistant`",
+                ].join("\n"),
+            );
 
             await expect(gym.client.archiveAgent(created.agent.id)).rejects.toMatchObject({
                 code: "conflict",

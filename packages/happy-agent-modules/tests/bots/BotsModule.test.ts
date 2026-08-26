@@ -294,6 +294,41 @@ describe("BotsModule", () => {
             await fixture.close();
         }
     });
+
+    it("contributes the bot's current identity only to its own agent instructions", async () => {
+        const fixture = await started("bots-identity-instructions", true);
+        try {
+            const created = await fixture.bots.create(fixture.database.context, {
+                id: "identitybot",
+                name: "Research Assistant",
+                username: "research_assistant",
+            });
+
+            await expect(fixture.instructions("someoneelsesagent")).resolves.toBe("");
+            await expect(fixture.instructions(created.agentId)).resolves.toBe(
+                [
+                    "# Bot identity",
+                    "",
+                    'You are the persistent bot named "Research Assistant". Use this bot identity when referring to yourself. Happy Agent is the runtime that powers you, not your bot name.',
+                    "- Bot ID: `identitybot`",
+                    "- Username: `research_assistant`",
+                ].join("\n"),
+            );
+
+            const renamed = await fixture.bots.rename(
+                fixture.database.context,
+                created.id,
+                "Literature Scout",
+                created.version,
+            );
+            expect(renamed.username).toBe("research_assistant");
+            await expect(fixture.instructions(created.agentId)).resolves.toContain(
+                'You are the persistent bot named "Literature Scout".',
+            );
+        } finally {
+            await fixture.close();
+        }
+    });
 });
 
 async function started(name: string, workspacesEnabled: boolean) {
@@ -321,6 +356,10 @@ async function started(name: string, workspacesEnabled: boolean) {
             const scope = { agent: { id: agentId } } as unknown as AgentModuleScope;
             const offered = await hooks.tools?.(database.context, scope);
             return (offered ?? []).map((tool) => tool.name);
+        },
+        instructions: async (agentId: string): Promise<string> => {
+            const scope = { agent: { id: agentId } } as unknown as AgentModuleScope;
+            return (await hooks.instructions?.(database.context, scope)) ?? "";
         },
         close: async () => {
             database.close();
