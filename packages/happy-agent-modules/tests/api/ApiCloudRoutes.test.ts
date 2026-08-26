@@ -11,6 +11,7 @@ import {
     type CloudAuthorizing,
     type CloudConnected,
     type CloudDisconnected,
+    type CloudSocial,
 } from "@slopus/happy-agent-client";
 import { ensureAgentDatabaseConnection } from "@slopus/happy-agent-base";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
@@ -20,6 +21,7 @@ import { ApiModule } from "../../sources/api/ApiModule.js";
 import {
     CloudModule,
     CloudOperationError,
+    type CloudSocialUpdatedListener,
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
@@ -95,6 +97,36 @@ const connected: CloudConnected = {
     user,
     version: VERSION_3,
 };
+const socialUnenrolled: CloudSocial = {
+    blocked: [],
+    connection: null,
+    friends: [],
+    incomingRequests: [],
+    outgoingRequests: [],
+    status: "unenrolled",
+    updatedAt: 1,
+    version: VERSION_1,
+};
+const socialEnrolled: CloudSocial = {
+    ...socialUnenrolled,
+    connection: "connecting",
+    status: "enrolled",
+    updatedAt: 2,
+    version: VERSION_2,
+};
+const socialWithFriend: CloudSocial = {
+    ...socialEnrolled,
+    connection: "connected",
+    friends: [
+        {
+            firstName: "Grace",
+            username: "grace",
+            version: VERSION_3,
+        },
+    ],
+    updatedAt: 3,
+    version: VERSION_3,
+};
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -151,6 +183,9 @@ describe("Cloud HTTP API", () => {
         await expect(fixture.client.getCloudProfile()).resolves.toEqual({
             profile: { firstName: null, username: null },
         });
+        await expect(fixture.client.getCloudSocial()).resolves.toEqual({
+            cloudSocial: socialUnenrolled,
+        });
         await expect(
             fixture.client.enrollCloudProfile({
                 mutationId: "cloud-profile-1",
@@ -169,6 +204,10 @@ describe("Cloud HTTP API", () => {
                 type: "cloud.updated",
             }),
             expect.objectContaining({
+                payload: { mutationId: "cloud-profile-1", version: socialEnrolled.version },
+                type: "cloud.social.updated",
+            }),
+            expect.objectContaining({
                 payload: { mutationId: "cloud-profile-1" },
                 type: "cloud.profile.updated",
             }),
@@ -182,6 +221,34 @@ describe("Cloud HTTP API", () => {
             fixture.context,
             expect.objectContaining({ redirectUri: "desktop-app://workos/callback" }),
         );
+    });
+
+    it("routes every supported Cloud friends mutation and emits compact invalidations", async () => {
+        const fixture = await apiFixture(connected);
+        const before = fixture.api.cursor();
+
+        await expect(
+            fixture.client.sendCloudFriendRequest("grace", { mutationId: "social-send" }),
+        ).resolves.toEqual({ cloudSocial: socialWithFriend });
+        await fixture.client.approveCloudFriendRequest("grace");
+        await fixture.client.rejectCloudFriendRequest("grace");
+        await fixture.client.revokeCloudFriendRequest("grace");
+        await fixture.client.blockCloudUser("grace");
+        await fixture.client.unblockCloudUser("grace");
+
+        expect(fixture.cloud.mutateSocial.mock.calls.map((call) => call.slice(1))).toEqual([
+            ["send-request", "grace"],
+            ["approve-request", "grace"],
+            ["reject-request", "grace"],
+            ["revoke-request", "grace"],
+            ["block", "grace"],
+            ["unblock", "grace"],
+        ]);
+        const events = await fixture.client.getEvents({ after: before });
+        expect(events.events[0]).toMatchObject({
+            payload: { mutationId: "social-send", version: VERSION_3 },
+            type: "cloud.social.updated",
+        });
     });
 
     it("returns an authoritative Cloud snapshot when minting discovers revocation", async () => {
@@ -340,6 +407,13 @@ describe("Cloud HTTP API", () => {
                 type: "cloud.updated",
             }),
             expect.objectContaining({
+                payload: {
+                    mutationId: "cloud-real-profile",
+                    version: expect.any(String),
+                },
+                type: "cloud.social.updated",
+            }),
+            expect.objectContaining({
                 payload: { mutationId: "cloud-real-profile" },
                 type: "cloud.profile.updated",
             }),
@@ -361,6 +435,8 @@ async function apiFixture(initial: Cloud = disconnected) {
     let current = initial;
     let updated: CloudUpdatedListener | undefined;
     let profileUpdated: ((ctx: Context) => void) | undefined;
+    let socialUpdated: CloudSocialUpdatedListener | undefined;
+    let social = socialUnenrolled;
     const cloud = {
         complete: vi.fn(async (ctx: Context) => {
             current = connected;
@@ -374,6 +450,12 @@ async function apiFixture(initial: Cloud = disconnected) {
         }),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
         getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
+        getSocial: vi.fn(() => ({ cloudSocial: social })),
+        mutateSocial: vi.fn(async (ctx: Context) => {
+            social = socialWithFriend;
+            socialUpdated?.(ctx, social, "mutation");
+            return { cloudSocial: social };
+        }),
         onUpdated: vi.fn((listener: CloudUpdatedListener) => {
             updated = listener;
             return () => {
@@ -386,13 +468,22 @@ async function apiFixture(initial: Cloud = disconnected) {
                 profileUpdated = undefined;
             };
         }),
+        onSocialUpdated: vi.fn((listener: CloudSocialUpdatedListener) => {
+            socialUpdated = listener;
+            return () => {
+                socialUpdated = undefined;
+            };
+        }),
         start: vi.fn(async (ctx: Context) => {
             current = authorizing;
             updated?.(ctx, current);
             return authorizing;
         }),
         status: vi.fn(() => current),
+        socialStatus: vi.fn(() => social),
         enrollProfile: vi.fn(async (ctx: Context) => {
+            social = socialEnrolled;
+            socialUpdated?.(ctx, social, "mutation");
             profileUpdated?.(ctx);
             return { profile: { firstName: "Ada", username: "ada" } };
         }),

@@ -5,6 +5,8 @@ import {
     CloudCredentialsRejectedError,
     CloudProfileRejectedError,
     CloudServiceUnavailableError,
+    CloudSocialBlockedError,
+    CloudSocialNotFoundError,
     CloudUsernameUnavailableError,
     CloudWorkOS,
 } from "../../sources/cloud/CloudWorkOS.js";
@@ -16,6 +18,114 @@ afterEach(() => {
 });
 
 describe("CloudWorkOS", () => {
+    it("loads one version-consistent social snapshot and hydrates every public profile", async () => {
+        const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const graceVersion = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";
+        const alanVersion = "01991f3a-5c1e-7002-8000-2f9a1b3c4d5e";
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+                const path = new URL(String(input)).pathname;
+                if (path === "/v0/friends") {
+                    return Response.json({
+                        friends: [{ firstName: "stale", username: "grace" }],
+                        version,
+                    });
+                }
+                if (path === "/v0/friends/requests") {
+                    return Response.json({
+                        incoming: [{ firstName: "stale", username: "alan" }],
+                        outgoing: [],
+                        version,
+                    });
+                }
+                if (path === "/v0/friends/blocked") {
+                    return Response.json({ blocked: [], version });
+                }
+                if (path === "/v0/profiles/grace") {
+                    return Response.json({
+                        firstName: "Grace",
+                        lastName: "Hopper",
+                        username: "grace",
+                        version: graceVersion,
+                    });
+                }
+                if (path === "/v0/profiles/alan") {
+                    return Response.json({
+                        firstName: "Alan",
+                        username: "alan",
+                        version: alanVersion,
+                    });
+                }
+                return Response.json({ error: "not_found" }, { status: 404 });
+            }),
+        );
+
+        await expect(
+            new CloudWorkOS("production").getSocialSnapshot("access-token"),
+        ).resolves.toEqual({
+            blocked: [],
+            friends: [
+                {
+                    firstName: "Grace",
+                    lastName: "Hopper",
+                    username: "grace",
+                    version: graceVersion,
+                },
+            ],
+            incomingRequests: [{ firstName: "Alan", username: "alan", version: alanVersion }],
+            outgoingRequests: [],
+            version,
+        });
+    });
+
+    it("maps every social mutation to the canonical Cloud route", async () => {
+        const request = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) =>
+            Response.json({ status: "ok" }),
+        );
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("staging");
+
+        await client.mutateSocial("access", "send-request", "grace");
+        await client.mutateSocial("access", "approve-request", "grace");
+        await client.mutateSocial("access", "reject-request", "grace");
+        await client.mutateSocial("access", "revoke-request", "grace");
+        await client.mutateSocial("access", "block", "grace");
+        await client.mutateSocial("access", "unblock", "grace");
+
+        expect(
+            request.mock.calls.map(([input, init]) => [
+                new URL(String(input)).pathname,
+                init?.method,
+            ]),
+        ).toEqual([
+            ["/v0/friends/requests/grace", "PUT"],
+            ["/v0/friends/requests/grace/approve", "POST"],
+            ["/v0/friends/requests/grace/reject", "POST"],
+            ["/v0/friends/requests/grace", "DELETE"],
+            ["/v0/friends/blocked/grace", "PUT"],
+            ["/v0/friends/blocked/grace", "DELETE"],
+        ]);
+    });
+
+    it("distinguishes missing and blocked Cloud social mutations", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(Response.json({ error: "not_found" }, { status: 404 }))
+                .mockResolvedValueOnce(Response.json({ error: "blocked" }, { status: 403 })),
+        );
+        const client = new CloudWorkOS("production");
+
+        await expect(
+            client.mutateSocial("access", "approve-request", "missing"),
+        ).rejects.toBeInstanceOf(CloudSocialNotFoundError);
+        await expect(
+            client.mutateSocial("access", "send-request", "blocked"),
+        ).rejects.toBeInstanceOf(CloudSocialBlockedError);
+    });
+
     it("reads a projected profile from the canonical production endpoint", async () => {
         const request = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) =>
             Response.json({

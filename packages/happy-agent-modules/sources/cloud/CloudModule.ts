@@ -9,12 +9,14 @@ import type {
     CloudEnvironment,
     CloudProfile,
     CloudProfileResponse,
+    CloudSocial,
+    CloudSocialResponse,
     CloudUser,
     CompleteCloudAuthorizationRequest,
     EnrollCloudProfileRequest,
     StartCloudAuthorizationRequest,
 } from "@slopus/happy-agent-client";
-import { enrollCloudProfileRequestSchema } from "@slopus/happy-agent-client";
+import { cloudUsernameSchema, enrollCloudProfileRequestSchema } from "@slopus/happy-agent-client";
 import {
     agentDatabase,
     withAgentDatabase,
@@ -27,6 +29,7 @@ import {
     asyncLock,
     delay,
     detach,
+    withLifetime,
     type AsyncLock,
     type Context,
 } from "@steve.kite/stdlib";
@@ -53,27 +56,53 @@ import {
     CLOUD_AUTHORIZATION_LOCK,
     CLOUD_PROFILE_SYNC_FUNCTION,
     CLOUD_PROFILE_SYNC_LOCK,
+    CLOUD_SOCIAL_SYNC_FUNCTION,
+    CLOUD_SOCIAL_SYNC_LOCK,
     cloudAuthorizationExpiryArgumentsSchema,
     cloudAuthorizationExpiryResultSchema,
     cloudProfileSyncArgumentsSchema,
     cloudProfileSyncResultSchema,
+    cloudSocialSyncArgumentsSchema,
+    cloudSocialSyncResultSchema,
     type CloudAuthorizationExpiryArguments,
     type CloudProfileSyncArguments,
+    type CloudSocialSyncArguments,
 } from "./CloudDurableFunctions.js";
+import {
+    cloudSocialMigrations,
+    createCloudSocialDatabase,
+    unenrolledCloudSocialValue,
+    type CloudSocialDatabaseReplacement,
+    type CloudSocialStoredState,
+    type CloudSocialStoredValue,
+} from "./CloudSocialDatabase.js";
+import type { CloudSocialSocketConnection } from "./CloudSocialSocket.js";
 import {
     CloudCredentialsRejectedError,
     CloudIdentityMismatchError,
     CloudProfileRejectedError,
+    CloudProfileRequiredError,
     CloudServiceUnavailableError,
+    CloudSocialBlockedError,
+    CloudSocialInvalidRequestError,
+    CloudSocialNotFoundError,
+    CloudSocialSnapshotChangedError,
     CloudUsernameUnavailableError,
     CloudWorkOS,
     type CloudAuthentication,
+    type CloudRemoteSocialSnapshot,
+    type CloudSocialMutation,
 } from "./CloudWorkOS.js";
 import { createCloudVersion } from "./createCloudVersion.js";
 
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1_000;
 const AUTHORIZATION_EXPIRY_RETRY_MS = 5_000;
 const PROFILE_SYNC_RETRY_MS = 5_000;
+const SOCIAL_SYNC_RETRY_MS = 5_000;
+const SOCIAL_SOCKET_RETRY_MS = 5_000;
+const SOCIAL_ELIGIBILITY_POLL_MS = 1_000;
+const SOCIAL_MUTATION_SNAPSHOT_ATTEMPTS = 3;
+const SOCIAL_PROFILE_REFRESH_MS = 5 * 60 * 1_000;
 const cloudProfileNameSchema = Type.String({
     minLength: 1,
     maxLength: 64,
@@ -97,6 +126,7 @@ interface CloudReplacementOptions {
     readonly attempt?: CloudAttempt;
     readonly cancelAuthorizationExpiry?: boolean;
     readonly onCommit?: () => void;
+    readonly socialOrigin?: CloudSocialUpdateOrigin;
 }
 
 interface MintedCloudCredential extends CloudAccessTokenResponse {
@@ -108,50 +138,77 @@ type CloudStoredReplacement = CloudStoredValue;
 
 export type CloudUpdatedListener = (ctx: Context, cloud: Cloud) => void;
 export type CloudProfileUpdatedListener = (ctx: Context) => void;
+export type CloudSocialUpdateOrigin = "background" | "mutation";
+export type CloudSocialMutationKind = CloudSocialMutation;
+export type CloudSocialUpdatedListener = (
+    ctx: Context,
+    social: CloudSocial,
+    origin: CloudSocialUpdateOrigin,
+) => void;
+
+interface LiveCloudSocialConnection {
+    readonly controller: AbortController;
+    readonly userId: string;
+    socket: CloudSocialSocketConnection | undefined;
+    stateVersion: string | undefined;
+}
 
 export type CloudOperationErrorCode =
     | "cloud_not_authenticated"
+    | "cloud_not_enrolled"
     | "cloud_unauthorized"
     | "cloud_unavailable"
     | "conflict"
-    | "invalid_request";
+    | "invalid_request"
+    | "not_found";
 
 /** A display-safe Cloud failure carrying the authoritative current snapshot. */
 export class CloudOperationError extends Error {
     readonly cloud: Cloud;
+    readonly cloudSocial: CloudSocial | undefined;
     readonly code: CloudOperationErrorCode;
-    readonly status: 400 | 409 | 503;
+    readonly status: 400 | 404 | 409 | 503;
 
     constructor(
-        status: 400 | 409 | 503,
+        status: 400 | 404 | 409 | 503,
         code: CloudOperationErrorCode,
         message: string,
         cloud: Cloud,
+        cloudSocial?: CloudSocial,
     ) {
         super(message);
         this.name = "CloudOperationError";
         this.status = status;
         this.code = code;
         this.cloud = cloud;
+        this.cloudSocial = cloudSocial;
     }
 }
 
 /** Owns Happy Cloud authentication, refresh-token storage, token minting, and profile access. */
 export class CloudModule implements AgentModule {
     readonly name = "cloud";
-    readonly migrations = cloudMigrations;
+    readonly migrations = [...cloudMigrations, ...cloudSocialMigrations];
 
     readonly #database = createCloudDatabase();
+    readonly #socialDatabase = createCloudSocialDatabase();
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #profile: ProfileModule;
     readonly #profileUnsubscribe: ProfileUnsubscribe;
     readonly #listeners = new Set<CloudUpdatedListener>();
     readonly #profileListeners = new Set<CloudProfileUpdatedListener>();
+    readonly #socialListeners = new Set<CloudSocialUpdatedListener>();
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #clients = new Map<CloudEnvironment, CloudWorkOS>();
+    readonly #socialLifetime = new AbortController();
     #attempt: CloudAttempt | undefined;
     #cloud: Cloud;
+    #cloudSocial: CloudSocial;
+    #cloudSocialUserId: string | null = null;
     #context: Context | undefined;
+    #liveSocial: LiveCloudSocialConnection | undefined;
+    #socialSupervisor: Promise<void> | undefined;
+    #socialWake: (() => void) | undefined;
     #stopping = false;
 
     constructor(durableFunctions: DurableFunctionsModule, profile: ProfileModule) {
@@ -165,6 +222,11 @@ export class CloudModule implements AgentModule {
             status: "disconnected",
             updatedAt,
             user: null,
+            version: createCloudVersion(undefined, () => updatedAt),
+        });
+        this.#cloudSocial = projectSocial({
+            ...unenrolledCloudSocialValue(),
+            updatedAt,
             version: createCloudVersion(undefined, () => updatedAt),
         });
         durableFunctions.register({
@@ -185,6 +247,15 @@ export class CloudModule implements AgentModule {
                 return null;
             },
         });
+        durableFunctions.register({
+            name: CLOUD_SOCIAL_SYNC_FUNCTION,
+            argumentsSchema: cloudSocialSyncArgumentsSchema,
+            resultSchema: cloudSocialSyncResultSchema,
+            executor: async (ctx, call) => {
+                await this.#executeSocialSync(ctx, call.arguments);
+                return null;
+            },
+        });
         this.#profileUnsubscribe = profile.onEvent(async (ctx, event) => {
             await this.#scheduleChangedProfileSync(ctx, event.data.version);
         });
@@ -201,11 +272,18 @@ export class CloudModule implements AgentModule {
             this.#context,
             async () => await this.#initialize(this.#context!),
         );
-        return {};
+        return {
+            afterStart: () => {
+                this.#startSocialSupervisor();
+            },
+        };
     };
 
     async stop(): Promise<void> {
         this.#profileUnsubscribe();
+        this.#socialLifetime.abort();
+        this.#liveSocial?.controller.abort();
+        this.#socialWake?.();
         const ctx = this.#context;
         if (ctx === undefined) {
             this.#stopping = true;
@@ -216,10 +294,15 @@ export class CloudModule implements AgentModule {
             this.#stopping = true;
             this.#attempt = undefined;
         });
+        await this.#socialSupervisor;
     }
 
     status(_ctx: Context): Cloud {
         return this.#cloud;
+    }
+
+    socialStatus(_ctx: Context): CloudSocial {
+        return this.#cloudSocial;
     }
 
     onUpdated(listener: CloudUpdatedListener): () => void {
@@ -233,6 +316,13 @@ export class CloudModule implements AgentModule {
         this.#profileListeners.add(listener);
         return () => {
             this.#profileListeners.delete(listener);
+        };
+    }
+
+    onSocialUpdated(listener: CloudSocialUpdatedListener): () => void {
+        this.#socialListeners.add(listener);
+        return () => {
+            this.#socialListeners.delete(listener);
         };
     }
 
@@ -547,6 +637,127 @@ export class CloudModule implements AgentModule {
         });
     }
 
+    getSocial(_ctx: Context): CloudSocialResponse {
+        return { cloudSocial: this.#cloudSocial };
+    }
+
+    async mutateSocial(
+        _ctx: Context,
+        mutation: CloudSocialMutation,
+        username: string,
+    ): Promise<CloudSocialResponse> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            if (!Value.Check(cloudUsernameSchema, username)) {
+                throw this.#error(400, "invalid_request", "The Cloud username is invalid.", true);
+            }
+            const stored = await this.#readOwned(ctx);
+            if (stored?.session === null || stored?.session === undefined) {
+                throw this.#error(
+                    409,
+                    "cloud_not_authenticated",
+                    "Cloud is not authenticated on this Happy Agent.",
+                    true,
+                );
+            }
+            if (stored.session.enrollment === null || stored.session.enrollment === undefined) {
+                throw this.#error(
+                    409,
+                    "cloud_not_enrolled",
+                    "Enroll a Cloud profile before using friends.",
+                    true,
+                );
+            }
+            const minted = await this.#mintInLock(ctx, false);
+            try {
+                await this.#client(minted.cloud.environment).mutateSocial(
+                    minted.accessToken,
+                    mutation,
+                    username,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudSocialNotFoundError) {
+                    throw this.#error(
+                        404,
+                        "not_found",
+                        "The Cloud user or request was not found.",
+                        true,
+                    );
+                }
+                if (error instanceof CloudSocialBlockedError) {
+                    throw this.#error(
+                        409,
+                        "conflict",
+                        "The Cloud friend request is blocked.",
+                        true,
+                    );
+                }
+                if (error instanceof CloudSocialInvalidRequestError) {
+                    throw this.#error(
+                        400,
+                        "invalid_request",
+                        "The Cloud friend request is invalid.",
+                        true,
+                    );
+                }
+                if (error instanceof CloudProfileRequiredError) {
+                    await this.#persistSessionAfterProfile(ctx, minted, null, "mutation");
+                    throw this.#error(
+                        409,
+                        "cloud_not_enrolled",
+                        "Enroll a Cloud profile before using friends.",
+                        true,
+                    );
+                }
+                logCloudFailure(
+                    ctx,
+                    "social",
+                    minted.cloud.environment,
+                    "cloud-social-mutation",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud friends are temporarily unavailable.",
+                    true,
+                );
+            }
+
+            for (let attempt = 0; attempt < SOCIAL_MUTATION_SNAPSHOT_ATTEMPTS; attempt += 1) {
+                try {
+                    await this.#synchronizeSocialSnapshot(ctx, minted, "mutation");
+                    return { cloudSocial: this.#cloudSocial };
+                } catch (error: unknown) {
+                    if (error instanceof CloudSocialSnapshotChangedError) continue;
+                    if (error instanceof CloudOperationError) throw error;
+                    logCloudFailure(
+                        ctx,
+                        "social",
+                        minted.cloud.environment,
+                        "cloud-social-snapshot",
+                        error,
+                    );
+                    await this.#scheduleCurrentSocialSync(ctx, stored.session.user.id);
+                    throw this.#error(
+                        503,
+                        "cloud_unavailable",
+                        "Cloud friends are temporarily unavailable.",
+                        true,
+                    );
+                }
+            }
+            await this.#scheduleCurrentSocialSync(ctx, stored.session.user.id);
+            throw this.#error(
+                503,
+                "cloud_unavailable",
+                "Cloud friends changed while they were being synchronized.",
+                true,
+            );
+        });
+    }
+
     async #mintInLock(ctx: Context, publishUserChange: boolean): Promise<MintedCloudCredential> {
         const stored = await this.#readOwned(ctx);
         const session = stored?.session;
@@ -645,6 +856,7 @@ export class CloudModule implements AgentModule {
         ctx: Context,
         minted: MintedCloudCredential,
         enrollment: CloudEnrollment | null,
+        origin: CloudSocialUpdateOrigin = "mutation",
     ): Promise<void> {
         const stored = await this.#readOwned(ctx);
         if (stored?.session === null || stored?.session === undefined) {
@@ -654,19 +866,37 @@ export class CloudModule implements AgentModule {
             throw new Error("The Cloud account changed while enrollment was being stored.");
         }
         if (sameUser(stored.session.user, minted.authenticated.user)) {
-            await this.#database.updateEnrollment(ctx, stored.session.user.id, enrollment);
+            await ctx.inTx(async (txCtx) => {
+                await this.#database.updateEnrollment(txCtx, stored.session!.user.id, enrollment);
+                const currentSocial = await this.#socialDatabase.read(txCtx);
+                const replacement = await this.#socialDatabase.replace(
+                    txCtx,
+                    socialValueForSession(currentSocial, {
+                        ...stored.session!,
+                        enrollment,
+                    }),
+                );
+                afterCommit(txCtx, (postCommitCtx) => {
+                    this.#applySocial(postCommitCtx, replacement, origin, true);
+                });
+                return replacement;
+            });
             return;
         }
-        await this.#replace(ctx, {
-            error: null,
-            pending: false,
-            session: cloudSession(
-                stored.session.environment,
-                stored.session.refreshToken,
-                minted.authenticated.user,
-                enrollment,
-            ),
-        });
+        await this.#replace(
+            ctx,
+            {
+                error: null,
+                pending: false,
+                session: cloudSession(
+                    stored.session.environment,
+                    stored.session.refreshToken,
+                    minted.authenticated.user,
+                    enrollment,
+                ),
+            },
+            { socialOrigin: origin },
+        );
     }
 
     async #scheduleChangedProfileSync(ctx: Context, profileVersion: string): Promise<void> {
@@ -748,7 +978,7 @@ export class CloudModule implements AgentModule {
         }
 
         if (online.username === null) {
-            await this.#persistSessionAfterProfile(ctx, minted, null);
+            await this.#persistSessionAfterProfile(ctx, minted, null, "background");
             return true;
         }
 
@@ -759,6 +989,7 @@ export class CloudModule implements AgentModule {
                 ctx,
                 minted,
                 cloudEnrollment(online.username, null),
+                "background",
             );
             return true;
         }
@@ -768,6 +999,7 @@ export class CloudModule implements AgentModule {
                 ctx,
                 minted,
                 cloudEnrollment(online.username, localProfile.version),
+                "background",
             );
             return true;
         }
@@ -789,6 +1021,7 @@ export class CloudModule implements AgentModule {
             ctx,
             minted,
             cloudEnrollment(synchronized.username, localProfile.version),
+            "background",
         );
         for (const listener of this.#profileListeners) listener(ctx);
 
@@ -797,17 +1030,22 @@ export class CloudModule implements AgentModule {
     }
 
     async #initialize(ctx: Context): Promise<void> {
-        const stored = await this.#database.read(ctx);
+        let stored = await this.#database.read(ctx);
         if (stored === undefined) {
-            const created = await this.#database.replace(ctx, {
+            stored = await this.#database.replace(ctx, {
                 error: null,
                 pending: false,
                 session: null,
             });
-            this.#cloud = project(created);
-            return;
         }
         this.#cloud = project(stored);
+        const currentSocial = await this.#socialDatabase.read(ctx);
+        const social = await this.#socialDatabase.replace(
+            ctx,
+            socialValueForSession(currentSocial, stored.session, true),
+        );
+        this.#cloudSocial = projectSocial(social.state);
+        this.#cloudSocialUserId = social.state.userId;
         if (stored.session !== null) {
             await this.#scheduleProfileSync(ctx, stored.session.user.id);
         }
@@ -821,12 +1059,14 @@ export class CloudModule implements AgentModule {
                 pending: true,
                 session: null,
             });
+            const social = await this.#socialDatabase.replace(txCtx, unenrolledCloudSocialValue());
             const attempt: CloudAttempt = { ...draft, version: stored.version };
             const cloud = project(stored, attempt);
             afterCommit(txCtx, (postCommitCtx) => {
                 this.#attempt = attempt;
                 this.#cloud = cloud;
                 for (const listener of this.#listeners) listener(postCommitCtx, cloud);
+                this.#applySocial(postCommitCtx, social, "mutation", true);
             });
             await this.#durableFunctions.invoke(txCtx, {
                 function: CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
@@ -848,11 +1088,17 @@ export class CloudModule implements AgentModule {
                 await this.#durableFunctions.cancel(txCtx, CLOUD_AUTHORIZATION_EXPIRY_OPERATION);
             }
             const stored = await this.#database.replace(txCtx, value);
+            const currentSocial = await this.#socialDatabase.read(txCtx);
+            const social = await this.#socialDatabase.replace(
+                txCtx,
+                socialValueForSession(currentSocial, value.session),
+            );
             const cloud = project(stored, options.attempt);
             afterCommit(txCtx, (postCommitCtx) => {
                 options.onCommit?.();
                 this.#cloud = cloud;
                 for (const listener of this.#listeners) listener(postCommitCtx, cloud);
+                this.#applySocial(postCommitCtx, social, options.socialOrigin ?? "mutation", true);
             });
             return cloud;
         });
@@ -938,6 +1184,337 @@ export class CloudModule implements AgentModule {
         }
     }
 
+    #startSocialSupervisor(): void {
+        if (this.#socialSupervisor !== undefined || this.#socialLifetime.signal.aborted) return;
+        const owned = this.#ownedContext();
+        const database = agentDatabase(owned);
+        if (database === undefined) throw new Error("Cloud lost its agent database.");
+        const ctx = withLifetime(
+            withAgentDatabase(detach(owned).named("cloud-social-socket"), database),
+            this.#socialLifetime.signal,
+        );
+        this.#socialSupervisor = this.#runSocialSupervisor(ctx).catch((error: unknown) => {
+            if (this.#socialLifetime.signal.aborted) return;
+            ctx.log.warn("Cloud friends stopped reconnecting unexpectedly.", {}, error);
+        });
+    }
+
+    async #runSocialSupervisor(ctx: Context): Promise<void> {
+        while (!this.#socialLifetime.signal.aborted) {
+            let live: LiveCloudSocialConnection | undefined;
+            let environment: CloudEnvironment | undefined;
+            try {
+                const prepared = await this.#lock.runInLock(ctx, async () => {
+                    const stored = await this.#readOwned(ctx);
+                    if (
+                        stored?.session === null ||
+                        stored?.session === undefined ||
+                        stored.session.enrollment === null ||
+                        stored.session.enrollment === undefined
+                    ) {
+                        return undefined;
+                    }
+                    const controller = new AbortController();
+                    const next: LiveCloudSocialConnection = {
+                        controller,
+                        socket: undefined,
+                        stateVersion: undefined,
+                        userId: stored.session.user.id,
+                    };
+                    this.#liveSocial = next;
+                    const minted = await this.#mintInLock(ctx, false);
+                    return { live: next, minted };
+                });
+                if (prepared === undefined) {
+                    await this.#waitForSocialWake(SOCIAL_ELIGIBILITY_POLL_MS);
+                    continue;
+                }
+                live = prepared.live;
+                environment = prepared.minted.cloud.environment;
+                const socket = await this.#client(environment).openSocialSocket(
+                    prepared.minted.accessToken,
+                    live.controller.signal,
+                    {
+                        onState: async (version) => {
+                            await this.#handleSocialSocketVersion(ctx, live!, version, true);
+                        },
+                        onUpdate: async (version) => {
+                            await this.#handleSocialSocketVersion(ctx, live!, version, false);
+                        },
+                    },
+                );
+                live.socket = socket;
+                let periodicRefresh: Promise<void> | undefined;
+                const refresh = setInterval(() => {
+                    if (
+                        periodicRefresh !== undefined ||
+                        live?.stateVersion === undefined ||
+                        this.#liveSocial !== live
+                    ) {
+                        return;
+                    }
+                    periodicRefresh = this.#scheduleSocialSync(ctx, live.userId, live.stateVersion)
+                        .catch((error: unknown) => {
+                            ctx.log.warn(
+                                "Cloud friends could not schedule their periodic profile refresh.",
+                                {},
+                                error,
+                            );
+                        })
+                        .finally(() => {
+                            periodicRefresh = undefined;
+                        });
+                }, SOCIAL_PROFILE_REFRESH_MS);
+                refresh.unref();
+                try {
+                    await socket.done;
+                } finally {
+                    clearInterval(refresh);
+                    await periodicRefresh;
+                }
+            } catch (error: unknown) {
+                if (!this.#socialLifetime.signal.aborted && environment !== undefined) {
+                    logCloudFailure(ctx, "social", environment, "cloud-social-socket", error);
+                }
+            } finally {
+                if (live !== undefined) await this.#socialSocketClosed(ctx, live);
+            }
+            if (!this.#socialLifetime.signal.aborted) {
+                await this.#waitForSocialWake(SOCIAL_SOCKET_RETRY_MS);
+            }
+        }
+    }
+
+    async #handleSocialSocketVersion(
+        ctx: Context,
+        live: LiveCloudSocialConnection,
+        version: string,
+        initial: boolean,
+    ): Promise<void> {
+        const previous = live.stateVersion;
+        if (
+            this.#liveSocial !== live ||
+            (initial ? previous !== undefined : previous === undefined || version <= previous)
+        ) {
+            throw new Error("The Cloud social socket version is out of order.");
+        }
+        live.stateVersion = version;
+        await this.#lock.runInLock(ctx, async () => {
+            if (this.#liveSocial !== live) return;
+            const stored = await this.#readOwned(ctx);
+            if (
+                stored?.session === null ||
+                stored?.session === undefined ||
+                stored.session.user.id !== live.userId ||
+                stored.session.enrollment === null ||
+                stored.session.enrollment === undefined
+            ) {
+                throw new Error("The Cloud account changed while its social socket was open.");
+            }
+            await ctx.inTx(async (txCtx) => {
+                const current = await this.#socialDatabase.read(txCtx);
+                if (current === undefined || current.status !== "enrolled") {
+                    throw new Error(
+                        "The Cloud social state disappeared while its socket was open.",
+                    );
+                }
+                const synchronized = current.remoteVersion === version;
+                const replacement = await this.#socialDatabase.replace(txCtx, {
+                    ...enrolledSocialStoredValue(current),
+                    connection: synchronized ? "connected" : "connecting",
+                });
+                if (!synchronized) await this.#scheduleSocialSync(txCtx, live.userId, version);
+                afterCommit(txCtx, (postCommitCtx) => {
+                    this.#applySocial(postCommitCtx, replacement, "background", false);
+                });
+            });
+        });
+    }
+
+    async #socialSocketClosed(ctx: Context, live: LiveCloudSocialConnection): Promise<void> {
+        await this.#lock.runInLock(ctx, async () => {
+            if (this.#liveSocial !== live) return;
+            this.#liveSocial = undefined;
+            const current = await this.#socialDatabase.read(ctx);
+            if (current?.status !== "enrolled" || current.userId !== live.userId) return;
+            await this.#replaceSocial(
+                ctx,
+                { ...enrolledSocialStoredValue(current), connection: "connecting" },
+                "background",
+            );
+        });
+    }
+
+    async #waitForSocialWake(milliseconds?: number): Promise<void> {
+        if (this.#socialLifetime.signal.aborted) return;
+        await new Promise<void>((resolve) => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const finish = (): void => {
+                if (this.#socialWake !== finish) return;
+                this.#socialWake = undefined;
+                if (timer !== undefined) clearTimeout(timer);
+                this.#socialLifetime.signal.removeEventListener("abort", finish);
+                resolve();
+            };
+            this.#socialWake = finish;
+            this.#socialLifetime.signal.addEventListener("abort", finish, { once: true });
+            if (milliseconds !== undefined) timer = setTimeout(finish, milliseconds);
+        });
+    }
+
+    #restartSocialConnection(): void {
+        this.#liveSocial?.controller.abort();
+        this.#socialWake?.();
+    }
+
+    async #scheduleCurrentSocialSync(ctx: Context, userId: string): Promise<void> {
+        const live = this.#liveSocial;
+        if (live?.userId !== userId || live.stateVersion === undefined) return;
+        await this.#scheduleSocialSync(ctx, userId, live.stateVersion);
+    }
+
+    async #scheduleSocialSync(ctx: Context, userId: string, remoteVersion: string): Promise<void> {
+        await this.#durableFunctions.invoke(ctx, {
+            function: CLOUD_SOCIAL_SYNC_FUNCTION,
+            arguments: { remoteVersion, userId },
+            operationId: `cloud.social-sync:${remoteVersion}`,
+            lockKeys: [CLOUD_SOCIAL_SYNC_LOCK],
+        });
+    }
+
+    async #executeSocialSync(ctx: Context, input: CloudSocialSyncArguments): Promise<void> {
+        for (;;) {
+            try {
+                const synchronized = await this.#lock.runInLock(ctx, async () => {
+                    const stored = await this.#readOwned(ctx);
+                    if (
+                        stored?.session === null ||
+                        stored?.session === undefined ||
+                        stored.session.user.id !== input.userId ||
+                        stored.session.enrollment === null ||
+                        stored.session.enrollment === undefined
+                    ) {
+                        return true;
+                    }
+                    const live = this.#liveSocial;
+                    if (live?.userId !== input.userId || live.stateVersion === undefined)
+                        return true;
+                    const minted = await this.#mintInLock(ctx, false);
+                    const snapshot = await this.#synchronizeSocialSnapshot(
+                        ctx,
+                        minted,
+                        "background",
+                    );
+                    return (
+                        this.#liveSocial === live &&
+                        live.stateVersion === snapshot.version &&
+                        this.#cloudSocial.status === "enrolled" &&
+                        this.#cloudSocial.connection === "connected"
+                    );
+                });
+                if (synchronized) return;
+            } catch (error: unknown) {
+                if (
+                    error instanceof CloudOperationError &&
+                    (error.code === "cloud_not_authenticated" ||
+                        error.code === "cloud_not_enrolled" ||
+                        error.code === "cloud_unauthorized")
+                ) {
+                    return;
+                }
+                const environment =
+                    this.#cloud.status === "connected" ? this.#cloud.environment : "unknown";
+                const diagnostic = cloudFailureDiagnostic(error);
+                const status =
+                    diagnostic.status === undefined ? "" : ` status=${String(diagnostic.status)}`;
+                ctx.log.warn(
+                    `cloud:social:error environment=${environment} phase=durable-social-sync reason=${diagnostic.reason}${status}`,
+                );
+            }
+            await delay(ctx, SOCIAL_SYNC_RETRY_MS);
+        }
+    }
+
+    async #synchronizeSocialSnapshot(
+        ctx: Context,
+        minted: MintedCloudCredential,
+        origin: CloudSocialUpdateOrigin,
+    ): Promise<CloudRemoteSocialSnapshot> {
+        const snapshot = await this.#client(minted.cloud.environment).getSocialSnapshot(
+            minted.accessToken,
+        );
+        const stored = await this.#readOwned(ctx);
+        if (
+            stored?.session === null ||
+            stored?.session === undefined ||
+            stored.session.user.id !== minted.session.user.id ||
+            stored.session.enrollment === null ||
+            stored.session.enrollment === undefined
+        ) {
+            throw this.#error(
+                409,
+                "cloud_not_enrolled",
+                "Enroll a Cloud profile before using friends.",
+                true,
+            );
+        }
+        const live = this.#liveSocial;
+        const connected =
+            live?.userId === stored.session.user.id && live.stateVersion === snapshot.version;
+        await this.#replaceSocial(
+            ctx,
+            {
+                blocked: snapshot.blocked,
+                connection: connected ? "connected" : "connecting",
+                friends: snapshot.friends,
+                incomingRequests: snapshot.incomingRequests,
+                outgoingRequests: snapshot.outgoingRequests,
+                remoteVersion: snapshot.version,
+                status: "enrolled",
+                userId: stored.session.user.id,
+            },
+            origin,
+        );
+        return snapshot;
+    }
+
+    async #replaceSocial(
+        ctx: Context,
+        value: CloudSocialStoredValue,
+        origin: CloudSocialUpdateOrigin,
+    ): Promise<CloudSocial> {
+        return await ctx.inTx(async (txCtx) => {
+            const replacement = await this.#socialDatabase.replace(txCtx, value);
+            const social = projectSocial(replacement.state);
+            afterCommit(txCtx, (postCommitCtx) => {
+                this.#applySocial(postCommitCtx, replacement, origin, false);
+            });
+            return social;
+        });
+    }
+
+    #applySocial(
+        ctx: Context,
+        replacement: CloudSocialDatabaseReplacement,
+        origin: CloudSocialUpdateOrigin,
+        restartEligibility: boolean,
+    ): void {
+        const previousStatus = this.#cloudSocial.status;
+        const previousUserId = this.#cloudSocialUserId;
+        const social = projectSocial(replacement.state);
+        this.#cloudSocial = social;
+        this.#cloudSocialUserId = replacement.state.userId;
+        if (replacement.changed) {
+            for (const listener of this.#socialListeners) listener(ctx, social, origin);
+        }
+        if (
+            restartEligibility &&
+            (previousStatus !== social.status || previousUserId !== replacement.state.userId)
+        ) {
+            this.#restartSocialConnection();
+        }
+    }
+
     #client(environment: CloudEnvironment): CloudWorkOS {
         let client = this.#clients.get(environment);
         if (client === undefined) {
@@ -952,11 +1529,18 @@ export class CloudModule implements AgentModule {
     }
 
     #error(
-        status: 400 | 409 | 503,
+        status: 400 | 404 | 409 | 503,
         code: CloudOperationErrorCode,
         message: string,
+        includeSocial = false,
     ): CloudOperationError {
-        return new CloudOperationError(status, code, message, this.#cloud);
+        return new CloudOperationError(
+            status,
+            code,
+            message,
+            this.#cloud,
+            includeSocial ? this.#cloudSocial : undefined,
+        );
     }
 
     #assertRunning(): void {
@@ -976,7 +1560,7 @@ export class CloudModule implements AgentModule {
 
 function logCloudFailure(
     ctx: Context,
-    operation: "authorization" | "profile" | "token",
+    operation: "authorization" | "profile" | "social" | "token",
     environment: CloudEnvironment,
     phase: string,
     error: unknown,
@@ -996,6 +1580,11 @@ function cloudFailureDiagnostic(error: unknown): {
     if (error instanceof CloudCredentialsRejectedError) return { reason: "credentials-rejected" };
     if (error instanceof CloudIdentityMismatchError) return { reason: "identity-mismatch" };
     if (error instanceof CloudProfileRejectedError) return { reason: "profile-rejected" };
+    if (error instanceof CloudProfileRequiredError) return { reason: "profile-required" };
+    if (error instanceof CloudSocialBlockedError) return { reason: "blocked" };
+    if (error instanceof CloudSocialInvalidRequestError) return { reason: "invalid-request" };
+    if (error instanceof CloudSocialNotFoundError) return { reason: "not-found" };
+    if (error instanceof CloudSocialSnapshotChangedError) return { reason: "snapshot-changed" };
     if (error instanceof CloudUsernameUnavailableError) return { reason: "username-unavailable" };
     if (error instanceof CloudServiceUnavailableError) {
         return error.status === undefined
@@ -1054,6 +1643,74 @@ function project(stored: CloudStoredState, attempt?: CloudAttempt): Cloud {
         user: null,
         version: stored.version,
     });
+}
+
+function socialValueForSession(
+    current: CloudSocialStoredState | undefined,
+    session: CloudSession | null,
+    forceConnecting = false,
+): CloudSocialStoredValue {
+    if (session === null || session.enrollment === null || session.enrollment === undefined) {
+        return unenrolledCloudSocialValue();
+    }
+    if (current?.status === "enrolled" && current.userId === session.user.id) {
+        return {
+            ...enrolledSocialStoredValue(current),
+            connection: forceConnecting ? "connecting" : current.connection,
+        };
+    }
+    return {
+        blocked: [],
+        connection: "connecting",
+        friends: [],
+        incomingRequests: [],
+        outgoingRequests: [],
+        remoteVersion: null,
+        status: "enrolled",
+        userId: session.user.id,
+    };
+}
+
+function enrolledSocialStoredValue(
+    stored: Extract<CloudSocialStoredState, { status: "enrolled" }>,
+): Extract<CloudSocialStoredValue, { status: "enrolled" }> {
+    return {
+        blocked: stored.blocked,
+        connection: stored.connection,
+        friends: stored.friends,
+        incomingRequests: stored.incomingRequests,
+        outgoingRequests: stored.outgoingRequests,
+        remoteVersion: stored.remoteVersion,
+        status: "enrolled",
+        userId: stored.userId,
+    };
+}
+
+function projectSocial(stored: CloudSocialStoredState): CloudSocial {
+    if (stored.status === "unenrolled") {
+        return Object.freeze({
+            blocked: Object.freeze([]),
+            connection: null,
+            friends: Object.freeze([]),
+            incomingRequests: Object.freeze([]),
+            outgoingRequests: Object.freeze([]),
+            status: "unenrolled",
+            updatedAt: stored.updatedAt,
+            version: stored.version,
+        }) as CloudSocial;
+    }
+    const profiles = (values: CloudSocialStoredState["friends"]) =>
+        Object.freeze(values.map((profile) => Object.freeze({ ...profile })));
+    return Object.freeze({
+        blocked: profiles(stored.blocked),
+        connection: stored.connection,
+        friends: profiles(stored.friends),
+        incomingRequests: profiles(stored.incomingRequests),
+        outgoingRequests: profiles(stored.outgoingRequests),
+        status: "enrolled",
+        updatedAt: stored.updatedAt,
+        version: stored.version,
+    }) as CloudSocial;
 }
 
 function validRedirectUri(value: string, cloud: Cloud): string {

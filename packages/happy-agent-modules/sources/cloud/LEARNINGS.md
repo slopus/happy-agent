@@ -83,3 +83,29 @@
   stale work safely.
 - CloudModule owns the successful remote profile-change signal so every caller gets the same
   behavior; the API translates it into `cloud.profile.updated` as a compact invalidation.
+
+## Cloud friends
+
+- Friends activate from persisted profile enrollment; there is no second feature toggle. Keep the
+  socket closed while disconnected or unenrolled, wake it after enrollment commits, and clear all
+  retained social profiles atomically when the account or online enrollment disappears.
+- Happy Cloud's updates socket authenticates with the short-lived WorkOS bearer token but does not
+  replay missed events. Send the token in the WebSocket authorization header rather than its URL,
+  open the socket before snapshotting, and treat its state version as the convergence boundary.
+- Persist friends, incoming requests, outgoing requests, blocked users, hydrated public profiles,
+  and the private Happy Cloud state version together. Expose a separate local UUIDv7 version so
+  connection changes and list replacements produce a coherent daemon resource and compact event.
+- Socket frames only trigger work. Full reconciliation is a Durable Function keyed by the announced
+  remote version; it fetches all three lists at one shared version, hydrates their public profiles
+  under one total deadline, and commits one atomic replacement. Reconnects with an unchanged remote
+  version can reuse the durable cache immediately.
+- Happy Cloud broadcasts profile changes to friends, but not necessarily to pending-request or
+  blocked-list peers. While the socket is open, periodically invoke the same bounded durable full
+  reconciliation so those retained public profiles cannot remain stale forever.
+- Happy Cloud currently supports send, approve, reject, revoke, block, and unblock. It has no direct
+  remove-friend route; do not emulate one locally. Blocking is the only current upstream operation
+  that removes a friendship.
+- Social mutations use the same serialized refresh-and-verify boundary as profile work, then read an
+  authoritative post-mutation snapshot. Missing targets, blocked requests, missing enrollment, and
+  transient service failures remain distinct display-safe errors; an ambiguous successful remote
+  mutation relies on the socket-triggered durable reconciliation to converge afterward.

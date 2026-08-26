@@ -14,6 +14,7 @@ import {
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
+import { CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { ProfileModule } from "../../sources/profile/index.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
@@ -104,6 +105,7 @@ afterEach(async () => {
         module.durableFunctions.stop();
     }
     for (const database of databases.splice(0)) database.close();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
 });
@@ -123,12 +125,12 @@ async function fixture(name: string, logs?: CloudLogRecord[]) {
     await database.ready;
     const ctx =
         logs === undefined ? database.context : withLogger(database.context, recordingLogger(logs));
-    await resolveModuleHooks(ctx, module);
+    const cloudHooks = await resolveModuleHooks(ctx, module);
     const durableHooks = await resolveModuleHooks(ctx, durableFunctions);
     await durableHooks.afterStart?.(ctx, {} as never);
     const local = await profile.ensure(ctx);
     await profile.update(ctx, local.id, { name: "Ada" });
-    return { database, durableFunctions, module, profile };
+    return { cloudHooks, database, durableFunctions, module, profile };
 }
 
 async function pendingDurableCallCount(database: ModuleDatabase): Promise<number> {
@@ -232,6 +234,131 @@ describe("CloudModule", () => {
             firstName: "Changed upstream",
         });
         expect(updates).toEqual(["cloud", "profile"]);
+    });
+
+    it("activates friends on enrollment, hydrates mutation snapshots, and clears on disconnect", async () => {
+        const { database, module } = await fixture("cloud-module-social");
+        const remoteVersion = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const graceVersion = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";
+        const socialUpdates: Array<{ origin: string; status: string }> = [];
+        module.onSocialUpdated((_ctx, social, origin) => {
+            socialUpdates.push({ origin, status: social.status });
+        });
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            if (path === "/v0/profile") {
+                return Response.json({ firstName: "Ada", username: "ada" });
+            }
+            if (path === "/v0/friends/requests/grace" && init?.method === "PUT") {
+                return Response.json({ status: "pending" });
+            }
+            if (path === "/v0/friends") {
+                return Response.json({
+                    friends: [{ firstName: "stale", username: "grace" }],
+                    version: remoteVersion,
+                });
+            }
+            if (path === "/v0/friends/requests") {
+                return Response.json({ incoming: [], outgoing: [], version: remoteVersion });
+            }
+            if (path === "/v0/friends/blocked") {
+                return Response.json({ blocked: [], version: remoteVersion });
+            }
+            if (path === "/v0/profiles/grace") {
+                return Response.json({
+                    firstName: "Grace",
+                    lastName: "Hopper",
+                    username: "grace",
+                    version: graceVersion,
+                });
+            }
+            return Response.json({ error: "not_found" }, { status: 404 });
+        });
+        await connect(module, database);
+
+        await module.enrollProfile(database.context, { username: "ada" });
+        expect(module.socialStatus(database.context)).toMatchObject({
+            connection: "connecting",
+            status: "enrolled",
+        });
+
+        await expect(
+            module.mutateSocial(database.context, "send-request", "grace"),
+        ).resolves.toMatchObject({
+            cloudSocial: {
+                connection: "connecting",
+                friends: [
+                    {
+                        firstName: "Grace",
+                        lastName: "Hopper",
+                        username: "grace",
+                        version: graceVersion,
+                    },
+                ],
+                status: "enrolled",
+            },
+        });
+
+        await module.disconnect(database.context);
+        expect(module.socialStatus(database.context)).toMatchObject({
+            blocked: [],
+            connection: null,
+            friends: [],
+            status: "unenrolled",
+        });
+        expect(socialUpdates).toEqual([
+            { origin: "mutation", status: "enrolled" },
+            { origin: "mutation", status: "enrolled" },
+            { origin: "mutation", status: "unenrolled" },
+        ]);
+    });
+
+    it("opens the updates socket only after enrollment and durably converges its announced state", async () => {
+        const { cloudHooks, database, module } = await fixture("cloud-module-social-socket");
+        const remoteVersion = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const graceVersion = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";
+        const open = vi.spyOn(CloudWorkOS.prototype, "openSocialSocket");
+        open.mockImplementation(async (_token, signal, callbacks) => {
+            let finish: (() => void) | undefined;
+            const done = new Promise<void>((resolve) => {
+                finish = resolve;
+            });
+            signal.addEventListener("abort", () => finish?.(), { once: true });
+            await callbacks.onState(remoteVersion);
+            return { close: () => finish?.(), done };
+        });
+        vi.spyOn(CloudWorkOS.prototype, "getSocialSnapshot").mockResolvedValue({
+            blocked: [],
+            friends: [{ firstName: "Grace", username: "grace", version: graceVersion }],
+            incomingRequests: [],
+            outgoingRequests: [],
+            version: remoteVersion,
+        });
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            return Response.json({ firstName: "Ada", username: "ada" });
+        });
+
+        await cloudHooks.afterStart?.(database.context, {} as never);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(open).not.toHaveBeenCalled();
+        await connect(module, database);
+        await module.enrollProfile(database.context, { username: "ada" });
+
+        await vi.waitFor(() => {
+            expect(module.socialStatus(database.context)).toMatchObject({
+                connection: "connected",
+                friends: [{ username: "grace", version: graceVersion }],
+                status: "enrolled",
+            });
+        });
+        expect(open).toHaveBeenCalledTimes(1);
     });
 
     it("requires a compatible local profile name before contacting Cloud enrollment", async () => {

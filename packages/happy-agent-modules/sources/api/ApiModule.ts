@@ -55,7 +55,7 @@ import {
 } from "../compactions/index.js";
 import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
-import { CloudModule, CloudOperationError } from "../cloud/index.js";
+import { CloudModule, CloudOperationError, type CloudSocialMutationKind } from "../cloud/index.js";
 import { EventsModule, eventIdSchema, type AgentEvent } from "../events/index.js";
 import {
     fileReadQuerySchema,
@@ -152,6 +152,7 @@ import {
     agentCreateBodySchema,
     apiIdSchema,
     cloudMutationRequestSchema,
+    cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
     documentBodySchema,
     draftBodySchema,
@@ -710,6 +711,32 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, result);
                 return;
             }
+            if (request.method === "GET" && url.pathname === "/v0/cloud/social") {
+                sendJson(response, 200, this.#cloud.getSocial(ctx));
+                return;
+            }
+            const cloudSocialMutation = parseCloudSocialMutation(request.method, url.pathname);
+            if (cloudSocialMutation !== undefined) {
+                const body = await optionalBodyAs(
+                    request,
+                    cloudSocialMutationRequestSchema,
+                    "Cloud friends request",
+                    2 * 1_024,
+                );
+                const result = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await this.#cloudOperation(() =>
+                            this.#cloud.mutateSocial(
+                                ctx,
+                                cloudSocialMutation.mutation,
+                                cloudSocialMutation.username,
+                            ),
+                        ),
+                );
+                sendJson(response, 200, result);
+                return;
+            }
             if (request.method === "GET" && url.pathname === "/v0/integrations/happy") {
                 sendJson(response, 200, { integration: this.#happy.integration(ctx) });
                 return;
@@ -1164,6 +1191,16 @@ export class ApiModule implements AgentModule {
             }),
             this.#cloud.onProfileUpdated(() => {
                 this.#journal.append("cloud.profile.updated", {});
+            }),
+            this.#cloud.onSocialUpdated((_eventCtx, social, origin) => {
+                const append = (): void => {
+                    this.#journal.append("cloud.social.updated", { version: social.version });
+                };
+                if (origin === "background") {
+                    this.#journal.appendOutsideMutation("cloud.social.updated", {
+                        version: social.version,
+                    });
+                } else append();
             }),
             this.#happy.onIntegrationUpdated((_eventCtx, integration) => {
                 this.#journal.append(
@@ -4297,8 +4334,12 @@ export class ApiModule implements AgentModule {
             return await operation();
         } catch (error: unknown) {
             if (error instanceof CloudOperationError) {
-                throw new ApiError(error.status, error.code, error.message, {
+                const details = {
                     cloud: error.cloud,
+                    ...(error.cloudSocial === undefined ? {} : { cloudSocial: error.cloudSocial }),
+                };
+                throw new ApiError(error.status, error.code, error.message, {
+                    ...details,
                 });
             }
             throw error;
@@ -4527,6 +4568,7 @@ export class ApiModule implements AgentModule {
             sharing: sharingResource(sharing),
             onboarding,
             cloud: this.#cloud.status(ctx),
+            cloudSocial: this.#cloud.socialStatus(ctx),
             happyIntegration: this.#happy.integration(ctx),
             bots: await Promise.all(bots.map(async (bot) => await this.#botResource(ctx, bot))),
             projects: await Promise.all(
@@ -5519,6 +5561,41 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
         return JSON.stringify(left) === JSON.stringify(right);
     } catch {
         return false;
+    }
+}
+
+function parseCloudSocialMutation(
+    method: string | undefined,
+    pathname: string,
+): { readonly mutation: CloudSocialMutationKind; readonly username: string } | undefined {
+    if (method !== "DELETE" && method !== "POST" && method !== "PUT") return undefined;
+    const request = /^\/v0\/cloud\/social\/requests\/([^/]+)$/.exec(pathname);
+    const decision = /^\/v0\/cloud\/social\/requests\/([^/]+)\/(approve|reject)$/.exec(pathname);
+    const blocked = /^\/v0\/cloud\/social\/blocked\/([^/]+)$/.exec(pathname);
+    let mutation: CloudSocialMutationKind | undefined;
+    let encodedUsername: string | undefined;
+    if (request !== null && method === "PUT") {
+        mutation = "send-request";
+        encodedUsername = request[1];
+    } else if (request !== null && method === "DELETE") {
+        mutation = "revoke-request";
+        encodedUsername = request[1];
+    } else if (decision !== null && method === "POST") {
+        mutation = decision[2] === "approve" ? "approve-request" : "reject-request";
+        encodedUsername = decision[1];
+    } else if (blocked !== null && method === "PUT") {
+        mutation = "block";
+        encodedUsername = blocked[1];
+    } else if (blocked !== null && method === "DELETE") {
+        mutation = "unblock";
+        encodedUsername = blocked[1];
+    } else if (pathname.startsWith("/v0/cloud/social/")) {
+        throw invalidRequest("The Cloud friends route is invalid.");
+    } else return undefined;
+    try {
+        return { mutation, username: decodeURIComponent(encodedUsername!) };
+    } catch {
+        throw invalidRequest("The Cloud username is invalid.");
     }
 }
 

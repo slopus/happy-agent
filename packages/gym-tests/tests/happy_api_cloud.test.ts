@@ -28,6 +28,15 @@ describe("Happy Cloud API", () => {
                 status: "disconnected",
                 user: null,
             });
+            const initialSocial = await gym.client.getCloudSocial();
+            expect(initialSocial.cloudSocial).toMatchObject({
+                blocked: [],
+                connection: null,
+                friends: [],
+                incomingRequests: [],
+                outgoingRequests: [],
+                status: "unenrolled",
+            });
             const baseline = (await gym.client.getEvents({ limit: 1 })).latestCursor;
             const request = {
                 environment: "production" as const,
@@ -58,6 +67,7 @@ describe("Happy Cloud API", () => {
             });
             await expect(gym.client.getDesktopBootstrap()).resolves.toMatchObject({
                 cloud: started.cloud,
+                cloudSocial: initialSocial.cloudSocial,
             });
 
             await gym.restart();
@@ -72,6 +82,7 @@ describe("Happy Cloud API", () => {
             expect(expired.cloud.version > started.cloud.version).toBe(true);
             await expect(gym.client.getDesktopBootstrap()).resolves.toMatchObject({
                 cloud: expired.cloud,
+                cloudSocial: expect.objectContaining({ status: "unenrolled" }),
             });
             expect(
                 (await gym.client.getEvents()).events.filter(
@@ -131,6 +142,14 @@ describe("Happy Cloud API", () => {
                 code: "cloud_not_authenticated",
                 status: 409,
             });
+            await expect(gym.client.sendCloudFriendRequest("grace")).rejects.toMatchObject({
+                body: {
+                    cloudSocial: expect.objectContaining({ status: "unenrolled" }),
+                    code: "cloud_not_authenticated",
+                },
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
             await expect(
                 gym.client.enrollCloudProfile({ username: "UPPERCASE" }),
             ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
@@ -144,7 +163,9 @@ describe("Happy Cloud API", () => {
             expect(
                 (await gym.client.getEvents({ after: baseline })).events.filter(
                     (event) =>
-                        event.type === "cloud.updated" || event.type === "cloud.profile.updated",
+                        event.type === "cloud.updated" ||
+                        event.type === "cloud.profile.updated" ||
+                        event.type === "cloud.social.updated",
                 ),
             ).toEqual([]);
             await expect(gym.client.getCloud()).resolves.toMatchObject({

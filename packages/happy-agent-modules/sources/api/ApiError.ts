@@ -2,6 +2,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 export const apiErrorCodeSchema = Type.Union([
     Type.Literal("cloud_not_authenticated"),
+    Type.Literal("cloud_not_enrolled"),
     Type.Literal("cloud_unauthorized"),
     Type.Literal("cloud_unavailable"),
     Type.Literal("conflict"),

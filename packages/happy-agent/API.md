@@ -1121,7 +1121,8 @@ current public profile, applies buffered updates newer than that snapshot, and m
 connected only when the result matches the socket's newest announced version. A reconnect with a
 different state version, malformed or out-of-order update, profile change, or inconsistent
 snapshot schedules another durable full reconciliation. Ordinary complete update messages are
-applied atomically and persisted before `cloud.social.updated` is emitted.
+coalesced into durable full reconciliations; each resulting replacement is applied atomically and
+persisted before `cloud.social.updated` is emitted.
 
 Cloud social operations mint and verify an access token with the same rotation, identity checks,
 and errors as `POST /v0/cloud/access-token`. They are serialized with reconciliation and return

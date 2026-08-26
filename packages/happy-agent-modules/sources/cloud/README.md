@@ -12,3 +12,9 @@ version. Durable Functions reconcile online enrollment at startup and push later
 changes back to Happy Cloud, retrying transient failures without exposing credentials.
 
 Cloud is independent from `HappyModule`, which connects the daemon to the Happy mobile app.
+
+Friends activate automatically after enrollment. The module retains one account-scoped social
+snapshot, opens Happy Cloud's authenticated updates WebSocket, and uses its announced version to
+drive Durable Function reconciliation of friends, requests, blocked users, and public profiles.
+Reconnects and transient failures preserve the last synchronized lists as connecting state; losing
+enrollment or disconnecting clears them before another account can be used.
