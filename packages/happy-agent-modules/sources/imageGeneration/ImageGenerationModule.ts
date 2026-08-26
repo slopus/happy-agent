@@ -16,14 +16,14 @@ import {
     type ImageGenerationArguments,
     type ImageGenerationResult,
 } from "./ImageGeneration.js";
-import { decodeAndValidatePng } from "./impl/decodeAndValidatePng.js";
+import { decodeAndValidatePng } from "../impl/images/decodeAndValidatePng.js";
+import { writeGeneratedImageFile } from "../impl/images/writeGeneratedImageFile.js";
 import { codexImageProviderIds, generateImageWithCodex } from "./impl/generateImageWithCodex.js";
 import {
     assertAggregateImageSize,
     prepareReferencedImages,
 } from "./impl/prepareReferencedImages.js";
 import { RecentImages } from "./impl/RecentImages.js";
-import { writeGeneratedImageFile } from "./impl/writeGeneratedImageFile.js";
 import { codexImageGenerationTool } from "./tools/codex_imagegen.js";
 
 /** What one generation needs to know beyond the model's own arguments. */

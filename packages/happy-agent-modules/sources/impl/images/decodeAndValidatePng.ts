@@ -1,4 +1,4 @@
-import { getImageProcessor } from "../../impl/images/getImageProcessor.js";
+import { getImageProcessor } from "./getImageProcessor.js";
 
 /** The eight bytes every PNG file begins with. */
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

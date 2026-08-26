@@ -20,9 +20,10 @@ import { geminiGenerateMusicTool } from "./tools/gemini_generate_music.js";
  *
  * The module owns the Gemini calls itself — nothing is delegated to a host — and it owns nothing
  * else. There is no catalog, no event, and no record kept of what was made: a tool calls Gemini,
- * writes the file where the model asked for it, and answers with that path. The key comes from the
- * configuration module that owns credentials, and the machine from the compute module that owns
- * machines.
+ * writes its file, and answers with that path. The key comes from the configuration module that
+ * owns credentials, and the machine from the compute module that owns machines. Image generation
+ * publishes into the shared generated-files folder the way `codex_imagegen` does, so it needs only
+ * the key; music generation and media analysis work through the agent's machine and need one.
  */
 export class GeminiModule implements AgentModule {
     readonly name = "gemini";
@@ -57,16 +58,18 @@ export class GeminiModule implements AgentModule {
     readonly #hooks: AgentModuleHooks = {
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             // Every call here is authenticated, so an installation with no Gemini key has nothing
-            // to offer rather than three tools that would fail on their first use.
+            // to offer rather than tools that would fail on their first use.
             const connection = this.#connection();
             if (connection === undefined) return [];
-            // Every tool here either writes a file or reads one, so an agent without a machine to
-            // work on has nothing to offer either.
+            // Image generation publishes into the shared generated-files folder, so the key alone
+            // backs it. The other tools write or read the agent's own files, so an agent without a
+            // machine to work on is not offered them.
+            const image = geminiGenerateImageTool(connection, this.#config);
             const compute = await this.#compute.resolve(ctx, scope.agent.id);
-            if (compute === undefined) return [];
+            if (compute === undefined) return [image];
             const reads = new FileReadLog(scope.kv, this.#readLocks, scope.agent.id);
             return [
-                geminiGenerateImageTool(connection, this.#compute, compute, reads),
+                image,
                 geminiGenerateMusicTool(connection, this.#compute, compute, reads),
                 geminiAnalyzeMediaTool(connection, this.#compute, compute),
             ];

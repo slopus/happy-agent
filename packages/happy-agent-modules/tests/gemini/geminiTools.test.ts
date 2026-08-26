@@ -1,4 +1,8 @@
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+
 import { createRootContext } from "@steve.kite/stdlib";
+import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GeminiModule } from "../../sources/gemini/index.js";
@@ -18,6 +22,15 @@ beforeEach(() => {
 afterEach(() => {
     vi.unstubAllEnvs();
 });
+
+/** A real PNG, because everything published as a generated image is proven to decode first. */
+async function png(): Promise<Buffer> {
+    return await sharp({
+        create: { width: 8, height: 8, channels: 3, background: { r: 40, g: 40, b: 200 } },
+    })
+        .png()
+        .toBuffer();
+}
 
 /** A Gemini interaction response, as the API would answer it. */
 function interaction(...content: readonly Record<string, unknown>[]): Response {
@@ -59,14 +72,15 @@ describe("the Gemini module's tools", () => {
         ).toEqual([true, true, true]);
     });
 
-    it("has no tools at all when the agent has no machine to write to", async () => {
+    it("still offers image generation when the agent has no machine to write to", async () => {
         const module = new GeminiModule(
             testConfig,
             scriptedComputeModule(async () => undefined),
         );
 
         const hooks = await resolveModuleHooks(ctx, module);
-        expect(await hooks.tools!(ctx, { agent: { id: "a" }, kv: undefined } as never)).toEqual([]);
+        const tools = await hooks.tools!(ctx, { agent: { id: "a" }, kv: undefined } as never);
+        expect(tools.map((tool) => tool.name)).toEqual(["gemini_imagegen"]);
     });
 
     it("has no tools at all when the installation has no Gemini key", async () => {
@@ -81,28 +95,27 @@ describe("the Gemini module's tools", () => {
         expect(await hooks.tools!(ctx, { agent: { id: "a" }, kv: undefined } as never)).toEqual([]);
     });
 
-    it("writes a generated image through the agent's own filesystem", async () => {
-        const { compute, request, tool } = await machine(() =>
+    it("publishes a generated image into the shared generated-files folder", async () => {
+        const bytes = await png();
+        const { request, tool } = await machine(() =>
             interaction(
                 { type: "text", text: "A quiet mountain lake." },
-                { type: "image", mime_type: "image/png", data: "AQID" },
+                { type: "image", mime_type: "image/png", data: bytes.toString("base64") },
             ),
         );
 
         const result = await tool("gemini_imagegen").execute(ctx, {
             aspect_ratio: "16:9",
             image_size: "2K",
-            output_path: "art/generated.png",
             prompt: "A quiet mountain lake",
         });
 
-        expect(result.path).toBe("/workspace/art/generated.png");
-        expect(result.bytes).toBe(3);
-        expect(result.mime_type).toBe("image/png");
+        const generatedPath = testConfig.configuration.paths.generatedPath;
+        expect(result.path).toBe(join(generatedPath, "geminitestcall.png"));
+        expect(result.bytes).toBe(bytes.byteLength);
+        expect(result.media_type).toBe("image/png");
         expect(result.description).toBe("A quiet mountain lake.");
-        expect(await compute.fs.readFileBuffer({} as never, result.path)).toEqual(
-            new Uint8Array([1, 2, 3]),
-        );
+        expect(await readFile(result.path)).toEqual(bytes);
         expect(requestBody(request)).toMatchObject({
             input: "A quiet mountain lake",
             model: "gemini-3.1-flash-image",
@@ -111,39 +124,21 @@ describe("the Gemini module's tools", () => {
         expect(tool("gemini_imagegen").toLLM(result)).toEqual([
             {
                 type: "text",
-                text: "Generated image at /workspace/art/generated.png (3 bytes).\n\nA quiet mountain lake.",
+                text: `Generated image at ${result.path} (${String(bytes.byteLength)} bytes).\n\nA quiet mountain lake.`,
             },
+            { type: "image", mimeType: "image/png", data: result.image_base64 },
         ]);
+        await rm(result.path, { force: true });
     });
 
-    it("refuses an output path that is not a .png before spending a generation", async () => {
-        const { request, tool } = await machine();
-
-        await expect(
-            tool("gemini_imagegen").execute(ctx, {
-                output_path: "art/generated.jpg",
-                prompt: "A quiet mountain lake",
-            }),
-        ).rejects.toThrow("Gemini image output_path must end in .png.");
-        expect(request).not.toHaveBeenCalled();
-    });
-
-    it("overwrites an existing output without a prior read", async () => {
-        const { compute, request, tool } = await machine(() =>
+    it("refuses to publish an answer that is not a real PNG", async () => {
+        const { tool } = await machine(() =>
             interaction({ type: "image", mime_type: "image/png", data: "AQID" }),
         );
-        compute.writeBuffer("/workspace/existing.png", new Uint8Array([9]));
 
-        const result = await tool("gemini_imagegen").execute(ctx, {
-            output_path: "existing.png",
-            prompt: "A replacement image",
-        });
-
-        expect(result.path).toBe("/workspace/existing.png");
-        expect(await compute.fs.readFileBuffer({} as never, result.path)).toEqual(
-            new Uint8Array([1, 2, 3]),
-        );
-        expect(request).toHaveBeenCalledOnce();
+        await expect(
+            tool("gemini_imagegen").execute(ctx, { prompt: "A quiet mountain lake" }),
+        ).rejects.toThrow("not a PNG image");
     });
 
     it("reports the exact action and boundary a reviewer decides on", async () => {
@@ -151,11 +146,11 @@ describe("the Gemini module's tools", () => {
 
         expect(
             tool("gemini_imagegen").describeAutoPermissionAction!(
-                { output_path: "art/generated.png", prompt: 'A "quiet"\nlake' },
+                { prompt: 'A "quiet"\nlake' },
                 ctx,
             ),
         ).toBe(
-            'sending "A \\"quiet\\"\\nlake" to Gemini image generation and writing "art/generated.png". Access: external Gemini API and local filesystem write',
+            'sending "A \\"quiet\\"\\nlake" to Gemini image generation. Access: external Gemini API and local filesystem write',
         );
         expect(
             tool("gemini_analyze_media").describeAutoPermissionAction!(
@@ -270,18 +265,7 @@ describe("the Gemini module's tools", () => {
     it("keeps work inside the workspace out of Full access, and everything else in it", async () => {
         const { tool } = await machine();
 
-        expect(
-            await tool("gemini_imagegen").shouldRunInFullAccessInAutoMode!(
-                { output_path: "art/generated.png", prompt: "A lake" },
-                ctx,
-            ),
-        ).toBe(false);
-        expect(
-            await tool("gemini_imagegen").shouldRunInFullAccessInAutoMode!(
-                { output_path: "/etc/generated.png", prompt: "A lake" },
-                ctx,
-            ),
-        ).toBe(true);
+        expect(tool("gemini_imagegen").shouldRunInFullAccessInAutoMode).toBeUndefined();
         expect(
             await tool("gemini_analyze_media").shouldRunInFullAccessInAutoMode!(
                 { path: "/etc/hosts", prompt: "Describe this" },

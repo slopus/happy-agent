@@ -1,39 +1,44 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
 import { Type } from "@sinclair/typebox";
 
-import type { Compute, ComputeModule } from "../../compute/index.js";
-import type { FileReadLog } from "../../impl/FileReadLog.js";
+import type { ConfigModule } from "../../config/index.js";
+import { decodeAndValidatePng } from "../../impl/images/decodeAndValidatePng.js";
+import { writeGeneratedImageFile } from "../../impl/images/writeGeneratedImageFile.js";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import type { GeminiConnection } from "../Gemini.js";
-import { computePathExtension } from "../impl/computePathExtension.js";
 import { generateGeminiImage } from "../impl/generateGeminiImage.js";
-import { prepareGeneratedMediaOutputPath } from "../impl/prepareGeneratedMediaOutputPath.js";
-import { writeGeneratedMediaFile } from "../impl/writeGeneratedMediaFile.js";
 
 const generatedImageSchema = Type.Object({
     bytes: Type.Number(),
     description: Type.Optional(Type.String()),
-    mime_type: Type.String(),
+    image_base64: Type.String(),
+    media_type: Type.Literal("image/png"),
     path: Type.String(),
 });
 
-/** Gemini's image generation, written straight to a file on the agent's machine. */
-export function geminiGenerateImageTool(
-    connection: GeminiConnection,
-    computeModule: ComputeModule,
-    compute: Compute,
-    reads: FileReadLog,
-) {
+/**
+ * Gemini's image generation, published the way every generated image is.
+ *
+ * The tool follows the same approach as `codex_imagegen`: it needs only the credential behind it,
+ * proves the answer is a real PNG, publishes it into the shared generated-files folder named after
+ * the tool call, and hands the model both the path and the image itself. The arguments stay
+ * Gemini's own — aspect ratio and resolution — because the two vendor tools are separate
+ * definitions, not one shared surface.
+ */
+export function geminiGenerateImageTool(connection: GeminiConnection, config: ConfigModule) {
     return defineAgentTool({
         name: "gemini_imagegen",
         defer: true,
-        capabilities: ["Generate and analyze images, audio, music, and other media with Gemini."],
+        capabilities: ["Generate new images and edit existing images."],
         searchKeywords: ["Gemini image generation", "create picture", "generate visual"],
-        description:
-            "Generate a new PNG image with Gemini 3.1 Flash Image and save it to the local filesystem. Use a detailed visual prompt and an output path ending in .png.",
+        description: `Generate a new PNG image with Gemini 3.1 Flash Image from a detailed visual prompt.
+
+Guidelines:
+- Use a detailed visual prompt; \`aspect_ratio\` and \`image_size\` are optional.
+- This tool generates brand new images only; it cannot edit an existing image.
+- The finished image is saved in the shared generated-files folder named in your environment instructions and returned to you.`,
         parameters: Type.Object({
             prompt: Type.String({ minLength: 2, description: "Detailed image generation prompt" }),
-            output_path: Type.String({ description: "Local output path ending in .png" }),
             aspect_ratio: Type.Optional(
                 Type.Union(
                     [
@@ -71,22 +76,10 @@ export function geminiGenerateImageTool(
         // reported rather than run a second time.
         durable: false,
         requiresAutoOrFullAccess: true,
-        describeAutoPermissionAction: ({ prompt, output_path }) =>
-            `sending ${quoteVisibleExact(prompt)} to Gemini image generation and writing ${quoteVisibleExact(output_path)}. Access: external Gemini API and local filesystem write`,
+        describeAutoPermissionAction: ({ prompt }) =>
+            `sending ${quoteVisibleExact(prompt)} to Gemini image generation. Access: external Gemini API and local filesystem write`,
         shouldReviewInAutoMode: () => true,
-        shouldRunInFullAccessInAutoMode: ({ output_path }, ctx) =>
-            computeModule.shouldReviewPath(ctx, compute, output_path, { write: true }),
-        execute: async (ctx, { prompt, output_path, aspect_ratio, image_size }) => {
-            if (computePathExtension(computeModule, output_path) !== ".png") {
-                throw new Error("Gemini image output_path must end in .png.");
-            }
-            const resolvedOutputPath = await prepareGeneratedMediaOutputPath(
-                computeModule,
-                compute,
-                reads,
-                ctx,
-                output_path,
-            );
+        execute: async (ctx, { prompt, aspect_ratio, image_size }, call) => {
             const generated = await generateGeminiImage({
                 apiKey: connection.apiKey,
                 ...(connection.fetch === undefined ? {} : { fetch: connection.fetch }),
@@ -98,18 +91,19 @@ export function geminiGenerateImageTool(
             if (generated.mimeType !== "image/png") {
                 throw new Error(`Gemini returned unsupported image type '${generated.mimeType}'.`);
             }
-            const path = await writeGeneratedMediaFile(
-                computeModule,
-                compute,
-                reads,
-                ctx,
-                resolvedOutputPath,
-                generated.bytes,
+            const base64 = Buffer.from(generated.bytes).toString("base64");
+            const bytes = await decodeAndValidatePng(base64);
+            const fileName = `${call.id.replaceAll(/[^A-Za-z0-9_-]/gu, "_")}.png`;
+            const path = await writeGeneratedImageFile(
+                config.configuration.paths.generatedPath,
+                fileName,
+                bytes,
             );
             return {
-                bytes: generated.bytes.byteLength,
+                bytes: bytes.byteLength,
                 ...(generated.text === undefined ? {} : { description: generated.text }),
-                mime_type: generated.mimeType,
+                image_base64: base64,
+                media_type: "image/png" as const,
                 path,
             };
         },
@@ -118,6 +112,7 @@ export function geminiGenerateImageTool(
                 type: "text",
                 text: `Generated image at ${result.path} (${String(result.bytes)} bytes).${result.description === undefined ? "" : `\n\n${result.description}`}`,
             },
+            { type: "image", mimeType: result.media_type, data: result.image_base64 },
         ],
     });
 }
