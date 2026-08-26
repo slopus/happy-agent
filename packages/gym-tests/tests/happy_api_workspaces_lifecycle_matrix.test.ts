@@ -328,8 +328,7 @@ describe("public workspace lifecycle matrix", () => {
                 const child = await createChild(gym, parent.id, "lifecycle-hidden-child");
                 await gym.client.archiveWorkspace(parent.id, { ifMatch: parent.version });
                 await waitArchived(gym, child.id);
-                const active = (await gym.client.listWorkspaces({ projectId: root.projectId }))
-                    .workspaces;
+                const active = (await gym.client.listWorkspaces({ projectId: root.id })).workspaces;
                 expect(active.some((workspace) => workspace.id === parent.id)).toBe(false);
                 expect(active.some((workspace) => workspace.id === child.id)).toBe(false);
             },
@@ -345,7 +344,7 @@ describe("public workspace lifecycle matrix", () => {
                 const history = (
                     await gym.client.listWorkspaces({
                         includeArchived: true,
-                        projectId: root.projectId,
+                        projectId: root.id,
                     })
                 ).workspaces;
                 expect(history.find((workspace) => workspace.id === child.id)?.parentId).toBe(
@@ -467,10 +466,14 @@ async function waitReady(gym: AgentGym, workspaceId: string): Promise<Workspace>
 }
 
 async function siblingsOf(gym: AgentGym, parentId: string): Promise<Workspace[]> {
+    const parentProjectId = (await gym.client.getWorkspace(parentId)).workspace.projectId;
+    if (parentProjectId === null) {
+        throw new Error(`Workspace ${parentId} unexpectedly belongs to no project.`);
+    }
     return (
         await gym.client.listWorkspaces({
             includeArchived: true,
-            projectId: (await gym.client.getWorkspace(parentId)).workspace.projectId,
+            projectId: parentProjectId,
         })
     ).workspaces
         .filter((workspace) => workspace.parentId === parentId && workspace.status === "active")

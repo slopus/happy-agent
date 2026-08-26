@@ -141,7 +141,7 @@ interface RuntimeObservation {
     readonly projectAgentIds: readonly string[];
     readonly workspaceId: string;
     readonly workspaceParentId: string | null;
-    readonly workspaceProjectId: string;
+    readonly workspaceProjectId: string | null;
     readonly workspaceStatus: string;
     readonly agentId: string;
     readonly agentWorkspaceId: string;

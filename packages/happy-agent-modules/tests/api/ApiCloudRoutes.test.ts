@@ -489,6 +489,7 @@ function createApi(cloud: unknown, config: unknown, subscriptions: unknown): Api
         subscriptions as never,
         subscriptions as never,
         subscriptions as never,
+        subscriptions as never,
     );
 }
 

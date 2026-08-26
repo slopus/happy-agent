@@ -38,7 +38,7 @@ describe("public workspace tree matrix", () => {
                 const filtered = (
                     await gym.client.listWorkspaces({
                         includeArchived: true,
-                        projectId: root.projectId,
+                        projectId: root.id,
                     })
                 ).workspaces;
                 expect(filtered.length).toBeGreaterThan(0);
@@ -158,7 +158,7 @@ describe("public workspace tree matrix", () => {
                 const before = (
                     await gym.client.listWorkspaces({
                         includeArchived: true,
-                        projectId: root.projectId,
+                        projectId: root.id,
                     })
                 ).workspaces;
                 // The typed request requires a name, so the omission travels through a cast.
@@ -173,7 +173,7 @@ describe("public workspace tree matrix", () => {
                 const after = (
                     await gym.client.listWorkspaces({
                         includeArchived: true,
-                        projectId: root.projectId,
+                        projectId: root.id,
                     })
                 ).workspaces;
                 expect(after.map((workspace) => workspace.id)).toEqual(
@@ -254,7 +254,7 @@ describe("public workspace tree matrix", () => {
                     })
                 ).workspace;
                 const siblings = (
-                    await gym.client.listWorkspaces({ projectId: root.projectId })
+                    await gym.client.listWorkspaces({ projectId: root.id })
                 ).workspaces.filter((workspace) => workspace.parentId === root.id);
                 expect(second.id).toBe(first.id);
                 expect(siblings.filter((workspace) => workspace.id === first.id)).toHaveLength(1);
@@ -266,8 +266,7 @@ describe("public workspace tree matrix", () => {
                 const root = await rootWorkspace(gym);
                 const child = await createChild(gym, root.id, "tree-default-archive");
                 await archiveAndWait(gym, child);
-                const active = (await gym.client.listWorkspaces({ projectId: root.projectId }))
-                    .workspaces;
+                const active = (await gym.client.listWorkspaces({ projectId: root.id })).workspaces;
                 expect(active.some((workspace) => workspace.id === child.id)).toBe(false);
             },
         },
@@ -280,7 +279,7 @@ describe("public workspace tree matrix", () => {
                 const history = (
                     await gym.client.listWorkspaces({
                         includeArchived: true,
-                        projectId: root.projectId,
+                        projectId: root.id,
                     })
                 ).workspaces;
                 expect(history.find((workspace) => workspace.id === child.id)?.status).toBe(
@@ -330,7 +329,7 @@ describe("public workspace tree matrix", () => {
                 const all = (
                     await gym.client.listWorkspaces({
                         includeArchived: true,
-                        projectId: root.projectId,
+                        projectId: root.id,
                     })
                 ).workspaces;
                 const byId = new Map(all.map((workspace) => [workspace.id, workspace]));
@@ -352,9 +351,9 @@ describe("public workspace tree matrix", () => {
                 const fetched = (await gym.client.getWorkspace(child.id)).workspace;
                 expect(fetched).toEqual(child);
                 expect(
-                    (
-                        await gym.client.listWorkspaces({ projectId: root.projectId })
-                    ).workspaces.some((candidate) => candidate.id === child.id),
+                    (await gym.client.listWorkspaces({ projectId: root.id })).workspaces.some(
+                        (candidate) => candidate.id === child.id,
+                    ),
                 ).toBe(true);
             },
         },
@@ -420,12 +419,16 @@ async function archiveAndWait(gym: AgentGym, workspace: Workspace): Promise<Work
         mutationId: `tree-archive-${workspace.id}`,
     });
     expect(["archiving", "archived"]).toContain(response.workspace.status);
+    const workspaceProjectId = workspace.projectId;
+    if (workspaceProjectId === null) {
+        throw new Error(`Workspace ${workspace.id} unexpectedly belongs to no project.`);
+    }
     return await gym.waitUntil(
         async () => {
             const candidate = (
                 await gym.client.listWorkspaces({
                     includeArchived: true,
-                    projectId: workspace.projectId,
+                    projectId: workspaceProjectId,
                 })
             ).workspaces.find((item) => item.id === workspace.id);
             return candidate?.status === "archived" ? candidate : undefined;

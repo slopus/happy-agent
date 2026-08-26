@@ -11,6 +11,8 @@ import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
+import { ProjectsModule } from "../projects/index.js";
+
 interface Installation {
     readonly epoch: string;
     readonly schemaVersion: number;
@@ -43,10 +45,16 @@ export class InstallationModule implements AgentModule<AnyAgentTool, LibSQLDatab
         ],
     ] as const satisfies AgentModule<AnyAgentTool, LibSQLDatabase>["migrations"];
 
+    readonly #projects: ProjectsModule;
     #installation: Installation | undefined;
+
+    constructor(projects: ProjectsModule) {
+        this.#projects = projects;
+    }
 
     readonly beforeStart = async (ctx: Context): Promise<void> => {
         this.#installation = await ctx.inTx(async (txCtx) => await readInstallation(txCtx.db));
+        this.#projects.open(this.#installation.epoch);
     };
 
     get epoch(): string {

@@ -26,6 +26,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { AbortModule } from "../abort/index.js";
 import { ApiModule } from "../api/index.js";
 import { AutoModule } from "../auto/index.js";
+import { BotsModule } from "../bots/index.js";
 import { CollaborationModule } from "../collaboration/index.js";
 import { CompactionsModule } from "../compactions/index.js";
 import { CloudModule } from "../cloud/index.js";
@@ -119,6 +120,7 @@ export interface HappyAgentRuntimeModules {
     readonly abort: AbortModule;
     readonly api: ApiModule;
     readonly auto: AutoModule;
+    readonly bots: BotsModule;
     readonly collaboration: CollaborationModule;
     readonly cloud: CloudModule;
     readonly compactions: CompactionsModule;
@@ -405,10 +407,11 @@ export async function startHappyAgentRuntime(
         const durableFunctions = new DurableFunctionsModule();
         const projects = new ProjectsModule(config, git, abort, durableFunctions);
         const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
+        const bots = new BotsModule(config, projects, abort);
         const titles = new TitlesModule(config, history, workspaces);
-        const terminals = new TerminalsModule(projects, workspaces);
+        const terminals = new TerminalsModule(projects, workspaces, bots);
         registerShutdown("terminals", async () => await terminals.close());
-        const files = new ProjectFilesModule(projects, workspaces, git);
+        const files = new ProjectFilesModule(projects, workspaces, git, bots);
         registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>();
@@ -429,7 +432,7 @@ export async function startHappyAgentRuntime(
                 .catch(() => undefined);
         });
 
-        const installation = new InstallationModule();
+        const installation = new InstallationModule(projects);
         const cloud = new CloudModule();
         const providerUsage = new ProviderUsageModule(config);
         registerShutdown("provider-usage", async () => await providerUsage.close());
@@ -465,6 +468,7 @@ export async function startHappyAgentRuntime(
             events,
             cloud,
             compactions,
+            bots,
             projects,
             workspaces,
             terminals,
@@ -488,6 +492,7 @@ export async function startHappyAgentRuntime(
             abort,
             api: apiModule,
             auto: autoModule,
+            bots,
             collaboration,
             cloud,
             compactions,
@@ -555,6 +560,7 @@ export async function startHappyAgentRuntime(
             murmur,
             git,
             durableFunctions,
+            bots,
             projects,
             titles,
             workspaces,
@@ -575,7 +581,6 @@ export async function startHappyAgentRuntime(
             .map(checkModuleToolParameters)
             .map(instrumentModuleLogging);
 
-        projects.open(installation.epoch);
         await apiModule.prepare();
         await options.onPrepared?.({
             api: apiModule,
@@ -645,7 +650,9 @@ export async function startHappyAgentRuntime(
             git.dispose();
             await workspaces.close(withDatabase(ctx));
         });
-        await workspaces.open(withDatabase(ctx));
+        if (configuration.values.features.workspaces) {
+            await workspaces.open(withDatabase(ctx));
+        }
 
         profile.open(installation.epoch);
         registerShutdown("murmur", async () => await murmur.close(withDatabase(ctx)));

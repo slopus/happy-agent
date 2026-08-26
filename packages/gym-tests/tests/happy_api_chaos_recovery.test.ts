@@ -355,9 +355,10 @@ class RecoveryReferenceModel {
             snapshot.workspaces.map((workspace) => [workspace.id, workspace]),
         );
         for (const workspace of snapshot.workspaces) {
-            expect(projectIdSet.has(workspace.projectId), `${phase}: cross-project workspace`).toBe(
-                true,
-            );
+            expect(
+                workspace.projectId !== null && projectIdSet.has(workspace.projectId),
+                `${phase}: cross-project workspace`,
+            ).toBe(true);
             if (workspace.parentId !== null) {
                 const parent = workspaceById.get(workspace.parentId);
                 expect(parent, `${phase}: missing workspace parent`).toBeDefined();

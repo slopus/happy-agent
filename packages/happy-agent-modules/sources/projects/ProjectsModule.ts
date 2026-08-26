@@ -877,20 +877,11 @@ export class ProjectsModule implements AgentModule {
     async setAvatar(ctx: Context, input: ProjectSetAvatarInput): Promise<Project> {
         this.#assertInput(projectSetAvatarInputSchema, input, "avatar");
         const normalized = structuredClone(input);
-        const image = await normalizeProjectAvatar(normalized.bytes, normalized.contentType);
+        const asset = await this.normalizeAvatar(normalized.bytes, normalized.contentType);
         const avatar = {
             kind: "image" as const,
             source: normalized.source,
-            thumbhash: image.thumbhash,
-        };
-        const asset: ProjectAvatarAsset = {
-            bytes: new Uint8Array(image.bytes),
-            contentHash: image.contentHash,
-            contentType: image.contentType,
-            etag: `"${image.contentHash}"`,
-            height: image.height,
-            thumbhash: image.thumbhash,
-            width: image.width,
+            thumbhash: asset.thumbhash,
         };
         const result = await this.#mutations.run(ctx, {
             changeable: ["avatar"],
@@ -918,6 +909,28 @@ export class ProjectsModule implements AgentModule {
             throw new Error("The stored avatar does not match the one that was requested.");
         }
         return project;
+    }
+
+    /**
+     * Normalize an avatar through the catalog's one image boundary.
+     *
+     * Bots ask the module that owns avatar image processing instead of importing project
+     * internals or growing a second encoder with subtly different limits.
+     */
+    async normalizeAvatar(
+        bytes: Uint8Array,
+        contentType?: "image/jpeg" | "image/png" | "image/webp",
+    ): Promise<ProjectAvatarAsset> {
+        const image = await normalizeProjectAvatar(bytes, contentType);
+        return {
+            bytes: new Uint8Array(image.bytes),
+            contentHash: image.contentHash,
+            contentType: image.contentType,
+            etag: `"${image.contentHash}"`,
+            height: image.height,
+            thumbhash: image.thumbhash,
+            width: image.width,
+        };
     }
 
     async clearAvatar(ctx: Context, input: ProjectClearAvatarInput): Promise<Project> {

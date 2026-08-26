@@ -77,7 +77,7 @@ interface ResourceSummary {
     readonly status?: string;
     readonly archivedAt?: number | null;
     readonly orderKey?: string | null;
-    readonly projectId?: string;
+    readonly projectId?: string | null;
     readonly workspaceId?: string;
     readonly parentId?: string | null;
     readonly parentAgentId?: string | null;
@@ -1436,7 +1436,7 @@ async function assertGlobalInvariants(
 
     for (const workspace of observation.workspaces) {
         expect(workspace.version).toEqual(expect.any(String));
-        expect(projectById.has(workspace.projectId)).toBe(true);
+        expect(workspace.projectId !== null && projectById.has(workspace.projectId)).toBe(true);
         if (workspace.parentId === null) {
             expect(workspace.kind).toBe("root");
             expect(workspace.id).toBe(workspace.projectId);

@@ -996,6 +996,19 @@ export class ConfigModule implements AgentModule {
     #scriptedModelSnapshot: readonly AgentModel[] | undefined;
     #workspacesHome: string | undefined;
 
+    /** The public root for persistent bot folders. Configuration owns every product path. */
+    get botsHome(): string {
+        return join(this.configuration.paths.publicHome, "Bots");
+    }
+
+    /** One immutable bot folder below the configuration-owned bot root. */
+    botPath(username: string): string {
+        if (!/^[a-z][a-z0-9_]{0,63}$/.test(username)) {
+            throw new Error("The bot username cannot name a folder.");
+        }
+        return join(this.botsHome, username);
+    }
+
     private constructor(
         configuration: HappyAgentConfiguration,
         runtimeValues: PartialValues,

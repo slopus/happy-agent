@@ -55,7 +55,14 @@ export async function loadAgentCatalog(client: HappyAgentClient): Promise<AgentC
         }
     }
     for (const workspace of workspaces) {
-        if (workspace.id === workspace.projectId || workspace.archivedAt !== null) continue;
+        // Bot workspaces carry no project and are absent from listings; skip them if one appears.
+        if (
+            workspace.projectId === null ||
+            workspace.id === workspace.projectId ||
+            workspace.archivedAt !== null
+        ) {
+            continue;
+        }
         const cwd = computePath(workspace);
         for (const agent of workspace.agents) {
             if (agent.archivedAt !== null) continue;

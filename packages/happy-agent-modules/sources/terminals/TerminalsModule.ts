@@ -5,6 +5,7 @@ import { Value } from "@sinclair/typebox/value";
 import { detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
 
 import { createUuidV7Factory } from "../events/index.js";
+import { BotsModule } from "../bots/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
 
@@ -47,6 +48,7 @@ export class TerminalsModule {
     readonly #locks: MapAsyncLock<string> = mapAsyncLock<string>();
     readonly #listeners = new Set<TerminalEventListener>();
     readonly #nextVersion = createUuidV7Factory();
+    readonly #bots: BotsModule | undefined;
     readonly #projects: ProjectsModule;
     readonly #scopes = new Map<string, TerminalCollection>();
     readonly #workspaces: WorkspacesModule;
@@ -63,7 +65,8 @@ export class TerminalsModule {
      * A workspace folder is not inside its project's, and it only exists once the catalog says the
      * workspace is ready, so both answers have to come from here.
      */
-    constructor(projects: ProjectsModule, workspaces: WorkspacesModule) {
+    constructor(projects: ProjectsModule, workspaces: WorkspacesModule, bots?: BotsModule) {
+        this.#bots = bots;
         this.#projects = projects;
         this.#workspaces = workspaces;
         this.#processFactory = createHostTerminalProcessFactory();
@@ -95,6 +98,22 @@ export class TerminalsModule {
             if (event.type !== "project_archived") return;
             const closeCtx = detach(ctx).named("terminal-archive-closure");
             this.#closeInBackground(closeCtx, this.closeProject(event.project.id, closeCtx));
+        });
+        bots?.onEvent((ctx, event) => {
+            if (
+                event.type !== "bot_updated" ||
+                event.bot.status !== "archived" ||
+                event.previousBot.status === "archived"
+            )
+                return;
+            const closeCtx = detach(ctx).named("terminal-archive-closure");
+            this.#closeInBackground(
+                closeCtx,
+                this.closeScope(
+                    { projectId: event.bot.id, workspaceId: event.bot.workspaceId },
+                    closeCtx,
+                ),
+            );
         });
     }
 
@@ -353,6 +372,15 @@ export class TerminalsModule {
 
     /** Where this folder actually is, according to the catalog that owns it. */
     async #root(ctx: Context, scope: TerminalScope): Promise<string> {
+        if (scope.workspaceId !== undefined) {
+            const bot = await this.#bots?.forWorkspace(ctx, scope.workspaceId);
+            if (bot !== undefined && bot.id === scope.projectId) {
+                if (bot.status !== "active") {
+                    throw new TerminalError("conflict", "An archived bot cannot open a terminal.");
+                }
+                return bot.path;
+            }
+        }
         const project = await this.#projects.get(ctx, scope.projectId);
         if (project === undefined) {
             throw new TerminalError("not_found", "The project was not found.");

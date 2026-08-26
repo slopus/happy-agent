@@ -17,6 +17,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { createRootContext, detach, type Context, type RootContext } from "@steve.kite/stdlib";
 import type { GitModule } from "../git/index.js";
+import type { BotsModule } from "../bots/index.js";
 import type { ProjectsModule } from "../projects/index.js";
 import type { WorkspacesModule } from "../workspaces/index.js";
 import { ProjectFileWatcher } from "./ProjectFileWatcher.js";
@@ -168,6 +169,7 @@ export class ProjectFilesModule implements AgentModule {
     readonly name = "files";
 
     readonly #git: GitModule;
+    readonly #bots: BotsModule | undefined;
     readonly #listeners = new Set<ProjectFilesEventListener>();
     readonly #projects: ProjectsModule;
     readonly #index = new WorkspaceFileIndex();
@@ -177,7 +179,13 @@ export class ProjectFilesModule implements AgentModule {
     #lifetime: RootContext | undefined;
     #watcher: ProjectFileWatcher | undefined;
 
-    constructor(projects: ProjectsModule, workspaces: WorkspacesModule, git: GitModule) {
+    constructor(
+        projects: ProjectsModule,
+        workspaces: WorkspacesModule,
+        git: GitModule,
+        bots?: BotsModule,
+    ) {
+        this.#bots = bots;
         this.#git = git;
         this.#projects = projects;
         this.#workspaces = workspaces;
@@ -248,6 +256,22 @@ export class ProjectFilesModule implements AgentModule {
                 "Only ready, available workspaces can access files.",
             );
         }
+    }
+
+    /** Resolve one unlisted bot workspace through the catalog that owns its physical folder. */
+    async resolveBotRoot(ctx: Context, workspaceId: string): Promise<ProjectFileRoot> {
+        const bot = await this.#bots?.forWorkspace(ctx, workspaceId);
+        if (bot === undefined) {
+            throw new ProjectFileError(404, "missing", "The workspace was not found.");
+        }
+        if (bot.status !== "active") {
+            throw new ProjectFileError(409, "conflict", "The workspace is not available.");
+        }
+        return {
+            projectId: bot.id,
+            workspaceId: bot.workspaceId,
+            root: await this.#canonicalRoot(bot.path),
+        };
     }
 
     async search(root: ProjectFileRoot, query: FileSearchQuery): Promise<FileSearchResult> {

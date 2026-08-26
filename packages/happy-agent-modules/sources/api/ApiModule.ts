@@ -8,6 +8,11 @@ import { dirname, join } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
+    archiveBotRequestSchema,
+    createBotRequestSchema,
+    renameBotRequestSchema,
+    reorderBotRequestSchema,
+    unarchiveBotRequestSchema,
     configPatchSchema,
     providerVerificationRequestSchema,
     sharingIdentitySchema,
@@ -33,6 +38,13 @@ import { afterCommit, shutdown, type Context } from "@steve.kite/stdlib";
 import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
+import {
+    BotConflictError,
+    BotNotFoundError,
+    BotsModule,
+    type BotEvent,
+    type BotRecord,
+} from "../bots/index.js";
 import {
     CompactionAgentBusyError,
     CompactionAlreadyRunningError,
@@ -123,6 +135,8 @@ import {
     agentResource,
     agentModeFromConfig,
     apiResourceVersion,
+    botResource,
+    botWorkspaceResource,
     gitResource,
     profileResource,
     projectResource,
@@ -250,6 +264,7 @@ export class ApiModule implements AgentModule {
     readonly #events: EventsModule;
     readonly #cloud: CloudModule;
     readonly #compactions: CompactionsModule;
+    readonly #bots: BotsModule;
     readonly #projects: ProjectsModule;
     readonly #workspaces: WorkspacesModule;
     readonly #terminals: TerminalsModule;
@@ -325,6 +340,7 @@ export class ApiModule implements AgentModule {
         events: EventsModule,
         cloud: CloudModule,
         compactions: CompactionsModule,
+        bots: BotsModule,
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
         terminals: TerminalsModule,
@@ -347,6 +363,7 @@ export class ApiModule implements AgentModule {
         this.#events = events;
         this.#cloud = cloud;
         this.#compactions = compactions;
+        this.#bots = bots;
         this.#projects = projects;
         this.#workspaces = workspaces;
         this.#terminals = terminals;
@@ -807,6 +824,46 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, { profile: profileResource(profile) });
                 return;
             }
+            if (request.method === "GET" && url.pathname === "/v0/bots") {
+                sendJson(response, 200, {
+                    bots: await Promise.all(
+                        (await this.#bots.list(ctx)).map(
+                            async (bot) => await this.#botResource(ctx, bot),
+                        ),
+                    ),
+                });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/bots") {
+                const body = await bodyAs(request, createBotRequestSchema, "bot creation");
+                const { mutationId, ...input } = body;
+                const existing =
+                    body.id === undefined ? undefined : await this.#bots.get(ctx, body.id);
+                const bot = await this.#withMutationId(
+                    mutationId,
+                    async () => await this.#bots.create(ctx, input),
+                );
+                // Initial slash-command discovery is part of the same settled public agent
+                // snapshot used by ordinary agent creation.
+                await this.#slashCommands.catalog(ctx, bot.agentId);
+                await this.#queueAgentWork(ctx, bot.agentId, undefined, async () => undefined);
+                const resource = await this.#botResource(ctx, bot);
+                if (existing === undefined && !this.#announcedAgentCreations.has(bot.agentId)) {
+                    const agent = resource["agent"] as Record<string, unknown>;
+                    boundedAdd(
+                        this.#announcedAgentCreations,
+                        bot.agentId,
+                        MAX_ANNOUNCED_AGENT_CREATIONS,
+                    );
+                    this.#journal.append("agent.created", {
+                        agent,
+                        ...(mutationId === undefined ? {} : { mutationId }),
+                    });
+                }
+                sendJson(response, 201, { bot: resource });
+                return;
+            }
+            if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
                 const projects = await this.#allProjects(ctx, true);
                 sendJson(response, 200, {
@@ -1003,6 +1060,9 @@ export class ApiModule implements AgentModule {
             }),
             this.#workspaces.onEvent(async (_eventCtx, event) => {
                 await this.#convertWorkspaceEvent(ctx, event);
+            }),
+            this.#bots.onEvent(async (_eventCtx, event) => {
+                await this.#convertBotEvent(ctx, event);
             }),
             this.#terminals.onEvent(async (event) => {
                 this.#convertTerminalEvent(event);
@@ -1268,6 +1328,52 @@ export class ApiModule implements AgentModule {
             },
             event.at,
         );
+    }
+
+    async #convertBotEvent(ctx: Context, event: BotEvent): Promise<void> {
+        // Agent creation and archival have their own independently versioned event chain. Bot
+        // delivery runs inside the catalog's post-commit notification, so it must not wait on
+        // another post-commit chain from that same transaction.
+        const agent = await this.#buildAgentResource(
+            ctx,
+            event.bot.agentId,
+            event.bot.workspaceId,
+            null,
+        );
+        if (agent === undefined) throw new Error("The bot event has no agent.");
+        const resource = botResource(event.bot, agent);
+        const workspace = botWorkspaceResource(event.bot, agent);
+        if (event.type === "bot_created") {
+            this.#journal.append("bot.created", { bot: resource }, event.at);
+            this.#journal.append("workspace.created", { workspace }, event.at);
+            return;
+        }
+        const previous = botResource(event.previousBot, agent);
+        const changes = resourceChanges(previous, resource);
+        delete changes["agent"];
+        this.#journal.append(
+            "bot.updated",
+            {
+                botId: event.bot.id,
+                previousVersion: previous["version"],
+                version: resource["version"],
+                changes,
+            },
+            event.at,
+        );
+        if (event.bot.workspaceVersion !== event.previousBot.workspaceVersion) {
+            const previousWorkspace = botWorkspaceResource(event.previousBot, agent);
+            this.#journal.append(
+                "workspace.updated",
+                {
+                    workspaceId: event.bot.workspaceId,
+                    previousVersion: previousWorkspace["version"],
+                    version: workspace["version"],
+                    changes: resourceChanges(previousWorkspace, workspace),
+                },
+                event.at,
+            );
+        }
     }
 
     #convertTerminalEvent(event: TerminalEvent): void {
@@ -2095,6 +2201,13 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             const ownership = await this.#resolveWorkspaceScope(ctx, body.workspaceId);
+            if (ownership.botId !== undefined) {
+                throw new ApiError(
+                    409,
+                    "conflict",
+                    "A bot workspace already has its one permanent agent.",
+                );
+            }
             const managedByAnotherAgent = body.parentAgentId !== undefined;
             if (body.parentAgentId !== undefined) {
                 if ((await agents.config(ctx, body.parentAgentId)) === undefined) {
@@ -2304,6 +2417,13 @@ export class ApiModule implements AgentModule {
                 (operation === "archive" || operation === "unarchive") &&
                 request.method === "POST"
             ) {
+                if ((await this.#bots.forAgent(ctx, agentId)) !== undefined) {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "Archive or unarchive this agent through its bot.",
+                    );
+                }
                 await this.#assertUserControlledAgent(ctx, agentId, true);
                 const body = await bodyAs(request, emptyMutationBodySchema, "agent archival");
                 const config = await this.#agentSystem().config(ctx, agentId);
@@ -2330,10 +2450,15 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (operation === "reorder" && request.method === "POST") {
+                if ((await this.#bots.forAgent(ctx, agentId)) !== undefined) {
+                    throw new ApiError(409, "conflict", "Reorder this agent through its bot.");
+                }
                 await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, reorderBodySchema, "agent reorder");
                 const before = await this.#requireAgentResource(ctx, agentId);
-                const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+                const workspaceId = this.#config.configuration.values.features.workspaces
+                    ? await this.#workspaces.workspaceForAgent(ctx, agentId)
+                    : undefined;
                 if (workspaceId === undefined) {
                     const project = await this.#projects.projectForAgent(ctx, agentId);
                     if (project === undefined) throw notFound("The agent was not found.");
@@ -2866,6 +2991,7 @@ export class ApiModule implements AgentModule {
         workspaceId: string,
         orderKey?: string | null,
     ): Promise<Record<string, unknown> | undefined> {
+        const botOwned = (await this.#bots.forAgent(ctx, agentId)) !== undefined;
         const children = await this.#agentSystem().childOf(ctx, agentId);
         const [processes, questions, runningSubagents, activeRunId] = await Promise.all([
             this.#compute.listProcesses(ctx, agentId),
@@ -2881,6 +3007,7 @@ export class ApiModule implements AgentModule {
         ]);
         return await agentResource(ctx, this.#agentSystem(), this.#events, agentId, workspaceId, {
             ...(orderKey === undefined ? {} : { orderKey }),
+            ...(botOwned ? { userVisible: true } : {}),
             pendingQuestionId: questions.requests[0]?.id ?? null,
             runningProcesses: processes.filter((process) => process.status === "running").length,
             runningSubagents,
@@ -2889,7 +3016,10 @@ export class ApiModule implements AgentModule {
     }
 
     async #agentOrderKey(ctx: Context, agentId: string): Promise<string | null> {
-        const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+        if ((await this.#bots.forAgent(ctx, agentId)) !== undefined) return null;
+        const workspaceId = this.#config.configuration.values.features.workspaces
+            ? await this.#workspaces.workspaceForAgent(ctx, agentId)
+            : undefined;
         if (workspaceId !== undefined) {
             return (
                 (await this.#workspaces.listAgents(ctx, workspaceId)).find(
@@ -2909,7 +3039,11 @@ export class ApiModule implements AgentModule {
     async #workspaceIdForAgent(ctx: Context, agentId: string): Promise<string | undefined> {
         let current = agentId;
         for (let depth = 0; depth < 64; depth += 1) {
-            const workspaceId = await this.#workspaces.workspaceForAgent(ctx, current);
+            const bot = await this.#bots.forAgent(ctx, current);
+            if (bot !== undefined) return bot.workspaceId;
+            const workspaceId = this.#config.configuration.values.features.workspaces
+                ? await this.#workspaces.workspaceForAgent(ctx, current)
+                : undefined;
             if (workspaceId !== undefined) return workspaceId;
             const project = await this.#projects.projectForAgent(ctx, current);
             if (project !== undefined) return project.id;
@@ -3304,6 +3438,175 @@ export class ApiModule implements AgentModule {
         return project;
     }
 
+    async #handleBotRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const direct = /^\/v0\/bots\/([a-z][a-z0-9]*)$/.exec(url.pathname);
+        if (direct !== null) {
+            const botId = direct[1] as string;
+            if (request.method === "GET") {
+                const bot = await this.#bots.get(ctx, botId);
+                if (bot === undefined) throw notFound("The bot was not found.");
+                sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
+                return true;
+            }
+            if (request.method === "PATCH") {
+                const body = await bodyAs(request, renameBotRequestSchema, "bot rename");
+                const current = await this.#requireBotMatch(ctx, request, botId);
+                const bot = await this.#botMutation(
+                    ctx,
+                    botId,
+                    async () =>
+                        await this.#withMutationId(
+                            body.mutationId,
+                            async () =>
+                                await this.#bots.rename(ctx, botId, body.name, current.bot.version),
+                        ),
+                );
+                sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
+                return true;
+            }
+            return false;
+        }
+
+        const avatar = /^\/v0\/bots\/([a-z][a-z0-9]*)\/avatar$/.exec(url.pathname);
+        if (avatar !== null) {
+            const botId = avatar[1] as string;
+            if (request.method === "GET") {
+                const asset = await this.#bots.avatar(ctx, botId).catch((error: unknown) => {
+                    if (error instanceof BotNotFoundError) throw notFound(error.message);
+                    throw error;
+                });
+                if (asset === undefined) throw notFound("The bot has no avatar.");
+                if (request.headers["if-none-match"] === asset.etag) {
+                    response.writeHead(304, { "cache-control": "no-store", etag: asset.etag });
+                    response.end();
+                    return true;
+                }
+                response.writeHead(200, {
+                    "cache-control": "no-store",
+                    "content-length": asset.bytes.byteLength,
+                    "content-type": asset.contentType,
+                    etag: asset.etag,
+                });
+                response.end(Buffer.from(asset.bytes));
+                return true;
+            }
+            if (request.method === "PUT") {
+                const current = await this.#requireBotMatch(ctx, request, botId);
+                const contentType = request.headers["content-type"]?.split(";")[0]?.trim();
+                if (
+                    contentType !== "image/jpeg" &&
+                    contentType !== "image/png" &&
+                    contentType !== "image/webp"
+                ) {
+                    throw invalidRequest("The bot avatar must be a PNG, JPEG, or WebP image.");
+                }
+                const bytes = await readBytes(request, 8 * 1024 * 1024);
+                const bot = await this.#botMutation(
+                    ctx,
+                    botId,
+                    async () =>
+                        await this.#bots.setAvatar(
+                            ctx,
+                            botId,
+                            bytes,
+                            contentType,
+                            current.bot.version,
+                        ),
+                );
+                sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
+                return true;
+            }
+            if (request.method === "DELETE") {
+                const current = await this.#requireBotMatch(ctx, request, botId);
+                const bot = await this.#botMutation(
+                    ctx,
+                    botId,
+                    async () => await this.#bots.clearAvatar(ctx, botId, current.bot.version),
+                );
+                sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
+                return true;
+            }
+            return false;
+        }
+
+        const action = /^\/v0\/bots\/([a-z][a-z0-9]*)\/(archive|unarchive|reorder)$/.exec(
+            url.pathname,
+        );
+        if (action === null || request.method !== "POST") return false;
+        const botId = action[1] as string;
+        const operation = action[2] as "archive" | "unarchive" | "reorder";
+        const current = await this.#requireBotMatch(ctx, request, botId);
+        if (operation === "reorder") {
+            const body = await bodyAs(request, reorderBotRequestSchema, "bot reorder");
+            const bot = await this.#botMutation(
+                ctx,
+                botId,
+                async () =>
+                    await this.#withMutationId(
+                        body.mutationId,
+                        async () =>
+                            await this.#bots.reorder(ctx, botId, body.afterId, current.bot.version),
+                    ),
+            );
+            sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
+            return true;
+        }
+        const schema =
+            operation === "archive" ? archiveBotRequestSchema : unarchiveBotRequestSchema;
+        const body = await bodyAs(request, schema, `bot ${operation}`);
+        const bot = await this.#botMutation(
+            ctx,
+            botId,
+            async () =>
+                await this.#withMutationId(body.mutationId, async () =>
+                    operation === "archive"
+                        ? await this.#bots.archive(ctx, botId, current.bot.version)
+                        : await this.#bots.unarchive(ctx, botId, current.bot.version),
+                ),
+        );
+        sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
+        return true;
+    }
+
+    async #requireBotMatch(
+        ctx: Context,
+        request: IncomingMessage,
+        botId: string,
+    ): Promise<{ readonly bot: BotRecord; readonly resource: Record<string, unknown> }> {
+        const bot = await this.#bots.get(ctx, botId);
+        if (bot === undefined) throw notFound("The bot was not found.");
+        const resource = await this.#botResource(ctx, bot);
+        requireIfMatch(request, resource["version"], {
+            currentVersion: resource["version"],
+            bot: resource,
+        });
+        return { bot, resource };
+    }
+
+    async #botMutation(
+        ctx: Context,
+        botId: string,
+        mutate: () => Promise<BotRecord>,
+    ): Promise<BotRecord> {
+        try {
+            return await mutate();
+        } catch (error: unknown) {
+            if (!(error instanceof BotConflictError)) throw error;
+            const current = await this.#bots.get(ctx, botId);
+            if (current === undefined) throw notFound("The bot was not found.");
+            const bot = await this.#botResource(ctx, current);
+            throw new ApiError(409, "conflict", error.message, {
+                currentVersion: bot["version"],
+                bot,
+            });
+        }
+    }
+
     async #requireProjectMatch(
         ctx: Context,
         request: IncomingMessage,
@@ -3326,6 +3629,13 @@ export class ApiModule implements AgentModule {
     ): Promise<boolean> {
         if (request.method === "POST" && url.pathname === "/v0/workspaces") {
             const body = await bodyAs(request, workspaceCreateBodySchema, "workspace creation");
+            if ((await this.#bots.forWorkspace(ctx, body.parentId)) !== undefined) {
+                throw new ApiError(
+                    409,
+                    "conflict",
+                    "A bot workspace cannot have child workspaces.",
+                );
+            }
             const root = await this.#projects.get(ctx, body.parentId);
             let projectId: string;
             if (root !== undefined) {
@@ -3390,6 +3700,9 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (request.method === "PATCH") {
+                if ((await this.#bots.forWorkspace(ctx, workspaceId)) !== undefined) {
+                    throw new ApiError(409, "conflict", "Rename this workspace through its bot.");
+                }
                 const project = await this.#projects.get(ctx, workspaceId);
                 if (project !== undefined) {
                     throw new ApiError(
@@ -3422,6 +3735,15 @@ export class ApiModule implements AgentModule {
         const action = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/(archive|reorder)$/.exec(url.pathname);
         if (action === null || request.method !== "POST") return false;
         const workspaceId = action[1] as string;
+        if ((await this.#bots.forWorkspace(ctx, workspaceId)) !== undefined) {
+            throw new ApiError(
+                409,
+                "conflict",
+                action[2] === "archive"
+                    ? "Archive this workspace through its bot."
+                    : "Reorder this workspace through its bot.",
+            );
+        }
         if ((await this.#projects.get(ctx, workspaceId)) !== undefined) {
             throw new ApiError(
                 409,
@@ -3472,6 +3794,12 @@ export class ApiModule implements AgentModule {
         ctx: Context,
         workspaceId: string,
     ): Promise<Record<string, unknown>> {
+        const bot = await this.#bots.forWorkspace(ctx, workspaceId);
+        if (bot !== undefined) {
+            const agent = await this.#buildAgentResource(ctx, bot.agentId, bot.workspaceId, null);
+            if (agent === undefined) throw new Error("The bot workspace has no agent.");
+            return botWorkspaceResource(bot, agent);
+        }
         const project = await this.#projects.get(ctx, workspaceId);
         if (project !== undefined) {
             if (project.status === "archived" || project.archivedAt !== undefined) {
@@ -3529,7 +3857,11 @@ export class ApiModule implements AgentModule {
         agentId: string,
         visible: boolean,
     ): Promise<void> {
-        const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+        // A bot's one agent is always embedded and visible; bot lifecycle owns archival.
+        if ((await this.#bots.forAgent(ctx, agentId)) !== undefined) return;
+        const workspaceId = this.#config.configuration.values.features.workspaces
+            ? await this.#workspaces.workspaceForAgent(ctx, agentId)
+            : undefined;
         if (workspaceId !== undefined) {
             await this.#workspaces.refreshAgentVisibility(ctx, workspaceId, agentId, visible);
             return;
@@ -3607,7 +3939,11 @@ export class ApiModule implements AgentModule {
                 ctx,
                 workspaceId,
             );
-            const root = await this.#files.resolveRoot(ctx, projectId, childWorkspaceId);
+            const bot = await this.#bots.forWorkspace(ctx, workspaceId);
+            const root =
+                bot === undefined
+                    ? await this.#files.resolveRoot(ctx, projectId, childWorkspaceId)
+                    : await this.#files.resolveBotRoot(ctx, workspaceId);
             if (kind === "files" && request.method === "GET") {
                 const query = queryAs(
                     {
@@ -3736,11 +4072,25 @@ export class ApiModule implements AgentModule {
         ctx: Context,
         workspaceId: string,
     ): Promise<{
+        readonly botId?: string;
         readonly childWorkspaceId?: string;
         readonly projectId: string;
         readonly root: string;
         readonly scope: TerminalScope;
     }> {
+        const bot = await this.#bots.forWorkspace(ctx, workspaceId);
+        if (bot !== undefined) {
+            if (bot.status !== "active") {
+                throw new ApiError(409, "conflict", "The workspace is not available.");
+            }
+            return {
+                botId: bot.id,
+                childWorkspaceId: bot.workspaceId,
+                projectId: bot.id,
+                root: bot.path,
+                scope: { projectId: bot.id, workspaceId: bot.workspaceId },
+            };
+        }
         const project = await this.#projects.get(ctx, workspaceId);
         if (project !== undefined) {
             // A root workspace is its project, and an archived project's folder is on its way out.
@@ -3836,6 +4186,12 @@ export class ApiModule implements AgentModule {
             ...(await projectResource(ctx, this.#projects, project)),
             agents: await this.#agentsForProject(ctx, project.id),
         };
+    }
+
+    async #botResource(ctx: Context, bot: BotRecord): Promise<Record<string, unknown>> {
+        const agent = await this.#buildAgentResource(ctx, bot.agentId, bot.workspaceId, null);
+        if (agent === undefined) throw new Error("The bot has no agent.");
+        return botResource(bot, agent);
     }
 
     async #agentsForProject(
@@ -4151,12 +4507,15 @@ export class ApiModule implements AgentModule {
         // Capture first. A mutation concurrent with the reads is replayed after this cursor, which
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
-        const [profile, sharing, onboarding, projects, workspaces] = await Promise.all([
+        const [profile, sharing, onboarding, projects, workspaces, bots] = await Promise.all([
             this.#profile.ensure(ctx),
             this.#murmur.snapshot(ctx),
             this.#onboarding(ctx),
             this.#allProjects(ctx, false),
-            this.#allWorkspaces(ctx, undefined, false),
+            this.#config.configuration.values.features.workspaces
+                ? this.#allWorkspaces(ctx, undefined, false)
+                : Promise.resolve([]),
+            this.#bots.list(ctx),
         ]);
         const shallow = workspaces.filter(
             (workspace: Workspace) => workspace.parentId === workspace.projectRef,
@@ -4168,6 +4527,7 @@ export class ApiModule implements AgentModule {
             onboarding,
             cloud: this.#cloud.status(ctx),
             happyIntegration: this.#happy.integration(ctx),
+            bots: await Promise.all(bots.map(async (bot) => await this.#botResource(ctx, bot))),
             projects: await Promise.all(
                 projects.map(
                     async (project: Project) => await this.#projectWithAgents(ctx, project),
@@ -4547,6 +4907,14 @@ export class ApiModule implements AgentModule {
         }
         if (error instanceof ApiError) {
             sendJson(response, error.status, error.body());
+            return;
+        }
+        if (error instanceof BotNotFoundError) {
+            sendJson(response, 404, { code: "not_found", error: error.message });
+            return;
+        }
+        if (error instanceof BotConflictError) {
+            sendJson(response, 409, { code: "conflict", error: error.message });
             return;
         }
         if (error instanceof ProjectFileError) {

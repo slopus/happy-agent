@@ -6,6 +6,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import type { GitChangeSnapshot } from "../git/index.js";
+import type { BotRecord } from "../bots/index.js";
 import type { MurmurSharingSnapshot } from "../murmur/index.js";
 import type { Profile } from "../profile/index.js";
 import { ProjectsModule, type Project, type ProjectSettings } from "../projects/index.js";
@@ -118,6 +119,7 @@ export function workspaceResource(
         id: workspace.id,
         projectId,
         parentId: workspace.parentId,
+        botId: null,
         name: workspace.name,
         nameSource: workspace.nameConfigured ? "user" : "generated",
         kind: workspace.kind === "git_worktree" ? "worktree" : "copy",
@@ -154,11 +156,61 @@ export function workspaceResource(
     };
 }
 
+export function botResource(
+    bot: BotRecord,
+    agent: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+    return {
+        id: bot.id,
+        name: bot.name,
+        username: bot.username,
+        workspaceId: bot.workspaceId,
+        compute: { type: "host", path: bot.path },
+        status: bot.status,
+        avatar: bot.avatar ?? null,
+        agent,
+        orderKey: bot.orderKey,
+        version: apiResourceVersion(bot.updatedAt, bot.version, bot.id),
+        createdAt: bot.createdAt,
+        updatedAt: bot.updatedAt,
+        archivedAt: bot.archivedAt ?? null,
+    };
+}
+
+/** The unlisted workspace owned by one bot. */
+export function botWorkspaceResource(
+    bot: BotRecord,
+    agent: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+    return {
+        id: bot.workspaceId,
+        projectId: null,
+        parentId: null,
+        botId: bot.id,
+        name: bot.username,
+        nameSource: "user",
+        kind: "bot",
+        compute: { type: "host", path: bot.path },
+        status: bot.status,
+        initialization: { status: "ready", attempt: 0, error: null },
+        base: null,
+        git: null,
+        creatorAgentId: null,
+        orderKey: "5",
+        version: apiResourceVersion(bot.workspaceUpdatedAt, bot.workspaceVersion, bot.workspaceId),
+        createdAt: bot.createdAt,
+        updatedAt: bot.workspaceUpdatedAt,
+        archivedAt: bot.archivedAt ?? null,
+        agents: [agent],
+    };
+}
+
 export function rootWorkspaceResource(project: Project): Record<string, unknown> {
     return {
         id: project.id,
         projectId: project.id,
         parentId: null,
+        botId: null,
         name: project.name,
         nameSource: project.nameSource === "user" ? "user" : "generated",
         kind: "root",
@@ -344,6 +396,7 @@ export async function agentResource(
         readonly runningProcesses?: number;
         readonly runningSubagents?: number;
         readonly working?: boolean;
+        readonly userVisible?: boolean;
     } = {},
 ): Promise<Record<string, unknown> | undefined> {
     const config = await agents.config(ctx, agentId);
@@ -366,7 +419,7 @@ export async function agentResource(
         id: agentId,
         workspaceId,
         parentAgentId,
-        userVisible: state.orderKey != null,
+        userVisible: state.userVisible ?? state.orderKey != null,
         managedByAnotherAgent,
         canSendMessages: !managedByAnotherAgent && archivedAt === null,
         title: typeof metadata.title === "string" ? metadata.title : null,
