@@ -10,6 +10,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { AbortModule } from "../../sources/abort/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
+import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { ConfigModule } from "../../sources/config/ConfigModule.js";
 import { GitModule } from "../../sources/git/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
@@ -68,6 +69,7 @@ async function titles(script: SessionEvent[][], catalog: AgentModel[] = models()
         projectsModuleFor(config, git),
         git,
         new AbortModule(new ComputeModule(config)),
+        new DurableFunctionsModule(),
     );
     const module = new TitlesModule(config, new HistoryModule(), workspaces);
     return { module, provider };

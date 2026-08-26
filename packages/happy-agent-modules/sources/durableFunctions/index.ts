@@ -34,6 +34,11 @@ export {
 } from "./DurableFunctionsStore.js";
 export { DurableFunctionsModule } from "./DurableFunctionsModule.js";
 export {
+    durableCheckpoint,
+    durableEntityArgumentsSchema,
+    durableProvisionResultSchema,
+} from "./DurableFunctionHelpers.js";
+export {
     createSqliteDurableFunctionsStorage,
     durableFunctionsMigrations,
 } from "./SqliteDurableFunctionsStorage.js";

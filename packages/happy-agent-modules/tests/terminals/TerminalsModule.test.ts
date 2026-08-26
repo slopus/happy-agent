@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import type { Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
 import { projectMigrations, type ProjectsModule } from "../../sources/projects/index.js";
 import {
@@ -24,7 +25,7 @@ const opened: World[] = [];
 afterEach(async () => {
     for (const world of opened.splice(0)) {
         await world.module.close();
-        world.close();
+        await world.close();
     }
 });
 
@@ -421,7 +422,7 @@ describe("TerminalsModule", () => {
 interface World {
     /** A project whose folder no terminal may stand in any more. */
     readonly archivedProject: { readonly id: string };
-    readonly close: () => void;
+    readonly close: () => Promise<void>;
     readonly ctx: Context;
     readonly factory: FakeProcessFactory;
     /** A workspace whose folder is not usable yet, because the catalog is still making it. */
@@ -450,6 +451,9 @@ interface World {
  */
 async function createWorld(name: string): Promise<World> {
     const database = moduleDatabase([], name);
+    for (const [, migrate] of durableFunctionsMigrations) {
+        await migrate(database.context, database.database);
+    }
     for (const [, migrate] of projectMigrations) {
         await migrate(database.context, database.database);
     }
@@ -460,8 +464,8 @@ async function createWorld(name: string): Promise<World> {
     const ctx = database.context;
     const config = await temporaryTestConfig();
     const git = new GitModule();
-    const { projects, start, workspaces } = workspacesCatalogFrom(config, git);
-    start(ctx);
+    const { durableFunctions, projects, start, workspaces } = workspacesCatalogFrom(config, git);
+    await start(ctx);
 
     const project = await projects.create(ctx, {
         name: "Main",
@@ -494,7 +498,11 @@ async function createWorld(name: string): Promise<World> {
 
     const world: World = {
         archivedProject,
-        close: database.close,
+        close: async () => {
+            durableFunctions.stop();
+            await workspaces.close(ctx);
+            database.close();
+        },
         ctx,
         factory,
         initializingWorkspace: initializing.workspace,

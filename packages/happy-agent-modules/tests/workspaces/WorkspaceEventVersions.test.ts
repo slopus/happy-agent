@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import {
     type WorkspaceEvent,
     WorkspacesModule,
@@ -116,7 +117,13 @@ describe("workspace lifecycle event versions", () => {
             expectWorkspaceUpdateChain(events[3]!, firstAttached, secondAttached);
             expectWorkspaceUpdateChain(events[4]!, secondAttached, reordered);
 
-            const restarted = new WorkspacesModule(config, projects, git, abort);
+            const restarted = new WorkspacesModule(
+                config,
+                projects,
+                git,
+                abort,
+                new DurableFunctionsModule(),
+            );
             expect(await restarted.get(database.context, first.workspace.id)).toEqual(reordered);
             expect(await restarted.get(database.context, second.workspace.id)).toEqual(
                 second.workspace,

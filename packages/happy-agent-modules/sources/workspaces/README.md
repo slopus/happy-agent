@@ -19,6 +19,7 @@ import {
     AbortModule,
     ComputeModule,
     ConfigModule,
+    DurableFunctionsModule,
     GitModule,
     ProjectsModule,
     WorkspacesModule,
@@ -28,11 +29,12 @@ const config = await ConfigModule.load();
 const git = new GitModule();
 const compute = new ComputeModule(config);
 const abort = new AbortModule(compute);
-const projects = new ProjectsModule(config, git, abort);
-const workspaces = new WorkspacesModule(config, projects, git, abort);
+const durableFunctions = new DurableFunctionsModule();
+const projects = new ProjectsModule(config, git, abort, durableFunctions);
+const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
 const agent = await Agent.create(ctx, {
     ...options,
-    modules: [compute, abort, projects, workspaces],
+    modules: [compute, abort, durableFunctions, projects, workspaces],
 });
 ```
 
@@ -40,14 +42,13 @@ Abort and the compute beneath it are installed on the agent like any other modul
 learns the agent collection from its `beforeStart` hook, so a catalog that asks it to cancel
 something before the agent has started throws rather than quietly archiving over live work.
 
-Four modules, and nothing else.
-
-| Module                                    | What it answers                                                                                                                                                                    |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`ConfigModule`](../config/README.md)     | Where managed workspace folders live, whether managed workspaces are on at all, and what a workspace folder does by default — setup commands, sync paths, what is kept on archive. |
-| [`ProjectsModule`](../projects/README.md) | The project's folder, its credential, its repository lock, and the vocabulary a workspace names things with.                                                                       |
-| [`GitModule`](../git/README.md)           | Worktrees, branches, clones, and every path Git is handed.                                                                                                                         |
-| [`AbortModule`](../abort/README.md)       | How the agents working in a folder are stopped, so archiving a workspace ends the work standing in it.                                                                             |
+| Module                                                    | What it answers                                                                                                                                                                    |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`ConfigModule`](../config/README.md)                     | Where managed workspace folders live, whether managed workspaces are on at all, and what a workspace folder does by default — setup commands, sync paths, what is kept on archive. |
+| [`ProjectsModule`](../projects/README.md)                 | The project's folder, its credential, its repository lock, and the vocabulary a workspace names things with.                                                                       |
+| [`GitModule`](../git/README.md)                           | Worktrees, branches, clones, and every path Git is handed.                                                                                                                         |
+| [`AbortModule`](../abort/README.md)                       | How the agents working in a folder are stopped, so archiving a workspace ends the work standing in it.                                                                             |
+| [`DurableFunctionsModule`](../durableFunctions/README.md) | Provisioning, archival, restart recovery, checkpoints, and per-workspace operation locks.                                                                                          |
 
 The dependency on projects is one-way. A workspace is a branch of a project's repository, in a
 folder under that project's key, cut from the trunk that project decided on, and every worktree of
@@ -56,11 +57,10 @@ repository lock, and this catalog takes all three through it. Archiving a projec
 everything cut from it, which this module arranges by subscribing to the projects catalog's own
 events inside that transaction rather than by being called back.
 
-There is no `rootContext`, no path string, no settings object and no injected runner. The lifetime
-the module's Git and filesystem work runs on is derived from the first context it is used with: a
-checkout, a setup command or a folder removal outlives the call that asked for it, so it never runs
-on the caller's context. A detached context deliberately carries no storage, so the catalog puts the
-agent database back on that lifetime itself.
+There is no `rootContext`, no path string, no settings object and no injected runner. Provisioning
+and archival are registered durable functions. Their calls, checkpoints, locks, detached lifetimes,
+and restart recovery belong to `DurableFunctionsModule`; only the live file-sync watcher remains a
+workspace-owned background lifetime.
 
 This catalog does not name anything. A workspace created from a client is called something like
 "Workspace 3" until a chat working in it settles on something better, and the module that thinks of
@@ -79,10 +79,9 @@ return the call that ends the subscription. When the module's own folder removal
 throws, it is logged through the context's own logger, so the durable record stands while the
 failure is still visible.
 
-`open(ctx, agentId)` picks up whatever the last run left unfinished — every workspace still being
-created is carried through to a usable checkout, and every workspace still `archiving` has its
-folder removal resumed and its archival completed — and `close(ctx)` stops every background
-lifetime and waits for the ones in flight.
+Durable Functions recovers unfinished provisioning and archival before normal module startup
+completes. `open(ctx)` only restores live file-sync watches for ready workspaces, and `close(ctx)`
+stops those watches and their bounded background work.
 
 ## The record
 
@@ -121,17 +120,14 @@ the workspace is ready, so a probe racing initialization cannot resurrect a row,
 ignored once the workspace is archived, because an observation that was already in flight describes
 a workspace nobody has any more.
 
-Archival is two steps on purpose. `beginArchive` is the durable decision and moves the row to
-`archiving` immediately, and that is what `archive` returns. Folder removal does **not** run in the
-caller's lifetime: it is started on the catalog's own background lifetime, and `completeArchive`
-moves the row to `archived` when it finishes. A tool call therefore returns as soon as the decision
-is durable — with status `archiving` — however long a folder takes to delete. If removal throws,
-the failure is logged and the archival still completes — **cleanup failure never rolls archival
-back**. A person who archived a workspace does not get it handed back because a folder would not
-delete. A removal interrupted by shutdown resumes at the next `open`, which finishes the removal
-and the completion for every row still `archiving` — so `archiving` is always a window, never a
-resting state. `whenCleanupSettles()` waits for the removals this module started, for shutdown and
-for tests.
+Archival is two steps on purpose. In one transaction, `archive` moves the workspace tree to
+`archiving`, cancels each provisioning call, and invokes a durable archive call under the same
+workspace lock. The call checkpoints and retries agent shutdown before removing the folder with
+fresh keep-on-archive settings; `completeArchive` moves the row to `archived` only after that work
+succeeds. A tool call therefore returns as soon as the decision and durable responsibility are
+committed. Shutdown leaves a pending call for Durable Functions to recover, so `archiving` is a
+window rather than a startup-sweep resting state. Completion also re-runs sync convergence, which
+disarms the project watch when its last ready workspace disappears.
 
 ## Tools it provides to the model
 
@@ -199,12 +195,8 @@ Building a workspace:
   its durable identity.
 - `createWorkspace(ctx, agentId, projectId, request, creatorSessionId?, options?)` — the whole
   operation a person asks for. It reserves the workspace against a live snapshot of the project's
-  refs and managed directory, then starts the checkout in the background, so the caller is not held
-  while Git works.
-- `reconcileInitializingWorkspaces(ctx, agentId)` — carries every workspace that is still being
-  created through to a usable checkout. `open` calls it.
-- `removeArchivedWorkspace(ctx, agentId, projectId, workspaceId)` — deletes an archived workspace's
-  folder and moves the row to `archived`.
+  refs and managed directory, then commits its durable provisioning call in the same transaction,
+  so the caller is not held while Git works.
 - `inheritName(ctx, agentId, { workspaceId, name })` — gives a workspace the name its first chat
   arrived at. A workspace someone has already named keeps that name: only a placeholder is replaced.
 - `resolvePath`, `resolveSessionOwnership` — what owns a directory, and the explicit durable owner of
@@ -239,8 +231,7 @@ Lifecycle:
 - `recordInitialization`, `markReady`, `markFailed`, `markInitializationFailed`, `applyGitFacts`,
   `applyProbe` — each returns the authoritative `Workspace`.
 - `beginArchive`, `completeArchive`, and `archive` — the last commits the decision, starts folder
-  removal on the catalog's own background lifetime, and returns the `archiving` row without waiting
-  for it. `whenCleanupSettles()` waits for those removals.
+  removal as a durable call, and returns the `archiving` row without waiting for it.
 - `reorder(ctx, agentId, input)` — `{ workspaceId, afterId, expectedVersion? }`; `afterId: null`
   moves a workspace to the top.
 

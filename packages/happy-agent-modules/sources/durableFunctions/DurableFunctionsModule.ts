@@ -174,6 +174,10 @@ export class DurableFunctionsModule implements AgentModule {
             }
             if (result.status === "created") {
                 afterCommit(txCtx, async () => {
+                    // An earlier startup collaborator may create durable work before this module's
+                    // hook supplies its dispatcher context. The row is the delivery guarantee;
+                    // startup recovery will enqueue it once the whole system opens.
+                    if (this.#dispatchCtx === undefined) return;
                     await this.#enqueue(call);
                 });
             }

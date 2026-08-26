@@ -6,12 +6,18 @@ import { createId } from "@paralleldrive/cuid2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
+import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import { projectMigrations } from "../../sources/projects/index.js";
 import {
     workspaceMigrations,
     type CreateWorkspaceRequest,
     type Workspace,
 } from "../../sources/workspaces/index.js";
+import {
+    WORKSPACE_PROVISION_FUNCTION,
+    workspaceLockKey,
+    workspaceOperationId,
+} from "../../sources/workspaces/WorkspaceDurableFunctions.js";
 import { createChildWorkspaceTool } from "../../sources/workspaces/tools/create_child_workspace.js";
 import { createWorkspaceTool } from "../../sources/workspaces/tools/create_workspace.js";
 import {
@@ -230,6 +236,105 @@ setup_commands = ['node -e "require(\\"node:fs\\").writeFileSync(\\"setup-ran.tx
             const ready = await waitForWorkspace(world, workspaceId, "ready");
             expect(await readFile(join(ready.path, "setup-ran.txt"), "utf8")).toBe("ran");
             expect(ready.initializationError).toBeUndefined();
+        } finally {
+            await world.close();
+        }
+    }, 20_000);
+
+    it("recovers setup from its durable command checkpoint after restart", async () => {
+        const repository = join(await createRoot("workspace-checkpoint-project-"), "project");
+        await mkdir(repository);
+        const world = await createWorld(
+            "workspace-checkpoint-restart",
+            `[workspace]
+setup_commands = [
+  'echo run >> first-runs.txt',
+  'touch second-started; while [ ! -f finish-setup ]; do sleep 1; done'
+]`,
+        );
+        let restarted: ReturnType<typeof workspacesCatalogFrom> | undefined;
+        try {
+            const project = await world.projects.create(world.database.context, {
+                id: "project-a",
+                repositoryRef: world.git.normalizeProjectCwd(repository),
+                name: "Project",
+            });
+            await readyProject(world, project.id);
+            const workspaceId = createId();
+            const workspace = await world.workspaces.createWorkspace(
+                world.database.context,
+                project.id,
+                { id: workspaceId, name: "Checkpoint" },
+            );
+            if (workspace === undefined) throw new Error("The workspace was not created.");
+
+            await vi.waitFor(() => {
+                expect(existsSync(join(workspace.path, "second-started"))).toBe(true);
+            });
+            world.durableFunctions.stop();
+            await writeFile(join(workspace.path, "finish-setup"), "yes", "utf8");
+
+            restarted = workspacesCatalogFrom(world.config, world.git);
+            await restarted.start(world.database.context);
+            await vi.waitFor(
+                async () => {
+                    expect(
+                        (await restarted?.workspaces.get(world.database.context, workspace.id))
+                            ?.status,
+                    ).toBe("ready");
+                },
+                { timeout: 15_000 },
+            );
+            expect(await readFile(join(workspace.path, "first-runs.txt"), "utf8")).toBe("run\n");
+        } finally {
+            restarted?.durableFunctions.stop();
+            world.durableFunctions.stop();
+            if (restarted !== undefined) {
+                await restarted.workspaces.close(world.database.context);
+            }
+            await world.workspaces.close(world.database.context);
+            world.database.close();
+        }
+    }, 20_000);
+
+    it("cancels provisioning and archives while a setup command is running", async () => {
+        const repository = join(
+            await createRoot("workspace-archive-provision-project-"),
+            "project",
+        );
+        await mkdir(repository);
+        const world = await createWorld(
+            "workspace-archive-during-provision",
+            `[workspace]
+setup_commands = [
+  'touch setup-started; while true; do sleep 1; done'
+]`,
+        );
+        try {
+            const project = await world.projects.create(world.database.context, {
+                id: "project-a",
+                repositoryRef: world.git.normalizeProjectCwd(repository),
+                name: "Project",
+            });
+            await readyProject(world, project.id);
+            const workspaceId = createId();
+            const workspace = await world.workspaces.createWorkspace(
+                world.database.context,
+                project.id,
+                { id: workspaceId, name: "Archive provisioning" },
+            );
+            if (workspace === undefined) throw new Error("The workspace was not created.");
+            await vi.waitFor(() => {
+                expect(existsSync(join(workspace.path, "setup-started"))).toBe(true);
+            });
+
+            expect(
+                (await world.workspaces.archive(world.database.context, workspace.id)).status,
+            ).toBe("archiving");
+            await waitForWorkspace(world, workspace.id, "archived");
+            expect((await world.workspaces.get(world.database.context, workspace.id))?.status).toBe(
+                "archived",
+            );
         } finally {
             await world.close();
         }
@@ -461,11 +566,18 @@ setup_commands = ['node -e "require(\\"node:fs\\").writeFileSync(\\"setup-ran.tx
                 error: "The parent folder disappeared.",
             });
 
-            await world.workspaces.reconcileInitializingWorkspaces(world.database.context);
+            await world.durableFunctions.invoke(world.database.context, {
+                function: WORKSPACE_PROVISION_FUNCTION,
+                arguments: { id: child.id },
+                operationId: workspaceOperationId("create", child.id),
+                lockKeys: [workspaceLockKey(child.id)],
+            });
 
-            expect(await world.workspaces.get(world.database.context, child.id)).toMatchObject({
-                status: "failed",
-                initializationError: expect.stringMatching(/parent.*ready|parent.*available/iu),
+            await vi.waitFor(async () => {
+                expect(await world.workspaces.get(world.database.context, child.id)).toMatchObject({
+                    status: "failed",
+                    initializationError: expect.stringMatching(/parent.*ready|parent.*available/iu),
+                });
             });
         } finally {
             await world.close();
@@ -477,22 +589,26 @@ async function createWorld(name: string, toml?: string) {
     const root = await createRoot(`happy-${name}-`);
     const config = await testConfigRootedAt(root, toml);
     const gitModule = GitModule.withRunner(gitRunner);
-    const { projects, start, workspaces } = workspacesCatalogFrom(config, gitModule);
+    const { durableFunctions, projects, start, workspaces } = workspacesCatalogFrom(
+        config,
+        gitModule,
+    );
     const database = moduleDatabase(
-        [...projectMigrations, ...workspaceMigrations],
+        [...durableFunctionsMigrations, ...projectMigrations, ...workspaceMigrations],
         `${name}-database`,
     );
     await database.ready;
-    start(database.context);
+    await start(database.context);
     return {
         config,
         git: gitModule,
         projects,
         workspaces,
         database,
+        durableFunctions,
         close: async () => {
+            durableFunctions.stop();
             await workspaces.close(database.context);
-            await projects.close(database.context);
             database.close();
         },
     };

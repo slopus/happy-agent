@@ -11,56 +11,36 @@ it was no longer listed anywhere, so the question could not be reached and never
 agent stayed in its durable tool stage, which meant every later daemon restart drained forever
 waiting for an agent nobody could see.
 
-Archival now prepares the cancellation of every agent attached to the workspace inside the
-transaction that records the decision, and each cancellation carries the subagent tree and
-background processes below it. Preparing it there is what ties the two together in the direction
-that matters: work that cannot be cancelled fails the archival, so a workspace is never archived
-while its agents were left alone. A repeat of an archive already made cancels nothing, so an
-idempotent retry cannot reach into agents that have since moved on.
-
-Be careful about how strongly this is stated. The cancellation is _prepared_ transactionally, not
-recorded durably: Agent Base registers an in-memory post-commit callback, and Compute persists a
-notice only when it already has processes to name. A crash between the commit and the signal can
-therefore leave an archived workspace whose agent was never told. Closing that gap needs a durable
-cancellation intent and startup reconciliation, which this change does not add — so the documents
-say _prepared in the transaction, signalled after commit_, and must not say "one durable fact".
+Archival now commits the lifecycle decision and a Durable Functions archive call in one
+transaction. That call retries cancellation of every attached agent, including each subagent tree
+and its background processes, before removing the folder. Its operation ID makes repeated archive
+requests converge, and its call KV checkpoints each completed cancellation. A daemon exit leaves
+the call pending for recovery instead of losing an in-memory post-commit callback.
 
 The other half is the arriving agent. Attaching to a workspace whose archival has committed is
 refused, because the decision has already scanned the attachments and would never see a later one.
 
-The archival of a _folder_ is still background cleanup that never rolls the decision back. Stopping
-the work is not cleanup; it is half of the decision itself.
+The archival of a _folder_ is still asynchronous work that never rolls the logical decision back.
+Stopping the work is not optional cleanup; it is the first durable archive step.
 
-## An interrupted removal resumes at startup
+## Durable Functions own provisioning and archive recovery
 
-A graceful shutdown racing an archive stranded the workspace in `archiving` forever. `close()`
-raises the closed flag before waiting for cleanup, and an in-flight folder removal that observes
-the flag returns without completing the archival — correctly, because a closing daemon must not
-keep deleting. But nothing ever came back for the row: startup reconciled only `initializing`
-workspaces, so the stranded one was hidden from every default list, refused agents through the
-attach gate, kept its folder on disk, and never published the `workspace_archived` event — while
-reading as "removal is still running" for the life of the installation.
+Workspace reservation and its provisioning call commit together. Provisioning checkpoints folder
+creation, initial sync, and each setup command; setup checkpoints include the command text so fresh
+settings at the same index are not mistaken for completed work. Archiving cancels that provisioning
+operation and creates its archive replacement in the archival transaction, under the same workspace
+lock. Recovery comes only from the pending Durable Functions row: `open` does not sweep
+`initializing` or `archiving` records, and the module has no setup-controller or cleanup-task
+registry. `archiving` remains a window, never a resting state.
 
-`open` now sweeps every row still `archiving` and hands it back to `removeArchivedWorkspace` on
-the cleanup lifetime. Resuming is safe because the state is terminal: nothing can move an
-`archiving` row anywhere but `archived`, no restore transition exists that could have resurrected
-the workspace in between, and the managed path cannot have been reused while its folder still
-exists. The keep-on-archive settings are read fresh at resume time, exactly as on the normal path,
-and completion publishes the event the interrupted run still owed. `archiving` is a window, never
-a resting state.
+Archive retries use stdlib `backoff` and durable checkpoints rather than module-owned timers. When
+provisioning recovery finds that archival already superseded it, the durable result is an expected
+no-op instead of an executor error.
 
-## Deferred work needs its lifetime taken before the transaction ends
-
-`archive_workspace` is a transactional tool, so archiving often runs inside a caller's transaction
-that may still roll back. Deleting a folder cannot be undone, so the removals moved behind
-`afterCommit`. Reaching for the module's background lifetime from inside that callback then failed:
-a post-commit callback still runs on the context that carried the transaction, and reading storage
-from an ended transaction throws. The failure was invisible from the outside, because it surfaced
-as a swallowed post-commit warning while the archival itself looked entirely successful.
-
-Derive the background lifetime while the caller's context is still live, then let the callback use
-only what it was handed. The rule generalizes: whatever an `afterCommit` callback needs from the
-transaction's context must be read before the callback is registered, never inside it.
+The live sync debounce does not retain a caller or transaction context. Scheduling records only the
+project ID; when the timer fires, the module creates work on its pinned sync lifetime. Both ready and
+archived completion re-schedule the pass so the last ready workspace disappearing also disarms its
+watch.
 
 ## Catalog pages and model pages have different bounds
 

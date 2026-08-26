@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
+import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import { projectMigrations, ProjectsModule } from "../../sources/projects/index.js";
 import { validateRegistrationPath } from "../../sources/projects/impl/validateRegistrationPath.js";
 import {
@@ -16,12 +18,68 @@ import {
 import { cleanupRoots, createRepository, gitRunner } from "../git/helpers.js";
 import { testConfigRootedAt } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
-import { projectsModuleFor } from "../support/projectsModule.js";
+import { projectsCatalogFor, projectsModuleFor } from "../support/projectsModule.js";
 import { workspacesCatalogFrom } from "../support/workspacesModule.js";
 
 afterEach(cleanupRoots);
 
 describe("plain-directory project registration", () => {
+    it("recovers durable project provisioning without a project startup sweep", async () => {
+        const root = await mkdtemp(join(tmpdir(), "project-provision-recovery-"));
+        const folder = join(root, "source");
+        await mkdir(folder);
+        const world = await createWorld(root, "project-provision-recovery");
+        let restarted: ReturnType<typeof projectsCatalogFor> | undefined;
+        try {
+            const project = await world.projects.register(world.database.context, {
+                path: folder,
+            });
+            world.durableFunctions.stop();
+
+            restarted = projectsCatalogFor(world.config, world.git);
+            const hooks = restarted.durableFunctions.beforeStart(world.database.context);
+            restarted.projects.beforeStart(world.database.context, restarted.agents.asRef());
+            restarted.projects.open("test-instance");
+            await hooks.afterStart?.(world.database.context, restarted.agents.asRef());
+
+            const ready = await waitForProject(
+                restarted.projects,
+                world.database.context,
+                project.id,
+            );
+            expect(ready.initializationStatus).toBe("ready");
+            expect(ready.presence).toBe("present");
+        } finally {
+            restarted?.durableFunctions.stop();
+            await world.close();
+            await rm(root, { force: true, recursive: true });
+        }
+    });
+
+    it("removes only the exact managed remote-project root after archival", async () => {
+        const root = await mkdtemp(join(tmpdir(), "managed-project-archive-"));
+        const world = await createWorld(root, "managed-project-archive");
+        try {
+            const managed = join(world.config.projectsHome, "managed-project");
+            await mkdir(managed, { recursive: true });
+            await writeFile(join(managed, "owned.txt"), "owned\n", "utf8");
+            const project = await world.projects.create(world.database.context, {
+                id: "managed-project",
+                name: "Managed project",
+                repositoryRef: world.git.normalizeProjectCwd(managed),
+                remoteSource: { kind: "git", url: "https://example.com/managed-project.git" },
+            });
+
+            await world.projects.archive(world.database.context, project.id);
+            await vi.waitFor(() => {
+                expect(existsSync(managed)).toBe(false);
+            });
+        } finally {
+            await world.close();
+            await rm(root, { force: true, recursive: true });
+        }
+    });
+
     it("persists non-Git facts and creates copied child workspaces after restart", async () => {
         const root = await mkdtemp(join(tmpdir(), "plain-project-registration-"));
         const folder = join(root, "source");
@@ -82,7 +140,6 @@ describe("plain-directory project registration", () => {
                 "plain directory\n",
             );
         } finally {
-            if (reopened !== undefined) await reopened.close(world.database.context);
             await world.close();
             await rm(root, { force: true, recursive: true });
         }
@@ -167,22 +224,23 @@ describe("plain-directory project registration", () => {
 async function createWorld(root: string, name: string) {
     const config = await testConfigRootedAt(join(root, "state"));
     const git = GitModule.withRunner(gitRunner);
-    const { projects, start, workspaces } = workspacesCatalogFrom(config, git);
+    const { durableFunctions, projects, start, workspaces } = workspacesCatalogFrom(config, git);
     const database = moduleDatabase(
-        [...projectMigrations, ...workspaceMigrations],
+        [...durableFunctionsMigrations, ...projectMigrations, ...workspaceMigrations],
         `${name}-database`,
     );
     await database.ready;
-    start(database.context);
+    await start(database.context);
     return {
         config,
         database,
+        durableFunctions,
         git,
         projects,
         workspaces,
         close: async () => {
+            durableFunctions.stop();
             await workspaces.close(database.context);
-            await projects.close(database.context);
             database.close();
         },
     };

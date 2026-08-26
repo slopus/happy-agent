@@ -2,6 +2,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import type { AbortModule } from "../../sources/abort/index.js";
 import type { ConfigModule } from "../../sources/config/index.js";
+import type { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
 import type { ProjectsModule } from "../../sources/projects/index.js";
 import { WorkspacesModule } from "../../sources/workspaces/index.js";
@@ -22,6 +23,7 @@ export interface WorkspacesCatalog {
     /** What the shared abort module was asked to cancel, in the order it was asked. */
     readonly agents: TestAgentCollection;
     readonly config: ConfigModule;
+    readonly durableFunctions: DurableFunctionsModule;
     readonly git: GitModule;
     readonly projects: ProjectsModule;
     /**
@@ -31,7 +33,7 @@ export interface WorkspacesCatalog {
      * startup, and refuses background work when it was never started, so a world that creates or
      * archives has to call this before it does.
      */
-    readonly start: (ctx: Context) => void;
+    readonly start: (ctx: Context) => Promise<void>;
     readonly workspaces: WorkspacesModule;
     readonly workspacesDirectory: string;
 }
@@ -43,17 +45,21 @@ export function workspacesCatalogFrom(
     // One abort module across both catalogs, exactly as production wires it. With two, each
     // catalog would cancel into an instance the other cannot see, and a test could pass while
     // the arrangement it claims to mirror was never built.
-    const { abort, agents, projects } = projectsCatalogFor(config, git);
-    const workspaces = new WorkspacesModule(config, projects, git, abort);
+    const { abort, agents, durableFunctions, projects } = projectsCatalogFor(config, git);
+    const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
     return {
         abort,
         agents,
         config,
+        durableFunctions,
         git,
         projects,
-        start: (ctx: Context) => {
+        start: async (ctx: Context) => {
+            const durableHooks = durableFunctions.beforeStart(ctx);
             projects.beforeStart(ctx, agents.asRef());
             workspaces.beforeStart(ctx, agents.asRef());
+            projects.open("test-instance");
+            await durableHooks.afterStart?.(ctx, agents.asRef());
         },
         workspaces,
         workspacesDirectory: git.normalizeFuturePath(config.workspacesHome),

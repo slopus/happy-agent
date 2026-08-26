@@ -1,13 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import { projectMigrations } from "../../sources/projects/index.js";
 import { workspaceMigrations, type WorkspaceEvent } from "../../sources/workspaces/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { workspacesCatalogFrom } from "../support/workspacesModule.js";
 
-describe("archival cleanup interrupted by a shutdown resumes at the next startup", () => {
-    it("carries a workspace stranded in archiving through to archived when it opens", async () => {
+describe("durable workspace archive recovery", () => {
+    it("recovers the pending archive call without a workspace startup sweep", async () => {
         const config = await temporaryTestConfig();
         const database = moduleDatabase([], "stranded-archival-recovery");
         await database.ready;
@@ -17,15 +18,16 @@ describe("archival cleanup interrupted by a shutdown resumes at the next startup
         for (const [, migrate] of workspaceMigrations) {
             await migrate(database.context, database.database);
         }
+        for (const [, migrate] of durableFunctionsMigrations) {
+            await migrate(database.context, database.database);
+        }
         try {
-            // The first run archives a workspace and shuts down while folder removal is still in
-            // flight. Archival commits the decision and defers removal past the commit, so the
-            // close lands between the two: the durable record says `archiving`, and the completion
-            // that would have moved it to `archived` never ran. This is an ordinary graceful
-            // shutdown racing an archive, not a crash.
+            // Stop dispatch before its next-turn launch. The lifecycle row and pending call have
+            // committed together, but no executor has had a chance to remove the folder.
             const first = workspacesCatalogFrom(config);
-            first.start(database.context);
+            await first.start(database.context);
             const project = await first.projects.create(database.context, {
+                id: "acme",
                 name: "Acme",
                 repositoryRef: "/projects/acme",
             });
@@ -33,23 +35,22 @@ describe("archival cleanup interrupted by a shutdown resumes at the next startup
                 id: "workspace-1",
                 projectRef: project.id,
                 name: "Interrupted workspace",
+                kind: "directory",
             });
             await first.workspaces.archive(database.context, "workspace-1");
-            await first.workspaces.close(database.context);
+            first.durableFunctions.stop();
             const stranded = await first.workspaces.get(database.context, "workspace-1");
             expect(stranded?.status).toBe("archiving");
 
-            // A second catalog over the same records is the daemon starting again. Opening it must
-            // finish what the shutdown interrupted: the row reaches `archived`, and the
-            // `workspace_archived` event the first run still owed its subscribers is published.
+            // A new Durable Functions instance recovers the call. Workspaces.open is intentionally
+            // absent here: there is no catalog sweep involved in the repair.
             const second = workspacesCatalogFrom(config);
-            second.start(database.context);
             const events: WorkspaceEvent[] = [];
             second.workspaces.onEvent((_ctx, event) => {
                 events.push(event);
             });
-            await second.workspaces.open(database.context);
-            await second.workspaces.whenCleanupSettles();
+            await second.start(database.context);
+            await expectArchived(second, database.context, "workspace-1");
 
             const recovered = await second.workspaces.get(database.context, "workspace-1");
             expect(recovered?.status).toBe("archived");
@@ -60,20 +61,31 @@ describe("archival cleanup interrupted by a shutdown resumes at the next startup
                 ),
             ).toBe(true);
 
-            // Startup recovery is a repair, not a new decision: it reaches into no agents, and a
-            // third run finds nothing left to do.
+            // Recovery is a repair, not a new decision, and a third run finds no pending work.
             expect(second.agents.aborted).toEqual([]);
-            await second.workspaces.close(database.context);
+            second.durableFunctions.stop();
             const third = workspacesCatalogFrom(config);
-            third.start(database.context);
-            await third.workspaces.open(database.context);
-            await third.workspaces.whenCleanupSettles();
+            await third.start(database.context);
+            await expectArchived(third, database.context, "workspace-1");
             expect((await third.workspaces.get(database.context, "workspace-1"))?.status).toBe(
                 "archived",
             );
+            third.durableFunctions.stop();
             await third.workspaces.close(database.context);
+            await second.workspaces.close(database.context);
+            await first.workspaces.close(database.context);
         } finally {
             database.close();
         }
     });
 });
+
+async function expectArchived(
+    world: ReturnType<typeof workspacesCatalogFrom>,
+    ctx: Parameters<typeof world.workspaces.get>[0],
+    workspaceId: string,
+): Promise<void> {
+    await vi.waitFor(async () => {
+        expect((await world.workspaces.get(ctx, workspaceId))?.status).toBe("archived");
+    });
+}

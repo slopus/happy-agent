@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import {
     withAgentDatabase,
-    type AgentDatabase,
+    type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
@@ -12,17 +12,11 @@ import {
 } from "@slopus/happy-agent-base";
 import { createId } from "@paralleldrive/cuid2";
 import { Value } from "@sinclair/typebox/value";
-import {
-    afterCommit,
-    detach,
-    mapAsyncLock,
-    type Context,
-    type MapAsyncLock,
-    type RootContext,
-} from "@steve.kite/stdlib";
+import { backoff, detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
+import { durableCheckpoint, DurableFunctionsModule } from "../durableFunctions/index.js";
 import { GitModule, type GitCredentialRef, type GitRepositoryFacts } from "../git/index.js";
 import { ProjectRegistrationError, ProjectsModule, type Project } from "../projects/index.js";
 
@@ -142,6 +136,16 @@ import {
     type WorkspaceStore,
 } from "./WorkspaceStore.js";
 import { requirePromise } from "./workspaceRuntime.js";
+import {
+    WORKSPACE_ARCHIVE_FUNCTION,
+    WORKSPACE_PROVISION_FUNCTION,
+    workspaceArchiveResultSchema,
+    workspaceDurableArgumentsSchema,
+    workspaceLockKey,
+    workspaceOperationId,
+    workspaceProvisionResultSchema,
+    type WorkspaceProvisionResult,
+} from "./WorkspaceDurableFunctions.js";
 import { archiveWorkspaceTool } from "./tools/archive_workspace.js";
 import { createChildWorkspaceTool } from "./tools/create_child_workspace.js";
 import { createWorkspaceTool } from "./tools/create_workspace.js";
@@ -169,9 +173,6 @@ export const MAX_WORKSPACE_OUTPUT_CHARACTERS = 12_000;
 const MAX_ERROR_LENGTH = 500;
 /** A burst of file events inside this window becomes a single replication pass. */
 const WORKSPACE_SYNC_DEBOUNCE_MS = 300;
-/** How many interrupted checkouts are carried forward at once on startup. */
-const WORKSPACE_INITIALIZATION_CONCURRENCY = 4;
-
 /** What owns a directory: always a project, and a workspace too when the folder is one. */
 export interface ResolvedProjectOwnership {
     readonly project: Project;
@@ -191,29 +192,26 @@ export class WorkspacesModule implements AgentModule {
     readonly #store: WorkspaceStore;
     readonly #mutations: WorkspaceMutations;
     readonly #enabled: boolean;
-    readonly #cleanupTasks = new Set<Promise<void>>();
     #agents: AgentSystemRef | undefined;
 
     // --- The catalog's own Git and filesystem work -------------------------------------------
 
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
+    readonly #durableFunctions: DurableFunctionsModule;
     readonly #git: GitModule;
     readonly #projects: ProjectsModule;
     readonly #projectFolders = new Map<string, { path: string; storageKey: string }>();
-    readonly #setupControllers = new Map<string, AbortController>();
     readonly #syncLocks: MapAsyncLock<string> = mapAsyncLock();
     readonly #syncStops = new Map<string, () => void>();
     readonly #syncTimers = new Map<string, NodeJS.Timeout>();
     readonly #tasks = new Set<Promise<void>>();
-    readonly #workspaceLocks: MapAsyncLock<string> = mapAsyncLock();
     /** Agent and owner locks serialize permanent attachment and ordering changes. */
     readonly #agentAssociationLocks: MapAsyncLock<string> = mapAsyncLock();
     readonly #workspacesDirectory: string;
 
     #closed = false;
-    #lifetime: RootContext | undefined;
-    #storage: AgentDatabase | undefined;
+    #syncContext: Context | undefined;
 
     /**
      * @param config Where workspace folders live and what a folder does when it says nothing itself.
@@ -221,6 +219,7 @@ export class WorkspacesModule implements AgentModule {
      * project's repository, in a folder named after it, so the projects catalog owns the folder,
      * the credential, and the repository lock every Git call here goes through.
      * @param git Git itself.
+     * @param durableFunctions The durable owner of checkout and archive work.
      * @param abort How work standing in a workspace is stopped. Archiving is the moment a folder
      * stops being anybody's, so the decision cancels the agents working in it rather than leaving
      * them running in a checkout that is about to be deleted.
@@ -230,15 +229,55 @@ export class WorkspacesModule implements AgentModule {
         projects: ProjectsModule,
         git: GitModule,
         abort: AbortModule,
+        durableFunctions: DurableFunctionsModule,
     ) {
         this.#abort = abort;
         this.#config = config;
+        this.#durableFunctions = durableFunctions;
         this.#git = git;
         this.#projects = projects;
         this.#enabled = config.configuration.values.features.workspaces;
         this.#workspacesDirectory = git.normalizeFuturePath(config.workspacesHome);
         this.#store = createWorkspaceStore(this);
         this.#mutations = new WorkspaceMutations(this.#store);
+
+        durableFunctions.register({
+            name: WORKSPACE_PROVISION_FUNCTION,
+            argumentsSchema: workspaceDurableArgumentsSchema,
+            resultSchema: workspaceProvisionResultSchema,
+            executor: async (ctx, call) =>
+                await this.#provisionWorkspace(ctx, call.arguments.id, call.kv),
+            onSuccess: async (ctx, call) => {
+                if (call.result.outcome === "superseded") return;
+                if (call.result.outcome === "ready") {
+                    const workspace = await this.markReady(ctx, {
+                        workspaceId: call.arguments.id,
+                    });
+                    ctx.afterCommit(() => this.#scheduleSync(workspace.projectRef));
+                    return;
+                }
+                await this.markInitializationFailed(ctx, {
+                    workspaceId: call.arguments.id,
+                    error: call.result.error,
+                });
+            },
+        });
+        durableFunctions.register({
+            name: WORKSPACE_ARCHIVE_FUNCTION,
+            argumentsSchema: workspaceDurableArgumentsSchema,
+            resultSchema: workspaceArchiveResultSchema,
+            executor: async (ctx, call) => {
+                await this.#archiveWorkspaceFolder(ctx, call.arguments.id, call.kv);
+                return null;
+            },
+            onSuccess: async (ctx, call) => {
+                const workspace = await this.get(ctx, call.arguments.id);
+                if (workspace === undefined) return;
+                await this.completeArchive(ctx, workspace.id);
+                ctx.afterCommit(() => this.#scheduleSync(workspace.projectRef));
+                await this.#scheduleProjectCleanupIfComplete(ctx, workspace.projectRef);
+            },
+        });
 
         // Archiving a project archives everything cut from it. The decision belongs to the
         // projects catalog, so this catalog listens for it inside that transaction rather than
@@ -283,10 +322,7 @@ export class WorkspacesModule implements AgentModule {
 
     readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
-        // The earliest root context the catalog is given, and the one its background work should
-        // run on. Taking it here rather than from the first caller keeps a transactional tool from
-        // pinning its own transaction facade as the catalog's database.
-        this.#pinBackgroundRoot(ctx);
+        this.#syncContext ??= withAgentDatabase(detach(ctx).named("workspace-sync"), ctx.db);
         return this.#hooks;
     };
 
@@ -601,13 +637,9 @@ export class WorkspacesModule implements AgentModule {
      * Archives a workspace: the immediate, irreversible logical decision. It leaves the active
      * list at once and never comes back because cleanup went wrong.
      *
-     * The decision also stops the work standing in the workspace. Its folder is about to be taken
-     * away, so every agent attached to it — with the subagents and background processes below
-     * them — has its cancellation prepared in the transaction that records the archival. An
-     * archival that succeeds has therefore taken responsibility for the work in it: preparation
-     * that fails takes the archival down with it and leaves the workspace active. The signal
-     * itself is released after the commit, and attaching an agent to a workspace whose archival
-     * has committed is refused, so nothing new arrives behind the decision.
+     * The durable archive operation stops attached agents before taking the folder away. Attaching
+     * an agent to a workspace whose archival has committed is refused, so nothing new can arrive
+     * behind this decision.
      */
     async beginArchive(
         ctx: Context,
@@ -623,8 +655,8 @@ export class WorkspacesModule implements AgentModule {
             "begin_archive",
             normalized.operationId,
             workspaceId,
-            async (txCtx, request) => {
-                const result = await this.#store.beginArchive(
+            async (txCtx, request) =>
+                await this.#store.beginArchive(
                     txCtx,
                     {
                         workspaceId,
@@ -633,13 +665,7 @@ export class WorkspacesModule implements AgentModule {
                             : { expectedVersion: normalized.expectedVersion }),
                     },
                     request,
-                );
-                // Only the archival that actually happens stops anything. A repeat of an archive
-                // already made leaves the record alone, and must not reach into agents that have
-                // since moved on.
-                if (result.changed) await this.#abortWorkspaceAgents(txCtx, workspaceId);
-                return result;
-            },
+                ),
             (before, after) => ({
                 type: "workspace_updated",
                 change: "begin_archive",
@@ -675,24 +701,14 @@ export class WorkspacesModule implements AgentModule {
     }
 
     /**
-     * Archives a workspace and hands its folder to the host to remove.
-     *
-     * The archival is committed here and returned at once: the workspace has left the active list
-     * before this call answers. Removing a worktree can take minutes and can fail, so it runs on
-     * the module's cleanup lifetime instead of the caller's, and its outcome arrives later as the
-     * `workspace_archived` event or as a logged failure. Archival never fails because cleanup did.
-     *
-     * Cleanup waits for the decision to become durable. A caller that already carries a transaction
-     * — the transactional `archive_workspace` tool — has not committed when the nested transaction
-     * below returns, and it can still roll back, so deleting the folder eagerly would destroy a
-     * checkout whose archival never happened.
+     * Archives a workspace tree and durably schedules each folder removal in the same transaction.
      */
     async archive(
         ctx: Context,
         workspaceId: string,
         options: WorkspaceArchiveOptions = {},
     ): Promise<Workspace> {
-        const archived = await ctx.inTx(async (txCtx) => {
+        return await ctx.inTx(async (txCtx) => {
             const root = await this.get(txCtx, workspaceId);
             if (root === undefined) {
                 throw new Error(`Workspace "${workspaceId}" was not found.`);
@@ -712,33 +728,29 @@ export class WorkspacesModule implements AgentModule {
             };
             await visit(root);
 
-            const rows: Workspace[] = [];
             for (const descendant of descendants) {
-                rows.push(await this.beginArchive(txCtx, descendant.id));
+                await this.#beginArchiveAndInvoke(txCtx, descendant.id);
             }
-            const begun = await this.beginArchive(txCtx, workspaceId, options);
-            rows.push(begun);
-            return { begun, rows };
+            const begun = await this.#beginArchiveAndInvoke(txCtx, workspaceId, options);
+            return begun;
         });
-        const cleanup = archived.rows.filter((workspace) => workspace.status === "archiving");
-        // Deleting a folder cannot be undone, so the removals wait for the archival the caller may
-        // still roll back to be durable. The lifetime they run on is derived here rather than in
-        // the callback: a context that carried the transaction cannot be read once it has ended.
-        const workerCtx = this.#backgroundLifetime("workspace-cleanup");
-        afterCommit(ctx, () => {
-            for (const workspace of archived.rows) this.#stopSetup(workspace.id);
-            if (cleanup.length === 0) return;
-            this.#runCleanup(workerCtx, async () => {
-                for (const workspace of cleanup) {
-                    await this.removeArchivedWorkspace(
-                        workerCtx,
-                        workspace.projectRef,
-                        workspace.id,
-                    );
-                }
-            });
+    }
+
+    async #beginArchiveAndInvoke(
+        ctx: Context,
+        workspaceId: string,
+        options: WorkspaceArchiveOptions = {},
+    ): Promise<Workspace> {
+        const workspace = await this.beginArchive(ctx, workspaceId, options);
+        if (workspace.status !== "archiving") return workspace;
+        await this.#durableFunctions.cancel(ctx, workspaceOperationId("create", workspace.id));
+        await this.#durableFunctions.invoke(ctx, {
+            function: WORKSPACE_ARCHIVE_FUNCTION,
+            arguments: { id: workspace.id },
+            operationId: workspaceOperationId("archive", workspace.id),
+            lockKeys: [workspaceLockKey(workspace.id)],
         });
-        return archived.begun;
+        return workspace;
     }
 
     // --- Folders, Git, and setup -------------------------------------------------------------
@@ -790,56 +802,22 @@ export class WorkspacesModule implements AgentModule {
     }
 
     /**
-     * Picks up whatever the last run left unfinished: workspaces still being created, folder
-     * removals a shutdown interrupted, and the file replication watch for every workspace that is
-     * ready.
-     *
-     * This is also where the catalog's own background lifetime is taken. Opening happens once, from
-     * the root context, before anything can reach the catalog through a tool or a request — so the
-     * database that later folder removals write through is the root one, never a caller's
-     * transaction facade.
+     * Starts the live file replication watch for every ready workspace. Durable Functions owns
+     * interrupted provisioning and archival recovery before this hook runs.
      */
     async open(ctx: Context): Promise<void> {
-        this.#pinBackgroundRoot(ctx);
-        const stranded: Workspace[] = [];
         for (const workspace of await this.#allWorkspaces(ctx)) {
-            if (workspace.status === "ready") this.#scheduleSync(ctx, workspace.projectRef);
-            if (workspace.status === "archiving") stranded.push(workspace);
+            if (workspace.status === "ready") this.#scheduleSync(workspace.projectRef);
         }
-        // A workspace still `archiving` was archived by a run that ended before its folder removal
-        // finished. The decision is durable and terminal — nothing can move the row anywhere but
-        // `archived` — so removal simply resumes here, honouring the keep-on-archive settings as
-        // they stand now, and completion publishes the `workspace_archived` event that run still
-        // owed. Without this the row would say "removal is still running" forever.
-        if (stranded.length > 0) {
-            const workerCtx = this.#backgroundLifetime("workspace-cleanup");
-            this.#runCleanup(workerCtx, async () => {
-                for (const workspace of stranded) {
-                    await this.removeArchivedWorkspace(
-                        workerCtx,
-                        workspace.projectRef,
-                        workspace.id,
-                    );
-                }
-            });
-        }
-        this.#runInBackground("workspace-initialization", async (workerCtx) => {
-            await this.reconcileInitializingWorkspaces(workerCtx);
-        });
     }
 
     /** Stops every background lifetime this catalog started and waits for the ones in flight. */
     async close(_ctx: Context): Promise<void> {
         this.#closed = true;
-        for (const controller of this.#setupControllers.values()) {
-            controller.abort(new Error("Workspace setup stopped because Happy Agent is closing."));
-        }
-        this.#setupControllers.clear();
         for (const timer of this.#syncTimers.values()) clearTimeout(timer);
         this.#syncTimers.clear();
         for (const stop of this.#syncStops.values()) stop();
         this.#syncStops.clear();
-        await this.whenCleanupSettles();
         while (this.#tasks.size > 0) {
             await Promise.allSettled(this.#tasks);
         }
@@ -965,38 +943,42 @@ export class WorkspacesModule implements AgentModule {
         const gitRefs = workspaceGitRefSnapshot(project.repositoryRef);
         const fallbackStorageKey = `${projects.storageKeyFor(name).slice(0, 20)}-${workspaceId}`;
 
-        const reserved = await this.reserve(
-            ctx,
-            {
-                id: workspaceId,
-                ...(options.operationId === undefined ? {} : { operationId: options.operationId }),
-                projectRef: projectId,
-                parentId: parent?.id ?? projectId,
-                name,
-                kind,
-                ...(normalized.nameConfigured === undefined
-                    ? {}
-                    : { nameConfigured: normalized.nameConfigured }),
-                ...(baseRef === undefined ? {} : { baseRef }),
-                ...(creatorSessionId === undefined ? {} : { creatorSessionId }),
-                ...(gitRefs.complete ? {} : { storageKeySeed: fallbackStorageKey }),
-            },
-            {
-                isBranchUnavailable: (branch) => gitBranchExists(gitRefs, branch),
-                isStorageKeyUnavailable: (storageKey) =>
-                    workspaceStorageKeyExists(gitRefs, workspaceRoot, storageKey),
-                pathForStorageKey: (storageKey) => join(workspaceRoot, storageKey),
-            },
-        );
-        if (reserved.created) {
-            const workspace = reserved.workspace;
-            afterCommit(ctx, () => {
-                this.#runInBackground("workspace-initialization", async (workerCtx) => {
-                    await this.#initializeWorkspace(workerCtx, workspace);
+        return await ctx.inTx(async (txCtx) => {
+            const reserved = await this.reserve(
+                txCtx,
+                {
+                    id: workspaceId,
+                    ...(options.operationId === undefined
+                        ? {}
+                        : { operationId: options.operationId }),
+                    projectRef: projectId,
+                    parentId: parent?.id ?? projectId,
+                    name,
+                    kind,
+                    ...(normalized.nameConfigured === undefined
+                        ? {}
+                        : { nameConfigured: normalized.nameConfigured }),
+                    ...(baseRef === undefined ? {} : { baseRef }),
+                    ...(creatorSessionId === undefined ? {} : { creatorSessionId }),
+                    ...(gitRefs.complete ? {} : { storageKeySeed: fallbackStorageKey }),
+                },
+                {
+                    isBranchUnavailable: (branch) => gitBranchExists(gitRefs, branch),
+                    isStorageKeyUnavailable: (storageKey) =>
+                        workspaceStorageKeyExists(gitRefs, workspaceRoot, storageKey),
+                    pathForStorageKey: (storageKey) => join(workspaceRoot, storageKey),
+                },
+            );
+            if (reserved.workspace.status === "initializing") {
+                await this.#durableFunctions.invoke(txCtx, {
+                    function: WORKSPACE_PROVISION_FUNCTION,
+                    arguments: { id: reserved.workspace.id },
+                    operationId: workspaceOperationId("create", reserved.workspace.id),
+                    lockKeys: [workspaceLockKey(reserved.workspace.id)],
                 });
-            });
-        }
-        return reserved.workspace;
+            }
+            return reserved.workspace;
+        });
     }
 
     /**
@@ -1155,55 +1137,90 @@ export class WorkspacesModule implements AgentModule {
 
     // --- Building a workspace ----------------------------------------------------------------
 
-    /** Carries every workspace that is still being created through to a usable checkout. */
-    async reconcileInitializingWorkspaces(ctx: Context): Promise<void> {
-        const workspaces = (await this.#allWorkspaces(ctx)).filter(
-            (workspace) => workspace.status === "initializing",
-        );
-        let next = 0;
-        const worker = async (): Promise<void> => {
-            for (;;) {
-                if (this.#closed) return;
-                const workspace = workspaces[next++];
-                if (workspace === undefined) return;
-                await this.#initializeWorkspace(ctx, workspace);
+    async #provisionWorkspace(
+        ctx: Context,
+        workspaceId: string,
+        kv: AgentKV,
+    ): Promise<WorkspaceProvisionResult> {
+        try {
+            let workspace = await this.get(ctx, workspaceId);
+            if (workspace === undefined) {
+                return { outcome: "superseded" };
             }
-        };
-        await Promise.all(
-            Array.from(
-                { length: Math.min(WORKSPACE_INITIALIZATION_CONCURRENCY, workspaces.length) },
-                worker,
-            ),
-        );
-    }
-
-    async #initializeWorkspace(ctx: Context, workspace: Workspace): Promise<void> {
-        await this.#workspaceLocks.runInLock(ctx, workspace.id, async () => {
+            if (workspace.status === "ready") return { outcome: "ready" };
+            if (workspace.status !== "initializing") {
+                return { outcome: "superseded" };
+            }
             const project = await this.#project(ctx, workspace.projectRef);
             if (project === undefined) {
-                await this.#failInitialization(
-                    ctx,
-                    workspace.id,
-                    "The workspace's project was not found.",
-                );
-                return;
+                return {
+                    outcome: "failed",
+                    error: "The workspace's project was not found.",
+                };
             }
-            try {
-                const current = await this.#projects.runInProjectGitLock(
+
+            const reservedWorkspace = workspace;
+            await durableCheckpoint(ctx, kv, "contents", async () => {
+                await this.#projects.runInProjectGitLock(
                     ctx,
-                    workspace.projectRef,
-                    async () => await this.#createContentsLocked(ctx, workspace, project),
+                    reservedWorkspace.projectRef,
+                    async () => await this.#createContentsLocked(ctx, reservedWorkspace, project),
                 );
-                if (current === undefined || this.#closed) return;
-                await this.#setupWorkspace(ctx, current);
-                if (this.#closed) return;
-                await this.markReady(ctx, { workspaceId: current.id });
-                this.#scheduleSync(ctx, current.projectRef);
-            } catch (error) {
-                if (this.#closed) return;
-                await this.#failInitialization(ctx, workspace.id, errorToMessage(error));
+            });
+            ctx.lifetime?.throwIfAborted();
+            workspace = await this.get(ctx, workspaceId);
+            if (workspace?.status === "ready") return { outcome: "ready" };
+            if (workspace?.status !== "initializing") {
+                return { outcome: "superseded" };
             }
-        });
+
+            const currentWorkspace = workspace;
+            await durableCheckpoint(ctx, kv, "initial-sync", async () => {
+                const currentProject = await this.#project(ctx, currentWorkspace.projectRef);
+                if (currentProject === undefined) {
+                    throw new Error("The workspace's project was not found.");
+                }
+                const rootSettings = await this.#folderSettings(currentProject.repositoryRef);
+                await syncWorkspaceFiles({
+                    paths: [...rootSettings.sync, ...rootSettings.protectedSync],
+                    projectPath: currentProject.repositoryRef,
+                    workspacePath: currentWorkspace.path,
+                });
+            });
+
+            const settings = await this.#folderSettings(currentWorkspace.path);
+            for (const [index, command] of settings.setupCommands.entries()) {
+                await durableCheckpoint(
+                    ctx,
+                    kv,
+                    `setup-${String(index)}`,
+                    async () => {
+                        try {
+                            await runWorkspaceSetupCommands(
+                                ctx,
+                                currentWorkspace.path,
+                                [command],
+                                ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
+                            );
+                        } catch (error) {
+                            ctx.lifetime?.throwIfAborted();
+                            ctx.log.warn(
+                                { error, workspaceId },
+                                "A workspace setup command failed, but the workspace is still usable.",
+                            );
+                        }
+                    },
+                    command,
+                );
+            }
+            return { outcome: "ready" };
+        } catch (error) {
+            ctx.lifetime?.throwIfAborted();
+            return {
+                outcome: "failed",
+                error: boundedWorkspaceError(errorToMessage(error)),
+            };
+        }
     }
 
     /** Everything that must happen while this project's Git lock is held. */
@@ -1340,104 +1357,60 @@ export class WorkspacesModule implements AgentModule {
         );
     }
 
-    async #setupWorkspace(ctx: Context, workspace: Workspace): Promise<void> {
-        const controller = new AbortController();
-        this.#setupControllers.set(workspace.id, controller);
-        try {
-            if (
-                (await this.#ownedWorkspace(ctx, workspace.projectRef, workspace.id))?.status !==
-                "initializing"
-            ) {
-                return;
-            }
-            const project = await this.#project(ctx, workspace.projectRef);
-            // The first replication runs before the setup commands so they can rely on the shared
-            // files being there. The sync list is read from the project root — the same source
-            // every later pass uses — so an uncommitted change to it applies immediately.
-            if (project !== undefined) {
-                const rootSettings = await this.#folderSettings(project.repositoryRef);
-                await syncWorkspaceFiles({
-                    paths: [...rootSettings.sync, ...rootSettings.protectedSync],
-                    projectPath: project.repositoryRef,
-                    workspacePath: workspace.path,
-                });
-            }
-            const settings = await this.#folderSettings(workspace.path);
-            try {
-                await runWorkspaceSetupCommands(ctx, workspace.path, settings.setupCommands, {
-                    signal: controller.signal,
-                });
-            } catch (error) {
-                // Setup makes a valid checkout more convenient; it does not decide whether the
-                // checkout exists. Preserve explicit cancellation, but keep an otherwise usable
-                // workspace when an install or another project-owned command fails.
-                controller.signal.throwIfAborted();
-                ctx.lifetime?.throwIfAborted();
-                ctx.log.warn(
-                    { error, workspaceId: workspace.id },
-                    "A workspace setup command failed, but the workspace is still usable.",
-                );
-            }
-        } finally {
-            if (this.#setupControllers.get(workspace.id) === controller) {
-                this.#setupControllers.delete(workspace.id);
-            }
-        }
-    }
-
-    async #failInitialization(ctx: Context, workspaceId: string, message: string): Promise<void> {
-        await this.markInitializationFailed(ctx, {
-            workspaceId,
-            error: boundedWorkspaceError(message),
-        });
-    }
-
     async #folderSettings(folder: string): Promise<WorkspaceFolderSettings> {
         return await loadWorkspaceFolderSettings(folder, this.#config.workspaceSettings);
     }
 
     // --- Archival ----------------------------------------------------------------------------
 
-    /** Cleans up an archived workspace's folder. Failure is logged; archival still stands. */
-    async removeArchivedWorkspace(
-        ctx: Context,
-        projectId: string,
-        workspaceId: string,
-    ): Promise<Workspace | undefined> {
-        await this.#workspaceLocks.runInLock(ctx, workspaceId, async () => {
-            const workspace = await this.#ownedWorkspace(ctx, projectId, workspaceId);
-            if (workspace === undefined || workspace.status === "archived") return;
-            if (workspace.status !== "archiving") {
-                throw new Error("That workspace is not being archived.");
-            }
-            const project = await this.#project(ctx, projectId);
-            if (project === undefined) throw new Error("The workspace's project was not found.");
-            const settings = await this.#folderSettings(project.repositoryRef);
-            try {
-                await removeWorkspaceDirectory({
-                    git: this.#git,
-                    ...this.#gitOptions(projectId),
-                    keepCopiesOnArchive: settings.keepCopiesOnArchive,
-                    keepWorktreesOnArchive: settings.keepWorktreesOnArchive,
-                    project,
-                    stopped: () => this.#closed,
-                    workspace,
-                });
-                if (this.#closed) return;
-            } catch (error) {
-                if (this.#closed) return;
-                // The archival is already durable, so a folder Happy Agent could not remove is something
-                // to tell someone about rather than a failure to hand back.
-                ctx.log.warn(
-                    { error, workspaceId },
-                    "The archived workspace's folder could not be removed.",
+    async #archiveWorkspaceFolder(ctx: Context, workspaceId: string, kv: AgentKV): Promise<void> {
+        const workspace = await this.get(ctx, workspaceId);
+        if (workspace === undefined || workspace.status === "archived") return;
+        if (workspace.status !== "archiving") {
+            throw new Error("That workspace is not being archived.");
+        }
+        const associations = await readWorkspaceAgents(ctx.db, workspaceId);
+        for (const association of associations) {
+            await durableCheckpoint(ctx, kv, `agent-${association.agentId}`, async () => {
+                await backoff(
+                    ctx,
+                    async (retryCtx) => await this.#abort.abort(retryCtx, association.agentId),
+                    {
+                        onError: (retryCtx, error) =>
+                            retryCtx.log.warn(
+                                { agentId: association.agentId, error, workspaceId },
+                                "Work in the archived workspace could not be stopped yet.",
+                            ),
+                    },
                 );
-            }
-            await this.completeArchive(ctx, workspaceId);
-            // The next pass stops the watch when this was the project's last ready workspace.
-            this.#scheduleSync(ctx, projectId);
-        });
-        return await this.#ownedWorkspace(ctx, projectId, workspaceId);
+            });
+        }
+        const project = await this.#project(ctx, workspace.projectRef);
+        if (project === undefined) throw new Error("The workspace's project was not found.");
+        const settings = await this.#folderSettings(project.repositoryRef);
+        await backoff(
+            ctx,
+            async (retryCtx) => {
+                await this.#projects.runInProjectGitLock(retryCtx, project.id, async () => {
+                    await removeWorkspaceDirectory({
+                        git: this.#git,
+                        ...this.#gitOptions(project.id),
+                        keepCopiesOnArchive: settings.keepCopiesOnArchive,
+                        keepWorktreesOnArchive: settings.keepWorktreesOnArchive,
+                        project,
+                        stopped: () => retryCtx.lifetime?.aborted === true,
+                        workspace,
+                    });
+                });
+            },
+            {
+                onError: (retryCtx, error) =>
+                    retryCtx.log.warn(
+                        { error, workspaceId },
+                        "The archived workspace's folder could not be removed yet.",
+                    ),
+            },
+        );
     }
 
     /**
@@ -1446,7 +1419,10 @@ export class WorkspacesModule implements AgentModule {
      * workspace anybody has any more, so it leaves the active list at the same moment.
      */
     async #archiveProjectWorkspaces(ctx: Context, projectId: string): Promise<void> {
-        if (!this.#enabled) return;
+        if (!this.#enabled) {
+            await this.#projects.scheduleArchivedProjectCleanup(ctx, projectId);
+            return;
+        }
         const active = (await this.#allWorkspaces(ctx, projectId)).filter(
             (workspace) => !isArchivalDecided(workspace),
         );
@@ -1467,52 +1443,31 @@ export class WorkspacesModule implements AgentModule {
             )
             .map(({ workspace }) => workspace);
         for (const workspace of workspaces) {
-            await this.beginArchive(ctx, workspace.id);
+            await this.#beginArchiveAndInvoke(ctx, workspace.id);
         }
-        if (workspaces.length === 0) return;
-        // This runs inside the project's archival transaction, which can still roll back. Stopping
-        // setup and deleting folders cannot be undone, so they wait for the decision to be durable.
-        // The lifetime they run on is derived while this context still carries a live transaction.
-        const workerCtx = this.#backgroundLifetime("workspace-cleanup");
-        afterCommit(ctx, () => {
-            for (const workspace of workspaces) this.#stopSetup(workspace.id);
-            this.#runCleanup(workerCtx, async () => {
-                for (const workspace of workspaces) {
-                    await this.removeArchivedWorkspace(workerCtx, projectId, workspace.id);
-                }
-            });
-        });
+        if (workspaces.length === 0) {
+            await this.#projects.scheduleArchivedProjectCleanup(ctx, projectId);
+        }
     }
 
-    #stopSetup(workspaceId: string): void {
-        this.#setupControllers
-            .get(workspaceId)
-            ?.abort(new Error("Workspace setup stopped because the workspace was archived."));
-    }
-
-    /**
-     * Cancels every agent standing in a workspace that is leaving the active list.
-     *
-     * Only the agents attached to the workspace are named here. Each abort carries the whole
-     * subagent tree below it, so a hidden helper working in the same folder stops with the agent
-     * that started it, and a managed root belonging to another workspace stops without disturbing
-     * the parent that supervises it from elsewhere.
-     */
-    async #abortWorkspaceAgents(ctx: Context, workspaceId: string): Promise<void> {
-        for (const association of await readWorkspaceAgents(ctx.db, workspaceId)) {
-            await this.#abort.abort(ctx, association.agentId);
+    async #scheduleProjectCleanupIfComplete(ctx: Context, projectId: string): Promise<void> {
+        const project = await this.#project(ctx, projectId);
+        if (project?.status !== "archived") return;
+        for (const workspace of await this.#allWorkspaces(ctx, projectId)) {
+            if (workspace.status !== "archived") return;
         }
+        await this.#projects.scheduleArchivedProjectCleanup(ctx, projectId);
     }
 
     // --- File replication --------------------------------------------------------------------
 
     /** Debounces the project's next sync pass, so a burst of file events becomes one copy. */
-    #scheduleSync(ctx: Context, projectId: string): void {
+    #scheduleSync(projectId: string): void {
         if (this.#closed) return;
         clearTimeout(this.#syncTimers.get(projectId));
         const timer = setTimeout(() => {
             this.#syncTimers.delete(projectId);
-            this.#runInBackground("workspace-sync", async (workerCtx) => {
+            this.#runSyncInBackground(async (workerCtx) => {
                 await this.#syncLocks.runInLock(workerCtx, projectId, async (lockedCtx) => {
                     await this.#runSyncPass(lockedCtx, projectId);
                 });
@@ -1546,7 +1501,7 @@ export class WorkspacesModule implements AgentModule {
             projectId,
             watchWorkspaceSyncPaths({
                 onChange: () => {
-                    this.#scheduleSync(ctx, projectId);
+                    this.#scheduleSync(projectId);
                 },
                 projectPath: project.repositoryRef,
                 recursive: this.#git.supportsRecursiveWorktreeWatch(),
@@ -1686,60 +1641,17 @@ export class WorkspacesModule implements AgentModule {
         return credential === undefined ? {} : { credential };
     }
 
-    /**
-     * The lifetime the catalog's own Git and filesystem work runs on.
-     *
-     * Cutting a worktree, running setup commands, replicating files, and removing a folder all
-     * outlive the call that asked for them, so none of them runs on that call's context. The
-     * lifetime is detached from the first context the catalog is used with. A detached context
-     * carries no storage — that is what stops work outliving its caller from writing through a
-     * transaction facade that has already committed — so the agent database is put back on it
-     * deliberately, and nothing else about the request comes along.
-     */
-    #backgroundLifetime(name: string): Context {
-        const lifetime = this.#lifetime;
-        const storage = this.#storage;
-        if (lifetime === undefined || storage === undefined) {
-            throw new Error(
-                "The workspaces catalog was asked for background work before it was started.",
-            );
-        }
-        return withAgentDatabase(lifetime.named(name), storage);
-    }
-
-    /**
-     * Captures the lifetime and database the catalog's own background work runs on.
-     *
-     * This is taken at startup rather than from whoever happens to ask first, because a caller can
-     * be inside a transaction — archiving is reachable from a transactional tool — and that
-     * caller's `db` is the transaction's facade, which is dead by the time background work runs.
-     * Pinning the root here is what keeps a folder removal deferred to after the commit from
-     * writing through a transaction that has ended.
-     */
-    #pinBackgroundRoot(ctx: Context): void {
-        this.#lifetime ??= detach(ctx);
-        this.#storage ??= ctx.db;
-    }
-
-    /**
-     * Starts work that outlives whatever asked for it, on its own named lifetime. The caller's
-     * context is deliberately not used: a background checkout must not end when a request does.
-     */
-    #runInBackground(name: string, work: (workerCtx: Context) => Promise<void>): void {
+    #runSyncInBackground(work: (workerCtx: Context) => Promise<void>): void {
         if (this.#closed) return;
-        const task = work(this.#backgroundLifetime(name))
+        if (this.#syncContext === undefined) {
+            throw new Error("The workspaces catalog was asked to sync before it started.");
+        }
+        const task = work(this.#syncContext)
             .catch(() => undefined)
             .finally(() => {
                 this.#tasks.delete(task);
             });
         this.#tasks.add(task);
-    }
-
-    /** Waits for the folder removals this module started. Closing and tests both need it. */
-    async whenCleanupSettles(): Promise<void> {
-        while (this.#cleanupTasks.size > 0) {
-            await Promise.allSettled(this.#cleanupTasks);
-        }
     }
 
     /** Persists the Git state the host observed, writing only when something actually changed. */
@@ -2495,22 +2407,6 @@ export class WorkspacesModule implements AgentModule {
                 branch: previousBranch,
             });
         }
-    }
-
-    /**
-     * Starts folder removal on the module's own lifetime. The caller's context is deliberately not
-     * used: an archive that has already been committed must not be tied to the request that asked
-     * for it, and a failure here cannot reach that caller as an error.
-     */
-    #runCleanup(workerCtx: Context, work: () => Promise<void>): void {
-        const task = work()
-            .catch((error: unknown) => {
-                workerCtx.log.error("A workspace folder could not be removed.", error);
-            })
-            .finally(() => {
-                this.#cleanupTasks.delete(task);
-            });
-        this.#cleanupTasks.add(task);
     }
 
     #assertEnabled(): void {

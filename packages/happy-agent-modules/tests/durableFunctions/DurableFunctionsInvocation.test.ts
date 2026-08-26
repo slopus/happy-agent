@@ -8,11 +8,44 @@ import {
     pendingCallCount,
     waitForCondition,
 } from "./support/durableFunctionsHarness.js";
+import { moduleDatabase } from "../support/moduleDatabase.js";
 
 const argumentsSchema = Type.Object({ label: Type.String() }, { additionalProperties: false });
 const resultSchema = Type.Object({ ok: Type.Boolean() }, { additionalProperties: false });
 
 describe("Durable Functions invocation", () => {
+    it("recovers a call committed before the module receives its startup context", async () => {
+        const executions: string[] = [];
+        const module = new DurableFunctionsModule();
+        module.register({
+            name: "record",
+            argumentsSchema,
+            resultSchema,
+            executor: async (_ctx, call) => {
+                executions.push(call.arguments.label);
+                return { ok: true };
+            },
+        });
+        const database = moduleDatabase(module.migrations, "durable-before-start-context");
+        try {
+            await database.ready;
+            await module.invoke(database.context, {
+                function: "record",
+                arguments: { label: "waiting" },
+            });
+            expect(executions).toEqual([]);
+            expect(await pendingCallCount(database.context)).toBe(1);
+
+            const hooks = module.beforeStart(database.context);
+            await hooks.afterStart?.(database.context, {} as never);
+            await waitForCondition(() => executions.length === 1);
+            await waitForCondition(async () => (await pendingCallCount(database.context)) === 0);
+        } finally {
+            module.stop();
+            database.close();
+        }
+    });
+
     it("executes a call only after its outer transaction commits and never after rollback", async () => {
         const executions: string[] = [];
         const module = new DurableFunctionsModule();

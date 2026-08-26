@@ -37,6 +37,7 @@ import {
     type HappyAgentConfiguration,
 } from "../config/index.js";
 import { ContextWindowModule } from "../contextWindow/index.js";
+import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { EventsModule } from "../events/index.js";
 import { ProjectFilesModule } from "../files/index.js";
 import { GitModule } from "../git/index.js";
@@ -124,6 +125,7 @@ export interface HappyAgentRuntimeModules {
     readonly compute: ComputeModule;
     readonly config: ConfigModule;
     readonly contextWindow: ContextWindowModule;
+    readonly durableFunctions: DurableFunctionsModule;
     readonly events: EventsModule;
     readonly files: ProjectFilesModule;
     readonly goal: GoalModule;
@@ -400,8 +402,9 @@ export async function startHappyAgentRuntime(
         const permissions = new PermissionsModule(compute.computeModule, autoModule);
         const abort = new AbortModule(compute.computeModule);
         const git = new GitModule(config);
-        const projects = new ProjectsModule(config, git, abort);
-        const workspaces = new WorkspacesModule(config, projects, git, abort);
+        const durableFunctions = new DurableFunctionsModule();
+        const projects = new ProjectsModule(config, git, abort, durableFunctions);
+        const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
         const titles = new TitlesModule(config, history, workspaces);
         const terminals = new TerminalsModule(projects, workspaces);
         registerShutdown("terminals", async () => await terminals.close());
@@ -491,6 +494,7 @@ export async function startHappyAgentRuntime(
             compute: compute.computeModule,
             config,
             contextWindow,
+            durableFunctions,
             events,
             files,
             goal,
@@ -550,6 +554,7 @@ export async function startHappyAgentRuntime(
             profile,
             murmur,
             git,
+            durableFunctions,
             projects,
             titles,
             workspaces,
@@ -570,6 +575,7 @@ export async function startHappyAgentRuntime(
             .map(checkModuleToolParameters)
             .map(instrumentModuleLogging);
 
+        projects.open(installation.epoch);
         await apiModule.prepare();
         await options.onPrepared?.({
             api: apiModule,
@@ -635,11 +641,10 @@ export async function startHappyAgentRuntime(
             }
         });
         registerShutdown("projects-and-workspaces", async () => {
+            durableFunctions.stop();
             git.dispose();
             await workspaces.close(withDatabase(ctx));
-            await projects.close(withDatabase(ctx));
         });
-        await projects.open(withDatabase(ctx), installation.epoch);
         await workspaces.open(withDatabase(ctx));
 
         profile.open(installation.epoch);

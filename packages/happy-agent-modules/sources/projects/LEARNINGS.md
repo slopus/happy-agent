@@ -90,16 +90,27 @@ project creation therefore keeps creator and credential ownership checks but doe
 require an author identity. When Git already has a local identity the clone receives it explicitly;
 otherwise the clone environment contains no author or committer override.
 
-## Detached background work must restore its database
+## Durable calls replace project-owned background queues
 
-The catalog's background work runs on a lifetime detached from the first caller. Detaching removes
-the agent database deliberately, so a transaction facade cannot escape the transaction that owns
-it. The module keeps the underlying database separately and restores it with `withAgentDatabase`
-before background work writes.
+Project creation commits a stable provisioning call, whose KV checkpoints clone, probe, default
+branch, remote name, and avatar work. Durable Functions supplies the detached lifetime, database,
+restart recovery, concurrency, and project lock, so the project module has no initialization queue,
+startup sweep, task set, or detached database reconstruction of its own.
+
+Remote provisioning also carries the shared `projects.clone` lock. The old queue allowed two clones
+at once; durable provisioning deliberately runs one network clone at a time while local project
+setup remains parallel across per-project locks. Retried agent shutdown and folder removal use
+stdlib `backoff`, so cancellation and retry policy stay consistent with the rest of the runtime.
+
+Project archival cancels provisioning and commits a durable root-agent cancellation call with the
+archive decision. Managed remote roots are removed by a separate durable cleanup call only after
+the workspaces module reports every child archived. Restore cancels archive and cleanup while
+holding the project Git lock; if cleanup already removed a managed clone, restore re-arms durable
+provisioning instead of leaving an active missing folder.
 
 ## Construction names only module dependencies
 
-The catalog takes `ConfigModule`, `GitModule`, and `AbortModule`, not an options object or loose
+The catalog takes `ConfigModule`, `GitModule`, `AbortModule`, and `DurableFunctionsModule`, not an options object or loose
 collaborators. Configuration owns its durable paths and credentials; Git owns repository
 operations; abort owns stopping an agent and everything below it. The catalog
 mints IDs and timestamps itself, keeps page bounds as constants, and accepts event subscribers

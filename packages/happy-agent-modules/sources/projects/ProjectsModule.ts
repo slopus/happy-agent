@@ -4,8 +4,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import {
-    withAgentDatabase,
-    type AgentDatabase,
+    type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
@@ -15,17 +14,11 @@ import {
 import { createId } from "@paralleldrive/cuid2";
 import { type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import {
-    afterCommit,
-    detach,
-    mapAsyncLock,
-    type Context,
-    type MapAsyncLock,
-    type RootContext,
-} from "@steve.kite/stdlib";
+import { backoff, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
+import { durableCheckpoint, DurableFunctionsModule } from "../durableFunctions/index.js";
 import {
     GitModule,
     type GitAuthentication,
@@ -80,6 +73,7 @@ import { ProjectLifecycleError } from "./ProjectLifecycleError.js";
 import { ProjectRegistrationError } from "./ProjectRegistrationError.js";
 import { findHostingAvatar, findRepositoryAvatar } from "./impl/findProjectAvatar.js";
 import { normalizeProjectAvatar } from "./impl/normalizeProjectAvatar.js";
+import { removeManagedProjectDirectory } from "./impl/removeManagedProjectDirectory.js";
 import {
     clientChosenId,
     clientChosenProjectId,
@@ -135,6 +129,18 @@ import {
     reorderProjectRootAgent,
 } from "./store/projectRootAgents.js";
 import { touchProject } from "./store/projectRecords.js";
+import {
+    PROJECT_ARCHIVE_FUNCTION,
+    PROJECT_CLEANUP_FUNCTION,
+    PROJECT_CLONE_LOCK,
+    PROJECT_PROVISION_FUNCTION,
+    projectArchiveResultSchema,
+    projectDurableArgumentsSchema,
+    projectLockKey,
+    projectOperationId,
+    projectProvisionResultSchema,
+    type ProjectProvisionResult,
+} from "./ProjectDurableFunctions.js";
 
 /** How many projects one page may carry, and how much text a page may spend on them. */
 export const PROJECT_PAGE_SIZE = 50;
@@ -148,12 +154,6 @@ export const MAX_PROJECT_OUTPUT_CHARACTERS = 12_000;
  * installation has exactly one person behind it, and this is what that person is called here.
  */
 const LOCAL_PROFILE_ID = "local";
-
-/** How many attempts a failed project gets before it stops being retried on startup. */
-const MAX_PROJECT_INITIALIZATION_RETRIES = 3;
-
-/** How many projects are set up at once. Cloning is network work, and two is enough of it. */
-const MAX_CONCURRENT_INITIALIZATIONS = 2;
 
 /** Fields one lifecycle write is allowed to move. */
 const PROJECT_STATE_FIELDS = [
@@ -190,6 +190,7 @@ export class ProjectsModule implements AgentModule {
 
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
+    readonly #durableFunctions: DurableFunctionsModule;
     readonly #git: GitModule;
     readonly #store: ProjectStore;
     readonly #mutations: ProjectMutations;
@@ -200,17 +201,9 @@ export class ProjectsModule implements AgentModule {
 
     readonly #creators = new Map<string, ProjectCreator>();
     readonly #homeDirectory: string;
-    readonly #initializing = new Set<string>();
-    readonly #pendingInitializations: string[] = [];
     readonly #projectLocks: MapAsyncLock<string> = mapAsyncLock();
     readonly #agentAssociationLocks: MapAsyncLock<string> = mapAsyncLock();
-    readonly #tasks = new Set<Promise<void>>();
 
-    #activeInitializations = 0;
-    #closed = false;
-    /** The lifetime the catalog's own background work runs on, derived from the first call. */
-    #lifetime: RootContext | undefined;
-    #storage: AgentDatabase | undefined;
     /** This machine, as the installation that built the catalog named it. */
     #localInstanceId: string | undefined;
 
@@ -219,9 +212,15 @@ export class ProjectsModule implements AgentModule {
      * folders stop being anybody's, so the decision cancels the root agents attached to it rather
      * than leaving them running in a checkout that is about to be removed.
      */
-    constructor(config: ConfigModule, git: GitModule, abort: AbortModule) {
+    constructor(
+        config: ConfigModule,
+        git: GitModule,
+        abort: AbortModule,
+        durableFunctions: DurableFunctionsModule,
+    ) {
         this.#abort = abort;
         this.#config = config;
+        this.#durableFunctions = durableFunctions;
         this.#git = git;
         this.#store = createProjectStore();
         this.#mutations = new ProjectMutations(this.#store);
@@ -229,6 +228,49 @@ export class ProjectsModule implements AgentModule {
         // a setting rather than something a caller decides per installation.
         this.#crossWorkspace = config.configuration.values.features.crossWorkspace;
         this.#homeDirectory = git.normalizeProjectCwd(homedir());
+
+        durableFunctions.register({
+            name: PROJECT_PROVISION_FUNCTION,
+            argumentsSchema: projectDurableArgumentsSchema,
+            resultSchema: projectProvisionResultSchema,
+            executor: async (ctx, call) =>
+                await this.runInProjectGitLock(
+                    ctx,
+                    call.arguments.id,
+                    async (lockedCtx) =>
+                        await this.#provisionProject(lockedCtx, call.arguments.id, call.kv),
+                ),
+            onSuccess: async (ctx, call) => {
+                if (call.result.outcome === "superseded") return;
+                if (call.result.outcome === "ready") {
+                    await this.markInitializationReady(ctx, call.arguments.id);
+                    return;
+                }
+                await this.markInitializationFailed(ctx, {
+                    projectId: call.arguments.id,
+                    error: call.result.error,
+                });
+            },
+        });
+        durableFunctions.register({
+            name: PROJECT_ARCHIVE_FUNCTION,
+            argumentsSchema: projectDurableArgumentsSchema,
+            resultSchema: projectArchiveResultSchema,
+            executor: async (ctx, call) => {
+                await this.#stopProjectAgents(ctx, call.arguments.id, call.kv);
+                this.#git.revokeCredentials(call.arguments.id);
+                return null;
+            },
+        });
+        durableFunctions.register({
+            name: PROJECT_CLEANUP_FUNCTION,
+            argumentsSchema: projectDurableArgumentsSchema,
+            resultSchema: projectArchiveResultSchema,
+            executor: async (ctx, call) => {
+                await this.#cleanupArchivedProject(ctx, call.arguments.id, call.kv);
+                return null;
+            },
+        });
     }
 
     /** Takes a subscriber that runs inside the transaction a catalog change commits in. */
@@ -390,9 +432,17 @@ export class ProjectsModule implements AgentModule {
      * Only the project's own attachments are named here. Each abort carries the whole subagent tree
      * below it, so a helper spawned by a root agent stops with the agent that started it.
      */
-    async #abortRootAgents(ctx: Context, projectId: string): Promise<void> {
+    async #stopProjectAgents(ctx: Context, projectId: string, kv: AgentKV): Promise<void> {
         for (const agentId of await this.listAgentIds(ctx, projectId)) {
-            await this.#abort.abort(ctx, agentId);
+            await durableCheckpoint(ctx, kv, `agent-${agentId}`, async () => {
+                await backoff(ctx, async (retryCtx) => await this.#abort.abort(retryCtx, agentId), {
+                    onError: (retryCtx, error) =>
+                        retryCtx.log.warn(
+                            { agentId, error, projectId },
+                            "Work in the archived project could not be stopped yet.",
+                        ),
+                });
+            });
         }
     }
 
@@ -686,69 +736,119 @@ export class ProjectsModule implements AgentModule {
     /**
      * Archives a project, and with it every workspace cut from it.
      *
-     * The decision also stops the work standing in the project. Its root agents — with the
-     * subagents and background processes below them — have their cancellation prepared in the
-     * transaction that records the archival, so an archival that succeeds has taken responsibility
-     * for that work, and preparation that fails leaves the project active rather than archived with
-     * work still going. The signal itself is released after the commit. The workspaces catalog
-     * prepares the agents of each workspace it archives in the same transaction, because a
-     * project's root agents and a workspace's agents are two separate attachments and neither
-     * catalog can see the other's.
+     * Root-agent cancellation and managed-folder cleanup are durable operations. The workspaces
+     * catalog schedules root cleanup only after every child folder has finished archiving.
      */
     async archive(ctx: Context, projectId: string): Promise<Project> {
         this.#assertId(projectId);
-        const result = await this.#mutations.run(ctx, {
-            changeable: ["status", "archivedAt"],
-            projectId,
-            event: (after, before) => ({
-                type: "project_archived",
-                project: after,
-                previousProject: requirePreviousProject(before),
-            }),
-            run: async (txCtx, before) => {
-                const archived = await requirePromise(
-                    this.#store.archive(txCtx, { projectId }),
-                    "Project store archive",
-                );
-                // Only the archival that actually happens stops anything. A repeat of an archive
-                // already made must not reach into agents that have since moved on.
-                if (before !== undefined && before.status !== "archived") {
-                    await this.#abortRootAgents(txCtx, projectId);
-                }
-                return archived;
-            },
+        const result = await ctx.inTx(async (txCtx) => {
+            const archived = await this.#mutations.run(txCtx, {
+                changeable: ["status", "archivedAt"],
+                projectId,
+                event: (after, before) => ({
+                    type: "project_archived",
+                    project: after,
+                    previousProject: requirePreviousProject(before),
+                }),
+                run: async (mutationCtx) =>
+                    await requirePromise(
+                        this.#store.archive(mutationCtx, { projectId }),
+                        "Project store archive",
+                    ),
+            });
+            if (archived.changed) {
+                await this.#durableFunctions.cancel(txCtx, projectOperationId("create", projectId));
+                await this.#durableFunctions.invoke(txCtx, {
+                    function: PROJECT_ARCHIVE_FUNCTION,
+                    arguments: { id: projectId },
+                    operationId: projectOperationId("archive", projectId),
+                    lockKeys: [projectLockKey(projectId)],
+                });
+            }
+            return archived;
         });
         const project = requireProjectFromResult(result);
         if (project.status !== "archived") {
             throw new Error("Project archival did not leave the project archived.");
         }
-        // Nobody works in this project any more, so the credential it was cloned with stops being
-        // available to anything that still asks. Revoking cannot be undone, so it waits until the
-        // archival the caller may still roll back is durable.
-        afterCommit(ctx, () => this.#git.revokeCredentials(projectId));
         return project;
+    }
+
+    /** Schedules managed-root deletion after the workspaces catalog has archived every child. */
+    async scheduleArchivedProjectCleanup(ctx: Context, projectId: string): Promise<void> {
+        const project = await this.get(ctx, projectId);
+        if (project?.status !== "archived") return;
+        await this.#durableFunctions.invoke(ctx, {
+            function: PROJECT_CLEANUP_FUNCTION,
+            arguments: { id: projectId },
+            operationId: projectOperationId("cleanup", projectId),
+            lockKeys: [projectLockKey(projectId)],
+        });
+    }
+
+    async #cleanupArchivedProject(ctx: Context, projectId: string, kv: AgentKV): Promise<void> {
+        const project = await this.get(ctx, projectId);
+        if (project === undefined || project.status !== "archived") return;
+        await this.#stopProjectAgents(ctx, projectId, kv);
+        await backoff(
+            ctx,
+            async (retryCtx) => {
+                await this.runInProjectGitLock(retryCtx, projectId, async () => {
+                    await removeManagedProjectDirectory({
+                        git: this.#git,
+                        managedProjectsDirectory: this.managedProjectsDirectory,
+                        project,
+                    });
+                });
+            },
+            {
+                onError: (retryCtx, error) =>
+                    retryCtx.log.warn(
+                        { error, projectId },
+                        "The archived managed project folder could not be removed yet.",
+                    ),
+            },
+        );
+        this.#git.revokeCredentials(projectId);
     }
 
     /** Brings an archived project back. Restoring an active project changes nothing. */
     async restore(ctx: Context, projectId: string): Promise<Project> {
         this.#assertId(projectId);
-        const result = await this.#mutations.run(ctx, {
-            changeable: ["status", "archivedAt"],
-            projectId,
-            event: (after, before) => ({
-                type: "project_restored",
-                project: after,
-                previousProject: requirePreviousProject(before),
-            }),
-            run: async (txCtx) =>
-                await requirePromise(
-                    this.#store.restore(txCtx, { projectId }),
-                    "Project store restore",
-                ),
+        const project = await this.runInProjectGitLock(ctx, projectId, async (lockedCtx) => {
+            const result = await lockedCtx.inTx(async (txCtx) => {
+                await this.#durableFunctions.cancel(
+                    txCtx,
+                    projectOperationId("archive", projectId),
+                );
+                await this.#durableFunctions.cancel(
+                    txCtx,
+                    projectOperationId("cleanup", projectId),
+                );
+                return await this.#mutations.run(txCtx, {
+                    changeable: ["status", "archivedAt"],
+                    projectId,
+                    event: (after, before) => ({
+                        type: "project_restored",
+                        project: after,
+                        previousProject: requirePreviousProject(before),
+                    }),
+                    run: async (mutationCtx) =>
+                        await requirePromise(
+                            this.#store.restore(mutationCtx, { projectId }),
+                            "Project store restore",
+                        ),
+                });
+            });
+            return requireProjectFromResult(result);
         });
-        const project = requireProjectFromResult(result);
         if (project.status !== "active") {
             throw new Error("Project restoration did not leave the project active.");
+        }
+        if (project.remoteSource !== undefined && !existsSync(project.repositoryRef)) {
+            const refreshing = await this.refresh(ctx, project.id);
+            await this.scheduleInitialization(ctx, project.id);
+            return refreshing;
         }
         return project;
     }
@@ -1160,33 +1260,11 @@ export class ProjectsModule implements AgentModule {
     }
 
     /**
-     * Picks up whatever the last run left unfinished: projects still being set up, failures worth
-     * another try.
+     * Records this installation identity before recovered remote clones need its credentials.
+     * Durable Functions owns restart recovery.
      */
-    async open(ctx: Context, localInstanceId: string): Promise<void> {
+    open(localInstanceId: string): void {
         this.#localInstanceId = localInstanceId;
-        for (const project of await this.#allProjects(ctx)) {
-            if (project.kind !== "regular" || project.status === "archived") continue;
-            if (project.initializationStatus === "initializing") {
-                await this.scheduleInitialization(ctx, project.id);
-            } else if (
-                project.initializationStatus === "failed" &&
-                project.initializationAttempt < MAX_PROJECT_INITIALIZATION_RETRIES &&
-                existsSync(project.repositoryRef)
-            ) {
-                await this.retryInitialization(ctx, project.id);
-                await this.scheduleInitialization(ctx, project.id);
-            }
-        }
-    }
-
-    /** Stops every background lifetime the catalog started and waits for the ones in flight. */
-    async close(_ctx: Context): Promise<void> {
-        this.#closed = true;
-        this.#pendingInitializations.length = 0;
-        while (this.#tasks.size > 0) {
-            await Promise.allSettled(this.#tasks);
-        }
     }
 
     /**
@@ -1289,66 +1367,55 @@ export class ProjectsModule implements AgentModule {
 
     // --- Setting a project up ----------------------------------------------------------------
 
-    /** Queues the project's setup, if it is not already queued or running. */
+    /** Durably offers the project's setup, converging repeated requests on one operation ID. */
     async scheduleInitialization(ctx: Context, projectId: string): Promise<void> {
-        if (this.#closed || this.#initializing.has(projectId)) return;
         const project = await this.get(ctx, projectId);
         if (project === undefined) return;
-        if (!existsSync(project.repositoryRef) && project.remoteSource === undefined) {
-            await this.#failInitialization(ctx, projectId, "The project folder is not available.");
-            return;
-        }
-        this.#initializing.add(projectId);
-        this.#pendingInitializations.push(projectId);
-        // The lifetime is taken now, while there is still a context to derive it from; the work
-        // itself starts on the next tick so the write that asked for it commits first.
-        const lifetime = this.#backgroundLifetime(ctx, "project-initialization");
-        setImmediate(() => {
-            this.#drainInitializations(lifetime);
+        if (project.kind === "home" || project.initializationStatus !== "initializing") return;
+        await this.#durableFunctions.invoke(ctx, {
+            function: PROJECT_PROVISION_FUNCTION,
+            arguments: { id: projectId },
+            operationId: projectOperationId("create", projectId),
+            lockKeys: [
+                projectLockKey(projectId),
+                ...(project.remoteSource === undefined ? [] : [PROJECT_CLONE_LOCK]),
+            ],
         });
     }
 
-    #drainInitializations(lifetime: Context): void {
-        if (this.#closed) return;
-        while (this.#activeInitializations < MAX_CONCURRENT_INITIALIZATIONS) {
-            const pending = this.#pendingInitializations.shift();
-            if (pending === undefined) return;
-            this.#activeInitializations += 1;
-            this.#runInBackground(lifetime, "project-initialization", async (workerCtx) => {
-                try {
-                    await this.#initializeProject(workerCtx, pending);
-                } finally {
-                    this.#activeInitializations -= 1;
-                    this.#initializing.delete(pending);
-                    const current = this.#closed ? undefined : await this.get(workerCtx, pending);
-                    if (current?.initializationStatus === "initializing") {
-                        await this.scheduleInitialization(workerCtx, pending);
-                    }
-                    if (!this.#closed) this.#drainInitializations(lifetime);
-                }
-            });
-        }
-    }
-
-    async #initializeProject(ctx: Context, projectId: string): Promise<void> {
-        if (this.#closed) return;
-        const project = await this.get(ctx, projectId);
-        if (
-            project === undefined ||
-            project.kind === "home" ||
-            project.initializationStatus !== "initializing"
-        ) {
-            return;
-        }
+    async #provisionProject(
+        ctx: Context,
+        projectId: string,
+        kv: AgentKV,
+    ): Promise<ProjectProvisionResult> {
         try {
+            const project = await this.get(ctx, projectId);
+            if (project === undefined) {
+                return { outcome: "superseded" };
+            }
+            if (project.initializationStatus === "ready") {
+                return { outcome: "ready" };
+            }
+            if (
+                project.kind === "home" ||
+                project.status !== "active" ||
+                project.initializationStatus !== "initializing"
+            ) {
+                return { outcome: "superseded" };
+            }
+            if (project.remoteSource === undefined && !existsSync(project.repositoryRef)) {
+                throw new Error("The project folder is not available.");
+            }
             if (project.remoteSource !== undefined) {
-                await this.#cloneRemoteProject(ctx, project);
-                if (this.#closed) return;
+                await durableCheckpoint(ctx, kv, "clone", async () => {
+                    await this.#cloneRemoteProject(ctx, project);
+                });
             }
             // A new project learns its presence and worktree capability here rather than waiting
             // for the next start, because a client offers "Create workspace" immediately.
-            await this.probe(ctx, projectId);
-            if (this.#closed) return;
+            await durableCheckpoint(ctx, kv, "probe", async () => {
+                await this.probe(ctx, projectId);
+            });
 
             let remote: string | undefined;
             const repositoryTopLevel = await this.#isRepositoryRoot(project);
@@ -1362,64 +1429,60 @@ export class ProjectsModule implements AgentModule {
                     // A repository without a usable remote is a perfectly good project.
                 }
             }
-            if (this.#closed) return;
 
             // The trunk is decided while the project is being added, so every later workspace has
             // a branch to fork without re-deciding it under someone's request.
-            if (repositoryTopLevel) await this.resolveDefaultBranch(ctx, projectId);
-            if (this.#closed) return;
+            if (repositoryTopLevel) {
+                await durableCheckpoint(ctx, kv, "default-branch", async () => {
+                    await this.resolveDefaultBranch(ctx, projectId);
+                });
+            }
 
             const detectedName =
                 remote === undefined ? undefined : this.#git.remoteProjectName(remote);
             const current = await this.get(ctx, projectId);
-            if (current === undefined) return;
+            if (current === undefined) throw new Error("The project was not found.");
             if (detectedName !== undefined && current.nameSource === "folder") {
-                await this.adoptRemoteName(ctx, { projectId, name: detectedName });
+                await durableCheckpoint(ctx, kv, "remote-name", async () => {
+                    await this.adoptRemoteName(ctx, { projectId, name: detectedName });
+                });
             }
 
             if ((await this.get(ctx, projectId))?.avatar === undefined) {
-                const repositoryAvatar = repositoryTopLevel
-                    ? await findRepositoryAvatar(project.repositoryRef)
-                    : undefined;
-                const hostingAvatar =
-                    repositoryAvatar === undefined && remote !== undefined
-                        ? await findHostingAvatar(this.#git, remote)
+                await durableCheckpoint(ctx, kv, "avatar", async () => {
+                    const repositoryAvatar = repositoryTopLevel
+                        ? await findRepositoryAvatar(project.repositoryRef)
                         : undefined;
-                const candidate = repositoryAvatar ?? hostingAvatar;
-                if (this.#closed) return;
-                if (
-                    candidate !== undefined &&
-                    (await this.get(ctx, projectId))?.avatar === undefined
-                ) {
-                    await this.setAvatar(ctx, {
-                        bytes: candidate,
-                        projectId,
-                        source: "generated",
-                    });
-                }
+                    const hostingAvatar =
+                        repositoryAvatar === undefined && remote !== undefined
+                            ? await findHostingAvatar(this.#git, remote)
+                            : undefined;
+                    const candidate = repositoryAvatar ?? hostingAvatar;
+                    if (
+                        candidate !== undefined &&
+                        (await this.get(ctx, projectId))?.avatar === undefined
+                    ) {
+                        await this.setAvatar(ctx, {
+                            bytes: candidate,
+                            projectId,
+                            source: "generated",
+                        });
+                    }
+                });
             }
-            if (this.#closed) return;
-
-            await this.markInitializationReady(ctx, projectId);
+            return { outcome: "ready" };
         } catch (error) {
-            if (this.#closed) return;
-            // The record says the setup failed and will be tried again; this is the only place the
-            // reason itself is readable, so it is logged rather than reported to a caller that has
-            // already been answered.
+            ctx.lifetime?.throwIfAborted();
             ctx.log.warn(
-                "Setting a project up failed; the record says so and it will be tried again.",
+                "Setting a project up failed; the durable result records the reason.",
                 { projectId },
                 error,
             );
-            await this.#failInitialization(ctx, projectId, errorToMessage(error));
+            return {
+                outcome: "failed",
+                error: boundedReason(errorToMessage(error)),
+            };
         }
-    }
-
-    async #failInitialization(ctx: Context, projectId: string, message: string): Promise<void> {
-        await this.markInitializationFailed(ctx, {
-            projectId,
-            error: boundedReason(message),
-        });
     }
 
     // --- Remote projects and credentials -----------------------------------------------------
@@ -1708,7 +1771,6 @@ export class ProjectsModule implements AgentModule {
             } catch {
                 continue;
             }
-            if (this.#closed) return;
             if (project.initializationStatus === "failed") {
                 await this.retryInitialization(ctx, project.id);
             }
@@ -1721,7 +1783,6 @@ export class ProjectsModule implements AgentModule {
     /** Re-derives presence, worktree capability, and Git facts for every live project. */
     async reconcileGitFacts(ctx: Context): Promise<void> {
         for (const project of await this.#allProjects(ctx)) {
-            if (this.#closed) return;
             // An archived project is hidden, so re-deriving its Git facts is wasted work.
             if (project.status === "archived") continue;
             await this.probe(ctx, project.id);
@@ -1757,35 +1818,6 @@ export class ProjectsModule implements AgentModule {
                 : { worktreeUnsupportedReason: boundedReason(probe.worktreeSupportReason) }),
             ...(probe.facts === undefined ? {} : { git: projectGitFactsFrom(probe.facts) }),
         });
-    }
-
-    /**
-     * The lifetime the catalog's own Git and filesystem work runs on.
-     *
-     * A clone or setup pass outlives the call that asked for it, so it never runs on that call's
-     * context. The lifetime is detached from the first context the catalog is
-     * used with. A detached context carries no storage — that is what stops work outliving its
-     * caller from writing through a transaction facade that has already committed — so the agent
-     * database is put back on it deliberately, and nothing else about the request comes along.
-     */
-    #backgroundLifetime(ctx: Context, name: string): Context {
-        this.#lifetime ??= detach(ctx);
-        this.#storage ??= ctx.db;
-        return withAgentDatabase(this.#lifetime.named(name), this.#storage);
-    }
-
-    /**
-     * Starts work that outlives whatever asked for it, on its own named lifetime. The caller's
-     * context is deliberately not used: a clone must not end when a request does.
-     */
-    #runInBackground(ctx: Context, name: string, work: (ctx: Context) => Promise<void>): void {
-        if (this.#closed) return;
-        const task = work(this.#backgroundLifetime(ctx, name))
-            .catch(() => undefined)
-            .finally(() => {
-                this.#tasks.delete(task);
-            });
-        this.#tasks.add(task);
     }
 
     formatProjectForModel(label: string, project: Project): string {

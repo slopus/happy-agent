@@ -5,6 +5,7 @@ import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import {
     WorkspacesModule,
     workspaceMigrations,
@@ -268,7 +269,13 @@ describe("WorkspacesModule", () => {
             expect(reordered[0]?.orderKey).not.toBe(attached[2]?.orderKey);
             expect(reordered.slice(1)).toEqual(attached.slice(0, 2));
 
-            const restarted = new WorkspacesModule(config, projects, git, abort);
+            const restarted = new WorkspacesModule(
+                config,
+                projects,
+                git,
+                abort,
+                new DurableFunctionsModule(),
+            );
             expect(await restarted.listAgents(database.context, "workspace-1")).toEqual(reordered);
 
             await expect(

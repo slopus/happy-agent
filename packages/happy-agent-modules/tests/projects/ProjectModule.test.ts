@@ -7,6 +7,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
+import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import {
     MAX_PROJECT_ERROR_LENGTH,
     projectCreateInputSchema,
@@ -34,6 +35,44 @@ describe("ProjectsModule", () => {
 
         expect(module.name).toBe("projects");
         expect(module.migrations).toEqual(projectMigrations);
+    });
+
+    it("serializes only remote project provisioning on the shared clone lock", async () => {
+        const database = await migratedProjectDatabase("projects-clone-lock-test");
+        const projects = await projectsModule();
+        try {
+            const local = await projects.create(database.context, {
+                id: "local-project",
+                name: "Local",
+                repositoryRef: "/tmp/projects/local",
+            });
+            const remote = await projects.create(database.context, {
+                id: "remote-project",
+                name: "Remote",
+                repositoryRef: "/tmp/projects/remote",
+                remoteSource: { kind: "git", url: "https://example.com/remote.git" },
+            });
+            await projects.scheduleInitialization(database.context, local.id);
+            await projects.scheduleInitialization(database.context, remote.id);
+
+            const calls = await agentDatabaseRows<{
+                readonly arguments_json: string;
+                readonly lock_keys_json: string;
+            }>(
+                database.database,
+                sql`SELECT arguments_json, lock_keys_json FROM durable_function_calls`,
+            );
+            const locks = new Map(
+                calls.map((call) => [
+                    (JSON.parse(call.arguments_json) as { id: string }).id,
+                    JSON.parse(call.lock_keys_json) as string[],
+                ]),
+            );
+            expect(locks.get(local.id)).toEqual([`project.${local.id}`]);
+            expect(locks.get(remote.id)).toEqual([`project.${remote.id}`, "projects.clone"]);
+        } finally {
+            database.close();
+        }
     });
 
     it("keeps project rows runtime-validated around the real folder record", () => {
@@ -973,6 +1012,9 @@ async function projectsModule(toml?: string): Promise<ProjectsModule> {
 
 async function migratedProjectDatabase(name: string) {
     const database = moduleDatabase([], name);
+    for (const [, migrate] of durableFunctionsMigrations) {
+        await migrate(database.context, database.database);
+    }
     for (const [, migrate] of projectMigrations) {
         await migrate(database.context, database.database);
     }

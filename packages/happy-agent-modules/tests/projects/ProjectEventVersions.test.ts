@@ -6,13 +6,17 @@ import {
     ProjectsModule,
 } from "../../sources/projects/index.js";
 import { GitModule } from "../../sources/git/index.js";
+import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { projectsModuleFor } from "../support/projectsModule.js";
 
 describe("project lifecycle event versions", () => {
     it("carries the exact preceding project through sequential updates", async () => {
-        const database = moduleDatabase(projectMigrations, "project-event-version-chain");
+        const database = moduleDatabase(
+            [...durableFunctionsMigrations, ...projectMigrations],
+            "project-event-version-chain",
+        );
         await database.ready;
         try {
             const projects = projectsModuleFor(await temporaryTestConfig(), new GitModule());

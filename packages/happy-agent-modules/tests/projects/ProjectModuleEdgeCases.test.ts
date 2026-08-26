@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { GitModule } from "../../sources/git/index.js";
+import { durableFunctionsMigrations } from "../../sources/durableFunctions/index.js";
 import {
     MAX_PROJECT_AVATAR_BYTES,
     MAX_PROJECT_REPOSITORY_REF_LENGTH,
@@ -508,6 +509,9 @@ async function projectsModule(toml?: string): Promise<ProjectsModule> {
 
 async function migratedProjectDatabase(name: string) {
     const database = moduleDatabase([], name);
+    for (const [, migrate] of durableFunctionsMigrations) {
+        await migrate(database.context, database.database);
+    }
     for (const [, migrate] of projectMigrations) {
         await migrate(database.context, database.database);
     }

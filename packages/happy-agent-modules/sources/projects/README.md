@@ -15,34 +15,32 @@ import {
     AbortModule,
     ComputeModule,
     ConfigModule,
+    DurableFunctionsModule,
     GitModule,
     ProjectsModule,
 } from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
 const abort = new AbortModule(new ComputeModule(config));
-const projects = new ProjectsModule(config, new GitModule(), abort);
-await projects.open(ctx, agentId);
+const durableFunctions = new DurableFunctionsModule();
+const projects = new ProjectsModule(config, new GitModule(), abort, durableFunctions);
 ```
 
-Three modules and nothing else.
-
-| Module                                | What it answers                                                                                                                                                   |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`ConfigModule`](../config/README.md) | Where managed projects live, where the agent keeps its own state, whether cross-workspace work is on, and the GitHub token a clone of a private repository needs. |
-| [`GitModule`](../git/README.md)       | Every Git command, probe, clone and worktree, the credentials they carry, and who this copy of Git commits as.                                                    |
-| [`AbortModule`](../abort/README.md)   | How the agents standing in a project stop when it is archived, together with everything below them.                                                               |
+| Module                                                    | What it answers                                                                                                                                                   |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`ConfigModule`](../config/README.md)                     | Where managed projects live, where the agent keeps its own state, whether cross-workspace work is on, and the GitHub token a clone of a private repository needs. |
+| [`GitModule`](../git/README.md)                           | Every Git command, probe, clone and worktree, the credentials they carry, and who this copy of Git commits as.                                                    |
+| [`AbortModule`](../abort/README.md)                       | How the agents standing in a project stop when it is archived, together with everything below them.                                                               |
+| [`DurableFunctionsModule`](../durableFunctions/README.md) | Provisioning, archival, cleanup, restart recovery, checkpoints, and per-project operation locks.                                                                  |
 
 Both `AbortModule` and the `ComputeModule` beneath it have to be installed on the
 agent and started with it: the abort module learns the agent collection from its
 `beforeStart` hook, and asking it to cancel anything before that throws.
 
-There is no `rootContext`, no path string, no runner and no callback. The
-lifetime the catalog's own Git and filesystem work runs on is derived from the
-first context it is used with: a clone or project setup
-outlives the request that started it, so none of them run on the caller's
-context. A detached context deliberately carries no storage, so the catalog puts
-the agent database back on that lifetime itself.
+There is no `rootContext`, no path string, no runner and no callback. Project
+provisioning, archival, and cleanup are registered durable functions. Their calls,
+checkpoints, locks, detached lifetimes, and restart recovery belong to
+`DurableFunctionsModule`, not to a second queue in this catalog.
 
 Two answers that used to be the composition root's are now owned deliberately:
 
@@ -54,9 +52,8 @@ Two answers that used to be the composition root's are now owned deliberately:
   one profile a single-machine installation can resolve is named `local` inside
   this module; a caller never passes a profile resolver.
 
-`open(ctx, agentId)` picks up whatever the last run left unfinished — projects
-still being set up and failures worth another try — and
-`close(ctx)` stops every background lifetime and waits for the ones in flight.
+`open(localInstanceId)` supplies this installation's identity before Durable Functions recovers
+unfinished project work. There is no project-owned provisioning queue to drain at shutdown.
 
 ## The record
 
@@ -153,9 +150,12 @@ Folders, clones and Git — the module's own work:
   `createRemote` records a project that still has to be cloned and starts the
   clone. `retryRemoteProjects` picks up the clones a newly available credential
   unblocks.
-- `scheduleInitialization` carries one project through setup on a background
-  lifetime; `probe`, `resolveDefaultBranch` and `resolveRemoteName` read the
-  repository and fold what they learn back into the row.
+- `scheduleInitialization` converges on one stable durable provisioning call;
+  `probe`, `resolveDefaultBranch` and `resolveRemoteName` read the repository
+  and fold what they learn back into the row. Clone, probe, branch, name, and
+  avatar steps are checkpointed independently. Remote calls additionally hold
+  the shared `projects.clone` lock, so network clones run one at a time while
+  local project setup remains independent.
 - `runInProjectGitLock` is how every worktree of a project takes the one lock
   over its shared refs and reflogs — including the workspaces catalog, which
   takes it through here rather than keeping a second lock over the same
@@ -174,6 +174,9 @@ Registration and catalog edits:
   `updateSettings` all accept an optional `expectedVersion`. `setAvatar`
   accepts raw PNG, JPEG, or WebP bytes, normalizes them, computes their
   ThumbHash, and stores only the API-shaped metadata on the project.
+  Archival cancels provisioning and schedules durable agent shutdown in the
+  same transaction. Managed remote roots are deleted only after every child
+  workspace has archived; restore cancels both archive and cleanup operations.
 
 Lifecycle, each recording what was observed or done:
 
@@ -214,9 +217,11 @@ inventing one would put unusable rows in front of a person. `repositoryRef`,
 Database operations use `ctx.db`, and multi-step mutations compose with
 `ctx.inTx(...)`.
 
-Agent Base owns durable tool-call completion. The module does not maintain a
-second receipt, fingerprint, proof, or replay system. Concurrent ensure calls
-converge through the catalog transaction and the folder uniqueness constraint.
+Agent Base owns durable tool-call completion, while Durable Functions owns the
+module's long-running filesystem operations. The project module does not maintain
+a second receipt, startup sweep, in-memory queue, task registry, or replay system.
+Concurrent ensure calls converge through the catalog transaction and the folder
+uniqueness constraint.
 
 Every changed mutation is represented by one frozen event: `project_created`,
 `project_renamed`, `project_archived`, `project_restored`,
