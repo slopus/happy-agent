@@ -152,13 +152,27 @@ describe("sharing protocol", () => {
             user: null,
             version,
         };
+        const cloudSocial = {
+            blocked: [],
+            connection: null,
+            friends: [],
+            incomingRequests: [],
+            outgoingRequests: [],
+            status: "unenrolled" as const,
+            updatedAt,
+            version,
+        };
 
         expect(Value.Check(desktopBootstrapResponseSchema, bootstrap)).toBe(true);
         expect(Value.Check(desktopBootstrapResponseSchema, { ...bootstrap, cloud })).toBe(true);
+        expect(Value.Check(desktopBootstrapResponseSchema, { ...bootstrap, cloudSocial })).toBe(
+            true,
+        );
         expect(
             Value.Check(desktopBootstrapResponseSchema, {
                 ...bootstrap,
                 cloud: { ...cloud, futureField: "newer-daemon" },
+                cloudSocial: { ...cloudSocial, futureField: "newer-daemon" },
             }),
         ).toBe(true);
     });

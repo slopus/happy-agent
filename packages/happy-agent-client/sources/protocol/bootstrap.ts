@@ -4,7 +4,7 @@ import { type Static, Type } from "@sinclair/typebox";
 
 import type { Agent, AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
 import { botSchema } from "./bots.js";
-import { cloudSchema } from "./cloud.js";
+import { cloudSchema, cloudSocialSchema } from "./cloud.js";
 import { type EventCursor, eventCursorSchema } from "./common.js";
 import { daemonConfigSchema, onboardingStateSchema } from "./daemon.js";
 import { happyIntegrationSchema } from "./integrations.js";
@@ -52,6 +52,8 @@ export const desktopBootstrapResponseSchema = Type.Object({
     cursor: eventCursorSchema,
     /** Current Happy Cloud authentication state. Absent on older compatible daemons. */
     cloud: Type.Optional(cloudSchema),
+    /** Current Cloud friends state. Absent on older compatible daemons. */
+    cloudSocial: Type.Optional(cloudSocialSchema),
     /** Current Happy mobile connection state. Absent on older compatible daemons. */
     happyIntegration: Type.Optional(happyIntegrationSchema),
     onboarding: onboardingStateSchema,

@@ -181,3 +181,58 @@ export const enrollCloudProfileRequestSchema = Type.Object(
     { additionalProperties: false },
 );
 export type EnrollCloudProfileRequest = Static<typeof enrollCloudProfileRequestSchema>;
+
+/** One complete public profile retained in the Cloud social lists. */
+export const cloudSocialProfileSchema = Type.Object({
+    firstName: cloudVisibleNameSchema,
+    lastName: Type.Optional(cloudVisibleNameSchema),
+    username: cloudUsernameSchema,
+    version: resourceVersionSchema,
+});
+export type CloudSocialProfile = Static<typeof cloudSocialProfileSchema>;
+
+const cloudSocialLists = {
+    blocked: Type.Array(cloudSocialProfileSchema),
+    friends: Type.Array(cloudSocialProfileSchema),
+    incomingRequests: Type.Array(cloudSocialProfileSchema),
+    outgoingRequests: Type.Array(cloudSocialProfileSchema),
+};
+
+/** Cloud friends are inactive until the connected account has enrolled a profile. */
+export const cloudSocialUnenrolledSchema = Type.Object({
+    ...snapshotFields,
+    blocked: Type.Tuple([]),
+    connection: Type.Null(),
+    friends: Type.Tuple([]),
+    incomingRequests: Type.Tuple([]),
+    outgoingRequests: Type.Tuple([]),
+    status: Type.Literal("unenrolled"),
+});
+export type CloudSocialUnenrolled = Static<typeof cloudSocialUnenrolledSchema>;
+
+/** The retained social state for an enrolled Cloud account. */
+export const cloudSocialEnrolledSchema = Type.Object({
+    ...snapshotFields,
+    ...cloudSocialLists,
+    connection: Type.Union([Type.Literal("connecting"), Type.Literal("connected")]),
+    status: Type.Literal("enrolled"),
+});
+export type CloudSocialEnrolled = Static<typeof cloudSocialEnrolledSchema>;
+
+/** The complete durable Cloud social snapshot, narrowed by enrollment status. */
+export const cloudSocialSchema = Type.Union([
+    cloudSocialUnenrolledSchema,
+    cloudSocialEnrolledSchema,
+]);
+export type CloudSocial = Static<typeof cloudSocialSchema>;
+
+/** The response shared by Cloud social reads and mutations. */
+export const cloudSocialResponseSchema = Type.Object({ cloudSocial: cloudSocialSchema });
+export type CloudSocialResponse = Static<typeof cloudSocialResponseSchema>;
+
+/** The optional event echo accepted by Cloud social mutations. */
+export const cloudSocialMutationRequestSchema = Type.Object(
+    { mutationId: Type.Optional(mutationIdSchema) },
+    { additionalProperties: false },
+);
+export type CloudSocialMutationRequest = Static<typeof cloudSocialMutationRequestSchema>;

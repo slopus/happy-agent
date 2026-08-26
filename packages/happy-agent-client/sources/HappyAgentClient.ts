@@ -38,6 +38,8 @@ import type {
     CloudMutationRequest,
     CloudProfileResponse,
     CloudResponse,
+    CloudSocialMutationRequest,
+    CloudSocialResponse,
     CompleteCloudAuthorizationRequest,
     EnrollCloudProfileRequest,
     StartCloudAuthorizationRequest,
@@ -417,6 +419,99 @@ export class HappyAgentClient {
         return await this.#json({
             method: "PUT",
             path: "v0/cloud/profile",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cloud/social` — reads the durable local friends and requests snapshot. */
+    async getCloudSocial(options: RequestOptions = {}): Promise<CloudSocialResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/cloud/social",
+            signal: options.signal,
+        });
+    }
+
+    /** Sends a friend request, or accepts a crossing request, through Happy Cloud. */
+    async sendCloudFriendRequest(
+        username: string,
+        request: CloudSocialMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudSocialResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: `v0/cloud/social/requests/${encodeURIComponent(username)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Approves an incoming Happy Cloud friend request. */
+    async approveCloudFriendRequest(
+        username: string,
+        request: CloudSocialMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudSocialResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/cloud/social/requests/${encodeURIComponent(username)}/approve`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Rejects an incoming Happy Cloud friend request. */
+    async rejectCloudFriendRequest(
+        username: string,
+        request: CloudSocialMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudSocialResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/cloud/social/requests/${encodeURIComponent(username)}/reject`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Revokes an outgoing Happy Cloud friend request. */
+    async revokeCloudFriendRequest(
+        username: string,
+        request: CloudSocialMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudSocialResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/cloud/social/requests/${encodeURIComponent(username)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Blocks a Happy Cloud user and removes any relationship with them. */
+    async blockCloudUser(
+        username: string,
+        request: CloudSocialMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudSocialResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: `v0/cloud/social/blocked/${encodeURIComponent(username)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Unblocks a Happy Cloud user. */
+    async unblockCloudUser(
+        username: string,
+        request: CloudSocialMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CloudSocialResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/cloud/social/blocked/${encodeURIComponent(username)}`,
             json: request,
             signal: options.signal,
         });

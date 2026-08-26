@@ -214,6 +214,13 @@ export interface CloudUpdatedPayload extends MutationEcho {
 /** Happy Cloud owns the profile, so this event is a compact refetch invalidation. */
 export type CloudProfileUpdatedPayload = MutationEcho;
 
+/** Compact Cloud social invalidation; clients refetch only when this version is newer. */
+export const cloudSocialUpdatedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    version: resourceVersionSchema,
+});
+export type CloudSocialUpdatedPayload = Static<typeof cloudSocialUpdatedPayloadSchema>;
+
 /** Happy integration state is computed, so the payload is a complete replacement. */
 export interface HappyIntegrationUpdatedPayload {
     integration: HappyIntegration;
@@ -269,6 +276,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"cloud.profile.updated", CloudProfileUpdatedPayload>
+    | EventEnvelope<"cloud.social.updated", CloudSocialUpdatedPayload>
     | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>
     | EventEnvelope<"sharing.updated", SharingUpdatedPayload>;
 

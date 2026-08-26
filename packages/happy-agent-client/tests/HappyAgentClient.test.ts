@@ -171,10 +171,21 @@ describe("HappyAgentClient", () => {
             version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
         };
         const profile = { firstName: "Ada", lastName: "Lovelace", username: "ada" };
+        const cloudSocial = {
+            blocked: [],
+            connection: "connected" as const,
+            friends: [],
+            incomingRequests: [],
+            outgoingRequests: [],
+            status: "enrolled" as const,
+            updatedAt: 1_755_400_000_000,
+            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5f",
+        };
         const { fetch, requests } = stubFetch((request) => {
             if (request.url.endsWith("/access-token")) {
                 return json({ accessToken: "access-token", cloud });
             }
+            if (request.url.includes("/social")) return json({ cloudSocial });
             if (request.url.endsWith("/profile")) return json({ profile });
             return json({ cloud });
         });
@@ -205,6 +216,25 @@ describe("HappyAgentClient", () => {
         await expect(
             client.enrollCloudProfile({ mutationId: "enroll-1", username: "ada" }),
         ).resolves.toEqual({ profile });
+        await expect(client.getCloudSocial()).resolves.toEqual({ cloudSocial });
+        await expect(
+            client.sendCloudFriendRequest("grace hopper", { mutationId: "send-1" }),
+        ).resolves.toEqual({ cloudSocial });
+        await expect(
+            client.approveCloudFriendRequest("grace", { mutationId: "approve-1" }),
+        ).resolves.toEqual({ cloudSocial });
+        await expect(
+            client.rejectCloudFriendRequest("grace", { mutationId: "reject-1" }),
+        ).resolves.toEqual({ cloudSocial });
+        await expect(
+            client.revokeCloudFriendRequest("grace", { mutationId: "revoke-1" }),
+        ).resolves.toEqual({ cloudSocial });
+        await expect(client.blockCloudUser("grace", { mutationId: "block-1" })).resolves.toEqual({
+            cloudSocial,
+        });
+        await expect(
+            client.unblockCloudUser("grace", { mutationId: "unblock-1" }),
+        ).resolves.toEqual({ cloudSocial });
 
         expect(requests.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
             { body: null, method: "GET", url: "http://agent.local/v0/cloud" },
@@ -240,6 +270,37 @@ describe("HappyAgentClient", () => {
                 body: JSON.stringify({ mutationId: "enroll-1", username: "ada" }),
                 method: "PUT",
                 url: "http://agent.local/v0/cloud/profile",
+            },
+            { body: null, method: "GET", url: "http://agent.local/v0/cloud/social" },
+            {
+                body: JSON.stringify({ mutationId: "send-1" }),
+                method: "PUT",
+                url: "http://agent.local/v0/cloud/social/requests/grace%20hopper",
+            },
+            {
+                body: JSON.stringify({ mutationId: "approve-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/social/requests/grace/approve",
+            },
+            {
+                body: JSON.stringify({ mutationId: "reject-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/social/requests/grace/reject",
+            },
+            {
+                body: JSON.stringify({ mutationId: "revoke-1" }),
+                method: "DELETE",
+                url: "http://agent.local/v0/cloud/social/requests/grace",
+            },
+            {
+                body: JSON.stringify({ mutationId: "block-1" }),
+                method: "PUT",
+                url: "http://agent.local/v0/cloud/social/blocked/grace",
+            },
+            {
+                body: JSON.stringify({ mutationId: "unblock-1" }),
+                method: "DELETE",
+                url: "http://agent.local/v0/cloud/social/blocked/grace",
             },
         ]);
     });

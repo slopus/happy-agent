@@ -56,7 +56,8 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   `conflict` (409, the generic `If-Match` and state conflicts), `cursor_unavailable` (the
   events `409`), `hash_mismatch` (the file-write `409`), `not_initialized` (a workspace still
   building), `cloud_not_authenticated` (409), `cloud_unauthorized` (409),
-  `cloud_unavailable` (503), `draining` (503, the daemon no longer admits mutations),
+  `cloud_not_enrolled` (409), `cloud_unavailable` (503), `draining` (503, the daemon no longer
+  admits mutations),
   `too_large` (413), `unsupported` (501), `internal` (500).
 
 An error body may carry additional fields alongside `error` and `code` when the endpoint
@@ -1050,6 +1051,133 @@ user-input error.
 Response — `200`: `{ "profile": { ... } }` with Happy Cloud's authoritative normalized profile.
 The successful mutation emits one `cloud.profile.updated` event; its compact payload contains only
 the optional `mutationId`, and clients refetch this endpoint.
+
+### Cloud friends and social state
+
+Cloud friends activate automatically after Cloud enrollment. There is no separate enable switch:
+persisting an enrolled profile starts synchronization and opens the Happy Cloud updates WebSocket;
+disconnecting Cloud or losing online enrollment stops it. The daemon closes the socket before it
+clears an account so another account can never observe the previous account's social state.
+
+The daemon maintains one durable Cloud social object. Before enrollment it is:
+
+```json
+{
+    "status": "unenrolled",
+    "connection": null,
+    "friends": [],
+    "incomingRequests": [],
+    "outgoingRequests": [],
+    "blocked": [],
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+After enrollment it is:
+
+```json
+{
+    "status": "enrolled",
+    "connection": "connected",
+    "friends": [
+        {
+            "username": "grace",
+            "firstName": "Grace Hopper",
+            "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5f"
+        }
+    ],
+    "incomingRequests": [],
+    "outgoingRequests": [],
+    "blocked": [],
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d60",
+    "updatedAt": 1755400001000
+}
+```
+
+- `status` — exactly `"unenrolled"` or `"enrolled"`. The unenrolled shape always has a null
+  `connection` and empty lists. An enrolled object retains its last synchronized lists while the
+  daemon reconnects.
+- `connection` — `"connecting"` or `"connected"` while enrolled. `"connected"` means a Happy
+  Cloud WebSocket is open and every list and public profile is synchronized to its announced
+  state version. A startup, reconnect, or transient Cloud failure uses `"connecting"`; retry is
+  automatic and durable.
+- `friends`, `incomingRequests`, `outgoingRequests`, and `blocked` — public Cloud profiles sorted
+  by username. A profile has `username`, `firstName`, optional `lastName`, and its Happy Cloud
+  UUIDv7 `version`. Usernames and names follow the Cloud profile constraints above. Each username
+  appears at most once in a list.
+- `version` — the daemon's UUIDv7 resource version, advanced whenever any public field of this
+  object changes. It is distinct from Happy Cloud's private social-state version.
+- `updatedAt` — when this daemon object last changed.
+
+The object and its version high-water mark are durable. A restart of an enrolled installation
+immediately exposes the retained lists with `connection: "connecting"`, then converges them before
+returning to `"connected"`. A disconnected or unenrolled account exposes no retained profiles.
+
+Happy Cloud's WebSocket does not replay missed messages. To close that gap, the daemon opens the
+socket before taking a snapshot, buffers update messages, and fetches the friends, requests, and
+blocked lists until all three carry the same Happy Cloud state version. It resolves each member's
+current public profile, applies buffered updates newer than that snapshot, and marks the object
+connected only when the result matches the socket's newest announced version. A reconnect with a
+different state version, malformed or out-of-order update, profile change, or inconsistent
+snapshot schedules another durable full reconciliation. Ordinary complete update messages are
+applied atomically and persisted before `cloud.social.updated` is emitted.
+
+Cloud social operations mint and verify an access token with the same rotation, identity checks,
+and errors as `POST /v0/cloud/access-token`. They are serialized with reconciliation and return
+only after the durable local object reflects an authoritative post-mutation snapshot. A mutation
+that succeeds remotely but cannot complete that snapshot returns `cloud_unavailable`; its durable
+reconciliation continues, and clients settle the ambiguous result by reading this resource.
+
+No Cloud account returns `cloud_not_authenticated` (409). A connected account without an enrolled
+online profile returns `cloud_not_enrolled` (409). Both errors include the current `cloud` and
+`cloudSocial` objects. Authoritative credential rejection and transient Cloud failures use
+`cloud_unauthorized` and `cloud_unavailable` exactly as the profile endpoints do. If Happy Cloud
+reports that the profile is no longer registered, the daemon durably clears enrollment and social
+state before returning `cloud_not_enrolled`.
+
+#### `GET /v0/cloud/social`
+
+Returns the durable local state without making a network request:
+
+```json
+{
+    "cloudSocial": {
+        /* complete Cloud social object */
+    }
+}
+```
+
+This read succeeds while unenrolled, connecting, or connected.
+
+#### Cloud social mutations
+
+The mutation routes are:
+
+- `PUT /v0/cloud/social/requests/:username` — send a friend request. Crossing requests become a
+  friendship, matching Happy Cloud behavior.
+- `POST /v0/cloud/social/requests/:username/approve` — approve an incoming request.
+- `POST /v0/cloud/social/requests/:username/reject` — reject an incoming request.
+- `DELETE /v0/cloud/social/requests/:username` — revoke an outgoing request.
+- `PUT /v0/cloud/social/blocked/:username` — block a user. Happy Cloud also removes any friendship
+  or requests involving that user.
+- `DELETE /v0/cloud/social/blocked/:username` — unblock a user.
+
+Happy Cloud does not currently expose a separate remove-friend operation. Blocking is the only
+upstream operation that removes an existing friendship.
+
+`:username` follows the canonical lowercase Cloud username constraints. Every mutation accepts an
+optional JSON body `{ "mutationId": "..." }`; an empty body is equivalent to `{}` and unknown
+fields return `400` with code `invalid_request`.
+
+Response — `200`: `{ "cloudSocial": { ... } }` with the complete synchronized post-mutation
+object. A changed object emits one `cloud.social.updated` event with its new local `version` and
+the optional `mutationId`; a remote idempotent no-op that leaves the object unchanged emits
+nothing. The response closes the event race for the caller.
+
+A malformed or self username returns `400` with code `invalid_request`; an unknown username or
+missing request returns `404` with code `not_found`; a request prohibited by either user's block
+state returns `409` with code `conflict`. These errors include the current `cloudSocial` object.
 
 ## Happy integration
 
@@ -3929,6 +4057,11 @@ to a different daemon process.
   payload is a compact invalidation because Happy Cloud remains authoritative and another
   application may also change it. Clients refetch `GET /v0/cloud/profile`.
     - `mutationId` — echoed when the API mutation supplied one.
+- `cloud.social.updated` — the durable Cloud social object changed: enrollment activated or
+  disappeared, the socket connection moved, a list changed, or a member profile refreshed. The
+  payload is a compact invalidation; clients with an older version refetch `GET /v0/cloud/social`.
+    - `version` — the Cloud social object's version after the change, a UUIDv7.
+    - `mutationId` — echoed when an API mutation supplied one.
 - `happy.integration.updated` — the installation-wide Happy connection state changed. This is
   a complete replacement rather than a version-chain diff; clients keep the greater embedded
   `version` when reconciling it with a snapshot.
@@ -4144,6 +4277,9 @@ Response — `200`:
     "cloud": {
         /* exactly GET /v0/cloud */
     },
+    "cloudSocial": {
+        /* exactly GET /v0/cloud/social */
+    },
     "happyIntegration": {
         /* exactly GET /v0/integrations/happy */
     },
@@ -4163,10 +4299,10 @@ Response — `200`:
 }
 ```
 
-- `config`, `profile`, `onboarding`, `cloud`, `happyIntegration`, `sharing` — the full objects
-  from their own endpoints. `cloud`, `happyIntegration`, and `sharing` are additive and may be
-  absent on an older compatible daemon; a daemon old enough to omit one does not serve that
-  feature's endpoints either.
+- `config`, `profile`, `onboarding`, `cloud`, `cloudSocial`, `happyIntegration`, `sharing` — the
+  full objects from their own endpoints. `cloud`, `cloudSocial`, `happyIntegration`, and `sharing`
+  are additive and may be absent on an older compatible daemon; a daemon old enough to omit one
+  does not serve that feature's endpoints either.
 - `projects` — every active project.
 - `workspaces` — deliberately shallow: each project's root workspace and the workspaces
   directly under it. Each returned project and workspace embeds its active top-level `agents`

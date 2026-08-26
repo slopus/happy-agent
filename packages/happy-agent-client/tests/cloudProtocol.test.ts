@@ -9,11 +9,14 @@ import {
     cloudDisconnectedResponseSchema,
     cloudProfileResponseSchema,
     cloudResponseSchema,
+    cloudSocialMutationRequestSchema,
+    cloudSocialResponseSchema,
     completeCloudAuthorizationRequestSchema,
     enrollCloudProfileRequestSchema,
     startCloudAuthorizationRequestSchema,
 } from "../sources/protocol/cloud.js";
 import type { HappyAgentEvent } from "../sources/protocol/events.js";
+import { cloudSocialUpdatedPayloadSchema } from "../sources/protocol/events.js";
 import { readEventStream } from "../sources/readEventStream.js";
 
 const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
@@ -201,6 +204,55 @@ describe("Cloud protocol", () => {
         }
     });
 
+    it("validates status-specific Cloud social snapshots and mutation bodies", () => {
+        const socialProfile = {
+            firstName: "Grace",
+            lastName: "Hopper",
+            username: "grace",
+            version,
+        };
+        const enrolled = {
+            blocked: [],
+            connection: "connected",
+            friends: [socialProfile],
+            incomingRequests: [],
+            outgoingRequests: [],
+            status: "enrolled",
+            updatedAt,
+            version,
+        };
+        const unenrolled = {
+            blocked: [],
+            connection: null,
+            friends: [],
+            incomingRequests: [],
+            outgoingRequests: [],
+            status: "unenrolled",
+            updatedAt,
+            version,
+        };
+
+        expect(Value.Check(cloudSocialResponseSchema, { cloudSocial: enrolled })).toBe(true);
+        expect(Value.Check(cloudSocialResponseSchema, { cloudSocial: unenrolled })).toBe(true);
+        expect(
+            Value.Check(cloudSocialResponseSchema, {
+                cloudSocial: { ...unenrolled, friends: [socialProfile] },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(cloudSocialResponseSchema, {
+                cloudSocial: { ...enrolled, connection: null },
+            }),
+        ).toBe(false);
+        expect(Value.Check(cloudSocialMutationRequestSchema, {})).toBe(true);
+        expect(Value.Check(cloudSocialMutationRequestSchema, { mutationId: "social-1" })).toBe(
+            true,
+        );
+        expect(
+            Value.Check(cloudSocialMutationRequestSchema, { mutationId: "social-1", extra: true }),
+        ).toBe(false);
+    });
+
     it("parses cloud.updated as a complete replacement with a mutation echo", async () => {
         const cloud: Cloud = {
             authorization: null,
@@ -247,6 +299,26 @@ describe("Cloud protocol", () => {
             frames.push(frame);
         }
 
+        expect(frames).toEqual([{ cursor: version, event, kind: "event" }]);
+    });
+
+    it("parses cloud.social.updated as a compact version invalidation", async () => {
+        const event: HappyAgentEvent = {
+            cursor: version,
+            occurredAt: updatedAt,
+            payload: { mutationId: "social-3", version },
+            type: "cloud.social.updated",
+        };
+        const frames = [];
+        for await (const frame of readEventStream(
+            streamOf(
+                `id: ${version}\nevent: cloud.social.updated\ndata: ${JSON.stringify(event)}\n\n`,
+            ),
+        )) {
+            frames.push(frame);
+        }
+
+        expect(Value.Check(cloudSocialUpdatedPayloadSchema, event.payload)).toBe(true);
         expect(frames).toEqual([{ cursor: version, event, kind: "event" }]);
     });
 });
