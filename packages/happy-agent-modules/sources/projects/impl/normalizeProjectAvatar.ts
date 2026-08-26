@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { getImageProcessor } from "../../impl/images/getImageProcessor.js";
+import { rgbaToThumbHash } from "../../impl/images/rgbaToThumbHash.js";
 import { ProjectAvatarInputError } from "../ProjectAvatarInputError.js";
-import { rgbaToProjectAvatarThumbHash } from "./rgbaToProjectAvatarThumbHash.js";
 
 export const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
 const MAX_DECODED_PIXELS = 25_000_000;
@@ -79,11 +79,7 @@ export async function normalizeProjectAvatar(
             contentType: "image/webp",
             height: result.height,
             thumbhash: Buffer.from(
-                rgbaToProjectAvatarThumbHash(
-                    placeholder.width,
-                    placeholder.height,
-                    placeholder.data,
-                ),
+                rgbaToThumbHash(placeholder.width, placeholder.height, placeholder.data),
             ).toString("base64"),
             width: result.width,
         };

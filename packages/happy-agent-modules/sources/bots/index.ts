@@ -14,6 +14,7 @@ export {
     type BotStatus,
     type CreateBotInput,
 } from "./Bot.js";
+export { BotAvatarInputError } from "./BotAvatarInputError.js";
 export {
     botEventSchema,
     type BotEvent,

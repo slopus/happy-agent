@@ -6,14 +6,16 @@ import {
     type AgentConfig,
     type AgentModule,
     type AgentModuleHooks,
+    type AgentModuleScope,
     type AgentSystemRef,
+    type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, asyncLock, type Context } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
-import { ProjectsModule } from "../projects/index.js";
+import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
 
 import {
     botRecordSchema,
@@ -24,6 +26,7 @@ import {
     type BotRecord,
     type CreateBotInput,
 } from "./Bot.js";
+import { normalizeBotAvatar } from "./impl/normalizeBotAvatar.js";
 import {
     botEventSchema,
     type BotEvent,
@@ -43,6 +46,10 @@ import {
     updateBot,
     writeBotAvatar,
 } from "./BotStore.js";
+import { createBotTool } from "./tools/create_bot.js";
+import { listBotsTool } from "./tools/list_bots.js";
+import { sendBotMessageTool } from "./tools/send_bot_message.js";
+import { setBotAvatarTool } from "./tools/set_bot_avatar.js";
 
 /** Persistent single-conversation assistants and the dedicated folders they own. */
 export class BotsModule implements AgentModule {
@@ -51,20 +58,36 @@ export class BotsModule implements AgentModule {
 
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
-    readonly #projects: ProjectsModule;
     readonly #listeners = new Set<BotEventListener>();
     readonly #mutations = asyncLock({ reentry: "allow" });
     #agents: AgentSystemRef | undefined;
 
-    constructor(config: ConfigModule, projects: ProjectsModule, abort: AbortModule) {
+    constructor(config: ConfigModule, abort: AbortModule) {
         this.#config = config;
-        this.#projects = projects;
         this.#abort = abort;
     }
 
+    readonly #hooks: AgentModuleHooks = {
+        tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
+            const roster = [
+                listBotsTool(this),
+                createBotTool(this),
+                sendBotMessageTool(this, scope.agent.id),
+            ];
+            // A bot is a peer of every other bot, and additionally manages its own picture.
+            if ((await readBotByAgent(ctx, scope.agent.id)) !== undefined) {
+                return [...roster, setBotAvatarTool(this, scope.agent.id)];
+            }
+            // Bots belong to the conversation a person is having. A subagent is one pair of
+            // hands inside the task it was given and does not manage the bot roster.
+            if ((await this.#requireAgents().parentOf(ctx, scope.agent.id)) !== null) return [];
+            return roster;
+        },
+    };
+
     readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
-        return {};
+        return this.#hooks;
     };
 
     onEvent(listener: BotEventListener): BotUnsubscribe {
@@ -168,6 +191,48 @@ export class BotsModule implements AgentModule {
         });
     }
 
+    /**
+     * Deliver one message into the bot's conversation. The message queues behind the bot's
+     * current run and starts one immediately when the bot is idle. The caller-supplied message
+     * ID makes redelivery after an interruption idempotent.
+     */
+    async sendMessage(
+        ctx: Context,
+        fromAgentId: string,
+        botId: string,
+        text: string,
+        messageId: string,
+    ): Promise<BotRecord> {
+        const bot = await this.#required(ctx, botId);
+        if (bot.status === "archived") {
+            throw new BotConflictError("The bot is archived and cannot receive messages.");
+        }
+        if (bot.agentId === fromAgentId) {
+            throw new BotConflictError("A bot cannot send a message to itself.");
+        }
+        const agents = this.#requireAgents();
+        const accepted = await agents.send(
+            ctx,
+            bot.agentId,
+            {
+                role: "agent",
+                author: { id: fromAgentId, description: `Agent ${fromAgentId}` },
+                content: [{ type: "text", text: `Message from agent ${fromAgentId}:\n\n${text}` }],
+            },
+            {
+                id: messageId,
+                metadata: {
+                    bots: { fromAgentId, botId },
+                    ...senderAgentIdMetadata(fromAgentId),
+                },
+            },
+        );
+        if (accepted.id !== messageId) {
+            throw new Error("Agent Base did not preserve the requested message ID.");
+        }
+        return structuredClone(bot);
+    }
+
     async rename(
         ctx: Context,
         botId: string,
@@ -245,17 +310,44 @@ export class BotsModule implements AgentModule {
         contentType: "image/jpeg" | "image/png" | "image/webp",
         expectedVersion: number,
     ): Promise<BotRecord> {
-        const asset = await this.#projects.normalizeAvatar(bytes, contentType);
+        const asset = await normalizeBotAvatar(bytes, contentType);
         return await this.#mutations.runInLock(ctx, async (lockCtx) => {
             const current = await this.#required(lockCtx, botId);
             this.#assertVersion(current, expectedVersion);
-            return await lockCtx.inTx(async (txCtx) => {
-                await writeBotAvatar(txCtx, botId, asset);
-                return await this.#changeUnlocked(txCtx, current, (bot) => ({
-                    ...bot,
-                    avatar: { kind: "image", source: "user", thumbhash: asset.thumbhash },
-                }));
-            });
+            return await this.#writeAvatarUnlocked(lockCtx, current, asset, "user");
+        });
+    }
+
+    /**
+     * Lets a bot choose its own picture. The caller is identified by its agent, and the write
+     * ignores versioning because the bot is not racing another device's view of itself.
+     */
+    async setOwnAvatar(ctx: Context, agentId: string, bytes: Uint8Array): Promise<BotRecord> {
+        const asset = await normalizeBotAvatar(bytes);
+        return await this.#mutations.runInLock(ctx, async (lockCtx) => {
+            const current = await readBotByAgent(lockCtx, agentId);
+            if (current === undefined) {
+                throw new BotNotFoundError("Only a bot can set its own avatar.");
+            }
+            if (current.status === "archived") {
+                throw new BotConflictError("An archived bot cannot change its avatar.");
+            }
+            return await this.#writeAvatarUnlocked(lockCtx, current, asset, "generated");
+        });
+    }
+
+    async #writeAvatarUnlocked(
+        ctx: Context,
+        current: BotRecord,
+        asset: BotAvatarAsset,
+        source: "user" | "generated",
+    ): Promise<BotRecord> {
+        return await ctx.inTx(async (txCtx) => {
+            await writeBotAvatar(txCtx, current.id, asset);
+            return await this.#changeUnlocked(txCtx, current, (bot) => ({
+                ...bot,
+                avatar: { kind: "image", source, thumbhash: asset.thumbhash },
+            }));
         });
     }
 

@@ -49,4 +49,29 @@ export const botMigrations = [
             );
         },
     ],
+    [
+        "002-bot-avatars-are-webp",
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            // Every bot picture is now re-encoded to WebP on the way in, so the stored format is
+            // no longer a property of the row. Pictures kept in their original format cannot be
+            // served as WebP, so they go, and the bots that had them go back to having none.
+            await agentDatabaseRun(database, sql`DROP TABLE ${sql.raw(BOT_AVATARS_TABLE)}`);
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(BOT_AVATARS_TABLE)} (
+                    bot_id TEXT PRIMARY KEY,
+                    image_bytes BLOB NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    thumbhash TEXT NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL
+                )`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`UPDATE ${sql.raw(BOTS_TABLE)}
+                    SET avatar_source = NULL, avatar_thumbhash = NULL`,
+            );
+        },
+    ],
 ] as const;

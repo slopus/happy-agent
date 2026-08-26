@@ -409,7 +409,7 @@ export async function startHappyAgentRuntime(
         const durableFunctions = new DurableFunctionsModule();
         const projects = new ProjectsModule(config, git, abort, durableFunctions);
         const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
-        const bots = new BotsModule(config, projects, abort);
+        const bots = new BotsModule(config, abort);
         const titles = new TitlesModule(config, history, workspaces);
         const terminals = new TerminalsModule(projects, workspaces, bots);
         registerShutdown("terminals", async () => await terminals.close());

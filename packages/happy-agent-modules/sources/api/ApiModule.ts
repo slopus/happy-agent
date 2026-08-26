@@ -39,6 +39,7 @@ import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
 import {
+    BotAvatarInputError,
     BotConflictError,
     BotNotFoundError,
     BotsModule,
@@ -3489,7 +3490,7 @@ export class ApiModule implements AgentModule {
                 response.writeHead(200, {
                     "cache-control": "no-store",
                     "content-length": asset.bytes.byteLength,
-                    "content-type": asset.contentType,
+                    "content-type": "image/webp",
                     etag: asset.etag,
                 });
                 response.end(Buffer.from(asset.bytes));
@@ -4963,6 +4964,13 @@ export class ApiModule implements AgentModule {
             return;
         }
         if (error instanceof ProjectAvatarInputError) {
+            sendJson(response, 400, {
+                error: error.message,
+                code: "invalid_request",
+            });
+            return;
+        }
+        if (error instanceof BotAvatarInputError) {
             sendJson(response, 400, {
                 error: error.message,
                 code: "invalid_request",

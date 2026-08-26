@@ -131,7 +131,7 @@ export async function readBotAvatar(
     const row = (
         await agentDatabaseRows<Record<string, unknown>>(
             ctx.db,
-            sql`SELECT image_bytes, content_type, content_hash, thumbhash, width, height
+            sql`SELECT image_bytes, content_hash, thumbhash, width, height
                 FROM ${sql.raw(BOT_AVATARS_TABLE)} WHERE bot_id = ${botId} LIMIT 1`,
         )
     )[0];
@@ -142,7 +142,6 @@ export async function readBotAvatar(
             : row["image_bytes"];
     const asset = {
         bytes,
-        contentType: row["content_type"],
         contentHash: row["content_hash"],
         etag: `"${String(row["content_hash"])}"`,
         thumbhash: row["thumbhash"],
@@ -168,12 +167,12 @@ export async function writeBotAvatar(
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(BOT_AVATARS_TABLE)} (
-            bot_id, image_bytes, content_type, content_hash, thumbhash, width, height
+            bot_id, image_bytes, content_hash, thumbhash, width, height
         ) VALUES (
-            ${botId}, ${asset.bytes}, ${asset.contentType}, ${asset.contentHash},
+            ${botId}, ${asset.bytes}, ${asset.contentHash},
             ${asset.thumbhash}, ${asset.width}, ${asset.height}
         ) ON CONFLICT (bot_id) DO UPDATE SET
-            image_bytes = EXCLUDED.image_bytes, content_type = EXCLUDED.content_type,
+            image_bytes = EXCLUDED.image_bytes,
             content_hash = EXCLUDED.content_hash, thumbhash = EXCLUDED.thumbhash,
             width = EXCLUDED.width, height = EXCLUDED.height`,
     );

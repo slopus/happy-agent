@@ -1,14 +1,10 @@
 /**
  * Encode non-premultiplied RGBA pixels using Evan Wallace's ThumbHash format.
  *
- * Project media owns this local encoder. It intentionally does not reach into another module's
- * internals, and the package needs no ThumbHash runtime dependency.
+ * The modules package owns this shared local encoder, so features that store image placeholders
+ * need no ThumbHash runtime dependency.
  */
-export function rgbaToProjectAvatarThumbHash(
-    width: number,
-    height: number,
-    rgba: Uint8Array,
-): Uint8Array {
+export function rgbaToThumbHash(width: number, height: number, rgba: Uint8Array): Uint8Array {
     if (
         width < 1 ||
         height < 1 ||
@@ -16,7 +12,7 @@ export function rgbaToProjectAvatarThumbHash(
         height > 100 ||
         rgba.byteLength !== width * height * 4
     ) {
-        throw new Error("The project ThumbHash source image is invalid.");
+        throw new Error("The ThumbHash source image is invalid.");
     }
 
     let averageRed = 0;

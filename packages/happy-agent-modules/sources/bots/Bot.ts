@@ -43,7 +43,7 @@ export const createBotInputSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** The normalized image asset this module persists beside public avatar metadata. */
+/** The validated image asset this module persists beside public avatar metadata. Always WebP. */
 export const botAvatarAssetSchema = Type.Object(
     {
         bytes: Type.Uint8Array({ minByteLength: 1, maxByteLength: 8 * 1024 * 1024 }),
@@ -52,7 +52,6 @@ export const botAvatarAssetSchema = Type.Object(
             maxLength: 64,
             pattern: "^[a-f0-9]{64}$",
         }),
-        contentType: Type.Literal("image/webp"),
         etag: Type.String({ minLength: 66, maxLength: 66, pattern: '^"[a-f0-9]{64}"$' }),
         height: Type.Integer({ minimum: 1, maximum: 16_384 }),
         thumbhash: Type.String({ minLength: 4, maxLength: 128 }),

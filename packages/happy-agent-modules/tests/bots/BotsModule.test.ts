@@ -1,7 +1,7 @@
 import { rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { AgentConfig, AgentSystemRef } from "@slopus/happy-agent-base";
+import type { AgentConfig, AgentModuleScope, AgentSystemRef } from "@slopus/happy-agent-base";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
@@ -10,11 +10,11 @@ import { AbortModule } from "../../sources/abort/index.js";
 import {
     botMigrations,
     BotConflictError,
+    BotNotFoundError,
     BotsModule,
     type BotEvent,
 } from "../../sources/bots/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
-import { projectsModuleFor } from "../support/projectsModule.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
@@ -206,9 +206,9 @@ describe("BotsModule", () => {
             });
             expect(updated.workspaceVersion).toBe(created.workspaceVersion);
             const asset = await fixture.bots.avatar(fixture.database.context, created.id);
+            // Whatever a bot is given, what the catalog stores is a WebP.
             expect(asset).toMatchObject({
                 contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
-                contentType: "image/webp",
                 etag: expect.stringMatching(/^"[a-f0-9]{64}"$/u),
                 thumbhash: updated.avatar?.thumbhash,
             });
@@ -231,6 +231,69 @@ describe("BotsModule", () => {
             await fixture.close();
         }
     });
+
+    it("lets a bot set its own avatar and refuses everyone else", async () => {
+        const fixture = await started("bots-own-avatar", true);
+        try {
+            const created = await fixture.bots.create(fixture.database.context, {
+                name: "Self Portrait",
+            });
+            const updated = await fixture.bots.setOwnAvatar(
+                fixture.database.context,
+                created.agentId,
+                await png(10, 200, 90),
+            );
+            expect(updated.avatar).toEqual({
+                kind: "image",
+                source: "generated",
+                thumbhash: expect.any(String),
+            });
+            expect(updated.version).toBe(created.version + 1);
+            const asset = await fixture.bots.avatar(fixture.database.context, created.id);
+            await expect(sharp(asset?.bytes).metadata()).resolves.toMatchObject({ format: "webp" });
+
+            // Only the bot's own agent may set it, and an archived bot may not.
+            await expect(
+                fixture.bots.setOwnAvatar(
+                    fixture.database.context,
+                    "notabotagentid",
+                    await png(1, 2, 3),
+                ),
+            ).rejects.toBeInstanceOf(BotNotFoundError);
+            const archived = await fixture.bots.archive(
+                fixture.database.context,
+                created.id,
+                updated.version,
+            );
+            await expect(
+                fixture.bots.setOwnAvatar(
+                    fixture.database.context,
+                    archived.agentId,
+                    await png(4, 5, 6),
+                ),
+            ).rejects.toBeInstanceOf(BotConflictError);
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("gives a bot the roster its owner has, plus its own picture", async () => {
+        const fixture = await started("bots-tools", true);
+        try {
+            const created = await fixture.bots.create(fixture.database.context, {
+                name: "Toolbelt",
+            });
+            const roster = ["list_bots", "create_bot", "send_bot_message"];
+            await expect(fixture.tools(created.agentId)).resolves.toEqual([
+                ...roster,
+                "set_bot_avatar",
+            ]);
+            // A person's own agent runs the roster but has no picture of its own to set.
+            await expect(fixture.tools("someoneelsesagent")).resolves.toEqual(roster);
+        } finally {
+            await fixture.close();
+        }
+    });
 });
 
 async function started(name: string, workspacesEnabled: boolean) {
@@ -243,8 +306,8 @@ async function started(name: string, workspacesEnabled: boolean) {
     const abort = new AbortModule(compute);
     const agents = new BotAgents();
     abort.beforeStart(database.context, agents.asRef());
-    const bots = new BotsModule(config, projectsModuleFor(config), abort);
-    bots.beforeStart(database.context, agents.asRef());
+    const bots = new BotsModule(config, abort);
+    const hooks = bots.beforeStart(database.context, agents.asRef());
     const events: BotEvent[] = [];
     bots.onEvent((_ctx, event) => {
         events.push(event);
@@ -254,6 +317,11 @@ async function started(name: string, workspacesEnabled: boolean) {
         bots,
         database,
         events,
+        tools: async (agentId: string): Promise<readonly string[]> => {
+            const scope = { agent: { id: agentId } } as unknown as AgentModuleScope;
+            const offered = await hooks.tools?.(database.context, scope);
+            return (offered ?? []).map((tool) => tool.name);
+        },
         close: async () => {
             database.close();
             await rm(dirname(config.configuration.paths.publicHome), {
