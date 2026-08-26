@@ -40,8 +40,8 @@ describe("MutationAwareApiEventJournal", () => {
         const journal = new MutationAwareApiEventJournal(mutationIds);
 
         mutationIds.run("direct-mutation", () => {
-            journal.append("sharing.updated", { version: "direct" });
-            journal.appendOutsideMutation("sharing.updated", { version: "background" });
+            journal.append("example.updated", { version: "direct" });
+            journal.appendOutsideMutation("example.updated", { version: "background" });
         });
 
         expect(

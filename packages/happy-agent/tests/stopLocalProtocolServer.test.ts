@@ -260,7 +260,7 @@ function drainedHealth(drainWaitingFor: readonly Record<string, unknown>[] = [])
         healthy: true,
         ready: true,
         status: "ready" as const,
-        version: { daemon: "test", protocol: 22 },
+        version: { daemon: "test", protocol: 23 },
         draining: true,
         drainWaitingFor,
     };

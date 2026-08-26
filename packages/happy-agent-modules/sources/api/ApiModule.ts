@@ -15,14 +15,7 @@ import {
     unarchiveBotRequestSchema,
     configPatchSchema,
     providerVerificationRequestSchema,
-    sharingIdentitySchema,
-    sharingInvitationResponseSchema,
-    sharingMutationRequestSchema,
-    sharingRequestIdSchema,
-    sharingRequestSubmissionSchema,
-    sharingResponseSchema,
     type MessageMode,
-    type Sharing,
 } from "@slopus/happy-agent-client";
 import {
     currentAgentEnvironment,
@@ -74,7 +67,6 @@ import {
     type HistoryRunState,
 } from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
-import { MurmurModule, MurmurOperationError, type MurmurSharingSnapshot } from "../murmur/index.js";
 import {
     PermissionsModule,
     type PermissionEvent,
@@ -143,7 +135,6 @@ import {
     projectResource,
     questionResource,
     rootWorkspaceResource,
-    sharingResource,
     terminalResource,
     workspaceResource,
 } from "./ApiResourceProjection.js";
@@ -176,7 +167,7 @@ import {
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
 
-const API_PROTOCOL_VERSION = 22;
+const API_PROTOCOL_VERSION = 23;
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
 const HEARTBEAT_MS = 15_000;
@@ -280,7 +271,6 @@ export class ApiModule implements AgentModule {
     readonly #providerScan: ProviderScanModule;
     readonly #happy: HappyModule;
     readonly #profile: ProfileModule;
-    readonly #murmur: MurmurModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
     readonly #daemonId = createId();
@@ -356,7 +346,6 @@ export class ApiModule implements AgentModule {
         providerScan: ProviderScanModule,
         happy: HappyModule,
         profile: ProfileModule,
-        murmur: MurmurModule,
         compute: ComputeModule,
         slashCommands: SlashCommandsModule,
     ) {
@@ -379,7 +368,6 @@ export class ApiModule implements AgentModule {
         this.#providerScan = providerScan;
         this.#happy = happy;
         this.#profile = profile;
-        this.#murmur = murmur;
         this.#compute = compute;
         this.#slashCommands = slashCommands;
     }
@@ -783,7 +771,6 @@ export class ApiModule implements AgentModule {
                 }
                 return;
             }
-            if (await this.#handleSharingRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/profile") {
                 sendJson(response, 200, {
                     profile: profileResource(await this.#profile.ensure(ctx)),
@@ -1157,26 +1144,6 @@ export class ApiModule implements AgentModule {
                 }
                 if (event.type !== "usage_recorded") return;
                 this.#scheduleUsageMetadataRefresh(ctx, event.record.agentId);
-            }),
-            this.#murmur.onEvent((_eventCtx, event) => {
-                const append = (): void => {
-                    this.#journal.append(
-                        "sharing.updated",
-                        { version: event.data.version },
-                        event.createdAt,
-                    );
-                };
-                // Relay, restart, and profile-service work may have been scheduled while an API
-                // mutation's AsyncLocalStorage scope happened to be active. Its origin is fixed
-                // by Murmur at commit time, so background invalidations are explicitly
-                // mutationless while direct sharing mutations retain the exact ambient echo.
-                if (event.data.origin === "background") {
-                    this.#journal.appendOutsideMutation(
-                        "sharing.updated",
-                        { version: event.data.version },
-                        event.createdAt,
-                    );
-                } else append();
             }),
             this.#profile.onEvent(async (_eventCtx: Context, event: ProfileChangedEvent) => {
                 const profile = profileResource(await this.#profile.ensure(ctx));
@@ -4346,153 +4313,6 @@ export class ApiModule implements AgentModule {
         }
     }
 
-    async #handleSharingRoute(
-        ctx: Context,
-        request: IncomingMessage,
-        response: ServerResponse,
-        url: URL,
-    ): Promise<boolean> {
-        if (url.pathname !== "/v0/sharing" && !url.pathname.startsWith("/v0/sharing/")) {
-            return false;
-        }
-        try {
-            if (request.method === "GET" && url.pathname === "/v0/sharing") {
-                sendJson(response, 200, this.#sharingResponse(await this.#murmur.snapshot(ctx)));
-                return true;
-            }
-            if (request.method === "POST" && url.pathname === "/v0/sharing/enroll") {
-                const body = await optionalBodyAs(
-                    request,
-                    sharingMutationRequestSchema,
-                    "sharing enrollment",
-                    MAX_JSON_BODY_BYTES,
-                );
-                const sharing = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#murmur.enroll(ctx),
-                );
-                sendJson(response, 200, this.#sharingResponse(sharing));
-                return true;
-            }
-            if (request.method === "POST" && url.pathname === "/v0/sharing/invitations") {
-                const invitation = await this.#murmur.createInvitation(ctx);
-                if (!Value.Check(sharingInvitationResponseSchema, invitation)) {
-                    throw new Error("Sharing produced an invalid invitation response.");
-                }
-                sendJson(response, 200, invitation);
-                return true;
-            }
-            if (request.method === "POST" && url.pathname === "/v0/sharing/requests") {
-                const body = await bodyAs(
-                    request,
-                    sharingRequestSubmissionSchema,
-                    "sharing request",
-                );
-                const sharing = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#murmur.requestContact(ctx, body.invitation),
-                );
-                sendJson(response, 200, this.#sharingResponse(sharing));
-                return true;
-            }
-            const requestResolution = /^\/v0\/sharing\/requests\/([^/]+)\/(accept|reject)$/u.exec(
-                url.pathname,
-            );
-            if (request.method === "POST" && requestResolution !== null) {
-                const encodedRequestId = requestResolution[1];
-                const action = requestResolution[2];
-                if (encodedRequestId === undefined || action === undefined) {
-                    throw notFound("The sharing request was not found.");
-                }
-                const requestId = decodePathSegment(encodedRequestId, "sharing request ID");
-                if (!Value.Check(sharingRequestIdSchema, requestId)) {
-                    throw invalidRequest("The sharing request ID is invalid.");
-                }
-                const body = await optionalBodyAs(
-                    request,
-                    sharingMutationRequestSchema,
-                    `sharing request ${action}`,
-                    MAX_JSON_BODY_BYTES,
-                );
-                const sharing = await this.#withMutationId(body.mutationId, async () =>
-                    action === "accept"
-                        ? await this.#murmur.acceptContact(ctx, requestId)
-                        : await this.#murmur.rejectContact(ctx, requestId),
-                );
-                sendJson(response, 200, this.#sharingResponse(sharing));
-                return true;
-            }
-            const contactRemoval = /^\/v0\/sharing\/contacts\/([^/]+)$/u.exec(url.pathname);
-            if (request.method === "DELETE" && contactRemoval !== null) {
-                const encodedIdentity = contactRemoval[1];
-                if (encodedIdentity === undefined) {
-                    throw notFound("The sharing contact was not found.");
-                }
-                const identity = decodePathSegment(encodedIdentity, "sharing identity");
-                if (!Value.Check(sharingIdentitySchema, identity)) {
-                    throw invalidRequest("The sharing identity is invalid.");
-                }
-                const body = await optionalBodyAs(
-                    request,
-                    sharingMutationRequestSchema,
-                    "sharing contact removal",
-                    MAX_JSON_BODY_BYTES,
-                );
-                const sharing = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#murmur.removeContact(ctx, identity),
-                );
-                sendJson(response, 200, this.#sharingResponse(sharing));
-                return true;
-            }
-            if (request.method === "POST" && url.pathname === "/v0/sharing/reset") {
-                const body = await optionalBodyAs(
-                    request,
-                    sharingMutationRequestSchema,
-                    "sharing reset",
-                    MAX_JSON_BODY_BYTES,
-                );
-                const sharing = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#murmur.reset(ctx),
-                );
-                sendJson(response, 200, this.#sharingResponse(sharing));
-                return true;
-            }
-            throw notFound("The sharing route was not found.");
-        } catch (error: unknown) {
-            let sharing: Sharing | undefined;
-            try {
-                sharing = sharingResource(await this.#murmur.snapshot(ctx));
-            } catch {
-                // Startup keeps a readable snapshot for every admitted API request. If local
-                // storage itself failed, preserve the original failure for the generic boundary.
-            }
-            if (sharing === undefined) throw error;
-            if (error instanceof ApiError) {
-                throw new ApiError(error.status, error.code, error.message, {
-                    ...error.details,
-                    sharing,
-                });
-            }
-            if (error instanceof MurmurOperationError) {
-                const mapped = sharingApiError(error);
-                throw new ApiError(mapped.status, mapped.code, error.message, { sharing });
-            }
-            throw new ApiError(500, "internal", "The sharing request could not be completed.", {
-                sharing,
-            });
-        }
-    }
-
-    #sharingResponse(snapshot: MurmurSharingSnapshot): { readonly sharing: Sharing } {
-        const response = { sharing: sharingResource(snapshot) };
-        if (!Value.Check(sharingResponseSchema, response)) {
-            throw new Error("Sharing produced an invalid public snapshot.");
-        }
-        return response;
-    }
-
     async #handleProfilePatch(
         ctx: Context,
         request: IncomingMessage,
@@ -4549,9 +4369,8 @@ export class ApiModule implements AgentModule {
         // Capture first. A mutation concurrent with the reads is replayed after this cursor, which
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
-        const [profile, sharing, onboarding, projects, workspaces, bots] = await Promise.all([
+        const [profile, onboarding, projects, workspaces, bots] = await Promise.all([
             this.#profile.ensure(ctx),
-            this.#murmur.snapshot(ctx),
             this.#onboarding(ctx),
             this.#allProjects(ctx, false),
             this.#config.configuration.values.features.workspaces
@@ -4565,7 +4384,6 @@ export class ApiModule implements AgentModule {
         return {
             config: this.#sanitizedConfig(),
             profile: profileResource(profile),
-            sharing: sharingResource(sharing),
             onboarding,
             cloud: this.#cloud.status(ctx),
             cloudSocial: this.#cloud.socialStatus(ctx),
@@ -5106,26 +4924,6 @@ function requestUrl(request: IncomingMessage): URL {
         return new URL(request.url ?? "/", "http://happy-agent.invalid");
     } catch {
         throw invalidRequest("The request URL is invalid.");
-    }
-}
-
-function sharingApiError(error: MurmurOperationError): {
-    readonly code: ApiErrorCode;
-    readonly status: number;
-} {
-    switch (error.code) {
-        case "not_enrolled":
-            return { code: "sharing_not_enrolled", status: 409 };
-        case "unavailable":
-            return { code: "sharing_unavailable", status: 503 };
-        case "invalid_invitation":
-            return { code: "invalid_invitation", status: 400 };
-        case "not_found":
-            return { code: "not_found", status: 404 };
-        case "conflict":
-            return { code: "conflict", status: 409 };
-        case "full":
-            return { code: "sharing_full", status: 409 };
     }
 }
 

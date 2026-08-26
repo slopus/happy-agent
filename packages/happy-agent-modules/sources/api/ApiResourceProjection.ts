@@ -1,13 +1,10 @@
 import { createHash } from "node:crypto";
 
 import type { AgentConfig, AgentSystemRef } from "@slopus/happy-agent-base";
-import { sharingSchema, type Sharing } from "@slopus/happy-agent-client";
-import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import type { GitChangeSnapshot } from "../git/index.js";
 import type { BotRecord } from "../bots/index.js";
-import type { MurmurSharingSnapshot } from "../murmur/index.js";
 import type { Profile } from "../profile/index.js";
 import { ProjectsModule, type Project, type ProjectSettings } from "../projects/index.js";
 import type { Terminal } from "../terminals/index.js";
@@ -346,42 +343,6 @@ export function profileResource(profile: Profile | undefined): Record<string, un
         version: profile.version,
         updatedAt: profile.updatedAt,
     };
-}
-
-/** Project Murmur's richer internal snapshot onto the exact public Sharing surface. */
-export function sharingResource(snapshot: MurmurSharingSnapshot): Sharing {
-    const sharing: unknown =
-        snapshot.status === "unenrolled"
-            ? {
-                  status: "unenrolled",
-                  updatedAt: snapshot.updatedAt,
-                  version: snapshot.version,
-              }
-            : {
-                  connection: snapshot.connection,
-                  contacts: snapshot.contacts.map((contact) => ({
-                      identity: contact.identity,
-                      profile: contact.profile === null ? null : profileResource(contact.profile),
-                      status: contact.status,
-                  })),
-                  identity: snapshot.identity,
-                  incomingRequests: snapshot.incomingRequests.map((request) => ({
-                      id: request.id,
-                      identity: request.identity,
-                      profile: request.profile === null ? null : profileResource(request.profile),
-                  })),
-                  outgoingRequests: snapshot.outgoingRequests.map((request) => ({
-                      id: request.id,
-                      identity: request.identity,
-                  })),
-                  status: "enrolled",
-                  updatedAt: snapshot.updatedAt,
-                  version: snapshot.version,
-              };
-    if (!Value.Check(sharingSchema, sharing)) {
-        throw new Error("Sharing produced an invalid public projection.");
-    }
-    return sharing as Sharing;
 }
 
 export async function agentResource(

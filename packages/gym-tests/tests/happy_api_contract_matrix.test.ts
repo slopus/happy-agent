@@ -827,12 +827,10 @@ describe("Happy Agent API contract closure matrix", () => {
     );
 
     it(
-        "contract-049 exposes the stable public sharing snapshot",
+        "contract-049 removes the sharing route",
         async () => {
             const gym = await start(gyms);
-            await expect(gym.client.getSharing()).resolves.toMatchObject({
-                sharing: { status: "unenrolled" },
-            });
+            await expectRemoved(gym, "/v0/sharing");
         },
         TEST_TIMEOUT_MS,
     );

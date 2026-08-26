@@ -168,7 +168,6 @@ its public methods, and its storage and event contracts.
 | [User input](sources/userInput/README.md)        | Questions an agent asks a person, and a durable wait for the answer that survives a restart.            |
 | [Presence](sources/presence/README.md)           | Configured versus effective availability, custom and temporary states, schedules, and status events.    |
 | [Profile](sources/profile/README.md)             | The one person this installation belongs to, and the machine that may speak for them.                   |
-| [Murmur](sources/murmur/README.md)               | Contacts over one Murmur identity, and the requests either side is waiting on.                          |
 
 ### Places and things
 
@@ -183,18 +182,12 @@ its public methods, and its storage and event contracts.
 ### Storage ownership
 
 Modules owning tables through their own migrations: auto, collaboration, compactions, events, goal,
-history, mcp, murmur, presence, profile, projects, scheduling, secrets, tasks, usage, user input,
+history, mcp, presence, profile, projects, scheduling, secrets, tasks, usage, user input,
 workflows, and workspaces. The rest own none: abort, compute, config, files, gemini, git, image
 generation, model switch, observation, permissions, search, skills, system prompt, and titles.
 Compute uses per-agent and shared Agent KV, while system prompt and titles use Agent KV only;
 terminals stores nothing anywhere because a terminal ends with the process behind it, and
 collaboration's migrations exist only to retire the tables it used to keep.
-
-Murmur owns three tables: a single row saying which person its identity belongs to, the key–value
-table Murmur itself writes its cryptographic state into, and the authoritative public projection
-plus its private recovery intents. They share a database so reset can stage a replacement first,
-then atomically install its keys, binding, and public snapshot while enrollment and version
-ordering survive restarts.
 
 Migrations are immutable once released. A schema change is a new keyed migration, never an edit to
 an existing one.

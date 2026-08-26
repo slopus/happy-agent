@@ -50,7 +50,6 @@ import { ImageGenerationModule } from "../imageGeneration/index.js";
 import { MenuBarModule } from "../menuBar/index.js";
 import { McpModule } from "../mcp/index.js";
 import { ModelSwitchModule } from "../modelSwitch/ModelSwitchModule.js";
-import { MurmurModule } from "../murmur/index.js";
 import { ObservationModule } from "../observation/index.js";
 import { PermissionsModule } from "../permissions/index.js";
 import { PresenceModule } from "../presence/index.js";
@@ -141,7 +140,6 @@ export interface HappyAgentRuntimeModules {
     readonly menuBar: MenuBarModule;
     readonly mcp: McpModule;
     readonly modelSwitch: ModelSwitchModule;
-    readonly murmur: MurmurModule<LibSQLDatabase>;
     readonly observation: ObservationModule;
     readonly permissions: PermissionsModule;
     readonly presence: PresenceModule;
@@ -328,7 +326,6 @@ export async function startHappyAgentRuntime(
                 "files",
                 "cloud",
                 "happy",
-                "murmur",
                 "projects-and-workspaces",
                 "terminals",
                 "titles",
@@ -419,7 +416,6 @@ export async function startHappyAgentRuntime(
         registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>();
-        const murmur = new MurmurModule<LibSQLDatabase>(profile);
         const collaboration = new CollaborationModule(config, abort);
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
@@ -489,7 +485,6 @@ export async function startHappyAgentRuntime(
             providerScan,
             happy,
             profile,
-            murmur,
             compute.computeModule,
             slashCommands,
         );
@@ -518,7 +513,6 @@ export async function startHappyAgentRuntime(
             menuBar,
             mcp,
             modelSwitch,
-            murmur,
             observation,
             permissions,
             presence,
@@ -566,7 +560,6 @@ export async function startHappyAgentRuntime(
             slashCommands,
             contextWindow,
             profile,
-            murmur,
             git,
             durableFunctions,
             bots,
@@ -666,8 +659,6 @@ export async function startHappyAgentRuntime(
         }
 
         profile.open(installation.epoch);
-        registerShutdown("murmur", async () => await murmur.close(withDatabase(ctx)));
-        await murmur.open(withDatabase(ctx));
 
         await apiModule.markReady();
 

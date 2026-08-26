@@ -625,6 +625,3 @@ export * from "./profile/index.js";
 
 // Provider discovery, live enablement, and verification.
 export * from "./providerScan/index.js";
-
-// Murmur: contacts over one shared identity, and the requests either side is waiting on.
-export * from "./murmur/index.js";
