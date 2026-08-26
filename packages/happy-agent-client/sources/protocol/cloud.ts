@@ -34,13 +34,58 @@ export const cloudErrorSchema = Type.Object({
 });
 export type CloudError = Static<typeof cloudErrorSchema>;
 
-const snapshotFields = {
+/** One 32-byte Cloud key serialized as unpadded base64url. */
+export const cloudKeyValueSchema = Type.String({
+    minLength: 43,
+    maxLength: 43,
+    pattern: "^[A-Za-z0-9_-]+$",
+});
+
+/** Cloud keys are unavailable without a connected account. */
+export const cloudKeysInactiveSchema = Type.Object(
+    { status: Type.Literal("inactive") },
+    { additionalProperties: false },
+);
+
+/** The connected account has no encrypted Cloud key bundle yet. */
+export const cloudKeysCreateRequiredSchema = Type.Object(
+    { status: Type.Literal("create_required") },
+    { additionalProperties: false },
+);
+
+/** Happy Cloud has an encrypted bundle whose root is unavailable locally. */
+export const cloudKeysRestoreRequiredSchema = Type.Object(
+    { status: Type.Literal("restore_required") },
+    { additionalProperties: false },
+);
+
+/** The account root is available locally and its public identity has been derived. */
+export const cloudKeysReadySchema = Type.Object(
+    { identityKey: cloudKeyValueSchema, status: Type.Literal("ready") },
+    { additionalProperties: false },
+);
+
+export const cloudKeysSchema = Type.Union([
+    cloudKeysInactiveSchema,
+    cloudKeysCreateRequiredSchema,
+    cloudKeysRestoreRequiredSchema,
+    cloudKeysReadySchema,
+]);
+export type CloudKeys = Static<typeof cloudKeysSchema>;
+
+const versionedFields = {
     updatedAt: timestampSchema,
     version: resourceVersionSchema,
 };
 
+const cloudSnapshotFields = {
+    ...versionedFields,
+    /** Account encryption state. Absent on older compatible daemons. */
+    keys: Type.Optional(cloudKeysSchema),
+};
+
 export const cloudDisconnectedSchema = Type.Object({
-    ...snapshotFields,
+    ...cloudSnapshotFields,
     authorization: Type.Null(),
     environment: Type.Null(),
     error: Nullable(cloudErrorSchema),
@@ -51,7 +96,7 @@ export type CloudDisconnected = Static<typeof cloudDisconnectedSchema>;
 
 /** The clean signed-out state returned by an explicit local disconnect. */
 export const cloudCleanDisconnectedSchema = Type.Object({
-    ...snapshotFields,
+    ...cloudSnapshotFields,
     authorization: Type.Null(),
     environment: Type.Null(),
     error: Type.Null(),
@@ -61,7 +106,7 @@ export const cloudCleanDisconnectedSchema = Type.Object({
 export type CloudCleanDisconnected = Static<typeof cloudCleanDisconnectedSchema>;
 
 export const cloudAuthorizingSchema = Type.Object({
-    ...snapshotFields,
+    ...cloudSnapshotFields,
     authorization: cloudAuthorizationSchema,
     environment: cloudEnvironmentSchema,
     error: Type.Null(),
@@ -71,7 +116,7 @@ export const cloudAuthorizingSchema = Type.Object({
 export type CloudAuthorizing = Static<typeof cloudAuthorizingSchema>;
 
 export const cloudConnectedSchema = Type.Object({
-    ...snapshotFields,
+    ...cloudSnapshotFields,
     authorization: Type.Null(),
     environment: cloudEnvironmentSchema,
     error: Type.Null(),
@@ -128,6 +173,24 @@ export const cloudMutationRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type CloudMutationRequest = Static<typeof cloudMutationRequestSchema>;
+
+const cloudKeysMutationFields = {
+    authHash: cloudKeyValueSchema,
+    encryptionKey: cloudKeyValueSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+};
+
+/** Creates and persists a new encrypted root bundle for the connected account. */
+export const createCloudKeysRequestSchema = Type.Object(cloudKeysMutationFields, {
+    additionalProperties: false,
+});
+export type CreateCloudKeysRequest = Static<typeof createCloudKeysRequestSchema>;
+
+/** Restores the connected account root from its existing encrypted Cloud bundle. */
+export const restoreCloudKeysRequestSchema = Type.Object(cloudKeysMutationFields, {
+    additionalProperties: false,
+});
+export type RestoreCloudKeysRequest = Static<typeof restoreCloudKeysRequestSchema>;
 
 /** A freshly minted access token and the still-current connected snapshot. */
 export const cloudAccessTokenResponseSchema = Type.Object({
@@ -200,7 +263,7 @@ const cloudSocialLists = {
 
 /** Cloud friends are inactive until the connected account has enrolled a profile. */
 export const cloudSocialUnenrolledSchema = Type.Object({
-    ...snapshotFields,
+    ...versionedFields,
     blocked: Type.Tuple([]),
     connection: Type.Null(),
     friends: Type.Tuple([]),
@@ -212,7 +275,7 @@ export type CloudSocialUnenrolled = Static<typeof cloudSocialUnenrolledSchema>;
 
 /** The retained social state for an enrolled Cloud account. */
 export const cloudSocialEnrolledSchema = Type.Object({
-    ...snapshotFields,
+    ...versionedFields,
     ...cloudSocialLists,
     connection: Type.Union([Type.Literal("connecting"), Type.Literal("connected")]),
     status: Type.Literal("enrolled"),

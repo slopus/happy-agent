@@ -7,12 +7,15 @@ import {
     cloudAuthorizingResponseSchema,
     cloudConnectedResponseSchema,
     cloudDisconnectedResponseSchema,
+    cloudKeysSchema,
     cloudProfileResponseSchema,
     cloudResponseSchema,
     cloudSocialMutationRequestSchema,
     cloudSocialResponseSchema,
     completeCloudAuthorizationRequestSchema,
+    createCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,
+    restoreCloudKeysRequestSchema,
     startCloudAuthorizationRequestSchema,
 } from "../sources/protocol/cloud.js";
 import type { HappyAgentEvent } from "../sources/protocol/events.js";
@@ -64,6 +67,62 @@ describe("Cloud protocol", () => {
 
         for (const cloud of snapshots) {
             expect(Value.Check(cloudResponseSchema, { cloud })).toBe(true);
+        }
+    });
+
+    it("validates every Cloud key state while keeping it optional for older daemons", () => {
+        const identityKey = "A".repeat(43);
+        const states = [
+            { status: "inactive" },
+            { status: "create_required" },
+            { status: "restore_required" },
+            { identityKey, status: "ready" },
+        ];
+
+        for (const keys of states) expect(Value.Check(cloudKeysSchema, keys)).toBe(true);
+        for (const keys of [
+            { identityKey, status: "restore_required" },
+            { status: "ready" },
+            { identityKey: "short", status: "ready" },
+            { identityKey, rootSecret: "must-not-appear", status: "ready" },
+        ]) {
+            expect(Value.Check(cloudKeysSchema, keys)).toBe(false);
+        }
+
+        const cloud: Cloud = {
+            authorization: null,
+            environment: "production",
+            error: null,
+            keys: { identityKey, status: "ready" },
+            status: "connected",
+            updatedAt,
+            user: {
+                email: "person@example.com",
+                firstName: "Ada",
+                id: "user_01H",
+                lastName: null,
+            },
+            version,
+        };
+        expect(Value.Check(cloudResponseSchema, { cloud })).toBe(true);
+    });
+
+    it("validates already-derived Cloud key mutation inputs", () => {
+        const request = {
+            authHash: "A".repeat(43),
+            encryptionKey: "B".repeat(43),
+            mutationId: "keys-1",
+        };
+
+        expect(Value.Check(createCloudKeysRequestSchema, request)).toBe(true);
+        expect(Value.Check(restoreCloudKeysRequestSchema, request)).toBe(true);
+        for (const invalid of [
+            { ...request, authHash: "short" },
+            { ...request, encryptionKey: "!".repeat(43) },
+            { ...request, extra: true },
+        ]) {
+            expect(Value.Check(createCloudKeysRequestSchema, invalid)).toBe(false);
+            expect(Value.Check(restoreCloudKeysRequestSchema, invalid)).toBe(false);
         }
     });
 

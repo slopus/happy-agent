@@ -41,7 +41,9 @@ import type {
     CloudSocialMutationRequest,
     CloudSocialResponse,
     CompleteCloudAuthorizationRequest,
+    CreateCloudKeysRequest,
     EnrollCloudProfileRequest,
+    RestoreCloudKeysRequest,
     StartCloudAuthorizationRequest,
 } from "./protocol/cloud.js";
 import type {
@@ -389,6 +391,32 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/cloud/access-token",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/cloud/keys/create` — creates the connected account's encrypted root bundle. */
+    async createCloudKeys(
+        request: CreateCloudKeysRequest,
+        options: RequestOptions = {},
+    ): Promise<CloudConnectedResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/cloud/keys/create",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/cloud/keys/restore` — restores the connected account's encrypted root bundle. */
+    async restoreCloudKeys(
+        request: RestoreCloudKeysRequest,
+        options: RequestOptions = {},
+    ): Promise<CloudConnectedResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/cloud/keys/restore",
             json: request,
             signal: options.signal,
         });

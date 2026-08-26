@@ -212,6 +212,16 @@ describe("HappyAgentClient", () => {
             accessToken: "access-token",
             cloud,
         });
+        const keyInput = {
+            authHash: "A".repeat(43),
+            encryptionKey: "B".repeat(43),
+        };
+        await expect(
+            client.createCloudKeys({ ...keyInput, mutationId: "keys-create-1" }),
+        ).resolves.toEqual({ cloud });
+        await expect(
+            client.restoreCloudKeys({ ...keyInput, mutationId: "keys-restore-1" }),
+        ).resolves.toEqual({ cloud });
         await expect(client.getCloudProfile()).resolves.toEqual({ profile });
         await expect(
             client.enrollCloudProfile({ mutationId: "enroll-1", username: "ada" }),
@@ -264,6 +274,16 @@ describe("HappyAgentClient", () => {
                 body: JSON.stringify({ mutationId: "mint-1" }),
                 method: "POST",
                 url: "http://agent.local/v0/cloud/access-token",
+            },
+            {
+                body: JSON.stringify({ ...keyInput, mutationId: "keys-create-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/keys/create",
+            },
+            {
+                body: JSON.stringify({ ...keyInput, mutationId: "keys-restore-1" }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/keys/restore",
             },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/profile" },
             {
