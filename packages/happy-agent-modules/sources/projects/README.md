@@ -103,15 +103,17 @@ Settings are a bounded object, not arbitrary JSON: an optional
 
 ## Tools
 
-One tool, `list_projects`, which lists projects in their independent main-list
-order in bounded cursor pages. It is durable and provider-neutral, and it never
-reviews in Auto mode.
+Two durable, provider-neutral tools are available and never review in Auto mode:
 
-Registering, renaming, archiving, reordering, and the avatar and settings
-writes happen through the public API below, on behalf of a person; a model
-changes the catalog only by asking the person.
+- `list_projects` lists projects in their independent main-list order in bounded cursor pages.
+- `set_project_avatar` takes a project ID and a PNG, JPEG, or WebP path inside that project's
+  folder, then stores the normalized picture as a generated avatar.
 
-The tool exists only when both are true:
+Registering, renaming, archiving, reordering, and settings writes happen through the public API
+below, on behalf of a person. A model may change only the avatar, through the bounded project-owned
+image path accepted by `set_project_avatar`.
+
+The tools exist only when both are true:
 
 - `crossWorkspace` is on. The catalog spans every project on the machine, so
   reading it is exactly what looking outside the current project means, and the
@@ -119,7 +121,7 @@ The tool exists only when both are true:
 - The agent is somebody's own conversation. A subagent works inside the task it
   was handed and is given no view of the catalog.
 
-When the tool is absent, a model has no project tools at all rather than a tool
+When the tools are absent, a model has no project tools at all rather than a tool
 that fails when it is called.
 
 ## Public API

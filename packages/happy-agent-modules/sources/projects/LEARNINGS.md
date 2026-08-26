@@ -2,6 +2,13 @@
 
 Feedback and decisions gathered while building this module.
 
+## A model may choose a project picture from that project
+
+Project tools used to be read-only even though bots could choose their own pictures. A top-level
+agent with cross-workspace tools may now set a selected project's avatar from a PNG, JPEG, or WebP
+already inside that project's folder. The tool resolves the folder and image through real paths so
+an absolute path, `..`, or a symlink cannot make the avatar read escape the selected project.
+
 ## A page always shows something
 
 A page that cannot fit one complete row within the output budget used to be an error. A legal folder

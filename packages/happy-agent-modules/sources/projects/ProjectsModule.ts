@@ -121,7 +121,7 @@ import {
     sameJson,
 } from "./ProjectTransition.js";
 import { folderProjectName, HOME_PROJECT_NAME, projectStorageKey } from "./projectIdentity.js";
-import { listProjectsTool } from "./tools/index.js";
+import { listProjectsTool, setProjectAvatarTool } from "./tools/index.js";
 import {
     attachProjectRootAgent,
     listProjectRootAgents,
@@ -294,7 +294,7 @@ export class ProjectsModule implements AgentModule {
                 throw new Error("The projects module was asked for tools before it started.");
             }
             if ((await agents.parentOf(ctx, scope.agent.id)) !== null) return [];
-            return [listProjectsTool(this, scope.agent.id)];
+            return [listProjectsTool(this, scope.agent.id), setProjectAvatarTool(this)];
         },
     };
 

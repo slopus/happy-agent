@@ -1,4 +1,5 @@
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { sql } from "drizzle-orm";
 import { Value } from "@sinclair/typebox/value";
@@ -165,13 +166,58 @@ describe("ProjectsModule", () => {
         expect(await projectToolNames(await projectsModule(), "agent-a")).toEqual([]);
         expect(
             await projectToolNames(await projectsModule(CROSS_WORKSPACE_TOML), "agent-a"),
-        ).toEqual(["list_projects"]);
+        ).toEqual(["list_projects", "set_project_avatar"]);
     });
 
     it("keeps the catalog out of a subagent", async () => {
         expect(
             await projectToolNames(await projectsModule(CROSS_WORKSPACE_TOML), "subagent-a"),
         ).toEqual([]);
+    });
+
+    it("sets a generated project avatar from an image inside that project's folder", async () => {
+        const database = await migratedProjectDatabase("projects-avatar-tool-test");
+        const config = await temporaryTestConfig(CROSS_WORKSPACE_TOML);
+        const projects = projectsModuleFor(config, new GitModule());
+        const projectFolder = join(config.configuration.paths.happyHome, "avatar-project");
+        const outsideImage = join(config.configuration.paths.happyHome, "outside.png");
+        try {
+            await mkdir(projectFolder, { recursive: true });
+            await writeFile(join(projectFolder, "avatar.png"), await projectAvatarPng(40, 80, 220));
+            await writeFile(outsideImage, await projectAvatarPng(220, 80, 40));
+            const project = await projects.create(database.context, {
+                repositoryRef: projectFolder,
+                name: "Avatar Tool",
+            });
+            const tool = (await projectTools(projects, database.context, "agent-a")).find(
+                (candidate) => candidate.name === "set_project_avatar",
+            );
+            if (tool === undefined) throw new Error("The project avatar tool was not offered.");
+
+            await tool.execute(
+                database.context,
+                { path: "avatar.png", projectId: project.id },
+                undefined as never,
+            );
+
+            await expect(projects.get(database.context, project.id)).resolves.toMatchObject({
+                avatar: {
+                    kind: "image",
+                    source: "generated",
+                    thumbhash: expect.any(String),
+                },
+            });
+            await expect(
+                tool.execute(
+                    database.context,
+                    { path: outsideImage, projectId: project.id },
+                    undefined as never,
+                ),
+            ).rejects.toThrow("The avatar image must live inside the project's folder.");
+        } finally {
+            database.close();
+            await rm(config.configuration.paths.happyHome, { force: true, recursive: true });
+        }
     });
 
     it("uses the context transaction for direct catalog mutations", async () => {
@@ -1039,13 +1085,21 @@ async function projectToolNames(
     projects: ProjectsModule,
     agentId: string,
 ): Promise<readonly string[]> {
+    const tools = await projectTools(projects, undefined as never, agentId);
+    return tools.map((tool) => tool.name);
+}
+
+async function projectTools(
+    projects: ProjectsModule,
+    context: Parameters<ProjectsModule["list"]>[0],
+    agentId: string,
+) {
     const agents = {
         parentOf: (_ctx: unknown, id: string) =>
             Promise.resolve(id === "subagent-a" ? "agent-a" : null),
     } as never;
     const hooks = projects.beforeStart(undefined as never, agents);
-    const tools = await hooks.tools!(undefined as never, { agent: { id: agentId } } as never);
-    return tools.map((tool) => tool.name);
+    return await hooks.tools!(context, { agent: { id: agentId } } as never);
 }
 
 async function projectIds(
