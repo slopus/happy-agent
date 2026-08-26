@@ -13,7 +13,7 @@ import {
     resourceVersionSchema,
     timestampSchema,
 } from "./common.js";
-import type { Agent } from "./agents.js";
+import { agentSchema } from "./agents.js";
 
 /** Where a cloned project came from; `null` for a registered local folder. */
 export const remoteSourceSchema = Type.Union([
@@ -48,7 +48,7 @@ export type ProjectSettings = Static<typeof projectSettingsSchema>;
 /** The project object. A project is also the root workspace of its tree. */
 export const projectSchema = Type.Object({
     /** Ordered top-level agents rooted directly in this project workspace. */
-    agents: Type.Array(Type.Unsafe<Agent>({ type: "object" })),
+    agents: Type.Array(agentSchema),
     archivedAt: Nullable(timestampSchema),
     avatar: Nullable(projectAvatarSchema),
     compute: computeSchema,

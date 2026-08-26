@@ -12,7 +12,7 @@ import {
     resourceVersionSchema,
     timestampSchema,
 } from "./common.js";
-import type { Agent } from "./agents.js";
+import { agentSchema } from "./agents.js";
 
 /** What the workspace was created from. */
 export const workspaceBaseSchema = Type.Object({
@@ -26,10 +26,12 @@ export type WorkspaceBase = Static<typeof workspaceBaseSchema>;
 /** The workspace object. A project's root workspace shares the project's ID. */
 export const workspaceSchema = Type.Object({
     /** Ordered top-level agents rooted directly in this workspace. */
-    agents: Type.Array(Type.Unsafe<Agent>({ type: "object" })),
+    agents: Type.Array(agentSchema),
     archivedAt: Nullable(timestampSchema),
     /** `null` on a root workspace, which was not branched from anything. */
     base: Nullable(workspaceBaseSchema),
+    /** The owning bot on a dedicated bot workspace; `null` on ordinary workspaces. */
+    botId: Type.Optional(Nullable(cuid2Schema)),
     compute: computeSchema,
     createdAt: timestampSchema,
     /** The agent that created this workspace; `null` when a person did. */
@@ -38,16 +40,21 @@ export const workspaceSchema = Type.Object({
     id: cuid2Schema,
     initialization: initializationStateSchema,
     /** How the checkout was made. */
-    kind: Type.Union([Type.Literal("root"), Type.Literal("worktree"), Type.Literal("copy")]),
+    kind: Type.Union([
+        Type.Literal("root"),
+        Type.Literal("worktree"),
+        Type.Literal("copy"),
+        Type.Literal("bot"),
+    ]),
     /** The display name, which is also the branch name behind the checkout. */
     name: Type.String(),
     nameSource: Type.Union([Type.Literal("user"), Type.Literal("generated")]),
     /** Orders this workspace among the siblings sharing its parent. */
     orderKey: Type.String(),
-    /** `null` on the root workspace. */
+    /** `null` on a root workspace and on a bot workspace. */
     parentId: Nullable(cuid2Schema),
-    /** The root of this workspace's tree. */
-    projectId: cuid2Schema,
+    /** The root of this workspace's tree; `null` on a bot workspace. */
+    projectId: Nullable(cuid2Schema),
     /** `"archiving"` is the window where the decision is durable but cleanup runs. */
     status: Type.Union([
         Type.Literal("active"),

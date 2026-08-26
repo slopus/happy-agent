@@ -1,27 +1,43 @@
 /** Agents: one conversation running in a workspace, its transcript and its activity. */
 
+import { type Static, Type } from "@sinclair/typebox";
+
 import type {
     Cuid2,
     Effort,
     EventCursor,
     MessageMode,
     PermissionMode,
-    ResourceVersion,
     ServiceTier,
     Timestamp,
+} from "./common.js";
+import {
+    cuid2Schema,
+    eventCursorSchema,
+    Nullable,
+    resourceVersionSchema,
+    timestampSchema,
 } from "./common.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { CompactionMessage, Run } from "./messages.js";
 import type { SlashCommandCatalog } from "./slashCommands.js";
 
 /** What the agent is doing right now. */
-export type AgentStatus = "idle" | "thinking" | "working" | "generating_tools" | "running_tools";
+export const agentStatusSchema = Type.Union([
+    Type.Literal("idle"),
+    Type.Literal("thinking"),
+    Type.Literal("working"),
+    Type.Literal("generating_tools"),
+    Type.Literal("running_tools"),
+]);
+export type AgentStatus = Static<typeof agentStatusSchema>;
 
 /** Why the agent has something the person has not looked at. */
-export interface AgentUnread {
-    reason: string;
-    since: Timestamp;
-}
+export const agentUnreadSchema = Type.Object({
+    reason: Type.String(),
+    since: timestampSchema,
+});
+export type AgentUnread = Static<typeof agentUnreadSchema>;
 
 /** The whole composer state, so a message can be finished on another device. */
 export interface AgentDraft {
@@ -34,38 +50,39 @@ export interface AgentDraft {
 }
 
 /** The agent object. */
-export interface Agent {
-    id: Cuid2;
-    /** The workspace the agent runs in; its commands and edits land there. */
-    workspaceId: Cuid2;
-    /** `null` when no agent manages this one; otherwise the managing parent. */
-    parentAgentId: Cuid2 | null;
-    /** Whether this agent belongs to a project or workspace's visible root-agent series. */
-    userVisible?: boolean;
-    /** Whether another agent owns this agent's Agent Base ancestry. */
-    managedByAnotherAgent?: boolean;
+export const agentSchema = Type.Object({
+    archivedAt: Nullable(timestampSchema),
     /** Whether the user-facing send route accepts messages for this agent. */
-    canSendMessages?: boolean;
-    title: string | null;
-    /** `"idle"` while no title has been generated yet. */
-    titleStatus: "idle" | "ready";
-    status: AgentStatus;
-    /** How many subagents this agent spawned over its life, and how many run now. */
-    subagents: { total: number; running: number };
-    /** How many background processes started by this agent are running now. */
-    processes: { running: number };
-    /** The open question when the run is waiting on the person. */
-    pendingQuestionId: Cuid2 | null;
-    unread: AgentUnread | null;
-    /** Owner-local order for a user-visible root; `null` on an ordinary hidden subagent. */
-    orderKey: string | null;
+    canSendMessages: Type.Optional(Type.Boolean()),
+    createdAt: timestampSchema,
+    id: cuid2Schema,
     /** The newest event cursor for this agent, so a stream opens where this left off. */
-    lastCursor: EventCursor;
-    version: ResourceVersion;
-    createdAt: Timestamp;
-    updatedAt: Timestamp;
-    archivedAt: Timestamp | null;
-}
+    lastCursor: eventCursorSchema,
+    /** Whether another agent owns this agent's Agent Base ancestry. */
+    managedByAnotherAgent: Type.Optional(Type.Boolean()),
+    /** Owner-local order for a user-visible root; `null` on an ordinary hidden subagent. */
+    orderKey: Nullable(Type.String()),
+    /** `null` when no agent manages this one; otherwise the managing parent. */
+    parentAgentId: Nullable(cuid2Schema),
+    /** The open question when the run is waiting on the person. */
+    pendingQuestionId: Nullable(cuid2Schema),
+    /** How many background processes started by this agent are running now. */
+    processes: Type.Object({ running: Type.Integer() }),
+    status: agentStatusSchema,
+    /** How many subagents this agent spawned over its life, and how many run now. */
+    subagents: Type.Object({ running: Type.Integer(), total: Type.Integer() }),
+    title: Nullable(Type.String()),
+    /** `"idle"` while no title has been generated yet. */
+    titleStatus: Type.Union([Type.Literal("idle"), Type.Literal("ready")]),
+    unread: Nullable(agentUnreadSchema),
+    updatedAt: timestampSchema,
+    /** Whether this agent belongs to a project or workspace's visible root-agent series. */
+    userVisible: Type.Optional(Type.Boolean()),
+    version: resourceVersionSchema,
+    /** The workspace the agent runs in; its commands and edits land there. */
+    workspaceId: cuid2Schema,
+});
+export type Agent = Static<typeof agentSchema>;
 
 /** Every single-agent route answers with this. */
 export interface AgentResponse extends SlashCommandCatalog {

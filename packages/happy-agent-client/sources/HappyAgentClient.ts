@@ -22,6 +22,15 @@ import type {
 } from "./protocol/agents.js";
 import type { AgentBootstrapResponse, DesktopBootstrapResponse } from "./protocol/bootstrap.js";
 import type {
+    ArchiveBotRequest,
+    BotListResponse,
+    BotResponse,
+    CreateBotRequest,
+    RenameBotRequest,
+    ReorderBotRequest,
+    UnarchiveBotRequest,
+} from "./protocol/bots.js";
+import type {
     CloudAccessTokenResponse,
     CloudAuthorizingResponse,
     CloudConnectedResponse,
@@ -864,6 +873,128 @@ export class HappyAgentClient {
             method: "POST",
             path: `v0/workspaces/${encodeURIComponent(workspaceId)}/reorder`,
             json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    // Bots
+
+    /** `GET /v0/bots` — every bot, archived ones included. */
+    async listBots(options: RequestOptions = {}): Promise<BotListResponse> {
+        return await this.#json({ method: "GET", path: "v0/bots", signal: options.signal });
+    }
+
+    /** `POST /v0/bots` — creates the bot, its dedicated workspace, and its one agent. */
+    async createBot(request: CreateBotRequest, options: RequestOptions = {}): Promise<BotResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/bots",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/bots/:botId` */
+    async getBot(botId: Cuid2, options: RequestOptions = {}): Promise<BotResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/bots/${encodeURIComponent(botId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `PATCH /v0/bots/:botId` — renames the display name; the username is immutable. */
+    async renameBot(
+        botId: Cuid2,
+        request: RenameBotRequest,
+        options: VersionedRequestOptions,
+    ): Promise<BotResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/bots/${encodeURIComponent(botId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/bots/:botId/archive` — idempotent; the folder stays on disk. */
+    async archiveBot(
+        botId: Cuid2,
+        options: VersionedRequestOptions & ArchiveBotRequest,
+    ): Promise<BotResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/bots/${encodeURIComponent(botId)}/archive`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/bots/:botId/unarchive` — restores the workspace and agent. */
+    async unarchiveBot(
+        botId: Cuid2,
+        options: VersionedRequestOptions & UnarchiveBotRequest,
+    ): Promise<BotResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/bots/${encodeURIComponent(botId)}/unarchive`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/bots/:botId/reorder` — moves it in the bot catalog. */
+    async reorderBot(
+        botId: Cuid2,
+        request: ReorderBotRequest,
+        options: VersionedRequestOptions,
+    ): Promise<BotResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/bots/${encodeURIComponent(botId)}/reorder`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/bots/:botId/avatar` — the picture bytes; `null` when unchanged. */
+    async getBotAvatar(
+        botId: Cuid2,
+        options: ConditionalRequestOptions = {},
+    ): Promise<BinaryContent | null> {
+        return await this.#binary({
+            method: "GET",
+            path: `v0/bots/${encodeURIComponent(botId)}/avatar`,
+            ifNoneMatch: options.ifNoneMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/bots/:botId/avatar` — the limit is 8 MB. */
+    async setBotAvatar(
+        botId: Cuid2,
+        image: ImageUpload,
+        options: VersionedRequestOptions,
+    ): Promise<BotResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: `v0/bots/${encodeURIComponent(botId)}/avatar`,
+            binary: image,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/bots/:botId/avatar` */
+    async deleteBotAvatar(botId: Cuid2, options: VersionedRequestOptions): Promise<BotResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/bots/${encodeURIComponent(botId)}/avatar`,
             ifMatch: options.ifMatch,
             signal: options.signal,
         });

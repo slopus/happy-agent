@@ -18,6 +18,7 @@ import {
     resourceVersionSchema,
 } from "./common.js";
 import type { Agent, AgentDraftSnapshot } from "./agents.js";
+import { botSchema } from "./bots.js";
 import type { Cloud } from "./cloud.js";
 import type { GitState } from "./git.js";
 import type { HappyIntegration } from "./integrations.js";
@@ -65,6 +66,23 @@ export type ProjectUpdatedPayload = ResourceUpdate<Project> & { projectId: Cuid2
 
 export type WorkspaceCreatedPayload = MutationEcho & { workspace: Workspace };
 export type WorkspaceUpdatedPayload = ResourceUpdate<Workspace> & { workspaceId: Cuid2 };
+
+/** A bot was created together with its dedicated workspace and one agent. */
+export const botCreatedPayloadSchema = Type.Object({
+    bot: botSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type BotCreatedPayload = Static<typeof botCreatedPayloadSchema>;
+
+/** A version-chained change to a bot's own fields. */
+export const botUpdatedPayloadSchema = Type.Object({
+    botId: cuid2Schema,
+    changes: Type.Partial(botSchema),
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    version: resourceVersionSchema,
+});
+export type BotUpdatedPayload = Static<typeof botUpdatedPayloadSchema>;
 
 export type TerminalCreatedPayload = MutationEcho & { terminal: Terminal };
 export type TerminalUpdatedPayload = ResourceUpdate<Terminal> & { terminalId: Cuid2 };
@@ -224,6 +242,8 @@ export type HappyAgentEvent =
     | EventEnvelope<"project.updated", ProjectUpdatedPayload>
     | EventEnvelope<"workspace.created", WorkspaceCreatedPayload>
     | EventEnvelope<"workspace.updated", WorkspaceUpdatedPayload>
+    | EventEnvelope<"bot.created", BotCreatedPayload>
+    | EventEnvelope<"bot.updated", BotUpdatedPayload>
     | EventEnvelope<"terminal.created", TerminalCreatedPayload>
     | EventEnvelope<"terminal.updated", TerminalUpdatedPayload>
     | EventEnvelope<"git.updated", GitUpdatedPayload>

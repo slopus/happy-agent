@@ -81,14 +81,14 @@ secrets rather than identities.
 ### Resource versions and `If-Match`
 
 Every resource that appears in version-chained `*.updated` events — projects, workspaces,
-terminals, agents, questions, processes, and the profile — carries a `version` field: a **UUIDv7** minted at the
+terminals, agents, bots, questions, processes, and the profile — carries a `version` field: a **UUIDv7** minted at the
 moment of the change. Because versions are time-ordered, a client holding two copies of the
 same resource compares their versions and keeps the greater one; this is how a REST snapshot
 and the event stream reconcile without bookkeeping. Versions also chain updates together:
 every `*.updated` event names the version it replaced, so a client can tell whether its cached
 copy is current or dirty (see the events chapter).
 
-Mutations of projects, workspaces, and the profile additionally require an `If-Match` header
+Mutations of projects, workspaces, bots, and the profile additionally require an `If-Match` header
 carrying the version the client last saw (creation excepted):
 
 ```
@@ -138,8 +138,8 @@ start — see `POST /v0/agents/:agentId/send`.
 ### Archival, not deletion
 
 Nothing durable is ever permanently deleted through this API — that is deliberate, not an
-omission. Projects, workspaces, and agents **archive**: they leave the active lists but keep
-their history and can be inspected. Only agents can be unarchived for now; an archived project
+omission. Projects, workspaces, agents, and bots **archive**: they leave the active lists but keep
+their history and can be inspected. Only agents and bots can be unarchived for now; an archived project
 is revived by registering its path again, and an archived workspace stays archived. There are
 no hard-delete endpoints. The only things that end are runtime state — a terminal, a background process — and
 the transcript resets described under `message.deleted`, none of which is a client deleting a
@@ -1732,6 +1732,10 @@ The tree works like this:
   beneath it, and the root workspace is archived by archiving the project, not through the
   workspace surface.
 
+Bot workspaces are the one kind of workspace outside any tree: they have no project and no
+parent — `projectId` and `parentId` are both `null` — and can have no children. Their lifecycle
+belongs to their bot; see the bots chapter.
+
 Workspaces are a versioned resource and follow the `If-Match` and `mutationId` conventions
 from the basics. A daemon with workspaces disabled by configuration answers `503` on every
 workspace route.
@@ -1758,6 +1762,7 @@ workspace route.
         "behind": 0,
         "detached": false
     },
+    "botId": null,
     "creatorAgentId": "a1b2c3d4",
     "agents": [
         /* active user-visible root agents owned by this workspace, in order */
@@ -1773,14 +1778,16 @@ workspace route.
 Fields:
 
 - `id` — stable workspace identifier. The root workspace's ID is the project's ID.
-- `projectId` — the root of this workspace's tree.
-- `parentId` — the workspace this one was created under; `null` on the root workspace.
+- `projectId` — the root of this workspace's tree; `null` on a bot workspace, which belongs to
+  no tree.
+- `parentId` — the workspace this one was created under; `null` on the root workspace and on a
+  bot workspace.
 - `name`, `nameSource` — display name and where it came from: `"user"` for a chosen name,
   `"generated"` for one the daemon derived. The name is also the branch name behind the
   checkout, so renaming moves the branch.
 - `kind` — how the checkout was made: `"root"` for the project's own folder, `"worktree"` for
   a Git worktree, `"copy"` for a plain folder copy (used when the project cannot support
-  worktrees).
+  worktrees), `"bot"` for a bot's plain created folder.
 - `compute` — where the workspace's files live and where work executes, same shape as on the
   project.
 - `status` — `"active"`, `"archiving"`, or `"archived"`. `"archiving"` is the window where the
@@ -1788,8 +1795,12 @@ Fields:
 - `initialization` — the checkout state, same shape as on the project: a workspace answers
   immediately on creation and builds in the background.
 - `base` — what the workspace was created from: the `ref` the caller named and the `commit`
-  it resolved to at creation time.
+  it resolved to at creation time. `null` on a bot workspace, which is created empty rather
+  than cut from anything.
 - `git` — the same working-tree summary as on the project, for this workspace's checkout.
+- `botId` — optional additive field, always emitted by current daemons. `null` for every
+  ordinary workspace; the owning bot's ID on a bot's dedicated workspace. See the bots chapter
+  for how bot workspaces behave.
 - `creatorAgentId` — the agent that created this workspace, when one did; `null` when a
   person created it directly.
 - `agents` — active user-visible root agents owned by this workspace, in `orderKey` order. The
@@ -1810,7 +1821,9 @@ Query parameters:
   and only appear when asked for.
 
 Response — `200`: `{ "workspaces": [ /* workspace objects */ ] }`. Root workspaces are
-included: a project with no child workspaces still contributes one row.
+included: a project with no child workspaces still contributes one row. Bot workspaces are
+excluded from this listing regardless of parameters; they are discovered through their bot and
+remain addressable by ID.
 
 ### `POST /v0/workspaces`
 
@@ -1839,7 +1852,7 @@ Request:
 Response — `202`: `{ "workspace": { ... } }`. The reservation is durable and immediate — the
 row already carries the branch and folder the checkout will use — and the checkout itself runs
 in the background, settling through events. Creating under an archived or nonexistent parent is
-`404`.
+`404`. Creating under a bot workspace is `409` — bot workspaces have no children.
 
 ### `GET /v0/workspaces/:workspaceId`
 
@@ -1857,6 +1870,8 @@ Request: `{ "name": "fix-login-v2", "mutationId": "..." }`
 
 Response — `200`: `{ "workspace": { ... } }`. The root workspace is renamed through its
 project (`PATCH /v0/projects/:projectId`), not here; renaming it through this route is `409`.
+A bot workspace's name is fixed by its bot's immutable username, so renaming it here is also
+`409`.
 
 ### `POST /v0/workspaces/:workspaceId/archive`
 
@@ -1867,7 +1882,8 @@ Response — `202`: `{ "workspace": { ... } }` with `status` `"archiving"` or `"
 decision is durable when the response is sent; removing checkouts and closing terminals
 standing in them is background work. Whether the folder itself is kept follows the workspace
 configuration: worktrees are removed by default, plain copies are kept. The root workspace
-cannot be archived here — archive the project instead; trying is `409`.
+cannot be archived here — archive the project instead; trying is `409`. A bot workspace is
+archived only through its bot; trying here is also `409`.
 
 Archiving also stops the work standing in the workspace. Every agent in it is cancelled, together
 with the subagents and background processes below it. The cancellation is prepared inside the
@@ -2195,7 +2211,8 @@ Fields:
 
 - `id` — stable agent identifier.
 - `workspaceId` — the workspace the agent runs in. This is where its shell commands execute
-  and its file edits land.
+  and its file edits land. A bot's agent is no exception: it runs in the bot's dedicated
+  workspace, and this field names that real workspace; see the bots chapter.
 - `parentAgentId` — `null` when no agent manages this one; otherwise the agent that spawned and
   manages it. A user-visible managed root and an ordinary hidden subagent both retain this
   ancestry.
@@ -2268,7 +2285,9 @@ Request:
 Creation always makes a user-visible root in the destination workspace. Without `parentAgentId`
 it is also a root in Agent Base ancestry. With `parentAgentId` it is the exceptional managed root
 whose parent belongs to another workspace. Ordinary hidden subagents are still spawned by their
-parents rather than through this endpoint.
+parents rather than through this endpoint. Bot agents are not created here either — a bot's one
+agent is born with the bot through `POST /v0/bots`, and creating another agent in a bot's
+workspace is refused with `409`: a bot has exactly one session.
 
 Response — `201`: `{ "agent": { ... }, "slashCommands": [ ... ] }`. Creation is complete when it
 answers: the agent exists, is `"idle"`, and is ready for work. A user-controlled root may receive
@@ -3411,6 +3430,209 @@ Response — `200`:
   timestamps are epoch milliseconds, `durationMs` is milliseconds, monetary amounts are USD cents,
   and percentages run from 0 to 100.
 
+## Bots
+
+A bot is a continuous chat with an identity and a single folder of its own. Where a project or
+workspace is a place that hosts many conversations, a bot **is** one conversation: it is created
+with exactly one agent, keeps that same agent for its whole life, and never gets another. The
+conversation goes on indefinitely — compaction keeps the context fitting — which is what makes a
+bot feel like a persistent assistant rather than a task.
+
+Bots live outside the project catalog entirely. Each bot owns one folder under the daemon's
+bots root, `~/Happy/Bots/<username>`, and that folder is held by a **dedicated workspace** the
+bot owns — a real workspace with its own distinct ID, so the agent, file, terminal, and proxy
+machinery works on a bot folder exactly as it does anywhere else. There is no project behind it:
+a bot workspace is the root of nothing, appears in no project list, no workspace listing, and no
+bootstrap `projects` or `workspaces` array, and it is not a Git worktree and has no branch
+semantics. It is discovered only through its bot and addressed by its own workspace ID.
+
+A bot's identity is:
+
+- `name` — a normal human display name, chosen by the person ("Research Assistant").
+- `username` — a local snake_case machine name; it is the folder name on disk. Lowercase ASCII
+  letters, digits, and underscores, starting with a letter, 1–64 characters. Usernames are
+  unique across all bots on the installation, archived ones included, because the folder path
+  is derived from it. The username is chosen at creation and is immutable ever after — the
+  folder never moves.
+- `id` — the stable CUID2 the database knows the bot by, like every other resource.
+- an optional avatar, exactly like a project's picture.
+
+**Mapping to workspaces and agents.** A bot is one dedicated workspace plus one agent in it,
+under the bot's identity. All three have their own distinct IDs. The workspace is a real
+workspace: its files, file-tree, terminals, and proxy routes all work by its workspace ID, its
+`botId` names the bot, and its `projectId` and `parentId` are `null`. Its lifecycle belongs to
+the bot — renaming, archiving, and creating children through the workspace surface are `409` —
+and it is excluded from `GET /v0/workspaces` and the bootstrap `workspaces` array.
+
+The agent is an ordinary agent, and every agent endpoint works on it unchanged: `send`,
+`messages`, `bootstrap`, `mode`, `draft`, questions, `abort`, `compact`, `read`, usage,
+activity, background processes, and slash commands. Its `workspaceId` names the bot's
+workspace. The differences are ownership and lifecycle, not behavior:
+
+- The agent reports `userVisible: true`, `managedByAnotherAgent: false`, and
+  `canSendMessages: true` while the bot is active. Its `orderKey` is `null`: it belongs to no
+  project or workspace root-agent series, and ordering lives on the bot.
+- The agent's lifecycle belongs to the bot. Agent `archive`, `unarchive`, and `reorder` on a
+  bot's agent answer `409`; archiving and unarchiving happen through the bot routes below, and
+  the agent follows.
+- It is the workspace's only agent, forever: `POST /v0/agents` refuses a bot workspace with
+  `409`, and the bot workspace's `agents` array always contains exactly this one agent.
+
+Bot agents and bot workspaces appear in no project or workspace listing; they are discovered
+only through bot objects. A client that does not know about bots therefore never encounters
+one, which is what keeps this chapter additive for protocol 22.
+
+Bots are a versioned resource: mutations require `If-Match` with the usual `409` conflict
+carrying the authoritative `bot`, and accept the optional `mutationId` from the basics. The bot's
+`version` covers the bot's own fields — name, avatar, order, archival. The embedded
+agent is independently versioned and changes through `agent.updated` without advancing the bot,
+exactly as agents embedded in projects and workspaces do; clients merge it by its own version.
+
+### The bot object
+
+```json
+{
+    "id": "b7f2k9m4",
+    "name": "Research Assistant",
+    "username": "research_assistant",
+    "workspaceId": "w9x8y7z6",
+    "compute": { "type": "host", "path": "/Users/steve/Happy/Bots/research_assistant" },
+    "status": "active",
+    "avatar": { "kind": "image", "thumbhash": "3OcRJYB4d3h3iIeHeEh3eIhw+j2w", "source": "user" },
+    "agent": {
+        /* the bot's one agent, the full agent object */
+    },
+    "orderKey": "00000000000000000001",
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "createdAt": 1755300000000,
+    "updatedAt": 1755400000000,
+    "archivedAt": null
+}
+```
+
+Fields:
+
+- `id` — stable bot identifier.
+- `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
+  characters.
+- `username` — the local snake_case name and on-disk folder name, under the rules above.
+- `workspaceId` — the bot's dedicated workspace, its own distinct ID. The workspace object is
+  fetched from `GET /v0/workspaces/:workspaceId` like any other; it is simply not listed.
+- `compute` — where the bot's folder lives, same shape as on projects and workspaces. Currently
+  always a `"host"` compute carrying the resolved `path`. It mirrors the workspace's compute so
+  a bot list renders without fetching workspaces.
+- `status` — `"active"` or `"archived"`.
+- `avatar` — the bot's picture, or `null`; the same shape and byte-fetching model as a project
+  avatar, served from `GET /v0/bots/:botId/avatar`.
+- `agent` — the bot's one agent, embedded in full so listing bots also answers what each one is
+  doing. It merges by its own `version` through `agent.updated` events.
+- `orderKey` — an opaque sort key; clients order the bot list by comparing these strings.
+- `version` — the UUIDv7 concurrency version; see the basics.
+- `createdAt`, `updatedAt`, `archivedAt` — lifecycle timestamps; `archivedAt` is `null` while
+  active.
+
+### `GET /v0/bots`
+
+Lists every bot, archived ones included, in catalog order.
+
+Response — `200`: `{ "bots": [ /* bot objects */ ] }`
+
+### `POST /v0/bots`
+
+Creates a bot: the row, its dedicated workspace with its folder, and its one agent, together.
+
+Request:
+
+```json
+{
+    "name": "Research Assistant",
+    "username": "research_assistant",
+    "id": "b7f2k9m4"
+}
+```
+
+- `name` — required.
+- `username` — optional. Omitted, the daemon derives one from the name (lowercased,
+  non-alphanumeric runs collapsed to underscores) and resolves a collision by appending a
+  numeric suffix. A supplied username that is malformed is `400`; one already taken by any bot,
+  archived included, is `409` with code `conflict`.
+- `id` — optional client-supplied CUID2. Creating with the ID of a bot that already exists
+  returns that bot unchanged, making creation safely retryable.
+
+Response — `201`: `{ "bot": { ... } }`. Creation is complete when it answers: the folder exists
+at `~/Happy/Bots/<username>`, the workspace and agent exist, the agent is `"idle"`, and the bot
+is ready for its first message through `POST /v0/agents/:agentId/send`. Creation emits
+`bot.created`; the workspace and agent also emit their own `workspace.created` and
+`agent.created`.
+
+### `GET /v0/bots/:botId`
+
+Returns one bot.
+
+Response — `200`: `{ "bot": { ... } }`; `404` when no such bot exists.
+
+### `PATCH /v0/bots/:botId`
+
+Renames the bot's display name. Requires `If-Match`.
+
+Request: `{ "name": "Research Buddy", "mutationId": "..." }`
+
+The `username` is immutable: it is the folder on disk, chosen at creation and never changed.
+A request carrying `username` is `400` with code `invalid_request`.
+
+Response — `200`: `{ "bot": { ... } }` with the updated name.
+
+### `POST /v0/bots/:botId/archive`
+
+Archives the bot. Requires `If-Match`; the body is `{}`. Idempotent — an already archived bot
+answers the same way and stops nothing.
+
+Archiving stops the work standing in the bot: its agent's run is aborted, its background
+processes are killed, and its workspace's terminals are closed, with the same durability
+contract as workspace archival — the cancellation is prepared inside the transaction that
+records the archival. The workspace and agent are archived with the bot and the agent's
+`canSendMessages` becomes `false`; the conversation history remains readable. The folder is
+kept on disk — archival is a logical action, never a deletion.
+
+Response — `200`: `{ "bot": { ... } }` with `status` `"archived"`.
+
+### `POST /v0/bots/:botId/unarchive`
+
+Brings an archived bot back: it reappears in the active list with its history, identity, folder,
+and order intact, its workspace is active again, and its agent accepts messages. Requires
+`If-Match`. Idempotent.
+
+Response — `200`: `{ "bot": { ... } }` with `archivedAt` `null`.
+
+### `POST /v0/bots/:botId/reorder`
+
+Moves the bot in the catalog order. Requires `If-Match`.
+
+Request: `{ "afterId": "c3d4e5f6", "mutationId": "..." }` — the bot to place this one after, or
+`null` to move it first.
+
+Response — `200`: `{ "bot": { ... } }`. Reordering assigns the moved bot a fractional `orderKey`
+between its destination neighbours; neighbour keys and versions remain unchanged.
+
+### `GET /v0/bots/:botId/avatar`
+
+Serves the bot picture's image bytes, with the same `ETag`, conditional-request, and `404`
+behavior as a project avatar.
+
+### `PUT /v0/bots/:botId/avatar`
+
+Sets the bot picture. Requires `If-Match`. The body is the raw image bytes; the limit is 8 MB,
+and a larger upload is rejected with `413`.
+
+Response — `200`: `{ "bot": { ... } }` with the new `avatar`, including the freshly computed
+`thumbhash`.
+
+### `DELETE /v0/bots/:botId/avatar`
+
+Removes the bot picture. Requires `If-Match`.
+
+Response — `200`: `{ "bot": { ... } }` with `avatar` `null`.
+
 ## Events
 
 Everything that changes on the daemon is announced as an event: projects and workspaces
@@ -3473,7 +3695,7 @@ object does not name (a message's `agentId` and `runId`, for example).
 }
 ```
 
-- the resource ID (`projectId`, `workspaceId`, `terminalId`, `agentId`, `compactionId`,
+- the resource ID (`projectId`, `workspaceId`, `terminalId`, `agentId`, `botId`, `compactionId`,
   `processId`, `questionId`) — an ID string naming what changed, since the full object is not here;
 - `previousVersion` — the resource's version **before** this change;
 - `version` — its version after;
@@ -3517,6 +3739,16 @@ to a different daemon process.
 - `workspace.updated` — rename, reorder, archive progress, initialization settling, or a change
   to the workspace's top-level-agent association.
     - `workspaceId` (ID string), `previousVersion`, `version`, `changes`.
+
+**Bots**
+
+- `bot.created` — a bot was created, with its dedicated workspace, folder, and one agent; the
+  workspace and agent also emit their own `workspace.created` and `agent.created`.
+    - `bot` (full bot object).
+- `bot.updated` — rename, reorder, archive, unarchive, or avatar. The embedded agent's own
+  state changes travel as `agent.updated` and do not advance the bot; likewise the workspace's
+  own changes travel as `workspace.updated`.
+    - `botId` (ID string), `previousVersion`, `version`, `changes`.
 
 **Terminals**
 
@@ -3906,6 +4138,9 @@ Response — `200`:
     "workspaces": [
         /* root workspaces of every project, plus their first-level children */
     ],
+    "bots": [
+        /* all bot objects, catalog order */
+    ],
     "cursor": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
 }
 ```
@@ -3919,10 +4154,14 @@ Response — `200`:
   directly under it. Each returned project and workspace embeds its active top-level `agents`
   series. Deeper nesting and archived resources are loaded on demand through their owner or
   resource endpoints when the user opens a project.
+- `bots` — every bot, archived ones included, in catalog order, exactly as `GET /v0/bots`
+  returns them, each embedding its one agent. This additive field may be absent on an older
+  compatible daemon, which does not serve the bot endpoints either.
 - `cursor` — the event cursor captured before the composed snapshot reads. The client opens
   `GET /v0/events/stream` from here and everything it just read stays current; there is no
   window for a change to fall between the snapshot and the stream.
 
 There is no standalone agent collection in bootstrap or a global agent-list endpoint. Agents
-are discovered through the ordered `agents` arrays embedded in projects and workspaces; an
-individual agent and its history are then loaded by ID.
+are discovered through the ordered `agents` arrays embedded in projects and workspaces — and,
+for bots, through the single agent embedded in each bot object; an individual agent and its
+history are then loaded by ID.

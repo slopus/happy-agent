@@ -468,6 +468,172 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.headers.get("if-match")).toBe("v1");
     });
 
+    it("manages bots through their complete version-guarded catalog surface", async () => {
+        const bot = { id: "bot1", name: "Research Assistant" };
+        const { fetch, requests } = stubFetch((request) => {
+            if (request.method === "GET" && request.url === "http://agent.local/v0/bots") {
+                return json({ bots: [bot] });
+            }
+            return json(
+                { bot },
+                request.method === "POST" && request.url.endsWith("/bots") ? 201 : 200,
+            );
+        });
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.listBots()).resolves.toEqual({ bots: [bot] });
+        await expect(
+            client.createBot({
+                id: "bot1",
+                mutationId: "create-1",
+                name: "Research Assistant",
+                username: "research_assistant",
+            }),
+        ).resolves.toEqual({ bot });
+        await expect(client.getBot("bot/one")).resolves.toEqual({ bot });
+        await expect(
+            client.renameBot(
+                "bot1",
+                { mutationId: "rename-1", name: "Research Buddy" },
+                { ifMatch: "version-1" },
+            ),
+        ).resolves.toEqual({ bot });
+        await expect(
+            client.archiveBot("bot1", { ifMatch: "version-2", mutationId: "archive-1" }),
+        ).resolves.toEqual({ bot });
+        await expect(client.unarchiveBot("bot1", { ifMatch: "version-3" })).resolves.toEqual({
+            bot,
+        });
+        await expect(
+            client.reorderBot(
+                "bot1",
+                { afterId: null, mutationId: "reorder-1" },
+                { ifMatch: "version-4" },
+            ),
+        ).resolves.toEqual({ bot });
+
+        expect(
+            requests.map(({ body, headers, method, url }) => ({
+                body,
+                ifMatch: headers.get("if-match"),
+                method,
+                url,
+            })),
+        ).toEqual([
+            {
+                body: null,
+                ifMatch: null,
+                method: "GET",
+                url: "http://agent.local/v0/bots",
+            },
+            {
+                body: JSON.stringify({
+                    id: "bot1",
+                    mutationId: "create-1",
+                    name: "Research Assistant",
+                    username: "research_assistant",
+                }),
+                ifMatch: null,
+                method: "POST",
+                url: "http://agent.local/v0/bots",
+            },
+            {
+                body: null,
+                ifMatch: null,
+                method: "GET",
+                url: "http://agent.local/v0/bots/bot%2Fone",
+            },
+            {
+                body: JSON.stringify({ mutationId: "rename-1", name: "Research Buddy" }),
+                ifMatch: "version-1",
+                method: "PATCH",
+                url: "http://agent.local/v0/bots/bot1",
+            },
+            {
+                body: JSON.stringify({ mutationId: "archive-1" }),
+                ifMatch: "version-2",
+                method: "POST",
+                url: "http://agent.local/v0/bots/bot1/archive",
+            },
+            {
+                body: "{}",
+                ifMatch: "version-3",
+                method: "POST",
+                url: "http://agent.local/v0/bots/bot1/unarchive",
+            },
+            {
+                body: JSON.stringify({ afterId: null, mutationId: "reorder-1" }),
+                ifMatch: "version-4",
+                method: "POST",
+                url: "http://agent.local/v0/bots/bot1/reorder",
+            },
+        ]);
+    });
+
+    it("uploads, conditionally reads, and removes bot avatar bytes", async () => {
+        const bot = { id: "bot1" };
+        const { fetch, requests } = stubFetch((request) => {
+            if (request.method === "GET") {
+                return new Response(new Uint8Array([1, 2, 3]), {
+                    headers: { "content-type": "image/webp", etag: "avatar-2" },
+                });
+            }
+            return json({ bot });
+        });
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(
+            client.setBotAvatar(
+                "bot1",
+                { contentType: "image/webp", data: new Uint8Array([1, 2, 3]) },
+                { ifMatch: "version-1" },
+            ),
+        ).resolves.toEqual({ bot });
+        const image = await client.getBotAvatar("bot1", { ifNoneMatch: "avatar-1" });
+        await expect(client.deleteBotAvatar("bot1", { ifMatch: "version-2" })).resolves.toEqual({
+            bot,
+        });
+
+        expect(image?.contentType).toBe("image/webp");
+        expect(image?.etag).toBe("avatar-2");
+        expect(new Uint8Array(image?.data ?? new ArrayBuffer(0))).toEqual(
+            new Uint8Array([1, 2, 3]),
+        );
+        expect(requests[0]?.url).toBe("http://agent.local/v0/bots/bot1/avatar");
+        expect(requests[0]?.method).toBe("PUT");
+        expect(requests[0]?.headers.get("content-type")).toBe("image/webp");
+        expect(requests[0]?.headers.get("if-match")).toBe("version-1");
+        expect(requests[1]?.headers.get("accept")).toBe("image/*");
+        expect(requests[1]?.headers.get("if-none-match")).toBe("avatar-1");
+        expect(requests[2]?.method).toBe("DELETE");
+        expect(requests[2]?.headers.get("if-match")).toBe("version-2");
+    });
+
+    it("preserves an authoritative bot conflict in HappyAgentApiError", async () => {
+        const current = { id: "bot1", name: "Current name", version: "version-2" };
+        const { fetch } = stubFetch(() =>
+            json(
+                {
+                    bot: current,
+                    code: "conflict",
+                    currentVersion: "version-2",
+                    error: "The bot has changed.",
+                },
+                409,
+            ),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        const failure = await client
+            .renameBot("bot1", { name: "New name" }, { ifMatch: "version-1" })
+            .catch((error: unknown) => error);
+
+        expect(failure).toBeInstanceOf(HappyAgentApiError);
+        expect((failure as HappyAgentApiError).code).toBe("conflict");
+        expect((failure as HappyAgentApiError).body?.["bot"]).toEqual(current);
+        expect((failure as HappyAgentApiError).body?.["currentVersion"]).toBe("version-2");
+    });
+
     it("starts explicit compaction as a durable history message", async () => {
         const { fetch, requests } = stubFetch(() =>
             json({ agent: {}, run: {}, message: {}, cursor: "c1" }, 202),

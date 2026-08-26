@@ -3,6 +3,7 @@
 import { type Static, Type } from "@sinclair/typebox";
 
 import type { Agent, AgentDraftResponse, AgentModeResponse, AgentResponse } from "./agents.js";
+import { botSchema } from "./bots.js";
 import { cloudSchema } from "./cloud.js";
 import { type EventCursor, eventCursorSchema } from "./common.js";
 import { daemonConfigSchema, onboardingStateSchema } from "./daemon.js";
@@ -41,6 +42,8 @@ export interface AgentBootstrapResponse
  * workspace carries its own ordered top-level agents.
  */
 export const desktopBootstrapResponseSchema = Type.Object({
+    /** Every bot, archived ones included. Absent on older compatible daemons. */
+    bots: Type.Optional(Type.Array(botSchema)),
     config: daemonConfigSchema,
     /**
      * The newest event cursor as of this snapshot. Opening the event stream
