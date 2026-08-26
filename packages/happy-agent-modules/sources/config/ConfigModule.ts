@@ -28,7 +28,7 @@ import {
 import { loadConfiguredProviderUsage } from "./impl/loadConfiguredProviderUsage.js";
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
-import { HAPPY_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
+import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
 
 const MAX_PATH_LENGTH = 4_096;
@@ -799,6 +799,7 @@ const pathSchemaSet = Type.Object(
         instructionsPath: pathSchema,
         localConfigPath: pathSchema,
         logPath: pathSchema,
+        mcpConfigPath: pathSchema,
         observationHome: pathSchema,
         pidPath: pathSchema,
         publicHome: pathSchema,
@@ -985,7 +986,9 @@ export class ConfigModule implements AgentModule {
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
     readonly #providerLifetime = new AbortController();
     readonly #providerEnabled = new Map<string, boolean>();
+    readonly #mcpLock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #runtimeLock: AsyncLock = asyncLock({ reentry: "allow" });
+    #mcpServers: HappyAgentConfigValues["mcpServers"];
     #runtimeValues: PartialValues;
     #providerEnablement: ProviderEnablement | undefined;
     readonly #catalogNotices: string[] = [];
@@ -1017,6 +1020,7 @@ export class ConfigModule implements AgentModule {
         environment: Readonly<NodeJS.ProcessEnv>,
     ) {
         this.configuration = configuration;
+        this.#mcpServers = configuration.values.mcpServers;
         this.#runtimeValues = structuredClone(runtimeValues);
         this.#scripted = scripted;
         this.#environment = environment;
@@ -1412,6 +1416,7 @@ export class ConfigModule implements AgentModule {
             ...new Set([
                 dirname(paths.globalConfigPath),
                 dirname(paths.instructionsPath),
+                dirname(paths.mcpConfigPath),
                 dirname(paths.securityPath),
             ]),
         ];
@@ -1424,6 +1429,7 @@ export class ConfigModule implements AgentModule {
         await Promise.all([
             writeUserFileIfMissing(paths.globalConfigPath, HAPPY_TOML_TEMPLATE),
             writeUserFileIfMissing(paths.instructionsPath, ""),
+            writeUserFileIfMissing(paths.mcpConfigPath, MCP_TOML_TEMPLATE),
             writeUserFileIfMissing(paths.securityPath, ""),
         ]);
     }
@@ -1539,6 +1545,51 @@ export class ConfigModule implements AgentModule {
         return this.configuration.values.workspace;
     }
 
+    /** Read the Happy-owned MCP catalog fresh so an online reload sees edits immediately. */
+    async readMcpServers(): Promise<HappyAgentConfigValues["mcpServers"]> {
+        const source = await readConfigSource(this.configuration.paths.mcpConfigPath, "global");
+        const misplaced = Object.keys(source.values).filter((key) => key !== "mcp_servers");
+        if (misplaced.length > 0) {
+            throw new Error(
+                `MCP configuration may contain only mcp_servers, not ${misplaced.join(", ")}.`,
+            );
+        }
+        const servers = deepFreeze(
+            normalizeMcpServers(source.values.mcp_servers ?? {}),
+        ) as HappyAgentConfigValues["mcpServers"];
+        this.#mcpServers = servers;
+        return servers;
+    }
+
+    /** The most recently loaded Happy-owned MCP catalog. */
+    get mcpServers(): HappyAgentConfigValues["mcpServers"] {
+        return this.#mcpServers;
+    }
+
+    /** Canonically add, replace, or remove one server without exposing the other server values. */
+    async updateMcpServer(
+        ctx: Context,
+        name: string,
+        server: HappyAgentConfigValues["mcpServers"][string] | undefined,
+    ): Promise<HappyAgentConfigValues["mcpServers"]> {
+        if (name.length === 0 || name.length > 128) throw new Error("MCP server name is invalid.");
+        return await this.#mcpLock.runInLock(ctx, async () => {
+            const current = structuredClone(await this.readMcpServers()) as Record<string, unknown>;
+            if (server === undefined) delete current[name];
+            else current[name] = structuredClone(server);
+            if (!Value.Check(resolvedValuesSchema.properties.mcpServers, current)) {
+                throw new Error("MCP server configuration is invalid.");
+            }
+            await writeMcpConfigurationFile(
+                this.configuration.paths.mcpConfigPath,
+                current as HappyAgentConfigValues["mcpServers"],
+            );
+            const servers = deepFreeze(current) as HappyAgentConfigValues["mcpServers"];
+            this.#mcpServers = servers;
+            return servers;
+        });
+    }
+
     /**
      * The person's own instructions, the ones that apply to every project.
      *
@@ -1586,16 +1637,27 @@ export class ConfigModule implements AgentModule {
         options: ConfigModuleLoadOptions = {},
     ): Promise<ConfigModule> {
         const paths = derivePaths(input);
-        const [global, local, runtime] = await Promise.all([
+        const [global, local, runtime, mcp] = await Promise.all([
             readConfigSource(paths.globalConfigPath, "global"),
             readConfigSource(paths.localConfigPath, "local"),
             readConfigSource(paths.runtimeConfigPath, "runtime"),
+            readConfigSource(paths.mcpConfigPath, "global"),
         ]);
         const localValues = withoutProjectMachineSettings(local.values);
-        const values = mergeValues(global.values, localValues, runtime.values);
+        const globalValues = withoutMcpServers(global.values);
+        const runtimeValues = withoutMcpServers(runtime.values);
+        const values = mergeValues(
+            globalValues,
+            withoutMcpServers(localValues),
+            runtimeValues,
+            mcp.values.mcp_servers === undefined ? {} : { mcp_servers: mcp.values.mcp_servers },
+        );
         const configuration = {
             paths,
-            provenance: calculateProvenance(global.values, localValues, runtime.values),
+            provenance: {
+                ...calculateProvenance(globalValues, withoutMcpServers(localValues), runtimeValues),
+                ...(mcp.values.mcp_servers === undefined ? {} : { mcpServers: "global" }),
+            },
             sources: {
                 global: sourceSnapshot(global),
                 local: sourceSnapshot(local),
@@ -1611,7 +1673,7 @@ export class ConfigModule implements AgentModule {
         }
         return new ConfigModule(
             deepFreeze(configuration),
-            runtime.values,
+            runtimeValues,
             options.inference,
             Object.freeze({ ...options.environment }),
         );
@@ -1646,6 +1708,83 @@ async function writeRuntimeConfigurationFile(path: string, values: PartialValues
     const contents = encoded.length === 0 || encoded.endsWith("\n") ? encoded : `${encoded}\n`;
     if (Buffer.byteLength(contents, "utf8") > MAX_CONFIG_FILE_BYTES) {
         throw new Error(`Configuration exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`);
+    }
+    await mkdir(dirname(path), { mode: 0o700, recursive: true });
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+        await writeFile(temporary, contents, { flag: "wx", mode: 0o600 });
+        await rename(temporary, path);
+    } finally {
+        await rm(temporary, { force: true }).catch(() => undefined);
+    }
+}
+
+/** Replace the user-owned MCP catalog atomically after rendering its normalized values. */
+async function writeMcpConfigurationFile(
+    path: string,
+    servers: HappyAgentConfigValues["mcpServers"],
+): Promise<void> {
+    const mcpServers: TomlTable = {};
+    for (const [name, server] of Object.entries(servers)) {
+        mcpServers[name] =
+            server.transport === "stdio"
+                ? {
+                      command: server.command,
+                      ...(server.args === undefined ? {} : { args: [...server.args] }),
+                      ...(server.cwd === undefined ? {} : { cwd: server.cwd }),
+                      ...(server.env === undefined ? {} : { env: { ...server.env } }),
+                      ...(server.enabled === undefined ? {} : { enabled: server.enabled }),
+                      ...(server.startupTimeoutMs === undefined
+                          ? {}
+                          : { startup_timeout_sec: server.startupTimeoutMs / 1_000 }),
+                      ...(server.toolTimeoutMs === undefined
+                          ? {}
+                          : { tool_timeout_sec: server.toolTimeoutMs / 1_000 }),
+                      ...(server.enabledTools === undefined
+                          ? {}
+                          : { enabled_tools: [...server.enabledTools] }),
+                      ...(server.disabledTools === undefined
+                          ? {}
+                          : { disabled_tools: [...server.disabledTools] }),
+                  }
+                : {
+                      url: server.url,
+                      ...(server.headers === undefined
+                          ? {}
+                          : { http_headers: { ...server.headers } }),
+                      ...(server.bearerTokenEnvVar === undefined
+                          ? {}
+                          : { bearer_token_env_var: server.bearerTokenEnvVar }),
+                      ...(server.oauthClientIdEnvVar === undefined
+                          ? {}
+                          : { oauth_client_id_env_var: server.oauthClientIdEnvVar }),
+                      ...(server.oauthClientSecretEnvVar === undefined
+                          ? {}
+                          : { oauth_client_secret_env_var: server.oauthClientSecretEnvVar }),
+                      ...(server.oauthScopes === undefined
+                          ? {}
+                          : { oauth_scopes: [...server.oauthScopes] }),
+                      ...(server.enabled === undefined ? {} : { enabled: server.enabled }),
+                      ...(server.startupTimeoutMs === undefined
+                          ? {}
+                          : { startup_timeout_sec: server.startupTimeoutMs / 1_000 }),
+                      ...(server.toolTimeoutMs === undefined
+                          ? {}
+                          : { tool_timeout_sec: server.toolTimeoutMs / 1_000 }),
+                      ...(server.enabledTools === undefined
+                          ? {}
+                          : { enabled_tools: [...server.enabledTools] }),
+                      ...(server.disabledTools === undefined
+                          ? {}
+                          : { disabled_tools: [...server.disabledTools] }),
+                  };
+    }
+    const encoded = stringify(
+        Object.keys(mcpServers).length === 0 ? {} : { mcp_servers: mcpServers },
+    );
+    const contents = encoded.length === 0 || encoded.endsWith("\n") ? encoded : `${encoded}\n`;
+    if (Buffer.byteLength(contents, "utf8") > MAX_CONFIG_FILE_BYTES) {
+        throw new Error(`MCP configuration exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`);
     }
     await mkdir(dirname(path), { mode: 0o700, recursive: true });
     const temporary = `${path}.${randomUUID()}.tmp`;
@@ -1893,6 +2032,7 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         instructionsPath: join(configHome, "AGENTS.md"),
         localConfigPath: join(process.cwd(), "happy.toml"),
         logPath: join(observationHome, "agent.log"),
+        mcpConfigPath: join(configHome, "mcp.toml"),
         observationHome,
         pidPath: join(agentHome, "daemon.pid"),
         publicHome,
@@ -2426,6 +2566,11 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         ...(Object.keys(projectDefaults).length === 0 ? {} : { defaults: projectDefaults }),
         ...(Object.keys(projectSettings).length === 0 ? {} : { settings: projectSettings }),
     };
+}
+
+function withoutMcpServers(values: PartialValues): PartialValues {
+    const { mcp_servers: _mcpServers, ...rest } = values;
+    return rest;
 }
 
 function calculateProvenance(...sources: readonly PartialValues[]): Record<string, string> {

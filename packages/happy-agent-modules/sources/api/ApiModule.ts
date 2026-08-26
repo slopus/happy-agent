@@ -4761,7 +4761,7 @@ export class ApiModule implements AgentModule {
             },
             features: values.features,
             mcpServers: Object.fromEntries(
-                Object.entries(values.mcpServers).map(([name, server]) => [
+                Object.entries(this.#config.mcpServers).map(([name, server]) => [
                     name,
                     { enabled: server.enabled !== false, transport: server.transport },
                 ]),

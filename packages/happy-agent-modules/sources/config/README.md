@@ -1,6 +1,6 @@
 # Config module
 
-`ConfigModule` is the first module loaded by a Happy Agent host. It resolves
+`ConfigModule` is the first module loaded by the Happy Agent runtime. It resolves
 one `.happy` root, reads the global, project, and private runtime TOML layers,
 and exposes one deeply frozen snapshot.
 
@@ -14,6 +14,7 @@ and exposes one deeply frozen snapshot.
 └── Happy/
     └── Config/
         ├── happy.toml
+        ├── mcp.toml
         ├── AGENTS.md
         └── SECURITY.md
 ```
@@ -22,6 +23,11 @@ The project layer is `happy.toml` in the current working directory. Project
 machine settings (credentials, provider
 selection, daemon settings, permission mode, and observation) are filtered
 before merging. Precedence is global → project → runtime.
+
+MCP is deliberately separate. Its only source is the global `mcp.toml`; MCP entries in global,
+project, runtime, Codex, Claude, or other provider configuration are ignored by the live MCP
+catalog. `readMcpServers()` reads this file fresh for online reload, and `updateMcpServer()`
+canonically updates one named server while preserving the other server records.
 
 `runtime.toml` is generated and daemon-owned. Startup rewrites its known values canonically, and
 runtime mutations replace it atomically; comments and unknown fields are intentionally not

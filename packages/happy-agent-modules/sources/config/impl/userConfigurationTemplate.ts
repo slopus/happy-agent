@@ -152,6 +152,10 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # env = { NODE_ENV = "development" }
 # mounts = [{ source = "/host/path", target = "/container/path", read_only = true }]
 
+`;
+
+export const MCP_TOML_TEMPLATE = `# Happy Agent MCP servers. Changes can be reloaded without restarting the daemon.
+
 # [mcp_servers.local]
 # command = "my-mcp-server"
 # args = ["--stdio"]
@@ -167,9 +171,6 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # url = "https://example.com/mcp"
 # http_headers = { "X-Client" = "Happy Agent" }
 # bearer_token_env_var = "MCP_BEARER_TOKEN"
-# oauth_client_id_env_var = "MCP_CLIENT_ID"
-# oauth_client_secret_env_var = "MCP_CLIENT_SECRET"
-# oauth_scopes = ["tools:read"]
 # enabled = true
 # startup_timeout_sec = 10
 # tool_timeout_sec = 30

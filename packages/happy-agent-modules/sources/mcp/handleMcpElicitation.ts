@@ -31,9 +31,8 @@ export const mcpUserInputServiceSchema = Type.Object(
 export type McpUserInputService = Static<typeof mcpUserInputServiceSchema>;
 
 /**
- * Adapt MCP's schema-shaped elicitation request to the host's ordinary user-input surface.
- * Elicitation is intentionally a host callback: the module does not own a UI, socket, or
- * permission decision.  If no user-input service is supplied, the safe MCP response is decline.
+ * Adapt MCP's schema-shaped elicitation request to the ordinary user-input surface. If no
+ * user-input service is supplied, the safe MCP response is decline.
  */
 export function handleMcpElicitation(
     request: McpElicitationRequest,
@@ -191,9 +190,8 @@ async function requestUserInput(
     request: McpUserInputRequest,
 ): Promise<McpUserInputResponse> {
     /*
-     * A host may bind the service to an agent context (one-argument request) or expose it as a
-     * context-aware adapter (two-argument request).  Both are structural host boundaries; the
-     * module never looks up a UI or creates one.
+     * A service may bind itself to an agent context (one-argument request) or expose a
+     * context-aware adapter (two-argument request).
      */
     const raw = await Reflect.apply(
         userInput.request,

@@ -9,7 +9,10 @@ import {
 } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { Context } from "@steve.kite/stdlib";
+import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
+
+import { ConfigModule, type HappyAgentConfigValues } from "../config/index.js";
+import { UserInputModule } from "../userInput/index.js";
 
 import {
     MAX_MCP_PAGE_SIZE,
@@ -35,6 +38,7 @@ import {
     mcpToolPageSchema,
     mcpToolResultSchema,
     mcpAgentIdSchema,
+    mcpElicitationRequestSchema,
     type McpCallToolInput,
     type McpElicitationRequest,
     type McpGetPromptInput,
@@ -56,15 +60,14 @@ import {
     type McpToolPageQuery,
     type McpToolPolicy,
     type McpToolResult,
+    type McpUserInputRequest,
+    type McpUserInputResponse,
 } from "./Mcp.js";
-import { assertMcpHost, mcpHostCallOptionsSchema, mcpHostSchema, type McpHost } from "./McpHost.js";
+import { McpClientConnection } from "./McpClientConnection.js";
+import { createMcpConfigurationTools } from "./createMcpConfigurationTools.js";
 import { createMcpProtocolTools } from "./createMcpProtocolTools.js";
 import { createMcpTool } from "./createMcpTool.js";
-import {
-    handleMcpElicitation,
-    mcpUserInputServiceSchema,
-    type McpUserInputService,
-} from "./handleMcpElicitation.js";
+import { handleMcpElicitation, type McpUserInputService } from "./handleMcpElicitation.js";
 import {
     assertPromptPage,
     assertResourcePage,
@@ -104,36 +107,37 @@ const mcpMigration = [
 
 export const mcpModuleOptionsSchema = Type.Object(
     {
-        host: mcpHostSchema,
         maxOutputCharacters: Type.Optional(outputCharactersSchema),
         maxPageSize: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_MCP_PAGE_SIZE })),
-        userInput: Type.Optional(mcpUserInputServiceSchema),
     },
     { additionalProperties: false },
 );
 export type McpModuleOptions = Static<typeof mcpModuleOptionsSchema>;
 
 /**
- * One shared MCP capability serves every agent.  Happy Agent supplies the host; this class owns the
- * provider-neutral operations, validation, naming, permission declarations, and model rendering.
+ * One shared MCP capability serves every agent and owns the live clients, protocol operations,
+ * validation, naming, permission declarations, and model rendering.
  */
 export class McpModule implements AgentModule {
     readonly name = "mcp";
     readonly migrations = [mcpMigration];
 
-    readonly #host: McpHost;
-    readonly #userInput: McpUserInputService | undefined;
+    readonly #config: ConfigModule;
+    readonly #userInput: UserInputModule;
     readonly #maxPageSize: number;
     readonly #maxOutputCharacters: number;
+    readonly #reloadLock: AsyncLock = asyncLock({ reentry: "allow" });
+    #connections = new Map<string, McpClientConnection>();
+    #servers: HappyAgentConfigValues["mcpServers"] = {};
+    #failures = new Map<string, string>();
+    #initialReload: Promise<void> | undefined;
 
-    constructor(options: McpModuleOptions) {
-        const checked = runtimeOptions(options);
-        if (!Value.Check(mcpModuleOptionsSchema, checked)) {
+    constructor(config: ConfigModule, userInput: UserInputModule, options: McpModuleOptions = {}) {
+        if (!Value.Check(mcpModuleOptionsSchema, options)) {
             throw new Error("MCP module options are invalid.");
         }
-        assertMcpHost(checked.host);
-        this.#host = options.host;
-        this.#userInput = options.userInput;
+        this.#config = config;
+        this.#userInput = userInput;
         this.#maxPageSize = options.maxPageSize ?? DEFAULT_PAGE_SIZE;
         this.#maxOutputCharacters = options.maxOutputCharacters ?? DEFAULT_OUTPUT_CHARACTERS;
     }
@@ -141,10 +145,11 @@ export class McpModule implements AgentModule {
     readonly #hooks: AgentModuleHooks = {
         /**
          * Keep a durable, bounded server index for prompt projections and restart diagnostics.
-         * The host remains authoritative for live calls; this snapshot is only written through
-         * the caller's Agent Storage transaction.
+         * The live connection catalog remains authoritative; this snapshot is only written
+         * through the caller's Agent Storage transaction.
          */
         beforeAgentLoop: async (ctx: Context, scope: AgentModuleScope): Promise<void> => {
+            await this.#initialReload;
             const servers = await this.#listAllServers(
                 ctx,
                 scope.agent.id,
@@ -185,11 +190,11 @@ export class McpModule implements AgentModule {
         },
 
         /**
-         * The dynamic tool list is intentionally rebuilt from the host's current connected
-         * catalog. Happy Agent remains authoritative for connection lifetime and trust; the module never
-         * caches a client or treats its own heap as a server record.
+         * The dynamic tool list is intentionally rebuilt from the current connected catalog, so
+         * an online reload reaches the next provider request without restarting the daemon.
          */
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
+            await this.#initialReload;
             const agentId = assertAgentId(scope.agent.id);
             const servers = await this.#listAllServers(ctx, agentId, scope.agent.permissionMode);
             const connected = servers.filter((server) => server.status === "connected");
@@ -225,13 +230,69 @@ export class McpModule implements AgentModule {
                   );
             return [
                 listMcpServersTool(this, agentId, scope.agent.permissionMode, quarantined),
+                ...createMcpConfigurationTools(this, agentId),
                 ...merged.tools,
                 ...protocolTools,
             ];
         },
     };
 
-    readonly beforeStart = (): AgentModuleHooks => this.#hooks;
+    readonly beforeStart = (ctx: Context): AgentModuleHooks => {
+        this.#initialReload ??= this.reload(ctx).catch((error: unknown) => {
+            ctx.log.warn(`Initial MCP discovery failed: ${errorMessage(error)}`);
+        });
+        return this.#hooks;
+    };
+
+    /** Reread mcp.toml and atomically replace the live connection catalog. */
+    async reload(ctx: Context): Promise<void> {
+        await this.#reloadLock.runInLock(ctx, async () => {
+            const servers = await this.#config.readMcpServers();
+            const connected = await Promise.all(
+                Object.entries(servers).map(async ([name, server]) => {
+                    if (server.enabled === false) return { name } as const;
+                    try {
+                        return {
+                            name,
+                            connection: await McpClientConnection.connect(name, server),
+                        } as const;
+                    } catch (error) {
+                        return { name, error: errorMessage(error) } as const;
+                    }
+                }),
+            );
+            const nextConnections = new Map<string, McpClientConnection>();
+            const nextFailures = new Map<string, string>();
+            for (const result of connected) {
+                if ("connection" in result) nextConnections.set(result.name, result.connection);
+                if ("error" in result) nextFailures.set(result.name, result.error);
+            }
+            const previous = this.#connections;
+            this.#servers = servers;
+            this.#connections = nextConnections;
+            this.#failures = nextFailures;
+            await Promise.allSettled(
+                [...previous.values()].map(async (entry) => await entry.close()),
+            );
+        });
+    }
+
+    async configureServer(
+        ctx: Context,
+        name: string,
+        server: HappyAgentConfigValues["mcpServers"][string] | undefined,
+    ): Promise<void> {
+        await this.#config.updateMcpServer(ctx, name, server);
+        await this.reload(ctx);
+    }
+
+    async close(): Promise<void> {
+        const connections = this.#connections;
+        this.#connections = new Map();
+        await Promise.allSettled(
+            [...connections.values()].map(async (entry) => await entry.close()),
+        );
+    }
 
     async listServerPage(
         ctx: Context,
@@ -251,10 +312,54 @@ export class McpModule implements AgentModule {
                 this.#maximumVisibleRows(24),
             ),
         };
-        const raw = await this.#host.listServers(ctx, agentId, permissionMode, normalized);
+        const all = await Promise.all(
+            Object.entries(this.#servers)
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(async ([name, config]): Promise<McpServerSummary> => {
+                    if (config.enabled === false) {
+                        return { name, status: "disabled", toolCount: 0 };
+                    }
+                    const connection = this.#connections.get(name);
+                    if (connection === undefined) {
+                        return {
+                            name,
+                            status: "failed",
+                            toolCount: 0,
+                            errorMessage: this.#failures.get(name) ?? "Connection failed.",
+                        };
+                    }
+                    try {
+                        const tools = await this.#allTools(ctx, connection);
+                        const capabilities = connection.client.getServerCapabilities();
+                        return {
+                            name,
+                            status: "connected",
+                            toolCount: tools.length,
+                            ...(config.enabledTools === undefined
+                                ? {}
+                                : { enabledTools: [...config.enabledTools] }),
+                            ...(config.disabledTools === undefined
+                                ? {}
+                                : { disabledTools: [...config.disabledTools] }),
+                            ...(capabilities?.prompts === undefined ? {} : { promptSupport: true }),
+                            ...(capabilities?.resources === undefined
+                                ? {}
+                                : { resourceSupport: true }),
+                        };
+                    } catch (error) {
+                        return {
+                            name,
+                            status: "failed",
+                            toolCount: 0,
+                            errorMessage: errorMessage(error),
+                        };
+                    }
+                }),
+        );
+        const raw = pageFrom(all, normalized.cursor, normalized.limit, "servers");
         assertServerPage(raw);
         if (raw.servers.length > normalized.limit) {
-            throw new Error("MCP host returned more servers than requested.");
+            throw new Error("MCP server page returned more servers than requested.");
         }
         assertUnique(
             raw.servers.map((server) => server.name),
@@ -291,10 +396,15 @@ export class McpModule implements AgentModule {
                 this.#maximumVisibleRows(1),
             ),
         };
-        const raw = await this.#host.listTools(ctx, agentId, normalized);
+        const raw = pageFrom(
+            await this.#allTools(ctx, this.#connection(normalized.server)),
+            normalized.cursor,
+            normalized.limit,
+            "tools",
+        );
         assertToolPage(raw);
         if (raw.tools.length > normalized.limit) {
-            throw new Error("MCP host returned more tools than requested.");
+            throw new Error("MCP server page returned more tools than requested.");
         }
         assertUnique(
             raw.tools.map((tool) => tool.name),
@@ -343,10 +453,15 @@ export class McpModule implements AgentModule {
                 this.#maximumVisibleRows(1),
             ),
         };
-        const raw = await this.#host.listResources(ctx, agentId, normalized);
+        const raw = pageFrom(
+            await this.#allResources(ctx, this.#connection(normalized.server)),
+            normalized.cursor,
+            normalized.limit,
+            "resources",
+        );
         assertResourcePage(raw);
         if (raw.resources.length > normalized.limit) {
-            throw new Error("MCP host returned more resources than requested.");
+            throw new Error("MCP server page returned more resources than requested.");
         }
         assertUnique(
             raw.resources.map((resource) => resource.uri),
@@ -399,10 +514,15 @@ export class McpModule implements AgentModule {
                 this.#maximumVisibleRows(1),
             ),
         };
-        const raw = await this.#host.listResourceTemplates(ctx, agentId, normalized);
+        const raw = pageFrom(
+            await this.#allResourceTemplates(ctx, this.#connection(normalized.server)),
+            normalized.cursor,
+            normalized.limit,
+            "resourceTemplates",
+        );
         assertResourceTemplatePage(raw);
         if (raw.resourceTemplates.length > normalized.limit) {
-            throw new Error("MCP host returned more resource templates than requested.");
+            throw new Error("MCP server page returned more resource templates than requested.");
         }
         assertUnique(
             raw.resourceTemplates.map((template) => template.uriTemplate),
@@ -430,10 +550,15 @@ export class McpModule implements AgentModule {
                 this.#maximumVisibleRows(1),
             ),
         };
-        const raw = await this.#host.listPrompts(ctx, agentId, normalized);
+        const raw = pageFrom(
+            await this.#allPrompts(ctx, this.#connection(normalized.server)),
+            normalized.cursor,
+            normalized.limit,
+            "prompts",
+        );
         assertPromptPage(raw);
         if (raw.prompts.length > normalized.limit) {
-            throw new Error("MCP host returned more prompts than requested.");
+            throw new Error("MCP server page returned more prompts than requested.");
         }
         assertUnique(
             raw.prompts.map((prompt) => prompt.name),
@@ -466,16 +591,16 @@ export class McpModule implements AgentModule {
         if (policy !== undefined && !isMcpToolAllowed(policy, input.name)) {
             throw new Error(`The MCP tool "${input.name}" is disabled by the server policy.`);
         }
-        const options = {
-            onElicitation: async (request: McpElicitationRequest) =>
-                await handleMcpElicitation(ctx, request, this.#userInput),
-        };
-        if (!Value.Check(mcpHostCallOptionsSchema, options)) {
-            throw new Error("MCP host call options are invalid.");
-        }
-        const raw = await this.#host.callTool(ctx, agentId, structuredClone(input), options);
+        const raw = await this.#connection(input.server).callTool(ctx, input, async (request) => {
+            if (!Value.Check(mcpElicitationRequestSchema, request)) return { action: "decline" };
+            return await handleMcpElicitation(
+                ctx,
+                request,
+                this.#mcpUserInputService(ctx, agentId),
+            );
+        });
         if (!Value.Check(mcpToolResultSchema, raw)) {
-            throw new Error("MCP host returned an invalid tool result.");
+            throw new Error("MCP server returned an invalid tool result.");
         }
         return structuredClone(raw);
     }
@@ -494,9 +619,13 @@ export class McpModule implements AgentModule {
         if (!Value.Check(mcpReadResourceInputSchema, input)) {
             throw new Error("MCP resource read input is invalid.");
         }
-        const raw = await this.#host.readResource(ctx, agentId, structuredClone(input));
+        const connection = this.#connection(input.server);
+        const raw = await connection.client.readResource(
+            { uri: input.uri },
+            this.#requestOptions(ctx, connection.config.toolTimeoutMs),
+        );
         if (!Value.Check(mcpReadResourceResultSchema, raw)) {
-            throw new Error("MCP host returned an invalid resource result.");
+            throw new Error("MCP server returned an invalid resource result.");
         }
         for (const content of raw.contents) {
             if (isRecord(content) && typeof content.uri === "string" && content.uri !== input.uri) {
@@ -515,9 +644,16 @@ export class McpModule implements AgentModule {
         if (!Value.Check(mcpGetPromptInputSchema, input)) {
             throw new Error("MCP prompt input is invalid.");
         }
-        const raw = await this.#host.getPrompt(ctx, agentId, structuredClone(input));
+        const connection = this.#connection(input.server);
+        const raw = await connection.client.getPrompt(
+            {
+                name: input.name,
+                ...(input.arguments === undefined ? {} : { arguments: input.arguments }),
+            },
+            this.#requestOptions(ctx, connection.config.toolTimeoutMs),
+        );
         if (!Value.Check(mcpGetPromptResultSchema, raw)) {
-            throw new Error("MCP host returned an invalid prompt result.");
+            throw new Error("MCP server returned an invalid prompt result.");
         }
         return structuredClone(raw);
     }
@@ -678,13 +814,6 @@ export class McpModule implements AgentModule {
         agentId: string,
         serverName: string,
     ): Promise<McpToolPolicy | undefined> {
-        if (this.#host.getToolPolicy !== undefined) {
-            const policy = await this.#host.getToolPolicy(ctx, agentId, serverName);
-            if (!Value.Check(mcpToolPolicySchema, policy)) {
-                throw new Error("MCP host returned an invalid tool policy.");
-            }
-            return structuredClone(policy);
-        }
         const server = (await this.#listAllServers(ctx, agentId, "auto")).find(
             (candidate) => candidate.name === serverName,
         );
@@ -704,46 +833,154 @@ export class McpModule implements AgentModule {
         }
         return policy === undefined ? undefined : structuredClone(policy);
     }
-}
 
-export function assertMcpModuleOptions(value: unknown): asserts value is McpModuleOptions {
-    const checked = runtimeOptions(value as McpModuleOptions);
-    if (!Value.Check(mcpModuleOptionsSchema, checked)) {
-        throw new Error("MCP module options are invalid.");
+    #connection(name: string): McpClientConnection {
+        const connection = this.#connections.get(name);
+        if (connection !== undefined) return connection;
+        const failure = this.#failures.get(name);
+        throw new Error(
+            failure === undefined
+                ? `MCP server "${name}" is not connected.`
+                : `MCP server "${name}" failed to connect: ${failure}`,
+        );
+    }
+
+    #requestOptions(ctx: Context, configuredTimeout: number | undefined) {
+        const timeout = configuredTimeout ?? 60_000;
+        return {
+            timeout,
+            maxTotalTimeout: timeout,
+            ...(ctx.lifetime === undefined ? {} : { signal: ctx.lifetime }),
+        };
+    }
+
+    async #allTools(ctx: Context, connection: McpClientConnection): Promise<McpTool[]> {
+        const values = await collectMcpPages(
+            async (cursor) =>
+                await connection.client.listTools(
+                    cursor === undefined ? {} : { cursor },
+                    this.#requestOptions(ctx, connection.config.toolTimeoutMs),
+                ),
+            (page) => page.tools,
+        );
+        return values.map((tool) => ({
+            name: tool.name,
+            ...(tool.description === undefined ? {} : { description: tool.description }),
+            inputSchema: structuredClone(tool.inputSchema),
+            ...(tool.title === undefined ? {} : { title: tool.title }),
+            ...(tool._meta === undefined ? {} : { _meta: structuredClone(tool._meta) }),
+        }));
+    }
+
+    async #allResources(ctx: Context, connection: McpClientConnection) {
+        const values = await collectMcpPages(
+            async (cursor) =>
+                await connection.client.listResources(
+                    cursor === undefined ? {} : { cursor },
+                    this.#requestOptions(ctx, connection.config.toolTimeoutMs),
+                ),
+            (page) => page.resources,
+        );
+        return values.map((resource) => ({
+            uri: resource.uri,
+            name: resource.name,
+            ...(resource.title === undefined ? {} : { title: resource.title }),
+            ...(resource.description === undefined ? {} : { description: resource.description }),
+            ...(resource.mimeType === undefined ? {} : { mimeType: resource.mimeType }),
+            ...(resource.annotations === undefined
+                ? {}
+                : { annotations: structuredClone(resource.annotations) }),
+            ...(resource._meta === undefined ? {} : { _meta: structuredClone(resource._meta) }),
+        }));
+    }
+
+    async #allResourceTemplates(ctx: Context, connection: McpClientConnection) {
+        const values = await collectMcpPages(
+            async (cursor) =>
+                await connection.client.listResourceTemplates(
+                    cursor === undefined ? {} : { cursor },
+                    this.#requestOptions(ctx, connection.config.toolTimeoutMs),
+                ),
+            (page) => page.resourceTemplates,
+        );
+        return values.map((template) => ({
+            uriTemplate: template.uriTemplate,
+            name: template.name,
+            ...(template.title === undefined ? {} : { title: template.title }),
+            ...(template.description === undefined ? {} : { description: template.description }),
+            ...(template.mimeType === undefined ? {} : { mimeType: template.mimeType }),
+            ...(template.annotations === undefined
+                ? {}
+                : { annotations: structuredClone(template.annotations) }),
+            ...(template._meta === undefined ? {} : { _meta: structuredClone(template._meta) }),
+        }));
+    }
+
+    async #allPrompts(ctx: Context, connection: McpClientConnection) {
+        const values = await collectMcpPages(
+            async (cursor) =>
+                await connection.client.listPrompts(
+                    cursor === undefined ? {} : { cursor },
+                    this.#requestOptions(ctx, connection.config.toolTimeoutMs),
+                ),
+            (page) => page.prompts,
+        );
+        return values.map((prompt) => ({
+            name: prompt.name,
+            ...(prompt.title === undefined ? {} : { title: prompt.title }),
+            ...(prompt.description === undefined ? {} : { description: prompt.description }),
+            ...(prompt.arguments === undefined
+                ? {}
+                : { arguments: structuredClone(prompt.arguments) }),
+            ...(prompt._meta === undefined ? {} : { _meta: structuredClone(prompt._meta) }),
+        }));
+    }
+
+    #mcpUserInputService(ctx: Context, agentId: string): McpUserInputService {
+        return {
+            request: async (request: McpUserInputRequest): Promise<McpUserInputResponse> => {
+                const pending = await this.#userInput.ask(
+                    ctx,
+                    agentId,
+                    {
+                        context: "An MCP server is asking for additional input.",
+                        questions: request.questions.map((question) => ({
+                            id: question.id,
+                            header: question.header,
+                            question: question.question.slice(0, 4_000),
+                            ...(question.options.length === 0
+                                ? {}
+                                : {
+                                      options: question.options.map((option) => ({
+                                          label: option.label,
+                                          description: option.description.slice(0, 2_000),
+                                      })),
+                                      multiSelect: question.multiSelect,
+                                  }),
+                        })),
+                    },
+                    request.requestId,
+                );
+                const settled = await this.#userInput.wait(ctx, agentId, pending.id);
+                if (settled.status !== "answered") return { status: "cancelled" };
+                return {
+                    status: "answered",
+                    answers: Object.fromEntries(
+                        Object.entries(settled.answers ?? {}).map(([id, answer]) => [
+                            id,
+                            userInputAnswerStrings(answer),
+                        ]),
+                    ),
+                };
+            },
+        };
     }
 }
 
-function runtimeOptions(options: McpModuleOptions): McpModuleOptions {
-    if (options === null || typeof options !== "object") return options;
-    const host = options.host;
-    return {
-        ...options,
-        host:
-            host === null || typeof host !== "object"
-                ? host
-                : {
-                      ...host,
-                      callTool: host.callTool,
-                      getPrompt: host.getPrompt,
-                      ...(host.getToolPolicy === undefined
-                          ? {}
-                          : { getToolPolicy: host.getToolPolicy }),
-                      listPrompts: host.listPrompts,
-                      listResourceTemplates: host.listResourceTemplates,
-                      listResources: host.listResources,
-                      listServers: host.listServers,
-                      listTools: host.listTools,
-                      readResource: host.readResource,
-                  },
-        ...(options.userInput === undefined
-            ? {}
-            : {
-                  userInput: {
-                      ...options.userInput,
-                      request: options.userInput.request,
-                  },
-              }),
-    } as McpModuleOptions;
+export function assertMcpModuleOptions(value: unknown): asserts value is McpModuleOptions {
+    if (!Value.Check(mcpModuleOptionsSchema, value)) {
+        throw new Error("MCP module options are invalid.");
+    }
 }
 
 function assertAgentId(agentId: string): string {
@@ -755,8 +992,60 @@ function assertAgentId(agentId: string): string {
 
 function assertUnique(values: readonly string[], kind: string): void {
     if (new Set(values).size !== values.length) {
-        throw new Error(`MCP host returned duplicate ${kind} identities.`);
+        throw new Error(`MCP server returned duplicate ${kind} identities.`);
     }
+}
+
+async function collectMcpPages<Page extends { readonly nextCursor?: string | undefined }, Item>(
+    fetchPage: (cursor: string | undefined) => Promise<Page>,
+    items: (page: Page) => readonly Item[],
+): Promise<Item[]> {
+    const collected: Item[] = [];
+    let cursor: string | undefined;
+    for (let count = 0; count < MAX_MCP_PAGE_SIZE; count += 1) {
+        const page = await fetchPage(cursor);
+        collected.push(...items(page));
+        if (collected.length > MAX_MCP_TOTAL_TOOLS) {
+            throw new Error("MCP catalog exceeded its configured bound.");
+        }
+        if (page.nextCursor === undefined) return collected;
+        if (page.nextCursor === cursor) throw new Error("MCP cursor did not advance.");
+        cursor = page.nextCursor;
+    }
+    throw new Error("MCP pagination exceeded its configured bound.");
+}
+
+function pageFrom<const Key extends string, Item>(
+    values: readonly Item[],
+    cursor: string | undefined,
+    limit: number,
+    key: Key,
+): { readonly [K in Key]: readonly Item[] } & { readonly nextCursor?: string } {
+    const offset = cursor === undefined ? 0 : Number(cursor);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > values.length) {
+        throw new Error("MCP cursor is invalid.");
+    }
+    const selected = values.slice(offset, offset + limit);
+    return {
+        [key]: selected,
+        ...(offset + selected.length < values.length
+            ? { nextCursor: String(offset + selected.length) }
+            : {}),
+    } as { readonly [K in Key]: readonly Item[] } & { readonly nextCursor?: string };
+}
+
+function userInputAnswerStrings(answer: unknown): string[] {
+    if (typeof answer === "string") return [answer];
+    if (!isRecord(answer)) return [];
+    const selected = Array.isArray(answer.selectedOptions)
+        ? answer.selectedOptions.filter((value): value is string => typeof value === "string")
+        : [];
+    return typeof answer.text === "string" ? [...selected, answer.text] : selected;
+}
+
+function errorMessage(error: unknown): string {
+    const text = error instanceof Error ? error.message : String(error);
+    return text.replaceAll(/\s+/gu, " ").slice(0, 2_000) || "Connection failed.";
 }
 
 function isMcpToolAllowed(server: McpToolPolicy, name: string): boolean {
@@ -773,7 +1062,7 @@ function assertCursorProgress(
 ): void {
     if (next === undefined) return;
     if (visibleCount === 0 || next === requested) {
-        throw new Error("MCP host returned a non-advancing cursor.");
+        throw new Error("MCP server returned a non-advancing cursor.");
     }
 }
 

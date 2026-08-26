@@ -160,6 +160,7 @@ describe("ConfigModule edge coverage", () => {
                 instructionsPath: join(root, "Happy", "Config", "AGENTS.md"),
                 localConfigPath: resolve(process.cwd(), "happy.toml"),
                 logPath: join(root, ".happy", "agent", "observation", "agent.log"),
+                mcpConfigPath: join(root, "Happy", "Config", "mcp.toml"),
                 observationHome: join(root, ".happy", "agent", "observation"),
                 pidPath: join(root, ".happy", "agent", "daemon.pid"),
                 publicHome: join(root, "Happy"),
@@ -388,6 +389,18 @@ describe("ConfigModule edge coverage", () => {
                     'emoji = "⏳"',
                 ].join("\n"),
             );
+            await writeLayer(
+                root,
+                "Happy/Config/mcp.toml",
+                [
+                    "[mcp_servers.docs]",
+                    'command = "docs-server"',
+                    "startup_timeout_sec = 0.001",
+                    "[mcp_servers.remote]",
+                    'url = "https://example.test/mcp"',
+                    "tool_timeout_sec = 2",
+                ].join("\n"),
+            );
             const configuration = (await ConfigModule.load(happyHome)).configuration;
 
             expect(configuration.values.permissions.protectedPaths).toEqual([
@@ -537,6 +550,25 @@ describe("ConfigModule edge coverage", () => {
                     "startup_timeout_sec = 1",
                     "tool_timeout_sec = 2",
                     "",
+                    "[mcp_servers.http]",
+                    'url = "https://mcp.example.test"',
+                    "enabled = false",
+                    'http_headers = { X_Test = "yes" }',
+                    'oauth_scopes = ["read"]',
+                    "startup_timeout_sec = 3",
+                    "tool_timeout_sec = 4",
+                ].join("\n"),
+            );
+            await writeLayer(
+                root,
+                "Happy/Config/mcp.toml",
+                [
+                    "[mcp_servers.stdio]",
+                    'command = "docs-server"',
+                    'args = ["--stdio"]',
+                    "enabled = true",
+                    "startup_timeout_sec = 1",
+                    "tool_timeout_sec = 2",
                     "[mcp_servers.http]",
                     'url = "https://mcp.example.test"',
                     "enabled = false",
@@ -763,6 +795,11 @@ describe("ConfigModule edge coverage", () => {
                     "[workspace]",
                     'sync = ["runtime.env"]',
                 ].join("\n"),
+            );
+            await writeLayer(
+                root,
+                "Happy/Config/mcp.toml",
+                '[mcp_servers.docs]\ncommand = "docs"\n',
             );
             const configuration = (await ConfigModule.load(join(root, ".happy"))).configuration;
             expect(configuration.provenance).toMatchObject({

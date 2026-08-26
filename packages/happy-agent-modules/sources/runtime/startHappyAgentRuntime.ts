@@ -47,6 +47,7 @@ import { HappyModule } from "../happy/index.js";
 import { HistoryModule } from "../history/index.js";
 import { ImageGenerationModule } from "../imageGeneration/index.js";
 import { MenuBarModule } from "../menuBar/index.js";
+import { McpModule } from "../mcp/index.js";
 import { ModelSwitchModule } from "../modelSwitch/ModelSwitchModule.js";
 import { MurmurModule } from "../murmur/index.js";
 import { ObservationModule } from "../observation/index.js";
@@ -136,6 +137,7 @@ export interface HappyAgentRuntimeModules {
     readonly imageGeneration: ImageGenerationModule;
     readonly installation: InstallationModule;
     readonly menuBar: MenuBarModule;
+    readonly mcp: McpModule;
     readonly modelSwitch: ModelSwitchModule;
     readonly murmur: MurmurModule<LibSQLDatabase>;
     readonly observation: ObservationModule;
@@ -419,6 +421,8 @@ export async function startHappyAgentRuntime(
         const collaboration = new CollaborationModule(config, abort);
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
+        const mcp = new McpModule(config, userInput);
+        registerShutdown("mcp", async () => await mcp.close());
         userInput.onEventTransactional(async (listenerCtx, event) => {
             if (event.type !== "user_input_answered") return;
             if (event.actingAgentId !== event.request.askingAgentId) return;
@@ -508,6 +512,7 @@ export async function startHappyAgentRuntime(
             imageGeneration,
             installation,
             menuBar,
+            mcp,
             modelSwitch,
             murmur,
             observation,
@@ -570,6 +575,7 @@ export async function startHappyAgentRuntime(
             workflows,
             scheduling,
             userInput,
+            mcp,
             search,
             imageGeneration,
             compute.skillsModule,

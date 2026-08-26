@@ -36,7 +36,7 @@ export function createMcpTool(
         description: tool.description ?? `Use ${tool.name} from ${serverName}.`,
         // Preserve the server's JSON Schema for providers while intentionally treating it as
         // opaque to TypeBox's ordinary argument checker. MCP itself validates the arguments at
-        // the injected host boundary; `Type.Unsafe` would make Value.Check throw on the external
+        // the server boundary; `Type.Unsafe` would make Value.Check throw on the external
         // schema's unregistered kind.
         parameters: Type.Unknown(tool.inputSchema),
         returnType: mcpToolResultSchema,

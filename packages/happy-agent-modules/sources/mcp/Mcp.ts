@@ -2,9 +2,8 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
 
 /**
- * MCP is deliberately described here without importing the SDK.  The SDK client, transports,
- * credentials, and configuration belong to Happy Agent; this package only receives the small protocol
- * values it needs from an injected host.
+ * MCP protocol values are described here independently from the SDK client and transports so the
+ * model-facing and persistence boundaries remain TypeBox-validated.
  */
 
 export const MAX_MCP_AGENT_ID_LENGTH = 256;
@@ -540,8 +539,8 @@ export type McpListPromptsInput = Static<typeof mcpListPromptsInputSchema>;
 export type McpGetPromptInput = Static<typeof mcpGetPromptInputSchema>;
 
 /**
- * The configuration is a Happy Agent-owned value.  It is included only in the trust/fingerprint
- * boundary, never used to create a client or choose a process/path in this package.
+ * The configuration is a Happy Agent-owned value used by the live MCP client lifecycle and by the
+ * stable fingerprint boundary.
  */
 const mcpCommonConfig = {
     ...mcpToolPolicyProperties,

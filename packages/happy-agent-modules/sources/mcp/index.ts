@@ -5,17 +5,6 @@ export {
     type McpModuleOptions,
 } from "./McpModule.js";
 export {
-    assertMcpHost,
-    mcpElicitationHandlerSchema,
-    mcpHostCallOptionsSchema,
-    mcpHostSchema,
-    type McpHost,
-    type McpHostCallOptions,
-    type McpHostElicitationRequest,
-    type McpHostResult,
-    type McpHostToolCall,
-} from "./McpHost.js";
-export {
     MAX_MCP_AGENT_ID_LENGTH,
     MAX_MCP_CONTENT_BLOCKS,
     MAX_MCP_CURSOR_LENGTH,
@@ -154,6 +143,7 @@ export {
     type McpUri,
 } from "./Mcp.js";
 export { createMcpProtocolTools } from "./createMcpProtocolTools.js";
+export { createMcpConfigurationTools } from "./createMcpConfigurationTools.js";
 export { createMcpTool } from "./createMcpTool.js";
 export {
     createMcpTrustUserInputRequest,
