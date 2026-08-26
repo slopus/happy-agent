@@ -660,6 +660,7 @@ export class ComputeModule implements AgentModule {
                     "AGENTS.md",
                     "AGENTS_SECURITY.md",
                     "happy.toml",
+                    "mcp.toml",
                     ...values.permissions.protectedPaths,
                     ...values.workspace.protectedSync,
                 ]),

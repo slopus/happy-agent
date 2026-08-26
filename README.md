@@ -418,8 +418,8 @@ missing. Existing files are never replaced. Set `HAPPY_TERMINAL_CONFIGURATION_DI
 to an absolute path to choose a different user configuration folder.
 
 Repository settings come only from `happy.toml`. Repository values win where
-both are allowed. MCP servers use these same Happy Agent-owned configuration layers;
-provider configuration files are not imported.
+both are allowed. MCP is separate: user-wide servers live in `~/Happy/Config/mcp.toml`, and a
+workspace can add servers in its root `mcp.toml`. Provider configuration files are not imported.
 
 Happy Agent keeps daemon state in `~/.happy/agent`, including its databases, token, socket, logs,
 and runtime configuration. `HAPPY_HOME_DIR` moves the `.happy` root. Happy Terminal keeps only
@@ -890,6 +890,10 @@ bearer_token_env_var = "ISSUES_MCP_TOKEN"
 MCP tools, resources, resource templates, prompts, pagination, form elicitation,
 bearer tokens, and OAuth client credentials are supported. Live tool discovery
 lets a session use tools added after startup.
+
+Put user-wide servers in `~/Happy/Config/mcp.toml`, or workspace servers in a root
+`mcp.toml`. Matching configurations share one live process across workspaces. Reload reconciles
+the current workspace by default and the user-wide catalog when called with `global = true`.
 
 Only configure servers you trust. Stdio servers run as local processes, receive
 the daemon environment, and are not restricted by the session filesystem

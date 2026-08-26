@@ -13,6 +13,18 @@ const configureMcpServerInputSchema = Type.Object(
     { additionalProperties: false },
 );
 
+const reloadMcpServersInputSchema = Type.Object(
+    {
+        global: Type.Optional(
+            Type.Boolean({
+                description:
+                    "Reload the user-wide ~/Happy/Config/mcp.toml catalog instead of this workspace's mcp.toml.",
+            }),
+        ),
+    },
+    { additionalProperties: false },
+);
+
 export function createMcpConfigurationTools(
     module: McpModule,
     agentId: string,
@@ -61,16 +73,19 @@ export function createMcpConfigurationTools(
             ],
             searchKeywords: ["reload MCP", "reconnect MCP", "refresh mcp.toml"],
             description:
-                "Rereads ~/Happy/Config/mcp.toml and replaces the live MCP connections without restarting the daemon.",
-            parameters: Type.Object({}, { additionalProperties: false }),
+                "Reconciles this workspace's mcp.toml with the live shared MCP connections. Set global to true to reconcile ~/Happy/Config/mcp.toml instead. Unchanged connections keep running.",
+            parameters: reloadMcpServersInputSchema,
             returnType: mcpServerPageSchema,
             requiresAutoOrFullAccess: true,
-            describeAutoPermissionAction: () =>
-                "reloading external MCP servers from ~/Happy/Config/mcp.toml",
+            describeAutoPermissionAction: ({ global }) =>
+                global === true
+                    ? "reconciling external MCP servers from ~/Happy/Config/mcp.toml"
+                    : "reconciling external MCP servers from this workspace's mcp.toml",
             shouldReviewInAutoMode: () => true,
             shouldRunInFullAccessInAutoMode: () => true,
-            execute: async (ctx) => {
-                await module.reload(ctx);
+            execute: async (ctx, input) => {
+                if (input.global === true) await module.reload(ctx);
+                else await module.reloadWorkspace(ctx, agentId);
                 return await module.listServerPage(ctx, agentId, {}, "auto");
             },
             toLLM: (page) => [{ type: "text", text: module.formatServerPageForModel(page) }],

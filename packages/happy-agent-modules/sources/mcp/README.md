@@ -1,16 +1,19 @@
 # MCP
 
 `McpModule` owns Happy Agent's MCP clients, transports, child processes, live connections, tools,
-and reload lifecycle. It depends on `ConfigModule` for the Happy-owned
-`~/Happy/Config/mcp.toml` path and parsed server records, and on `UserInputModule` for MCP
-elicitation. It does not inspect or import MCP configuration from Codex, Claude, or another model
-provider.
+workspace demand, and reload lifecycle. It depends on `ConfigModule` for parsing the Happy-owned
+`~/Happy/Config/mcp.toml` and workspace-root `mcp.toml` files, on `WorkspacesModule` for archival,
+and on `UserInputModule` for MCP elicitation. It does not inspect or import MCP configuration from
+Codex, Claude, or another model provider.
 
-The module connects enabled stdio and Streamable HTTP servers concurrently at startup. A failed
-server is reported as failed without preventing unrelated servers or the daemon from starting.
-`reload_mcp_servers` rereads `mcp.toml` and atomically swaps the live connection catalog;
-`configure_mcp_server` updates one server without exposing or replacing unrelated records and then
-performs the same online reload.
+The module connects enabled user-wide stdio and Streamable HTTP servers concurrently at startup.
+The first durable session in a workspace activates its workspace catalog; the last archived
+session or workspace archival releases it. Identical normalized configurations share one client
+and process across catalogs. A failed server is reported as failed without preventing unrelated
+servers or the daemon from starting. `reload_mcp_servers` reconciles the caller's workspace by
+default and the user-wide catalog with `global = true`; `configure_mcp_server` updates one
+user-wide server without exposing or replacing unrelated records and then performs the same online
+reconciliation.
 
 Every MCP operation remains on the shared permission surface. Catalog and resource inspection are
 intrinsically read-only but still declare the external boundary. Tool calls and prompt loading are

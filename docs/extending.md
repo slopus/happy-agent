@@ -397,17 +397,16 @@ not installed.
 
 ### Configuration
 
-Config layers, resolved in this order:
+MCP uses dedicated files rather than the ordinary `happy.toml` layers:
 
-| Source    | File                                                                                                    |
-| --------- | ------------------------------------------------------------------------------------------------------- |
-| `global`  | `happy.toml` in Happy Agent's config directory — `~/Happy/Config` on macOS or `~/happy/config` on Linux |
-| `runtime` | `~/.happy/agent/runtime.toml`                                                                           |
-| `project` | `happy.toml` in the project                                                                             |
+| Scope       | File                                                                                                  |
+| ----------- | ----------------------------------------------------------------------------------------------------- |
+| `global`    | `mcp.toml` in Happy Agent's config directory — `~/Happy/Config` on macOS or `~/happy/config` on Linux |
+| `workspace` | `mcp.toml` at the workspace root                                                                      |
 
-Global and runtime are trusted layers. Project entries are separate: a project
-server with the same name as a trusted one does not override it — the trusted one
-wins and is flagged `projectShadowed`.
+The user-wide entry wins when both catalogs use the same server name. Workspace catalogs activate
+on demand while they have an unarchived session. Identical normalized configurations share one
+connection/process across workspaces, and the final owner releasing a server closes it.
 
 A local stdio server:
 
@@ -466,9 +465,8 @@ These are product rules, enforced on the tool definitions themselves:
   server to do something — `call_mcp_tool` and `get_mcp_prompt` — are reviewed.
 - Server-supplied annotations such as `readOnlyHint` are untrusted metadata. They
   are never authorization evidence and never a reason to skip review.
-- MCP settings coming from a project require a one-time trust decision before the
-  server starts. The decision is fingerprinted and stored, and Happy Agent asks again if
-  the server configuration changes.
+- A workspace's root `mcp.toml` is protected project configuration, so changing it through an
+  agent file tool is reviewed and requires the protected-path elevation.
 - Stdio servers run as local processes with the daemon environment and are **not**
   restricted by the session filesystem sandbox. Only configure servers you trust.
 

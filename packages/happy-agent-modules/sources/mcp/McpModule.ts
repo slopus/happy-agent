@@ -1,10 +1,15 @@
+import { resolve } from "node:path";
+
 import { sql } from "drizzle-orm";
 import {
     agentDatabaseRun,
     type AgentDatabase,
+    type AgentModuleAgentLifecycle,
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
+    type AgentModuleSystemScope,
+    type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
@@ -13,6 +18,7 @@ import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import { ConfigModule, type HappyAgentConfigValues } from "../config/index.js";
 import { UserInputModule } from "../userInput/index.js";
+import { WorkspacesModule } from "../workspaces/index.js";
 
 import {
     MAX_MCP_PAGE_SIZE,
@@ -40,7 +46,6 @@ import {
     mcpAgentIdSchema,
     mcpElicitationRequestSchema,
     type McpCallToolInput,
-    type McpElicitationRequest,
     type McpGetPromptInput,
     type McpGetPromptResult,
     type McpPermissionMode,
@@ -78,9 +83,11 @@ import {
 import { listMcpServersTool } from "./tools/list_mcp_servers.js";
 import { mcpResultToContentBlocks } from "./mcpResultToContentBlocks.js";
 import { mergeMcpTools } from "./mergeMcpTools.js";
+import { mcpConnectionFingerprint } from "./mcpConnectionFingerprint.js";
 
 const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_OUTPUT_CHARACTERS = 12_000;
+const GLOBAL_CATALOG = "global";
 const outputCharactersSchema = Type.Integer({
     minimum: MIN_MCP_OUTPUT_CHARACTERS,
     maximum: MAX_MCP_OUTPUT_CHARACTERS,
@@ -114,6 +121,23 @@ export const mcpModuleOptionsSchema = Type.Object(
 );
 export type McpModuleOptions = Static<typeof mcpModuleOptionsSchema>;
 
+type McpServerConfig = HappyAgentConfigValues["mcpServers"][string];
+
+interface McpCatalogServer {
+    readonly config: McpServerConfig;
+    readonly connectionId?: string;
+}
+
+interface McpCatalog {
+    readonly servers: ReadonlyMap<string, McpCatalogServer>;
+}
+
+interface McpPooledConnection {
+    readonly references: Set<string>;
+    readonly connection?: McpClientConnection;
+    readonly failure?: string;
+}
+
 /**
  * One shared MCP capability serves every agent and owns the live clients, protocol operations,
  * validation, naming, permission declarations, and model rendering.
@@ -127,12 +151,25 @@ export class McpModule implements AgentModule {
     readonly #maxPageSize: number;
     readonly #maxOutputCharacters: number;
     readonly #reloadLock: AsyncLock = asyncLock({ reentry: "allow" });
-    #connections = new Map<string, McpClientConnection>();
-    #servers: HappyAgentConfigValues["mcpServers"] = {};
-    #failures = new Map<string, string>();
+    readonly #catalogs = new Map<string, McpCatalog>();
+    readonly #pool = new Map<string, McpPooledConnection>();
+    readonly #agentWorkspaces = new Map<string, string>();
+    readonly #workspaceAgents = new Map<string, Set<string>>();
+    readonly #archivedWorkspaces = new Set<string>();
+    readonly #workspaceFailures = new Map<string, string>();
+    readonly #unsubscribeWorkspaceEvents: () => void;
+    #agents: AgentSystemRef | undefined;
+    #context: Context | undefined;
     #initialReload: Promise<void> | undefined;
+    #closePromise: Promise<void> | undefined;
+    #closed = false;
 
-    constructor(config: ConfigModule, userInput: UserInputModule, options: McpModuleOptions = {}) {
+    constructor(
+        config: ConfigModule,
+        userInput: UserInputModule,
+        workspaces: WorkspacesModule,
+        options: McpModuleOptions = {},
+    ) {
         if (!Value.Check(mcpModuleOptionsSchema, options)) {
             throw new Error("MCP module options are invalid.");
         }
@@ -140,6 +177,18 @@ export class McpModule implements AgentModule {
         this.#userInput = userInput;
         this.#maxPageSize = options.maxPageSize ?? DEFAULT_PAGE_SIZE;
         this.#maxOutputCharacters = options.maxOutputCharacters ?? DEFAULT_OUTPUT_CHARACTERS;
+        this.#unsubscribeWorkspaceEvents = workspaces.onEvent(async (ctx, event) => {
+            if (event.type === "workspace_created") {
+                await this.#markWorkspaceActive(ctx, event.workspace.path);
+                return;
+            }
+            if (
+                (event.type === "workspace_updated" && event.change === "begin_archive") ||
+                event.type === "workspace_archived"
+            ) {
+                await this.#releaseWorkspace(ctx, event.workspace.path);
+            }
+        });
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -150,6 +199,7 @@ export class McpModule implements AgentModule {
          */
         beforeAgentLoop: async (ctx: Context, scope: AgentModuleScope): Promise<void> => {
             await this.#initialReload;
+            await this.#ensureAgentWorkspace(ctx, scope.agent.id);
             const servers = await this.#listAllServers(
                 ctx,
                 scope.agent.id,
@@ -196,6 +246,7 @@ export class McpModule implements AgentModule {
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             await this.#initialReload;
             const agentId = assertAgentId(scope.agent.id);
+            await this.#ensureAgentWorkspace(ctx, agentId);
             const servers = await this.#listAllServers(ctx, agentId, scope.agent.permissionMode);
             const connected = servers.filter((server) => server.status === "connected");
             const loadedTools: AnyAgentTool[] = [];
@@ -235,45 +286,101 @@ export class McpModule implements AgentModule {
                 ...protocolTools,
             ];
         },
+        agentCreated: async (
+            ctx: Context,
+            scope: AgentModuleSystemScope,
+            agent: AgentModuleAgentLifecycle,
+        ): Promise<void> => {
+            await this.#activateAgent(ctx, scope.agents, agent.id);
+        },
+        agentRestored: async (
+            ctx: Context,
+            scope: AgentModuleSystemScope,
+            agent: AgentModuleAgentLifecycle,
+        ): Promise<void> => {
+            await this.#activateAgent(ctx, scope.agents, agent.id);
+        },
+        agentArchived: async (
+            ctx: Context,
+            _scope: AgentModuleSystemScope,
+            agent: AgentModuleAgentLifecycle,
+        ): Promise<void> => {
+            await this.#releaseAgent(ctx, agent.id);
+        },
     };
 
-    readonly beforeStart = (ctx: Context): AgentModuleHooks => {
+    readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+        this.#agents = agents;
+        this.#context ??= ctx;
         this.#initialReload ??= this.reload(ctx).catch((error: unknown) => {
             ctx.log.warn(`Initial MCP discovery failed: ${errorMessage(error)}`);
         });
         return this.#hooks;
     };
 
-    /** Reread mcp.toml and atomically replace the live connection catalog. */
+    /** Reconcile the global mcp.toml without restarting unchanged shared connections. */
     async reload(ctx: Context): Promise<void> {
+        this.#rememberContext(ctx);
+        this.#assertOpen();
         await this.#reloadLock.runInLock(ctx, async () => {
+            this.#assertOpen();
             const servers = await this.#config.readMcpServers();
-            const connected = await Promise.all(
-                Object.entries(servers).map(async ([name, server]) => {
-                    if (server.enabled === false) return { name } as const;
+            const globalNames = new Set(Object.keys(servers));
+            const workspaceServers = await Promise.all(
+                [...this.#workspaceAgents.keys()].map(async (workspace) => {
                     try {
-                        return {
-                            name,
-                            connection: await McpClientConnection.connect(name, server),
-                        } as const;
+                        const workspaceCatalogServers = withoutServerNames(
+                            await this.#config.readWorkspaceMcpServers(workspace),
+                            globalNames,
+                        );
+                        this.#workspaceFailures.delete(workspace);
+                        return { workspace, servers: workspaceCatalogServers };
                     } catch (error) {
-                        return { name, error: errorMessage(error) } as const;
+                        this.#recordWorkspaceFailure(ctx, workspace, error);
+                        const current = this.#catalogs.get(workspaceCatalog(workspace));
+                        return current === undefined
+                            ? undefined
+                            : {
+                                  workspace,
+                                  servers: withoutServerNames(
+                                      catalogServerConfigs(current),
+                                      globalNames,
+                                  ),
+                              };
                     }
                 }),
             );
-            const nextConnections = new Map<string, McpClientConnection>();
-            const nextFailures = new Map<string, string>();
-            for (const result of connected) {
-                if ("connection" in result) nextConnections.set(result.name, result.connection);
-                if ("error" in result) nextFailures.set(result.name, result.error);
-            }
-            const previous = this.#connections;
-            this.#servers = servers;
-            this.#connections = nextConnections;
-            this.#failures = nextFailures;
-            await Promise.allSettled(
-                [...previous.values()].map(async (entry) => await entry.close()),
+            await this.#reconcileCatalogs(
+                ctx,
+                new Map([
+                    [GLOBAL_CATALOG, servers],
+                    ...workspaceServers.flatMap((entry) =>
+                        entry === undefined
+                            ? []
+                            : [[workspaceCatalog(entry.workspace), entry.servers] as const],
+                    ),
+                ]),
             );
+        });
+    }
+
+    /** Reconcile only the workspace catalog used by the calling agent. */
+    async reloadWorkspace(ctx: Context, agentId: string): Promise<void> {
+        this.#rememberContext(ctx);
+        this.#assertOpen();
+        assertAgentId(agentId);
+        await this.#ensureAgentWorkspace(ctx, agentId);
+        await this.#reloadLock.runInLock(ctx, async () => {
+            this.#assertOpen();
+            const workspace = this.#agentWorkspaces.get(agentId);
+            if (
+                workspace === undefined ||
+                this.#archivedWorkspaces.has(workspace) ||
+                !this.#workspaceAgents.get(workspace)?.has(agentId)
+            ) {
+                throw new Error("This session is not attached to an active workspace directory.");
+            }
+            await this.#reconcileWorkspace(ctx, workspace);
         });
     }
 
@@ -282,23 +389,39 @@ export class McpModule implements AgentModule {
         name: string,
         server: HappyAgentConfigValues["mcpServers"][string] | undefined,
     ): Promise<void> {
+        this.#assertOpen();
         await this.#config.updateMcpServer(ctx, name, server);
         await this.reload(ctx);
     }
 
     async close(): Promise<void> {
-        const connections = this.#connections;
-        this.#connections = new Map();
-        await Promise.allSettled(
-            [...connections.values()].map(async (entry) => await entry.close()),
-        );
+        if (this.#closePromise !== undefined) return await this.#closePromise;
+        this.#closed = true;
+        this.#unsubscribeWorkspaceEvents();
+        const close = async (): Promise<void> => {
+            const connections = [...this.#pool.values()].flatMap((entry) =>
+                entry.connection === undefined ? [] : [entry.connection],
+            );
+            this.#pool.clear();
+            this.#catalogs.clear();
+            this.#agentWorkspaces.clear();
+            this.#workspaceAgents.clear();
+            this.#archivedWorkspaces.clear();
+            this.#workspaceFailures.clear();
+            await Promise.allSettled(connections.map(async (entry) => await entry.close()));
+        };
+        this.#closePromise =
+            this.#context === undefined
+                ? close()
+                : this.#reloadLock.runInLock(this.#context, async () => await close());
+        await this.#closePromise;
     }
 
     async listServerPage(
         ctx: Context,
         agentId: string,
         query: McpServerPageQuery = {},
-        permissionMode: McpPermissionMode = "auto",
+        _permissionMode: McpPermissionMode = "auto",
     ): Promise<McpServerPage> {
         assertAgentId(agentId);
         if (!Value.Check(mcpServerPageQuerySchema, query)) {
@@ -313,19 +436,24 @@ export class McpModule implements AgentModule {
             ),
         };
         const all = await Promise.all(
-            Object.entries(this.#servers)
+            [...this.#effectiveServers(agentId).entries()]
                 .sort(([left], [right]) => left.localeCompare(right))
-                .map(async ([name, config]): Promise<McpServerSummary> => {
+                .map(async ([name, server]): Promise<McpServerSummary> => {
+                    const { config } = server;
                     if (config.enabled === false) {
                         return { name, status: "disabled", toolCount: 0 };
                     }
-                    const connection = this.#connections.get(name);
-                    if (connection === undefined) {
+                    const pooled =
+                        server.connectionId === undefined
+                            ? undefined
+                            : this.#pool.get(server.connectionId);
+                    const connection = pooled?.connection;
+                    if (connection === undefined || server.connectionId === undefined) {
                         return {
                             name,
                             status: "failed",
                             toolCount: 0,
-                            errorMessage: this.#failures.get(name) ?? "Connection failed.",
+                            errorMessage: pooled?.failure ?? "Connection failed.",
                         };
                     }
                     try {
@@ -397,7 +525,7 @@ export class McpModule implements AgentModule {
             ),
         };
         const raw = pageFrom(
-            await this.#allTools(ctx, this.#connection(normalized.server)),
+            await this.#allTools(ctx, this.#connection(agentId, normalized.server)),
             normalized.cursor,
             normalized.limit,
             "tools",
@@ -454,7 +582,7 @@ export class McpModule implements AgentModule {
             ),
         };
         const raw = pageFrom(
-            await this.#allResources(ctx, this.#connection(normalized.server)),
+            await this.#allResources(ctx, this.#connection(agentId, normalized.server)),
             normalized.cursor,
             normalized.limit,
             "resources",
@@ -515,7 +643,7 @@ export class McpModule implements AgentModule {
             ),
         };
         const raw = pageFrom(
-            await this.#allResourceTemplates(ctx, this.#connection(normalized.server)),
+            await this.#allResourceTemplates(ctx, this.#connection(agentId, normalized.server)),
             normalized.cursor,
             normalized.limit,
             "resourceTemplates",
@@ -551,7 +679,7 @@ export class McpModule implements AgentModule {
             ),
         };
         const raw = pageFrom(
-            await this.#allPrompts(ctx, this.#connection(normalized.server)),
+            await this.#allPrompts(ctx, this.#connection(agentId, normalized.server)),
             normalized.cursor,
             normalized.limit,
             "prompts",
@@ -591,14 +719,19 @@ export class McpModule implements AgentModule {
         if (policy !== undefined && !isMcpToolAllowed(policy, input.name)) {
             throw new Error(`The MCP tool "${input.name}" is disabled by the server policy.`);
         }
-        const raw = await this.#connection(input.server).callTool(ctx, input, async (request) => {
-            if (!Value.Check(mcpElicitationRequestSchema, request)) return { action: "decline" };
-            return await handleMcpElicitation(
-                ctx,
-                request,
-                this.#mcpUserInputService(ctx, agentId),
-            );
-        });
+        const raw = await this.#connection(agentId, input.server).callTool(
+            ctx,
+            input,
+            async (request) => {
+                if (!Value.Check(mcpElicitationRequestSchema, request))
+                    return { action: "decline" };
+                return await handleMcpElicitation(
+                    ctx,
+                    request,
+                    this.#mcpUserInputService(ctx, agentId),
+                );
+            },
+        );
         if (!Value.Check(mcpToolResultSchema, raw)) {
             throw new Error("MCP server returned an invalid tool result.");
         }
@@ -619,7 +752,7 @@ export class McpModule implements AgentModule {
         if (!Value.Check(mcpReadResourceInputSchema, input)) {
             throw new Error("MCP resource read input is invalid.");
         }
-        const connection = this.#connection(input.server);
+        const connection = this.#connection(agentId, input.server);
         const raw = await connection.client.readResource(
             { uri: input.uri },
             this.#requestOptions(ctx, connection.config.toolTimeoutMs),
@@ -644,7 +777,7 @@ export class McpModule implements AgentModule {
         if (!Value.Check(mcpGetPromptInputSchema, input)) {
             throw new Error("MCP prompt input is invalid.");
         }
-        const connection = this.#connection(input.server);
+        const connection = this.#connection(agentId, input.server);
         const raw = await connection.client.getPrompt(
             {
                 name: input.name,
@@ -834,15 +967,247 @@ export class McpModule implements AgentModule {
         return policy === undefined ? undefined : structuredClone(policy);
     }
 
-    #connection(name: string): McpClientConnection {
-        const connection = this.#connections.get(name);
+    #connection(agentId: string, name: string): McpClientConnection {
+        const server = this.#effectiveServers(agentId).get(name);
+        const pooled =
+            server?.connectionId === undefined ? undefined : this.#pool.get(server.connectionId);
+        const connection = pooled?.connection;
         if (connection !== undefined) return connection;
-        const failure = this.#failures.get(name);
         throw new Error(
-            failure === undefined
+            pooled?.failure === undefined
                 ? `MCP server "${name}" is not connected.`
-                : `MCP server "${name}" failed to connect: ${failure}`,
+                : `MCP server "${name}" failed to connect: ${pooled.failure}`,
         );
+    }
+
+    #effectiveServers(agentId: string): ReadonlyMap<string, McpCatalogServer> {
+        const servers = new Map<string, McpCatalogServer>();
+        const workspace = this.#agentWorkspaces.get(agentId);
+        if (workspace !== undefined) {
+            for (const [name, server] of this.#catalogs.get(workspaceCatalog(workspace))?.servers ??
+                []) {
+                servers.set(name, server);
+            }
+        }
+        // User configuration is trusted and keeps its name when a workspace declares a collision.
+        for (const [name, server] of this.#catalogs.get(GLOBAL_CATALOG)?.servers ?? []) {
+            servers.set(name, server);
+        }
+        return servers;
+    }
+
+    async #ensureAgentWorkspace(ctx: Context, agentId: string): Promise<void> {
+        if (this.#closed) return;
+        const workspace = this.#agentWorkspaces.get(agentId);
+        if (workspace !== undefined && this.#catalogs.has(workspaceCatalog(workspace))) return;
+        const agents = this.#agents;
+        if (agents === undefined) return;
+        await this.#activateAgent(ctx, agents, agentId);
+    }
+
+    async #activateAgent(ctx: Context, agents: AgentSystemRef, agentId: string): Promise<void> {
+        this.#rememberContext(ctx);
+        if (this.#closed) return;
+        const config = await agents.config(ctx, agentId);
+        const workspace = config?.environment?.workingDirectory;
+        if (workspace === undefined) {
+            await this.#releaseAgent(ctx, agentId);
+            return;
+        }
+        await this.#reloadLock.runInLock(ctx, async () => {
+            if (this.#closed) return;
+            const normalized = workspacePath(workspace);
+            if (this.#archivedWorkspaces.has(normalized)) return;
+            const previous = this.#agentWorkspaces.get(agentId);
+            const catalogId = workspaceCatalog(normalized);
+            if (previous === normalized && this.#catalogs.has(catalogId)) return;
+            if (previous !== undefined && previous !== normalized) {
+                await this.#releaseAgentLocked(agentId, previous);
+            }
+            const demand = this.#workspaceAgents.get(normalized) ?? new Set<string>();
+            const first = demand.size === 0;
+            this.#agentWorkspaces.set(agentId, normalized);
+            demand.add(agentId);
+            this.#workspaceAgents.set(normalized, demand);
+            if (first || !this.#catalogs.has(catalogId)) {
+                try {
+                    await this.#reconcileWorkspace(ctx, normalized);
+                } catch (error) {
+                    this.#recordWorkspaceFailure(ctx, normalized, error);
+                }
+            }
+        });
+    }
+
+    async #releaseAgent(ctx: Context, agentId: string): Promise<void> {
+        this.#rememberContext(ctx);
+        await this.#reloadLock.runInLock(ctx, async () => {
+            const workspace = this.#agentWorkspaces.get(agentId);
+            if (workspace === undefined) return;
+            await this.#releaseAgentLocked(agentId, workspace);
+        });
+    }
+
+    async #releaseAgentLocked(agentId: string, workspace: string): Promise<void> {
+        this.#agentWorkspaces.delete(agentId);
+        const demand = this.#workspaceAgents.get(workspace);
+        demand?.delete(agentId);
+        if (demand !== undefined && demand.size > 0) return;
+        this.#workspaceAgents.delete(workspace);
+        this.#workspaceFailures.delete(workspace);
+        await this.#removeCatalog(workspaceCatalog(workspace));
+    }
+
+    async #releaseWorkspace(ctx: Context, workspace: string): Promise<void> {
+        this.#rememberContext(ctx);
+        await this.#reloadLock.runInLock(ctx, async () => {
+            const normalized = workspacePath(workspace);
+            this.#archivedWorkspaces.add(normalized);
+            for (const agentId of this.#workspaceAgents.get(normalized) ?? []) {
+                this.#agentWorkspaces.delete(agentId);
+            }
+            this.#workspaceAgents.delete(normalized);
+            this.#workspaceFailures.delete(normalized);
+            await this.#removeCatalog(workspaceCatalog(normalized));
+        });
+    }
+
+    async #markWorkspaceActive(ctx: Context, workspace: string): Promise<void> {
+        this.#rememberContext(ctx);
+        await this.#reloadLock.runInLock(ctx, async () => {
+            if (this.#closed) return;
+            const normalized = workspacePath(workspace);
+            this.#archivedWorkspaces.delete(normalized);
+            this.#workspaceFailures.delete(normalized);
+        });
+    }
+
+    async #reconcileWorkspace(ctx: Context, workspace: string): Promise<void> {
+        if (
+            this.#closed ||
+            this.#archivedWorkspaces.has(workspace) ||
+            (this.#workspaceAgents.get(workspace)?.size ?? 0) === 0
+        ) {
+            throw new Error("The workspace no longer requires an MCP catalog.");
+        }
+        const servers = await this.#config.readWorkspaceMcpServers(workspace);
+        const globalNames = new Set(this.#catalogs.get(GLOBAL_CATALOG)?.servers.keys() ?? []);
+        await this.#reconcileCatalog(
+            ctx,
+            workspaceCatalog(workspace),
+            withoutServerNames(servers, globalNames),
+        );
+        this.#workspaceFailures.delete(workspace);
+    }
+
+    async #reconcileCatalog(
+        ctx: Context,
+        catalogId: string,
+        servers: HappyAgentConfigValues["mcpServers"],
+    ): Promise<void> {
+        await this.#reconcileCatalogs(ctx, new Map([[catalogId, servers]]));
+    }
+
+    async #reconcileCatalogs(
+        ctx: Context,
+        catalogs: ReadonlyMap<string, HappyAgentConfigValues["mcpServers"]>,
+    ): Promise<void> {
+        const desiredCatalogs = new Map<string, McpCatalog>();
+        const connectionInputs = new Map<
+            string,
+            { readonly config: McpServerConfig; readonly name: string }
+        >();
+        for (const [catalogId, servers] of catalogs) {
+            const desired = new Map<string, McpCatalogServer>();
+            for (const [name, config] of Object.entries(servers)) {
+                if (config.enabled === false) {
+                    desired.set(name, { config });
+                    continue;
+                }
+                const connectionId = mcpConnectionFingerprint(config);
+                desired.set(name, { config, connectionId });
+                connectionInputs.set(connectionId, { config, name });
+            }
+            desiredCatalogs.set(catalogId, { servers: desired });
+        }
+
+        const attempts = await Promise.all(
+            [...connectionInputs.entries()].map(async ([connectionId, input]) => {
+                const existing = this.#pool.get(connectionId);
+                if (existing?.connection !== undefined) return undefined;
+                try {
+                    return {
+                        connectionId,
+                        connection: await McpClientConnection.connect(input.name, input.config),
+                    } as const;
+                } catch (error) {
+                    return {
+                        connectionId,
+                        failure: errorMessage(error),
+                    } as const;
+                }
+            }),
+        );
+        for (const attempt of attempts) {
+            if (attempt === undefined) continue;
+            const references =
+                this.#pool.get(attempt.connectionId)?.references ?? new Set<string>();
+            this.#pool.set(attempt.connectionId, {
+                references,
+                ...(attempt.connection === undefined ? {} : { connection: attempt.connection }),
+                ...(attempt.failure === undefined ? {} : { failure: attempt.failure }),
+            });
+        }
+
+        // Every connection needed by the batch is ready or has a bounded failure before any
+        // visible catalog changes. The map writes below are synchronous, so readers see the whole
+        // old batch or the whole new one rather than a global/workspace half-state.
+        for (const [catalogId, desired] of desiredCatalogs) {
+            for (const connectionId of catalogConnectionIds(this.#catalogs.get(catalogId))) {
+                this.#pool.get(connectionId)?.references.delete(catalogId);
+            }
+            for (const connectionId of catalogConnectionIds(desired)) {
+                this.#pool.get(connectionId)?.references.add(catalogId);
+            }
+        }
+        for (const [catalogId, desired] of desiredCatalogs) {
+            this.#catalogs.set(catalogId, desired);
+        }
+        await this.#closeUnreferencedConnections();
+    }
+
+    async #removeCatalog(catalogId: string): Promise<void> {
+        const catalog = this.#catalogs.get(catalogId);
+        this.#catalogs.delete(catalogId);
+        for (const connectionId of catalogConnectionIds(catalog)) {
+            this.#pool.get(connectionId)?.references.delete(catalogId);
+        }
+        await this.#closeUnreferencedConnections();
+    }
+
+    async #closeUnreferencedConnections(): Promise<void> {
+        const closing: McpClientConnection[] = [];
+        for (const [connectionId, pooled] of this.#pool) {
+            if (pooled.references.size > 0) continue;
+            this.#pool.delete(connectionId);
+            if (pooled.connection !== undefined) closing.push(pooled.connection);
+        }
+        await Promise.allSettled(closing.map(async (connection) => await connection.close()));
+    }
+
+    #rememberContext(ctx: Context): void {
+        this.#context ??= ctx;
+    }
+
+    #assertOpen(): void {
+        if (this.#closed) throw new Error("The MCP module is closed.");
+    }
+
+    #recordWorkspaceFailure(ctx: Context, workspace: string, error: unknown): void {
+        const message = errorMessage(error);
+        if (this.#workspaceFailures.get(workspace) === message) return;
+        this.#workspaceFailures.set(workspace, message);
+        ctx.log.warn(`Workspace MCP discovery failed for ${workspace}: ${message}`);
     }
 
     #requestOptions(ctx: Context, configuredTimeout: number | undefined) {
@@ -1041,6 +1406,36 @@ function userInputAnswerStrings(answer: unknown): string[] {
         ? answer.selectedOptions.filter((value): value is string => typeof value === "string")
         : [];
     return typeof answer.text === "string" ? [...selected, answer.text] : selected;
+}
+
+function workspacePath(path: string): string {
+    if (path.length === 0 || path.length > 4_096) throw new Error("Workspace path is invalid.");
+    return resolve(path);
+}
+
+function workspaceCatalog(path: string): string {
+    return `workspace:${path}`;
+}
+
+function catalogConnectionIds(catalog: McpCatalog | undefined): ReadonlySet<string> {
+    return new Set(
+        [...(catalog?.servers.values() ?? [])].flatMap((server) =>
+            server.connectionId === undefined ? [] : [server.connectionId],
+        ),
+    );
+}
+
+function withoutServerNames(
+    servers: HappyAgentConfigValues["mcpServers"],
+    omitted: ReadonlySet<string>,
+): HappyAgentConfigValues["mcpServers"] {
+    return Object.fromEntries(Object.entries(servers).filter(([name]) => !omitted.has(name)));
+}
+
+function catalogServerConfigs(catalog: McpCatalog): HappyAgentConfigValues["mcpServers"] {
+    return Object.fromEntries(
+        [...catalog.servers.entries()].map(([name, server]) => [name, server.config]),
+    );
 }
 
 function errorMessage(error: unknown): string {

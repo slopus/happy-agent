@@ -134,7 +134,7 @@ remembered timestamp, but proceed when no read-log entry exists. That is what th
 Permissions are decided per path or per command, not per tool. `shouldReviewComputePath` resolves
 the proposed path, checks it stays inside `compute.cwd`, and — following every symbolic link with
 `canonicalComputePath` — checks it still stays inside once resolved; anything unresolved or leaving
-the workspace is reviewed. Writes to `.git` control files and the root `happy.toml` or
+the workspace is reviewed. Writes to `.git` control files and the root `happy.toml`, `mcp.toml`, or
 `AGENTS_SECURITY.md` are reviewed even when they remain inside the workspace. The host compute
 receives the reviewed Agent Base mode on the actual operation and applies its own configured host
 policy. Shell commands take the opposite default — sandboxed unless the model explicitly asks to

@@ -1,3 +1,6 @@
+import { access, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -11,6 +14,20 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 const label = process.argv[2] ?? "fixture";
+const startupMarker = process.argv[3];
+const startupRelease = process.argv[4];
+
+if (startupMarker !== undefined && startupRelease !== undefined) {
+    await writeFile(startupMarker, "started", "utf8");
+    for (;;) {
+        try {
+            await access(startupRelease);
+            break;
+        } catch {
+            await delay(5);
+        }
+    }
+}
 const server = new Server(
     { name: `${label}-server`, version: "1.0.0" },
     { capabilities: { prompts: {}, resources: {}, tools: {} } },
@@ -30,7 +47,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     ],
 }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => ({
-    content: [{ type: "text", text: `${label}:${String(request.params.arguments?.text ?? "")}` }],
+    content: [
+        {
+            type: "text",
+            text:
+                request.params.arguments?.text === "__process_id__"
+                    ? String(process.pid)
+                    : `${label}:${String(request.params.arguments?.text ?? "")}`,
+        },
+    ],
 }));
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [{ uri: `fixture://${label}`, name: `${label} resource` }],

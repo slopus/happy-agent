@@ -1547,18 +1547,19 @@ export class ConfigModule implements AgentModule {
 
     /** Read the Happy-owned MCP catalog fresh so an online reload sees edits immediately. */
     async readMcpServers(): Promise<HappyAgentConfigValues["mcpServers"]> {
-        const source = await readConfigSource(this.configuration.paths.mcpConfigPath, "global");
-        const misplaced = Object.keys(source.values).filter((key) => key !== "mcp_servers");
-        if (misplaced.length > 0) {
-            throw new Error(
-                `MCP configuration may contain only mcp_servers, not ${misplaced.join(", ")}.`,
-            );
-        }
-        const servers = deepFreeze(
-            normalizeMcpServers(source.values.mcp_servers ?? {}),
-        ) as HappyAgentConfigValues["mcpServers"];
+        const servers = await readMcpConfigurationFile(this.configuration.paths.mcpConfigPath);
         this.#mcpServers = servers;
         return servers;
+    }
+
+    /** Read the MCP catalog owned by one workspace without merging it into machine settings. */
+    async readWorkspaceMcpServers(
+        workspacePath: string,
+    ): Promise<HappyAgentConfigValues["mcpServers"]> {
+        if (workspacePath.length === 0 || workspacePath.length > MAX_PATH_LENGTH) {
+            throw new Error("Workspace path is invalid.");
+        }
+        return await readMcpConfigurationFile(join(resolve(workspacePath), "mcp.toml"));
     }
 
     /** The most recently loaded Happy-owned MCP catalog. */
@@ -1920,6 +1921,21 @@ interface ReadSource {
     readonly unknownSettings: readonly string[];
     readonly unknownSettingsTruncated: boolean;
     readonly values: PartialValues;
+}
+
+async function readMcpConfigurationFile(
+    path: string,
+): Promise<HappyAgentConfigValues["mcpServers"]> {
+    const source = await readConfigSource(path, "global");
+    const misplaced = Object.keys(source.values).filter((key) => key !== "mcp_servers");
+    if (misplaced.length > 0) {
+        throw new Error(
+            `MCP configuration may contain only mcp_servers, not ${misplaced.join(", ")}.`,
+        );
+    }
+    return deepFreeze(
+        normalizeMcpServers(source.values.mcp_servers ?? {}),
+    ) as HappyAgentConfigValues["mcpServers"];
 }
 
 function sourceSnapshot(source: ReadSource): HappyAgentConfigSource {

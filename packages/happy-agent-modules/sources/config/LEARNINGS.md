@@ -17,10 +17,11 @@ may persist a scripted provider's compatibility protocol (for example, `gym` as 
 must not add the protocol's curated production models to the scripted provider after a restart.
 For every provider ID represented by scripted models, expose exactly those scripted routes.
 
-## MCP has one separate global source
+## MCP has dedicated global and workspace sources
 
 Combining MCP records into `happy.toml` made MCP look configured while provider and runtime wiring
-could disagree about discovery. MCP now comes only from `~/Happy/Config/mcp.toml`; project,
-runtime, Codex, Claude, and other provider MCP settings do not enter the Happy MCP catalog. The
-config module owns the path, parsing, bounded validation, and atomic one-server updates, while the
-MCP module owns live clients and reload.
+could disagree about discovery. MCP now comes from dedicated files: `~/Happy/Config/mcp.toml` for
+the user's catalog and root `mcp.toml` for a workspace catalog. Runtime, Codex, Claude, and other
+provider MCP settings do not enter the Happy MCP catalog. The config module owns parsing, bounded
+validation, the global path, and atomic global one-server updates, while the MCP module owns live
+clients, workspace demand, sharing, and reconciliation.

@@ -222,7 +222,7 @@ describe("ComputeModule", () => {
         );
     });
 
-    it.each(["happy.toml", "AGENTS_SECURITY.md"])(
+    it.each(["happy.toml", "mcp.toml", "AGENTS_SECURITY.md"])(
         "reviews writes to protected project config %s",
         async (name) => {
             const compute = new FakeCompute();

@@ -24,10 +24,11 @@ machine settings (credentials, provider
 selection, daemon settings, permission mode, and observation) are filtered
 before merging. Precedence is global → project → runtime.
 
-MCP is deliberately separate. Its only source is the global `mcp.toml`; MCP entries in global,
-project, runtime, Codex, Claude, or other provider configuration are ignored by the live MCP
-catalog. `readMcpServers()` reads this file fresh for online reload, and `updateMcpServer()`
-canonically updates one named server while preserving the other server records.
+MCP is deliberately separate. User-wide servers come from the global `mcp.toml`, and
+`readWorkspaceMcpServers()` reads a workspace root's own `mcp.toml`. MCP entries in `happy.toml`,
+runtime, Codex, Claude, or other provider configuration are ignored by the live MCP catalog.
+`readMcpServers()` reads the user file fresh for online reload, and `updateMcpServer()` canonically
+updates one named global server while preserving the other server records.
 
 `runtime.toml` is generated and daemon-owned. Startup rewrites its known values canonically, and
 runtime mutations replace it atomically; comments and unknown fields are intentionally not

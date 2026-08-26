@@ -1,7 +1,11 @@
 import { isPathInside, joinComputePath } from "./resolveComputePath.js";
 
 /** Root project files that change the boundary future commands run inside. */
-export const PROJECT_PROTECTED_COMPUTE_FILE_NAMES = ["happy.toml", "AGENTS_SECURITY.md"] as const;
+export const PROJECT_PROTECTED_COMPUTE_FILE_NAMES = [
+    "happy.toml",
+    "mcp.toml",
+    "AGENTS_SECURITY.md",
+] as const;
 
 /**
  * Whether the machine guards this path even inside the workspace. The compute names them — Git
