@@ -7,6 +7,7 @@ and exposes one deeply frozen snapshot.
 ```text
 <parent>/
 ├── .happy/
+│   ├── docs/
 │   └── agent/
 │       ├── agent.sqlite
 │       └── runtime.toml

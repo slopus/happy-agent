@@ -1,4 +1,5 @@
 import { startHappyAgentDaemon, type HappyAgentDaemon } from "../main.js";
+import { syncHappyAgentDocs } from "../documentation/syncHappyAgentDocs.js";
 import { removeDaemonPidSync } from "./daemonPid.js";
 import { createGymInferenceFromEnvironment } from "./gymInference.js";
 import { getDaemonIdentity } from "./getDaemonIdentity.js";
@@ -22,6 +23,7 @@ export async function runAgentDaemon(
     const identity = getDaemonIdentity();
     const gymInference = createGymInferenceFromEnvironment();
     const paths = getHappyDaemonPaths();
+    await syncHappyAgentDocs(paths.happyHome);
     const persistPid = options.persistPid ?? true;
     const hardExit = options.hardExit ?? persistPid;
     if (persistPid) {

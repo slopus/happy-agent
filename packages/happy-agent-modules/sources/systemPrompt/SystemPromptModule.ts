@@ -10,6 +10,7 @@ import {
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
+import { join } from "node:path";
 
 import type { ConfigModule } from "../config/index.js";
 import type { ComputeModule } from "../compute/index.js";
@@ -166,6 +167,8 @@ export class SystemPromptModule implements AgentModule {
                     availableModels: this.#models,
                     currentModel: scope.agent.model,
                     currentProvider: scope.agent.provider,
+                    designSystemPath: join(this.#config.configuration.paths.docsHome, "DESIGN.md"),
+                    documentationPath: join(this.#config.configuration.paths.docsHome, "README.md"),
                 }),
             );
         }

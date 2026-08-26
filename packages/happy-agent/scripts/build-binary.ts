@@ -540,6 +540,7 @@ export function resolveBinaryForTarget(key, binaryPath) {
                 `export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64"];\nexport { getMenuBarApp as resolveMenuBarApp } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
         });
     }
+    addDocumentationAdapter(adapters);
     addPermissionPromptAdapter(adapters, modulesRoot);
     addAdapter(adapters, onlyMatchingFile(justBashChunks, /^js-exec-[A-Z0-9]+\.js$/u), {
         name: "just-bash JavaScript worker resolver",
@@ -552,6 +553,36 @@ export function resolveBinaryForTarget(key, binaryPath) {
         adapt: adaptJustBashSqliteChunk,
     });
     return adapters;
+}
+
+function addDocumentationAdapter(adapters: Map<string, SourceAdapter>): void {
+    const docsRoot = join(happyAgentRoot, "dist", "docs");
+    const documents = listDocumentationFiles(docsRoot).map((path) => ({
+        contents: readFileSync(path, "utf8"),
+        relativePath: path.slice(docsRoot.length + 1),
+    }));
+    if (documents.length === 0) {
+        throw new Error("The Happy Agent distribution contains no documentation.");
+    }
+    addAdapter(adapters, join(happyAgentRoot, "dist", "documentation", "syncHappyAgentDocs.js"), {
+        name: "Happy Agent documentation",
+        required: true,
+        adapt: () =>
+            `import { syncHappyAgentDocumentation } from "./syncHappyAgentDocumentation.js";\n` +
+            `const documents = ${JSON.stringify(documents)};\n` +
+            `export async function syncHappyAgentDocs(happyHome) { await syncHappyAgentDocumentation(happyHome, documents); }\n`,
+    });
+}
+
+function listDocumentationFiles(directory: string): string[] {
+    return readdirSync(directory, { withFileTypes: true })
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .flatMap((entry) => {
+            const path = join(directory, entry.name);
+            if (entry.isDirectory()) return listDocumentationFiles(path);
+            if (entry.isFile()) return [path];
+            throw new Error(`The Happy Agent documentation contains an unsafe entry: ${path}`);
+        });
 }
 
 function adaptBunComputePtyTransport(source: string): string {

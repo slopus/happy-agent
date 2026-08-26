@@ -2,9 +2,7 @@
 
 Welcome. If you are a coding agent reading this, you are almost certainly
 _running inside the system these pages describe_. This folder ships with Happy Agent
-itself and is exposed read-only to agents: on the local host at the installed
-package's `dist/docs` folder, and inside managed Docker containers at
-`/happy/docs`. Its purpose is simple: give you enough understanding of Happy Agent and
+itself and is exposed read-only to agents. Its purpose is simple: give you enough understanding of Happy Agent and
 Happy that you can work well inside them — and, when asked, **extend them**.
 
 ## What is Happy Agent?
@@ -51,15 +49,15 @@ When you are driven through either of them rather than a terminal,
 
 Read these in whatever order your task demands; each page stands alone.
 
-| Page                                                       | What it tells you                                                                                                                                                                                                          |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [architecture.md](architecture.md)                         | How Happy Agent is put together: daemon and TUI, the protocol between them, sessions and durability, providers and model catalogs, inference and compaction, persistence, and how the codebase is organized into packages. |
-| [workspaces.md](workspaces.md)                             | What a workspace is (a Git worktree on its own branch), how to create, delegate into, and archive one, where they live on disk, and when making one is actually the right call.                                            |
-| [agents-and-collaboration.md](agents-and-collaboration.md) | Subagents, follow-up messages, the `agent_me` / `agent_info` / `agent_send` handshake, scheduling, durable waits, presence, and the concurrency model.                                                                     |
-| [permissions-and-sandbox.md](permissions-and-sandbox.md)   | The four permission modes, the single cross-provider sandbox, how Auto review works, escalation syntax per provider, and why a denied action must never be retried by another route.                                       |
-| [extending.md](extending.md)                               | How to extend Happy Agent from inside: plugins (TypeScript processes with MCP tools and UI), skills, MCP servers, Happy Agent Connect integrations, and subagents as a runtime extension mechanism.                        |
-| [DESIGN.md](DESIGN.md)                                     | The visual specification for a Happy plugin app: host style variables, surfaces, layout grid, typography, controls, states, and a copyable baseline. Read it before designing or building a Happy applet or plugin UI.     |
-| [happy.md](happy.md)                                       | The Happy family: encrypted remote access to agents with Happy, the collaborative desktop workspace of Happy 2, how each connects to Happy Agent, and what an agent should know when driven through them.                  |
+| Page                                                       | What it tells you                                                                                                                                                                                                                 |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [architecture.md](architecture.md)                         | How Happy Agent is put together: daemon and TUI, the protocol between them, sessions and durability, providers and model catalogs, inference and compaction, persistence, and how the codebase is organized into packages.        |
+| [workspaces.md](workspaces.md)                             | What a workspace is (a Git worktree on its own branch), how to create, delegate into, and archive one, where they live on disk, and when making one is actually the right call.                                                   |
+| [agents-and-collaboration.md](agents-and-collaboration.md) | Subagents, follow-up messages, the `agent_me` / `agent_info` / `agent_send` handshake, scheduling, durable waits, presence, and the concurrency model.                                                                            |
+| [permissions-and-sandbox.md](permissions-and-sandbox.md)   | The four permission modes, the single cross-provider sandbox, how Auto review works, escalation syntax per provider, and why a denied action must never be retried by another route.                                              |
+| [extending.md](extending.md)                               | How to extend Happy Agent from inside: plugins (TypeScript processes with MCP tools and UI), skills, MCP servers, Happy Agent Connect integrations, and subagents as a runtime extension mechanism.                               |
+| [DESIGN.md](DESIGN.md)                                     | The Happy design system for web pages and interfaces: variables, surfaces, layout grid, typography, controls, states, and a copyable baseline. Read it for temporary pages or whenever the user asks for Happy's visual language. |
+| [happy.md](happy.md)                                       | The Happy family: encrypted remote access to agents with Happy, the collaborative desktop workspace of Happy 2, how each connects to Happy Agent, and what an agent should know when driven through them.                         |
 
 ## If you want to extend yourself
 

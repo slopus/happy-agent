@@ -1,13 +1,15 @@
 # build scripts
 
 The package's ordinary TypeScript build produces its published Node-compatible
-JavaScript distribution. `build-binary.ts` takes that distribution and compiles
+JavaScript distribution and copies the repository's `docs/` into `dist/docs/`.
+`build-binary.ts` takes that distribution and compiles
 target-specific Bun executables. The binary compiler owns all platform asset
 discovery and adapts third-party runtime-selected native packages at the bundle
 boundary; product code remains runtime-neutral.
 
 ```text
 sources/ ----> tsc ------> dist/cli.js (Node or Bun)
+docs/ ----> copy-docs ---> dist/docs/
                               |
                               +--> build-binary.ts --> dist/bin/happy-agent-<target>
 ```

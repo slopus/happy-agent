@@ -1,153 +1,102 @@
-# Happy (2) plugin app design
+# Happy design system
 
-This is the authoritative visual specification for a **plugin app**: the HTML
-document a Happy (2) plugin ships and Happy renders inside a sandboxed iframe
-(an MCP App view, or an applet served on its own isolated origin).
+This is the authoritative visual specification for web pages and interfaces
+designed in Happy's visual language. Use it for temporary pages, prototypes,
+product surfaces, and any page the user asks to be built with the Happy design
+system.
 
 It is written to be followed literally. Every rule states a name, a number, or a
 condition. Where a choice exists, this document makes it for you. If you are a
-model generating a plugin app and you are unsure what something should look
+model generating an interface and you are unsure what something should look
 like, the answer is in here; do not invent one.
 
 ## 0. How to use this document
 
-**Precedence.** Three contracts apply to a plugin app, in this order:
+**Precedence.** Three contracts apply, in this order:
 
-1. The **MCP Apps specification** (`@modelcontextprotocol/ext-apps`). It defines
-   the handshake, the host context, and the closed set of style variables. Never
-   violate it.
-2. **This document.** It says how a Happy plugin app should look and behave
-   inside that specification.
-3. Your plugin's own product decisions — content, information architecture,
+1. The user's explicit requirements for the page.
+2. **This document.** It defines the Happy visual language and interaction
+   defaults.
+3. The page's own product decisions — content, information architecture, and
    feature set.
 
-The repository's root `DESIGN.md` is the contract for **Happy's own native UI**,
-written and reviewed inside the Happy codebase. It is _not_ the contract for a
-plugin app and you do not need to read it. This document deliberately restates
-every shared value (grid, radii, control heights, type scale) so a plugin app is
-self-contained. Where a number appears in both, it is the same number.
-
-**The one-sentence summary.** A Happy plugin app is a quiet, dense, neutral
-desktop surface built from flex rows and columns on a 4 px grid, painted only
-with host-provided CSS variables, with exactly one accent colour used only where
+**The one-sentence summary.** A Happy-designed page is a quiet, dense, neutral
+desktop surface built from flex rows and columns on a 4 px grid, painted from
+the design variables in §5, with exactly one accent colour used only where
 something is interactive or selected.
 
-**Read at minimum:** §1 (host contract), §2 (surfaces and sizes), §5 (variable
-reference), §6 (typography), §11.6 (what to render before you are connected),
-§16 (anti-patterns), §18 (checklist). §17 is a complete working baseline you can
-copy verbatim.
+**Read at minimum:** §1 (foundation), §2 (surfaces and sizes), §5 (variable
+reference), §6 (typography), §11 (states), §16 (anti-patterns), and §18
+(checklist). §17 is a complete working baseline you can copy verbatim.
 
 ---
 
-## 1. The host contract
+## 1. Foundation
 
-### 1.1 How appearance reaches your app
+### 1.1 The design-variable contract
 
-Your app runs in an iframe on a different origin from Happy. It cannot read
-Happy's stylesheets, DOM, or fonts. Everything about appearance arrives as data
-in the **host context**, over the MCP Apps postMessage bridge:
+The variables in §5 are the complete visual vocabulary. A page may receive
+them from its surrounding product, or define them itself from the fallback
+values in §5.4. Components consume variables and never depend on a particular
+framework, runtime, or container.
 
-| Field                     | What it carries                                                         |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `theme`                   | `"light"` or `"dark"` — the appearance Happy is currently rendering in. |
-| `styles.variables`        | The standard MCP Apps CSS variables, resolved from Happy's live theme.  |
-| `happy2/styles.variables` | Happy's extension: the roles the standard set has no key for (§5.3).    |
-| `displayMode`             | `"inline"` or `"fullscreen"` — which surface you are on (§2).           |
-| `containerDimensions`     | The space Happy allocated you **at connect time only** — see below.     |
-| `platform`                | Always `"desktop"` in Happy.                                            |
-| `deviceCapabilities`      | Always `{ touch: false, hover: true }` in Happy.                        |
-| `locale`, `timeZone`      | For formatting dates and numbers. Never hard-code a format.             |
+Layout comes from CSS, not JavaScript measurements. Use flexbox, intrinsic
+sizing, and container queries. Do not read a width once at startup and build a
+fixed layout from it; the page must remain correct as its container changes.
 
-> **`containerDimensions` is not live.** Happy re-sends the host context when the
-> appearance changes, not when the window resizes, so this value goes stale the
-> moment the user drags the window edge. Use it to choose an initial layout at
-> most. **Never lay out from it in JavaScript.** Your size comes from CSS —
-> `height: 100%` and a flex column — and from container queries (§4.5).
-
-The SDK applies all of this for you. In a React app:
-
-```tsx
-import { useHappyApp } from "happy2-plugin-sdk/app";
-
-function App() {
-    const { app, error, hostContext, isConnected } = useHappyApp({
-        appInfo: { name: "my-plugin-app", version: "1.0.0" },
-        autoResize: true,
-    });
-    // Nothing else is needed for theming.
-}
-```
-
-`useHappyApp` calls the official `useHostStyles`, which sets
-`data-theme="light" | "dark"` and `style.colorScheme` on `<html>` and writes
-every standard variable there as an inline custom property; and it calls
-Happy's `useHappyStyleVariables`, which writes the `--happy-*` variables the
-same way.
-
-**Your first paint is not themed.** Connecting is an asynchronous handshake over
-`postMessage`. Your app mounts and paints _before_ it completes — with
-`isConnected === false` and not one host variable set — then repaints when the
-context arrives, usually within a frame or two. This is why the fallback block in
-§5.4 is mandatory rather than a nicety: without it the app flashes unstyled, and
-in a host that never sends styles it stays that way. §11.6 says what to render
-during the handshake.
+The first paint must already be complete and legible. Declare the §5.4 fallback
+block synchronously in the first stylesheet so the page never flashes unstyled
+while scripts, data, or an outer product initialize.
 
 ### 1.2 The theme can change at any moment
 
-Happy re-sends the host context whenever the resolved appearance changes: the
-operating system switches between light and dark, or the user picks an explicit
-appearance inside Happy. Your app is **not** remounted and **not** reloaded.
+The resolved appearance can change at any moment because the operating system,
+the containing product, or the user changes between light and dark. The page
+must repaint without remounting or reloading.
 
 This has one hard consequence:
 
-> **Every colour in your app must be a `var(--…)` reference that resolves through
-> the host variables.** A colour you computed once in JavaScript, baked into a
+> **Every colour in your page must be a `var(--…)` reference that resolves through
+> the design variables.** A colour you computed once in JavaScript, baked into a
 > generated SVG, or hard-coded in a class name will be wrong the moment the theme
 > changes, and there will be no second chance to fix it.
 
 Corollaries:
 
 - Do not read a variable with `getComputedStyle` and store the value.
-- Do not branch on `theme` in JavaScript to pick a colour. Let CSS do it.
-- Do not use `@media (prefers-color-scheme: …)` to pick colours. The user may
-  have overridden the appearance inside Happy, in which case the media query and
-  the host disagree and the host is right.
-- **Do not write theme-conditional rules at all.** The variables already encode
-  the difference; a rule keyed on `[data-theme="dark"]` is both unnecessary and a
-  trap, because that attribute exists only after a host connects, so the rule
-  silently never fires in a standalone browser tab. If a value genuinely has no
-  variable — a hand-drawn illustration's two-tone fill, say — express it with
-  `light-dark()`, which works in both situations.
-- `light-dark()` **is** safe: the host sets `color-scheme` on `<html>`, so
-  `light-dark(a, b)` follows the host's decision, including an in-app override.
-  This is the recommended way to write a _fallback_ (§5.4).
+- Do not branch on a theme name in JavaScript to pick a colour. Let CSS do it.
+- Do not scatter `@media (prefers-color-scheme: …)` colour overrides through
+  components. Define the variables once and let every component consume them.
+- **Do not write component rules keyed on `[data-theme]`.** The variables already
+  encode the difference. If a fallback needs two values, express it with
+  `light-dark()`.
+- `light-dark()` **is** safe when `color-scheme: light dark` is set on `:root`.
+  This is the recommended way to write a fallback (§5.4).
 
-### 1.3 What the host will never give you
+### 1.3 What this system does not provide
 
-- Happy's fonts as files, its component CSS, its class names, or its icon fonts.
-- Arbitrary CSS. There is no channel for the host to inject rules into your
-  document. Everything you paint, you paint yourself, from the variables.
-- Any variable outside the two documented sets. Do not guess at names such as
-  `--happy-sidebar-width`; they do not exist and never resolve.
+- Font files, component CSS, framework classes, or icon fonts.
+- A component library. Build the small primitives in §9 from semantic HTML and
+  the documented variables.
+- Any variable outside the documented sets. Do not guess at names such as
+  `--happy-sidebar-width`; they do not exist.
 
-### 1.4 You are app content, not Happy chrome
+### 1.4 Page content is not browser or operating-system chrome
 
-Happy already draws the frame around you: a header carrying the app's glyph,
-title, and controls (40 px on a message card, 56 px on a page or overlay); the
-window title bar; the feature rail; the modal card and its scrim. Your document
-is the region _inside_ that.
+If a page appears inside another product, that product already draws its own
+window frame and global navigation. If it is standalone, the browser still owns
+its title bar and window controls.
 
-**Do not imitate host chrome.** Specifically, never render:
+**Do not imitate outer chrome.** Specifically, never render:
 
 - A window title bar, traffic-light buttons, or a drag region.
-- A duplicate of the app's own title in a bar across the top of your document.
-  Happy is already showing it, one hairline above you.
+- A duplicate browser title bar across the top of the document.
 - A close, minimise, maximise, reload, or "open in new window" control.
-- A global app-level navigation rail or sidebar of _Happy's_ features.
+- A navigation rail that imitates the surrounding product's global features.
 - A backdrop or scrim covering the whole viewport for a "modal" that is really
-  the whole app. If your app needs to be a dialog, request it from Happy.
+  the whole page.
 
-You _may_ render a toolbar or a header **for your own content** — a list's
+You _may_ render a toolbar or a header **for the page's own content** — a list's
 filter row, a document's breadcrumb — as long as it reads as part of the
 content, not as a second window frame. See §9.6.
 
@@ -155,54 +104,31 @@ content, not as a second window frame. See §9.6.
 
 ## 2. Surfaces, dimensions, and gutters
 
-Happy is **desktop only**. There is no mobile viewport, no touch input, and no
-phone layout. Do not write `@media (max-width: 480px)` breakpoints, do not
-enlarge hit targets for fingers, and do not build a bottom tab bar.
+Happy is desktop-first. Build one dense desktop layout that remains usable in a
+narrow panel; do not introduce a separate mobile visual language, hamburger
+navigation, or bottom tab bar.
 
-### 2.1 The five surfaces
+### 2.1 The three surface shapes
 
-| #   | Surface                 | `displayMode` | Host header | Host gutter around you                                     | Typical width                 | Height ownership |
-| --- | ----------------------- | ------------- | ----------- | ---------------------------------------------------------- | ----------------------------- | ---------------- |
-| 1   | Message card (inline)   | `inline`      | 40 px       | 0, or 8 px + 1 px hairline when the app asked for a border | the chat message column       | **you**, 120–800 |
-| 2   | Workspace page          | `fullscreen`  | 56 px       | none, flush                                                | main region width             | the host         |
-| 3   | Modal card              | `fullscreen`  | 56 px       | none, flush                                                | `min(920px, window − 48) − 2` | the host         |
-| 4   | Fullscreen overlay      | `fullscreen`  | 56 px       | none, flush                                                | `window − 48 − 2`             | the host         |
-| 5   | Happy Agent plugin page | `fullscreen`  | none        | none, flush                                                | the whole allocated region    | the host         |
+| Surface        | Typical use                              | Width                         | Height ownership |
+| -------------- | ---------------------------------------- | ----------------------------- | ---------------- |
+| Full page      | Temporary page, product view, dashboard  | the browser or product region | the viewport     |
+| Embedded panel | Card, preview, or bounded content region | the containing column         | the content      |
+| Dialog/overlay | One focused decision or bounded workflow | `min(920px, viewport − 48px)` | the viewport     |
 
-`hostContext.containerDimensions` reports the initial allocation as one of
-`{ width, height }`, `{ width, maxHeight }`, or `{ maxWidth, maxHeight }`. It
-does not track resizing — see the note in §1.1.
+Design one layout that works across those sizes. Surface differences should
+change only height ownership, gutters, and optional column collapse—not the
+page's identity or interaction model.
 
-Surfaces 2–4 are flush: no inset, no border, no rounded corner from the host. The
-seam between Happy's chrome and your document is one hairline, so your outermost
-background should normally be `--color-background-primary` (§7.1), which makes
-that seam invisible.
+### 2.2 Embedded content — the content owns its height
 
-**You cannot tell surfaces 2–5 apart, and you must not need to.** All four report
-`displayMode: "fullscreen"`; nothing in the host context says whether you are a
-workspace page, a modal card, or a whole window. Design one fullscreen layout that
-is correct at every size in §2.4 and it will be right on all four. The only
-distinction that reaches you is `inline` versus `fullscreen`, and it matters for
-exactly one reason: who owns your height (§2.2, §2.3).
+An embedded panel sizes to its content. Do not set `height: 100%`, `100vh`, or
+`min-height: 100vh` on `html` or `body`. When the embedding context imposes a
+maximum height, give the content one explicit internal scrollport (§4.4).
 
-### 2.2 Inline (surface 1) — you own your height
+### 2.3 Full page and overlay — the viewport owns the height
 
-On a chat message card, Happy sizes the frame to the height your document
-reports. The SDK does this for you when you pass `autoResize: true`.
-
-- Default before you report: **360 px**.
-- Clamped to **120 px minimum, 800 px maximum**. Content taller than 800 px
-  scrolls _inside_ your document; design for that, do not fight it.
-- `containerDimensions` gives you `maxHeight: 800`.
-
-Therefore: on inline, **`<body>` must size to its content**. Do not set
-`height: 100%` or `100vh` on `html`/`body`, or you will report 800 px forever and
-show a mostly empty card.
-
-### 2.3 Fullscreen (surfaces 2–5) — the host owns your height
-
-The frame is exactly the region Happy allocated. Your document must fill it and
-manage its own overflow.
+The document fills the available region and manages its own overflow.
 
 ```css
 html,
@@ -220,11 +146,9 @@ body {
 
 ### 2.4 The smallest size you must survive
 
-Happy's Electron window minimum is **720 × 480**. Subtract the 64 px feature
-rail, a navigation sidebar that can be as narrow as 250 px, the 56 px window
-title row, and the 56 px host app header, and the honest floor is:
+Desktop panels can become narrow even in a large window. The honest floor is:
 
-> **A plugin app must remain usable and unbroken at 400 × 360 CSS pixels, and
+> **A Happy-designed page must remain usable and unbroken at 400 × 360 CSS pixels, and
 > must look correct at 640 × 480 and above.**
 
 Design the primary layout for **640–1180 px** wide. Below 640 px, collapse
@@ -232,13 +156,12 @@ optional columns; do not introduce a different design.
 
 ### 2.5 Gutters
 
-Except for the optional 8 px on a bordered inline card, the host region is flush,
-so your document supplies its own gutter:
+The document supplies its own gutter:
 
 | Context                                   | Gutter (padding) |
 | ----------------------------------------- | ---------------- |
-| Inline message card, outer edge           | **12 px**        |
-| Workspace page / overlay, outer edge      | **16 px**        |
+| Embedded panel, outer edge                | **12 px**        |
+| Full page / overlay, outer edge           | **16 px**        |
 | Wide page (≥ 900 px), outer edge          | **24 px**        |
 | Inside a card                             | **16 px**        |
 | Inside a card in a dense card grid        | **12 px**        |
@@ -406,7 +329,7 @@ The same applies vertically: a flex child that contains a scroll area needs
 
 ### 4.4 Scrolling
 
-Exactly **one** element in a fullscreen layout owns vertical scrolling. It fills
+Exactly **one** element in a full-page layout owns vertical scrolling. It fills
 the region its parent gives it and has **zero padding and zero margin** — its
 viewport and scrollbar run edge to edge. All spacing, maximum widths, and
 centring belong to an inner wrapper.
@@ -430,7 +353,7 @@ centring belong to an inner wrapper.
 
 Rules:
 
-- Never put `overflow: auto` on `<body>` in a fullscreen surface; give it to the
+- Never put `overflow: auto` on `<body>` in a full-page surface; give it to the
   designated scrollport so the header and footer stay fixed.
 - Never nest scroll areas on the same axis. Two vertical scrollbars in one view
   is a defect.
@@ -439,7 +362,7 @@ Rules:
 - Keep the full painted extent of a focus ring inside the content wrapper's
   padding, so scrolling cannot clip it. A 2 px ring with a 2 px offset needs at
   least 4 px of clearance — the 16 px gutter covers it.
-- Style the scrollbar with the host thumb colour, or leave it native. Do not hide
+- Style the scrollbar with the design-system thumb colour, or leave it native. Do not hide
   it.
 
 ```css
@@ -484,7 +407,7 @@ introducing a hamburger menu, shrinking type below the minimums in §6.
 
 ## 5. Colour: the complete variable reference
 
-**Every colour in your app comes from this section.** A raw hex value, named
+**Every colour in your page comes from this section.** A raw hex value, named
 colour, or `rgb()` literal in your CSS is a defect, with exactly one exception:
 the fallback inside `var(--x, fallback)` (§5.4).
 
@@ -493,10 +416,10 @@ primary actions; dark is a `#1e1e1e` canvas with `#212121` surfaces and, again,
 black primary actions. You never write those values — they are given here only so
 you can predict what a variable will look like.
 
-### 5.1 Standard MCP Apps variables — colour
+### 5.1 Core variables — colour
 
-Set on `<html>` by the official host-styles hook. Resolved live from Happy's
-theme, so they change with the appearance.
+Define these on `:root`, either directly or through the fallback mapping in
+§5.4. They are the shared colour roles for every Happy-designed page.
 
 | Variable                       | Meaning in Happy                                                       | Light         | Dark          |
 | ------------------------------ | ---------------------------------------------------------------------- | ------------- | ------------- |
@@ -538,7 +461,7 @@ theme, so they change with the appearance.
 | `--color-ring-warning`         | Warning ring                                                           | `#ff9500`     | `#ff9f0a`     |
 | `--color-ring-danger`          | Error ring                                                             | `#f44336`     | `#f48fb1`     |
 
-### 5.2 Standard MCP Apps variables — type, shape, elevation
+### 5.2 Core variables — type, shape, elevation
 
 | Variable                                                   | Value                      | Use                                       |
 | ---------------------------------------------------------- | -------------------------- | ----------------------------------------- |
@@ -554,8 +477,8 @@ theme, so they change with the appearance.
 | `--font-heading-md-size` / `-line-height`                  | 17 / 22 px                 | Page title on a small surface             |
 | `--font-heading-lg-size` / `-line-height`                  | 20 / 26 px                 | Page title                                |
 | `--font-heading-xl-size` / `-line-height`                  | 24 / 30 px                 | Rare; a landing or empty-state headline   |
-| `--font-heading-2xl-size` / `-line-height`                 | 28 / 34 px                 | Do not use in a plugin app                |
-| `--font-heading-3xl-size` / `-line-height`                 | 34 / 40 px                 | Do not use in a plugin app                |
+| `--font-heading-2xl-size` / `-line-height`                 | 28 / 34 px                 | Do not use in a product interface         |
+| `--font-heading-3xl-size` / `-line-height`                 | 34 / 40 px                 | Do not use in a product interface         |
 | `--border-radius-xs`                                       | 6 px                       | Chips, small inputs                       |
 | `--border-radius-sm`                                       | 6 px                       | **Controls: buttons, inputs, menu items** |
 | `--border-radius-md`                                       | 8 px                       | **Content blocks, wells, list rows**      |
@@ -568,31 +491,28 @@ theme, so they change with the appearance.
 | `--shadow-md`                                              | `0 4px 12px <24 % black>`  | A popover or dropdown                     |
 | `--shadow-lg`                                              | `0 12px 32px <45 % black>` | An in-app dialog                          |
 
-### 5.3 Happy's extension: `--happy-*`
+### 5.3 Supplemental Happy variables: `--happy-*`
 
-Delivered under the namespaced `happy2/styles` host-context member and applied by
-the SDK. These are the roles the standard vocabulary has no key for. They are all
-live theme values and follow appearance changes exactly like the standard ones.
+These are the roles the core vocabulary has no key for. Define them alongside
+the core variables; they follow appearance changes in exactly the same way.
 
-| Variable                      | Meaning                                                            | Light      | Dark       |
-| ----------------------------- | ------------------------------------------------------------------ | ---------- | ---------- |
-| `--happy-canvas`              | The app canvas **behind** cards; use when your page is a card list | `#f5f5f5`  | `#1e1e1e`  |
-| `--happy-header-background`   | A content header strip's fill (your own, not the host's)           | `#ffffff`  | `#212121`  |
-| `--happy-header-text`         | Text on that strip                                                 | `#18171c`  | `#ffffff`  |
-| `--happy-selected-background` | The fill of a **selected** row or tab                              | `#eaeaea`  | `#2c2c2e`  |
-| `--happy-link`                | Hyperlink text (Happy teal, identical in both schemes)             | `#2baccc`  | `#2baccc`  |
-| `--happy-input-background`    | A text field's fill                                                | `#f5f5f5`  | `#303030`  |
-| `--happy-input-text`          | A text field's value                                               | `#000000`  | `#ffffff`  |
-| `--happy-input-placeholder`   | A text field's placeholder                                         | `#999999`  | `#8e8e93`  |
-| `--happy-code-background`     | The code/diff/log surface                                          | `#f6f8fa`  | `#161b22`  |
-| `--happy-scrim`               | Backdrop behind an in-app overlay you own                          | 48 % black | 48 % black |
-| `--happy-scrollbar-thumb`     | Custom scrollbar thumb                                             | 40 % grey  | 40 % grey  |
-| `--happy-shadow-color`        | The base elevation tint, for a shadow you compose yourself         | 10 % black | 10 % black |
+| Variable                      | Meaning                                                             | Light      | Dark       |
+| ----------------------------- | ------------------------------------------------------------------- | ---------- | ---------- |
+| `--happy-canvas`              | The page canvas **behind** cards; use when your page is a card list | `#f5f5f5`  | `#1e1e1e`  |
+| `--happy-header-background`   | A content header strip's fill (your own, not the outer shell's)     | `#ffffff`  | `#212121`  |
+| `--happy-header-text`         | Text on that strip                                                  | `#18171c`  | `#ffffff`  |
+| `--happy-selected-background` | The fill of a **selected** row or tab                               | `#eaeaea`  | `#2c2c2e`  |
+| `--happy-link`                | Hyperlink text (Happy teal, identical in both schemes)              | `#2baccc`  | `#2baccc`  |
+| `--happy-input-background`    | A text field's fill                                                 | `#f5f5f5`  | `#303030`  |
+| `--happy-input-text`          | A text field's value                                                | `#000000`  | `#ffffff`  |
+| `--happy-input-placeholder`   | A text field's placeholder                                          | `#999999`  | `#8e8e93`  |
+| `--happy-code-background`     | The code/diff/log surface                                           | `#f6f8fa`  | `#161b22`  |
+| `--happy-scrim`               | Backdrop behind an in-app overlay you own                           | 48 % black | 48 % black |
+| `--happy-scrollbar-thumb`     | Custom scrollbar thumb                                              | 40 % grey  | 40 % grey  |
+| `--happy-shadow-color`        | The base elevation tint, for a shadow you compose yourself          | 10 % black | 10 % black |
 
-No other `--happy-*` name exists — the SDK applies these twelve names and nothing
-else, discards any value that is not a colour, and removes a variable that a later
-host context stops sending. If you need a role that is not listed, build it from
-the ones that are, with `color-mix`:
+No other `--happy-*` name exists. If you need a role that is not listed, build
+it from the documented ones with `color-mix`:
 
 ```css
 /* A 12% accent wash for a selected-and-focused row. */
@@ -601,16 +521,15 @@ background: color-mix(in srgb, var(--color-ring-primary) 12%, var(--color-backgr
 
 ### 5.4 Fallbacks: declare them once, in one place
 
-Every host variable can be absent — when your app is opened outside Happy, in a
-bare browser tab during development, or by a host that has not sent styles yet.
-Declare a fallback for each variable you use **exactly once**, in a `:root` block
-that maps host names to your app's own short names. Downstream CSS then uses your
-names with no fallbacks at all.
+Every design variable can be absent when a page starts as a standalone document
+or is viewed in a bare browser tab. Declare a fallback for each variable you use
+**exactly once**, in a `:root` block that maps design-system names to the page's
+own short names. Downstream CSS then uses the short names with no fallbacks.
 
 ```css
 :root {
-    /* Standalone documents follow the OS; inside Happy the host has already set
-       `color-scheme`, so `light-dark()` below follows the host's decision. */
+    /* Standalone documents follow the OS. A containing product may set an
+       explicit color-scheme, and `light-dark()` follows that decision. */
     color-scheme: light dark;
 
     --app-surface: var(--color-background-primary, light-dark(#ffffff, #212121));
@@ -631,12 +550,12 @@ Two rules about this block:
 
 - **Never alias a variable to itself.** `--happy-canvas: var(--happy-canvas, #f5f5f5)`
   is a cycle; the property becomes invalid and everything using it falls back to
-  its initial value. Always map a host name to a _different_ local name.
+  its initial value. Always map a design name to a _different_ local name.
 - **Never repeat a fallback downstream.** `background: var(--app-surface)` — not
   `var(--app-surface, #fff)`. One place to change, one place to be wrong.
-- The component snippets in §9 write `var(--host-name, fallback)` inline so each
+- The component snippets in §9 write `var(--design-name, fallback)` inline so each
   one can be read and copied on its own. That is a documentation convenience, not
-  the pattern. When you assemble an app, alias every host variable you use in the
+  the pattern. When you assemble a page, alias every design variable you use in the
   `:root` block once — §17's block is the complete list — and rewrite the §9
   snippets to use your local names with no fallback.
 
@@ -645,7 +564,7 @@ Two rules about this block:
 - Body text on any surface: at least **4.5 : 1**.
 - Text at 18 px+ or 14 px+ bold, and any non-text indicator (borders that carry
   meaning, focus rings, chart strokes): at least **3 : 1**.
-- The host variables already satisfy this for the documented pairings — primary
+- The documented variables satisfy this for the documented pairings — primary
   and secondary text on primary/secondary/tertiary backgrounds. If you invent a
   pairing with `color-mix`, measure it.
 - Never put `--color-text-tertiary` or `--color-text-disabled` on anything other
@@ -673,8 +592,8 @@ pre,
 The font _files_ are not available to your origin, so the stack ends in system
 fonts; that is expected and correct. Do **not** load a web font, do not use
 `@import url(https://fonts.googleapis.com/…)`, and do not embed a font as a data
-URL. A plugin app that ships its own typeface looks foreign and costs the user a
-network request from a sandboxed origin.
+URL. A page that ships its own typeface looks foreign and adds an unnecessary
+network request.
 
 Set `font-synthesis: none` on `body` so a missing weight is not faked.
 
@@ -695,7 +614,7 @@ together, both from the same row.
 | Micro         | 11 / 16 px         | 500    | `--color-text-tertiary`  | Table column heads, chip text, counts |
 
 - **11 px is the absolute minimum.** Never render text smaller.
-- Weight vocabulary is 400, 500, 600 only. Do not use 700 in a plugin app; do not
+- Weight vocabulary is 400, 500, 600 only. Do not use 700 in an interface; do not
   use 300 or lighter.
 - Do not use `text-transform: uppercase` on anything longer than a three-word
   label, and never with letter-spacing above `0.04em`.
@@ -739,8 +658,9 @@ Right-align numeric table columns and use tabular figures so digits line up:
 }
 ```
 
-Format dates, times, and numbers with `Intl`, passing `hostContext.locale` and
-`hostContext.timeZone`. Never hard-code `MM/DD/YYYY` or a currency symbol.
+Format dates, times, and numbers with `Intl`, using the requested locale and time
+zone when the page has them, otherwise the browser's resolved defaults. Never
+hard-code `MM/DD/YYYY` or a currency symbol.
 
 ---
 
@@ -760,10 +680,9 @@ Format dates, times, and numbers with `Intl`, passing `hostContext.locale` and
 | A pressed control                                 | `--color-background-tertiary`  |
 | A text input                                      | `--happy-input-background`     |
 
-Default to the first row. A plugin app on a workspace page sits flush against
-Happy's own `--surface`; painting `--color-background-primary` makes the seam
-invisible, which is correct. Reach for `--happy-canvas` only when you genuinely
-have separated cards.
+Default to the first row. Painting the outer document
+`--color-background-primary` creates one quiet continuous surface. Reach for
+`--happy-canvas` only when you genuinely have separated cards.
 
 ### 7.2 Borders
 
@@ -1130,7 +1049,7 @@ Prefer `<table>` — you get semantics and keyboard behaviour for free.
   clip above — becomes that ancestor and breaks it. Choose one:
 
     - **Simplest, and the default:** no sticky header. The table scrolls with the
-      page. This is correct and is what most plugin apps should do.
+      page. This is correct and is what most interfaces should do.
     - **Sticky:** the table's own container owns the vertical scroll
       (`overflow-y: auto` with a bounded height) and there is no clipping ancestor
       between it and the `thead`. Then add `position: sticky; top: 0; z-index: 1`
@@ -1257,11 +1176,10 @@ a text glyph. Do not use a bare coloured dot as the only signal.
 
 ### 9.8 Menus and dialogs you own
 
-**When to own one.** An overflow menu on a row, a filter popover, a confirm
-prompt for a destructive action: these belong inside your document. A whole view
-that should _be_ a dialog is different — ask Happy to present it (surface 3) via
-`app.requestDisplayMode`, and never fake it by covering your own viewport with a
-scrim.
+**When to own one.** An overflow menu on a row, a filter popover, and a confirm
+prompt for a destructive action belong inside the document. A larger workflow
+should be a page or a real dialog surface, not a fake nested application covered
+by its own scrim.
 
 **Menu / popover.** Anchored to its trigger, never wider than 280 px:
 
@@ -1327,7 +1245,7 @@ case anchor it to the viewport instead:
 - Close it on scroll and on window resize rather than trying to follow the
   trigger.
 
-This is the one place a plugin app reads geometry from the DOM, and it is
+This is the one place a page reads geometry from the DOM, and it is
 legitimate: there is no CSS expression of "anchored to that element but not
 clipped by its scroll container" that is portable today.
 
@@ -1405,32 +1323,22 @@ a:focus-visible {
 }
 ```
 
-An external link must be opened through the host, not by the iframe — and only
-when the host offers it. `openLinks` is an optional host capability: the message
-and page hosts advertise it, the standalone Happy Agent plugin page does not. Feature
-detect it, and when it is absent render the URL as selectable text rather than a
-link that does nothing:
+Use a real anchor for navigation. Keep same-product navigation in the current
+tab. An external destination may open in a new tab only when that behavior is
+useful and clearly expected; include `rel="noreferrer"` whenever using
+`target="_blank"`:
 
 ```tsx
-const canOpenLinks = app?.getHostCapabilities()?.openLinks !== undefined;
-
-return canOpenLinks ? (
-    <a
-        href={url}
-        onClick={(event) => {
-            event.preventDefault();
-            void app!.openLink({ url });
-        }}
-    >
+return (
+    <a href={url} target="_blank" rel="noreferrer">
         {label}
     </a>
-) : (
-    <span className="mono wrap-anywhere">{url}</span>
 );
 ```
 
-Never `window.open`, never `target="_blank"`, never `location.href = …`. A
-sandboxed frame cannot navigate the top level and the attempt fails silently.
+Prefer declarative anchors over `window.open` or click handlers that assign
+`location.href`. A link must remain discoverable, keyboard-accessible, and
+copyable.
 
 ---
 
@@ -1458,12 +1366,10 @@ That list is exhaustive. Do **not** use the accent for: page or section headings
 body text, card borders, row hover, the primary button (that is black —
 `--color-background-inverse`), any filled area larger than a chip, or decoration.
 
-One deliberate difference to be aware of: Happy's own chrome uses teal
-(`--happy-link`) for its general interactive colour, while a plugin app's
-selection and focus read system blue. That is intentional — the blue is the
-platform's focus colour and the standard MCP Apps `ring-primary` — but it means
-you should use teal, not blue, for anything of yours that will sit directly
-beside Happy's chrome: hyperlink text (§9.8) and the loading arc (§11.2).
+One deliberate difference to be aware of: hyperlinks use teal (`--happy-link`),
+while selection and focus use system blue (`--color-ring-primary`). The blue is
+the platform focus colour; use teal for hyperlink text (§9.9) and the loading
+arc (§11.2).
 
 ---
 
@@ -1538,8 +1444,8 @@ Never illustrate an empty state with a large graphic, and never apologise
     }
     ```
 
-    The arc is teal (`--happy-link`), not blue, so it matches the ring Happy draws
-    in its own loading state one hairline above yours. Under
+    The arc is teal (`--happy-link`), not blue, so progress stays distinct from
+    focus and selection. Under
     `prefers-reduced-motion` the animation stops and the ring becomes a static
     arc — which is why the adjacent "Loading…" text is required, not optional: it
     is what carries the meaning when nothing moves.
@@ -1549,7 +1455,7 @@ Never illustrate an empty state with a large graphic, and never apologise
   `opacity: 0.6`. Never blank a populated view.
 - **Optional:** skeleton blocks — `--color-background-secondary`, the exact height
   and radius of the real content. If you animate them, respect §13.
-- Never a full-screen spinner overlay in a plugin app. Never a progress bar that
+- Never a full-screen spinner overlay. Never a progress bar that
   fakes progress.
 
 ### 11.3 Error
@@ -1591,33 +1497,33 @@ An inline block at the top of the content, not a modal, not a toast:
 
 ### 11.5 Staying current
 
-Your app must keep itself up to date. When Happy tells you data changed — a new
-tool result, an instance `dataRevision` bump — re-read and re-render without a
-remount and without the user asking. Do not ship a "Refresh" button whose only
-job is to re-fetch.
+The page must keep itself up to date. When its data source reports a change,
+re-read and re-render without a remount and without the user asking. Do not ship
+a "Refresh" button whose only job is to re-fetch.
 
-### 11.6 Connecting, and failing to connect
+### 11.6 Initializing, and failing to initialize
 
-Before the four data states there is a fifth: the handshake (§1.1). `useHappyApp`
-gives you `isConnected` and `error`, and you must render something sensible for
-every combination of them. This is not optional — an unhandled handshake shows the
-user a blank document.
+Before the four data states there is initialization: scripts start, dependencies
+become ready, and the first data request begins. Render something sensible for
+every outcome. This is not optional—an unhandled startup failure shows a blank
+document.
 
 ```tsx
-if (error) return <ErrorBlock title="This app could not start." detail={error.message} />;
-if (!isConnected) return <Loading label="Starting…" />;
+if (startError)
+    return <ErrorBlock title="This page could not start." detail={startError.message} />;
+if (!isReady) return <Loading label="Starting…" />;
 if (items === undefined) return <Loading label="Loading items…" />;
 if (items.length === 0) return <Empty />;
 return <List items={items} />;
 ```
 
-- While `!isConnected`, render the §11.2 first-load state. Do not render your
+- While initialization is pending, render the §11.2 first-load state. Do not render the
   populated layout with placeholder data, and do not render nothing.
-- When `error` is set the app never connected: there is no host to retry through
-  and no tool you can call. Render the §11.3 block with no retry action, and say
-  that the app could not start rather than that data could not load.
-- Everything in these two states is painted from your §5.4 fallbacks, because no
-  host variable has arrived yet. Check that they are legible.
+- When startup fails before retry is possible, render the §11.3 block with no
+  retry action, and say that the page could not start rather than that data could
+  not load.
+- Everything in these states is painted from the §5.4 variables. Check that it
+  is legible before any asynchronous work completes.
 
 ---
 
@@ -1632,8 +1538,8 @@ return <List items={items} />;
   `<ul>`. A `<div onclick>` is a defect.
 - Give every icon-only control an `aria-label`. Mark decorative glyphs
   `aria-hidden="true"`.
-- One `<h1>` per document (your content's title, not the app name Happy already
-  shows), then `<h2>`/`<h3>` in order, never skipping a level.
+- One `<h1>` per document for the page's content title, then `<h2>`/`<h3>` in
+  order, never skipping a level.
 - Keyboard contracts you must honour: Enter and Space activate a button; Escape
   closes a popover or cancels an inline edit; arrow keys move within a tablist,
   menu, or grid; Tab never enters a closed disclosure.
@@ -1641,9 +1547,9 @@ return <List items={items} />;
 - Respect `prefers-reduced-motion` (§13).
 - Do not trap focus unless you have opened a modal you own, and then return focus
   to the trigger on close.
-- Do not autofocus on load in an inline card; the user did not ask you to steal
-  the caret from the chat composer. Autofocus is acceptable in a modal or a page
-  whose sole purpose is that field.
+- Do not autofocus on load in an embedded panel; the user may already be
+  interacting with the surrounding page. Autofocus is acceptable in a modal or
+  a page whose sole purpose is that field.
 
 ---
 
@@ -1679,14 +1585,14 @@ and animating `width`, `height`, `top`, or `left`. Animate only `opacity` and
 
 Performance:
 
-- The whole app is one HTML document. Keep it small; no framework beyond React,
-  which the SDK already bundles.
+- Keep the page small. Use the project's existing framework; do not add another
+  framework for one view.
 - No network requests to third-party origins for fonts, icons, analytics, or CSS.
-  Data comes through MCP tool calls.
+  Data comes from the page's own application boundary.
 - Virtualise any list that can exceed a few hundred rows.
-- Do not observe `resize` at high frequency; the SDK's auto-resize already reports
-  your content height on animation frames.
-- Do not poll on a timer for data Happy pushes to you.
+- Do not observe `resize` at high frequency; prefer CSS container queries. When
+  JavaScript observation is unavoidable, coalesce work to animation frames.
+- Do not poll on a timer for data the application can push or invalidate.
 
 ---
 
@@ -1700,7 +1606,7 @@ channel to get them. So:
 2. When an icon is genuinely needed, use one from the set below. Do not invent a
    different one, and do not mix drawing styles within an app.
 
-These seven cover nearly every plugin app. Copy them verbatim; they share one
+These seven cover nearly every product interface. Copy them verbatim; they share one
 grid, one stroke weight, and one cap style, which is what makes a set look like a
 set rather than seven unrelated drawings.
 
@@ -1801,7 +1707,7 @@ generating a web page tends to do by default.
 3. A gradient of any kind — background, text, border, or button.
 4. `@media (prefers-color-scheme)` to choose colours instead of the variables.
 5. Reading a variable in JavaScript and storing the resolved colour.
-6. Aliasing a host variable to itself (`--happy-canvas: var(--happy-canvas, …)`).
+6. Aliasing a design variable to itself (`--happy-canvas: var(--happy-canvas, …)`).
 7. Repeating a fallback at every use site instead of once in `:root`.
 8. A dark-mode-only or light-mode-only design.
 
@@ -1813,23 +1719,21 @@ generating a web page tends to do by default.
 11. A flex child that can shrink without `min-width: 0` (§4.3).
 12. Padding on the scrollport instead of on an inner wrapper (§4.4).
 13. Two nested vertical scrollbars (§4.4).
-14. `100vh` or `min-height: 100vh` anywhere. On a fullscreen surface it is merely
-    redundant with `100%`. On an **inline** surface it is a ratchet: your content
-    is then always at least as tall as the frame, so the height you report can
-    never shrink and the card is stuck at its maximum forever.
-15. `height: 100%` on `<html>`/`<body>` in an **inline** surface — same ratchet,
-    and it reports 800 px from the first frame (§2.2).
-16. Laying out from `containerDimensions` in JavaScript; it does not survive a
-    window resize (§1.1).
+14. `100vh` or `min-height: 100vh` inside an embedded surface. It forces content
+    to viewport height even though the panel owns a different region (§2.2).
+15. `height: 100%` on `<html>`/`<body>` in an embedded surface; content should
+    own its intrinsic height (§2.2).
+16. Laying out from a one-time JavaScript width measurement; it does not survive
+    a window or container resize (§1.1).
 17. Mobile breakpoints, a hamburger menu, or touch-sized targets (§2).
 
 **Chrome and identity**
 
-18. A fake title bar, window controls, or a repeat of the app's title (§1.4).
-19. A left navigation rail that imitates Happy's feature rail (§1.4).
+18. A fake browser title bar or window controls (§1.4).
+19. A navigation rail that imitates the surrounding product's global chrome (§1.4).
 20. A full-viewport scrim for something that is not a dialog you own (§9.8).
-21. `window.open` or `target="_blank"` instead of a capability-checked
-    `app.openLink` (§9.9).
+21. Scripted navigation where a semantic `<a>` works, or `target="_blank"`
+    without `rel="noreferrer"` (§9.9).
 22. Shipping a web font, an icon font, a Google Fonts `@import`, or a CDN
     stylesheet (§6.1, §14).
 
@@ -1844,8 +1748,8 @@ generating a web page tends to do by default.
 
 **Behaviour**
 
-28. Rendering nothing, or a populated layout with placeholder data, while the
-    handshake is still in flight (§11.6).
+28. Rendering nothing, or a populated layout with placeholder data, while
+    initialization is still in flight (§11.6).
 29. A "Refresh" button as the only way to get current data (§11.5).
 30. A full-screen loading overlay, or blanking a populated view while refreshing.
 31. `alert()`, `confirm()`, or `prompt()`.
@@ -1857,11 +1761,11 @@ generating a web page tends to do by default.
 
 ## 17. A complete baseline
 
-Copy this as the first stylesheet of a new plugin app. It implements §5.4, §3,
+Copy this as the first stylesheet of a new Happy-designed page. It implements §5.4, §3,
 §4, §6, and §12, and nothing else — every component style is yours to add from §9.
 
 ```css
-/* ---- Host variable mapping and fallbacks (declare once) --------------- */
+/* ---- Design-variable mapping and fallbacks (declare once) ------------- */
 :root {
     color-scheme: light dark;
 
@@ -1893,8 +1797,7 @@ Copy this as the first stylesheet of a new plugin app. It implements §5.4, §3,
     --app-warning: var(--color-text-warning, light-dark(#ff9500, #ffab00));
     --app-info: var(--color-text-info, light-dark(#007aff, #0a84ff));
 
-    /* The soft semantic fills. The host composes each from its own hue over the
-       surface; these fallbacks are the same mixes written out. */
+    /* Soft semantic fills, composed from each hue over the surface. */
     --app-danger-soft: var(--color-background-danger, light-dark(#fff0f0, rgb(255 69 58 / 0.15)));
     --app-success-soft: var(
         --color-background-success,
@@ -1933,16 +1836,15 @@ body {
 
 /* Include EXACTLY ONE of the following two blocks.
  *
- * FULLSCREEN (surfaces 2-5): the host owns the height, so fill the frame. */
+ * FULL PAGE OR OVERLAY: the viewport owns the height, so fill the frame. */
 html,
 body,
 #root {
     height: 100%;
 }
 
-/* INLINE (surface 1): you own the height, so include NOTHING here — no height,
- * no min-height, no vh — and the document sizes to its content, which is what
- * auto-resize reports to the host. */
+/* EMBEDDED PANEL: content owns the height, so include NOTHING here—no height,
+ * no min-height, no vh—and let the document size intrinsically. */
 
 body {
     font-family: var(--app-font);
@@ -2063,14 +1965,10 @@ a:hover {
 }
 ```
 
-And the shape of a fullscreen page built on it:
+And the shape of a full-page layout built on it:
 
 ```tsx
 function Page() {
-    const { hostContext, isConnected } = useHappyApp({
-        appInfo: { name: "example", version: "1.0.0" },
-    });
-
     return (
         <div className="page">
             <div className="toolbar">
@@ -2118,27 +2016,27 @@ in **both** light and dark, at **three** container widths: **400**, **640**, and
 
 **Theme**
 
-- [ ] `document.documentElement.style` carries `--color-background-primary` and
-      `--happy-canvas` once the app has connected.
-- [ ] Before it connects the app already renders legibly from the §5.4 fallbacks —
-      no flash of unstyled or invisible content.
+- [ ] `getComputedStyle(document.documentElement)` resolves `--app-surface` and
+      `--app-canvas`.
+- [ ] The first paint already renders legibly from the §5.4 fallbacks—no flash
+      of unstyled or invisible content.
 - [ ] No rule is keyed on `[data-theme]`.
-- [ ] Toggling Happy between light and dark repaints the app with no reload, and
+- [ ] Toggling between light and dark repaints the page with no reload, and
       every visible colour changes appropriately.
-- [ ] A grep of the app's CSS and TSX finds **zero** hex, `rgb(`, `hsl(`, or
+- [ ] A grep of the page's CSS and TSX finds **zero** hex, `rgb(`, `hsl(`, or
       named colours outside `var(…, fallback)` positions.
-- [ ] Opened standalone in a browser tab with no host, the app is still legible
+- [ ] Opened standalone in a browser tab, the page is still legible
       in both OS appearances (the fallbacks work) and no variable is cyclic.
 
 **Layout**
 
 - [ ] `document.body` computed `margin` is `0px`.
-- [ ] On a fullscreen surface the outermost element fills the frame
+- [ ] On a full-page surface the outermost element fills the frame
       (`clientHeight === document.documentElement.clientHeight`) and there is no
-      page-level scrollbar on `<body>`. Verify after resizing the host window, not
+      page-level scrollbar on `<body>`. Verify after resizing the window, not
       only at first load.
-- [ ] On an inline surface the reported height equals the content height and is
-      between 120 and 800.
+- [ ] On an embedded surface the document height equals its content height and
+      no viewport-height rule forces extra space.
 - [ ] The scrollport's computed `padding` and `margin` are both `0px`, and its
       box exactly matches its parent's content box.
 - [ ] Exactly one element in the view has a vertical scrollbar.
@@ -2154,8 +2052,8 @@ in **both** light and dark, at **three** container widths: **400**, **640**, and
 **Type**
 
 - [ ] No computed `font-size` below `11px`.
-- [ ] Every text element's `font-family` resolves through `--font-sans` or
-      `--font-mono`; no other family appears.
+- [ ] Every text element's `font-family` resolves through `--app-font` or
+      `--app-mono`; no other family appears.
 - [ ] Every `font-weight` is 400, 500, or 600.
 - [ ] Each `font-size`/`line-height` pair matches a row of the §6.2 table.
 
@@ -2183,9 +2081,9 @@ in **both** light and dark, at **three** container widths: **400**, **640**, and
 - [ ] Enter and Space activate every clickable thing; Escape closes every menu and
       dialog and returns focus to its trigger.
 - [ ] Every icon-only control has an `aria-label`.
-- [ ] All six states — connecting, connect-failed, loading, empty, error,
-      populated — render correctly at each of the three widths.
+- [ ] All six states—initializing, start-failed, loading, empty, error, and
+      populated—render correctly at each of the three widths.
 - [ ] No transition exceeds 200 ms; `prefers-reduced-motion` disables them all and
       the loading state still reads without motion.
-- [ ] There is no "Refresh" button, no `alert()`, no `window.open`, and every
-      external link is capability-checked.
+- [ ] There is no "Refresh" button, no `alert()`, no scripted navigation where
+      an anchor works, and every new-tab link uses `rel="noreferrer"`.

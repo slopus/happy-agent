@@ -31,6 +31,7 @@ describe("ConfigModule", () => {
 
         expect(configuration.paths).toMatchObject({
             agentHome: join(root, ".happy", "agent"),
+            docsHome: join(root, ".happy", "docs"),
             globalConfigPath: join(root, "Happy", "Config", "happy.toml"),
             publicHome: join(root, "Happy"),
             runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),

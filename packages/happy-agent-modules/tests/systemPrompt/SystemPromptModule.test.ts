@@ -66,11 +66,16 @@ function contextWithEnvironment(environment = testEnvironment): Context {
 /** A module whose configuration serves exactly the catalog a test names. */
 async function moduleWithCatalog(models: readonly AgentModel[] = []): Promise<{
     readonly module: SystemPromptModule;
+    readonly docsHome: string;
     readonly instructions: (promptCtx: Context, scope: AgentModuleScope) => MaybePromise<string>;
 }> {
     const world = await systemPromptWorld({ models });
     const hooks = await resolveModuleHooks(ctx, world.module);
-    return { module: world.module, instructions: hooks.instructions! };
+    return {
+        module: world.module,
+        docsHome: world.config.configuration.paths.docsHome,
+        instructions: hooks.instructions!,
+    };
 }
 
 function catalogWithBytes(targetBytes: number): AgentModel[] {
@@ -170,6 +175,12 @@ describe("SystemPromptModule", () => {
         expect(prompt).toContain("- OS version: 25.5.0");
         expect(prompt).toContain("- Current model: Claude Opus (`anthropic/opus-5`)");
         expect(prompt).toContain("- Current provider: `provider`");
+        expect(prompt).toContain("- Happy Agent documentation: ");
+        expect(prompt).toContain("/.happy/docs/README.md");
+        expect(prompt).toContain(
+            "- Happy design system: When the user asks for a temporary page unrelated to their work, or asks to use the Happy design system, read and follow ",
+        );
+        expect(prompt).toContain("/.happy/docs/DESIGN.md");
         expect(prompt).toContain(
             "- Scratch directory: `.context/` in the working directory. Strongly prefer it",
         );
@@ -207,7 +218,7 @@ describe("SystemPromptModule", () => {
     });
 
     it("renders the complete legacy environment text in its exact order", async () => {
-        const { module, instructions } = await moduleWithCatalog(twoModelCatalog);
+        const { docsHome, module, instructions } = await moduleWithCatalog(twoModelCatalog);
         const selection = { model: "anthropic/opus-5", providerKind: "claude" as const };
         const expectedEnvironment = [
             "# Environment",
@@ -217,6 +228,8 @@ describe("SystemPromptModule", () => {
             "- OS version: 25.5.0",
             "- Current model: Claude Opus (`anthropic/opus-5`)",
             "- Current provider: `provider`",
+            `- Happy Agent documentation: ${docsHome}/README.md`,
+            `- Happy design system: When the user asks for a temporary page unrelated to their work, or asks to use the Happy design system, read and follow ${docsHome}/DESIGN.md.`,
             "- Scratch directory: `.context/` in the working directory. Strongly prefer it for temporary files, throwaway scripts, and notes or instructions for other agents; keep it gitignored (add the entry if missing) unless there is a real reason not to, and never commit it.",
             "- By default the user sees only the last message you send before stopping; earlier messages are collapsed. Include all essential information in that last message.",
             "- When the project is a Git folder, a workspace and a worktree are the same thing: creating a workspace creates a new worktree, and deleting a workspace archives it.",

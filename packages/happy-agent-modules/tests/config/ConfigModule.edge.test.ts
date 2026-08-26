@@ -152,6 +152,7 @@ describe("ConfigModule edge coverage", () => {
                 autoDatabasePath: join(root, ".happy", "agent", "auto-agent.sqlite"),
                 configHome: join(root, "Happy", "Config"),
                 databasePath: join(root, ".happy", "agent", "agent.sqlite"),
+                docsHome: join(root, ".happy", "docs"),
                 generatedPath: join(root, "Happy", "Generated"),
                 globalConfigPath: join(root, "Happy", "Config", "happy.toml"),
                 happyHome: join(root, ".happy"),

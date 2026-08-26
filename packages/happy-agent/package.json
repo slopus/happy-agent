@@ -31,7 +31,7 @@
         "access": "public"
     },
     "scripts": {
-        "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json",
+        "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json && node scripts/copy-docs.mjs",
         "build:bun": "pnpm dlx bun@1.4.0 scripts/build-binary.ts",
         "build:bun:all": "pnpm dlx bun@1.4.0 scripts/build-binary.ts --all",
         "check": "tsc --noEmit",

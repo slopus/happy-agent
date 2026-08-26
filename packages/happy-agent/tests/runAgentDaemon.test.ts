@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     })),
     removeDaemonPidSync: vi.fn(),
     startHappyAgentDaemon: vi.fn(),
+    syncHappyAgentDocs: vi.fn(),
 }));
 
 vi.mock("../sources/main.js", () => ({
@@ -25,6 +26,9 @@ vi.mock("../sources/lifecycle/getDaemonIdentity.js", () => ({
 }));
 vi.mock("../sources/lifecycle/getHappyDaemonPaths.js", () => ({
     getHappyDaemonPaths: mocks.getHappyDaemonPaths,
+}));
+vi.mock("../sources/documentation/syncHappyAgentDocs.js", () => ({
+    syncHappyAgentDocs: mocks.syncHappyAgentDocs,
 }));
 
 import { runAgentDaemon } from "../sources/lifecycle/runAgentDaemon.js";
@@ -44,6 +48,22 @@ afterEach(() => {
 });
 
 describe("runAgentDaemon", () => {
+    it("synchronizes docs before starting the runtime", async () => {
+        mocks.startHappyAgentDaemon.mockResolvedValue({
+            close: vi.fn(),
+            closed: new Promise<void>(() => undefined),
+            socketPath: "/tmp/happy-agent-test/daemon.sock",
+            tokenPath: "/tmp/happy-agent-test/token",
+        });
+
+        await runAgentDaemon({ hardExit: false, persistPid: false });
+
+        expect(mocks.syncHappyAgentDocs).toHaveBeenCalledWith("/tmp/happy-agent-test");
+        expect(mocks.syncHappyAgentDocs.mock.invocationCallOrder[0]).toBeLessThan(
+            mocks.startHappyAgentDaemon.mock.invocationCallOrder[0]!,
+        );
+    });
+
     it("hard-exits after the daemon's graceful close barrier settles", async () => {
         let resolveClosed!: () => void;
         const closed = new Promise<void>((resolve) => {
