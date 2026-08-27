@@ -118,6 +118,9 @@ await client.createCloudKeys({ ...keys, generatedSecret });
 
 // The daemon retains this pair together and exposes it only through an on-demand backup read.
 const { backup } = await client.getCloudKeyBackup();
+
+// Recovery-only: delete an unrestorable remote vault before creating it again.
+await client.deleteCloudKeys({ confirmation: "YES DELETE MY VAULT" });
 ```
 
 Focused agent responses and agent bootstrap include the current module-contributed slash-command

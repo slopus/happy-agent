@@ -230,6 +230,12 @@ describe("HappyAgentClient", () => {
         await expect(
             client.restoreCloudKeys({ ...keyInput, mutationId: "keys-restore-1" }),
         ).resolves.toEqual({ cloud });
+        await expect(
+            client.deleteCloudKeys({
+                confirmation: "YES DELETE MY VAULT",
+                mutationId: "keys-delete-1",
+            }),
+        ).resolves.toEqual({ cloud });
         await expect(client.getCloudKeyBackup()).resolves.toEqual({ backup });
         await expect(client.getCloudProfile()).resolves.toEqual(profileResponse);
         await expect(
@@ -293,6 +299,14 @@ describe("HappyAgentClient", () => {
                 body: JSON.stringify({ ...keyInput, mutationId: "keys-restore-1" }),
                 method: "POST",
                 url: "http://agent.local/v0/cloud/keys/restore",
+            },
+            {
+                body: JSON.stringify({
+                    confirmation: "YES DELETE MY VAULT",
+                    mutationId: "keys-delete-1",
+                }),
+                method: "DELETE",
+                url: "http://agent.local/v0/cloud/keys",
             },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/keys/backup" },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/profile" },

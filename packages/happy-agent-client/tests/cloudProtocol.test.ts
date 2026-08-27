@@ -16,6 +16,7 @@ import {
     cloudSocialResponseSchema,
     completeCloudAuthorizationRequestSchema,
     createCloudKeysRequestSchema,
+    deleteCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,
     restoreCloudKeysRequestSchema,
     startCloudAuthorizationRequestSchema,
@@ -78,6 +79,7 @@ describe("Cloud protocol", () => {
             { status: "inactive" },
             { status: "create_required" },
             { status: "restore_required" },
+            { status: "resetting" },
             { identityKey, status: "ready" },
         ];
 
@@ -153,6 +155,26 @@ describe("Cloud protocol", () => {
             expect(Value.Check(createCloudKeysRequestSchema, invalid)).toBe(false);
             expect(Value.Check(restoreCloudKeysRequestSchema, invalid)).toBe(false);
         }
+    });
+
+    it("requires the exact destructive Cloud vault confirmation", () => {
+        expect(
+            Value.Check(deleteCloudKeysRequestSchema, {
+                confirmation: "YES DELETE MY VAULT",
+                mutationId: "keys-delete-1",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(deleteCloudKeysRequestSchema, {
+                confirmation: "yes delete my vault",
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(deleteCloudKeysRequestSchema, {
+                confirmation: "YES DELETE MY VAULT",
+                extra: true,
+            }),
+        ).toBe(false);
     });
 
     it("validates the on-demand Cloud key backup without accepting password material", () => {

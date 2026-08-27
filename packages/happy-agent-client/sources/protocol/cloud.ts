@@ -130,6 +130,12 @@ export const cloudKeysRestoreRequiredSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** Happy Cloud is durably deleting an unrestorable encrypted vault. */
+export const cloudKeysResettingSchema = Type.Object(
+    { status: Type.Literal("resetting") },
+    { additionalProperties: false },
+);
+
 /** The account root is available locally and its public identity has been derived. */
 export const cloudKeysReadySchema = Type.Object(
     { identityKey: cloudKeyValueSchema, status: Type.Literal("ready") },
@@ -140,6 +146,7 @@ export const cloudKeysSchema = Type.Union([
     cloudKeysInactiveSchema,
     cloudKeysCreateRequiredSchema,
     cloudKeysRestoreRequiredSchema,
+    cloudKeysResettingSchema,
     cloudKeysReadySchema,
 ]);
 export type CloudKeys = Static<typeof cloudKeysSchema>;
@@ -266,6 +273,18 @@ export const restoreCloudKeysRequestSchema = Type.Object(cloudKeysMutationFields
     additionalProperties: false,
 });
 export type RestoreCloudKeysRequest = Static<typeof restoreCloudKeysRequestSchema>;
+
+export const CLOUD_VAULT_DELETE_CONFIRMATION = "YES DELETE MY VAULT" as const;
+
+/** Deletes an unrestorable remote vault so the connected account can create it again. */
+export const deleteCloudKeysRequestSchema = Type.Object(
+    {
+        confirmation: Type.Literal(CLOUD_VAULT_DELETE_CONFIRMATION),
+        mutationId: Type.Optional(mutationIdSchema),
+    },
+    { additionalProperties: false },
+);
+export type DeleteCloudKeysRequest = Static<typeof deleteCloudKeysRequestSchema>;
 
 /** A freshly minted access token and the still-current connected snapshot. */
 export const cloudAccessTokenResponseSchema = Type.Object({

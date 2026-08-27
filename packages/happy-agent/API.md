@@ -891,6 +891,10 @@ The optional `keys` field is one of these states:
   bundle or could not prove that no bundle exists. The person must restore it through the restore
   mutation below. If restoration authoritatively reports no bundle, the state becomes
   `create_required`.
+- `resetting` — the person explicitly confirmed deletion of an unrestorable remote vault. The
+  daemon has durably accepted the reset and is retrying deletion through Happy Cloud. Create and
+  restore are unavailable until the remote deletion succeeds and the state becomes
+  `create_required`.
 - `ready` — the account root and generated secret are available locally. `identityKey` is the
   derived Ed25519 public key, serialized as exactly 43 unpadded base64url characters.
 
@@ -1131,6 +1135,37 @@ failed. A transient authentication or Happy Cloud failure keeps the request pend
 process-local factors remain available. A local storage failure returns `503` with code
 `cloud_unavailable` and preserves `restore_required`.
 
+### `DELETE /v0/cloud/keys`
+
+Deletes an unrestorable encrypted vault from Happy Cloud so the connected account can create it
+again. This is a destructive recovery operation and requires the exact confirmation phrase:
+
+```json
+{
+    "confirmation": "YES DELETE MY VAULT",
+    "mutationId": "optional-client-value"
+}
+```
+
+The mutation is valid only while `cloud.keys.status` is `restore_required`. Any other confirmation
+is malformed input. The daemon first durably changes the key state to `resetting`, then invokes
+Happy Cloud's complete vault deletion without an authentication hash. Temporary authentication or
+Happy Cloud failures retry through Durable Functions across daemon restarts. A successful remote
+deletion changes the key state to `create_required`. Any locally retained root and generated H1
+secret remain owner-only backup material; resetting the remote vault does not erase or rotate them.
+A later create re-encrypts and uploads the retained root and therefore preserves its identity.
+
+Response — `200`: `{ "cloud": { ... } }` with a connected Cloud object whose keys are
+`create_required`. The durable transitions to `resetting` and `create_required` each emit a
+`cloud.updated` event. The request's optional `mutationId` is echoed only by the initial
+`resetting` transition.
+
+Malformed input, including any confirmation other than the exact phrase, returns `400` with code
+`invalid_request` without contacting Happy Cloud. No connected account returns `409` with code
+`cloud_not_authenticated`. A key state other than `restore_required` returns `409` with code
+`conflict` and the authoritative current `cloud`. A definitive Happy Cloud rejection returns a
+display-safe `409` conflict. Local storage failures return `503` with code `cloud_unavailable`.
+
 ### `GET /v0/cloud/keys/backup`
 
 Returns the complete locally retained backup material for the connected account. This is an
@@ -1152,10 +1187,13 @@ factor supplied while creating or restoring the keys. Together they are sufficie
 for the daemon-owned portion of Cloud encryption; the person's password is neither returned nor
 recoverable from this response.
 
-No connected account returns `409` with code `cloud_not_authenticated`. Keys that are not `ready`
-return `409` with code `conflict` and the current `cloud`. Missing or incomplete local ready-key
-material is an unexpected storage invariant failure and returns the generic `500` `internal` error;
-the daemon does not migrate or backfill key records created before generated-secret retention.
+No connected account returns `409` with code `cloud_not_authenticated`. A complete retained local
+backup remains readable while keys are `ready`, `restore_required`, `resetting`, or
+`create_required`; remote deletion does not make it unavailable. If the account has no retained
+local root, the endpoint returns `409` with code `conflict` and the current `cloud`. Incomplete local
+material, such as a retained root without its generated secret, is an unexpected storage invariant
+failure and returns the generic `500` `internal` error; the daemon does not migrate or backfill key
+records created before generated-secret retention.
 
 ### Cloud profile and enrollment
 

@@ -43,6 +43,7 @@ import type {
     CloudSocialResponse,
     CompleteCloudAuthorizationRequest,
     CreateCloudKeysRequest,
+    DeleteCloudKeysRequest,
     EnrollCloudProfileRequest,
     RestoreCloudKeysRequest,
     StartCloudAuthorizationRequest,
@@ -418,6 +419,19 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/cloud/keys/restore",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/cloud/keys` — deletes an unrestorable remote Cloud vault. */
+    async deleteCloudKeys(
+        request: DeleteCloudKeysRequest,
+        options: RequestOptions = {},
+    ): Promise<CloudConnectedResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: "v0/cloud/keys",
             json: request,
             signal: options.signal,
         });
