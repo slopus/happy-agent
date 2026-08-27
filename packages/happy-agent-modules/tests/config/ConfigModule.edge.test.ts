@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { Value } from "@sinclair/typebox/value";
+import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -15,6 +16,7 @@ import {
     loadHappyAgentConfiguration,
     parseHappyAgentConfigToml,
 } from "../../sources/config/index.js";
+import { smartProviderRoute } from "../../sources/config/impl/agentCatalog.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -1203,6 +1205,93 @@ describe("ConfigModule edge coverage", () => {
             expectParseError("[providers.custom]\napi_key = 'x'", "must set type");
             expectParseError("[providers.custom]\ntype = 'unsupported'", "must set type");
             expectParseError("[providers.codex]\ncredential_isolation = false");
+        });
+
+        it("normalizes smart round-robin providers and filters incompatible routes silently", async () => {
+            const root = await temporaryRoot("happy-agent-config-smart-provider-");
+            await writeLayer(
+                root,
+                "Happy/Config/happy.toml",
+                [
+                    "[providers.work]",
+                    'type = "codex"',
+                    'include_models = ["openai/gpt-5.6-sol"]',
+                    "",
+                    "[providers.personal]",
+                    'type = "codex"',
+                    'include_models = ["openai/gpt-5.6-sol", "openai/gpt-5.6-terra"]',
+                    "",
+                    "[providers.other-kind]",
+                    'type = "claude"',
+                    'include_models = ["anthropic/sonnet-5"]',
+                    "",
+                    "[providers.router]",
+                    'type = "smart"',
+                    'strategy = "round_robin"',
+                    'providers = ["missing", "work", "other-kind", "personal", "router"]',
+                ].join("\n"),
+            );
+
+            const config = await ConfigModule.load(join(root, ".happy"));
+            const smart = config.configuration.values.providers.router;
+            expect(smart).toMatchObject({
+                providers: ["missing", "work", "other-kind", "personal", "router"],
+                strategy: "round_robin",
+                type: "smart",
+            });
+            expect(
+                config.offeredModels
+                    .filter((model) => model.providerId === "router")
+                    .map((model) => model.id),
+            ).toEqual(["openai/gpt-5.6-sol", "openai/gpt-5.6-terra"]);
+            expect(config.providers.typeOf("router")).toBe("codex");
+            expect(smartProviderRoute(config.configuration, "router")?.models).toMatchObject([
+                {
+                    candidates: ["work", "personal"],
+                    model: { id: "openai/gpt-5.6-sol" },
+                },
+                {
+                    candidates: ["personal"],
+                    model: { id: "openai/gpt-5.6-terra" },
+                },
+            ]);
+            await expect(
+                config.updateRuntimeProviderStates(createRootContext(), {
+                    router: { autoEnable: true },
+                }),
+            ).resolves.toBeUndefined();
+        });
+
+        it("routes Bedrock accounts only within the same explicitly configured region", async () => {
+            const root = await temporaryRoot("happy-agent-config-smart-bedrock-");
+            await writeLayer(
+                root,
+                "Happy/Config/happy.toml",
+                [
+                    "[providers.east-a]",
+                    'type = "bedrock"',
+                    'region = "us-east-1"',
+                    "",
+                    "[providers.west]",
+                    'type = "bedrock"',
+                    'region = "us-west-2"',
+                    "",
+                    "[providers.east-b]",
+                    'type = "bedrock"',
+                    'region = "us-east-1"',
+                    "",
+                    "[providers.router]",
+                    'type = "smart"',
+                    'providers = ["east-a", "west", "east-b"]',
+                ].join("\n"),
+            );
+
+            const config = await ConfigModule.load(join(root, ".happy"));
+            const route = smartProviderRoute(config.configuration, "router");
+            expect(route?.models.every((model) => model.region === "us-east-1")).toBe(true);
+            expect(
+                route?.models.every((model) => model.candidates.join(",") === "east-a,east-b"),
+            ).toBe(true);
         });
 
         it("validates the provider default-enable switch independently of provider records", () => {

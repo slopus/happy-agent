@@ -34,3 +34,11 @@ the user's catalog and root `mcp.toml` for a workspace catalog. Runtime, Codex, 
 provider MCP settings do not enter the Happy MCP catalog. The config module owns parsing, bounded
 validation, the global path, and atomic global one-server updates, while the MCP module owns live
 clients, workspace demand, sharing, and reconciliation.
+
+## Smart routing is a virtual provider with concrete accounting
+
+A smart provider keeps the agent's configured provider identity stable while delegating each
+exact-model session to one compatible concrete account. The random starting choice and failed
+accounts are held per agent; authentication and account-token exhaustion advance the route, while
+other failures remain terminal. Candidate validation is deliberately silent, Bedrock routing fails
+closed across unknown or different regions, and usage remains attributed to concrete providers.

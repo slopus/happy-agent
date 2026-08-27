@@ -80,18 +80,33 @@ export function createGymInferenceFromEnvironment(
                         }
                         return provider;
                     },
-                    real.providers.typeOf(providerId) ?? configured?.type ?? "codex",
+                    gymProviderType(real.providers, providerId, configured?.type),
                 );
                 continue;
             }
             providers.add(
                 providerId,
                 new GymHttpProvider({ endpoint, providerId, token }),
-                configured?.type ?? "codex",
+                gymProviderType(real.providers, providerId, configured?.type),
             );
         }
         return { models: [GYM_MODEL, ...real.models], providers };
     };
+}
+
+function gymProviderType(
+    providers: AgentProviders,
+    providerId: string,
+    configuredType: string | undefined,
+): Exclude<ReturnType<AgentProviders["typeOf"]>, null> {
+    const routed = providers.typeOf(providerId);
+    if (routed !== null) return routed;
+    return configuredType === "bedrock" ||
+        configuredType === "claude" ||
+        configuredType === "codex" ||
+        configuredType === "grok"
+        ? configuredType
+        : "codex";
 }
 
 // --- Wire protocol (mirrors packages/gym/sources/inferenceTypes.ts) ------------------------

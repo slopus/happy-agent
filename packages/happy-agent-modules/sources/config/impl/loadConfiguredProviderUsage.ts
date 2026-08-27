@@ -23,6 +23,8 @@ export function loadConfiguredProviderUsage(
     if (provider === undefined || (provider.enabled === false && options.ignoreEnabled !== true)) {
         return Promise.resolve(null);
     }
+    // A smart provider spends through its concrete members, whose own entries carry usage.
+    if (provider.type === "smart") return Promise.resolve(null);
     const env = providerEnvironment(provider.credentialIsolation === true, options.environment);
     const providerFetch = options.signal === undefined ? {} : { fetch: until(options.signal) };
 

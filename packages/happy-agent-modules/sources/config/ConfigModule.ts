@@ -22,6 +22,7 @@ import {
     agentModelContext,
     agentModels,
     agentProviders,
+    smartProviderRoute,
     type AgentModelContext,
     type ConfiguredAgentModel,
 } from "./impl/agentCatalog.js";
@@ -230,12 +231,32 @@ const providerInputSchemas = {
         },
         { additionalProperties: false },
     ),
+    smart: Type.Object(
+        {
+            auto_enable: Type.Optional(Type.Boolean()),
+            enabled: Type.Optional(Type.Boolean()),
+            exclude_models: Type.Optional(boundedStringArraySchema),
+            include_models: Type.Optional(boundedStringArraySchema),
+            p2p_share: Type.Optional(p2pShareSchema),
+            providers: Type.Optional(
+                Type.Array(configStringSchema, {
+                    minItems: 1,
+                    maxItems: MAX_CONFIG_ARRAY_ITEMS,
+                    uniqueItems: true,
+                }),
+            ),
+            strategy: Type.Optional(Type.Literal("round_robin")),
+            type: Type.Literal("smart"),
+        },
+        { additionalProperties: false },
+    ),
 } as const;
 const providerInputSchema = Type.Union([
     providerInputSchemas.bedrock,
     providerInputSchemas.claude,
     providerInputSchemas.codex,
     providerInputSchemas.grok,
+    providerInputSchemas.smart,
 ]);
 const providerMapInputSchema = Type.Record(configStringSchema, providerInputSchema, {
     maxProperties: MAX_PROVIDER_COUNT,
@@ -541,12 +562,30 @@ const providerSchemas = {
         },
         { additionalProperties: false },
     ),
+    smart: Type.Object(
+        {
+            autoEnable: Type.Optional(Type.Boolean()),
+            enabled: Type.Boolean(),
+            excludeModels: Type.Optional(boundedStringArraySchema),
+            includeModels: Type.Optional(boundedStringArraySchema),
+            p2pShare: Type.Optional(p2pShareSchema),
+            providers: Type.Array(configStringSchema, {
+                minItems: 1,
+                maxItems: MAX_CONFIG_ARRAY_ITEMS,
+                uniqueItems: true,
+            }),
+            strategy: Type.Literal("round_robin"),
+            type: Type.Literal("smart"),
+        },
+        { additionalProperties: false },
+    ),
 } as const;
 const providerSchema = Type.Union([
     providerSchemas.bedrock,
     providerSchemas.claude,
     providerSchemas.codex,
     providerSchemas.grok,
+    providerSchemas.smart,
 ]);
 
 const resolvedValuesSchema = Type.Object(
@@ -1264,6 +1303,24 @@ export class ConfigModule implements AgentModule {
         }
         const configured = this.configuration.values.providers[providerId];
         if (configured === undefined) return "missing";
+        if (configured.type === "smart") {
+            const route = smartProviderRoute(this.configuration, providerId);
+            const candidates = new Set(route?.models.flatMap((model) => model.candidates) ?? []);
+            for (const candidate of candidates) {
+                if ((await this.#probeConfiguredProviderCredentials(candidate)) === "available") {
+                    return "available";
+                }
+            }
+            return "missing";
+        }
+        return await this.#probeConfiguredProviderCredentials(providerId);
+    }
+
+    async #probeConfiguredProviderCredentials(
+        providerId: string,
+    ): Promise<"available" | "missing"> {
+        const configured = this.configuration.values.providers[providerId];
+        if (configured === undefined || configured.type === "smart") return "missing";
         if (configured.type === "bedrock") {
             return (await this.#hasLocalBedrockCredential(configured)) ? "available" : "missing";
         }
@@ -1387,7 +1444,12 @@ export class ConfigModule implements AgentModule {
                 models: agentModels(this.configuration, (message) =>
                     this.#catalogNotices.push(message),
                 ),
-                providers: agentProviders(this.configuration),
+                providers: agentProviders(
+                    this.configuration,
+                    undefined,
+                    (id) => this.isProviderEnabled(id),
+                    (id) => this.#providerEnablement?.signal(id),
+                ),
             },
             this.configuration,
         );
@@ -1416,7 +1478,12 @@ export class ConfigModule implements AgentModule {
         if (this.#sourceProviders === undefined) {
             this.#sourceProviders =
                 this.#resolveScripted()?.providers ??
-                agentProviders(this.configuration, (usage) => this.#reportAccountUsage(usage));
+                agentProviders(
+                    this.configuration,
+                    (usage) => this.#reportAccountUsage(usage),
+                    (id) => this.isProviderEnabled(id),
+                    (id) => this.#providerEnablement?.signal(id),
+                );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This
             // happens exactly once: ProviderScanModule may subsequently gate them without a later
@@ -2558,6 +2625,13 @@ function normalizeProvider(id: string, value: Record<string, unknown>): Record<s
                 ...(value["base_url"] === undefined ? {} : { baseUrl: value["base_url"] }),
                 type: inferred,
             };
+        case "smart":
+            return {
+                ...normalizeProviderCommon(value),
+                providers: value["providers"],
+                strategy: value["strategy"] ?? "round_robin",
+                type: inferred,
+            };
     }
 }
 
@@ -2576,20 +2650,32 @@ function normalizeProviderCommon(value: Record<string, unknown>): Record<string,
     };
 }
 
-function inferProviderType(id: string, type: unknown): "bedrock" | "claude" | "codex" | "grok" {
+function inferProviderType(
+    id: string,
+    type: unknown,
+): "bedrock" | "claude" | "codex" | "grok" | "smart" {
     const builtIn = ["bedrock", "claude", "codex", "grok"].includes(id)
         ? (id as "bedrock" | "claude" | "codex" | "grok")
         : undefined;
     if (type !== undefined && type !== builtIn && builtIn !== undefined) {
         throw new Error(`Built-in provider "${id}" must use type "${builtIn}".`);
     }
-    if (type !== undefined && !["bedrock", "claude", "codex", "grok"].includes(String(type))) {
+    if (
+        type !== undefined &&
+        !["bedrock", "claude", "codex", "grok", "smart"].includes(String(type))
+    ) {
         throw new Error(`Provider "${id}" has an unsupported type.`);
     }
-    const inferred = (type ?? builtIn) as "bedrock" | "claude" | "codex" | "grok" | undefined;
+    const inferred = (type ?? builtIn) as
+        | "bedrock"
+        | "claude"
+        | "codex"
+        | "grok"
+        | "smart"
+        | undefined;
     if (inferred === undefined) {
         throw new Error(
-            `Provider "${id}" must set type to "codex", "claude", "grok", or "bedrock".`,
+            `Provider "${id}" must set type to "codex", "claude", "grok", "bedrock", or "smart".`,
         );
     }
     return inferred;
@@ -3163,10 +3249,12 @@ function readProviders(
                     ? providerInputSchemas.codex
                     : type === "grok"
                       ? providerInputSchemas.grok
-                      : undefined;
+                      : type === "smart"
+                        ? providerInputSchemas.smart
+                        : undefined;
         if (schema === undefined) {
             throw new Error(
-                `Provider "${id}" must set type to "codex", "claude", "grok", or "bedrock".`,
+                `Provider "${id}" must set type to "codex", "claude", "grok", "bedrock", or "smart".`,
             );
         }
         if (["bedrock", "claude", "codex", "grok"].includes(id) && type !== id) {

@@ -100,6 +100,23 @@ AWS credential provider, so process credentials are renewed without storing retu
 When no authentication source is named, Bedrock tries its bearer-token environment variable first
 and then the ambient AWS credential chain.
 
+A virtual smart provider uses `type = "smart"`, `strategy = "round_robin"`, and an ordered
+`providers` array. For each exact model, the first valid concrete member establishes the provider
+kind; missing providers, nested smart providers, other kinds, unsupported models, and incompatible
+Bedrock regions are silently omitted. Each agent starts at a random point in the remaining list,
+stays on that account across turns and provider-session recreation, and moves forward only after a
+typed authentication or account-token-exhaustion failure. A failure after visible model output is
+not replayed elsewhere, because doing so could duplicate output or provider-side effects. Usage is
+still recorded against the concrete account that spent it.
+
+```toml
+[providers.smart]
+type = "smart"
+strategy = "round_robin"
+providers = ["codex-work", "codex-personal"]
+enabled = true
+```
+
 `load` takes an `inference` override for tests, which replaces both. It belongs here rather than
 where the agent starts, because a scripted account has to reach every module that names one.
 

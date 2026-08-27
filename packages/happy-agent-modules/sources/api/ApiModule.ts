@@ -4715,8 +4715,14 @@ export class ApiModule implements AgentModule {
         for (const [providerId, provider] of Object.entries(
             this.#config.configuration.values.providers,
         )) {
+            const compatibility = this.#config.providers.typeOf(providerId);
             providers[providerId] = {
-                type: provider.type,
+                type:
+                    provider.type === "smart"
+                        ? compatibility === null || compatibility === "gym"
+                            ? "codex"
+                            : compatibility
+                        : provider.type,
                 enabled: this.#config.isProviderEnabled(providerId),
                 models: [],
             };

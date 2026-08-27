@@ -147,6 +147,16 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # region = "us-east-1"
 # transport = "mantle"
 
+# A smart provider is a virtual account backed by compatible concrete providers. It picks a
+# random starting account for each agent, stays there, and advances through this list only when
+# that account is signed out or has exhausted its tokens. Missing providers, different provider
+# kinds, unsupported models, and mismatched Bedrock regions are ignored for that route.
+# [providers.smart]
+# type = "smart"
+# strategy = "round_robin"
+# providers = ["codex-work", "codex-personal"]
+# enabled = true
+
 # Gemini powers the universal media and search tools rather than chat models, so it has no
 # [providers.*] entry. The key written here wins over the GEMINI_API_KEY environment variable.
 # [gemini]

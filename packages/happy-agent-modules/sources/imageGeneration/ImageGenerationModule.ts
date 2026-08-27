@@ -58,9 +58,7 @@ export class ImageGenerationModule implements AgentModule {
 
     /** How many accounts this agent's request could be sent to, for an approval to disclose. */
     get accountCount(): number {
-        return codexImageProviderIds(this.#config.providers, (id) =>
-            this.#config.isProviderEnabled(id),
-        ).length;
+        return codexImageProviderIds(this.#config.providers, this.#isDirectImageProvider).length;
     }
 
     /** Generate one image, write it to the shared generated-files folder, and return it. */
@@ -135,9 +133,7 @@ export class ImageGenerationModule implements AgentModule {
      * the same second account.
      */
     #accountOrder(preferredProviderId: string | undefined): readonly string[] {
-        const accounts = codexImageProviderIds(this.#config.providers, (id) =>
-            this.#config.isProviderEnabled(id),
-        );
+        const accounts = codexImageProviderIds(this.#config.providers, this.#isDirectImageProvider);
         if (accounts.length === 0) return accounts;
         const offset = this.#roundRobinOffset++ % accounts.length;
         const rotated = [...accounts.slice(offset), ...accounts.slice(0, offset)];
@@ -146,6 +142,10 @@ export class ImageGenerationModule implements AgentModule {
             ? rotated
             : [preferred, ...rotated.filter((candidate) => candidate !== preferred)];
     }
+
+    readonly #isDirectImageProvider = (providerId: string): boolean =>
+        this.#config.isProviderEnabled(providerId) &&
+        this.#config.configuration.values.providers[providerId]?.type !== "smart";
 
     readonly #hooks: AgentModuleHooks = {
         /**

@@ -16,11 +16,14 @@ import {
     loadCodexCredential,
     resolveClaudeCodeExecutablePath,
     type BaseProvider,
+    type ProviderModelCompatibilityType,
     type ProviderUsage,
 } from "@slopus/happy-providers";
 import type { HappyAgentConfigValues, HappyAgentConfiguration } from "../ConfigModule.js";
+import { RoundRobinRouterProvider } from "./RoundRobinRouterProvider.js";
 
 type ConfiguredProvider = HappyAgentConfigValues["providers"][string];
+type ConcreteConfiguredProvider = Exclude<ConfiguredProvider, { readonly type: "smart" }>;
 
 /** Provider-facing context limits that are not part of Agent Base's routing identity. */
 export interface AgentModelContext {
@@ -29,6 +32,17 @@ export interface AgentModelContext {
 }
 
 type CatalogAgentModel = AgentModel & AgentModelContext;
+
+export interface SmartProviderModelRoute {
+    readonly candidates: readonly string[];
+    readonly model: CatalogAgentModel;
+    readonly region?: string;
+}
+
+export interface SmartProviderRoute {
+    readonly models: readonly SmartProviderModelRoute[];
+    readonly type: ProviderModelCompatibilityType;
+}
 
 /** One provider/model route in the complete catalog, whether or not configuration enables it. */
 export type ConfiguredAgentModel = AgentModel & {
@@ -177,9 +191,10 @@ export function agentModelCatalog(
     isProviderEnabled: (id: string) => boolean = (id) =>
         configuration.values.providers[id]?.enabled !== false,
 ): readonly ConfiguredAgentModel[] {
-    const models: ConfiguredAgentModel[] = [];
+    const concreteModels: ConfiguredAgentModel[] = [];
     const values = configuration.values;
     for (const [id, provider] of Object.entries(values.providers)) {
+        if (provider.type === "smart") continue;
         const source = provider.type === "bedrock" ? BEDROCK_CATALOG : CATALOG;
         for (const candidate of source) {
             if (provider.type !== "bedrock" && candidate.providerId !== provider.type) continue;
@@ -187,10 +202,97 @@ export function agentModelCatalog(
                 isProviderEnabled(id) &&
                 provider.includeModels?.includes(candidate.id) !== false &&
                 provider.excludeModels?.includes(candidate.id) !== true;
-            models.push({ ...candidate, enabled, providerId: id });
+            concreteModels.push({ ...candidate, enabled, providerId: id });
+        }
+    }
+    const models = [...concreteModels];
+    for (const [id, provider] of Object.entries(values.providers)) {
+        if (provider.type !== "smart") continue;
+        const route = smartProviderRoute(configuration, id, concreteModels);
+        if (route === undefined) continue;
+        for (const routed of route.models) {
+            const enabled =
+                isProviderEnabled(id) &&
+                provider.includeModels?.includes(routed.model.id) !== false &&
+                provider.excludeModels?.includes(routed.model.id) !== true &&
+                routed.candidates.some((candidate) => isProviderEnabled(candidate));
+            models.push({ ...routed.model, enabled, providerId: id });
         }
     }
     return models;
+}
+
+/** Resolve one smart provider into exact-model routes, silently dropping invalid members. */
+export function smartProviderRoute(
+    configuration: HappyAgentConfiguration,
+    providerId: string,
+    catalog: readonly ConfiguredAgentModel[] = concreteAgentModelCatalog(configuration),
+): SmartProviderRoute | undefined {
+    const smart = configuration.values.providers[providerId];
+    if (smart?.type !== "smart") return undefined;
+    const concrete = smart.providers
+        .map((id) => [id, configuration.values.providers[id]] as const)
+        .filter(
+            (
+                entry,
+            ): entry is readonly [
+                string,
+                Exclude<ConfiguredProvider, { readonly type: "smart" }>,
+            ] => entry[1] !== undefined && entry[1].type !== "smart",
+        );
+    const type = concrete[0]?.[1].type;
+    if (type === undefined) return undefined;
+    const compatibleIds = new Set(
+        concrete.filter(([, provider]) => provider.type === type).map(([id]) => id),
+    );
+    const orderedModels: string[] = [];
+    const routes = new Map<
+        string,
+        { candidates: string[]; model: CatalogAgentModel; region?: string }
+    >();
+    for (const candidateId of smart.providers) {
+        if (!compatibleIds.has(candidateId)) continue;
+        for (const entry of catalog) {
+            if (entry.providerId !== candidateId) continue;
+            const candidateProvider = configuration.values.providers[candidateId];
+            if (
+                candidateProvider === undefined ||
+                candidateProvider.type === "smart" ||
+                candidateProvider.includeModels?.includes(entry.id) === false ||
+                candidateProvider.excludeModels?.includes(entry.id) === true
+            ) {
+                continue;
+            }
+            let route = routes.get(entry.id);
+            const region =
+                type === "bedrock"
+                    ? bedrockModelRegion(configuration, candidateId, entry.id)
+                    : undefined;
+            if (route === undefined) {
+                const { enabled: _enabled, ...model } = entry;
+                route = {
+                    candidates: [],
+                    model: model as CatalogAgentModel,
+                    ...(region === undefined ? {} : { region }),
+                };
+                routes.set(entry.id, route);
+                orderedModels.push(entry.id);
+            }
+            if (
+                type === "bedrock" &&
+                !sameBedrockRegion(route.region, region, route.candidates.length)
+            ) {
+                continue;
+            }
+            route.candidates.push(candidateId);
+        }
+    }
+    return {
+        models: orderedModels
+            .map((modelId) => routes.get(modelId)!)
+            .filter((route) => route.candidates.length > 0),
+        type,
+    };
 }
 
 /** Context limits for one enabled provider/model route, when the curated catalog knows them. */
@@ -206,10 +308,13 @@ export function agentModelContext(modelId: string): AgentModelContext | undefine
 export function agentProviders(
     configuration: HappyAgentConfiguration,
     onAccountUsage?: (usage: ProviderUsage) => void,
+    isProviderEnabled: (providerId: string) => boolean = () => true,
+    providerSignal: (providerId: string) => AbortSignal | undefined = () => undefined,
 ): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
     for (const [id, provider] of Object.entries(configuration.values.providers)) {
+        if (provider.type === "smart") continue;
         providers.add(
             id,
             async ({ model: selected }) =>
@@ -217,12 +322,80 @@ export function agentProviders(
             provider.type,
         );
     }
+    for (const [id, provider] of Object.entries(configuration.values.providers)) {
+        if (provider.type !== "smart") continue;
+        const route = smartProviderRoute(configuration, id);
+        if (route === undefined || route.models.length === 0) continue;
+        const cache = new Map<string, RoundRobinRouterProvider>();
+        providers.add(
+            id,
+            ({ model: selected }) => {
+                const routed =
+                    route.models.find((candidate) => candidate.model.id === selected) ??
+                    (selected === undefined ? route.models[0] : undefined);
+                if (routed === undefined) {
+                    throw new Error(
+                        `Smart provider "${id}" has no compatible route for model "${selected ?? ""}".`,
+                    );
+                }
+                let resolved = cache.get(routed.model.id);
+                if (resolved === undefined) {
+                    resolved = new RoundRobinRouterProvider({
+                        candidates: routed.candidates.map((providerId) => ({ providerId })),
+                        isEnabled: isProviderEnabled,
+                        model: routed.model.id,
+                        ...(routed.region === undefined ? {} : { region: routed.region }),
+                        resolve: async (providerId, model) =>
+                            await providers.resolve(providerId, model),
+                        signal: providerSignal,
+                    });
+                    cache.set(routed.model.id, resolved);
+                }
+                return resolved;
+            },
+            route.type,
+        );
+    }
     return providers;
+}
+
+function concreteAgentModelCatalog(
+    configuration: HappyAgentConfiguration,
+): readonly ConfiguredAgentModel[] {
+    const models: ConfiguredAgentModel[] = [];
+    for (const [id, provider] of Object.entries(configuration.values.providers)) {
+        if (provider.type === "smart") continue;
+        const source = provider.type === "bedrock" ? BEDROCK_CATALOG : CATALOG;
+        for (const candidate of source) {
+            if (provider.type !== "bedrock" && candidate.providerId !== provider.type) continue;
+            models.push({ ...candidate, enabled: true, providerId: id });
+        }
+    }
+    return models;
+}
+
+function bedrockModelRegion(
+    configuration: HappyAgentConfiguration,
+    providerId: string,
+    modelId: string,
+): string | undefined {
+    const provider = configuration.values.providers[providerId];
+    if (provider?.type !== "bedrock") return undefined;
+    return provider.modelOverrides?.[modelId]?.region ?? provider.region;
+}
+
+function sameBedrockRegion(
+    anchor: string | undefined,
+    candidate: string | undefined,
+    existingCandidates: number,
+): boolean {
+    if (existingCandidates === 0) return true;
+    return anchor !== undefined && candidate !== undefined && anchor === candidate;
 }
 
 async function createProvider(
     id: string,
-    provider: ConfiguredProvider,
+    provider: ConcreteConfiguredProvider,
     selectedModel: string | undefined,
     retryLimit: number | undefined,
     onAccountUsage?: (usage: ProviderUsage) => void,
