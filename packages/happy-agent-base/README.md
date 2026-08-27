@@ -19,6 +19,13 @@ The package also provides the primitives needed to host that runtime:
 should be injected before one response. The choice applies consistently to newly created and
 restored agents.
 
+`retryForever: true` is token-max operation: it is for a token-rich caller that wants the agent to
+keep consuming tokens and never accept an error as final. `AgentBase`, or every agent in an
+`AgentSystemLocal`, always retries forever across provider errors, failed compactions, and fatal
+internal run-stage failures, using bounded exponential backoff. The outstanding durable stage
+remains active between attempts, so committed tool effects are not replayed. Only explicit abort,
+drain, close, provider disablement, or graceful shutdown stops active retrying.
+
 One `AgentSystem` exclusively owns one durable store. `AgentStorage` requires an asynchronous
 Drizzle SQLite or PostgreSQL/PGlite database plus a hard database-level lock. It owns the agent
 record, key-value, and migration tables itself. `AgentSystem.close()` stops its agents and releases

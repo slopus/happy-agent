@@ -38,6 +38,27 @@ brand = "ansi:202"
 accent = "cyan"
 ```
 
+## Ethan mode
+
+Ethan mode is token-max mode. Enable it when you are token rich, expect the agent to keep consuming
+tokens, and want progress to continue instead of accepting any error as final. It always retries,
+forever, with backoff: there is no retry limit, and errors marked fatal do not stop it. This includes
+provider, authentication, billing, context, policy, compaction, and internal run-stage failures.
+In short, Ethan mode survives any failure the agent loop can recover from and keeps trying until it
+works.
+
+Only a deliberate stop ends it. Explicit cancellation, provider disablement, and daemon shutdown
+still stop active work.
+
+Enable it only in the user-wide configuration, then restart the daemon:
+
+```toml
+[settings.ethan]
+enabled = true
+```
+
+A repository `happy.toml` cannot enable Ethan mode.
+
 ## Protected paths
 
 Add existing workspace-relative files or directories to a project's

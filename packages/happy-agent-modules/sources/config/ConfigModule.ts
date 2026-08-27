@@ -124,6 +124,14 @@ const settingsInputSchema = Type.Object(
         completion_chime: Type.Optional(Type.Boolean()),
         daemon_heap_snapshots: Type.Optional(Type.Boolean()),
         durable_global_event_queue: Type.Optional(Type.Boolean()),
+        ethan: Type.Optional(
+            Type.Object(
+                {
+                    enabled: Type.Optional(Type.Boolean()),
+                },
+                { additionalProperties: false },
+            ),
+        ),
         happy_integration: Type.Optional(Type.Boolean()),
         inference_max_retries: Type.Optional(
             Type.Integer({ minimum: 0, maximum: MAX_INFERENCE_MAX_RETRIES }),
@@ -743,6 +751,12 @@ const resolvedValuesSchema = Type.Object(
                 completionChime: Type.Boolean(),
                 daemonHeapSnapshots: Type.Boolean(),
                 durableGlobalEventQueue: Type.Boolean(),
+                ethan: Type.Object(
+                    {
+                        enabled: Type.Boolean(),
+                    },
+                    { additionalProperties: false },
+                ),
                 happyIntegration: Type.Boolean(),
                 inferenceMaxRetries: Type.Integer({
                     minimum: 0,
@@ -938,6 +952,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         completionChime: false,
         daemonHeapSnapshots: false,
         durableGlobalEventQueue: false,
+        ethan: { enabled: false },
         happyIntegration: true,
         inferenceMaxRetries: 10,
         maxCollaborationDepth: 3,
@@ -2208,6 +2223,7 @@ function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Recor
         ...(value.durable_global_event_queue === undefined
             ? {}
             : { durableGlobalEventQueue: value.durable_global_event_queue }),
+        ...(value.ethan === undefined ? {} : { ethan: { enabled: value.ethan.enabled ?? false } }),
         ...(value.happy_integration === undefined
             ? {}
             : { happyIntegration: value.happy_integration }),
@@ -2600,6 +2616,7 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
     const {
         daemon_heap_snapshots: _daemonHeapSnapshots,
         durable_global_event_queue: _durableGlobalEventQueue,
+        ethan: _ethan,
         happy_integration: _happyIntegration,
         inference_max_retries: _inferenceMaxRetries,
         max_collaboration_depth: _maxCollaborationDepth,
@@ -2654,6 +2671,7 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
             completion_chime: "completionChime",
             daemon_heap_snapshots: "daemonHeapSnapshots",
             durable_global_event_queue: "durableGlobalEventQueue",
+            ethan: "ethan",
             happy_integration: "happyIntegration",
             inference_max_retries: "inferenceMaxRetries",
             max_collaboration_depth: "maxCollaborationDepth",
@@ -2720,6 +2738,7 @@ function readSettings(
             "completion_chime",
             "daemon_heap_snapshots",
             "durable_global_event_queue",
+            "ethan",
             "happy_integration",
             "inference_max_retries",
             "max_collaboration_depth",

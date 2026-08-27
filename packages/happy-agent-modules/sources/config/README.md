@@ -46,6 +46,11 @@ settings. Ordinary collaboration reads `settings.maxCollaborators` and
 `settings.maxCollaborationDepth` from this snapshot; their persisted TOML spellings are
 `max_collaborators` and `max_collaboration_depth`.
 
+`[settings.ethan] enabled = true` enables token-max mode for a token-rich user who expects the
+agent to keep consuming tokens rather than accept an error as final. Agent work always retries,
+forever, including provider errors, failed compactions, and fatal internal run-stage errors. Only
+explicit cancellation, provider disablement, or daemon shutdown stops active work.
+
 `[observation]` decides what the agent records about itself, and is read only
 from the global and runtime layers. A checked-in project file that turned
 tracing on and named its own endpoint would send this machine's traces

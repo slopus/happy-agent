@@ -36,6 +36,39 @@ class UnwritableFailurePersistence extends InMemoryPersistence {
  * with the settlement itself rather than only through whatever the model happened to say.
  */
 describe("a failed run", () => {
+    it("reopens a fatally failed run until its lifecycle succeeds when enabled", async () => {
+        const persistence = new InMemoryPersistence();
+        const provider = new ScriptedProvider([textTurn("recovered")]);
+        const settlements: AgentBaseSettlement[] = [];
+        let openings = 0;
+        const agent = await AgentBase.create(ctx, {
+            id: "retrying-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            retryForever: true,
+            hooks: {
+                beforeAgentLoopTransact: () => {
+                    openings += 1;
+                    if (openings === 1) throw new Error("the run could not be opened");
+                },
+                afterAgentSettledTransact: (_hookCtx, settlement) => {
+                    settlements.push(settlement);
+                },
+            },
+        });
+
+        await agent.send(ctx, user("do the work"));
+        await agent.waitForIdle();
+
+        expect(openings).toBe(2);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(settlements).toHaveLength(1);
+        expect(settlements[0]?.error).toBeUndefined();
+        expect(agent.active).toBe(false);
+        await agent.close();
+    });
+
     it("settles with the provider failure that ended it", async () => {
         const persistence = new InMemoryPersistence();
         const provider = new ScriptedProvider([errorTurn("You have reached your usage limit.")]);

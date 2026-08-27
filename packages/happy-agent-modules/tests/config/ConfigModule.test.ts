@@ -40,9 +40,25 @@ describe("ConfigModule", () => {
         expect(configuration.sources.runtime.exists).toBe(false);
         expect(configuration.values.defaults.modelId).toBe("openai/gpt-5.6-sol");
         expect(configuration.values.settings).toMatchObject({
+            ethan: { enabled: false },
             maxCollaborationDepth: 3,
             maxCollaborators: 5,
         });
+    });
+
+    it("loads Ethan mode from its nested machine setting", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-ethan-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            ["[settings.ethan]", "enabled = true"].join("\n"),
+        );
+
+        const configuration = await loadHappyAgentConfiguration(join(root, ".happy"));
+
+        expect(configuration.values.settings.ethan).toEqual({ enabled: true });
+        expect(configuration.provenance["settings.ethan"]).toBe("global");
     });
 
     it("writes collaborator controls into the starter Happy settings", async () => {
@@ -217,6 +233,9 @@ describe("ConfigModule", () => {
                 "max_collaborators = 100",
                 "max_collaboration_depth = 20",
                 "",
+                "[settings.ethan]",
+                "enabled = true",
+                "",
                 "[workspace]",
                 'setup_commands = ["pnpm install"]',
             ].join("\n"),
@@ -236,6 +255,7 @@ describe("ConfigModule", () => {
                 permissionMode: "auto",
             });
             expect(configuration.values.settings).toMatchObject({
+                ethan: { enabled: false },
                 inferenceMaxRetries: 10,
                 maxCollaborationDepth: 3,
                 maxCollaborators: 5,

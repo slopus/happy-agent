@@ -31,6 +31,12 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # show_reasoning = false
 # show_usage = false
 
+# Ethan mode is token-max mode for token-rich users: always retry forever on every error, keep
+# consuming tokens, and survive failures providers classify as fatal. Explicit cancellation and
+# daemon shutdown still stop it.
+# [settings.ethan]
+# enabled = false
+
 # [features]
 # cross_workspace = false
 # workflows = true

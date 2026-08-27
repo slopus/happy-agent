@@ -82,6 +82,8 @@ export interface AgentSystemLocalOptions<Database extends AgentDatabase = AgentD
     readonly steeringMode?: AgentBaseQueueMode;
     /** How every agent drains sent follow-ups accepted before its next response. */
     readonly sendMode?: AgentBaseQueueMode;
+    /** Retry every failed agent stage until it succeeds or the agent is explicitly stopped. */
+    readonly retryForever?: boolean;
     /** Stable name this collection reports to a stdlib graceful-shutdown coordinator. */
     readonly shutdownName?: string;
 }
@@ -129,6 +131,8 @@ export class AgentSystemLocal<
     readonly #steeringMode: AgentBaseQueueMode;
     /** How every agent drains its sent-message queue. */
     readonly #sendMode: AgentBaseQueueMode;
+    /** Whether every agent retries failed stages until explicitly stopped. */
+    readonly #retryForever: boolean;
     /** Exclusive database-backed ownership of this collection's whole durable store. */
     readonly #storageLock: AgentStorageLock;
     /** The identity index and creation-time config fallback; current config lives with the agent. */
@@ -234,6 +238,7 @@ export class AgentSystemLocal<
         this.#provider = options.provider;
         this.#steeringMode = options.steeringMode ?? "one-at-a-time";
         this.#sendMode = options.sendMode ?? "one-at-a-time";
+        this.#retryForever = options.retryForever ?? false;
         this.models = [...options.models];
         this.#configs = storage.kv.scoped("config");
         this.#parents = storage.kv.scoped("parent");
@@ -711,6 +716,7 @@ export class AgentSystemLocal<
             providers: this.#providers,
             provider: this.#provider,
             persistence: this.#persistenceFor(agentId),
+            retryForever: this.#retryForever,
             sendMode: this.#sendMode,
             sharedKV: this.#sharedModuleKV,
             steeringMode: this.#steeringMode,

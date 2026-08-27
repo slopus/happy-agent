@@ -58,6 +58,34 @@ function managerKV(persistence: InMemoryPersistence): AgentKV {
 }
 
 describe("AgentSystemLocal", () => {
+    it("applies forever retry behavior to every agent in the collection", async () => {
+        const provider = new ScriptedProvider([
+            [{ type: "done", state: "error", kind: "unknown", message: "try again" }],
+            textTurn("answer"),
+        ]);
+        const system = await AgentSystemLocal.create(
+            ctx,
+            new InMemoryAgentStorage({
+                acquireLock: inMemoryStorageLock(),
+                kv: managerKV(new InMemoryPersistence()),
+                persistence: () => new InMemoryPersistence(),
+            }),
+            {
+                providers: providersOf(provider),
+                provider: "scripted",
+                models: [],
+                retryForever: true,
+            },
+        );
+        const agent = await system.create(ctx, {}, { id: "retryingagent1234567890123" });
+
+        await agent.send(ctx, user("answer this"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.requests).toHaveLength(2);
+        await system.close(ctx);
+    });
+
     it("keeps a freshly created agent idle until it receives work", async () => {
         const provider = new ScriptedProvider([textTurn("answer")]);
         let loops = 0;

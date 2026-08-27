@@ -596,15 +596,21 @@ export async function startHappyAgentRuntime(
             acquireLock: async () => await acquireHappyAgentStorageLock(paths.agentLockPath),
             database: main.database,
         });
-        const agentSystem = await AgentSystemLocal.create(ctx.named("agent-system"), storage, {
+        const agentSystemOptions = {
             models,
             modules: ordered,
             provider,
             providers,
-            sendMode: "all",
+            retryForever: configuration.values.settings.ethan.enabled,
+            sendMode: "all" as const,
             shutdownName: "agent-system",
-            steeringMode: "all",
-        });
+            steeringMode: "all" as const,
+        };
+        const agentSystem = await AgentSystemLocal.create(
+            ctx.named("agent-system"),
+            storage,
+            agentSystemOptions,
+        );
         system = agentSystem;
         let mainDraining: Promise<void> | undefined;
         const drainMain = (): Promise<void> => {

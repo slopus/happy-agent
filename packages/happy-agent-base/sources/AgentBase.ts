@@ -20,6 +20,7 @@ import { Value } from "@sinclair/typebox/value";
 import {
     afterCommit,
     createContextNamespace,
+    delay,
     detach,
     deterministicStringify,
     shutdown,
@@ -131,6 +132,9 @@ const insideLoops = new AsyncLocalStorage<readonly string[]>();
  * hears the shutdown finish, short enough that one still holding the loop is told promptly.
  */
 const INSIDE_CLOSE_REPORT_MS = 15;
+/** Ethan-mode failures start quickly, then back off enough to avoid hammering a broken service. */
+const FAILURE_RETRY_INITIAL_MS = 100;
+const FAILURE_RETRY_MAX_MS = 60_000;
 
 /** How a message queue drains: one message per model response, or every queued message at once. */
 export type AgentBaseQueueMode = "one-at-a-time" | "all";
@@ -258,6 +262,8 @@ export interface AgentBaseOptions {
     readonly steeringMode?: AgentBaseQueueMode;
     /** How the send queue drains; one message per response by default. */
     readonly sendMode?: AgentBaseQueueMode;
+    /** Retry every failed stage until it succeeds or the agent is explicitly stopped. */
+    readonly retryForever?: boolean;
 }
 
 /**
@@ -462,6 +468,12 @@ export class AgentBase {
     readonly #steeringMode: AgentBaseQueueMode;
     /** Whether sends drain one message per response or all of them at once. */
     readonly #sendMode: AgentBaseQueueMode;
+    /** Whether failed stages retry until success or an explicit stop. */
+    readonly #retryForever: boolean;
+    /** Consecutive failures used to pace retries across stage boundaries. */
+    #failureRetryAttempt = 0;
+    /** Stops a retry backoff promptly when this instance drains or closes. */
+    readonly #stopFailureRetries = new AbortController();
 
     /** The provider session requests run on, created on first use and stateful thereafter. */
     #session: BaseSession | undefined;
@@ -761,6 +773,7 @@ export class AgentBase {
         this.#ctx = this.#deriveCtx();
         this.#steeringMode = options.steeringMode ?? "one-at-a-time";
         this.#sendMode = options.sendMode ?? "one-at-a-time";
+        this.#retryForever = options.retryForever ?? false;
     }
 
     /**
@@ -1499,6 +1512,7 @@ export class AgentBase {
      */
     drain(): Promise<void> {
         this.#draining = true;
+        this.#stopFailureRetries.abort();
         this.#stopSteerableToolsController.abort();
         this.#stopReloadableToolsController.abort();
         this.#drainPromise ??= this.#finishDrain();
@@ -1738,6 +1752,7 @@ export class AgentBase {
         // because the work it would abandon is the caller itself.
         const fromInsideOwnLoop = this.#insideOwnLoop();
         this.#closed = true;
+        this.#stopFailureRetries.abort();
         // Graceful shutdown lets ordinary tools reach the next durable edge, but steerable tools
         // explicitly opt out of holding shutdown open. A direct close still abandons every tool.
         this.#stopSteerableToolsController.abort();
@@ -1878,7 +1893,18 @@ export class AgentBase {
         try {
             outcome = await this.#runLoops(ctx);
         } catch (error: unknown) {
-            this.#runFailure = error instanceof Error ? error.message : String(error);
+            const message = error instanceof Error ? error.message : String(error);
+            if (
+                this.#retryForever &&
+                (await this.#waitForFailureRetry(ctx, this.#abortController?.signal, message))
+            ) {
+                // Keep the durable stage and reopen from it after this run lifetime unwinds.
+                // Restarting at the run edge is what lets load, lifecycle, and persistence
+                // failures retry without pretending a partially completed turn succeeded.
+                this.#turnRequested = true;
+                return;
+            }
+            this.#runFailure = message;
             // The request that opened this run is answered by the failure, however badly. Left
             // standing, it would start the run again the moment this one settles, and whatever
             // made the run throw would make the next one throw too — for ever, without anything
@@ -1994,13 +2020,21 @@ export class AgentBase {
         if (loadFailure !== undefined) {
             const message =
                 loadFailure instanceof Error ? loadFailure.message : String(loadFailure);
-            this.#runFailure = message;
             await this.#emit(ctx, {
                 type: "done",
                 state: "error",
                 kind: "internal_error",
                 message,
             });
+            if (
+                this.#retryForever &&
+                (await this.#waitForFailureRetry(ctx, abort.signal, message))
+            ) {
+                this.#turnId = undefined;
+                this.#turnRequested = true;
+                return "continue";
+            }
+            this.#runFailure = message;
             this.#turnId = undefined;
             return "stop";
         }
@@ -2318,6 +2352,20 @@ export class AgentBase {
      * conversation, so a turn ends with a complete context whatever went wrong.
      */
     async #runInference(ctx: Context, abort: AbortController): Promise<"complete" | "shutdown"> {
+        let forceInference = false;
+        for (;;) {
+            const outcome = await this.#runInferenceAttempt(ctx, abort, forceInference);
+            if (outcome !== "retry") return outcome;
+            forceInference = true;
+        }
+    }
+
+    /** One inference pass, separated so a failed pass can restart without recursive promises. */
+    async #runInferenceAttempt(
+        ctx: Context,
+        abort: AbortController,
+        forceInference: boolean,
+    ): Promise<"complete" | "retry" | "shutdown"> {
         // One shared promise for the turn's scope keeps races from piling up listeners on the
         // signal, and a scope that was aborted before this point settles it immediately: a
         // listener added afterwards would never hear the event that already happened.
@@ -2371,7 +2419,8 @@ export class AgentBase {
                 }
                 if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             }
-            let needsInference = resumed.length > 0;
+            let needsInference = resumed.length > 0 || forceInference;
+            forceInference = false;
             // A requested compaction runs before this turn's first inference, so the model
             // always receives a settled conversation — never one still owing tool results.
             await this.#runCompaction(ctx, abort.signal, needsInference);
@@ -2476,6 +2525,9 @@ export class AgentBase {
                 const { content, state } = response;
                 needsInference = false;
                 pendingError = state === "error" ? response.errorMessage : undefined;
+                if (state !== "error" && state !== undefined && state !== "cancelled") {
+                    this.#failureRetryAttempt = 0;
+                }
                 if (state !== "tool_call") {
                     // A response can carry a tool call and still not end in one — a stream that
                     // failed or was cut off after the call was emitted. Nothing will dispatch
@@ -2510,6 +2562,17 @@ export class AgentBase {
                     needsInference = true;
                     continue;
                 }
+                if ((state === "error" || state === undefined) && this.#retryForever) {
+                    const message =
+                        response.errorMessage ??
+                        (state === undefined
+                            ? "The provider stream ended before completion."
+                            : "The provider reported an error.");
+                    pendingError = undefined;
+                    if (!(await this.#waitForFailureRetry(ctx, abort.signal, message))) break;
+                    needsInference = true;
+                    continue;
+                }
                 // A natural stop keeps draining, and so does a provider-reported error: the
                 // failed response never answers the queued messages, so they still get their
                 // fresh inference — each drain consumes from a finite queue, so a persistently
@@ -2525,27 +2588,37 @@ export class AgentBase {
                 await this.#appendFailure(ctx, pendingError);
             }
         } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
             await this.#emit(ctx, {
                 type: "done",
                 state: "error",
                 kind: "internal_error",
-                message: error instanceof Error ? error.message : String(error),
+                message,
             });
             // A turn that failed while it owed tool results must not leave them owed: the next
             // message would be appended after an unanswered call, which most providers reject
             // outright and no later turn would ever repair. When even that write is refused, the
             // note is not written either — the call stays last, and the next run settles it
             // before anything else is said.
+            const callsSettled = await this.#settleUnansweredCalls(
+                ctx,
+                "The turn failed before this tool call finished.",
+            );
             if (
-                await this.#settleUnansweredCalls(
-                    ctx,
-                    "The turn failed before this tool call finished.",
-                )
+                this.#retryForever &&
+                (await this.#waitForFailureRetry(ctx, abort.signal, message))
             ) {
-                await this.#appendFailure(
-                    ctx,
-                    error instanceof Error ? error.message : String(error),
-                );
+                if (callsSettled) {
+                    return "retry";
+                }
+                // A durable tool result that could not settle must be retried only after the
+                // prior execution has unwound. Reopen from the durable batch at the run edge.
+                this.#turnRequested = true;
+                this.#noticeAwaitingResponse = false;
+                this.#turnAborted = abort.signal.aborted;
+                return this.#stopAtSafeEdgeRequested() ? "shutdown" : "complete";
+            } else if (callsSettled) {
+                await this.#appendFailure(ctx, message);
             }
             this.#noticeAwaitingResponse = false;
             this.#clearTurnRequestIfNoPendingInput();
@@ -2557,6 +2630,37 @@ export class AgentBase {
     /** Whether a sticky drain or the stdlib coordinator has asked for the next durable edge. */
     #stopAtSafeEdgeRequested(): boolean {
         return this.#draining || shutdown.get(this.#ctx)?.shuttingDown === true;
+    }
+
+    /** Wait before Ethan mode retries one failed durable stage. */
+    async #waitForFailureRetry(
+        ctx: Context,
+        signal: AbortSignal | undefined,
+        message: string,
+    ): Promise<boolean> {
+        if (!this.#retryForever || this.#stopAtSafeEdgeRequested() || signal?.aborted === true) {
+            return false;
+        }
+        this.#failureRetryAttempt += 1;
+        await this.#emit(ctx, {
+            type: "retrying",
+            attempt: this.#failureRetryAttempt,
+            reason: `Ethan mode is retrying after a fatal error: ${message}`,
+        });
+        const waitSignal =
+            signal === undefined
+                ? this.#stopFailureRetries.signal
+                : AbortSignal.any([signal, this.#stopFailureRetries.signal]);
+        const milliseconds = Math.min(
+            FAILURE_RETRY_INITIAL_MS * 2 ** Math.min(this.#failureRetryAttempt - 1, 20),
+            FAILURE_RETRY_MAX_MS,
+        );
+        try {
+            await delay(withLifetime(this.#workContext(ctx), waitSignal), milliseconds);
+        } catch {
+            return false;
+        }
+        return !this.#stopAtSafeEdgeRequested() && !waitSignal.aborted;
     }
 
     /**
@@ -2775,8 +2879,23 @@ export class AgentBase {
         signal: AbortSignal,
         continueWithInference: boolean,
     ): Promise<void> {
+        for (;;) {
+            if (
+                (await this.#compactHistoryAttempt(ctx, signal, continueWithInference)) !== "retry"
+            ) {
+                return;
+            }
+        }
+    }
+
+    /** One compaction attempt, separated so a failed attempt can restart without recursion. */
+    async #compactHistoryAttempt(
+        ctx: Context,
+        signal: AbortSignal,
+        continueWithInference: boolean,
+    ): Promise<"complete" | "retry"> {
         const pending = this.#compaction;
-        if (pending === undefined) return;
+        if (pending === undefined) return "complete";
         try {
             await this.#enterStage(ctx, "compaction");
             const { instructions, tools } = await this.#configuration(ctx);
@@ -2893,15 +3012,20 @@ export class AgentBase {
                 ...compactionStart,
                 result: hookResult,
             });
+            this.#failureRetryAttempt = 0;
             this.#compaction = undefined;
             pending.resolve();
+            return "complete";
         } catch (error: unknown) {
             await this.#preserveCompactionContinuation(
                 ctx,
                 continueWithInference && !signal.aborted,
             );
+            const message = error instanceof Error ? error.message : String(error);
+            if (await this.#waitForFailureRetry(ctx, signal, message)) return "retry";
             this.#compaction = undefined;
             pending.reject(error);
+            return "complete";
         }
     }
 

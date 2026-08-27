@@ -3242,6 +3242,37 @@ describe("AgentBase compaction", () => {
         await agent.close();
     });
 
+    it("retries a terminal compaction failure until it succeeds when enabled", async () => {
+        const persistence = new InMemoryPersistence([
+            userRecord("hi"),
+            { type: "block", block: { type: "text", text: "hello" } },
+        ]);
+        const provider = new ScriptedProvider([]);
+        const original = provider.session.bind(provider);
+        provider.session = async (id, options) => {
+            const session = await original(id, options);
+            (session as ScriptedSession).compactionResults = [
+                { status: "failed", kind: "inference_error", message: "model unavailable" },
+                completed([compactionMessage]),
+            ];
+            return session;
+        };
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            retryForever: true,
+        });
+
+        await agent.compact(ctx);
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.compactions).toHaveLength(2);
+        expect(persistence.records.at(-1)).toMatchObject({ type: "compaction" });
+        await agent.close();
+    });
+
     it("rolls the deletion back when the compaction record fails to write", async () => {
         const records = [
             userRecord("hi"),
@@ -3520,6 +3551,101 @@ describe("AgentBase instructions and tools hooks", () => {
 });
 
 describe("AgentBase inference errors", () => {
+    it("retries terminal provider errors until an inference succeeds when enabled", async () => {
+        const persistence = new InMemoryPersistence();
+        const provider = new ScriptedProvider([
+            [{ type: "done", state: "error", kind: "billing_error", message: "no credits" }],
+            [],
+            textTurn("recovered"),
+        ]);
+        const events: SessionEvent[] = [];
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            retryForever: true,
+            hooks: { onEvent: (_hookCtx, event) => events.push(event) },
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.requests).toHaveLength(3);
+        expect(events).toContainEqual({
+            type: "retrying",
+            attempt: 1,
+            reason: "Ethan mode is retrying after a fatal error: no credits",
+        });
+        expect(events).toContainEqual({
+            type: "retrying",
+            attempt: 2,
+            reason:
+                "Ethan mode is retrying after a fatal error: " +
+                "The provider stream ended before completion.",
+        });
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        expect(persistence.records.some((record) => record.type === "system")).toBe(false);
+        await agent.close();
+    });
+
+    it("retries internal turn failures without settling the run", async () => {
+        const provider = new ScriptedProvider([textTurn("recovered")]);
+        const events: SessionEvent[] = [];
+        let toolReads = 0;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            retryForever: true,
+            hooks: {
+                tools: () => {
+                    toolReads += 1;
+                    if (toolReads === 1) throw new Error("tool configuration failed");
+                    return [];
+                },
+                onEvent: (_hookCtx, event) => events.push(event),
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(toolReads).toBe(2);
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        expect(events.filter((event) => event.type === "done").map((event) => event.state)).toEqual(
+            ["error", "normal"],
+        );
+        await agent.close();
+    });
+
+    it("stops a forever retry when the turn is explicitly aborted", async () => {
+        const provider = new ScriptedProvider([
+            [{ type: "done", state: "error", kind: "unknown", message: "still broken" }],
+            textTurn("must not run"),
+        ]);
+        let agent: AgentBase;
+        agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            retryForever: true,
+            hooks: {
+                onEvent: (_hookCtx, event) => {
+                    if (event.type === "retrying") void agent.abort(ctx);
+                },
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.requests).toHaveLength(1);
+        await agent.close();
+    });
+
     it("continues draining queued messages after a provider-reported error", async () => {
         const provider = new ScriptedProvider([
             [
