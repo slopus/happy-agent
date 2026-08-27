@@ -207,7 +207,8 @@ class GymHttpSession extends BaseSession {
                 modelId: request.model ?? GYM_MODEL.id,
                 options: {
                     ...(request.effort === undefined ? {} : { effort: request.effort }),
-                    ...(request.serviceTier === undefined
+                    ...(request.serviceTier === undefined ||
+                    String(request.serviceTier) === "default"
                         ? {}
                         : { serviceTier: request.serviceTier }),
                     sessionId: wireSessionId(session.id),

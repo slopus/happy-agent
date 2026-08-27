@@ -1377,7 +1377,12 @@ export class ConfigModule implements AgentModule {
             const enabled = providers?.[providerId]?.enabled;
             if (typeof enabled === "boolean") explicitProvider = enabled;
         }
-        return explicitProvider ?? explicitDefault;
+        return (
+            explicitProvider ??
+            (this.configuration.values.providers[providerId] === undefined
+                ? undefined
+                : explicitDefault)
+        );
     }
 
     /** The generated auto-enable setting, or nothing before a provider has been detected. */

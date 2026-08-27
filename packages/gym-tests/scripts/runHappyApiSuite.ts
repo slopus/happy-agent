@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -52,6 +52,14 @@ const apiTestPaths = readdirSync(join(packageRoot, "tests"))
     .filter((name) => /^happy_api_.+\.test\.ts$/u.test(name))
     .sort()
     .map((name) => join("tests", name));
+const chaosSuites = [
+    { count: 24, file: "happy_api_chaos_catalog.test.ts", prefix: "C" },
+    { count: 16, file: "happy_api_chaos_files.test.ts", prefix: "F" },
+    { count: 20, file: "happy_api_chaos_recovery.test.ts", prefix: "X" },
+    { count: 20, file: "happy_api_chaos_runs.test.ts", prefix: "R" },
+    { count: 12, file: "happy_api_chaos_runtime.test.ts", prefix: "T" },
+    { count: 28, file: "happy_api_chaos_sync.test.ts", prefix: "S" },
+] as const;
 
 await mkdir(reportDirectory, { recursive: true });
 
@@ -69,30 +77,68 @@ if (listResult.exitCode !== 0) {
 
 const listed = parseJson<ListedTest[]>(listResult.stdout);
 const chaosFilter = process.env.API_CHAOS_SEED?.trim() || undefined;
-const runResult = await runCommand(
-    "pnpm",
-    [
-        "exec",
-        "vitest",
-        "run",
-        "--maxWorkers=1",
-        "--retry=0",
-        "--reporter=default",
-        "--reporter=json",
-        "--reporter=hanging-process",
-        `--outputFile.json=${reportPath}`,
-        ...apiTestPaths,
-    ],
-    packageRoot,
-);
-
-let report: VitestReport | undefined;
-try {
-    report = JSON.parse(await readFile(reportPath, "utf8")) as VitestReport;
-} catch (error: unknown) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Vitest did not produce its JSON report at ${reportPath}: ${reason}`);
+const chaosPaths = new Set(chaosSuites.map((suite) => join("tests", suite.file)));
+const runSpecs =
+    chaosFilter === undefined
+        ? [
+              {
+                  label: "ordinary API scenarios",
+                  paths: apiTestPaths.filter((path) => !chaosPaths.has(path)),
+                  environment: { API_CHAOS_SEED: undefined },
+              },
+              ...chaosSuites.flatMap((suite) =>
+                  namedSeeds(suite.prefix, suite.count).map((seed) => ({
+                      label: `${suite.file} seed=${seed}`,
+                      paths: [join("tests", suite.file)],
+                      environment: { API_CHAOS_SEED: seed },
+                  })),
+              ),
+          ]
+        : [
+              {
+                  label: `focused API scenarios seed=${chaosFilter}`,
+                  paths: apiTestPaths,
+                  environment: { API_CHAOS_SEED: chaosFilter },
+              },
+          ];
+const reports: VitestReport[] = [];
+const runResults: CommandResult[] = [];
+for (const [index, spec] of runSpecs.entries()) {
+    const partitionPath = join(
+        reportDirectory,
+        `vitest-${String(process.pid)}-${String(index).padStart(3, "0")}.json`,
+    );
+    console.error(
+        `API gym partition ${String(index + 1)}/${String(runSpecs.length)}: ${spec.label}`,
+    );
+    const result = await runCommand(
+        "pnpm",
+        [
+            "exec",
+            "vitest",
+            "run",
+            "--maxWorkers=1",
+            "--retry=0",
+            "--reporter=default",
+            "--reporter=json",
+            "--reporter=hanging-process",
+            `--outputFile.json=${partitionPath}`,
+            ...spec.paths,
+        ],
+        packageRoot,
+        spec.environment,
+    );
+    runResults.push(result);
+    try {
+        reports.push(JSON.parse(await readFile(partitionPath, "utf8")) as VitestReport);
+    } catch (error: unknown) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`Vitest did not produce its JSON report at ${partitionPath}: ${reason}`);
+    }
 }
+const report = aggregateReports(reports);
+await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+const runResult = aggregateCommandResults(runResults);
 
 const assertions = report.testResults?.flatMap((result) => result.assertionResults ?? []) ?? [];
 const chaosAssertions = assertions.filter((assertion) =>
@@ -206,15 +252,62 @@ if (failures.length > 0) {
     process.exitCode = 0;
 }
 
+function namedSeeds(prefix: string, count: number): readonly string[] {
+    return Array.from(
+        { length: count },
+        (_, index) => `${prefix}${String(index).padStart(3, "0")}`,
+    );
+}
+
+function aggregateReports(reports: readonly VitestReport[]): VitestReport {
+    return {
+        success: reports.every((report) => report.success === true),
+        numFailedTestSuites: sum(reports, (report) => report.numFailedTestSuites),
+        numTotalTests: sum(reports, (report) => report.numTotalTests),
+        numPassedTests: sum(reports, (report) => report.numPassedTests),
+        numFailedTests: sum(reports, (report) => report.numFailedTests),
+        numPendingTests: sum(reports, (report) => report.numPendingTests),
+        numTodoTests: sum(reports, (report) => report.numTodoTests),
+        numUnhandledErrors: sum(reports, (report) => report.numUnhandledErrors),
+        retries: sum(reports, (report) => report.retries),
+        numRetries: sum(reports, (report) => report.numRetries),
+        unhandledErrors: reports.flatMap((report) => report.unhandledErrors ?? []),
+        testResults: reports.flatMap((report) => report.testResults ?? []),
+    };
+}
+
+function sum(
+    reports: readonly VitestReport[],
+    value: (report: VitestReport) => number | undefined,
+): number {
+    return reports.reduce((total, report) => total + (value(report) ?? 0), 0);
+}
+
+function aggregateCommandResults(results: readonly CommandResult[]): CommandResult {
+    const failed = results.filter((result) => result.exitCode !== 0);
+    return {
+        exitCode: failed.length === 0 ? 0 : 1,
+        signal: failed.find((result) => result.signal !== null)?.signal ?? null,
+        stdout: failed.map((result) => result.stdout).join("\n"),
+        stderr: failed.map((result) => result.stderr).join("\n"),
+    };
+}
+
 async function runCommand(
     command: string,
     args: readonly string[],
     cwd: string,
+    additionalEnvironment: NodeJS.ProcessEnv = {},
 ): Promise<CommandResult> {
+    const environment = { ...process.env };
+    for (const [name, value] of Object.entries(additionalEnvironment)) {
+        if (value === undefined) delete environment[name];
+        else environment[name] = value;
+    }
     return await new Promise<CommandResult>((resolveResult, reject) => {
         const child = spawn(command, args, {
             cwd,
-            env: process.env,
+            env: environment,
             stdio: ["ignore", "pipe", "pipe"],
         });
         const stdout: Uint8Array[] = [];

@@ -33,7 +33,10 @@ those runtime fields cannot erase credentials, endpoints, or model filters confi
 A test-supplied inference override replaces both accounts and their model catalogs. Runtime state
 may persist a scripted provider's compatibility protocol (for example, `gym` as `codex`), but that
 must not add the protocol's curated production models to the scripted provider after a restart.
-For every provider ID represented by scripted models, expose exactly those scripted routes.
+For every provider ID represented by scripted models, expose exactly those scripted routes. A
+scripted-only provider is authenticated test infrastructure, not a configured production account,
+so a global provider default must not disable it; only an explicit table for that provider may do
+so.
 
 ## Gemini has a config key without a provider entry
 

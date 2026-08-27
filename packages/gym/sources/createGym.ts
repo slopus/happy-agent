@@ -19,7 +19,7 @@ import {
     createSharedDockerFixtureRoot,
     dockerSandboxArguments,
 } from "./sharedDockerRunner.js";
-import type { GymOptions } from "./types.js";
+import type { GymFixture, GymOptions } from "./types.js";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -62,7 +62,7 @@ export async function createGym(options: GymOptions): Promise<Gym> {
     let homePath: string;
     try {
         homePath = await createFixtureWorkspace(
-            options.homeFiles ?? {},
+            configureGymProviders(options.homeFiles, options.providerOverrides),
             dockerFixture === undefined ? undefined : join(dockerFixture.hostRoot, "home"),
         );
     } catch (error) {
@@ -138,12 +138,6 @@ export async function createGym(options: GymOptions): Promise<Gym> {
                             ]),
                       "--env",
                       "HAPPY_TERMINAL_GYM_OUTER_ISOLATION=docker",
-                      ...(options.providerOverrides === undefined
-                          ? []
-                          : [
-                                "--env",
-                                `HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES=${options.providerOverrides.join(",")}`,
-                            ]),
                       "--env",
                       `HAPPY_TERMINAL_MODEL=${modelId}`,
                       ...(options.permissionMode === "from_config"
@@ -332,9 +326,6 @@ function createLocalEnvironment(
         ...(options.permissionMode === "from_config"
             ? {}
             : { HAPPY_TERMINAL_PERMISSION_MODE: options.permissionMode ?? "full_access" }),
-        ...(options.providerOverrides === undefined
-            ? {}
-            : { HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES: options.providerOverrides.join(",") }),
         ...localEnvironmentValues(options.environment, httpProxy?.localUrl),
     };
     if (httpProxy === undefined) return environment;
@@ -346,6 +337,30 @@ function createLocalEnvironment(
         http_proxy: httpProxy.localUrl,
         https_proxy: httpProxy.localUrl,
     };
+}
+
+/**
+ * A gym scripts inference, not configuration. Seed the real provider configuration when a
+ * scenario does not supply one, so its picker and system prompt exercise the production catalog.
+ */
+function configureGymProviders(
+    homeFiles: Readonly<Record<string, GymFixture>> | undefined,
+    providerOverrides: GymOptions["providerOverrides"],
+): Readonly<Record<string, GymFixture>> {
+    const files = homeFiles ?? {};
+    if (providerOverrides === undefined || files["Happy/Config/happy.toml"] !== undefined) {
+        return files;
+    }
+    const source = [
+        "[providers]",
+        "default_enable = false",
+        ...providerOverrides.flatMap((providerId) => [
+            "",
+            `[providers.${providerId}]`,
+            "enabled = true",
+        ]),
+    ].join("\n");
+    return { ...files, "Happy/Config/happy.toml": `${source}\n` };
 }
 
 function localEnvironmentValues(

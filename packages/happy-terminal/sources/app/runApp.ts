@@ -201,7 +201,14 @@ export async function runApp(ctx: Context, options: RunAppOptions = {}): Promise
     });
     try {
         const processManager = new NativeProcessManager();
-        const [terminalBackground, terminalColorScheme] = await terminalAppearance;
+        const [terminalBackground, initialTerminalColorScheme] = await terminalAppearance;
+        // Startup work can keep the event loop busy long enough for the overlapping appearance
+        // probes to time out before their already-queued terminal replies are handled. Retry the
+        // color-scheme probe once after startup when neither probe found an appearance.
+        const terminalColorScheme =
+            terminalBackground === undefined && initialTerminalColorScheme === undefined
+                ? await tui.queryTerminalColorScheme({ timeoutMs: 250 })
+                : initialTerminalColorScheme;
         const theme = resolveTerminalTheme(
             loadedConfig.config.theme,
             terminalBackground ?? terminalColorSchemeBackground(terminalColorScheme),

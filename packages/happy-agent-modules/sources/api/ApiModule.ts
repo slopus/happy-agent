@@ -84,6 +84,7 @@ import {
     type ProfileChangedEvent,
     type ProfilePhotoContentType,
 } from "../profile/index.js";
+
 import {
     ProjectRegistrationError,
     ProjectAvatarInputError,
@@ -195,6 +196,12 @@ import {
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
 
+// Agent Base interprets an omitted tier as "keep the previous tier". The public API's null mode
+// instead means the provider's ordinary tier, so carry the provider-native explicit value through
+// the core. Codex accepts `default` as the semantic equivalent of omitting service_tier.
+const DEFAULT_PROVIDER_SERVICE_TIER = "default" as unknown as NonNullable<
+    AgentBaseMessageOptions["serviceTier"]
+>;
 const API_PROTOCOL_VERSION = 23;
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
@@ -2063,7 +2070,7 @@ export class ApiModule implements AgentModule {
                     id: messageId,
                     role: "agent",
                     createdAt: event.occurredAt,
-                    content,
+                    content: [...committed, ...content],
                     metadata,
                 },
             },
@@ -2914,10 +2921,13 @@ export class ApiModule implements AgentModule {
             if (effort === undefined) throw invalidRequest("The selected effort is unavailable.");
             const serviceTier =
                 body.mode.serviceTier === null
-                    ? undefined
+                    ? DEFAULT_PROVIDER_SERVICE_TIER
                     : selected.serviceTiers?.find(
                           (candidate) => candidate === body.mode.serviceTier,
                       );
+            if (serviceTier === undefined) {
+                throw invalidRequest("The selected service tier is unavailable.");
+            }
             const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
             const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
@@ -2925,7 +2935,7 @@ export class ApiModule implements AgentModule {
                 provider: body.mode.providerId,
                 model: body.mode.modelId,
                 effort,
-                ...(serviceTier === undefined ? {} : { serviceTier }),
+                serviceTier,
                 permissionMode: body.mode.permissionMode,
                 profile,
                 metadata: {
