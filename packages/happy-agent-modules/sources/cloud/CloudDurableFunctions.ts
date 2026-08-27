@@ -5,6 +5,7 @@ import { cloudVersionSchema } from "./CloudDatabase.js";
 
 export const CLOUD_AUTHORIZATION_EXPIRY_FUNCTION = "cloud.expire-authorization";
 export const CLOUD_AUTHORIZATION_EXPIRY_OPERATION = "cloud.authorization-expiry";
+export const CLOUD_DISCONNECT_FUNCTION = "cloud.disconnect";
 export const CLOUD_ENROLLMENT_FUNCTION = "cloud.reconcile-enrollment";
 export const CLOUD_KEYS_FUNCTION = "cloud.reconcile-keys";
 export const CLOUD_KEYS_MUTATION_FUNCTION = "cloud.mutate-keys";
@@ -24,6 +25,19 @@ export const cloudAuthorizationExpiryResultSchema = Type.Null();
 export type CloudAuthorizationExpiryArguments = Static<
     typeof cloudAuthorizationExpiryArgumentsSchema
 >;
+
+export const cloudDisconnectArgumentsSchema = Type.Object(
+    {
+        environment: cloudEnvironmentSchema,
+        generation: Type.String({ minLength: 1, maxLength: 128 }),
+        userId: Type.String({ minLength: 1, maxLength: 256 }),
+    },
+    { additionalProperties: false },
+);
+
+export const cloudDisconnectResultSchema = Type.Null();
+
+export type CloudDisconnectArguments = Static<typeof cloudDisconnectArgumentsSchema>;
 
 export const cloudAccountArgumentsSchema = Type.Object(
     {

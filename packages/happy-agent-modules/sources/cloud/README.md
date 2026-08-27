@@ -40,6 +40,12 @@ deployment. Murmur owns a durable device identity in an account-scoped Cloud sto
 client registers the device once and later daemon starts reuse it. Relay registration and
 synchronization retry independently without changing Cloud authentication status.
 
+Disconnecting commits signed-out Cloud and empty social state together with a durable local
+teardown. It closes the live Murmur client, uses the retained account root only long enough to
+remove this installation's device from the relay, and then atomically deletes the root, H1 backup,
+vault identity, and complete account-scoped Murmur store. Relay failures retry across daemon
+restarts, and another Cloud authorization cannot begin until this cleanup finishes.
+
 Cloud is independent from `HappyModule`, which connects the daemon to the Happy mobile app.
 
 Friends activate automatically after enrollment. The module retains one account-scoped social

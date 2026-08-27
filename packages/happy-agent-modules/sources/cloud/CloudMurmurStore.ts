@@ -67,6 +67,13 @@ export class CloudMurmurStore implements MurmurStore {
         });
     }
 
+    /** Removes every durable Murmur value owned by this Cloud account. */
+    async clear(): Promise<void> {
+        await this.#lock.runInLock(this.#ctx, async () => {
+            await this.#ctx.inTx(async (txCtx) => await this.#clear(txCtx));
+        });
+    }
+
     async list(prefix: string): Promise<ReadonlyMap<string, Uint8Array>> {
         return await this.#lock.runInLock(this.#ctx, async () => {
             return await this.#ctx.inTx(async (txCtx) => {
@@ -173,6 +180,19 @@ export class CloudMurmurStore implements MurmurStore {
                     WHERE environment = ${this.#account.environment}
                       AND user_id = ${this.#account.userId}
                       AND store_key = ${key}`,
+            );
+        } catch {
+            throw new Error("The Murmur state could not be removed.");
+        }
+    }
+
+    async #clear(ctx: Context): Promise<void> {
+        try {
+            await agentDatabaseRun(
+                ctx.db,
+                sql`DELETE FROM ${sql.raw(CLOUD_MURMUR_STORE_TABLE)}
+                    WHERE environment = ${this.#account.environment}
+                      AND user_id = ${this.#account.userId}`,
             );
         } catch {
             throw new Error("The Murmur state could not be removed.");

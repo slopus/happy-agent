@@ -128,12 +128,17 @@
   user must enter the factors again. Durable arguments and rows must never contain those factors.
   Every re-entry gets a fresh non-secret generation and durable call, so a finishing old call cannot
   deduplicate, consume, or settle replacement factors.
-- Retain committed roots by deployment and WorkOS user ID across disconnects. An unknown remote
-  vault identity requires restoration and must never cause a replacement identity to be generated.
+- Disconnect commits signed-out authentication, empty social state, and a durable teardown intent
+  together. Close the live Murmur client, retain the root and Murmur store only while they are
+  needed to authenticate removal of this installation's device, then atomically delete the root,
+  H1 backup, vault identity, Murmur store, and teardown intent. Relay failures retry across daemon
+  restarts, and new authorization stays blocked until cleanup finishes. A later reconnect with an
+  existing remote vault therefore requires restoration.
 - Murmur's device key belongs in its own account-scoped durable key/value store. Only an enrolled
   account with ready keys may open the client. Opening performs durable relay registration, while
   transport retries and failures remain independent from Cloud authentication and its public error
-  field.
+  field. Disconnect removes `client.deviceKey` rather than terminally deleting the shared Murmur
+  account or touching sibling devices.
 
 ## Cloud friends
 

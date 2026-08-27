@@ -520,6 +520,136 @@ describe("CloudModule", () => {
         expect(sync).toHaveBeenCalledTimes(1);
     });
 
+    it("durably deletes local keys and Murmur state when Cloud disconnects", async () => {
+        existingCloudProfile();
+        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+            return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
+        });
+        const liveClose = vi.fn();
+        const cleanupClose = vi.fn();
+        const deviceKey = new Uint8Array(32).fill(7);
+        const removeDevice = vi.fn().mockResolvedValue(undefined);
+        vi.spyOn(MurmurClient, "open")
+            .mockResolvedValueOnce({ close: liveClose, sync } as never)
+            .mockResolvedValueOnce({
+                close: cleanupClose,
+                deviceKey,
+                removeDevice,
+            } as never);
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        const { cloudHooks, database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-disconnect-deletes-account",
+        );
+        const account = { environment: "production", userId: user.id } as const;
+        const murmurStore = new CloudMurmurStore(database.context, account);
+
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await module.createKeys(database.context, cloudKeyInput);
+        await murmurStore.set("device/key", new Uint8Array([1, 2, 3]));
+        await cloudHooks.afterStart?.(database.context, {} as never);
+        await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+
+        await expect(module.disconnect(database.context)).resolves.toMatchObject({
+            status: "disconnected",
+        });
+        expect(liveClose).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(removeDevice).toHaveBeenCalledTimes(1));
+        expect(removeDevice).toHaveBeenCalledWith(deviceKey);
+        expect(cleanupClose).toHaveBeenCalledTimes(1);
+        await expect(
+            createCloudKeysDatabase().read(database.context, account),
+        ).resolves.toBeUndefined();
+        await expect(murmurStore.get("device/key")).resolves.toBeUndefined();
+
+        await module.stop();
+        durableFunctions.stop();
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        expect(restarted.status(database.context)).toMatchObject({ status: "disconnected" });
+        await expect(
+            createCloudKeysDatabase().read(database.context, account),
+        ).resolves.toBeUndefined();
+        await expect(murmurStore.get("device/key")).resolves.toBeUndefined();
+    });
+
+    it("retries Murmur device removal after restart before deleting local secrets", async () => {
+        existingCloudProfile();
+        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+            return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
+        });
+        const deviceKey = new Uint8Array(32).fill(8);
+        const removeDevice = vi
+            .fn()
+            .mockRejectedValueOnce(new Error("relay unavailable"))
+            .mockResolvedValue(undefined);
+        const open = vi
+            .spyOn(MurmurClient, "open")
+            .mockResolvedValueOnce({ close: vi.fn(), sync } as never)
+            .mockResolvedValue({
+                close: vi.fn(),
+                deviceKey,
+                removeDevice,
+            } as never);
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        const { cloudHooks, database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-disconnect-recovery",
+        );
+        const account = { environment: "production", userId: user.id } as const;
+        const murmurStore = new CloudMurmurStore(database.context, account);
+
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await module.createKeys(database.context, cloudKeyInput);
+        await murmurStore.set("device/key", new Uint8Array([4, 5, 6]));
+        await cloudHooks.afterStart?.(database.context, {} as never);
+        await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+        await module.disconnect(database.context);
+        await vi.waitFor(() => expect(removeDevice).toHaveBeenCalledTimes(1));
+
+        await expect(
+            createCloudKeysDatabase().read(database.context, account),
+        ).resolves.toMatchObject({
+            status: "ready",
+        });
+        await expect(murmurStore.get("device/key")).resolves.toEqual(new Uint8Array([4, 5, 6]));
+        await expect(
+            module.start(database.context, {
+                environment: "production",
+                redirectUri: "happy-auth://callback",
+            }),
+        ).rejects.toMatchObject({ code: "conflict", status: 409 });
+        expect(await pendingDurableCallCount(database)).toBe(1);
+
+        await module.stop();
+        durableFunctions.stop();
+        open.mockClear();
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
+
+        await vi.waitFor(() => expect(removeDevice).toHaveBeenCalledTimes(2));
+        await vi.waitFor(async () => {
+            expect(await createCloudKeysDatabase().read(database.context, account)).toBeUndefined();
+            expect(await murmurStore.get("device/key")).toBeUndefined();
+            expect(await pendingDurableCallCount(database)).toBe(0);
+        });
+        expect(restarted.status(database.context)).toMatchObject({ status: "disconnected" });
+    });
+
     it("completes PKCE, verifies hello, persists refresh, and mints with rotation", async () => {
         const { database, module } = await fixture("cloud-module-complete");
         const events: unknown[] = [];

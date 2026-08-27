@@ -79,4 +79,20 @@ describe("Cloud Murmur store", () => {
         await expect(store.get("message/a")).resolves.toEqual(new Uint8Array([1]));
         await expect(store.get("message/d")).resolves.toBeUndefined();
     });
+
+    it("clears only the selected account", async () => {
+        const { database, store } = await fixture("cloud-murmur-clear-account");
+        const anotherAccount = new CloudMurmurStore(database.context, {
+            environment: "production",
+            userId: "user-b",
+        });
+        await store.set("device/key", new Uint8Array([1]));
+        await store.set("session/a", new Uint8Array([2]));
+        await anotherAccount.set("device/key", new Uint8Array([3]));
+
+        await store.clear();
+
+        await expect(store.list("")).resolves.toEqual(new Map());
+        await expect(anotherAccount.get("device/key")).resolves.toEqual(new Uint8Array([3]));
+    });
 });

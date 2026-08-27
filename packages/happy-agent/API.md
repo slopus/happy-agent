@@ -905,9 +905,10 @@ vault against a retained local root. A vault identity without a matching retaine
 restore and is never overwritten by generating a new root. An absent vault identity requires
 create; a matching retained root publishes `ready`. Cloud's vault version is an internal service
 detail and is not part of Happy Agent's state. Until discovery reaches one of those conclusions,
-`keys` is omitted. Disconnecting stops account services and publishes `inactive`, but retains roots
-under their WorkOS user IDs so reconnecting the same account can be verified and resumed without
-another restore.
+`keys` is omitted. Disconnecting stops account services and publishes `inactive`; its durable
+teardown then unregisters this installation's Murmur device and removes the local root, generated
+secret, identity, and Murmur store. Reconnecting the account therefore verifies it as a fresh local
+installation and requires restoration when its remote vault still exists.
 
 The create and restore requests each contain `generatedSecret`, `encryptionKey`, and `authHash`.
 `generatedSecret` is the canonical 33-character H1 value beginning with `H1-`; it is stored with the
@@ -1036,8 +1037,15 @@ snapshot. Authoritative rejection stores a display-safe error; transient failure
 ### `DELETE /v0/cloud/auth`
 
 Disconnects Cloud locally. The optional JSON body is `{ "mutationId": "..." }`; an empty body is
-equivalent to `{}`. It cancels an authorization attempt and removes the daemon-owned refresh token
-and account data. It does not revoke the person's WorkOS browser session or other applications.
+equivalent to `{}`. It atomically cancels an authorization attempt, removes the daemon-owned refresh
+token, connected account data, and retained social state, and records durable teardown of the local
+Cloud identity. The daemon closes the account's Murmur and Cloud social connections, unregisters
+this installation's Murmur device from the relay, and then atomically removes the retained root and
+generated-secret backup, local vault identity, and account-scoped Murmur store. Relay unavailability
+retries across daemon restarts; the otherwise inaccessible key material remains only until it is
+needed to authenticate that device removal. A new Cloud authorization cannot start until teardown
+finishes. It does not delete the remote vault, remove another Murmur device, revoke the person's
+WorkOS browser session, or affect other applications.
 
 Response — `200`: `{ "cloud": { ... } }` with a clean disconnected Cloud object. A changed
 snapshot emits one `cloud.updated`; an already-clean disconnected snapshot emits nothing.

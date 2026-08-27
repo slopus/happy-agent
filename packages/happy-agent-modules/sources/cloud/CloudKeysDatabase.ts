@@ -85,7 +85,7 @@ export const cloudKeysMigrations: readonly AgentModuleMigration[] = [
     ],
 ];
 
-/** Owner-only account roots and staged encrypted bundles retained across Cloud disconnects. */
+/** Owner-only account roots and staged encrypted bundles. */
 export function createCloudKeysDatabase() {
     async function read(
         ctx: Context,
@@ -123,7 +123,20 @@ export function createCloudKeysDatabase() {
         }
     }
 
-    return { read, write };
+    async function remove(ctx: Context, account: CloudKeysAccount): Promise<void> {
+        validateAccount(account);
+        try {
+            await agentDatabaseRun(
+                ctx.db,
+                sql`DELETE FROM ${sql.raw(CLOUD_KEYS_TABLE)}
+                    WHERE environment = ${account.environment} AND user_id = ${account.userId}`,
+            );
+        } catch {
+            throw new Error("The Cloud key state could not be removed.");
+        }
+    }
+
+    return { read, remove, write };
 }
 
 export type CloudKeysDatabase = ReturnType<typeof createCloudKeysDatabase>;
