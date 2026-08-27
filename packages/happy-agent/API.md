@@ -1264,6 +1264,29 @@ No connected account or keys other than `ready` return `409` with the authoritat
 `cloud`. While the account is ready but its local Murmur service has not opened, the endpoint
 returns `503` with code `cloud_unavailable`.
 
+### `DELETE /v0/cloud/devices/:id`
+
+Removes one other installation from the connected account's Murmur device roster. `id` is the
+exact 43-character unpadded base64url device key returned by `GET /v0/cloud/devices`. The request
+has no body. Removing an already-absent device is an idempotent success. A successful response is
+`200` with the same `{ "devices": [...] }` shape as `GET /v0/cloud/devices`, read back from the
+relay after removal. The mutation emits no Happy Agent event; connected Murmur clients receive the
+owner-only roster invalidation described by Murmur and fetch the authoritative roster.
+
+This endpoint cannot remove the current daemon's own device. Self-removal must use
+`DELETE /v0/cloud/auth`, which durably unregisters the device and erases the local Cloud secrets and
+Murmur store together. Removing another device changes only the remote roster and the MLS device
+membership that converges from it; it does not delete this daemon's local keys, disconnect Cloud,
+or alter the remote vault.
+
+A malformed device id returns `400` with code `invalid_request` without contacting Murmur. No
+connected account or keys other than `ready` return `409` with the authoritative current `cloud`.
+Naming the current device returns `409` with code `conflict` and the authoritative current `cloud`
+and `devices`. While the account is ready but its local Murmur service has not opened, the endpoint
+returns `503` with code `cloud_unavailable`. Relay rejection or unavailability returns `503` with
+code `cloud_unavailable`; an ambiguous concurrent removal is reconciled by reading the roster and
+succeeds when the named device is absent.
+
 ### Cloud profile and enrollment
 
 The Cloud profile is the public identity stored durably by Happy Cloud for the connected WorkOS
