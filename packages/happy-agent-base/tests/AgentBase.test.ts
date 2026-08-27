@@ -3395,6 +3395,151 @@ describe("AgentBase instructions and tools hooks", () => {
         await agent.close();
     });
 
+    it("attributes direct contributions and makes the last instruction override final", async () => {
+        const provider = new ScriptedProvider([textTurn("done")]);
+        const stateTool = tool("state");
+        const hookTool = tool("hook");
+        const finalTool = defineAgentTool({
+            name: "python",
+            capabilities: ["Run isolated Python."],
+            returnType: Type.Object({}),
+            shouldReviewInAutoMode: () => false,
+            execute: () => Promise.resolve({}),
+            toLLM: () => [],
+        });
+        const instructionInputs: unknown[] = [];
+        const toolInputs: unknown[] = [];
+        const agent = await AgentBase.create(ctx, {
+            id: "direct-override-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            model: "gym/model",
+            effort: "high",
+            serviceTier: "priority",
+            persistence: new InMemoryPersistence(),
+            initialState: { instructions: "State prompt.", tools: [stateTool] },
+            hooks: {
+                instructions: () => "Hook prompt.",
+                tools: () => [hookTool],
+                overrideTools: (_hookCtx, input) => {
+                    toolInputs.push(input);
+                    return [finalTool];
+                },
+                overrideInstructions: (_hookCtx, input) => {
+                    instructionInputs.push(input);
+                    return "The exact final prompt.";
+                },
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.options).toMatchObject({
+            instructions: "The exact final prompt.",
+            tools: [finalTool],
+        });
+        expect(toolInputs).toEqual([
+            {
+                selection: {
+                    provider: "scripted",
+                    providerKind: "gym",
+                    model: "gym/model",
+                    effort: "high",
+                    tier: "priority",
+                },
+                contributions: [
+                    {
+                        contributor: { type: "agent", id: "direct-override-agent" },
+                        tools: [stateTool],
+                    },
+                    {
+                        contributor: { type: "hooks", id: "agent-base-hooks" },
+                        tools: [hookTool],
+                    },
+                ],
+                tools: [stateTool, hookTool],
+            },
+        ]);
+        expect(instructionInputs).toEqual([
+            {
+                selection: {
+                    provider: "scripted",
+                    providerKind: "gym",
+                    model: "gym/model",
+                    effort: "high",
+                    tier: "priority",
+                },
+                contributions: [
+                    {
+                        contributor: { type: "agent", id: "direct-override-agent" },
+                        instructions: "State prompt.",
+                    },
+                    {
+                        contributor: { type: "hooks", id: "agent-base-hooks" },
+                        instructions: "Hook prompt.",
+                    },
+                    {
+                        contributor: { type: "base", id: "tool-capabilities" },
+                        instructions: "Tool capabilities:\n- Run isolated Python.",
+                    },
+                ],
+                instructions:
+                    "State prompt.\n\nHook prompt.\n\nTool capabilities:\n- Run isolated Python.",
+            },
+        ]);
+        await agent.close();
+    });
+
+    it("validates only the tool array returned by the final override", async () => {
+        const replacement = tool("replacement");
+        const provider = new ScriptedProvider([textTurn("done")]);
+        const agent = await AgentBase.create(ctx, {
+            id: "final-tool-validation-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            initialState: { tools: [tool("duplicate")] },
+            hooks: {
+                tools: () => [tool("duplicate")],
+                overrideTools: () => [replacement],
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.options.tools).toEqual([replacement]);
+        await agent.close();
+    });
+
+    it("rejects conflicts introduced by the final tool override", async () => {
+        const events: SessionEvent[] = [];
+        const provider = new ScriptedProvider([textTurn("unused")]);
+        const agent = await AgentBase.create(ctx, {
+            id: "invalid-final-tool-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks: {
+                onEvent: (_hookCtx, event) => events.push(event),
+                overrideTools: () => [tool("duplicate"), tool("duplicate")],
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions).toHaveLength(0);
+        expect(events.at(-1)).toEqual({
+            type: "done",
+            state: "error",
+            kind: "internal_error",
+            message: 'Two tools are registered as "duplicate".',
+        });
+        await agent.close();
+    });
+
     it("fails the turn loudly when a configuration hook throws", async () => {
         const persistence = new InMemoryPersistence();
         const provider = new ScriptedProvider([textTurn("answer")]);

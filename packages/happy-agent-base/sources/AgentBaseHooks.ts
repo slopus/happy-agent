@@ -22,6 +22,11 @@ import type { AgentPermissionMode } from "./AgentPermissionMode.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
 import type { AgentProviders } from "./AgentProviders.js";
 import type { AnyAgentTool } from "./AgentTool.js";
+import type {
+    AgentInstructionsContribution,
+    AgentInstructionsOverride,
+    AgentToolsOverride,
+} from "./AgentConfigurationOverride.js";
 
 /** A value or a promise of it; every hook may answer either synchronously or asynchronously. */
 export type MaybePromise<Value> = Value | Promise<Value>;
@@ -267,6 +272,25 @@ export interface AgentBaseHooks {
      */
     readonly instructions?: (ctx: Context) => MaybePromise<string>;
     /**
+     * Supplies already attributed instruction fragments during facade assembly. `Agent` uses this
+     * seam to preserve each module's identity while keeping ordinary instruction hooks ahead of
+     * tool resolution. A failure fails the turn before any tool hook runs.
+     */
+    readonly instructionContributions?: (
+        ctx: Context,
+    ) => MaybePromise<readonly AgentInstructionsContribution[]>;
+    /**
+     * Replaces the complete provider-facing instructions after mutable state, `instructions`, the
+     * final tools, and their generated capability guidance have contributed. The returned string
+     * is final: Base appends nothing to it. The input keeps every original fragment attributed and
+     * carries the effective provider/model selection. This is a correctness hook: failure fails
+     * the turn.
+     */
+    readonly overrideInstructions?: (
+        ctx: Context,
+        input: AgentInstructionsOverride,
+    ) => MaybePromise<string>;
+    /**
      * Extends `state.tools` for the session, consulted once before each inference and compaction,
      * and before tool execution. This is a correctness hook: a failure — including duplicate
      * tool names in the merged list — fails the turn loudly instead of silently running with
@@ -274,6 +298,16 @@ export interface AgentBaseHooks {
      * is recreated so the model sees the current tools.
      */
     readonly tools?: (ctx: Context) => MaybePromise<readonly AnyAgentTool[]>;
+    /**
+     * Replaces the complete provider-facing tool array after mutable state and `tools` have
+     * contributed. Only the returned final descriptors are validated, so an override may remove
+     * an invalid or conflicting ordinary contribution. This is a correctness hook: failure fails
+     * the turn.
+     */
+    readonly overrideTools?: (
+        ctx: Context,
+        input: AgentToolsOverride,
+    ) => MaybePromise<readonly AnyAgentTool[]>;
     /** Called immediately before the provider is asked to compact the current history. */
     readonly beforeCompaction?: (
         ctx: Context,

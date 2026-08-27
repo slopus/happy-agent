@@ -40,6 +40,10 @@ import type { AgentMetadata, AgentMetadataChange } from "./AgentMetadata.js";
 import type { AgentPermissionMode } from "./AgentPermissionMode.js";
 import type { AgentSystemRef } from "./AgentSystemRef.js";
 import type { AnyAgentTool } from "./AgentTool.js";
+import type {
+    AgentInstructionsOverride,
+    AgentToolsOverride,
+} from "./AgentConfigurationOverride.js";
 
 /**
  * The agent a hook is serving, in full. One module instance serves every agent in a collection,
@@ -237,11 +241,32 @@ export interface AgentModuleHooks<
         ctx: Context,
         scope: AgentModuleScope<Database>,
     ) => MaybePromise<string>;
+    /**
+     * Replaces the complete instruction surface after every module and the final tools have
+     * contributed. Overrides chain in module order, and each receives the final instructions
+     * returned by the previous override alongside the attributed original contributions and
+     * effective model selection. The last answer is the exact provider-facing prompt.
+     */
+    readonly overrideInstructions?: (
+        ctx: Context,
+        scope: AgentModuleScope<Database>,
+        input: AgentInstructionsOverride,
+    ) => MaybePromise<string>;
     /** Merged after the base state and every earlier module's tools, in module order. */
     readonly tools?: (
         ctx: Context,
         scope: AgentModuleScope<Database>,
     ) => MaybePromise<readonly Tool[]>;
+    /**
+     * Replaces the complete tool surface after every module has contributed. Overrides chain in
+     * module order, and each receives the final array returned by the previous override alongside
+     * the attributed original arrays and effective model selection.
+     */
+    readonly overrideTools?: (
+        ctx: Context,
+        scope: AgentModuleScope<Database>,
+        input: AgentToolsOverride,
+    ) => MaybePromise<readonly AnyAgentTool[]>;
     /** Observes the start of a provider compaction attempt. */
     readonly beforeCompaction?: (
         ctx: Context,

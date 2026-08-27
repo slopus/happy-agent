@@ -151,6 +151,14 @@ export {
     type AgentBasePendingState,
 } from "./AgentBasePending.js";
 export { type AgentBaseState } from "./AgentBaseState.js";
+export {
+    type AgentConfigurationContributor,
+    type AgentConfigurationSelection,
+    type AgentInstructionsContribution,
+    type AgentInstructionsOverride,
+    type AgentToolsContribution,
+    type AgentToolsOverride,
+} from "./AgentConfigurationOverride.js";
 
 // Modules: pluggable capabilities that compose into an agent's hooks, tools, and instructions.
 export {

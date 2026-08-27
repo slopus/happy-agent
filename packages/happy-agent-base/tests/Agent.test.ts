@@ -25,9 +25,10 @@ import { ScriptedProvider, ScriptedSession } from "./gym/ScriptedProvider.js";
 
 const ctx = withAgentDatabase(createRootContext().named("happy-agent-test"), testAgentDatabase());
 
-function tool(name: string) {
+function tool(name: string, capabilities?: readonly string[]) {
     return defineAgentTool({
         name,
+        ...(capabilities === undefined ? {} : { capabilities }),
         returnType: Type.Object({}),
         shouldReviewInAutoMode: () => false,
         execute: () => Promise.resolve({}),
@@ -122,6 +123,165 @@ describe("Agent", () => {
         expect(session?.options.instructions).toBe("You can search.\n\nYou can edit.");
         expect(session?.options.tools).toEqual([searchTool, editTool]);
         expect(session?.requests[0]?.context.instructions).toBe("You can search.\n\nYou can edit.");
+        await agent.close();
+    });
+
+    it("attributes contributions and chains complete instruction and tool overrides", async () => {
+        const stateTool = tool("state");
+        const contributedTool = tool("contributed");
+        const firstTool = tool("first-final");
+        const secondTool = tool("second-final", ["Run isolated Python."]);
+        const provider = new ScriptedProvider([textTurn("answer")]);
+        const instructionInputs: unknown[] = [];
+        const toolInputs: unknown[] = [];
+        const hookOrder: string[] = [];
+        const agent = await Agent.create(ctx, {
+            id: "override-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            model: "gym/small",
+            effort: "high",
+            serviceTier: "priority",
+            persistence: new InMemoryPersistence(),
+            sharedKV: sharedKV(),
+            initialState: { instructions: "State prompt.", tools: [stateTool] },
+            modules: [
+                module({
+                    name: "contributor",
+                    instructions: () => {
+                        hookOrder.push("instructions");
+                        return "Module prompt.";
+                    },
+                    tools: () => {
+                        hookOrder.push("tools");
+                        return [contributedTool];
+                    },
+                }),
+                module({
+                    name: "first-override",
+                    overrideInstructions: (_hookCtx, _scope, input) => {
+                        hookOrder.push("first overrideInstructions");
+                        instructionInputs.push(input);
+                        return `first(${input.instructions})`;
+                    },
+                    overrideTools: (_hookCtx, _scope, input) => {
+                        hookOrder.push("first overrideTools");
+                        toolInputs.push(input);
+                        return [firstTool];
+                    },
+                }),
+                module({
+                    name: "second-override",
+                    overrideInstructions: (_hookCtx, _scope, input) => {
+                        hookOrder.push("second overrideInstructions");
+                        instructionInputs.push(input);
+                        return `second(${input.instructions})`;
+                    },
+                    overrideTools: (_hookCtx, _scope, input) => {
+                        hookOrder.push("second overrideTools");
+                        toolInputs.push(input);
+                        return [secondTool];
+                    },
+                }),
+            ],
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions[0]?.options.instructions).toBe(
+            "second(first(State prompt.\n\nModule prompt.\n\nTool capabilities:\n- Run isolated Python.))",
+        );
+        expect(provider.sessions[0]?.options.tools).toEqual([secondTool]);
+        expect(hookOrder).toEqual([
+            "instructions",
+            "tools",
+            "first overrideTools",
+            "second overrideTools",
+            "first overrideInstructions",
+            "second overrideInstructions",
+        ]);
+        expect(instructionInputs).toHaveLength(2);
+        expect(instructionInputs[0]).toMatchObject({
+            selection: {
+                provider: "scripted",
+                providerKind: "gym",
+                model: "gym/small",
+                effort: "high",
+                tier: "priority",
+            },
+            contributions: [
+                {
+                    contributor: { type: "agent", id: "override-agent" },
+                    instructions: "State prompt.",
+                },
+                {
+                    contributor: { type: "module", id: "contributor" },
+                    instructions: "Module prompt.",
+                },
+                {
+                    contributor: { type: "base", id: "tool-capabilities" },
+                    instructions: "Tool capabilities:\n- Run isolated Python.",
+                },
+            ],
+            instructions:
+                "State prompt.\n\nModule prompt.\n\nTool capabilities:\n- Run isolated Python.",
+        });
+        expect(instructionInputs[1]).toMatchObject({
+            instructions:
+                "first(State prompt.\n\nModule prompt.\n\nTool capabilities:\n- Run isolated Python.)",
+        });
+        expect(toolInputs).toHaveLength(2);
+        expect(toolInputs[0]).toMatchObject({
+            contributions: [
+                { contributor: { type: "agent", id: "override-agent" }, tools: [stateTool] },
+                {
+                    contributor: { type: "module", id: "contributor" },
+                    tools: [contributedTool],
+                },
+            ],
+            tools: [stateTool, contributedTool],
+        });
+        expect(toolInputs[1]).toMatchObject({ tools: [firstTool] });
+        await agent.close();
+    });
+
+    it("fails on ordinary module instructions before consulting module tools", async () => {
+        const provider = new ScriptedProvider([textTurn("unused")]);
+        const events: SessionEvent[] = [];
+        let toolsCalled = false;
+        const agent = await Agent.create(ctx, {
+            id: "instruction-failure-order-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            sharedKV: sharedKV(),
+            modules: [
+                module({
+                    name: "broken-instructions",
+                    instructions: () => {
+                        throw new Error("instruction assembly broke");
+                    },
+                    tools: () => {
+                        toolsCalled = true;
+                        return [];
+                    },
+                    onEvent: (_hookCtx, _scope, event) => events.push(event),
+                }),
+            ],
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(toolsCalled).toBe(false);
+        expect(provider.sessions).toHaveLength(0);
+        expect(events.at(-1)).toEqual({
+            type: "done",
+            state: "error",
+            kind: "internal_error",
+            message: "instruction assembly broke",
+        });
         await agent.close();
     });
 
@@ -840,8 +1000,7 @@ describe("Agent", () => {
                 module({
                     name: "context-window",
                     prepareInference: (_hookCtx, _scope, preparation) =>
-                        preparation.contextTokens === undefined ||
-                        preparation.contextTokens < 540
+                        preparation.contextTokens === undefined || preparation.contextTokens < 540
                             ? undefined
                             : [{ type: "compact" }],
                 }),

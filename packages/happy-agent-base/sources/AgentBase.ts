@@ -63,6 +63,11 @@ import type {
     AgentBaseToolOutcome,
     MaybePromise,
 } from "./AgentBaseHooks.js";
+import type {
+    AgentConfigurationSelection,
+    AgentInstructionsContribution,
+    AgentToolsContribution,
+} from "./AgentConfigurationOverride.js";
 import type { AgentPersistence, AgentRecord } from "./AgentPersistence.js";
 import {
     assistantContextRecord,
@@ -1639,16 +1644,56 @@ export class AgentBase {
         readonly instructions: string;
         readonly tools: readonly AnyAgentTool[];
     }> {
-        // Preserve the established correctness-hook order: instructions first, then tools.
-        const hookedInstructions = await this.#hooks.instructions?.(this.#workContext(ctx));
-        const tools = await this.#tools(ctx);
-        const instructions = [
-            this.state.instructions,
-            hookedInstructions ?? "",
-            toolCapabilityInstructions(tools),
-        ]
-            .filter((text) => text.length > 0)
+        // Resolve ordinary instruction contributions first, then the final tools. Tools may add
+        // capability guidance, so the complete instruction override must run last: its answer is
+        // the exact provider-facing system prompt and nothing is appended after it.
+        const workCtx = this.#workContext(ctx);
+        const selection: AgentConfigurationSelection = {
+            provider: this.#providerId,
+            providerKind: this.#providers.typeOf(this.#providerId) ?? undefined,
+            model: this.#model,
+            effort: this.#effort,
+            tier: this.#serviceTier,
+        };
+        const hookedInstructions = await this.#hooks.instructions?.(workCtx);
+        const attributedInstructions =
+            (await this.#hooks.instructionContributions?.(workCtx)) ?? [];
+        const instructionContributions: AgentInstructionsContribution[] = [
+            ...(this.state.instructions.length === 0
+                ? []
+                : [
+                      {
+                          contributor: { type: "agent" as const, id: this.id },
+                          instructions: this.state.instructions,
+                      },
+                  ]),
+            ...(hookedInstructions === undefined || hookedInstructions.length === 0
+                ? []
+                : [
+                      {
+                          contributor: { type: "hooks" as const, id: "agent-base-hooks" },
+                          instructions: hookedInstructions,
+                      },
+                  ]),
+            ...attributedInstructions,
+        ];
+        const tools = await this.#tools(workCtx, selection);
+        const capabilityInstructions = toolCapabilityInstructions(tools);
+        if (capabilityInstructions.length > 0) {
+            instructionContributions.push({
+                contributor: { type: "base", id: "tool-capabilities" },
+                instructions: capabilityInstructions,
+            });
+        }
+        let instructions = instructionContributions
+            .map((contribution) => contribution.instructions)
             .join("\n\n");
+        instructions =
+            (await this.#hooks.overrideInstructions?.(workCtx, {
+                selection,
+                contributions: instructionContributions,
+                instructions,
+            })) ?? instructions;
         return { instructions, tools };
     }
 
@@ -1657,9 +1702,44 @@ export class AgentBase {
      * answer. Two tools sharing one name and namespace are a configuration error that fails
      * the turn, since the provider would receive ambiguous descriptors.
      */
-    async #tools(ctx: Context): Promise<readonly AnyAgentTool[]> {
-        const hooked = await this.#hooks.tools?.(this.#workContext(ctx));
-        const tools = [...this.state.tools, ...(hooked ?? [])];
+    async #tools(
+        ctx: Context,
+        selection?: AgentConfigurationSelection,
+    ): Promise<readonly AnyAgentTool[]> {
+        const workCtx = selection === undefined ? this.#workContext(ctx) : ctx;
+        const effectiveSelection: AgentConfigurationSelection = selection ?? {
+            provider: this.#providerId,
+            providerKind: this.#providers.typeOf(this.#providerId) ?? undefined,
+            model: this.#model,
+            effort: this.#effort,
+            tier: this.#serviceTier,
+        };
+        const hooked = await this.#hooks.tools?.(workCtx);
+        const contributions: AgentToolsContribution[] = [
+            ...(this.state.tools.length === 0
+                ? []
+                : [
+                      {
+                          contributor: { type: "agent" as const, id: this.id },
+                          tools: this.state.tools,
+                      },
+                  ]),
+            ...(hooked === undefined || hooked.length === 0
+                ? []
+                : [
+                      {
+                          contributor: { type: "hooks" as const, id: "agent-base-hooks" },
+                          tools: hooked,
+                      },
+                  ]),
+        ];
+        const initial = contributions.flatMap((contribution) => contribution.tools);
+        const tools =
+            (await this.#hooks.overrideTools?.(workCtx, {
+                selection: effectiveSelection,
+                contributions,
+                tools: initial,
+            })) ?? initial;
         const names = new Set<string>();
         for (const tool of tools) {
             if (

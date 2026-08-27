@@ -29,6 +29,10 @@ import type { AgentMetadata } from "./AgentMetadata.js";
 import type { AgentMessageAcceptance } from "./AgentMessageAcceptance.js";
 import type { AnyAgentTool } from "./AgentTool.js";
 import type { AgentBasePendingStage } from "./AgentBasePending.js";
+import type {
+    AgentInstructionsContribution,
+    AgentToolsContribution,
+} from "./AgentConfigurationOverride.js";
 
 /**
  * Everything `AgentBase` is constructed with, except its hooks: an agent's behavior comes from
@@ -252,7 +256,11 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
         module: AgentModuleRuntime<Tool, Database>,
     ): AgentModuleScope<Database> => moduleScope(ctx, module, options, sharedKV);
     const withInstructions = modules.filter((module) => module.hooks.instructions !== undefined);
+    const withOverrideInstructions = modules.filter(
+        (module) => module.hooks.overrideInstructions !== undefined,
+    );
     const withTools = modules.filter((module) => module.hooks.tools !== undefined);
+    const withOverrideTools = modules.filter((module) => module.hooks.overrideTools !== undefined);
     const withBeforeToolCall = modules.filter(
         (module) => module.hooks.beforeToolCall !== undefined,
     );
@@ -367,33 +375,79 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
         ...(withInstructions.length === 0
             ? {}
             : {
-                  // Correctness hook: a failing module propagates and fails the turn.
-                  instructions: async (ctx: Context) => {
-                      const texts: string[] = [];
+                  // Ordinary module instructions resolve before tools, preserving the established
+                  // correctness-hook order while retaining attribution for the final override.
+                  instructionContributions: async (ctx) => {
+                      const contributions: AgentInstructionsContribution[] = [];
                       for (const module of withInstructions) {
-                          texts.push(
+                          const instructions =
                               (await module.hooks.instructions?.(
                                   moduleCtx(ctx, module),
                                   scopeOf(ctx, module),
-                              )) ?? "",
-                          );
+                              )) ?? "";
+                          if (instructions.length > 0) {
+                              contributions.push({
+                                  contributor: { type: "module", id: module.name },
+                                  instructions,
+                              });
+                          }
                       }
-                      return texts.filter((text) => text.length > 0).join("\n\n");
+                      return contributions;
                   },
               }),
-        ...(withTools.length === 0
+        ...(withOverrideInstructions.length === 0
             ? {}
             : {
-                  // Correctness hook: a failing module propagates and fails the turn; the
-                  // base validates the merged list against duplicate names.
-                  tools: async (ctx: Context) => {
-                      const tools: AnyAgentTool[] = [];
+                  // Chain complete replacements after Base has resolved tools and generated its
+                  // capability contribution. Correctness-hook failures fail the turn.
+                  overrideInstructions: async (ctx, input) => {
+                      let instructions = input.instructions;
+                      for (const module of withOverrideInstructions) {
+                          instructions = await module.hooks.overrideInstructions!(
+                              moduleCtx(ctx, module),
+                              scopeOf(ctx, module),
+                              {
+                                  selection: input.selection,
+                                  contributions: input.contributions,
+                                  instructions,
+                              },
+                          );
+                      }
+                      return instructions;
+                  },
+              }),
+        ...(withTools.length === 0 && withOverrideTools.length === 0
+            ? {}
+            : {
+                  // Gather fixed arrays before chaining complete replacements; Base validates
+                  // only the final list, so an override may deliberately remove conflicts.
+                  overrideTools: async (ctx, input) => {
+                      const contributions: AgentToolsContribution[] = [...input.contributions];
                       for (const module of withTools) {
-                          tools.push(
-                              ...((await module.hooks.tools?.(
+                          const tools =
+                              (await module.hooks.tools?.(
                                   moduleCtx(ctx, module),
                                   scopeOf(ctx, module),
-                              )) ?? []),
+                              )) ?? [];
+                          if (tools.length > 0) {
+                              contributions.push({
+                                  contributor: { type: "module", id: module.name },
+                                  tools,
+                              });
+                          }
+                      }
+                      let tools: readonly AnyAgentTool[] = contributions.flatMap(
+                          (contribution) => contribution.tools,
+                      );
+                      for (const module of withOverrideTools) {
+                          tools = await module.hooks.overrideTools!(
+                              moduleCtx(ctx, module),
+                              scopeOf(ctx, module),
+                              {
+                                  selection: input.selection,
+                                  contributions,
+                                  tools,
+                              },
                           );
                       }
                       return tools;
