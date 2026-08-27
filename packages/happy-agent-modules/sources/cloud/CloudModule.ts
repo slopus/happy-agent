@@ -7,6 +7,8 @@ import type {
     CloudAuthorizing,
     CloudConnected,
     CloudDisconnected,
+    CloudDevice,
+    CloudDevicesResponse,
     CloudEnrollment as PublicCloudEnrollment,
     CloudEnvironment,
     CloudKeyBackup,
@@ -24,6 +26,7 @@ import type {
     StartCloudAuthorizationRequest,
 } from "@slopus/happy-agent-client";
 import {
+    cloudKeyValueSchema,
     cloudUsernameSchema,
     createCloudKeysRequestSchema,
     deleteCloudKeysRequestSchema,
@@ -33,11 +36,18 @@ import {
 import {
     agentDatabase,
     withAgentDatabase,
+    type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
-import { destroyIdentity, importIdentityKeyPair, MurmurClient } from "@slopus/murmur";
+import {
+    destroyIdentity,
+    HttpRelaySessionProvider,
+    importIdentityKeyPair,
+    MurmurClient,
+    type MurmurDeviceRosterEntry,
+} from "@slopus/murmur";
 import {
     afterCommit,
     asyncLock,
@@ -52,6 +62,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import type { ConfigModule } from "../config/index.js";
 import { ProfileModule, type Profile, type ProfileUnsubscribe } from "../profile/index.js";
 
 import {
@@ -85,6 +96,11 @@ import {
 } from "./CloudKeysDatabase.js";
 import { CloudMurmurStore, cloudMurmurStoreMigrations } from "./CloudMurmurStore.js";
 import { createCloudKeyTree, type CloudKeyTree } from "./CloudKeyTree.js";
+import {
+    createCloudDeviceMetadata,
+    decryptCloudDeviceMetadata,
+    encryptCloudDeviceMetadata,
+} from "./CloudDeviceMetadata.js";
 import {
     CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
     CLOUD_AUTHORIZATION_EXPIRY_OPERATION,
@@ -152,6 +168,8 @@ const SOCIAL_ELIGIBILITY_POLL_MS = 1_000;
 const SOCIAL_MUTATION_SNAPSHOT_ATTEMPTS = 3;
 const SOCIAL_PROFILE_REFRESH_MS = 5 * 60 * 1_000;
 const MURMUR_RETRY_MS = 5_000;
+const MURMUR_UNREGISTER_MAX_ATTEMPTS = 3;
+const MURMUR_UNREGISTER_ATTEMPTS_KEY = "unregister-attempts";
 const murmurRelays: Readonly<Record<CloudEnvironment, string>> = {
     production: "https://murmur-relay.bulka-llc.workers.dev",
     staging: "https://murmur-relay-staging.bulka-llc.workers.dev",
@@ -246,6 +264,26 @@ class CloudKeyTerminalError extends Error {
     }
 }
 
+class CloudMurmurUnregisterFailure extends Error {
+    override readonly cause: unknown;
+
+    constructor(cause: unknown) {
+        super("Murmur device unregistration failed.", { cause });
+        this.name = "CloudMurmurUnregisterFailure";
+        this.cause = cause;
+    }
+}
+
+class CloudMurmurLocalFailure extends Error {
+    override readonly cause: unknown;
+
+    constructor(cause: unknown) {
+        super("Local Murmur teardown state failed.", { cause });
+        this.name = "CloudMurmurLocalFailure";
+        this.cause = cause;
+    }
+}
+
 export type CloudOperationErrorCode =
     | "cloud_not_authenticated"
     | "cloud_not_enrolled"
@@ -258,6 +296,7 @@ export type CloudOperationErrorCode =
 /** A display-safe Cloud failure carrying the authoritative current snapshot. */
 export class CloudOperationError extends Error {
     readonly cloud: Cloud;
+    readonly devices: readonly CloudDevice[] | undefined;
     readonly cloudSocial: CloudSocial | undefined;
     readonly code: CloudOperationErrorCode;
     readonly status: 400 | 404 | 409 | 503;
@@ -268,6 +307,7 @@ export class CloudOperationError extends Error {
         message: string,
         cloud: Cloud,
         cloudSocial?: CloudSocial,
+        devices?: readonly CloudDevice[],
     ) {
         super(message);
         this.name = "CloudOperationError";
@@ -275,6 +315,7 @@ export class CloudOperationError extends Error {
         this.code = code;
         this.cloud = cloud;
         this.cloudSocial = cloudSocial;
+        this.devices = devices;
     }
 }
 
@@ -295,6 +336,7 @@ export class CloudModule implements AgentModule {
     readonly #keysDatabase = createCloudKeysDatabase();
     readonly #socialDatabase = createCloudSocialDatabase();
     readonly #durableFunctions: DurableFunctionsModule;
+    readonly #config: ConfigModule | undefined;
     readonly #profile: ProfileModule;
     readonly #profileUnsubscribe: ProfileUnsubscribe;
     readonly #listeners = new Set<CloudUpdatedListener>();
@@ -322,9 +364,14 @@ export class CloudModule implements AgentModule {
     #socialWake: (() => void) | undefined;
     #stopping = false;
 
-    constructor(durableFunctions: DurableFunctionsModule, profile: ProfileModule) {
+    constructor(
+        durableFunctions: DurableFunctionsModule,
+        profile: ProfileModule,
+        config?: ConfigModule,
+    ) {
         this.#durableFunctions = durableFunctions;
         this.#profile = profile;
+        this.#config = config;
         const updatedAt = Date.now();
         this.#cloud = freezeCloud({
             authorization: null,
@@ -356,7 +403,7 @@ export class CloudModule implements AgentModule {
             argumentsSchema: cloudDisconnectArgumentsSchema,
             resultSchema: cloudDisconnectResultSchema,
             executor: async (ctx, call) => {
-                await this.#executeDisconnect(ctx, call.arguments);
+                await this.#executeDisconnect(ctx, call.arguments, call.kv);
                 return null;
             },
         });
@@ -462,6 +509,72 @@ export class CloudModule implements AgentModule {
 
     status(_ctx: Context): Cloud {
         return this.#cloud;
+    }
+
+    async getDevices(_ctx: Context): Promise<CloudDevicesResponse> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            const live = await this.#requireLiveMurmur(ctx);
+            try {
+                return { devices: projectCloudDevices(live, await live.client.devices()) };
+            } catch (error: unknown) {
+                ctx.log.warn("cloud:devices:error phase=read reason=murmur-unavailable", {}, error);
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud devices are temporarily unavailable.",
+                );
+            }
+        });
+    }
+
+    async removeDevice(_ctx: Context, deviceId: string): Promise<CloudDevicesResponse> {
+        const target = parseCloudDeviceId(deviceId);
+        if (target === undefined) {
+            throw this.#error(400, "invalid_request", "The Cloud device ID is invalid.");
+        }
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            const live = await this.#requireLiveMurmur(ctx);
+            try {
+                let devices = projectCloudDevices(live, await live.client.devices());
+                const current = devices.find((device) => device.id === deviceId);
+                if (current?.current === true) {
+                    throw new CloudOperationError(
+                        409,
+                        "conflict",
+                        "Disconnect Cloud to remove this device.",
+                        this.#cloud,
+                        undefined,
+                        devices,
+                    );
+                }
+                if (current === undefined) return { devices };
+                try {
+                    await live.client.removeDevice(target);
+                } catch (error: unknown) {
+                    devices = projectCloudDevices(live, await live.client.devices());
+                    if (!devices.some((device) => device.id === deviceId)) return { devices };
+                    throw error;
+                }
+                devices = projectCloudDevices(live, await live.client.devices());
+                return { devices };
+            } catch (error: unknown) {
+                if (error instanceof CloudOperationError) throw error;
+                ctx.log.warn(
+                    "cloud:devices:error phase=remove reason=murmur-unavailable",
+                    {},
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud devices are temporarily unavailable.",
+                );
+            } finally {
+                target.fill(0);
+            }
+        });
     }
 
     socialStatus(_ctx: Context): CloudSocial {
@@ -714,13 +827,21 @@ export class CloudModule implements AgentModule {
                     } as const;
                 }
                 const account = cloudKeysAccount(stored.session);
-                const disconnect: CloudDisconnect = { ...account, generation: createId() };
+                const disconnect: CloudDisconnect = {
+                    ...account,
+                    generation: createId(),
+                    refreshToken: stored.session.refreshToken,
+                };
                 const cloud = disconnected(
                     await ctx.inTx(async (txCtx) => {
                         await this.#disconnectDatabase.write(txCtx, disconnect);
                         await this.#durableFunctions.invoke(txCtx, {
                             function: CLOUD_DISCONNECT_FUNCTION,
-                            arguments: disconnect,
+                            arguments: {
+                                environment: disconnect.environment,
+                                generation: disconnect.generation,
+                                userId: disconnect.userId,
+                            },
                         });
                         return await this.#replace(
                             txCtx,
@@ -2137,12 +2258,16 @@ export class CloudModule implements AgentModule {
         }
     }
 
-    async #executeDisconnect(ctx: Context, input: CloudDisconnectArguments): Promise<void> {
+    async #executeDisconnect(
+        ctx: Context,
+        input: CloudDisconnectArguments,
+        kv: AgentKV,
+    ): Promise<void> {
         for (;;) {
             try {
                 const current = await this.#disconnectDatabase.read(ctx);
                 if (!sameCloudDisconnect(current, input)) return;
-                await this.#completeDisconnect(ctx, current);
+                await this.#completeDisconnect(ctx, current, kv);
                 return;
             } catch (error: unknown) {
                 const diagnostic = cloudFailureDiagnostic(error);
@@ -2156,7 +2281,11 @@ export class CloudModule implements AgentModule {
         }
     }
 
-    async #completeDisconnect(ctx: Context, disconnect: CloudDisconnect): Promise<void> {
+    async #completeDisconnect(
+        ctx: Context,
+        disconnect: CloudDisconnect,
+        kv: AgentKV,
+    ): Promise<void> {
         const account = { environment: disconnect.environment, userId: disconnect.userId };
         const activity = await this.#lock.runInLock(ctx, async () => {
             this.#restartMurmur();
@@ -2174,8 +2303,18 @@ export class CloudModule implements AgentModule {
                 ctx.log.warn(
                     `cloud:keys:skip environment=${account.environment} phase=murmur-unregister reason=legacy-identity-local-delete`,
                 );
+            } else if (disconnect.refreshToken === undefined) {
+                ctx.log.warn(
+                    `cloud:keys:skip environment=${account.environment} phase=murmur-unregister reason=missing-session-credential-local-delete`,
+                );
             } else {
-                await this.#unregisterMurmurDevice(ctx, account, local);
+                await this.#unregisterMurmurDevice(
+                    ctx,
+                    account,
+                    local,
+                    { ...disconnect, refreshToken: disconnect.refreshToken },
+                    kv,
+                );
             }
         }
 
@@ -2196,36 +2335,154 @@ export class CloudModule implements AgentModule {
         ctx: Context,
         account: CloudKeysAccount,
         local: ReadyCloudKeys,
+        disconnect: CloudDisconnect & { readonly refreshToken: string },
+        kv: AgentKV,
+    ): Promise<void> {
+        const validated = cloudIdentity(local);
+        destroyIdentity(validated.identity);
+        validated.keyTree.destroy();
+
+        const storedAttempts = await kv.read(ctx, MURMUR_UNREGISTER_ATTEMPTS_KEY);
+        if (
+            storedAttempts !== undefined &&
+            (!Number.isSafeInteger(storedAttempts) ||
+                (storedAttempts as number) < 0 ||
+                (storedAttempts as number) > MURMUR_UNREGISTER_MAX_ATTEMPTS)
+        ) {
+            throw new Error("The durable Murmur unregister attempt count is invalid.");
+        }
+        let attempts = (storedAttempts as number | undefined) ?? 0;
+        while (attempts < MURMUR_UNREGISTER_MAX_ATTEMPTS) {
+            try {
+                const current = await this.#disconnectDatabase.read(ctx);
+                if (!sameCloudDisconnect(current, disconnect)) return;
+                if (current.refreshToken === undefined) {
+                    ctx.log.warn(
+                        `cloud:keys:skip environment=${account.environment} phase=murmur-unregister reason=missing-session-credential-local-delete`,
+                    );
+                    return;
+                }
+                await this.#unregisterMurmurDeviceOnce(ctx, account, local, {
+                    ...current,
+                    refreshToken: current.refreshToken,
+                });
+                return;
+            } catch (error: unknown) {
+                if (!(error instanceof CloudMurmurUnregisterFailure)) throw error;
+                attempts = await kv.update(ctx, MURMUR_UNREGISTER_ATTEMPTS_KEY, (current) => {
+                    if (
+                        current !== undefined &&
+                        (!Number.isSafeInteger(current) ||
+                            (current as number) < 0 ||
+                            (current as number) >= MURMUR_UNREGISTER_MAX_ATTEMPTS)
+                    ) {
+                        throw new Error("The durable Murmur unregister attempt count is invalid.");
+                    }
+                    return ((current as number | undefined) ?? 0) + 1;
+                });
+                const diagnostic = cloudFailureDiagnostic(error.cause);
+                const status =
+                    diagnostic.status === undefined ? "" : ` status=${String(diagnostic.status)}`;
+                ctx.log.warn(
+                    `cloud:keys:error environment=${account.environment} phase=murmur-unregister reason=${diagnostic.reason}${status} attempt=${String(attempts)}/${String(MURMUR_UNREGISTER_MAX_ATTEMPTS)}`,
+                );
+                if (attempts >= MURMUR_UNREGISTER_MAX_ATTEMPTS) {
+                    ctx.log.warn(
+                        `cloud:keys:skip environment=${account.environment} phase=murmur-unregister reason=retry-exhausted deviceMayRemainRegistered=true`,
+                    );
+                    return;
+                }
+                await delay(ctx, MURMUR_RETRY_MS);
+            }
+        }
+    }
+
+    #disconnectMurmurSessionProvider(
+        ctx: Context,
+        disconnect: CloudDisconnect & { readonly refreshToken: string },
+    ): HttpRelaySessionProvider {
+        let refreshToken = disconnect.refreshToken;
+        return this.#murmurSessionProvider(ctx, disconnect.environment, async () => {
+            const authenticated = await this.#client(disconnect.environment).refresh(refreshToken);
+            if (authenticated.user.id !== disconnect.userId) {
+                throw new CloudMurmurLocalFailure(new CloudIdentityMismatchError());
+            }
+            try {
+                await ctx.inTx(async (txCtx) => {
+                    const current = await this.#disconnectDatabase.read(txCtx);
+                    if (
+                        !sameCloudDisconnect(current, disconnect) ||
+                        current.refreshToken !== refreshToken
+                    ) {
+                        throw new Error(
+                            "The Cloud disconnect credential changed while it rotated.",
+                        );
+                    }
+                    await this.#disconnectDatabase.write(txCtx, {
+                        ...current,
+                        refreshToken: authenticated.refreshToken,
+                    });
+                });
+            } catch (error: unknown) {
+                throw new CloudMurmurLocalFailure(error);
+            }
+            refreshToken = authenticated.refreshToken;
+            return authenticated.accessToken;
+        });
+    }
+
+    #murmurSessionProvider(
+        ctx: Context,
+        environment: CloudEnvironment,
+        accessToken: () => Promise<string>,
+    ): HttpRelaySessionProvider {
+        return new HttpRelaySessionProvider(`${murmurRelays[environment]}/v2/session`, {
+            fetch: async (input, init) => {
+                const token = await accessToken();
+                const headers = new Headers(init?.headers);
+                headers.set("authorization", `Bearer ${token}`);
+                const signal =
+                    ctx.lifetime === undefined
+                        ? init?.signal
+                        : init?.signal === undefined || init.signal === null
+                          ? ctx.lifetime
+                          : AbortSignal.any([init.signal, ctx.lifetime]);
+                return signal === undefined
+                    ? await fetch(input, { ...init, headers })
+                    : await fetch(input, { ...init, headers, signal });
+            },
+        });
+    }
+
+    async #unregisterMurmurDeviceOnce(
+        ctx: Context,
+        account: CloudKeysAccount,
+        local: ReadyCloudKeys,
+        disconnect: CloudDisconnect & { readonly refreshToken: string },
     ): Promise<void> {
         const derived = cloudIdentity(local);
         let client: MurmurClient;
         try {
             client = await MurmurClient.open({
-                fetch: async (input, init) => {
-                    const signal =
-                        ctx.lifetime === undefined
-                            ? init?.signal
-                            : init?.signal === undefined || init.signal === null
-                              ? ctx.lifetime
-                              : AbortSignal.any([init.signal, ctx.lifetime]);
-                    return signal === undefined
-                        ? await fetch(input, init)
-                        : await fetch(input, { ...init, signal });
-                },
                 identity: derived.identity,
-                relay: murmurRelays[account.environment],
+                sessionProvider: this.#disconnectMurmurSessionProvider(ctx, disconnect),
                 store: new CloudMurmurStore(ctx, account),
             });
         } catch (error: unknown) {
             derived.keyTree.destroy();
-            throw error;
+            if (error instanceof CloudMurmurLocalFailure) throw error;
+            throw new CloudMurmurUnregisterFailure(error);
         } finally {
             destroyIdentity(derived.identity);
         }
 
         const deviceKey = client.deviceKey;
         try {
-            await client.removeDevice(deviceKey);
+            try {
+                await client.removeDevice(deviceKey);
+            } catch (error: unknown) {
+                throw new CloudMurmurUnregisterFailure(error);
+            }
         } finally {
             deviceKey.fill(0);
             try {
@@ -2275,9 +2532,17 @@ export class CloudModule implements AgentModule {
                     ) {
                         return undefined;
                     }
+                    const profile = await this.#profile.ensure(ctx);
                     activity = cloudMurmurActivity();
                     this.#murmurActivity = activity;
-                    return { account, local };
+                    return {
+                        account,
+                        local,
+                        metadata: createCloudDeviceMetadata(
+                            profile.parentInstanceId,
+                            this.#config?.configuration.version ?? "development",
+                        ),
+                    };
                 });
                 if (prepared === undefined) {
                     await this.#waitForMurmurWake(MURMUR_RETRY_MS);
@@ -2293,15 +2558,30 @@ export class CloudModule implements AgentModule {
                 let client: MurmurClient;
                 try {
                     client = await MurmurClient.open({
-                        fetch: async (input, init) => {
-                            const signal =
-                                init?.signal === undefined || init.signal === null
-                                    ? controller.signal
-                                    : AbortSignal.any([init.signal, controller.signal]);
-                            return await fetch(input, { ...init, signal });
-                        },
+                        encryptDeviceMetadata: (deviceKey) =>
+                            encryptCloudDeviceMetadata(
+                                derived.keyTree,
+                                derived.identity.publicKey,
+                                deviceKey,
+                                prepared.metadata,
+                            ),
                         identity: derived.identity,
-                        relay: murmurRelays[environment],
+                        sessionProvider: this.#murmurSessionProvider(
+                            withLifetime(ctx, controller.signal),
+                            environment,
+                            async () => {
+                                const minted = await this.#lock.runInLock(ctx, async () =>
+                                    this.#mintInLock(ctx, false),
+                                );
+                                if (
+                                    minted.session.environment !== prepared.account.environment ||
+                                    minted.session.user.id !== prepared.account.userId
+                                ) {
+                                    throw new CloudIdentityMismatchError();
+                                }
+                                return minted.accessToken;
+                            },
+                        ),
                         store: new CloudMurmurStore(ctx, prepared.account),
                     });
                 } catch (error: unknown) {
@@ -2754,6 +3034,33 @@ export class CloudModule implements AgentModule {
         );
     }
 
+    async #requireLiveMurmur(ctx: Context): Promise<LiveCloudMurmur> {
+        const stored = await this.#readOwned(ctx);
+        if (stored?.session === null || stored?.session === undefined) {
+            throw this.#error(
+                409,
+                "cloud_not_authenticated",
+                "Connect Cloud before managing devices.",
+            );
+        }
+        if (stored.session.keys?.status !== "ready") {
+            throw this.#error(409, "conflict", "Cloud keys must be ready to manage devices.");
+        }
+        const live = this.#liveMurmur;
+        if (
+            live === undefined ||
+            live.account.environment !== stored.session.environment ||
+            live.account.userId !== stored.session.user.id
+        ) {
+            throw this.#error(
+                503,
+                "cloud_unavailable",
+                "Cloud devices are temporarily unavailable.",
+            );
+        }
+        return live;
+    }
+
     #assertRunning(): void {
         if (this.#stopping) throw new Error("Cloud authentication is stopping.");
         if (this.#context === undefined) throw new Error("Cloud authentication has not started.");
@@ -3034,6 +3341,40 @@ function sameSecret(left: string, right: string): boolean {
 
 function cloudKeysAccount(session: CloudSession): CloudKeysAccount {
     return { environment: session.environment, userId: session.user.id };
+}
+
+function parseCloudDeviceId(value: string): Uint8Array | undefined {
+    if (!Value.Check(cloudKeyValueSchema, value)) return undefined;
+    const decoded = new Uint8Array(Buffer.from(value, "base64url"));
+    if (decoded.byteLength !== 32 || Buffer.from(decoded).toString("base64url") !== value) {
+        decoded.fill(0);
+        return undefined;
+    }
+    return decoded;
+}
+
+function projectCloudDevices(
+    live: LiveCloudMurmur,
+    entries: readonly MurmurDeviceRosterEntry[],
+): CloudDevice[] {
+    const accountKey = live.client.accountKey;
+    const currentKey = live.client.deviceKey;
+    try {
+        return entries.map((entry) => ({
+            current: Buffer.from(entry.deviceKey).equals(Buffer.from(currentKey)),
+            id: Buffer.from(entry.deviceKey).toString("base64url"),
+            lastAccessedAt: entry.lastAccessedAt,
+            metadata: decryptCloudDeviceMetadata(
+                live.keyTree,
+                accountKey,
+                entry.deviceKey,
+                entry.encryptedMetadata,
+            ),
+        }));
+    } finally {
+        accountKey.fill(0);
+        currentKey.fill(0);
+    }
 }
 
 function cloudAccountKey(account: CloudKeysAccount): string {

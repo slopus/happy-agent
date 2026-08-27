@@ -10,6 +10,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
 export const CLOUD_DISCONNECT_MIGRATION_KEY = "006-cloud-disconnect";
+export const CLOUD_DISCONNECT_REFRESH_TOKEN_MIGRATION_KEY = "007-cloud-disconnect-refresh-token";
 
 const CLOUD_DISCONNECT_TABLE = "happy_agent_cloud_disconnect";
 const exact = { additionalProperties: false } as const;
@@ -18,6 +19,7 @@ export const cloudDisconnectSchema = Type.Object(
     {
         environment: cloudEnvironmentSchema,
         generation: Type.String({ minLength: 1, maxLength: 128 }),
+        refreshToken: Type.Optional(Type.String({ minLength: 1, maxLength: 32_768 })),
         userId: Type.String({ minLength: 1, maxLength: 256 }),
     },
     exact,
@@ -28,6 +30,7 @@ const cloudDisconnectRowSchema = Type.Object(
     {
         environment: cloudEnvironmentSchema,
         generation: Type.String({ minLength: 1, maxLength: 128 }),
+        refresh_token: Type.Union([Type.Null(), Type.String({ minLength: 1, maxLength: 32_768 })]),
         user_id: Type.String({ minLength: 1, maxLength: 256 }),
     },
     exact,
@@ -48,6 +51,16 @@ export const cloudDisconnectMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    [
+        CLOUD_DISCONNECT_REFRESH_TOKEN_MIGRATION_KEY,
+        async (_ctx, database) => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(CLOUD_DISCONNECT_TABLE)}
+                    ADD COLUMN refresh_token TEXT`,
+            );
+        },
+    ],
 ];
 
 /** Durable ownership record for the one Cloud account whose local teardown is still pending. */
@@ -55,7 +68,7 @@ export function createCloudDisconnectDatabase() {
     async function read(ctx: Context): Promise<CloudDisconnect | undefined> {
         const rows = await agentDatabaseRows<unknown>(
             ctx.db,
-            sql`SELECT environment, user_id, generation
+            sql`SELECT environment, user_id, generation, refresh_token
                 FROM ${sql.raw(CLOUD_DISCONNECT_TABLE)}
                 WHERE singleton_id = 1`,
         );
@@ -65,6 +78,7 @@ export function createCloudDisconnectDatabase() {
         return {
             environment: row.environment,
             generation: row.generation,
+            ...(row.refresh_token === null ? {} : { refreshToken: row.refresh_token }),
             userId: row.user_id,
         };
     }
@@ -75,12 +89,19 @@ export function createCloudDisconnectDatabase() {
             await agentDatabaseRun(
                 ctx.db,
                 sql`INSERT INTO ${sql.raw(CLOUD_DISCONNECT_TABLE)}
-                        (singleton_id, environment, user_id, generation)
-                    VALUES (1, ${disconnect.environment}, ${disconnect.userId}, ${disconnect.generation})
+                        (singleton_id, environment, user_id, generation, refresh_token)
+                    VALUES (
+                        1,
+                        ${disconnect.environment},
+                        ${disconnect.userId},
+                        ${disconnect.generation},
+                        ${disconnect.refreshToken ?? null}
+                    )
                     ON CONFLICT (singleton_id) DO UPDATE SET
                         environment = EXCLUDED.environment,
                         user_id = EXCLUDED.user_id,
-                        generation = EXCLUDED.generation`,
+                        generation = EXCLUDED.generation,
+                        refresh_token = EXCLUDED.refresh_token`,
             );
         } catch {
             throw new Error("The Cloud disconnect could not be stored.");

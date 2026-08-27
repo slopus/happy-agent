@@ -70,7 +70,7 @@
         "@sinclair/typebox": "^0.34.49",
         "@slopus/ghostty-wasm": "1.3.6",
         "@slopus/ghostty-web": "0.1.3",
-        "@slopus/happy-agent-client": "0.0.41",
+        "@slopus/happy-agent-client": "0.0.43",
         "@slopus/happy-providers": "0.0.18",
         "@steve.kite/stdlib": "0.0.12",
         "drizzle-orm": "^0.45.2",

@@ -129,19 +129,36 @@
   Every re-entry gets a fresh non-secret generation and durable call, so a finishing old call cannot
   deduplicate, consume, or settle replacement factors.
 - Disconnect commits signed-out authentication, empty social state, and a durable teardown intent
-  together. Close the live Murmur client, retain the root and Murmur store only while they are
-  needed to authenticate removal of this installation's device, then atomically delete the root,
-  H1 backup, vault identity, Murmur store, and teardown intent. Relay failures retry across daemon
-  restarts, and new authorization stays blocked until cleanup finishes. A retained identity that
-  provably uses the obsolete direct-root derivation cannot authenticate the current key-tree Murmur
-  account; skip relay removal and atomically delete that unusable local state instead of retrying
-  forever. Arbitrary identity corruption still fails closed. A later reconnect with an existing
-  remote vault therefore requires restoration.
+  together. Move the rotating refresh token into that private teardown record, close the live
+  Murmur client, and use the token only to negotiate a device-bound WebSocket session for removing
+  this installation's device. Persist a three-attempt unregister budget in the Durable Function's
+  call KV so restart cannot reset it. After exhaustion, log that the relay may retain an orphaned
+  device and atomically delete the refresh token, root, H1 backup, vault identity, Murmur store, and
+  teardown intent; a relay outage must not wedge disconnect forever. Local persistence and
+  identity-integrity failures do not consume the relay budget and still fail closed. A retained
+  identity that provably uses the obsolete direct-root derivation, or an old teardown record with
+  no session credential, skips relay removal and deletes its unusable local state. A later reconnect
+  with an existing remote vault therefore requires restoration.
 - Murmur's device key belongs in its own account-scoped durable key/value store. Only an enrolled
-  account with ready keys may open the client. Opening performs durable relay registration, while
-  transport retries and failures remain independent from Cloud authentication and its public error
-  field. Disconnect removes `client.deviceKey` rather than terminally deleting the shared Murmur
-  account or touching sibling devices.
+  account with ready keys may open the client. Obtain a short-lived device ticket from the fixed
+  relay's WorkOS-authenticated session issuer and use Murmur's negotiated WebSocket transport for
+  registration, rosters, delivery, and disconnect alike; the Cloudflare deployment does not expose
+  the standalone relay's HTTP control routes. Transport retries and failures remain independent
+  from Cloud authentication and its public error field. Disconnect removes `client.deviceKey`
+  rather than terminally deleting the shared Murmur account or touching sibling devices.
+- Only an orderly Cloud disconnect can unregister this installation. If the complete local
+  instance is erased first, its root, refresh token, and device store no longer exist, so no process
+  can authenticate the removal; the remote roster entry remains until a restored sibling device
+  removes it. Keep this explicit in live WorkOS/Murmur staging coverage alongside self-removal,
+  sibling removal, and lost-key vault reset. The same live gate should prove the ordinary path with
+  two restored devices for each of two WorkOS users: explicitly admit all four device leaves to one
+  group and deliver messages from either account to every other active device.
+- Device metadata is owner-local application data. Derive its Noble AES-256-GCM key at
+  `murmur / device-metadata / #aes256`, bind every ciphertext to the account and exact device keys,
+  and keep the root out of encryption operations. Project malformed, unauthentic, or foreign
+  metadata as null per entry so one bad device cannot hide the roster. Sibling removal is
+  idempotent and reads the authoritative roster back after mutation; reject current-device removal
+  with that roster because self-removal belongs exclusively to durable Cloud disconnect.
 
 ## Cloud friends
 

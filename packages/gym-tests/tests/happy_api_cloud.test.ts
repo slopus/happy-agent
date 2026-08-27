@@ -138,6 +138,19 @@ describe("Happy Cloud API", () => {
                 code: "cloud_not_authenticated",
                 status: 409,
             });
+            await expect(gym.client.getCloudDevices()).rejects.toMatchObject({
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
+            const deviceId = Buffer.alloc(32, 7).toString("base64url");
+            await expect(gym.client.removeCloudDevice(deviceId)).rejects.toMatchObject({
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
+            await expect(gym.client.removeCloudDevice("not-a-device")).rejects.toMatchObject({
+                code: "invalid_request",
+                status: 400,
+            });
             await expect(gym.client.enrollCloudProfile({ username: "ada" })).rejects.toMatchObject({
                 code: "cloud_not_authenticated",
                 status: 409,

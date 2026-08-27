@@ -37,16 +37,37 @@ local root and H1 backup survive, so recreating the vault preserves the existing
 
 Enrolled accounts with ready keys start `@slopus/murmur` against the fixed relay for the selected
 deployment. Murmur owns a durable device identity in an account-scoped Cloud store, so opening the
-client registers the device once and later daemon starts reuse it. Relay registration and
-synchronization retry independently without changing Cloud authentication status.
+client registers the device once and later daemon starts reuse it. A WorkOS-authenticated session
+issuer negotiates Murmur's WebSocket transport; the Cloudflare relay does not expose the standalone
+HTTP control routes. Relay registration and synchronization retry independently without changing
+Cloud authentication status.
+
+Each installation encrypts bounded owner-local metadata with the key-tree derivation at
+`murmur / device-metadata / #aes256`, authenticated to the account and exact device public keys.
+The device API decrypts valid entries independently, reports invalid or foreign metadata as null,
+and returns Murmur's relay-owned last-access time. An owner may idempotently remove a sibling from
+that roster; removing the current device is rejected so only durable Cloud disconnect can couple
+self-unregistration with deletion of local secrets.
 
 Disconnecting commits signed-out Cloud and empty social state together with a durable local
-teardown. It closes the live Murmur client, uses the retained account root only long enough to
-remove this installation's device from the relay, and then atomically deletes the root, H1 backup,
-vault identity, and complete account-scoped Murmur store. Relay failures retry across daemon
-restarts, and another Cloud authorization cannot begin until this cleanup finishes. A retained
-identity recognized as using the obsolete direct-root derivation cannot authenticate the current
-key-tree Murmur account, so teardown skips relay removal and deletes its unusable local state.
+teardown. It moves the rotating refresh token into the private teardown record, closes the live
+Murmur client, and uses a negotiated session to remove this installation's device from the relay.
+The unregister budget is three attempts and survives daemon restarts. Success or exhaustion then
+atomically deletes the token, root, H1 backup, vault identity, and complete account-scoped Murmur
+store; exhaustion logs that the relay may retain an orphan rather than blocking disconnect forever.
+Another Cloud authorization cannot begin until cleanup finishes. A retained identity recognized as
+using the obsolete direct-root derivation, or an old teardown record without a session credential,
+skips relay removal and deletes its unusable local state. Erasing the whole local instance without
+invoking disconnect cannot contact the relay, so its roster device remains until a restored sibling
+device removes it.
+
+The opt-in `pnpm --filter @slopus/happy-agent-modules test:live:workos-staging` suite creates
+temporary staging WorkOS users and exercises real Happy Cloud and Murmur deployments. Put
+`{ "workosApiKey": "..." }` in the repository's ignored `.context/workos-staging.json`, or set
+`HAPPY_AGENT_WORKOS_STAGING_CREDENTIALS_FILE` to another JSON file path. The key itself must never be
+placed in an environment variable. The suite covers self-removal, sibling removal of an orphaned
+installation, lost-key vault reset, and a four-device Murmur group spanning two WorkOS users with
+messages sent in both directions to every other active device.
 
 Cloud is independent from `HappyModule`, which connects the daemon to the Happy mobile app.
 

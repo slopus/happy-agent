@@ -1,5 +1,12 @@
 import { OauthException } from "@workos-inc/node";
-import { destroyIdentity, importIdentityKeyPair, MurmurClient } from "@slopus/murmur";
+import {
+    destroyIdentity,
+    HttpRelaySessionProvider,
+    importIdentityKeyPair,
+    MurmurClient,
+    type MurmurClientOptions,
+    type MurmurDeviceRosterEntry,
+} from "@slopus/murmur";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
@@ -513,11 +520,92 @@ describe("CloudModule", () => {
 
         expect(open).toHaveBeenCalledWith(
             expect.objectContaining({
-                relay: "https://murmur-relay-staging.bulka-llc.workers.dev",
+                sessionProvider: expect.any(HttpRelaySessionProvider),
                 store: expect.any(CloudMurmurStore),
             }),
         );
+        expect(open.mock.calls[0]?.[0]).not.toHaveProperty("relay");
         expect(sync).toHaveBeenCalledTimes(1);
+    });
+
+    it("projects encrypted owner metadata and removes only sibling devices", async () => {
+        existingCloudProfile();
+        const currentKey = new Uint8Array(32).fill(11);
+        const siblingKey = new Uint8Array(32).fill(12);
+        let entries: MurmurDeviceRosterEntry[] = [];
+        const removeDevice = vi.fn(async (deviceKey: Uint8Array) => {
+            entries = entries.filter(
+                (entry) => !Buffer.from(entry.deviceKey).equals(Buffer.from(deviceKey)),
+            );
+        });
+        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+            return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
+        });
+        vi.spyOn(MurmurClient, "open").mockImplementation(async (options: MurmurClientOptions) => {
+            const accountKey = options.identity!.publicKey.slice();
+            entries = [
+                {
+                    deviceKey: currentKey,
+                    encryptedMetadata: await options.encryptDeviceMetadata!(currentKey),
+                    lastAccessedAt: 1_755_400_000_000,
+                    resetGeneration: 0,
+                },
+                {
+                    deviceKey: siblingKey,
+                    encryptedMetadata: await options.encryptDeviceMetadata!(siblingKey),
+                    lastAccessedAt: 1_755_400_001_000,
+                    resetGeneration: 0,
+                },
+            ];
+            return {
+                get accountKey() {
+                    return accountKey.slice();
+                },
+                close: vi.fn(),
+                get deviceKey() {
+                    return currentKey.slice();
+                },
+                devices: vi.fn(async () => entries),
+                removeDevice,
+                sync,
+            } as never;
+        });
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        const { cloudHooks, database, module } = await fixture("cloud-module-devices");
+        await connect(module, database, "staging");
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await module.createKeys(database.context, cloudKeyInput);
+        await cloudHooks.afterStart?.(database.context, {} as never);
+        await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+
+        const currentId = Buffer.from(currentKey).toString("base64url");
+        const siblingId = Buffer.from(siblingKey).toString("base64url");
+        await expect(module.getDevices(database.context)).resolves.toEqual({
+            devices: [
+                expect.objectContaining({
+                    current: true,
+                    id: currentId,
+                    metadata: expect.objectContaining({
+                        agentVersion: "development",
+                        installationId: "test-instance",
+                    }),
+                }),
+                expect.objectContaining({ current: false, id: siblingId }),
+            ],
+        });
+        await expect(module.removeDevice(database.context, siblingId)).resolves.toEqual({
+            devices: [expect.objectContaining({ current: true, id: currentId })],
+        });
+        expect(removeDevice).toHaveBeenCalledOnce();
+        await expect(module.removeDevice(database.context, siblingId)).resolves.toEqual({
+            devices: [expect.objectContaining({ current: true, id: currentId })],
+        });
+        expect(removeDevice).toHaveBeenCalledOnce();
+        await expect(module.removeDevice(database.context, currentId)).rejects.toMatchObject({
+            code: "conflict",
+            devices: [expect.objectContaining({ current: true, id: currentId })],
+            status: 409,
+        });
     });
 
     it("durably deletes local keys and Murmur state when Cloud disconnects", async () => {
@@ -529,7 +617,8 @@ describe("CloudModule", () => {
         const cleanupClose = vi.fn();
         const deviceKey = new Uint8Array(32).fill(7);
         const removeDevice = vi.fn().mockResolvedValue(undefined);
-        vi.spyOn(MurmurClient, "open")
+        const open = vi
+            .spyOn(MurmurClient, "open")
             .mockResolvedValueOnce({ close: liveClose, sync } as never)
             .mockResolvedValueOnce({
                 close: cleanupClose,
@@ -557,6 +646,10 @@ describe("CloudModule", () => {
         await vi.waitFor(() => expect(removeDevice).toHaveBeenCalledTimes(1));
         expect(removeDevice).toHaveBeenCalledWith(deviceKey);
         expect(cleanupClose).toHaveBeenCalledTimes(1);
+        expect(open.mock.calls[1]?.[0]).toEqual(
+            expect.objectContaining({ sessionProvider: expect.any(HttpRelaySessionProvider) }),
+        );
+        expect(open.mock.calls[1]?.[0]).not.toHaveProperty("relay");
         await expect(
             createCloudKeysDatabase().read(database.context, account),
         ).resolves.toBeUndefined();
@@ -626,6 +719,13 @@ describe("CloudModule", () => {
             }),
         ).rejects.toMatchObject({ code: "conflict", status: 409 });
         expect(await pendingDurableCallCount(database)).toBe(1);
+        const [disconnectCall] = await pendingDurableCalls(database, "cloud.disconnect");
+        expect(JSON.parse(disconnectCall!.arguments_json)).toEqual({
+            environment: "production",
+            generation: expect.any(String),
+            userId: user.id,
+        });
+        expect(disconnectCall!.arguments_json).not.toContain("refresh-");
 
         await module.stop();
         durableFunctions.stop();
@@ -649,6 +749,51 @@ describe("CloudModule", () => {
         });
         expect(restarted.status(database.context)).toMatchObject({ status: "disconnected" });
     });
+
+    it("deletes local secrets after the durable Murmur unregister budget is exhausted", async () => {
+        existingCloudProfile();
+        const logs: CloudLogRecord[] = [];
+        const deviceKey = new Uint8Array(32).fill(9);
+        const removeDevice = vi.fn().mockRejectedValue(new Error("relay unavailable"));
+        vi.spyOn(MurmurClient, "open").mockResolvedValue({
+            close: vi.fn(),
+            deviceKey,
+            removeDevice,
+        } as never);
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        const { database, module } = await fixture(
+            "cloud-module-disconnect-unregister-budget",
+            logs,
+        );
+        const account = { environment: "production", userId: user.id } as const;
+        const murmurStore = new CloudMurmurStore(database.context, account);
+
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await module.createKeys(database.context, cloudKeyInput);
+        await murmurStore.set("device/key", new Uint8Array([7, 8, 9]));
+        await module.disconnect(database.context);
+
+        await vi.waitFor(
+            async () => {
+                expect(removeDevice).toHaveBeenCalledTimes(3);
+                expect(
+                    await createCloudKeysDatabase().read(database.context, account),
+                ).toBeUndefined();
+                expect(await murmurStore.get("device/key")).toBeUndefined();
+                expect(await pendingDurableCallCount(database)).toBe(0);
+            },
+            { timeout: 15_000 },
+        );
+        expect(logs).toContainEqual(
+            expect.objectContaining({
+                level: "warn",
+                message: expect.stringContaining(
+                    "phase=murmur-unregister reason=retry-exhausted deviceMayRemainRegistered=true",
+                ),
+            }),
+        );
+    }, 20_000);
 
     it("deletes recognized legacy local identity state without retrying Murmur removal", async () => {
         existingCloudProfile();
@@ -683,6 +828,47 @@ describe("CloudModule", () => {
         await vi.waitFor(async () => {
             expect(await keysDatabase.read(database.context, account)).toBeUndefined();
             expect(await murmurStore.get("legacy/device")).toBeUndefined();
+            expect(await pendingDurableCallCount(database)).toBe(0);
+        });
+        expect(open).not.toHaveBeenCalled();
+    });
+
+    it("deletes local state from a pre-token disconnect record without contacting Murmur", async () => {
+        existingCloudProfile();
+        const open = vi.spyOn(MurmurClient, "open");
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        const { database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-disconnect-missing-credential",
+        );
+        const account = { environment: "production", userId: user.id } as const;
+        const murmurStore = new CloudMurmurStore(database.context, account);
+
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await module.createKeys(database.context, cloudKeyInput);
+        await murmurStore.set("device/key", new Uint8Array([7, 8, 9]));
+        durableFunctions.stop();
+        await module.disconnect(database.context);
+        await agentDatabaseRun(
+            database.context.db,
+            sql`UPDATE happy_agent_cloud_disconnect SET refresh_token = NULL`,
+        );
+
+        await module.stop();
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
+
+        await vi.waitFor(async () => {
+            expect(await createCloudKeysDatabase().read(database.context, account)).toBeUndefined();
+            expect(await murmurStore.get("device/key")).toBeUndefined();
             expect(await pendingDurableCallCount(database)).toBe(0);
         });
         expect(open).not.toHaveBeenCalled();

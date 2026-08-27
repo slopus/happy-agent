@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { createId } from "@paralleldrive/cuid2";
 import {
     archiveBotRequestSchema,
+    cloudKeyValueSchema,
     createBotRequestSchema,
     renameBotRequestSchema,
     reorderBotRequestSchema,
@@ -727,6 +728,29 @@ export class ApiModule implements AgentModule {
             if (request.method === "GET" && url.pathname === "/v0/cloud/keys/backup") {
                 const backup = await this.#cloudOperation(() => this.#cloud.getKeyBackup(ctx));
                 sendJson(response, 200, { backup });
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/v0/cloud/devices") {
+                sendJson(
+                    response,
+                    200,
+                    await this.#cloudOperation(() => this.#cloud.getDevices(ctx)),
+                );
+                return;
+            }
+            if (request.method === "DELETE" && url.pathname.startsWith("/v0/cloud/devices/")) {
+                const match = /^\/v0\/cloud\/devices\/([^/]+)$/.exec(url.pathname);
+                if (match === null) throw invalidRequest("The Cloud device route is invalid.");
+                await requireEmptyBody(request);
+                const deviceId = decodePathSegment(match[1]!, "Cloud device ID");
+                if (!Value.Check(cloudKeyValueSchema, deviceId)) {
+                    throw invalidRequest("The Cloud device ID is invalid.");
+                }
+                sendJson(
+                    response,
+                    200,
+                    await this.#cloudOperation(() => this.#cloud.removeDevice(ctx, deviceId)),
+                );
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/cloud/profile") {
@@ -4355,6 +4379,7 @@ export class ApiModule implements AgentModule {
                 const details = {
                     cloud: error.cloud,
                     ...(error.cloudSocial === undefined ? {} : { cloudSocial: error.cloudSocial }),
+                    ...(error.devices === undefined ? {} : { devices: error.devices }),
                 };
                 throw new ApiError(error.status, error.code, error.message, {
                     ...details,
@@ -5042,6 +5067,13 @@ async function optionalBodyAs<Schema extends TSchema>(
     if (!Value.Check(schema, value)) throw invalidRequest(`The ${name} is invalid.`);
     return value as Static<Schema>;
 }
+
+async function requireEmptyBody(request: IncomingMessage): Promise<void> {
+    if ((await readBytes(request, 2 * 1_024)).byteLength !== 0) {
+        throw invalidRequest("This request must not have a body.");
+    }
+}
+
 function queryAs<Schema extends TSchema>(
     value: unknown,
     schema: Schema,

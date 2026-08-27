@@ -10,6 +10,7 @@ import {
     type Cloud,
     type CloudAuthorizing,
     type CloudConnected,
+    type CloudDevice,
     type CloudDisconnected,
     type CloudSocial,
 } from "@slopus/happy-agent-client";
@@ -71,6 +72,20 @@ const cloudKeyInput = {
 const cloudKeyBackup = {
     generatedSecret: cloudKeyInput.generatedSecret,
     rootSecret: Buffer.alloc(32, 3).toString("base64url"),
+};
+const currentDeviceId = Buffer.alloc(32, 4).toString("base64url");
+const siblingDeviceId = Buffer.alloc(32, 5).toString("base64url");
+const currentDevice: CloudDevice = {
+    current: true,
+    id: currentDeviceId,
+    lastAccessedAt: 1_755_400_000_000,
+    metadata: null,
+};
+const siblingDevice: CloudDevice = {
+    current: false,
+    id: siblingDeviceId,
+    lastAccessedAt: 1_755_400_001_000,
+    metadata: null,
 };
 
 const user = {
@@ -213,6 +228,12 @@ describe("Cloud HTTP API", () => {
         await expect(fixture.client.getCloudKeyBackup()).resolves.toEqual({
             backup: cloudKeyBackup,
         });
+        await expect(fixture.client.getCloudDevices()).resolves.toEqual({
+            devices: [currentDevice, siblingDevice],
+        });
+        await expect(fixture.client.removeCloudDevice(siblingDeviceId)).resolves.toEqual({
+            devices: [currentDevice],
+        });
         await expect(fixture.client.getCloudProfile()).resolves.toEqual({
             profile: { firstName: null, username: null },
         });
@@ -269,6 +290,50 @@ describe("Cloud HTTP API", () => {
             expect.objectContaining({ confirmation: "YES DELETE MY VAULT" }),
         );
         expect(fixture.cloud.getKeyBackup).toHaveBeenCalledWith(fixture.context);
+        expect(fixture.cloud.getDevices).toHaveBeenCalledWith(fixture.context);
+        expect(fixture.cloud.removeDevice).toHaveBeenCalledWith(fixture.context, siblingDeviceId);
+    });
+
+    it("rejects malformed device IDs and request bodies before invoking Cloud", async () => {
+        const fixture = await apiFixture(connected);
+
+        await expect(fixture.client.removeCloudDevice("not-a-device")).rejects.toMatchObject({
+            code: "invalid_request",
+            status: 400,
+        });
+        const response = await apiFetch(fixture.api, fixture.context)(
+            `http://happy-agent.test/v0/cloud/devices/${siblingDeviceId}`,
+            {
+                body: "{}",
+                headers: {
+                    authorization: `Bearer ${fixture.token}`,
+                    "content-type": "application/json",
+                },
+                method: "DELETE",
+            },
+        );
+        expect(response.status).toBe(400);
+        expect(fixture.cloud.removeDevice).not.toHaveBeenCalled();
+    });
+
+    it("returns the authoritative roster when current-device removal conflicts", async () => {
+        const fixture = await apiFixture(connected);
+        fixture.cloud.removeDevice.mockRejectedValueOnce(
+            new CloudOperationError(
+                409,
+                "conflict",
+                "Disconnect Cloud to remove this device.",
+                connected,
+                undefined,
+                [currentDevice, siblingDevice],
+            ),
+        );
+
+        await expect(fixture.client.removeCloudDevice(currentDeviceId)).rejects.toMatchObject({
+            body: { devices: [currentDevice, siblingDevice] },
+            code: "conflict",
+            status: 409,
+        });
     });
 
     it("routes every supported Cloud friends mutation and emits compact invalidations", async () => {
@@ -581,6 +646,7 @@ async function apiFixture(initial: Cloud = disconnected) {
     let profileUpdated: ((ctx: Context) => void) | undefined;
     let socialUpdated: CloudSocialUpdatedListener | undefined;
     let social = socialUnenrolled;
+    let devices = [currentDevice, siblingDevice];
     const cloud = {
         complete: vi.fn(async (ctx: Context) => {
             current = connected;
@@ -595,6 +661,7 @@ async function apiFixture(initial: Cloud = disconnected) {
         createKeys: vi.fn(async () => connected),
         deleteKeys: vi.fn(async () => connected),
         getKeyBackup: vi.fn(async () => cloudKeyBackup),
+        getDevices: vi.fn(async () => ({ devices })),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
         getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
         getSocial: vi.fn(() => ({ cloudSocial: social })),
@@ -622,6 +689,10 @@ async function apiFixture(initial: Cloud = disconnected) {
             };
         }),
         restoreKeys: vi.fn(async () => connected),
+        removeDevice: vi.fn(async (_ctx: Context, id: string) => {
+            devices = devices.filter((device) => device.id !== id);
+            return { devices };
+        }),
         start: vi.fn(async (ctx: Context) => {
             current = authorizing;
             updated?.(ctx, current);
