@@ -41,7 +41,7 @@ export const cloudKeysMutationArgumentsSchema = Type.Object(
     {
         environment: cloudEnvironmentSchema,
         generation: Type.String({ minLength: 1, maxLength: 128 }),
-        kind: Type.Union([Type.Literal("create"), Type.Literal("restore")]),
+        kind: Type.Union([Type.Literal("create"), Type.Literal("reset"), Type.Literal("restore")]),
         userId: Type.String({ minLength: 1, maxLength: 256 }),
     },
     { additionalProperties: false },

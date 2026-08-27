@@ -1157,8 +1157,7 @@ A later create re-encrypts and uploads the retained root and therefore preserves
 
 Response — `200`: `{ "cloud": { ... } }` with a connected Cloud object whose keys are
 `create_required`. The durable transitions to `resetting` and `create_required` each emit a
-`cloud.updated` event. The request's optional `mutationId` is echoed only by the initial
-`resetting` transition.
+`cloud.updated` event carrying the request's optional `mutationId`.
 
 Malformed input, including any confirmation other than the exact phrase, returns `400` with code
 `invalid_request` without contacting Happy Cloud. No connected account returns `409` with code

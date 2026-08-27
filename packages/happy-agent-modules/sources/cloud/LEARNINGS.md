@@ -115,6 +115,13 @@
   operation arguments must not expose them. The password, encryption key, and vault authentication
   hash are never retained. Pre-retention rows remain readable but an incomplete backup read fails
   generically instead of inventing or migrating a generated secret.
+- Remote vault reset is a recovery operation, not ordinary deletion. Require the exact
+  `YES DELETE MY VAULT` phrase and accept it only from `restore_required`. Persist `resetting` and
+  its Durable Function atomically before contacting Happy Cloud, retry deletion across restarts,
+  and publish `create_required` only after the complete remote record is absent. A definitive
+  rejection returns to `restore_required`. Never erase a retained local root or H1 backup during
+  remote reset; the next create reuses that root and identity. The `resetting` key status is an
+  intentional human-directed compatibility break.
 - Create and restore are durable account operations, but their authentication and encryption
   factors remain only in a process-local waiter. The API request waits while transient networking
   retries; after daemon recovery the factorless call terminates at create/restore-required so the

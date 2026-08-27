@@ -18,7 +18,11 @@ import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
 import { createCloudKeyBundle } from "../../sources/cloud/CloudKeys.js";
 import { createCloudKeysDatabase } from "../../sources/cloud/CloudKeysDatabase.js";
 import { CloudMurmurStore } from "../../sources/cloud/CloudMurmurStore.js";
-import { CloudUsernameUnavailableError, CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
+import {
+    CloudUsernameUnavailableError,
+    CloudVaultDeleteRejectedError,
+    CloudWorkOS,
+} from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { ProfileModule } from "../../sources/profile/index.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
@@ -64,6 +68,7 @@ const cloudKeyInput = {
     encryptionKey: Buffer.alloc(32, 2).toString("base64url"),
     generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
 };
+const deleteCloudKeysInput = { confirmation: "YES DELETE MY VAULT" as const };
 
 const databases: ModuleDatabase[] = [];
 const modules: Array<{
@@ -342,6 +347,119 @@ describe("CloudModule", () => {
             generatedSecret: cloudKeyInput.generatedSecret,
             rootSecret: remote.rootSecret,
         });
+    });
+
+    it("resets only restore-required vaults and preserves retained backup identity", async () => {
+        existingCloudProfile();
+        const saveVault = vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        let finishDelete!: () => void;
+        const deleteVault = vi.spyOn(CloudWorkOS.prototype, "deleteVault").mockImplementation(
+            async () =>
+                await new Promise<void>((resolve) => {
+                    finishDelete = resolve;
+                }),
+        );
+        const { database, module } = await fixture("cloud-module-reset-vault");
+
+        await expect(
+            module.deleteKeys(database.context, deleteCloudKeysInput),
+        ).rejects.toMatchObject({
+            code: "cloud_not_authenticated",
+            status: 409,
+        });
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await expect(
+            module.deleteKeys(database.context, deleteCloudKeysInput),
+        ).rejects.toMatchObject({
+            code: "conflict",
+            status: 409,
+        });
+        const ready = await module.createKeys(database.context, cloudKeyInput);
+        if (ready.keys?.status !== "ready") throw new Error("Expected ready Cloud keys.");
+        const originalIdentity = ready.keys.identityKey;
+        const backup = await module.getKeyBackup(database.context);
+        const stored = await createCloudDatabase().read(database.context);
+        if (stored?.session === null || stored?.session === undefined) {
+            throw new Error("Expected a connected Cloud session.");
+        }
+        await createCloudDatabase().replace(database.context, {
+            error: null,
+            pending: false,
+            session: { ...stored.session, keys: { status: "restore_required" } },
+        });
+        await expect(module.getKeyBackup(database.context)).resolves.toEqual(backup);
+
+        const deleting = module.deleteKeys(database.context, deleteCloudKeysInput);
+        await vi.waitFor(() => expect(deleteVault).toHaveBeenCalledWith("access-b"));
+        expect(module.status(database.context).keys).toEqual({ status: "resetting" });
+        finishDelete();
+
+        await expect(deleting).resolves.toMatchObject({ keys: { status: "create_required" } });
+        await expect(module.getKeyBackup(database.context)).resolves.toEqual(backup);
+        const recreated = await module.createKeys(database.context, cloudKeyInput);
+        expect(recreated.keys).toEqual({ identityKey: originalIdentity, status: "ready" });
+        expect(saveVault).toHaveBeenLastCalledWith(
+            expect.any(String),
+            cloudKeyInput.authHash,
+            originalIdentity,
+            expect.any(String),
+        );
+    });
+
+    it("recovers an unfinished durable vault reset after restart", async () => {
+        existingCloudProfile();
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockResolvedValue("unknown-vault-key");
+        const deleteVault = vi
+            .spyOn(CloudWorkOS.prototype, "deleteVault")
+            .mockRejectedValue(new Error("network unavailable"));
+        const { database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-reset-vault-recovery",
+        );
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "restore_required" } });
+
+        const deleting = module
+            .deleteKeys(database.context, deleteCloudKeysInput)
+            .catch((error: unknown) => error);
+        await vi.waitFor(() => expect(deleteVault).toHaveBeenCalled());
+        await waitForCloud(module, database, { keys: { status: "resetting" } });
+        await vi.waitFor(async () => expect(await pendingDurableCallCount(database)).toBe(1));
+
+        await module.stop();
+        durableFunctions.stop();
+        await expect(deleting).resolves.toBeInstanceOf(Error);
+        deleteVault.mockResolvedValue(undefined);
+
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
+
+        await waitForCloud(restarted, database, { keys: { status: "create_required" } });
+        await vi.waitFor(async () => expect(await pendingDurableCallCount(database)).toBe(0));
+    });
+
+    it("returns a rejected remote vault reset to restore-required", async () => {
+        existingCloudProfile();
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockResolvedValue("unknown-vault-key");
+        vi.spyOn(CloudWorkOS.prototype, "deleteVault").mockRejectedValue(
+            new CloudVaultDeleteRejectedError(),
+        );
+        const { database, module } = await fixture("cloud-module-reset-vault-rejected");
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "restore_required" } });
+
+        await expect(
+            module.deleteKeys(database.context, deleteCloudKeysInput),
+        ).rejects.toMatchObject({ code: "conflict", status: 409 });
+        expect(module.status(database.context).keys).toEqual({ status: "restore_required" });
     });
 
     it("fails backup reads generically for incomplete pre-retention key rows", async () => {

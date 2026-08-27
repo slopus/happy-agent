@@ -291,6 +291,13 @@ export class CloudVaultNotFoundError extends Error {
     }
 }
 
+export class CloudVaultDeleteRejectedError extends Error {
+    constructor() {
+        super("Happy Cloud rejected the vault reset.");
+        this.name = "CloudVaultDeleteRejectedError";
+    }
+}
+
 export class CloudSocialNotFoundError extends Error {
     constructor() {
         super("The Happy Cloud friend or request was not found.");
@@ -526,6 +533,26 @@ export class CloudWorkOS {
         return { blob: result.body.blob, identityKey: result.body.identityKey };
     }
 
+    async deleteVault(accessToken: string): Promise<void> {
+        const result = await this.#request(
+            "/v0/vault",
+            accessToken,
+            "DELETE",
+            undefined,
+            [400, 403, 404],
+            MAX_CLOUD_RESPONSE_BYTES,
+            undefined,
+            true,
+        );
+        if (result.status === 404) return;
+        if (result.status === 400 || result.status === 403) {
+            throw new CloudVaultDeleteRejectedError();
+        }
+        if (!result.ok) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+    }
+
     async getSocialSnapshot(accessToken: string): Promise<CloudRemoteSocialSnapshot> {
         const socialSignal = AbortSignal.timeout(CLOUD_SOCIAL_SYNC_TIMEOUT_MS);
         const [friendsResult, requestsResult, blockedResult] = await Promise.all([
@@ -710,6 +737,7 @@ export class CloudWorkOS {
         parsedErrorStatuses: readonly number[] = [],
         maximum = MAX_CLOUD_RESPONSE_BYTES,
         callerSignal?: AbortSignal,
+        discardBody = false,
     ): Promise<{ readonly body: unknown; readonly ok: boolean; readonly status: number }> {
         const requestDeadline = AbortSignal.timeout(CLOUD_REQUEST_TIMEOUT_MS);
         const signal =
@@ -733,6 +761,10 @@ export class CloudWorkOS {
             );
         }
         if (!response.ok && !parsedErrorStatuses.includes(response.status)) {
+            await response.body?.cancel().catch(() => undefined);
+            return { body: undefined, ok: response.ok, status: response.status };
+        }
+        if (discardBody || response.status === 204) {
             await response.body?.cancel().catch(() => undefined);
             return { body: undefined, ok: response.ok, status: response.status };
         }

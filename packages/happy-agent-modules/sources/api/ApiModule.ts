@@ -146,6 +146,7 @@ import {
     cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
     createCloudKeysRequestSchema,
+    deleteCloudKeysRequestSchema,
     documentBodySchema,
     draftBodySchema,
     emptyMutationBodySchema,
@@ -705,6 +706,20 @@ export class ApiModule implements AgentModule {
                     body.mutationId,
                     async () =>
                         await this.#cloudOperation(() => this.#cloud.restoreKeys(ctx, body)),
+                );
+                sendJson(response, 200, { cloud });
+                return;
+            }
+            if (request.method === "DELETE" && url.pathname === "/v0/cloud/keys") {
+                const body = await bodyAs(
+                    request,
+                    deleteCloudKeysRequestSchema,
+                    "Cloud vault reset",
+                    2 * 1_024,
+                );
+                const cloud = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await this.#cloudOperation(() => this.#cloud.deleteKeys(ctx, body)),
                 );
                 sendJson(response, 200, { cloud });
                 return;

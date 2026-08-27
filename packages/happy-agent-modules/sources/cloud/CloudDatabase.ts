@@ -2,6 +2,7 @@ import {
     cloudEnvironmentSchema,
     cloudKeysCreateRequiredSchema,
     cloudKeysReadySchema,
+    cloudKeysResettingSchema,
     cloudKeysRestoreRequiredSchema,
     cloudUsernameSchema,
     type CloudEnvironment,
@@ -93,6 +94,7 @@ const cloudSessionSchema = Type.Object(
         keys: Type.Optional(
             Type.Union([
                 cloudKeysCreateRequiredSchema,
+                cloudKeysResettingSchema,
                 cloudKeysRestoreRequiredSchema,
                 cloudKeysReadySchema,
             ]),

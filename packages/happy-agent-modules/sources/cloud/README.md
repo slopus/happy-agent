@@ -29,6 +29,12 @@ usage. Cloud keeps this tree in memory while account services are live and deriv
 Ed25519 identity at `murmur / identity / #ed25519` with Noble. The raw root is never used directly
 as an Ed25519 seed, and closing the live service destroys the retained tree state.
 
+An account whose remote vault cannot be restored may explicitly reset it with the exact
+`YES DELETE MY VAULT` confirmation. Reset is accepted only from `restore_required`, durably
+publishes `resetting`, deletes the complete Happy Cloud vault without a vault authentication hash,
+and then publishes `create_required`. Temporary failures resume after daemon restart. Any retained
+local root and H1 backup survive, so recreating the vault preserves the existing identity.
+
 Enrolled accounts with ready keys start `@slopus/murmur` against the fixed relay for the selected
 deployment. Murmur owns a durable device identity in an account-scoped Cloud store, so opening the
 client registers the device once and later daemon starts reuse it. Relay registration and

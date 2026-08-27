@@ -18,6 +18,7 @@ import type {
     CloudUser,
     CompleteCloudAuthorizationRequest,
     CreateCloudKeysRequest,
+    DeleteCloudKeysRequest,
     EnrollCloudProfileRequest,
     RestoreCloudKeysRequest,
     StartCloudAuthorizationRequest,
@@ -25,6 +26,7 @@ import type {
 import {
     cloudUsernameSchema,
     createCloudKeysRequestSchema,
+    deleteCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,
     restoreCloudKeysRequestSchema,
 } from "@slopus/happy-agent-client";
@@ -123,6 +125,7 @@ import {
     CloudSocialSnapshotChangedError,
     CloudUsernameUnavailableError,
     CloudVaultKeyMismatchError,
+    CloudVaultDeleteRejectedError,
     CloudVaultNotFoundError,
     CloudWorkOS,
     type CloudAuthentication,
@@ -212,6 +215,13 @@ interface PendingCloudKeyFactors {
     readonly resolve: (cloud: CloudConnected) => void;
 }
 
+interface PendingCloudKeyReset {
+    readonly generation: string;
+    readonly promise: Promise<CloudConnected>;
+    readonly reject: (error: unknown) => void;
+    readonly resolve: (cloud: CloudConnected) => void;
+}
+
 class CloudKeyTerminalError extends Error {
     readonly operationError: CloudOperationError;
 
@@ -279,6 +289,7 @@ export class CloudModule implements AgentModule {
     readonly #socialLifetime = new AbortController();
     readonly #murmurLifetime = new AbortController();
     readonly #keyFactors = new Map<string, PendingCloudKeyFactors>();
+    readonly #keyResets = new Map<string, PendingCloudKeyReset>();
     #attempt: CloudAttempt | undefined;
     #cloud: Cloud;
     #cloudSocial: CloudSocial;
@@ -413,6 +424,10 @@ export class CloudModule implements AgentModule {
                 factors.reject(new Error("Cloud key setup stopped before it completed."));
             }
             this.#keyFactors.clear();
+            for (const reset of this.#keyResets.values()) {
+                reset.reject(new Error("Cloud vault reset stopped before it completed."));
+            }
+            this.#keyResets.clear();
         });
         await this.#socialSupervisor;
         await this.#murmurSupervisor;
@@ -686,6 +701,53 @@ export class CloudModule implements AgentModule {
         return await this.#queueKeysMutation(ctx, "restore", request);
     }
 
+    async deleteKeys(_ctx: Context, request: DeleteCloudKeysRequest): Promise<CloudConnected> {
+        const ctx = this.#ownedContext();
+        if (!Value.Check(deleteCloudKeysRequestSchema, request)) {
+            throw this.#error(400, "invalid_request", "The Cloud vault reset is invalid.");
+        }
+        const queued = await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const stored = await this.#readOwned(ctx);
+            if (stored?.session === null || stored?.session === undefined) {
+                throw this.#error(
+                    409,
+                    "cloud_not_authenticated",
+                    "Cloud is not authenticated on this Happy Agent.",
+                );
+            }
+            if (stored.session.keys?.status !== "restore_required") {
+                throw this.#error(
+                    409,
+                    "conflict",
+                    "Only an unrestorable Cloud vault can be reset.",
+                );
+            }
+            const account = cloudKeysAccount(stored.session);
+            const key = cloudAccountKey(account);
+            const generation = createId();
+            const pending = pendingCloudKeyReset(generation);
+            this.#keyResets.set(key, pending);
+            try {
+                await ctx.inTx(async (txCtx) => {
+                    await this.#replaceSessionKeys(txCtx, account.userId, {
+                        status: "resetting",
+                    });
+                    await this.#durableFunctions.invoke(txCtx, {
+                        function: CLOUD_KEYS_MUTATION_FUNCTION,
+                        arguments: { ...account, generation, kind: "reset" },
+                    });
+                });
+            } catch (error: unknown) {
+                if (this.#keyResets.get(key) === pending) this.#keyResets.delete(key);
+                pending.reject(error);
+                throw error;
+            }
+            return pending;
+        });
+        return await queued.promise;
+    }
+
     async getKeyBackup(_ctx: Context): Promise<CloudKeyBackup> {
         const ctx = this.#ownedContext();
         return await this.#lock.runInLock(ctx, async () => {
@@ -698,14 +760,16 @@ export class CloudModule implements AgentModule {
                     "Cloud is not authenticated on this Happy Agent.",
                 );
             }
-            if (stored.session.keys?.status !== "ready") {
-                throw this.#error(409, "conflict", "Cloud keys are not ready for backup.");
-            }
             const local = await this.#keysDatabase.read(ctx, cloudKeysAccount(stored.session));
+            if (local === undefined) {
+                throw this.#error(409, "conflict", "No Cloud key backup is retained locally.");
+            }
+            if (local.generatedSecret === undefined) {
+                throw new Error("The stored Cloud key backup is incomplete.");
+            }
             if (
-                local?.status !== "ready" ||
-                local.identityKey !== stored.session.keys.identityKey ||
-                local.generatedSecret === undefined
+                stored.session.keys?.status === "ready" &&
+                local.identityKey !== stored.session.keys.identityKey
             ) {
                 throw new Error("The stored Cloud key backup is incomplete.");
             }
@@ -1279,6 +1343,10 @@ export class CloudModule implements AgentModule {
     }
 
     async #executeKeysMutation(ctx: Context, input: CloudKeysMutationArguments): Promise<void> {
+        if (input.kind === "reset") {
+            await this.#executeKeyReset(ctx, input);
+            return;
+        }
         const account = { environment: input.environment, userId: input.userId };
         const key = cloudAccountKey(account);
         for (;;) {
@@ -1317,6 +1385,70 @@ export class CloudModule implements AgentModule {
                 await delay(ctx, PROFILE_SYNC_RETRY_MS);
             }
         }
+    }
+
+    async #executeKeyReset(ctx: Context, input: CloudKeysMutationArguments): Promise<void> {
+        const account = { environment: input.environment, userId: input.userId };
+        const key = cloudAccountKey(account);
+        for (;;) {
+            try {
+                const cloud = await this.#lock.runInLock(
+                    ctx,
+                    async () => await this.#resetKeysOnce(ctx, account),
+                );
+                const pending = this.#keyResets.get(key);
+                if (pending?.generation === input.generation) {
+                    this.#keyResets.delete(key);
+                    if (cloud === undefined) {
+                        pending.reject(
+                            this.#error(
+                                409,
+                                "cloud_not_authenticated",
+                                "The Cloud account changed before its vault was reset.",
+                            ),
+                        );
+                    } else {
+                        pending.resolve(cloud);
+                    }
+                }
+                return;
+            } catch (error: unknown) {
+                if (error instanceof CloudOperationError && error.status !== 503) {
+                    const pending = this.#keyResets.get(key);
+                    if (pending?.generation === input.generation) {
+                        this.#keyResets.delete(key);
+                        pending.reject(error);
+                    }
+                    return;
+                }
+                logCloudFailure(ctx, "keys", account.environment, "durable-vault-reset", error);
+                await delay(ctx, PROFILE_SYNC_RETRY_MS);
+            }
+        }
+    }
+
+    async #resetKeysOnce(
+        ctx: Context,
+        account: CloudKeysAccount,
+    ): Promise<CloudConnected | undefined> {
+        const stored = await this.#readOwned(ctx);
+        if (!sessionMatches(stored?.session, account)) return undefined;
+        if (stored.session.keys?.status !== "resetting") return undefined;
+        const minted = await this.#mintInLock(ctx, false);
+        try {
+            await this.#client(account.environment).deleteVault(minted.accessToken);
+        } catch (error: unknown) {
+            if (error instanceof CloudVaultDeleteRejectedError) {
+                await this.#replaceSessionKeys(ctx, account.userId, {
+                    status: "restore_required",
+                });
+                throw this.#error(409, "conflict", "Happy Cloud rejected the vault reset.");
+            }
+            throw error;
+        }
+        return await this.#replaceSessionKeys(ctx, account.userId, {
+            status: "create_required",
+        });
     }
 
     async #mutateKeysOnce(
@@ -2770,6 +2902,16 @@ function pendingCloudKeyFactors(
         },
         resolve,
     };
+}
+
+function pendingCloudKeyReset(generation: string): PendingCloudKeyReset {
+    let resolve!: (cloud: CloudConnected) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<CloudConnected>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { generation, promise, reject, resolve };
 }
 
 function cloudIdentity(keys: ReadyCloudKeys) {

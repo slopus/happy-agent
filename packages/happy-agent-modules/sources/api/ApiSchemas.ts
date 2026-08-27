@@ -7,6 +7,7 @@ export {
     cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
     createCloudKeysRequestSchema,
+    deleteCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,
     invokeSlashCommandRequestSchema,
     restoreCloudKeysRequestSchema,

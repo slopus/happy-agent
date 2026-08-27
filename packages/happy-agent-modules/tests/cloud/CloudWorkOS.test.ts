@@ -8,6 +8,7 @@ import {
     CloudSocialBlockedError,
     CloudSocialNotFoundError,
     CloudUsernameUnavailableError,
+    CloudVaultDeleteRejectedError,
     CloudVaultKeyMismatchError,
     CloudVaultNotFoundError,
     CloudWorkOS,
@@ -234,7 +235,8 @@ describe("CloudWorkOS", () => {
                     identityKey: "opaque-identity",
                     version,
                 }),
-            );
+            )
+            .mockResolvedValueOnce(new Response(null, { status: 200 }));
         vi.stubGlobal("fetch", request);
         const client = new CloudWorkOS("staging");
 
@@ -246,6 +248,7 @@ describe("CloudWorkOS", () => {
             blob: "encrypted-bundle",
             identityKey: "opaque-identity",
         });
+        await expect(client.deleteVault("access-d")).resolves.toBeUndefined();
 
         expect(
             request.mock.calls.map(([input, init]) => [
@@ -269,7 +272,26 @@ describe("CloudWorkOS", () => {
                 "POST",
                 JSON.stringify({ authKey: "auth-hash" }),
             ],
+            ["https://happy-cloud-staging.bulka-llc.workers.dev/v0/vault", "DELETE", null],
         ]);
+    });
+
+    it("treats a missing vault reset as complete and rejects definitive reset failures", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(Response.json({ error: "not_found" }, { status: 404 }))
+                .mockResolvedValueOnce(
+                    Response.json({ error: "invalid_request" }, { status: 400 }),
+                ),
+        );
+        const client = new CloudWorkOS("production");
+
+        await expect(client.deleteVault("access-a")).resolves.toBeUndefined();
+        await expect(client.deleteVault("access-b")).rejects.toBeInstanceOf(
+            CloudVaultDeleteRejectedError,
+        );
     });
 
     it("distinguishes a rejected vault proof from a missing bundle", async () => {

@@ -55,6 +55,13 @@ describe("Cloud storage", () => {
         expect(connected.version > authorizing.version).toBe(true);
         expect(connected.updatedAt).toBe(999);
         await expect(store.read(database.context)).resolves.toEqual(connected);
+
+        const resetting = await store.replace(database.context, {
+            error: null,
+            pending: false,
+            session: { ...connected.session!, keys: { status: "resetting" } },
+        });
+        expect(resetting.session?.keys).toEqual({ status: "resetting" });
     });
 
     it("commits a rotated refresh token without changing the public version", async () => {

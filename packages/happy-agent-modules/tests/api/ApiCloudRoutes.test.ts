@@ -204,6 +204,12 @@ describe("Cloud HTTP API", () => {
                 mutationId: "cloud-keys-restore-1",
             }),
         ).resolves.toEqual({ cloud: connected });
+        await expect(
+            fixture.client.deleteCloudKeys({
+                confirmation: "YES DELETE MY VAULT",
+                mutationId: "cloud-keys-delete-1",
+            }),
+        ).resolves.toEqual({ cloud: connected });
         await expect(fixture.client.getCloudKeyBackup()).resolves.toEqual({
             backup: cloudKeyBackup,
         });
@@ -257,6 +263,10 @@ describe("Cloud HTTP API", () => {
         expect(fixture.cloud.restoreKeys).toHaveBeenCalledWith(
             fixture.context,
             expect.objectContaining(cloudKeyInput),
+        );
+        expect(fixture.cloud.deleteKeys).toHaveBeenCalledWith(
+            fixture.context,
+            expect.objectContaining({ confirmation: "YES DELETE MY VAULT" }),
         );
         expect(fixture.cloud.getKeyBackup).toHaveBeenCalledWith(fixture.context);
     });
@@ -357,6 +367,17 @@ describe("Cloud HTTP API", () => {
 
         expect(error).toMatchObject({ code: "invalid_request", status: 400 });
         expect(fixture.cloud.enrollProfile).not.toHaveBeenCalled();
+    });
+
+    it("rejects an inexact vault reset confirmation before invoking Cloud", async () => {
+        const fixture = await apiFixture(connected);
+
+        const error = await fixture.client
+            .deleteCloudKeys({ confirmation: "yes delete my vault" } as never)
+            .catch((caught: unknown) => caught);
+
+        expect(error).toMatchObject({ code: "invalid_request", status: 400 });
+        expect(fixture.cloud.deleteKeys).not.toHaveBeenCalled();
     });
 
     it("returns the connected snapshot when a Cloud username is unavailable", async () => {
@@ -492,6 +513,64 @@ describe("Cloud HTTP API", () => {
         expect(JSON.stringify(events)).not.toContain("refresh-c");
         expect(JSON.stringify(events)).not.toContain("refresh-d");
     });
+
+    it("carries a confirmed vault reset through the real durable Cloud module", async () => {
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockResolvedValue("unknown-vault-key");
+        const deleteVault = vi
+            .spyOn(CloudWorkOS.prototype, "deleteVault")
+            .mockResolvedValue(undefined);
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            if (path === "/v0/profile" && init?.method === "PUT") {
+                return Response.json({ firstName: "Ada Lovelace", username: "ada" });
+            }
+            throw new Error(`Unexpected Cloud request: ${path}`);
+        });
+        const fixture = await actualCloudApiFixture();
+
+        const authorizing = await fixture.client.startCloudAuthorization({
+            environment: "production",
+            redirectUri: "happy-auth://callback",
+        });
+        await fixture.client.completeCloudAuthorization({
+            callbackUrl: `happy-auth://callback?code=code-a&state=${encodeURIComponent(new URL(authorizing.cloud.authorization.url).searchParams.get("state") ?? `state-${"x".repeat(16)}`)}`,
+        });
+        await fixture.client.enrollCloudProfile({ username: "ada" });
+        await vi.waitFor(() => {
+            expect(fixture.cloud.status(fixture.context)).toMatchObject({
+                enrollment: { status: "enrolled" },
+                keys: { status: "restore_required" },
+            });
+        });
+        const before = fixture.api.cursor();
+
+        await expect(
+            fixture.client.deleteCloudKeys({
+                confirmation: "YES DELETE MY VAULT",
+                mutationId: "cloud-reset-real",
+            }),
+        ).resolves.toMatchObject({ cloud: { keys: { status: "create_required" } } });
+
+        expect(deleteVault).toHaveBeenCalledWith(expect.any(String));
+        const events = await fixture.client.getEvents({ after: before });
+        expect(
+            events.events
+                .filter((event) => event.type === "cloud.updated")
+                .map((event) => event.payload),
+        ).toEqual([
+            expect.objectContaining({
+                cloud: expect.objectContaining({ keys: { status: "resetting" } }),
+                mutationId: "cloud-reset-real",
+            }),
+            expect.objectContaining({
+                cloud: expect.objectContaining({ keys: { status: "create_required" } }),
+                mutationId: "cloud-reset-real",
+            }),
+        ]);
+    });
 });
 
 async function apiFixture(initial: Cloud = disconnected) {
@@ -514,6 +593,7 @@ async function apiFixture(initial: Cloud = disconnected) {
             return disconnected;
         }),
         createKeys: vi.fn(async () => connected),
+        deleteKeys: vi.fn(async () => connected),
         getKeyBackup: vi.fn(async () => cloudKeyBackup),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
         getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
