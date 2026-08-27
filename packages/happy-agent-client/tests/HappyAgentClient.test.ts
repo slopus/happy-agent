@@ -187,11 +187,26 @@ describe("HappyAgentClient", () => {
             generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
             rootSecret: "C".repeat(43),
         };
+        const devices = [
+            {
+                current: true,
+                id: "D".repeat(43),
+                metadata: {
+                    agentVersion: "0.4.23",
+                    architecture: "arm64",
+                    installationId: "instance-1",
+                    name: "Ada's MacBook Pro",
+                    osVersion: "25.5.0",
+                    platform: "macOS" as const,
+                },
+            },
+        ];
         const { fetch, requests } = stubFetch((request) => {
             if (request.url.endsWith("/access-token")) {
                 return json({ accessToken: "access-token", cloud });
             }
             if (request.url.endsWith("/keys/backup")) return json({ backup });
+            if (request.url.endsWith("/devices")) return json({ devices });
             if (request.url.includes("/social")) return json({ cloudSocial });
             if (request.url.endsWith("/profile")) return json(profileResponse);
             return json({ cloud });
@@ -237,6 +252,7 @@ describe("HappyAgentClient", () => {
             }),
         ).resolves.toEqual({ cloud });
         await expect(client.getCloudKeyBackup()).resolves.toEqual({ backup });
+        await expect(client.getCloudDevices()).resolves.toEqual({ devices });
         await expect(client.getCloudProfile()).resolves.toEqual(profileResponse);
         await expect(
             client.enrollCloudProfile({ mutationId: "enroll-1", username: "ada" }),
@@ -309,6 +325,7 @@ describe("HappyAgentClient", () => {
                 url: "http://agent.local/v0/cloud/keys",
             },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/keys/backup" },
+            { body: null, method: "GET", url: "http://agent.local/v0/cloud/devices" },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/profile" },
             {
                 body: JSON.stringify({ mutationId: "enroll-1", username: "ada" }),

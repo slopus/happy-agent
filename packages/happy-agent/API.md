@@ -941,9 +941,12 @@ never carry identity keys.
 
 Once keys are ready, the Cloud module opens the account's durable Murmur store using the identity
 derived from the root. Each installation owns an independent Murmur device key, and opening the
-store durably registers that device with the relay. Registration and synchronization retry across
-daemon restarts without changing the public Cloud key state. Murmur transport failures do not
-disconnect Cloud authentication or populate the Cloud `error` field.
+store durably registers that device with the relay. The daemon supplies a freshly minted WorkOS
+access token to the relay's `/v2/session` issuer, which returns a short-lived device-bound ticket;
+all registration, roster, delivery, acknowledgement, and synchronization operations then use the
+negotiated WebSocket transport. Registration and synchronization retry across daemon restarts
+without changing the public Cloud key state. Murmur transport failures do not disconnect Cloud
+authentication or populate the Cloud `error` field.
 
 The fixed staging relay is `https://murmur-relay-staging.bulka-llc.workers.dev` with WebSocket
 endpoint `wss://murmur-relay-staging.bulka-llc.workers.dev/v2/connect` and worker name
@@ -1038,17 +1041,25 @@ snapshot. Authoritative rejection stores a display-safe error; transient failure
 
 Disconnects Cloud locally. The optional JSON body is `{ "mutationId": "..." }`; an empty body is
 equivalent to `{}`. It atomically cancels an authorization attempt, removes the daemon-owned refresh
-token, connected account data, and retained social state, and records durable teardown of the local
-Cloud identity. The daemon closes the account's Murmur and Cloud social connections, unregisters
-this installation's Murmur device from the relay, and then atomically removes the retained root and
-generated-secret backup, local vault identity, and account-scoped Murmur store. Relay unavailability
-retries across daemon restarts; the otherwise inaccessible key material remains only until it is
-needed to authenticate that device removal. When the retained identity is recognized as using the
-obsolete direct-root derivation instead of the current key tree, the daemon cannot authenticate the
-current Murmur account: it skips relay unregistration and atomically deletes the local key and
-Murmur state so teardown cannot remain blocked forever. A new Cloud authorization cannot start
-until teardown finishes. It does not delete the remote vault, remove another Murmur device, revoke
-the person's WorkOS browser session, or affect other applications.
+token from the active session, removes connected account data and retained social state, and records
+durable teardown of the local Cloud identity. The rotating refresh token moves into that owner-only
+teardown record rather than remaining in the disconnected Cloud session. The daemon closes the
+account's Murmur and Cloud
+social connections, uses that token only to obtain a short-lived negotiated Murmur session,
+unregisters this installation's Murmur device from the relay, and then atomically removes the
+refresh token, retained root and generated-secret backup, local vault identity, and account-scoped
+Murmur store. Relay unregistration is attempted at most three times, and that attempt count is
+durable across daemon restarts. After the third relay failure the daemon emits a warning that the
+device may remain registered and proceeds with the same atomic local deletion; local persistence
+and identity-integrity failures do not consume this relay budget. When the retained identity is
+recognized as using the obsolete direct-root derivation instead of the current key tree, or a
+pre-token teardown record cannot authenticate to the negotiated issuer, the daemon similarly skips
+relay unregistration and atomically deletes the local key and Murmur state. A new Cloud
+authorization cannot start until teardown finishes. It does not delete the remote vault, remove
+another Murmur device, revoke the person's WorkOS browser session, or affect other applications.
+Erasing the daemon's local instance or database without invoking this endpoint cannot authenticate
+or perform relay cleanup after the fact; that installation's Murmur roster entry remains until a
+restored sibling device removes it.
 
 Response — `200`: `{ "cloud": { ... } }` with a clean disconnected Cloud object. A changed
 snapshot emits one `cloud.updated`; an already-clean disconnected snapshot emits nothing.
@@ -1204,6 +1215,49 @@ local root, the endpoint returns `409` with code `conflict` and the current `clo
 material, such as a retained root without its generated secret, is an unexpected storage invariant
 failure and returns the generic `500` `internal` error; the daemon does not migrate or backfill key
 records created before generated-secret retention.
+
+### `GET /v0/cloud/devices`
+
+Returns the connected account's latest locally observed Murmur device roster. This is an
+owner-only local read. It performs no WorkOS, Happy Cloud, or relay request and emits no event.
+
+Response — `200`:
+
+```json
+{
+    "devices": [
+        {
+            "id": "43-character unpadded base64url device key",
+            "current": true,
+            "metadata": {
+                "installationId": "stable local installation ID",
+                "name": "Ada’s MacBook Pro",
+                "platform": "macOS",
+                "osVersion": "25.5.0",
+                "architecture": "arm64",
+                "agentVersion": "0.4.23"
+            }
+        }
+    ]
+}
+```
+
+`id` is the stable public Murmur device key and uniquely identifies the roster entry. `current`
+is true only for the device owned by this daemon. `metadata` is encrypted by the originating Happy
+Agent with a dedicated key derived at `murmur / device-metadata / #aes256`; the authenticated
+ciphertext is bound to the account identity and exact device key. The root secret is never used as
+an encryption key. Murmur and the relay store only the opaque ciphertext.
+
+The decrypted metadata identifies the originating installation: its stable private installation
+ID, host name, human-readable platform (`macOS`, `Linux`, `Windows`, or `Other`), operating-system
+version, architecture, and Happy Agent version. A roster entry created without metadata, by another
+Murmur application, or containing ciphertext that cannot be authenticated or validated has
+`metadata: null`; one bad entry does not hide the rest of the roster. Metadata is bounded and must
+contain only the exact documented fields.
+
+No connected account or keys other than `ready` return `409` with the authoritative current
+`cloud`. While the account is ready but its local Murmur service has not opened, the endpoint
+returns `503` with code `cloud_unavailable`.
 
 ### Cloud profile and enrollment
 

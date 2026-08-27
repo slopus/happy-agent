@@ -112,6 +112,57 @@ export const cloudKeyBackupResponseSchema = Type.Object(
 );
 export type CloudKeyBackupResponse = Static<typeof cloudKeyBackupResponseSchema>;
 
+/** Human-readable platform recorded by one Happy Agent installation. */
+export const cloudDevicePlatformSchema = Type.Union([
+    Type.Literal("macOS"),
+    Type.Literal("Linux"),
+    Type.Literal("Windows"),
+    Type.Literal("Other"),
+]);
+export type CloudDevicePlatform = Static<typeof cloudDevicePlatformSchema>;
+
+const cloudDeviceTextSchema = Type.String({
+    minLength: 1,
+    maxLength: 256,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+});
+
+/** Owner-decrypted identity details supplied by one Happy Agent installation. */
+export const cloudDeviceMetadataSchema = Type.Object(
+    {
+        agentVersion: cloudDeviceTextSchema,
+        architecture: cloudDeviceTextSchema,
+        installationId: Type.String({
+            minLength: 2,
+            maxLength: 64,
+            pattern: "^[A-Za-z0-9][A-Za-z0-9-]*$",
+        }),
+        name: cloudDeviceTextSchema,
+        osVersion: cloudDeviceTextSchema,
+        platform: cloudDevicePlatformSchema,
+    },
+    { additionalProperties: false },
+);
+export type CloudDeviceMetadata = Static<typeof cloudDeviceMetadataSchema>;
+
+/** One current Murmur roster entry and its optional owner-decrypted metadata. */
+export const cloudDeviceSchema = Type.Object(
+    {
+        current: Type.Boolean(),
+        id: cloudKeyValueSchema,
+        metadata: Type.Union([cloudDeviceMetadataSchema, Type.Null()]),
+    },
+    { additionalProperties: false },
+);
+export type CloudDevice = Static<typeof cloudDeviceSchema>;
+
+/** `GET /v0/cloud/devices` */
+export const cloudDevicesResponseSchema = Type.Object(
+    { devices: Type.Array(cloudDeviceSchema, { maxItems: 256 }) },
+    { additionalProperties: false },
+);
+export type CloudDevicesResponse = Static<typeof cloudDevicesResponseSchema>;
+
 /** Cloud keys are unavailable without a connected account. */
 export const cloudKeysInactiveSchema = Type.Object(
     { status: Type.Literal("inactive") },

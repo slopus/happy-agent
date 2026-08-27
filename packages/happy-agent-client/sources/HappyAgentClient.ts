@@ -35,6 +35,7 @@ import type {
     CloudAuthorizingResponse,
     CloudConnectedResponse,
     CloudDisconnectedResponse,
+    CloudDevicesResponse,
     CloudKeyBackupResponse,
     CloudMutationRequest,
     CloudProfileResponse,
@@ -442,6 +443,15 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: "v0/cloud/keys/backup",
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cloud/devices` — lists the current account's owner-visible devices. */
+    async getCloudDevices(options: RequestOptions = {}): Promise<CloudDevicesResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/cloud/devices",
             signal: options.signal,
         });
     }

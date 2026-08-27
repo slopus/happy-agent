@@ -7,6 +7,7 @@ import {
     cloudAuthorizingResponseSchema,
     cloudConnectedResponseSchema,
     cloudDisconnectedResponseSchema,
+    cloudDevicesResponseSchema,
     cloudEnrollmentSchema,
     cloudKeyBackupResponseSchema,
     cloudKeysSchema,
@@ -191,6 +192,36 @@ describe("Cloud protocol", () => {
                 backup: { ...response.backup, password: "must-not-appear" },
             }),
         ).toBe(false);
+    });
+
+    it("validates owner-visible device metadata and permits an opaque device without it", () => {
+        const metadata = {
+            agentVersion: "0.4.23",
+            architecture: "arm64",
+            installationId: "instance-1",
+            name: "Ada's MacBook Pro",
+            osVersion: "25.5.0",
+            platform: "macOS",
+        };
+        expect(
+            Value.Check(cloudDevicesResponseSchema, {
+                devices: [
+                    { current: true, id: "A".repeat(43), metadata },
+                    { current: false, id: "B".repeat(43), metadata: null },
+                ],
+            }),
+        ).toBe(true);
+        for (const invalid of [
+            { ...metadata, platform: "darwin" },
+            { ...metadata, installationId: "not valid" },
+            { ...metadata, secret: "must-not-appear" },
+        ]) {
+            expect(
+                Value.Check(cloudDevicesResponseSchema, {
+                    devices: [{ current: true, id: "A".repeat(43), metadata: invalid }],
+                }),
+            ).toBe(false);
+        }
     });
 
     it("rejects credentials and authorization fields in the wrong status", () => {
