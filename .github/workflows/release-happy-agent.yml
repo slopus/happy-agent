@@ -12,6 +12,11 @@ on:
                 description: Markdown change notes for the GitHub Release
                 required: true
                 type: string
+            prerelease:
+                description: Mark the GitHub Release as a prerelease
+                required: false
+                default: false
+                type: boolean
 
 permissions:
     contents: read
@@ -23,6 +28,7 @@ concurrency:
 env:
     RELEASE_TAG: v${{ inputs.version }}
     RELEASE_VERSION: ${{ inputs.version }}
+    RELEASE_PRERELEASE: ${{ inputs.prerelease }}
 
 jobs:
     verify:
@@ -265,12 +271,12 @@ jobs:
                       --title "Happy Agent $RELEASE_TAG"
                       --notes-file .release/notes.md
                   )
-                  if [[ "$RELEASE_VERSION" == *-* ]]; then
+                  if [[ "$RELEASE_VERSION" == *-* || "$RELEASE_PRERELEASE" == "true" ]]; then
                       arguments+=(--prerelease)
                   fi
                   gh release create "${arguments[@]}" release-assets/*
                   publish_arguments=(--draft=false)
-                  if [[ "$RELEASE_VERSION" != *-* ]]; then
+                  if [[ "$RELEASE_VERSION" != *-* && "$RELEASE_PRERELEASE" != "true" ]]; then
                       publish_arguments+=(--latest)
                   fi
                   gh release edit "$RELEASE_TAG" "${publish_arguments[@]}"
