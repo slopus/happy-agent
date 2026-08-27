@@ -2170,7 +2170,13 @@ export class CloudModule implements AgentModule {
             return await this.#keysDatabase.read(ctx, account);
         });
         if (local?.status === "ready") {
-            await this.#unregisterMurmurDevice(ctx, account, local);
+            if (usesLegacyCloudIdentity(local)) {
+                ctx.log.warn(
+                    `cloud:keys:skip environment=${account.environment} phase=murmur-unregister reason=legacy-identity-local-delete`,
+                );
+            } else {
+                await this.#unregisterMurmurDevice(ctx, account, local);
+            }
         }
 
         await this.#lock.runInLock(ctx, async () => {
@@ -3152,6 +3158,21 @@ function cloudIdentity(keys: ReadyCloudKeys) {
         root.fill(0);
         derived?.secret.fill(0);
         derived?.public.fill(0);
+    }
+}
+
+function usesLegacyCloudIdentity(keys: ReadyCloudKeys): boolean {
+    const root = new Uint8Array(Buffer.from(keys.rootSecret, "base64url"));
+    if (root.length !== 32 || Buffer.from(root).toString("base64url") !== keys.rootSecret) {
+        root.fill(0);
+        throw new Error("The stored Cloud identity root is invalid.");
+    }
+    const identity = importIdentityKeyPair(root);
+    try {
+        return Buffer.from(identity.publicKey).toString("base64url") === keys.identityKey;
+    } finally {
+        destroyIdentity(identity);
+        root.fill(0);
     }
 }
 

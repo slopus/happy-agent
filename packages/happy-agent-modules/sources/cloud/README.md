@@ -44,7 +44,9 @@ Disconnecting commits signed-out Cloud and empty social state together with a du
 teardown. It closes the live Murmur client, uses the retained account root only long enough to
 remove this installation's device from the relay, and then atomically deletes the root, H1 backup,
 vault identity, and complete account-scoped Murmur store. Relay failures retry across daemon
-restarts, and another Cloud authorization cannot begin until this cleanup finishes.
+restarts, and another Cloud authorization cannot begin until this cleanup finishes. A retained
+identity recognized as using the obsolete direct-root derivation cannot authenticate the current
+key-tree Murmur account, so teardown skips relay removal and deletes its unusable local state.
 
 Cloud is independent from `HappyModule`, which connects the daemon to the Happy mobile app.
 

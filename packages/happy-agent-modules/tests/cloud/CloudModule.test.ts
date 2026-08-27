@@ -1,5 +1,5 @@
 import { OauthException } from "@workos-inc/node";
-import { MurmurClient } from "@slopus/murmur";
+import { destroyIdentity, importIdentityKeyPair, MurmurClient } from "@slopus/murmur";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
@@ -648,6 +648,44 @@ describe("CloudModule", () => {
             expect(await pendingDurableCallCount(database)).toBe(0);
         });
         expect(restarted.status(database.context)).toMatchObject({ status: "disconnected" });
+    });
+
+    it("deletes recognized legacy local identity state without retrying Murmur removal", async () => {
+        existingCloudProfile();
+        const open = vi.spyOn(MurmurClient, "open");
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        const { database, module } = await fixture("cloud-module-disconnect-legacy-identity");
+        const account = { environment: "production", userId: user.id } as const;
+        const keysDatabase = createCloudKeysDatabase();
+        const murmurStore = new CloudMurmurStore(database.context, account);
+
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await module.createKeys(database.context, cloudKeyInput);
+        const local = await keysDatabase.read(database.context, account);
+        if (local?.status !== "ready") throw new Error("Expected ready Cloud keys.");
+        const root = new Uint8Array(Buffer.from(local.rootSecret, "base64url"));
+        const legacyIdentity = importIdentityKeyPair(root);
+        try {
+            await keysDatabase.write(database.context, account, {
+                ...local,
+                identityKey: Buffer.from(legacyIdentity.publicKey).toString("base64url"),
+            });
+        } finally {
+            destroyIdentity(legacyIdentity);
+            root.fill(0);
+        }
+        await murmurStore.set("legacy/device", new Uint8Array([7, 8, 9]));
+
+        await expect(module.disconnect(database.context)).resolves.toMatchObject({
+            status: "disconnected",
+        });
+        await vi.waitFor(async () => {
+            expect(await keysDatabase.read(database.context, account)).toBeUndefined();
+            expect(await murmurStore.get("legacy/device")).toBeUndefined();
+            expect(await pendingDurableCallCount(database)).toBe(0);
+        });
+        expect(open).not.toHaveBeenCalled();
     });
 
     it("completes PKCE, verifies hello, persists refresh, and mints with rotation", async () => {

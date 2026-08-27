@@ -1043,9 +1043,12 @@ Cloud identity. The daemon closes the account's Murmur and Cloud social connecti
 this installation's Murmur device from the relay, and then atomically removes the retained root and
 generated-secret backup, local vault identity, and account-scoped Murmur store. Relay unavailability
 retries across daemon restarts; the otherwise inaccessible key material remains only until it is
-needed to authenticate that device removal. A new Cloud authorization cannot start until teardown
-finishes. It does not delete the remote vault, remove another Murmur device, revoke the person's
-WorkOS browser session, or affect other applications.
+needed to authenticate that device removal. When the retained identity is recognized as using the
+obsolete direct-root derivation instead of the current key tree, the daemon cannot authenticate the
+current Murmur account: it skips relay unregistration and atomically deletes the local key and
+Murmur state so teardown cannot remain blocked forever. A new Cloud authorization cannot start
+until teardown finishes. It does not delete the remote vault, remove another Murmur device, revoke
+the person's WorkOS browser session, or affect other applications.
 
 Response — `200`: `{ "cloud": { ... } }` with a clean disconnected Cloud object. A changed
 snapshot emits one `cloud.updated`; an already-clean disconnected snapshot emits nothing.

@@ -132,8 +132,11 @@
   together. Close the live Murmur client, retain the root and Murmur store only while they are
   needed to authenticate removal of this installation's device, then atomically delete the root,
   H1 backup, vault identity, Murmur store, and teardown intent. Relay failures retry across daemon
-  restarts, and new authorization stays blocked until cleanup finishes. A later reconnect with an
-  existing remote vault therefore requires restoration.
+  restarts, and new authorization stays blocked until cleanup finishes. A retained identity that
+  provably uses the obsolete direct-root derivation cannot authenticate the current key-tree Murmur
+  account; skip relay removal and atomically delete that unusable local state instead of retrying
+  forever. Arbitrary identity corruption still fails closed. A later reconnect with an existing
+  remote vault therefore requires restoration.
 - Murmur's device key belongs in its own account-scoped durable key/value store. Only an enrolled
   account with ready keys may open the client. Opening performs durable relay registration, while
   transport retries and failures remain independent from Cloud authentication and its public error
