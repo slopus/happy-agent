@@ -790,6 +790,7 @@ Disconnected:
     "user": null,
     "authorization": null,
     "error": null,
+    "enrollment": { "status": "inactive" },
     "keys": { "status": "inactive" },
     "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
     "updatedAt": 1755400000000
@@ -808,6 +809,7 @@ Authorizing:
         "expiresAt": 1755400600000
     },
     "error": null,
+    "enrollment": { "status": "inactive" },
     "keys": { "status": "inactive" },
     "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
     "updatedAt": 1755400000000
@@ -828,7 +830,7 @@ Connected:
     },
     "authorization": null,
     "error": null,
-    "keys": { "status": "restore_required" },
+    "enrollment": { "status": "checking" },
     "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
     "updatedAt": 1755400000000
 }
@@ -847,6 +849,8 @@ Connected:
   `credentials_rejected`; clients tolerate unknown values. Transient WorkOS or Happy Cloud
   availability failures are request errors and do not invalidate an otherwise connected
   snapshot.
+- `enrollment` — the durable username-enrollment state described below. This field is optional for
+  compatibility with older daemons. Its absence means the daemon does not expose enrollment state.
 - `keys` — the account encryption state described below. This field is optional for compatibility
   with older daemons. Its absence means the daemon does not expose Cloud key state; it does not
   mean setup is complete.
@@ -867,20 +871,27 @@ versioned encrypted root bundle and a verifier derived from the supplied authent
 
 The optional `keys` field is one of these states:
 
-- `inactive` — there is no connected Cloud account. This is the only state while Cloud is
-  disconnected or authorizing.
+- `inactive` — there is no connected and enrolled Cloud account. This is the state while Cloud is
+  disconnected or authorizing; a daemon may omit `keys` while connected enrollment or key
+  discovery is unfinished.
 - `create_required` — the connected account has no encrypted Cloud bundle and no committed local
   root. The person must create its encryption state through the create mutation below.
-- `restore_required` — Happy Cloud has an encrypted bundle but this installation has no local root.
-  The person must restore it through the restore mutation below.
+- `restore_required` — this installation has no local root and Happy Cloud either has an encrypted
+  bundle or could not prove that no bundle exists. The person must restore it through the restore
+  mutation below. If restoration authoritatively reports no bundle, the state becomes
+  `create_required`.
 - `ready` — the account root is available locally. `identityKey` is the derived Ed25519 public key,
   serialized as exactly 43 unpadded base64url characters.
 
-Key setup is independent from username enrollment. Immediately after authentication, the daemon
-uses the selected Happy Cloud deployment's vault status to choose `create_required` or
-`restore_required`, unless the matching account root is already available locally, in which case it
-publishes `ready`. Disconnecting stops account services and publishes `inactive`, but retains roots
-under their WorkOS user IDs so reconnecting the same account resumes without another restore.
+Key setup starts only after durable username reconciliation confirms that the account is enrolled.
+The daemon then starts a separate durable key-discovery operation. It retries temporary WorkOS and
+Happy Cloud failures across daemon restarts until it can compare the Cloud profile identity, vault
+status, and matching retained local root. An unknown or mismatched Cloud profile identity requires
+restore and is never overwritten by generating a new root. A proven absent profile identity and
+vault bundle requires create; a matching retained root publishes `ready`. Until discovery reaches
+one of those conclusions, `keys` is omitted. Disconnecting stops account services and publishes
+`inactive`, but retains roots under their WorkOS user IDs so reconnecting the same account can be
+verified and resumed without another restore.
 
 The create and restore requests each contain `encryptionKey` and `authHash`. Both are already-derived
 32-byte values serialized as exactly 43 unpadded base64url characters; the daemon performs no
@@ -888,6 +899,14 @@ password KDF. It never stores either input. `encryptionKey` encrypts or decrypts
 versioned bundle. `authHash` is sent as the opaque proof value for Happy Cloud's vault operation.
 Neither value, the root, the encrypted bundle, nor any private identity or device key appears in a
 response, event, bootstrap payload, log, or display-safe error.
+
+Create and restore execute through Durable Functions without persisting either factor. The pending
+account operation and staged non-factor state are durable, while the factors live only in the
+running daemon process. The HTTP request waits while that process retries temporary network and
+service failures; disconnecting the HTTP client does not cancel the operation. If the daemon exits
+before completion, recovery leaves the account in `create_required` or `restore_required` and the
+person must submit the factors again. A replacement submission supersedes the process-local factors
+for the same account.
 
 Once keys are ready, the Cloud module opens the account's durable Murmur store using the identity
 derived from the root. Each installation owns an independent Murmur device key, and opening the
@@ -1049,8 +1068,9 @@ Malformed inputs return `400` with code `invalid_request` without contacting Hap
 connected account returns `409` with code `cloud_not_authenticated`. A state conflict, proof
 mismatch, or bundle that can no longer be safely created returns `409` with code `conflict` and the
 authoritative current `cloud`; secrets and upstream bodies are not reflected in the error. A
-transient authentication, Happy Cloud, or storage failure returns `503` with code
-`cloud_unavailable` and leaves setup retryable.
+transient authentication or Happy Cloud failure keeps the request pending while its process-local
+factors remain available. A local storage failure returns `503` with code `cloud_unavailable` and
+leaves setup retryable.
 
 ### `POST /v0/cloud/keys/restore`
 
@@ -1077,7 +1097,8 @@ one `cloud.updated` event carrying the optional `mutationId`; an idempotent retr
 Malformed inputs return `400` with code `invalid_request`. No connected account returns `409` with
 code `cloud_not_authenticated`. A proof mismatch, decryption failure, malformed bundle, or state
 conflict returns `409` with code `conflict` and the current `cloud`, without revealing which secret
-failed. A transient authentication, Happy Cloud, or storage failure returns `503` with code
+failed. A transient authentication or Happy Cloud failure keeps the request pending while its
+process-local factors remain available. A local storage failure returns `503` with code
 `cloud_unavailable` and preserves `restore_required`.
 
 ### Cloud profile and enrollment
@@ -1103,19 +1124,40 @@ control characters. Names are public display text. A registered username is excl
 remains current. When a user changes username, the previous username may be reused by another
 user; Happy Cloud resolves the race atomically.
 
-A successful username enrollment durably stores the enrolled username and synchronized local
-profile version beside the connected account. Enrollment requires `cloud.keys.status` `ready` and
-publishes its derived identity key with the profile. While enrolled, local profile-name changes
-schedule durable Cloud profile synchronization; the complete local `name` is sent as Cloud
-`firstName`, `lastName` is omitted, and the identity key is preserved. Local email and photo are not
-part of Happy Cloud's current profile contract.
+The optional `cloud.enrollment` field is one of these states:
 
-At daemon startup, the module first loads its local enrollment record, then durably reconciles it
-with `GET /v0/profile` in Happy Cloud. An online registered profile repairs the locally stored
-username when necessary; an online unregistered profile clears stale local enrollment. This
-online-to-local reconciliation never overwrites the Happy Agent human profile. After reconciling
-enrollment, the local human profile remains the display-name authority and is synchronized back to
-Happy Cloud when needed.
+- `inactive` — Cloud is disconnected or authorizing.
+- `checking` — Cloud is connected and durable reconciliation is retrying until it can determine
+  the account's online profile state.
+- `required` — reconciliation proved that the account has no Cloud username.
+- `enrolling` — `{ "status": "enrolling", "username": "ada" }`; the username intent is durable
+  and its worker keeps retrying until Happy Cloud accepts it or authoritatively rejects the
+  username.
+- `enrolled` — `{ "status": "enrolled", "username": "ada" }`; Happy Cloud has accepted this
+  username for the connected account.
+
+Every enrollment-state change advances the containing Cloud object's `version` and `updatedAt` and
+emits the existing `cloud.updated` complete replacement. The `enrolling` transition carries the
+profile mutation's optional `mutationId`; later worker-owned transitions do not retain or echo it.
+
+A successful username enrollment durably stores the enrolled username, synchronized local profile
+version, and the identity key last published beside the connected account. Enrollment is
+independent from Cloud key setup. When keys are ready, enrollment publishes the derived identity
+key with the profile; otherwise the profile is enrolled without an identity key and a durable
+profile synchronization adds it after the keys become ready. While enrolled, local profile-name
+changes schedule durable Cloud profile synchronization; the complete local `name` is sent as Cloud
+`firstName`, `lastName` is omitted, and a previously published identity key is never erased merely
+because its local root currently requires restoration. Local email and photo are not part of Happy
+Cloud's current profile contract.
+
+At daemon startup and after authentication, the module publishes `checking` and durably reconciles
+with `GET /v0/profile` in Happy Cloud. Temporary network, authentication-service, and Happy Cloud
+failures retry indefinitely without cancelling enrollment or reverting a durable username intent.
+An online registered profile repairs the locally stored username when necessary; an online
+unregistered profile becomes `required` unless an `enrolling` intent is pending. This online-to-local
+reconciliation never overwrites the Happy Agent human profile. After reconciling enrollment, the
+local human profile remains the display-name authority and is synchronized back to Happy Cloud when
+needed.
 
 Cloud profile operations mint and verify an access token exactly as `POST /v0/cloud/access-token`
 does, including durable refresh-token rotation and Cloud authentication error behavior. The access
@@ -1129,10 +1171,14 @@ access-token minting, including the authoritative current `cloud` object.
 Reads the connected user's current durable Cloud profile. Response — `200`:
 
 ```json
-{ "profile": { "username": "ada", "firstName": "Ada Lovelace" } }
+{
+    "profile": { "username": "ada", "firstName": "Ada Lovelace" },
+    "enrollment": { "status": "enrolled", "username": "ada" }
+}
 ```
 
-An unregistered user receives `{ "profile": { "username": null, "firstName": null } }`.
+`enrollment` is optional for compatibility with older daemons. An unregistered user receives a null
+profile and the current `checking`, `required`, or `enrolling` state.
 
 #### `PUT /v0/cloud/profile`
 
@@ -1145,21 +1191,34 @@ Enrolls the connected user using the daemon's local human profile. Request:
 }
 ```
 
-`mutationId` is optional. The local profile must already have a non-null `name` that Happy Cloud
-can represent as a valid display name, and Cloud keys must be ready. The daemon sends the derived
-identity public key with the complete name as `firstName`, omits `lastName`, and persists enrollment
-only after Happy Cloud accepts the profile. Missing Cloud keys, a missing local name, or an
-unrepresentable local name returns `409` with code `conflict` without changing the Cloud profile.
+`mutationId` is optional. The local profile must already have a non-null `name` that Happy Cloud can
+represent as a valid display name. In one transaction the daemon stores the username intent,
+publishes `enrolling`, and creates its Durable Function call. It then returns immediately without
+contacting WorkOS or Happy Cloud. A missing local name or an unrepresentable local name returns
+`409` with code `conflict` without storing an intent.
 
 Unknown fields or malformed usernames return `400` with code `invalid_request` without contacting
-Happy Cloud. A username currently owned by another user returns `409` with code `conflict` and the
-current `cloud`. A well-formed `invalid_profile` rejection from Happy Cloud after the daemon
-accepted the same input is contract drift and returns `503` with code `cloud_unavailable`, not a
-user-input error.
+Happy Cloud. The durable worker mints and verifies access tokens, sends the latest compatible local
+name as `firstName`, omits `lastName`, and includes the derived identity public key when keys are
+ready. Temporary failures retry across daemon restarts. A username authoritatively owned by another
+user clears that intent and publishes `required`; a well-formed `invalid_profile` response after
+local validation is service-contract drift and keeps retrying rather than becoming a user-input
+error.
 
-Response — `200`: `{ "profile": { ... } }` with Happy Cloud's authoritative normalized profile.
-The successful mutation emits one `cloud.profile.updated` event; its compact payload contains only
-the optional `mutationId`, and clients refetch this endpoint.
+Response — `200`:
+
+```json
+{
+    "profile": { "username": "ada", "firstName": "Ada Lovelace" },
+    "enrollment": { "status": "enrolling", "username": "ada" }
+}
+```
+
+The response profile is the locally validated optimistic target, not a report of remote completion;
+`enrollment` is optional for compatibility. The initial durable transition emits `cloud.updated`
+with the optional `mutationId`. After Happy Cloud accepts the profile, the worker publishes
+`enrolled`, emits `cloud.profile.updated` as a compact invalidation, and starts durable key-status
+discovery. Clients observe those later transitions through events and refetches.
 
 ### Cloud friends and social state
 

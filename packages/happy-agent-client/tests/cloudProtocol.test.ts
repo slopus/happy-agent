@@ -7,6 +7,7 @@ import {
     cloudAuthorizingResponseSchema,
     cloudConnectedResponseSchema,
     cloudDisconnectedResponseSchema,
+    cloudEnrollmentSchema,
     cloudKeysSchema,
     cloudProfileResponseSchema,
     cloudResponseSchema,
@@ -105,6 +106,25 @@ describe("Cloud protocol", () => {
             version,
         };
         expect(Value.Check(cloudResponseSchema, { cloud })).toBe(true);
+    });
+
+    it("validates every durable enrollment state while keeping it optional", () => {
+        for (const enrollment of [
+            { status: "inactive" },
+            { status: "checking" },
+            { status: "required" },
+            { status: "enrolling", username: "ada" },
+            { status: "enrolled", username: "ada" },
+        ]) {
+            expect(Value.Check(cloudEnrollmentSchema, enrollment)).toBe(true);
+        }
+        for (const enrollment of [
+            { status: "enrolling" },
+            { status: "required", username: "ada" },
+            { status: "unknown" },
+        ]) {
+            expect(Value.Check(cloudEnrollmentSchema, enrollment)).toBe(false);
+        }
     });
 
     it("validates already-derived Cloud key mutation inputs", () => {
@@ -236,6 +256,7 @@ describe("Cloud protocol", () => {
         ).toBe(true);
         expect(
             Value.Check(cloudProfileResponseSchema, {
+                enrollment: { status: "enrolling", username: "ada_1" },
                 futureResponseField: true,
                 profile: {
                     firstName: "Ada",

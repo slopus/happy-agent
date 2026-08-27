@@ -158,6 +158,7 @@ describe("HappyAgentClient", () => {
     it("manages Cloud authentication and mints verified access tokens", async () => {
         const cloud = {
             authorization: null,
+            enrollment: { status: "enrolled" as const, username: "ada" },
             environment: "production" as const,
             error: null,
             status: "connected" as const,
@@ -171,6 +172,7 @@ describe("HappyAgentClient", () => {
             version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
         };
         const profile = { firstName: "Ada", lastName: "Lovelace", username: "ada" };
+        const profileResponse = { enrollment: cloud.enrollment, profile };
         const cloudSocial = {
             blocked: [],
             connection: "connected" as const,
@@ -186,7 +188,7 @@ describe("HappyAgentClient", () => {
                 return json({ accessToken: "access-token", cloud });
             }
             if (request.url.includes("/social")) return json({ cloudSocial });
-            if (request.url.endsWith("/profile")) return json({ profile });
+            if (request.url.endsWith("/profile")) return json(profileResponse);
             return json({ cloud });
         });
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
@@ -222,10 +224,10 @@ describe("HappyAgentClient", () => {
         await expect(
             client.restoreCloudKeys({ ...keyInput, mutationId: "keys-restore-1" }),
         ).resolves.toEqual({ cloud });
-        await expect(client.getCloudProfile()).resolves.toEqual({ profile });
+        await expect(client.getCloudProfile()).resolves.toEqual(profileResponse);
         await expect(
             client.enrollCloudProfile({ mutationId: "enroll-1", username: "ada" }),
-        ).resolves.toEqual({ profile });
+        ).resolves.toEqual(profileResponse);
         await expect(client.getCloudSocial()).resolves.toEqual({ cloudSocial });
         await expect(
             client.sendCloudFriendRequest("grace hopper", { mutationId: "send-1" }),

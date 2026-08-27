@@ -34,6 +34,51 @@ export const cloudErrorSchema = Type.Object({
 });
 export type CloudError = Static<typeof cloudErrorSchema>;
 
+export const cloudUsernameSchema = Type.String({
+    minLength: 3,
+    maxLength: 24,
+    pattern: "^[a-z0-9_]+$",
+});
+
+/** Cloud enrollment is unavailable without a connected account. */
+export const cloudEnrollmentInactiveSchema = Type.Object(
+    { status: Type.Literal("inactive") },
+    { additionalProperties: false },
+);
+
+/** Durable reconciliation is determining the connected account's profile state. */
+export const cloudEnrollmentCheckingSchema = Type.Object(
+    { status: Type.Literal("checking") },
+    { additionalProperties: false },
+);
+
+/** The connected account has no Cloud username. */
+export const cloudEnrollmentRequiredSchema = Type.Object(
+    { status: Type.Literal("required") },
+    { additionalProperties: false },
+);
+
+/** One durable username intent awaiting Happy Cloud acceptance. */
+export const cloudEnrollmentEnrollingSchema = Type.Object(
+    { status: Type.Literal("enrolling"), username: cloudUsernameSchema },
+    { additionalProperties: false },
+);
+
+/** Happy Cloud has accepted the connected account's username. */
+export const cloudEnrollmentEnrolledSchema = Type.Object(
+    { status: Type.Literal("enrolled"), username: cloudUsernameSchema },
+    { additionalProperties: false },
+);
+
+export const cloudEnrollmentSchema = Type.Union([
+    cloudEnrollmentInactiveSchema,
+    cloudEnrollmentCheckingSchema,
+    cloudEnrollmentRequiredSchema,
+    cloudEnrollmentEnrollingSchema,
+    cloudEnrollmentEnrolledSchema,
+]);
+export type CloudEnrollment = Static<typeof cloudEnrollmentSchema>;
+
 /** One 32-byte Cloud key serialized as unpadded base64url. */
 export const cloudKeyValueSchema = Type.String({
     minLength: 43,
@@ -80,6 +125,8 @@ const versionedFields = {
 
 const cloudSnapshotFields = {
     ...versionedFields,
+    /** Durable username-enrollment state. Absent on older compatible daemons. */
+    enrollment: Type.Optional(cloudEnrollmentSchema),
     /** Account encryption state. Absent on older compatible daemons. */
     keys: Type.Optional(cloudKeysSchema),
 };
@@ -205,12 +252,6 @@ const cloudVisibleNameSchema = Type.String({
     pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
 });
 
-export const cloudUsernameSchema = Type.String({
-    minLength: 3,
-    maxLength: 24,
-    pattern: "^[a-z0-9_]+$",
-});
-
 /** A public profile that has not yet been registered in Happy Cloud. */
 export const cloudUnregisteredProfileSchema = Type.Object({
     firstName: Type.Null(),
@@ -232,7 +273,10 @@ export const cloudProfileSchema = Type.Union([
 ]);
 export type CloudProfile = Static<typeof cloudProfileSchema>;
 
-export const cloudProfileResponseSchema = Type.Object({ profile: cloudProfileSchema });
+export const cloudProfileResponseSchema = Type.Object({
+    enrollment: Type.Optional(cloudEnrollmentSchema),
+    profile: cloudProfileSchema,
+});
 export type CloudProfileResponse = Static<typeof cloudProfileResponseSchema>;
 
 /** Enrolls the connected account using the local Happy Agent profile and a Cloud username. */
