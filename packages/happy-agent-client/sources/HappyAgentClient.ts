@@ -35,6 +35,7 @@ import type {
     CloudAuthorizingResponse,
     CloudConnectedResponse,
     CloudDisconnectedResponse,
+    CloudDevice,
     CloudDevicesResponse,
     CloudKeyBackupResponse,
     CloudMutationRequest,
@@ -452,6 +453,18 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: "v0/cloud/devices",
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/cloud/devices/:id` — removes another installation from the roster. */
+    async removeCloudDevice(
+        deviceId: CloudDevice["id"],
+        options: RequestOptions = {},
+    ): Promise<CloudDevicesResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/cloud/devices/${encodeURIComponent(deviceId)}`,
             signal: options.signal,
         });
     }

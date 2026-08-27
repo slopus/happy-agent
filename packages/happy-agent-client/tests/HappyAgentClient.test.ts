@@ -207,6 +207,7 @@ describe("HappyAgentClient", () => {
                 return json({ accessToken: "access-token", cloud });
             }
             if (request.url.endsWith("/keys/backup")) return json({ backup });
+            if (request.url.includes("/devices/")) return json({ devices: [] });
             if (request.url.endsWith("/devices")) return json({ devices });
             if (request.url.includes("/social")) return json({ cloudSocial });
             if (request.url.endsWith("/profile")) return json(profileResponse);
@@ -254,6 +255,7 @@ describe("HappyAgentClient", () => {
         ).resolves.toEqual({ cloud });
         await expect(client.getCloudKeyBackup()).resolves.toEqual({ backup });
         await expect(client.getCloudDevices()).resolves.toEqual({ devices });
+        await expect(client.removeCloudDevice(devices[0]!.id)).resolves.toEqual({ devices: [] });
         await expect(client.getCloudProfile()).resolves.toEqual(profileResponse);
         await expect(
             client.enrollCloudProfile({ mutationId: "enroll-1", username: "ada" }),
@@ -327,6 +329,11 @@ describe("HappyAgentClient", () => {
             },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/keys/backup" },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/devices" },
+            {
+                body: null,
+                method: "DELETE",
+                url: `http://agent.local/v0/cloud/devices/${devices[0]!.id}`,
+            },
             { body: null, method: "GET", url: "http://agent.local/v0/cloud/profile" },
             {
                 body: JSON.stringify({ mutationId: "enroll-1", username: "ada" }),
