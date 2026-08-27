@@ -2275,6 +2275,8 @@ export class CloudModule implements AgentModule {
                     diagnostic.status === undefined ? "" : ` status=${String(diagnostic.status)}`;
                 ctx.log.warn(
                     `cloud:keys:error environment=${input.environment} phase=murmur-unregister reason=${diagnostic.reason}${status}`,
+                    {},
+                    error,
                 );
             }
             await delay(ctx, MURMUR_RETRY_MS);
@@ -2385,6 +2387,8 @@ export class CloudModule implements AgentModule {
                     diagnostic.status === undefined ? "" : ` status=${String(diagnostic.status)}`;
                 ctx.log.warn(
                     `cloud:keys:error environment=${account.environment} phase=murmur-unregister reason=${diagnostic.reason}${status} attempt=${String(attempts)}/${String(MURMUR_UNREGISTER_MAX_ATTEMPTS)}`,
+                    {},
+                    error.cause,
                 );
                 if (attempts >= MURMUR_UNREGISTER_MAX_ATTEMPTS) {
                     ctx.log.warn(
@@ -2630,6 +2634,8 @@ export class CloudModule implements AgentModule {
                     const diagnostic = cloudFailureDiagnostic(error);
                     ctx.log.warn(
                         `cloud:keys:error environment=${environment} phase=murmur reason=${diagnostic.reason}`,
+                        {},
+                        error,
                     );
                 }
             } finally {

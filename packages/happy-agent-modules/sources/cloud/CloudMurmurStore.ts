@@ -272,8 +272,13 @@ function validateValue(value: Uint8Array): void {
 }
 
 function storedBytes(value: unknown): Uint8Array {
-    if (!(value instanceof Uint8Array)) throw new Error("The stored Murmur state is invalid.");
-    const bytes = new Uint8Array(value);
+    const bytes =
+        value instanceof Uint8Array
+            ? new Uint8Array(value)
+            : value instanceof ArrayBuffer
+              ? new Uint8Array(value.slice(0))
+              : undefined;
+    if (bytes === undefined) throw new Error("The stored Murmur state is invalid.");
     validateValue(bytes);
     return bytes;
 }

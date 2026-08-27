@@ -144,8 +144,14 @@
   relay's WorkOS-authenticated session issuer and use Murmur's negotiated WebSocket transport for
   registration, rosters, delivery, and disconnect alike; the Cloudflare deployment does not expose
   the standalone relay's HTTP control routes. Transport retries and failures remain independent
-  from Cloud authentication and its public error field. Disconnect removes `client.deviceKey`
-  rather than terminally deleting the shared Murmur account or touching sibling devices.
+  from Cloud authentication and its public error field. Retry logs keep their stable diagnostic
+  label and pass the original Murmur error to observation so its stack trace remains available;
+  an `unexpected` classification must not hide the failure that produced it. Disconnect removes
+  `client.deviceKey` rather than terminally deleting the shared Murmur account or touching sibling
+  devices.
+- The runtime libSQL driver returns SQLite BLOB columns as `ArrayBuffer`, while the lightweight
+  module-test adapter returns `Uint8Array`. Normalize and copy both representations at the Murmur
+  store boundary; otherwise valid durable account state fails before relay session negotiation.
 - Only an orderly Cloud disconnect can unregister this installation. If the complete local
   instance is erased first, its root, refresh token, and device store no longer exist, so no process
   can authenticate the removal; the remote roster entry remains until a restored sibling device

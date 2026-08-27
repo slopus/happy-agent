@@ -92,12 +92,25 @@ function formatMessage(args: readonly unknown[]): string {
 
 function formatArgument(value: unknown): string {
     if (typeof value === "string") return value;
-    if (value instanceof Error) return value.message;
+    if (value instanceof Error) return formatError(value);
     if (value === undefined) return "undefined";
     if (typeof value === "bigint" || typeof value === "symbol") return String(value);
     try {
         return JSON.stringify(value) ?? String(value);
     } catch {
         return String(value);
+    }
+}
+
+function formatError(error: Error): string {
+    try {
+        if (typeof error.stack === "string" && error.stack.length > 0) return error.stack;
+    } catch {
+        // Fall through to the bounded fallback below. Logging must never break observed work.
+    }
+    try {
+        return `${error.name}: ${error.message}`;
+    } catch {
+        return "Error";
     }
 }

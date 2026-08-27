@@ -86,6 +86,7 @@ const modules: Array<{
 let authorizationNumber = 0;
 
 interface CloudLogRecord {
+    readonly error?: Error;
     readonly level: keyof Logger;
     readonly message: string;
 }
@@ -754,7 +755,8 @@ describe("CloudModule", () => {
         existingCloudProfile();
         const logs: CloudLogRecord[] = [];
         const deviceKey = new Uint8Array(32).fill(9);
-        const removeDevice = vi.fn().mockRejectedValue(new Error("relay unavailable"));
+        const relayFailure = new Error("relay unavailable");
+        const removeDevice = vi.fn().mockRejectedValue(relayFailure);
         vi.spyOn(MurmurClient, "open").mockResolvedValue({
             close: vi.fn(),
             deviceKey,
@@ -791,6 +793,13 @@ describe("CloudModule", () => {
                 message: expect.stringContaining(
                     "phase=murmur-unregister reason=retry-exhausted deviceMayRemainRegistered=true",
                 ),
+            }),
+        );
+        expect(logs).toContainEqual(
+            expect.objectContaining({
+                error: relayFailure,
+                level: "warn",
+                message: expect.stringContaining("phase=murmur-unregister"),
             }),
         );
     }, 20_000);
@@ -2032,7 +2041,12 @@ function recordingLogger(records: CloudLogRecord[]): Logger {
     const write =
         (level: keyof Logger) =>
         (_context: LogContext, ...args: readonly unknown[]) => {
-            records.push({ level, message: args.map(String).join(" ") });
+            const error = args.find((argument): argument is Error => argument instanceof Error);
+            records.push({
+                ...(error === undefined ? {} : { error }),
+                level,
+                message: args.map(String).join(" "),
+            });
         };
     return {
         debug: write("debug"),

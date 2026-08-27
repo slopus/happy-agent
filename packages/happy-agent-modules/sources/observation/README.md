@@ -77,6 +77,10 @@ Only scalar log-context fields are recorded, up to 64 per line. A context may
 carry anything a caller had to hand, including objects with cycles or getters
 that throw; a log line is not the place to discover that.
 
+Error arguments retain their stack trace in the message. This keeps a stable
+human-readable log label useful without discarding the failure site needed to
+diagnose unexpected errors.
+
 Every module startup and ordinary agent hook runs with its stable module name
 in the log context. At `trace`, ordinary hook boundaries record their start,
 finish, and duration. Raw provider-event hooks stay allocation-free and omit

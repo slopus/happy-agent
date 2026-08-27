@@ -1,9 +1,15 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
+import { createRootContext } from "@steve.kite/stdlib";
+import { withAgentDatabase } from "@slopus/happy-agent-base";
 
 import {
     CloudMurmurStore,
     cloudMurmurStoreMigrations,
 } from "../../sources/cloud/CloudMurmurStore.js";
+import { openHappyAgentDatabase } from "../../sources/runtime/HappyAgentDatabase.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 
 const databases: ModuleDatabase[] = [];
@@ -26,6 +32,36 @@ async function fixture(name: string) {
 }
 
 describe("Cloud Murmur store", () => {
+    it("reads BLOB values through the runtime libSQL driver", async () => {
+        const scratch = resolve(import.meta.dirname, "../../.context");
+        await mkdir(scratch, { recursive: true });
+        const directory = await mkdtemp(join(scratch, "cloud-murmur-runtime-"));
+        const opened = await openHappyAgentDatabase(join(directory, "agent.sqlite"));
+        try {
+            const context = withAgentDatabase(
+                createRootContext().named("cloud-murmur-runtime"),
+                opened.database,
+            );
+            for (const [, migrate] of cloudMurmurStoreMigrations) {
+                await migrate(context, opened.database);
+            }
+            const store = new CloudMurmurStore(context, {
+                environment: "production",
+                userId: "user-a",
+            });
+
+            await store.set("device/key", new Uint8Array([1, 2, 3]));
+
+            await expect(store.get("device/key")).resolves.toEqual(new Uint8Array([1, 2, 3]));
+            await expect(store.list("device/")).resolves.toEqual(
+                new Map([["device/key", new Uint8Array([1, 2, 3])]]),
+            );
+        } finally {
+            await opened.close();
+            await rm(directory, { force: true, recursive: true });
+        }
+    });
+
     it("copies values and isolates each account and deployment", async () => {
         const { database, store } = await fixture("cloud-murmur-isolation");
         const input = new Uint8Array([1, 2, 3]);

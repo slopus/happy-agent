@@ -79,19 +79,30 @@ describe("createObservationLogger edge cases", () => {
     it("formats supported argument kinds without throwing", () => {
         const destination = writer();
         const log = logger(destination, "info");
+        const failure = new Error("boom");
+        failure.stack = "Error: boom\n    at example.ts:1:1";
 
-        log.info(
-            {} as LogContext,
-            "text",
-            { value: 1 },
-            new Error("boom"),
-            undefined,
-            7n,
-            Symbol("s"),
-        );
+        log.info({} as LogContext, "text", { value: 1 }, failure, undefined, 7n, Symbol("s"));
 
         const record = JSON.parse(destination.lines[0] ?? "{}") as Record<string, unknown>;
-        expect(record.msg).toBe('text {"value":1} boom undefined 7 Symbol(s)');
+        expect(record.msg).toBe(
+            'text {"value":1} Error: boom\n    at example.ts:1:1 undefined 7 Symbol(s)',
+        );
+    });
+
+    it("records an Error stack trace instead of hiding it behind the message", () => {
+        const destination = writer();
+        const log = logger(destination, "warn");
+        const failure = new Error("relay failed");
+        failure.stack = "Error: relay failed\n    at openRelay (cloud.ts:42:7)";
+
+        log.warn({}, "cloud:keys:error reason=unexpected", failure);
+
+        const record = JSON.parse(destination.lines[0] ?? "{}") as Record<string, unknown>;
+        expect(record.msg).toBe(
+            "cloud:keys:error reason=unexpected Error: relay failed\n" +
+                "    at openRelay (cloud.ts:42:7)",
+        );
     });
 
     it("truncates a very long formatted message", () => {
