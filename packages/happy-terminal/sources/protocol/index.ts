@@ -1,11 +1,7 @@
 export type { EventId } from "./EventId.js";
 export {
     CURRENT_ONBOARDING_VERSION,
-    onboardMurmurRequestSchema,
-    onboardMurmurResponseSchema,
     onboardingStatusSchema,
-    type OnboardMurmurRequest,
-    type OnboardMurmurResponse,
     type OnboardingStatus,
 } from "./OnboardingProtocol.js";
 export {

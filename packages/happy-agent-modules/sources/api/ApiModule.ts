@@ -145,6 +145,7 @@ import {
     cloudMutationRequestSchema,
     cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
+    createCloudKeysRequestSchema,
     documentBodySchema,
     draftBodySchema,
     emptyMutationBodySchema,
@@ -159,6 +160,7 @@ import {
     questionAnswerBodySchema,
     renameBodySchema,
     reorderBodySchema,
+    restoreCloudKeysRequestSchema,
     securityDocumentBodySchema,
     startCloudAuthorizationRequestSchema,
     terminalCreateBodySchema,
@@ -676,6 +678,35 @@ export class ApiModule implements AgentModule {
                     async () => await this.#cloudOperation(() => this.#cloud.mint(ctx)),
                 );
                 sendJson(response, 200, result);
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/cloud/keys/create") {
+                const body = await bodyAs(
+                    request,
+                    createCloudKeysRequestSchema,
+                    "Cloud key creation",
+                    8 * 1_024,
+                );
+                const cloud = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await this.#cloudOperation(() => this.#cloud.createKeys(ctx, body)),
+                );
+                sendJson(response, 200, { cloud });
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/cloud/keys/restore") {
+                const body = await bodyAs(
+                    request,
+                    restoreCloudKeysRequestSchema,
+                    "Cloud key restoration",
+                    8 * 1_024,
+                );
+                const cloud = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await this.#cloudOperation(() => this.#cloud.restoreKeys(ctx, body)),
+                );
+                sendJson(response, 200, { cloud });
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/cloud/profile") {

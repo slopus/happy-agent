@@ -1,22 +1,32 @@
 import { timingSafeEqual } from "node:crypto";
 
+import { createId } from "@paralleldrive/cuid2";
 import type {
     Cloud,
     CloudAccessTokenResponse,
     CloudAuthorizing,
     CloudConnected,
     CloudDisconnected,
+    CloudEnrollment as PublicCloudEnrollment,
     CloudEnvironment,
+    CloudKeys,
     CloudProfile,
     CloudProfileResponse,
     CloudSocial,
     CloudSocialResponse,
     CloudUser,
     CompleteCloudAuthorizationRequest,
+    CreateCloudKeysRequest,
     EnrollCloudProfileRequest,
+    RestoreCloudKeysRequest,
     StartCloudAuthorizationRequest,
 } from "@slopus/happy-agent-client";
-import { cloudUsernameSchema, enrollCloudProfileRequestSchema } from "@slopus/happy-agent-client";
+import {
+    cloudUsernameSchema,
+    createCloudKeysRequestSchema,
+    enrollCloudProfileRequestSchema,
+    restoreCloudKeysRequestSchema,
+} from "@slopus/happy-agent-client";
 import {
     agentDatabase,
     withAgentDatabase,
@@ -24,6 +34,7 @@ import {
     type AgentModuleHooks,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
+import { destroyIdentity, importIdentityKeyPair, MurmurClient } from "@slopus/murmur";
 import {
     afterCommit,
     asyncLock,
@@ -42,29 +53,45 @@ import { ProfileModule, type Profile, type ProfileUnsubscribe } from "../profile
 
 import {
     cloudMigrations,
+    cloudEnrollmentMigrations,
     cloudEnrollment,
     cloudSession,
     createCloudDatabase,
-    type CloudEnrollment,
+    type CloudEnrollmentState,
     type CloudSession,
     type CloudStoredState,
     type CloudStoredValue,
 } from "./CloudDatabase.js";
+import { createCloudKeyBundle, CloudKeyMaterialError, openCloudKeyBundle } from "./CloudKeys.js";
+import {
+    cloudKeysMigrations,
+    createCloudKeysDatabase,
+    type CloudKeysAccount,
+    type ReadyCloudKeys,
+    type StoredCloudKeys,
+} from "./CloudKeysDatabase.js";
+import { CloudMurmurStore, cloudMurmurStoreMigrations } from "./CloudMurmurStore.js";
 import {
     CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
     CLOUD_AUTHORIZATION_EXPIRY_OPERATION,
-    CLOUD_AUTHORIZATION_LOCK,
+    CLOUD_ENROLLMENT_FUNCTION,
+    CLOUD_KEYS_FUNCTION,
+    CLOUD_KEYS_MUTATION_FUNCTION,
     CLOUD_PROFILE_SYNC_FUNCTION,
-    CLOUD_PROFILE_SYNC_LOCK,
     CLOUD_SOCIAL_SYNC_FUNCTION,
-    CLOUD_SOCIAL_SYNC_LOCK,
     cloudAuthorizationExpiryArgumentsSchema,
     cloudAuthorizationExpiryResultSchema,
+    cloudAccountArgumentsSchema,
+    cloudAccountResultSchema,
+    cloudKeysMutationArgumentsSchema,
+    cloudKeysMutationResultSchema,
     cloudProfileSyncArgumentsSchema,
     cloudProfileSyncResultSchema,
     cloudSocialSyncArgumentsSchema,
     cloudSocialSyncResultSchema,
     type CloudAuthorizationExpiryArguments,
+    type CloudAccountArguments,
+    type CloudKeysMutationArguments,
     type CloudProfileSyncArguments,
     type CloudSocialSyncArguments,
 } from "./CloudDurableFunctions.js";
@@ -88,6 +115,8 @@ import {
     CloudSocialNotFoundError,
     CloudSocialSnapshotChangedError,
     CloudUsernameUnavailableError,
+    CloudVaultKeyMismatchError,
+    CloudVaultNotFoundError,
     CloudWorkOS,
     type CloudAuthentication,
     type CloudRemoteSocialSnapshot,
@@ -103,6 +132,11 @@ const SOCIAL_SOCKET_RETRY_MS = 5_000;
 const SOCIAL_ELIGIBILITY_POLL_MS = 1_000;
 const SOCIAL_MUTATION_SNAPSHOT_ATTEMPTS = 3;
 const SOCIAL_PROFILE_REFRESH_MS = 5 * 60 * 1_000;
+const MURMUR_RETRY_MS = 5_000;
+const murmurRelays: Readonly<Record<CloudEnvironment, string>> = {
+    production: "https://murmur-relay.bulka-llc.workers.dev",
+    staging: "https://murmur-relay-staging.bulka-llc.workers.dev",
+};
 const cloudProfileNameSchema = Type.String({
     minLength: 1,
     maxLength: 64,
@@ -153,6 +187,33 @@ interface LiveCloudSocialConnection {
     stateVersion: string | undefined;
 }
 
+interface LiveCloudMurmur {
+    readonly account: CloudKeysAccount;
+    readonly client: MurmurClient;
+    readonly controller: AbortController;
+    readonly sync: Promise<void>;
+}
+
+interface PendingCloudKeyFactors {
+    readonly account: CloudKeysAccount;
+    readonly generation: string;
+    readonly kind: "create" | "restore";
+    readonly request: CreateCloudKeysRequest | RestoreCloudKeysRequest;
+    readonly promise: Promise<CloudConnected>;
+    readonly reject: (error: unknown) => void;
+    readonly resolve: (cloud: CloudConnected) => void;
+}
+
+class CloudKeyTerminalError extends Error {
+    readonly operationError: CloudOperationError;
+
+    constructor(operationError: CloudOperationError) {
+        super(operationError.message);
+        this.name = "CloudKeyTerminalError";
+        this.operationError = operationError;
+    }
+}
+
 export type CloudOperationErrorCode =
     | "cloud_not_authenticated"
     | "cloud_not_enrolled"
@@ -188,9 +249,16 @@ export class CloudOperationError extends Error {
 /** Owns Happy Cloud authentication, refresh-token storage, token minting, and profile access. */
 export class CloudModule implements AgentModule {
     readonly name = "cloud";
-    readonly migrations = [...cloudMigrations, ...cloudSocialMigrations];
+    readonly migrations = [
+        ...cloudMigrations,
+        ...cloudSocialMigrations,
+        ...cloudKeysMigrations,
+        ...cloudMurmurStoreMigrations,
+        ...cloudEnrollmentMigrations,
+    ];
 
     readonly #database = createCloudDatabase();
+    readonly #keysDatabase = createCloudKeysDatabase();
     readonly #socialDatabase = createCloudSocialDatabase();
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #profile: ProfileModule;
@@ -201,12 +269,18 @@ export class CloudModule implements AgentModule {
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #clients = new Map<CloudEnvironment, CloudWorkOS>();
     readonly #socialLifetime = new AbortController();
+    readonly #murmurLifetime = new AbortController();
+    readonly #keyFactors = new Map<string, PendingCloudKeyFactors>();
     #attempt: CloudAttempt | undefined;
     #cloud: Cloud;
     #cloudSocial: CloudSocial;
     #cloudSocialUserId: string | null = null;
     #context: Context | undefined;
     #liveSocial: LiveCloudSocialConnection | undefined;
+    #liveMurmur: LiveCloudMurmur | undefined;
+    #openingMurmur: AbortController | undefined;
+    #murmurSupervisor: Promise<void> | undefined;
+    #murmurWake: (() => void) | undefined;
     #socialSupervisor: Promise<void> | undefined;
     #socialWake: (() => void) | undefined;
     #stopping = false;
@@ -217,8 +291,10 @@ export class CloudModule implements AgentModule {
         const updatedAt = Date.now();
         this.#cloud = freezeCloud({
             authorization: null,
+            enrollment: { status: "inactive" },
             environment: null,
             error: null,
+            keys: { status: "inactive" },
             status: "disconnected",
             updatedAt,
             user: null,
@@ -235,6 +311,33 @@ export class CloudModule implements AgentModule {
             resultSchema: cloudAuthorizationExpiryResultSchema,
             executor: async (ctx, call) => {
                 await this.#executeAuthorizationExpiry(ctx, call.arguments);
+                return null;
+            },
+        });
+        durableFunctions.register({
+            name: CLOUD_ENROLLMENT_FUNCTION,
+            argumentsSchema: cloudAccountArgumentsSchema,
+            resultSchema: cloudAccountResultSchema,
+            executor: async (ctx, call) => {
+                await this.#executeEnrollment(ctx, call.arguments, call.callId);
+                return null;
+            },
+        });
+        durableFunctions.register({
+            name: CLOUD_KEYS_FUNCTION,
+            argumentsSchema: cloudAccountArgumentsSchema,
+            resultSchema: cloudAccountResultSchema,
+            executor: async (ctx, call) => {
+                await this.#executeKeysReconciliation(ctx, call.arguments, call.callId);
+                return null;
+            },
+        });
+        durableFunctions.register({
+            name: CLOUD_KEYS_MUTATION_FUNCTION,
+            argumentsSchema: cloudKeysMutationArgumentsSchema,
+            resultSchema: cloudKeysMutationResultSchema,
+            executor: async (ctx, call) => {
+                await this.#executeKeysMutation(ctx, call.arguments);
                 return null;
             },
         });
@@ -275,6 +378,7 @@ export class CloudModule implements AgentModule {
         return {
             afterStart: () => {
                 this.#startSocialSupervisor();
+                this.#startMurmurSupervisor();
             },
         };
     };
@@ -282,8 +386,12 @@ export class CloudModule implements AgentModule {
     async stop(): Promise<void> {
         this.#profileUnsubscribe();
         this.#socialLifetime.abort();
+        this.#murmurLifetime.abort();
         this.#liveSocial?.controller.abort();
+        this.#openingMurmur?.abort();
+        this.#liveMurmur?.controller.abort();
         this.#socialWake?.();
+        this.#murmurWake?.();
         const ctx = this.#context;
         if (ctx === undefined) {
             this.#stopping = true;
@@ -293,8 +401,13 @@ export class CloudModule implements AgentModule {
         await this.#lock.runInLock(ctx, async () => {
             this.#stopping = true;
             this.#attempt = undefined;
+            for (const factors of this.#keyFactors.values()) {
+                factors.reject(new Error("Cloud key setup stopped before it completed."));
+            }
+            this.#keyFactors.clear();
         });
         await this.#socialSupervisor;
+        await this.#murmurSupervisor;
     }
 
     status(_ctx: Context): Cloud {
@@ -489,19 +602,29 @@ export class CloudModule implements AgentModule {
                 );
             }
 
-            const cloud = await this.#settleAttempt(
-                ctx,
-                {
-                    error: null,
-                    pending: false,
-                    session: cloudSession(
-                        attempt.environment,
-                        authenticated.refreshToken,
-                        authenticated.user,
-                    ),
-                },
-                consumed,
-            );
+            const cloud = await ctx.inTx(async (txCtx) => {
+                const account = {
+                    environment: attempt.environment,
+                    userId: authenticated.user.id,
+                };
+                const enrollmentCallId = await this.#scheduleEnrollment(txCtx, account);
+                const settled = await this.#settleAttempt(
+                    txCtx,
+                    {
+                        error: null,
+                        pending: false,
+                        session: cloudSession(
+                            attempt.environment,
+                            authenticated.refreshToken,
+                            authenticated.user,
+                            undefined,
+                            { callId: enrollmentCallId, status: "checking" },
+                        ),
+                    },
+                    consumed,
+                );
+                return settled;
+            });
             return connected(cloud);
         });
     }
@@ -539,6 +662,22 @@ export class CloudModule implements AgentModule {
         });
     }
 
+    async createKeys(_ctx: Context, request: CreateCloudKeysRequest): Promise<CloudConnected> {
+        const ctx = this.#ownedContext();
+        if (!Value.Check(createCloudKeysRequestSchema, request)) {
+            throw this.#error(400, "invalid_request", "The Cloud key request is invalid.");
+        }
+        return await this.#queueKeysMutation(ctx, "create", request);
+    }
+
+    async restoreKeys(_ctx: Context, request: RestoreCloudKeysRequest): Promise<CloudConnected> {
+        const ctx = this.#ownedContext();
+        if (!Value.Check(restoreCloudKeysRequestSchema, request)) {
+            throw this.#error(400, "invalid_request", "The Cloud key request is invalid.");
+        }
+        return await this.#queueKeysMutation(ctx, "restore", request);
+    }
+
     async getProfile(_ctx: Context): Promise<CloudProfileResponse> {
         const ctx = this.#ownedContext();
         return await this.#lock.runInLock(ctx, async () => {
@@ -546,6 +685,7 @@ export class CloudModule implements AgentModule {
             const minted = await this.#mintInLock(ctx, true);
             try {
                 return {
+                    enrollment: publicEnrollment(minted.session.enrollment),
                     profile: await this.#client(minted.cloud.environment).getProfile(
                         minted.accessToken,
                     ),
@@ -586,54 +726,40 @@ export class CloudModule implements AgentModule {
                     "Set a compatible Happy Agent profile name before enrolling in Cloud.",
                 );
             }
-            const minted = await this.#mintInLock(ctx, false);
-            let profile: CloudProfile;
-            try {
-                profile = await this.#client(minted.cloud.environment).updateProfile(
-                    minted.accessToken,
-                    { firstName: name, username: request.username },
-                );
-            } catch (error: unknown) {
-                logCloudFailure(
-                    ctx,
-                    "profile",
-                    minted.cloud.environment,
-                    "cloud-profile-update",
-                    error,
-                );
-                if (error instanceof CloudProfileRejectedError) {
-                    throw this.#error(
-                        503,
-                        "cloud_unavailable",
-                        "The Cloud profile is temporarily unavailable.",
-                    );
-                }
-                if (error instanceof CloudUsernameUnavailableError) {
-                    throw this.#error(409, "conflict", "The Cloud username is unavailable.");
-                }
-                if (error instanceof CloudServiceUnavailableError) {
-                    throw this.#error(
-                        503,
-                        "cloud_unavailable",
-                        "The Cloud profile is temporarily unavailable.",
-                    );
-                }
-                throw error;
-            }
-            if (profile.username === null) {
+            const stored = await this.#readOwned(ctx);
+            if (stored?.session === null || stored?.session === undefined) {
                 throw this.#error(
-                    503,
-                    "cloud_unavailable",
-                    "The Cloud profile is temporarily unavailable.",
+                    409,
+                    "cloud_not_authenticated",
+                    "Cloud is not authenticated on this Happy Agent.",
                 );
             }
-            await this.#persistSessionAfterProfile(
-                ctx,
-                minted,
-                cloudEnrollment(profile.username, localProfile.version),
-            );
-            for (const listener of this.#profileListeners) listener(ctx);
-            return { profile };
+            const account = cloudKeysAccount(stored.session);
+            const enrollment = await ctx.inTx(async (txCtx) => {
+                const callId = await this.#scheduleEnrollment(txCtx, account);
+                const nextEnrollment = {
+                    callId,
+                    status: "enrolling" as const,
+                    username: request.username,
+                };
+                await this.#replace(
+                    txCtx,
+                    {
+                        error: null,
+                        pending: false,
+                        session: withoutKeysReconciliation({
+                            ...stored.session!,
+                            enrollment: nextEnrollment,
+                        }),
+                    },
+                    { socialOrigin: "mutation" },
+                );
+                return nextEnrollment;
+            });
+            return {
+                enrollment: publicEnrollment(enrollment),
+                profile: { firstName: name, username: request.username },
+            };
         });
     }
 
@@ -661,7 +787,7 @@ export class CloudModule implements AgentModule {
                     true,
                 );
             }
-            if (stored.session.enrollment === null || stored.session.enrollment === undefined) {
+            if (stored.session.enrollment.status !== "enrolled") {
                 throw this.#error(
                     409,
                     "cloud_not_enrolled",
@@ -702,7 +828,12 @@ export class CloudModule implements AgentModule {
                     );
                 }
                 if (error instanceof CloudProfileRequiredError) {
-                    await this.#persistSessionAfterProfile(ctx, minted, null, "mutation");
+                    await this.#persistSessionAfterProfile(
+                        ctx,
+                        minted,
+                        { status: "required" },
+                        "mutation",
+                    );
                     throw this.#error(
                         409,
                         "cloud_not_enrolled",
@@ -838,6 +969,470 @@ export class CloudModule implements AgentModule {
         return { ...minted, cloud: connected(this.#cloud) };
     }
 
+    async #scheduleEnrollment(ctx: Context, account: CloudKeysAccount): Promise<string> {
+        const invocation = await this.#durableFunctions.invoke(ctx, {
+            function: CLOUD_ENROLLMENT_FUNCTION,
+            arguments: account,
+        });
+        return invocation.callId;
+    }
+
+    async #executeEnrollment(
+        ctx: Context,
+        account: CloudAccountArguments,
+        callId: string,
+    ): Promise<void> {
+        for (;;) {
+            try {
+                const prepared = await this.#lock.runInLock(ctx, async () => {
+                    const stored = await this.#readOwned(ctx);
+                    if (!sessionMatches(stored?.session, account)) return undefined;
+                    const enrollment = stored.session.enrollment;
+                    if (enrollment.status !== "checking" && enrollment.status !== "enrolling") {
+                        return undefined;
+                    }
+                    if (enrollmentCallId(enrollment) !== callId) {
+                        return undefined;
+                    }
+                    const minted = await this.#mintInLock(ctx, false);
+                    const localProfile = await this.#profile.get(ctx);
+                    return {
+                        enrollment,
+                        identityKey:
+                            stored.session.keys?.status === "ready"
+                                ? stored.session.keys.identityKey
+                                : undefined,
+                        localProfile,
+                        minted,
+                    };
+                });
+                if (prepared === undefined) return;
+
+                let enrollment: CloudEnrollmentState;
+                if (prepared.enrollment.status === "checking") {
+                    const remote = await this.#client(account.environment).getProfileState(
+                        prepared.minted.accessToken,
+                    );
+                    if (remote.profile.username === null) {
+                        enrollment = { status: "required" };
+                    } else {
+                        const identityKey =
+                            prepared.identityKey !== undefined &&
+                            remote.identityKey === prepared.identityKey
+                                ? prepared.identityKey
+                                : undefined;
+                        enrollment = cloudEnrollment(remote.profile.username, null, identityKey);
+                    }
+                } else {
+                    const name = localProfileName(prepared.localProfile);
+                    if (prepared.localProfile === undefined || name === undefined) {
+                        enrollment = { status: "required" };
+                    } else {
+                        const remote = await this.#client(account.environment).updateProfile(
+                            prepared.minted.accessToken,
+                            {
+                                firstName: name,
+                                ...(prepared.identityKey === undefined
+                                    ? {}
+                                    : { identityKey: prepared.identityKey }),
+                                username: prepared.enrollment.username,
+                            },
+                        );
+                        if (remote.username === null) throw new CloudServiceUnavailableError();
+                        enrollment = cloudEnrollment(
+                            remote.username,
+                            prepared.localProfile.version,
+                            prepared.identityKey,
+                        );
+                    }
+                }
+
+                await this.#lock.runInLock(ctx, async () => {
+                    let enrolled = false;
+                    const committed = await ctx.inTx(async (txCtx) => {
+                        const stored = await this.#database.read(txCtx);
+                        if (
+                            !sessionMatches(stored?.session, account) ||
+                            enrollmentCallId(stored.session.enrollment) !== callId
+                        ) {
+                            return false;
+                        }
+                        const keysReconciliationCallId =
+                            enrollment.status === "enrolled"
+                                ? await this.#scheduleKeysReconciliation(txCtx, account)
+                                : undefined;
+                        await this.#persistSessionAfterProfile(
+                            txCtx,
+                            prepared.minted,
+                            enrollment,
+                            "background",
+                            keysReconciliationCallId,
+                        );
+                        if (enrollment.status === "enrolled") {
+                            enrolled = true;
+                            const latestProfile = await this.#profile.get(txCtx);
+                            if (
+                                prepared.localProfile !== undefined &&
+                                latestProfile?.version !== prepared.localProfile.version
+                            ) {
+                                await this.#scheduleProfileSync(
+                                    txCtx,
+                                    account.userId,
+                                    `cloud.profile-change:${latestProfile?.version ?? "missing"}`,
+                                );
+                            }
+                        }
+                        return true;
+                    });
+                    if (committed && enrolled) {
+                        for (const listener of this.#profileListeners) listener(ctx);
+                    }
+                });
+                return;
+            } catch (error: unknown) {
+                if (error instanceof CloudUsernameUnavailableError) {
+                    await this.#lock.runInLock(ctx, async () => {
+                        await ctx.inTx(async (txCtx) => {
+                            const stored = await this.#database.read(txCtx);
+                            if (
+                                !sessionMatches(stored?.session, account) ||
+                                enrollmentCallId(stored.session.enrollment) !== callId
+                            ) {
+                                return;
+                            }
+                            await this.#replace(txCtx, {
+                                error: null,
+                                pending: false,
+                                session: withoutKeysReconciliation({
+                                    ...stored.session,
+                                    enrollment: { status: "required" },
+                                }),
+                            });
+                        });
+                    });
+                    return;
+                }
+                if (
+                    error instanceof CloudOperationError &&
+                    (error.code === "cloud_not_authenticated" ||
+                        error.code === "cloud_unauthorized")
+                ) {
+                    return;
+                }
+                logCloudFailure(ctx, "profile", account.environment, "durable-enrollment", error);
+            }
+            await delay(ctx, PROFILE_SYNC_RETRY_MS);
+        }
+    }
+
+    async #scheduleKeysReconciliation(ctx: Context, account: CloudKeysAccount): Promise<string> {
+        const invocation = await this.#durableFunctions.invoke(ctx, {
+            function: CLOUD_KEYS_FUNCTION,
+            arguments: account,
+        });
+        return invocation.callId;
+    }
+
+    async #executeKeysReconciliation(
+        ctx: Context,
+        account: CloudAccountArguments,
+        callId: string,
+    ): Promise<void> {
+        for (;;) {
+            try {
+                const prepared = await this.#lock.runInLock(ctx, async () => {
+                    const stored = await this.#readOwned(ctx);
+                    if (
+                        !sessionMatches(stored?.session, account) ||
+                        stored.session.enrollment.status !== "enrolled" ||
+                        stored.session.keysReconciliationCallId !== callId
+                    ) {
+                        return undefined;
+                    }
+                    const minted = await this.#mintInLock(ctx, false);
+                    const local = await this.#keysDatabase.read(ctx, account);
+                    return { local, minted };
+                });
+                if (prepared === undefined) return;
+
+                const [vault, profile] = await Promise.all([
+                    this.#client(account.environment).getVaultStatus(prepared.minted.accessToken),
+                    this.#client(account.environment).getProfileState(prepared.minted.accessToken),
+                ]);
+                const localReady = prepared.local?.status === "ready" ? prepared.local : undefined;
+                const remoteIdentity = profile.identityKey;
+                const keys: Exclude<CloudKeys, { status: "inactive" }> =
+                    remoteIdentity !== undefined
+                        ? localReady?.identityKey === remoteIdentity
+                            ? {
+                                  identityKey: localReady.identityKey,
+                                  status: "ready",
+                              }
+                            : { status: "restore_required" }
+                        : localReady !== undefined
+                          ? { identityKey: localReady.identityKey, status: "ready" }
+                          : vault.exists
+                            ? { status: "restore_required" }
+                            : { status: "create_required" };
+
+                await this.#lock.runInLock(ctx, async () => {
+                    await ctx.inTx(async (txCtx) => {
+                        const stored = await this.#database.read(txCtx);
+                        if (
+                            !sessionMatches(stored?.session, account) ||
+                            stored.session.enrollment.status !== "enrolled" ||
+                            stored.session.keysReconciliationCallId !== callId
+                        ) {
+                            return;
+                        }
+                        await this.#replace(txCtx, {
+                            error: null,
+                            pending: false,
+                            session: withoutKeysReconciliation({ ...stored.session, keys }),
+                        });
+                        if (keys.status === "ready") {
+                            await this.#scheduleProfileSync(
+                                txCtx,
+                                account.userId,
+                                `cloud.keys-ready:${keys.identityKey}`,
+                            );
+                        }
+                    });
+                });
+                return;
+            } catch (error: unknown) {
+                if (
+                    error instanceof CloudOperationError &&
+                    (error.code === "cloud_not_authenticated" ||
+                        error.code === "cloud_unauthorized")
+                ) {
+                    return;
+                }
+                logCloudFailure(ctx, "keys", account.environment, "durable-key-discovery", error);
+                await delay(ctx, PROFILE_SYNC_RETRY_MS);
+            }
+        }
+    }
+
+    async #queueKeysMutation(
+        ctx: Context,
+        kind: "create" | "restore",
+        request: CreateCloudKeysRequest | RestoreCloudKeysRequest,
+    ): Promise<CloudConnected> {
+        const queued = await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const stored = await this.#readOwned(ctx);
+            if (stored?.session === null || stored?.session === undefined) {
+                throw this.#error(
+                    409,
+                    "cloud_not_authenticated",
+                    "Cloud is not authenticated on this Happy Agent.",
+                );
+            }
+            if (stored.session.keys?.status === "ready") {
+                return { cloud: connected(this.#cloud) } as const;
+            }
+            const expected = kind === "create" ? "create_required" : "restore_required";
+            if (stored.session.keys?.status !== expected) {
+                throw this.#error(
+                    409,
+                    "conflict",
+                    kind === "create"
+                        ? "Cloud keys must be restored for this account."
+                        : "Cloud keys must be created for this account.",
+                );
+            }
+            const account = cloudKeysAccount(stored.session);
+            const key = cloudAccountKey(account);
+            const generation = createId();
+            const pending = pendingCloudKeyFactors(account, generation, kind, request);
+            this.#keyFactors
+                .get(key)
+                ?.reject(this.#error(409, "conflict", "Cloud key setup was replaced."));
+            this.#keyFactors.set(key, pending);
+            try {
+                await this.#durableFunctions.invoke(ctx, {
+                    function: CLOUD_KEYS_MUTATION_FUNCTION,
+                    arguments: { ...account, generation, kind },
+                });
+            } catch (error: unknown) {
+                if (this.#keyFactors.get(key) === pending) this.#keyFactors.delete(key);
+                pending.reject(error);
+                throw error;
+            }
+            return { pending } as const;
+        });
+        if ("cloud" in queued) return queued.cloud;
+        return await queued.pending.promise;
+    }
+
+    async #executeKeysMutation(ctx: Context, input: CloudKeysMutationArguments): Promise<void> {
+        const account = { environment: input.environment, userId: input.userId };
+        const key = cloudAccountKey(account);
+        for (;;) {
+            const factors = this.#keyFactors.get(key);
+            if (factors === undefined || factors.generation !== input.generation) return;
+            try {
+                const cloud = await this.#lock.runInLock(ctx, async () => {
+                    if (this.#keyFactors.get(key) !== factors) return undefined;
+                    return await this.#mutateKeysOnce(ctx, factors);
+                });
+                if (this.#keyFactors.get(key) !== factors) return;
+                if (cloud === undefined) {
+                    this.#settleKeyFactors(
+                        factors,
+                        undefined,
+                        this.#error(
+                            409,
+                            "cloud_not_authenticated",
+                            "The Cloud account changed before key setup completed.",
+                        ),
+                    );
+                } else {
+                    this.#settleKeyFactors(factors, cloud);
+                }
+                return;
+            } catch (error: unknown) {
+                if (error instanceof CloudKeyTerminalError) {
+                    this.#settleKeyFactors(factors, undefined, error.operationError);
+                    return;
+                }
+                if (error instanceof CloudOperationError && error.status !== 503) {
+                    this.#settleKeyFactors(factors, undefined, error);
+                    return;
+                }
+                logCloudFailure(ctx, "keys", account.environment, "durable-key-mutation", error);
+                await delay(ctx, PROFILE_SYNC_RETRY_MS);
+            }
+        }
+    }
+
+    async #mutateKeysOnce(
+        ctx: Context,
+        factors: PendingCloudKeyFactors,
+    ): Promise<CloudConnected | undefined> {
+        const stored = await this.#readOwned(ctx);
+        if (!sessionMatches(stored?.session, factors.account)) return undefined;
+        if (stored.session.keys?.status === "ready") return connected(this.#cloud);
+        const minted = await this.#mintInLock(ctx, false);
+
+        if (factors.kind === "create") {
+            if (stored.session.keys?.status !== "create_required") {
+                throw this.#error(409, "conflict", "Cloud keys must be restored for this account.");
+            }
+            let staged: StoredCloudKeys | undefined;
+            try {
+                staged = await this.#keysDatabase.read(ctx, factors.account);
+                if (staged?.status === "ready") {
+                    return await this.#commitReadyKeys(ctx, factors.account, staged);
+                }
+                if (staged === undefined) {
+                    const created = await createCloudKeyBundle(factors.request.encryptionKey);
+                    staged = { ...created, status: "staged" };
+                    await this.#keysDatabase.write(ctx, factors.account, staged);
+                } else {
+                    const opened = await openCloudKeyBundle(
+                        staged.bundle,
+                        factors.request.encryptionKey,
+                    );
+                    if (
+                        opened.rootSecret !== staged.rootSecret ||
+                        opened.identityKey !== staged.identityKey
+                    ) {
+                        throw new CloudKeyMaterialError();
+                    }
+                }
+            } catch (error: unknown) {
+                if (error instanceof CloudKeyMaterialError) {
+                    throw this.#error(409, "conflict", "The Cloud key credentials were rejected.");
+                }
+                if (error instanceof CloudOperationError) throw error;
+                throw this.#terminalKeyStorageError();
+            }
+            try {
+                await this.#client(factors.account.environment).saveVault(
+                    minted.accessToken,
+                    factors.request.authHash,
+                    staged.bundle,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudVaultKeyMismatchError) {
+                    await this.#replaceSessionKeys(ctx, factors.account.userId, {
+                        status: "restore_required",
+                    });
+                    throw this.#error(
+                        409,
+                        "conflict",
+                        "Cloud keys already exist for this account.",
+                    );
+                }
+                throw error;
+            }
+            try {
+                return await this.#commitReadyKeys(ctx, factors.account, {
+                    identityKey: staged.identityKey,
+                    rootSecret: staged.rootSecret,
+                    status: "ready",
+                });
+            } catch (error: unknown) {
+                if (error instanceof CloudOperationError) throw error;
+                throw this.#terminalKeyStorageError();
+            }
+        }
+
+        if (stored.session.keys?.status !== "restore_required") {
+            throw this.#error(409, "conflict", "Cloud keys must be created for this account.");
+        }
+        try {
+            const remote = await this.#client(factors.account.environment).restoreVault(
+                minted.accessToken,
+                factors.request.authHash,
+            );
+            const restored = await openCloudKeyBundle(remote.blob, factors.request.encryptionKey);
+            try {
+                return await this.#commitReadyKeys(ctx, factors.account, {
+                    ...restored,
+                    status: "ready",
+                });
+            } catch (error: unknown) {
+                if (error instanceof CloudOperationError) throw error;
+                throw this.#terminalKeyStorageError();
+            }
+        } catch (error: unknown) {
+            if (error instanceof CloudVaultNotFoundError) {
+                await this.#replaceSessionKeys(ctx, factors.account.userId, {
+                    status: "create_required",
+                });
+                throw this.#error(409, "conflict", "Cloud keys do not exist for this account.");
+            }
+            if (
+                error instanceof CloudVaultKeyMismatchError ||
+                error instanceof CloudKeyMaterialError
+            ) {
+                throw this.#error(409, "conflict", "The Cloud key credentials were rejected.");
+            }
+            throw error;
+        }
+    }
+
+    #settleKeyFactors(
+        factors: PendingCloudKeyFactors,
+        cloud?: CloudConnected,
+        error?: unknown,
+    ): void {
+        const key = cloudAccountKey(factors.account);
+        if (this.#keyFactors.get(key) !== factors) return;
+        this.#keyFactors.delete(key);
+        if (error === undefined && cloud !== undefined) factors.resolve(cloud);
+        else factors.reject(error ?? new Error("Cloud key setup did not complete."));
+    }
+
+    #terminalKeyStorageError(): CloudKeyTerminalError {
+        return new CloudKeyTerminalError(
+            this.#error(503, "cloud_unavailable", "Cloud keys are temporarily unavailable."),
+        );
+    }
+
     async #publishUserChange(ctx: Context, minted: MintedCloudCredential): Promise<void> {
         if (sameUser(minted.session.user, minted.authenticated.user)) return;
         await this.#replace(ctx, {
@@ -847,7 +1442,9 @@ export class CloudModule implements AgentModule {
                 minted.session.environment,
                 minted.authenticated.refreshToken,
                 minted.authenticated.user,
-                minted.session.enrollment ?? null,
+                minted.session.keys,
+                minted.session.enrollment,
+                minted.session.keysReconciliationCallId,
             ),
         });
     }
@@ -855,8 +1452,9 @@ export class CloudModule implements AgentModule {
     async #persistSessionAfterProfile(
         ctx: Context,
         minted: MintedCloudCredential,
-        enrollment: CloudEnrollment | null,
+        enrollment: CloudEnrollmentState,
         origin: CloudSocialUpdateOrigin = "mutation",
+        keysReconciliationCallId: string | undefined = undefined,
     ): Promise<void> {
         const stored = await this.#readOwned(ctx);
         if (stored?.session === null || stored?.session === undefined) {
@@ -864,24 +1462,6 @@ export class CloudModule implements AgentModule {
         }
         if (stored.session.user.id !== minted.session.user.id) {
             throw new Error("The Cloud account changed while enrollment was being stored.");
-        }
-        if (sameUser(stored.session.user, minted.authenticated.user)) {
-            await ctx.inTx(async (txCtx) => {
-                await this.#database.updateEnrollment(txCtx, stored.session!.user.id, enrollment);
-                const currentSocial = await this.#socialDatabase.read(txCtx);
-                const replacement = await this.#socialDatabase.replace(
-                    txCtx,
-                    socialValueForSession(currentSocial, {
-                        ...stored.session!,
-                        enrollment,
-                    }),
-                );
-                afterCommit(txCtx, (postCommitCtx) => {
-                    this.#applySocial(postCommitCtx, replacement, origin, true);
-                });
-                return replacement;
-            });
-            return;
         }
         await this.#replace(
             ctx,
@@ -891,18 +1471,81 @@ export class CloudModule implements AgentModule {
                 session: cloudSession(
                     stored.session.environment,
                     stored.session.refreshToken,
-                    minted.authenticated.user,
+                    sameUser(stored.session.user, minted.authenticated.user)
+                        ? stored.session.user
+                        : minted.authenticated.user,
+                    stored.session.keys,
                     enrollment,
+                    keysReconciliationCallId ?? stored.session.keysReconciliationCallId,
                 ),
             },
             { socialOrigin: origin },
         );
     }
 
+    async #replaceSessionKeys(
+        ctx: Context,
+        expectedUserId: string,
+        keys: Exclude<CloudKeys, { status: "inactive" }>,
+    ): Promise<CloudConnected> {
+        const stored = await this.#readOwned(ctx);
+        if (stored?.session === null || stored?.session === undefined) {
+            throw new Error("The Cloud session changed while its keys were being stored.");
+        }
+        if (stored.session.user.id !== expectedUserId) {
+            throw new Error("The Cloud account changed while its keys were being stored.");
+        }
+        return connected(
+            await this.#replace(ctx, {
+                error: null,
+                pending: false,
+                session: { ...stored.session, keys },
+            }),
+        );
+    }
+
+    async #commitReadyKeys(
+        ctx: Context,
+        account: CloudKeysAccount,
+        ready: ReadyCloudKeys,
+    ): Promise<CloudConnected> {
+        return await ctx.inTx(async (txCtx) => {
+            const stored = await this.#database.read(txCtx);
+            if (stored?.session === null || stored?.session === undefined) {
+                throw new Error("The Cloud session changed while its keys were being stored.");
+            }
+            if (
+                stored.session.environment !== account.environment ||
+                stored.session.user.id !== account.userId
+            ) {
+                throw new Error("The Cloud account changed while its keys were being stored.");
+            }
+            await this.#keysDatabase.write(txCtx, account, ready);
+            const cloud = connected(
+                await this.#replace(txCtx, {
+                    error: null,
+                    pending: false,
+                    session: {
+                        ...stored.session,
+                        keys: { identityKey: ready.identityKey, status: "ready" },
+                    },
+                }),
+            );
+            if (stored.session.enrollment.status === "enrolled") {
+                await this.#scheduleProfileSync(
+                    txCtx,
+                    account.userId,
+                    `cloud.keys-ready:${ready.identityKey}`,
+                );
+            }
+            return cloud;
+        });
+    }
+
     async #scheduleChangedProfileSync(ctx: Context, profileVersion: string): Promise<void> {
         if (this.#stopping || this.#context === undefined) return;
         const stored = await this.#database.read(ctx);
-        if (stored?.session?.enrollment === null || stored?.session?.enrollment === undefined) {
+        if (stored?.session?.enrollment.status !== "enrolled") {
             return;
         }
         await this.#scheduleProfileSync(
@@ -917,7 +1560,6 @@ export class CloudModule implements AgentModule {
             function: CLOUD_PROFILE_SYNC_FUNCTION,
             arguments: { userId },
             ...(operationId === undefined ? {} : { operationId }),
-            lockKeys: [CLOUD_PROFILE_SYNC_LOCK],
         });
     }
 
@@ -956,11 +1598,11 @@ export class CloudModule implements AgentModule {
         if (
             stored?.session === null ||
             stored?.session === undefined ||
-            stored.session.user.id !== expectedUserId
+            stored.session.user.id !== expectedUserId ||
+            stored.session.enrollment.status !== "enrolled"
         ) {
             return true;
         }
-
         const minted = await this.#mintInLock(ctx, false);
         const client = this.#client(minted.cloud.environment);
         let online: CloudProfile;
@@ -978,36 +1620,54 @@ export class CloudModule implements AgentModule {
         }
 
         if (online.username === null) {
-            await this.#persistSessionAfterProfile(ctx, minted, null, "background");
+            await this.#persistSessionAfterProfile(
+                ctx,
+                minted,
+                { status: "required" },
+                "background",
+            );
             return true;
         }
 
         const localProfile = await this.#profile.get(ctx);
         const name = localProfileName(localProfile);
+        const synchronizedIdentityKey =
+            stored.session.enrollment.status === "enrolled"
+                ? stored.session.enrollment.identityKey
+                : undefined;
+        const readyIdentityKey =
+            stored.session.keys?.status === "ready" ? stored.session.keys.identityKey : undefined;
         if (localProfile === undefined || name === undefined) {
             await this.#persistSessionAfterProfile(
                 ctx,
                 minted,
-                cloudEnrollment(online.username, null),
+                cloudEnrollment(online.username, null, synchronizedIdentityKey),
                 "background",
             );
             return true;
         }
 
-        if (online.firstName === name && online.lastName === undefined) {
+        if (
+            online.firstName === name &&
+            online.lastName === undefined &&
+            (readyIdentityKey === undefined || readyIdentityKey === synchronizedIdentityKey)
+        ) {
             await this.#persistSessionAfterProfile(
                 ctx,
                 minted,
-                cloudEnrollment(online.username, localProfile.version),
+                cloudEnrollment(online.username, localProfile.version, synchronizedIdentityKey),
                 "background",
             );
             return true;
         }
+
+        if (readyIdentityKey === undefined && synchronizedIdentityKey !== undefined) return false;
 
         let synchronized: CloudProfile;
         try {
             synchronized = await client.updateProfile(minted.accessToken, {
                 firstName: name,
+                ...(readyIdentityKey === undefined ? {} : { identityKey: readyIdentityKey }),
                 username: online.username,
             });
         } catch (error: unknown) {
@@ -1020,7 +1680,7 @@ export class CloudModule implements AgentModule {
         await this.#persistSessionAfterProfile(
             ctx,
             minted,
-            cloudEnrollment(synchronized.username, localProfile.version),
+            cloudEnrollment(synchronized.username, localProfile.version, readyIdentityKey),
             "background",
         );
         for (const listener of this.#profileListeners) listener(ctx);
@@ -1047,7 +1707,41 @@ export class CloudModule implements AgentModule {
         this.#cloudSocial = projectSocial(social.state);
         this.#cloudSocialUserId = social.state.userId;
         if (stored.session !== null) {
-            await this.#scheduleProfileSync(ctx, stored.session.user.id);
+            const session = stored.session;
+            const account = cloudKeysAccount(session);
+            if (
+                session.enrollment.status === "checking" ||
+                session.enrollment.status === "enrolling"
+            ) {
+                const enrollment = session.enrollment;
+                if (enrollment.callId === undefined) {
+                    stored = await ctx.inTx(async (txCtx) => {
+                        const callId = await this.#scheduleEnrollment(txCtx, account);
+                        return await this.#database.replace(txCtx, {
+                            error: null,
+                            pending: false,
+                            session: {
+                                ...session,
+                                enrollment: { ...enrollment, callId },
+                            },
+                        });
+                    });
+                    this.#cloud = project(stored);
+                }
+            } else if (session.enrollment.status === "enrolled") {
+                if (session.keys === undefined && session.keysReconciliationCallId === undefined) {
+                    stored = await ctx.inTx(async (txCtx) => {
+                        const callId = await this.#scheduleKeysReconciliation(txCtx, account);
+                        return await this.#database.replace(txCtx, {
+                            error: null,
+                            pending: false,
+                            session: { ...session, keysReconciliationCallId: callId },
+                        });
+                    });
+                    this.#cloud = project(stored);
+                }
+                await this.#scheduleProfileSync(ctx, account.userId);
+            }
         }
     }
 
@@ -1067,12 +1761,12 @@ export class CloudModule implements AgentModule {
                 this.#cloud = cloud;
                 for (const listener of this.#listeners) listener(postCommitCtx, cloud);
                 this.#applySocial(postCommitCtx, social, "mutation", true);
+                this.#restartMurmur();
             });
             await this.#durableFunctions.invoke(txCtx, {
                 function: CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
                 arguments: { expiresAt: attempt.expiresAt, version: attempt.version },
                 operationId: CLOUD_AUTHORIZATION_EXPIRY_OPERATION,
-                lockKeys: [CLOUD_AUTHORIZATION_LOCK],
             });
             return cloud;
         });
@@ -1099,6 +1793,7 @@ export class CloudModule implements AgentModule {
                 this.#cloud = cloud;
                 for (const listener of this.#listeners) listener(postCommitCtx, cloud);
                 this.#applySocial(postCommitCtx, social, options.socialOrigin ?? "mutation", true);
+                this.#restartMurmur();
             });
             return cloud;
         });
@@ -1184,6 +1879,145 @@ export class CloudModule implements AgentModule {
         }
     }
 
+    #startMurmurSupervisor(): void {
+        if (this.#murmurSupervisor !== undefined || this.#murmurLifetime.signal.aborted) return;
+        const owned = this.#ownedContext();
+        const database = agentDatabase(owned);
+        if (database === undefined) throw new Error("Cloud lost its agent database.");
+        const ctx = withLifetime(
+            withAgentDatabase(detach(owned).named("cloud-murmur"), database),
+            this.#murmurLifetime.signal,
+        );
+        this.#murmurSupervisor = this.#runMurmurSupervisor(ctx).catch((error: unknown) => {
+            if (this.#murmurLifetime.signal.aborted) return;
+            ctx.log.warn("Cloud messaging stopped reconnecting unexpectedly.", {}, error);
+        });
+    }
+
+    async #runMurmurSupervisor(ctx: Context): Promise<void> {
+        while (!this.#murmurLifetime.signal.aborted) {
+            let live: LiveCloudMurmur | undefined;
+            let environment: CloudEnvironment | undefined;
+            let opening: AbortController | undefined;
+            let stop: (() => void) | undefined;
+            try {
+                const prepared = await this.#lock.runInLock(ctx, async () => {
+                    const stored = await this.#readOwned(ctx);
+                    if (
+                        stored?.session?.enrollment.status !== "enrolled" ||
+                        stored.session.keys?.status !== "ready"
+                    ) {
+                        return undefined;
+                    }
+                    const account = cloudKeysAccount(stored.session);
+                    const local = await this.#keysDatabase.read(ctx, account);
+                    if (
+                        local?.status !== "ready" ||
+                        local.identityKey !== stored.session.keys.identityKey
+                    ) {
+                        return undefined;
+                    }
+                    return { account, local };
+                });
+                if (prepared === undefined) {
+                    await this.#waitForMurmurWake(MURMUR_RETRY_MS);
+                    continue;
+                }
+                environment = prepared.account.environment;
+                const identity = cloudIdentity(prepared.local);
+                const controller = new AbortController();
+                opening = controller;
+                this.#openingMurmur = controller;
+                stop = (): void => controller.abort();
+                this.#murmurLifetime.signal.addEventListener("abort", stop, { once: true });
+                let client: MurmurClient;
+                try {
+                    client = await MurmurClient.open({
+                        fetch: async (input, init) => {
+                            const signal =
+                                init?.signal === undefined || init.signal === null
+                                    ? controller.signal
+                                    : AbortSignal.any([init.signal, controller.signal]);
+                            return await fetch(input, { ...init, signal });
+                        },
+                        identity,
+                        relay: murmurRelays[environment],
+                        store: new CloudMurmurStore(ctx, prepared.account),
+                    });
+                } finally {
+                    destroyIdentity(identity);
+                }
+                if (this.#openingMurmur === controller) this.#openingMurmur = undefined;
+                const sync = client.sync({ abort: controller.signal });
+                live = { account: prepared.account, client, controller, sync };
+                const accepted = await this.#lock.runInLock(ctx, async () => {
+                    const stored = await this.#readOwned(ctx);
+                    if (
+                        stored?.session?.enrollment.status !== "enrolled" ||
+                        stored.session.keys?.status !== "ready" ||
+                        stored.session.environment !== live!.account.environment ||
+                        stored.session.user.id !== live!.account.userId ||
+                        this.#murmurLifetime.signal.aborted
+                    ) {
+                        return false;
+                    }
+                    this.#liveMurmur = live;
+                    return true;
+                });
+                if (!accepted) controller.abort();
+                await sync;
+            } catch (error: unknown) {
+                if (!this.#murmurLifetime.signal.aborted && environment !== undefined) {
+                    const diagnostic = cloudFailureDiagnostic(error);
+                    ctx.log.warn(
+                        `cloud:keys:error environment=${environment} phase=murmur reason=${diagnostic.reason}`,
+                    );
+                }
+            } finally {
+                if (stop !== undefined) {
+                    this.#murmurLifetime.signal.removeEventListener("abort", stop);
+                }
+                if (this.#openingMurmur === opening) this.#openingMurmur = undefined;
+                if (live !== undefined) {
+                    live.controller.abort();
+                    await live.sync.catch(() => undefined);
+                    try {
+                        live.client.close();
+                    } catch {
+                        // The synchronization promise has settled; close is best-effort cleanup.
+                    }
+                    if (this.#liveMurmur === live) this.#liveMurmur = undefined;
+                }
+            }
+            if (!this.#murmurLifetime.signal.aborted) {
+                await this.#waitForMurmurWake(MURMUR_RETRY_MS);
+            }
+        }
+    }
+
+    async #waitForMurmurWake(milliseconds?: number): Promise<void> {
+        if (this.#murmurLifetime.signal.aborted) return;
+        await new Promise<void>((resolve) => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const finish = (): void => {
+                if (this.#murmurWake !== finish) return;
+                this.#murmurWake = undefined;
+                if (timer !== undefined) clearTimeout(timer);
+                this.#murmurLifetime.signal.removeEventListener("abort", finish);
+                resolve();
+            };
+            this.#murmurWake = finish;
+            this.#murmurLifetime.signal.addEventListener("abort", finish, { once: true });
+            if (milliseconds !== undefined) timer = setTimeout(finish, milliseconds);
+        });
+    }
+
+    #restartMurmur(): void {
+        this.#openingMurmur?.abort();
+        this.#liveMurmur?.controller.abort();
+        this.#murmurWake?.();
+    }
+
     #startSocialSupervisor(): void {
         if (this.#socialSupervisor !== undefined || this.#socialLifetime.signal.aborted) return;
         const owned = this.#ownedContext();
@@ -1209,8 +2043,7 @@ export class CloudModule implements AgentModule {
                     if (
                         stored?.session === null ||
                         stored?.session === undefined ||
-                        stored.session.enrollment === null ||
-                        stored.session.enrollment === undefined
+                        stored.session.enrollment.status !== "enrolled"
                     ) {
                         return undefined;
                     }
@@ -1306,8 +2139,7 @@ export class CloudModule implements AgentModule {
                 stored?.session === null ||
                 stored?.session === undefined ||
                 stored.session.user.id !== live.userId ||
-                stored.session.enrollment === null ||
-                stored.session.enrollment === undefined
+                stored.session.enrollment.status !== "enrolled"
             ) {
                 throw new Error("The Cloud account changed while its social socket was open.");
             }
@@ -1378,7 +2210,6 @@ export class CloudModule implements AgentModule {
             function: CLOUD_SOCIAL_SYNC_FUNCTION,
             arguments: { remoteVersion, userId },
             operationId: `cloud.social-sync:${remoteVersion}`,
-            lockKeys: [CLOUD_SOCIAL_SYNC_LOCK],
         });
     }
 
@@ -1391,8 +2222,7 @@ export class CloudModule implements AgentModule {
                         stored?.session === null ||
                         stored?.session === undefined ||
                         stored.session.user.id !== input.userId ||
-                        stored.session.enrollment === null ||
-                        stored.session.enrollment === undefined
+                        stored.session.enrollment.status !== "enrolled"
                     ) {
                         return true;
                     }
@@ -1448,8 +2278,7 @@ export class CloudModule implements AgentModule {
             stored?.session === null ||
             stored?.session === undefined ||
             stored.session.user.id !== minted.session.user.id ||
-            stored.session.enrollment === null ||
-            stored.session.enrollment === undefined
+            stored.session.enrollment.status !== "enrolled"
         ) {
             throw this.#error(
                 409,
@@ -1560,7 +2389,7 @@ export class CloudModule implements AgentModule {
 
 function logCloudFailure(
     ctx: Context,
-    operation: "authorization" | "profile" | "social" | "token",
+    operation: "authorization" | "keys" | "profile" | "social" | "token",
     environment: CloudEnvironment,
     phase: string,
     error: unknown,
@@ -1599,11 +2428,13 @@ function project(stored: CloudStoredState, attempt?: CloudAttempt): Cloud {
         if (attempt === undefined) {
             return freezeCloud({
                 authorization: null,
+                enrollment: { status: "inactive" },
                 environment: null,
                 error: {
                     code: "authorization_expired",
                     message: "Cloud authorization expired.",
                 },
+                keys: { status: "inactive" },
                 status: "disconnected",
                 updatedAt: stored.updatedAt,
                 user: null,
@@ -1612,8 +2443,10 @@ function project(stored: CloudStoredState, attempt?: CloudAttempt): Cloud {
         }
         return freezeCloud({
             authorization: { expiresAt: attempt.expiresAt, url: attempt.url },
+            enrollment: { status: "inactive" },
             environment: attempt.environment,
             error: null,
+            keys: { status: "inactive" },
             status: "authorizing",
             updatedAt: stored.updatedAt,
             user: null,
@@ -1623,8 +2456,10 @@ function project(stored: CloudStoredState, attempt?: CloudAttempt): Cloud {
     if (stored.session !== null) {
         return freezeCloud({
             authorization: null,
+            enrollment: publicEnrollment(stored.session.enrollment),
             environment: stored.session.environment,
             error: null,
+            ...(stored.session.keys === undefined ? {} : { keys: stored.session.keys }),
             status: "connected",
             updatedAt: stored.updatedAt,
             user: stored.session.user,
@@ -1633,11 +2468,13 @@ function project(stored: CloudStoredState, attempt?: CloudAttempt): Cloud {
     }
     return freezeCloud({
         authorization: null,
+        enrollment: { status: "inactive" },
         environment: null,
         error:
             stored.error === null
                 ? null
                 : { code: stored.error.code, message: stored.error.message },
+        keys: { status: "inactive" },
         status: "disconnected",
         updatedAt: stored.updatedAt,
         user: null,
@@ -1650,7 +2487,7 @@ function socialValueForSession(
     session: CloudSession | null,
     forceConnecting = false,
 ): CloudSocialStoredValue {
-    if (session === null || session.enrollment === null || session.enrollment === undefined) {
+    if (session === null || session.enrollment.status !== "enrolled") {
         return unenrolledCloudSocialValue();
     }
     if (current?.status === "enrolled" && current.userId === session.user.id) {
@@ -1813,6 +2650,86 @@ function sameSecret(left: string, right: string): boolean {
     return leftBytes.byteLength === rightBytes.byteLength && timingSafeEqual(leftBytes, rightBytes);
 }
 
+function cloudKeysAccount(session: CloudSession): CloudKeysAccount {
+    return { environment: session.environment, userId: session.user.id };
+}
+
+function cloudAccountKey(account: CloudKeysAccount): string {
+    return `${account.environment}:${account.userId}`;
+}
+
+function sessionMatches(
+    session: CloudSession | null | undefined,
+    account: CloudAccountArguments,
+): session is CloudSession {
+    return (
+        session !== null &&
+        session !== undefined &&
+        session.environment === account.environment &&
+        session.user.id === account.userId
+    );
+}
+
+function enrollmentCallId(enrollment: CloudEnrollmentState): string | undefined {
+    return enrollment.status === "checking" || enrollment.status === "enrolling"
+        ? enrollment.callId
+        : undefined;
+}
+
+function withoutKeysReconciliation(session: CloudSession): CloudSession {
+    const { keysReconciliationCallId, ...withoutCallId } = session;
+    void keysReconciliationCallId;
+    return withoutCallId;
+}
+
+function publicEnrollment(enrollment: CloudEnrollmentState): PublicCloudEnrollment {
+    return enrollment.status === "enrolling" || enrollment.status === "enrolled"
+        ? { status: enrollment.status, username: enrollment.username }
+        : { status: enrollment.status };
+}
+
+function pendingCloudKeyFactors(
+    account: CloudKeysAccount,
+    generation: string,
+    kind: "create" | "restore",
+    request: CreateCloudKeysRequest | RestoreCloudKeysRequest,
+): PendingCloudKeyFactors {
+    let resolve!: (cloud: CloudConnected) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<CloudConnected>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return {
+        account,
+        generation,
+        kind,
+        promise,
+        reject,
+        request: {
+            authHash: request.authHash,
+            encryptionKey: request.encryptionKey,
+            ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
+        },
+        resolve,
+    };
+}
+
+function cloudIdentity(keys: ReadyCloudKeys) {
+    const root = new Uint8Array(Buffer.from(keys.rootSecret, "base64url"));
+    if (root.length !== 32 || Buffer.from(root).toString("base64url") !== keys.rootSecret) {
+        root.fill(0);
+        throw new Error("The stored Cloud identity root is invalid.");
+    }
+    const identity = importIdentityKeyPair(root);
+    root.fill(0);
+    if (Buffer.from(identity.publicKey).toString("base64url") !== keys.identityKey) {
+        destroyIdentity(identity);
+        throw new Error("The stored Cloud identity does not match its root.");
+    }
+    return identity;
+}
+
 function sameUser(left: CloudUser, right: CloudUser): boolean {
     return (
         left.id === right.id &&
@@ -1829,7 +2746,9 @@ function localProfileName(profile: Profile | undefined): string | undefined {
 
 function freezeCloud(cloud: Cloud): Cloud {
     if (cloud.authorization !== null) Object.freeze(cloud.authorization);
+    if (cloud.enrollment !== undefined) Object.freeze(cloud.enrollment);
     if (cloud.error !== null) Object.freeze(cloud.error);
+    if (cloud.keys !== undefined) Object.freeze(cloud.keys);
     if (cloud.user !== null) Object.freeze(cloud.user);
     return Object.freeze(cloud);
 }

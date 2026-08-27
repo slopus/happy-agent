@@ -1,4 +1,5 @@
 import { OauthException } from "@workos-inc/node";
+import { MurmurClient } from "@slopus/murmur";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
@@ -14,7 +15,10 @@ import {
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
-import { CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
+import { createCloudKeyBundle } from "../../sources/cloud/CloudKeys.js";
+import { createCloudKeysDatabase } from "../../sources/cloud/CloudKeysDatabase.js";
+import { CloudMurmurStore } from "../../sources/cloud/CloudMurmurStore.js";
+import { CloudUsernameUnavailableError, CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { ProfileModule } from "../../sources/profile/index.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
@@ -54,6 +58,10 @@ const user = {
     firstName: "Ada",
     id: "user_01H",
     lastName: "Lovelace",
+};
+const cloudKeyInput = {
+    authHash: Buffer.alloc(32, 1).toString("base64url"),
+    encryptionKey: Buffer.alloc(32, 2).toString("base64url"),
 };
 
 const databases: ModuleDatabase[] = [];
@@ -97,6 +105,13 @@ beforeEach(() => {
         "fetch",
         vi.fn(async () => Response.json({ message: "hello", userId: user.id }, { status: 200 })),
     );
+    vi.spyOn(CloudWorkOS.prototype, "getVaultStatus").mockResolvedValue({
+        exists: false,
+        version: null,
+    });
+    vi.spyOn(CloudWorkOS.prototype, "getProfileState").mockResolvedValue({
+        profile: { firstName: null, username: null },
+    });
 });
 
 afterEach(async () => {
@@ -141,10 +156,30 @@ async function pendingDurableCallCount(database: ModuleDatabase): Promise<number
     return rows[0]?.count ?? 0;
 }
 
+interface PendingDurableCallRow {
+    readonly arguments_json: string;
+    readonly id: string;
+    readonly lock_keys_json: string;
+    readonly operation_id: string | null;
+}
+
+async function pendingDurableCalls(
+    database: ModuleDatabase,
+    functionName: string,
+): Promise<readonly PendingDurableCallRow[]> {
+    return await agentDatabaseRows<PendingDurableCallRow>(
+        database.context.db,
+        sql`SELECT id, operation_id, arguments_json, lock_keys_json
+            FROM durable_function_calls
+            WHERE "function" = ${functionName}
+            ORDER BY created_at, id`,
+    );
+}
+
 async function connect(
     module: CloudModule,
     database: ModuleDatabase,
-    environment = "production" as const,
+    environment: "production" | "staging" = "production",
 ) {
     const authorizing = await module.start(database.context, {
         environment,
@@ -158,7 +193,183 @@ async function connect(
     });
 }
 
+function existingCloudProfile(identityKey?: string): void {
+    vi.mocked(CloudWorkOS.prototype.getProfileState).mockResolvedValue({
+        ...(identityKey === undefined ? {} : { identityKey }),
+        profile: { firstName: "Ada", username: "ada" },
+    });
+}
+
+async function waitForCloud(
+    module: CloudModule,
+    database: ModuleDatabase,
+    expected: Record<string, unknown>,
+): Promise<void> {
+    await vi.waitFor(() => {
+        expect(module.status(database.context)).toMatchObject(expected);
+    });
+}
+
 describe("CloudModule", () => {
+    it("keeps authentication connected while durable key discovery retries", async () => {
+        existingCloudProfile();
+        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockRejectedValue(
+            new Error("vault unavailable"),
+        );
+        const { database, module } = await fixture("cloud-module-vault-status-unavailable");
+
+        await expect(connect(module, database)).resolves.toMatchObject({
+            enrollment: { status: "checking" },
+            status: "connected",
+            user,
+        });
+        await waitForCloud(module, database, { enrollment: { status: "enrolled" } });
+        expect(module.status(database.context).keys).toBeUndefined();
+        expect(await pendingDurableCallCount(database)).toBe(1);
+    });
+
+    it("recovers the transactionally owned key discovery after restart", async () => {
+        existingCloudProfile();
+        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockRejectedValue(
+            new Error("vault unavailable"),
+        );
+        const { database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-vault-status-recovery",
+        );
+
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "enrolled" } });
+        await vi.waitFor(async () => expect(await pendingDurableCallCount(database)).toBe(1));
+        await expect(createCloudDatabase().read(database.context)).resolves.toMatchObject({
+            session: { keysReconciliationCallId: expect.any(String) },
+        });
+
+        await module.stop();
+        durableFunctions.stop();
+        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockResolvedValue({
+            exists: false,
+            version: null,
+        });
+
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
+
+        await waitForCloud(restarted, database, { keys: { status: "create_required" } });
+        await vi.waitFor(async () => expect(await pendingDurableCallCount(database)).toBe(0));
+    });
+
+    it("requires restoration when Cloud already has an unknown public identity", async () => {
+        vi.mocked(CloudWorkOS.prototype.getProfileState).mockResolvedValue({
+            identityKey: "an-existing-opaque-public-identity",
+            profile: { firstName: "Ada", username: "ada" },
+        });
+        const { database, module } = await fixture("cloud-module-unknown-profile-key");
+
+        await connect(module, database);
+        await waitForCloud(module, database, {
+            keys: { status: "restore_required" },
+            status: "connected",
+        });
+    });
+
+    it("requires creation when no remote bundle exists and commits the account root", async () => {
+        existingCloudProfile();
+        const { database, module } = await fixture("cloud-module-create-keys");
+        const saveVault = vi
+            .spyOn(CloudWorkOS.prototype, "saveVault")
+            .mockResolvedValue("01991f3a-5c1e-7000-8000-2f9a1b3c4d5e");
+
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        const ready = await module.createKeys(database.context, cloudKeyInput);
+
+        expect(ready.keys).toEqual({
+            identityKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+            status: "ready",
+        });
+        expect(saveVault).toHaveBeenCalledWith(
+            "access-b",
+            cloudKeyInput.authHash,
+            expect.any(String),
+        );
+        const local = await createCloudKeysDatabase().read(database.context, {
+            environment: "production",
+            userId: user.id,
+        });
+        expect(local).toMatchObject({
+            identityKey: ready.keys?.status === "ready" ? ready.keys.identityKey : undefined,
+            status: "ready",
+        });
+        expect(JSON.stringify(ready)).not.toContain(cloudKeyInput.authHash);
+        expect(JSON.stringify(ready)).not.toContain(cloudKeyInput.encryptionKey);
+        expect(JSON.stringify(ready)).not.toContain(local?.rootSecret);
+    });
+
+    it("requires restoration for an unknown remote key and authenticates its encrypted root", async () => {
+        existingCloudProfile();
+        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockResolvedValue({
+            exists: true,
+            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+        });
+        const remote = await createCloudKeyBundle(cloudKeyInput.encryptionKey);
+        vi.spyOn(CloudWorkOS.prototype, "restoreVault").mockResolvedValue({
+            blob: remote.bundle,
+            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+        });
+        const { database, module } = await fixture("cloud-module-restore-keys");
+
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "restore_required" } });
+        const ready = await module.restoreKeys(database.context, cloudKeyInput);
+
+        expect(ready.keys).toEqual({ identityKey: remote.identityKey, status: "ready" });
+        await expect(
+            createCloudKeysDatabase().read(database.context, {
+                environment: "production",
+                userId: user.id,
+            }),
+        ).resolves.toEqual({
+            identityKey: remote.identityKey,
+            rootSecret: remote.rootSecret,
+            status: "ready",
+        });
+    });
+
+    it("opens the fixed relay with an account-scoped durable Murmur store once keys are ready", async () => {
+        existingCloudProfile();
+        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+            return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
+        });
+        const close = vi.fn();
+        const open = vi.spyOn(MurmurClient, "open").mockResolvedValue({ close, sync } as never);
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(
+            "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+        );
+        const { cloudHooks, database, module } = await fixture("cloud-module-murmur");
+        await connect(module, database, "staging");
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await module.createKeys(database.context, cloudKeyInput);
+
+        await cloudHooks.afterStart?.(database.context, {} as never);
+        await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+
+        expect(open).toHaveBeenCalledWith(
+            expect.objectContaining({
+                relay: "https://murmur-relay-staging.bulka-llc.workers.dev",
+                store: expect.any(CloudMurmurStore),
+            }),
+        );
+        expect(sync).toHaveBeenCalledTimes(1);
+    });
+
     it("completes PKCE, verifies hello, persists refresh, and mints with rotation", async () => {
         const { database, module } = await fixture("cloud-module-complete");
         const events: unknown[] = [];
@@ -178,16 +389,22 @@ describe("CloudModule", () => {
         expect(stored?.session?.refreshToken).toBe("refresh-a");
         expect(JSON.stringify(connected)).not.toContain("refresh-a");
         expect(JSON.stringify(connected)).not.toContain("access-a");
+        expect(connected.enrollment).toEqual({ status: "checking" });
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
         expect(await pendingDurableCallCount(database)).toBe(0);
 
         const minted = await module.mint(database.context);
         expect(minted.accessToken).toBe("access-b");
-        expect(minted.cloud).toEqual(connected);
+        expect(minted.cloud).toMatchObject({
+            enrollment: { status: "required" },
+            status: "connected",
+            user,
+        });
         expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
             "refresh-b",
         );
         expect(workos.refresh).toHaveBeenCalledWith({ refreshToken: "refresh-a" });
-        expect(events).toHaveLength(2);
+        expect(events.length).toBeGreaterThanOrEqual(2);
         unsubscribe();
     });
 
@@ -206,10 +423,12 @@ describe("CloudModule", () => {
             return Response.json({ firstName: null, username: null });
         });
         await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
         module.onUpdated(() => updates.push("cloud"));
         module.onProfileUpdated(() => updates.push("profile"));
 
         await expect(module.getProfile(database.context)).resolves.toEqual({
+            enrollment: { status: "required" },
             profile: { firstName: null, username: null },
         });
         workos.refresh.mockResolvedValueOnce({
@@ -222,18 +441,24 @@ describe("CloudModule", () => {
                 mutationId: "profile-update",
                 username: "ada_next",
             }),
-        ).resolves.toEqual({ profile: { firstName: "Ada", username: "ada_next" } });
+        ).resolves.toEqual({
+            enrollment: { status: "enrolling", username: "ada_next" },
+            profile: { firstName: "Ada", username: "ada_next" },
+        });
 
-        expect(workos.refresh).toHaveBeenNthCalledWith(1, { refreshToken: "refresh-a" });
-        expect(workos.refresh).toHaveBeenNthCalledWith(2, { refreshToken: "refresh-b" });
-        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
-            "refresh-c",
+        await waitForCloud(module, database, {
+            enrollment: { status: "enrolled", username: "ada_next" },
+        });
+
+        expect(workos.refresh).toHaveBeenCalled();
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toMatch(
+            /^refresh-[bc]$/,
         );
         expect(module.status(database.context).user).toEqual({
             ...user,
             firstName: "Changed upstream",
         });
-        expect(updates).toEqual(["cloud", "profile"]);
+        expect(updates).toContain("profile");
     });
 
     it("activates friends on enrollment, hydrates mutation snapshots, and clears on disconnect", async () => {
@@ -280,9 +505,11 @@ describe("CloudModule", () => {
         await connect(module, database);
 
         await module.enrollProfile(database.context, { username: "ada" });
-        expect(module.socialStatus(database.context)).toMatchObject({
-            connection: "connecting",
-            status: "enrolled",
+        await vi.waitFor(() => {
+            expect(module.socialStatus(database.context)).toMatchObject({
+                connection: "connecting",
+                status: "enrolled",
+            });
         });
 
         await expect(
@@ -310,7 +537,7 @@ describe("CloudModule", () => {
             status: "unenrolled",
         });
         expect(socialUpdates).toEqual([
-            { origin: "mutation", status: "enrolled" },
+            { origin: "background", status: "enrolled" },
             { origin: "mutation", status: "enrolled" },
             { origin: "mutation", status: "unenrolled" },
         ]);
@@ -377,8 +604,53 @@ describe("CloudModule", () => {
         expect(fetch).not.toHaveBeenCalled();
     });
 
+    it("enrolls before key setup and durably publishes the identity after keys are ready", async () => {
+        const { database, module } = await fixture("cloud-module-profile-key-sync");
+        vi.mocked(CloudWorkOS.prototype.getProfileState).mockRestore();
+        let online: Record<string, unknown> = { firstName: "Ada", username: "ada" };
+        const profileWrites: Array<Record<string, unknown>> = [];
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            if (path === "/v0/profile" && init?.method === "PUT") {
+                online = JSON.parse(String(init.body)) as Record<string, unknown>;
+                profileWrites.push(online);
+            }
+            return Response.json(online);
+        });
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(
+            "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+        );
+        await connect(module, database);
+
+        await module.enrollProfile(database.context, { username: "ada" });
+        await vi.waitFor(() => {
+            expect(profileWrites).toEqual([{ firstName: "Ada", username: "ada" }]);
+        });
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        const ready = await module.createKeys(database.context, cloudKeyInput);
+        if (ready.keys?.status !== "ready") throw new Error("Expected ready Cloud keys.");
+        const identityKey = ready.keys.identityKey;
+
+        await vi.waitFor(() => {
+            expect(profileWrites.at(-1)).toEqual({
+                firstName: "Ada",
+                identityKey,
+                username: "ada",
+            });
+        });
+        await expect(createCloudDatabase().read(database.context)).resolves.toMatchObject({
+            session: {
+                enrollment: { identityKey, status: "enrolled", username: "ada" },
+            },
+        });
+    });
+
     it("durably synchronizes later local profile names while preserving the Cloud username", async () => {
         const { database, module, profile } = await fixture("cloud-module-profile-sync");
+        vi.mocked(CloudWorkOS.prototype.getProfileState).mockRestore();
         let online = { firstName: "Ada", username: "ada" };
         const profileWrites: Array<Record<string, unknown>> = [];
         vi.mocked(fetch).mockImplementation(async (input, init) => {
@@ -398,6 +670,9 @@ describe("CloudModule", () => {
         });
         await connect(module, database);
         await module.enrollProfile(database.context, { username: "ada" });
+        await waitForCloud(module, database, {
+            enrollment: { status: "enrolled", username: "ada" },
+        });
         const local = await profile.get(database.context);
         if (local === undefined) throw new Error("Expected a local profile.");
 
@@ -407,7 +682,11 @@ describe("CloudModule", () => {
         await vi.waitFor(async () => {
             expect(
                 (await createCloudDatabase().read(database.context))?.session?.enrollment,
-            ).toEqual({ profileVersion: changed.version, username: "ada" });
+            ).toEqual({
+                profileVersion: changed.version,
+                status: "enrolled",
+                username: "ada",
+            });
         });
         expect(online).toEqual({ firstName: "Grace Hopper", username: "ada" });
         expect(profileWrites).toEqual([
@@ -420,6 +699,7 @@ describe("CloudModule", () => {
         const { database, durableFunctions, module, profile } = await fixture(
             "cloud-module-profile-reconcile",
         );
+        vi.mocked(CloudWorkOS.prototype.getProfileState).mockRestore();
         let online: { firstName: string; lastName?: string; username: string } = {
             firstName: "Ada",
             username: "ada",
@@ -442,6 +722,9 @@ describe("CloudModule", () => {
         });
         await connect(module, database);
         await module.enrollProfile(database.context, { username: "ada" });
+        await waitForCloud(module, database, {
+            enrollment: { status: "enrolled", username: "ada" },
+        });
         await module.stop();
         durableFunctions.stop();
         online = { firstName: "Remote name", lastName: "Remote surname", username: "ada_online" };
@@ -462,7 +745,11 @@ describe("CloudModule", () => {
         await vi.waitFor(async () => {
             expect(
                 (await createCloudDatabase().read(database.context))?.session?.enrollment,
-            ).toEqual({ profileVersion: local.version, username: "ada_online" });
+            ).toEqual({
+                profileVersion: local.version,
+                status: "enrolled",
+                username: "ada_online",
+            });
         });
         expect(online).toEqual({ firstName: "Ada", username: "ada_online" });
         expect(profileWrites.at(-1)).toEqual({ firstName: "Ada", username: "ada_online" });
@@ -481,7 +768,7 @@ describe("CloudModule", () => {
         expect(fetch).not.toHaveBeenCalled();
     });
 
-    it("preserves rotated credentials and public state when a username is unavailable", async () => {
+    it("returns immediately and durably settles an unavailable username as required", async () => {
         const { database, module } = await fixture("cloud-module-profile-conflict");
         await connect(module, database);
         const updates: unknown[] = [];
@@ -502,20 +789,262 @@ describe("CloudModule", () => {
 
         await expect(
             module.enrollProfile(database.context, { username: "taken_name" }),
-        ).rejects.toMatchObject({
-            cloud: { status: "connected", user },
-            code: "conflict",
-            status: 409,
+        ).resolves.toEqual({
+            enrollment: { status: "enrolling", username: "taken_name" },
+            profile: { firstName: "Ada", username: "taken_name" },
         });
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
         expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
             "refresh-b",
         );
         expect(module.status(database.context).user).toEqual(user);
-        expect(updates).toEqual([]);
+        expect(updates).toHaveLength(2);
         expect(profileUpdates).toEqual([]);
     });
 
-    it("orders disconnect after an in-flight profile update", async () => {
+    it("does not let a stale username rejection cancel a newer durable intent", async () => {
+        const { database, module } = await fixture("cloud-module-enrollment-replacement");
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
+        let rejectFirst!: (error: unknown) => void;
+        const updateProfile = vi
+            .spyOn(CloudWorkOS.prototype, "updateProfile")
+            .mockImplementationOnce(
+                async () =>
+                    await new Promise((_, reject) => {
+                        rejectFirst = reject;
+                    }),
+            )
+            .mockResolvedValue({ firstName: "Ada", username: "ada_two" });
+
+        await module.enrollProfile(database.context, { username: "ada_one" });
+        await vi.waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+        await module.enrollProfile(database.context, { username: "ada_two" });
+        await vi.waitFor(async () => {
+            const calls = await pendingDurableCalls(database, "cloud.reconcile-enrollment");
+            expect(calls).toHaveLength(2);
+            expect(calls.every((call) => call.operation_id === null)).toBe(true);
+            expect(calls.every((call) => call.lock_keys_json === "[]")).toBe(true);
+        });
+        rejectFirst(new CloudUsernameUnavailableError());
+
+        await waitForCloud(module, database, {
+            enrollment: { status: "enrolled", username: "ada_two" },
+        });
+        expect(updateProfile).toHaveBeenLastCalledWith(
+            expect.any(String),
+            expect.objectContaining({ username: "ada_two" }),
+        );
+    });
+
+    it("gives re-enrollment a new transactional key-discovery generation", async () => {
+        existingCloudProfile();
+        const finishDiscoveries: Array<
+            (status: { readonly exists: false; readonly version: null }) => void
+        > = [];
+        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockImplementation(
+            async () =>
+                await new Promise((resolve) => {
+                    finishDiscoveries.push(resolve);
+                }),
+        );
+        vi.spyOn(CloudWorkOS.prototype, "updateProfile").mockResolvedValue({
+            firstName: "Ada",
+            username: "ada_two",
+        });
+        const { database, module } = await fixture("cloud-module-key-discovery-generation");
+
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "enrolled" } });
+        await vi.waitFor(async () => {
+            expect(await pendingDurableCalls(database, "cloud.reconcile-keys")).toHaveLength(1);
+        });
+
+        await module.enrollProfile(database.context, { username: "ada_two" });
+        await waitForCloud(module, database, {
+            enrollment: { status: "enrolled", username: "ada_two" },
+        });
+        await vi.waitFor(async () => {
+            const calls = await pendingDurableCalls(database, "cloud.reconcile-keys");
+            expect(calls).toHaveLength(2);
+            expect(calls.every((call) => call.operation_id === null)).toBe(true);
+            expect(calls.every((call) => call.lock_keys_json === "[]")).toBe(true);
+            expect(finishDiscoveries).toHaveLength(2);
+        });
+
+        for (const finishDiscovery of finishDiscoveries) {
+            finishDiscovery({ exists: false, version: null });
+        }
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+    });
+
+    it("schedules profile convergence when the local name changes during enrollment", async () => {
+        const { database, module, profile } = await fixture("cloud-module-enrollment-profile-race");
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
+        let finishFirst!: (profile: {
+            readonly firstName: string;
+            readonly username: string;
+        }) => void;
+        const updateProfile = vi
+            .spyOn(CloudWorkOS.prototype, "updateProfile")
+            .mockImplementationOnce(
+                async () =>
+                    await new Promise((resolve) => {
+                        finishFirst = resolve;
+                    }),
+            )
+            .mockImplementation(async (_token, request) => ({
+                firstName: request.firstName,
+                username: request.username,
+            }));
+
+        await module.enrollProfile(database.context, { username: "ada" });
+        await vi.waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+        const local = await profile.get(database.context);
+        if (local === undefined) throw new Error("Expected a local profile.");
+        const changed = await profile.update(database.context, local.id, { name: "Grace Hopper" });
+        if (changed === undefined) throw new Error("Expected the local profile change to succeed.");
+        vi.mocked(CloudWorkOS.prototype.getProfileState).mockResolvedValue({
+            profile: { firstName: "Ada", username: "ada" },
+        });
+        finishFirst({ firstName: "Ada", username: "ada" });
+
+        await vi.waitFor(() => {
+            expect(updateProfile).toHaveBeenLastCalledWith(
+                expect.any(String),
+                expect.objectContaining({ firstName: "Grace Hopper", username: "ada" }),
+            );
+        });
+        await vi.waitFor(async () => {
+            expect(
+                (await createCloudDatabase().read(database.context))?.session?.enrollment,
+            ).toMatchObject({ profileVersion: changed.version, status: "enrolled" });
+        });
+    });
+
+    it("recovers a queued username enrollment after the daemon restarts", async () => {
+        const { database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-enrollment-recovery",
+        );
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
+        const updateProfile = vi
+            .spyOn(CloudWorkOS.prototype, "updateProfile")
+            .mockRejectedValue(new Error("network unavailable"));
+
+        await expect(
+            module.enrollProfile(database.context, { username: "ada" }),
+        ).resolves.toMatchObject({ enrollment: { status: "enrolling", username: "ada" } });
+        await vi.waitFor(() => expect(updateProfile).toHaveBeenCalled());
+        expect(await pendingDurableCallCount(database)).toBe(1);
+
+        await module.stop();
+        durableFunctions.stop();
+        updateProfile.mockResolvedValue({ firstName: "Ada", username: "ada" });
+
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
+
+        await waitForCloud(restarted, database, {
+            enrollment: { status: "enrolled", username: "ada" },
+        });
+        await vi.waitFor(async () => expect(await pendingDurableCallCount(database)).toBe(0));
+    });
+
+    it("recovers key setup without persisting factors and requires their re-entry", async () => {
+        existingCloudProfile();
+        const { database, durableFunctions, module, profile } = await fixture(
+            "cloud-module-key-factor-recovery",
+        );
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        const saveVault = vi
+            .spyOn(CloudWorkOS.prototype, "saveVault")
+            .mockRejectedValue(new Error("network unavailable"));
+
+        const creating = module
+            .createKeys(database.context, cloudKeyInput)
+            .catch((error: unknown) => error);
+        await vi.waitFor(() => expect(saveVault).toHaveBeenCalled());
+        const calls = await agentDatabaseRows<{ readonly arguments_json: string }>(
+            database.context.db,
+            sql`SELECT arguments_json FROM durable_function_calls
+                WHERE "function" = 'cloud.mutate-keys'`,
+        );
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.arguments_json).not.toContain(cloudKeyInput.authHash);
+        expect(calls[0]?.arguments_json).not.toContain(cloudKeyInput.encryptionKey);
+
+        await module.stop();
+        durableFunctions.stop();
+        await expect(creating).resolves.toBeInstanceOf(Error);
+        saveVault.mockResolvedValue("01991f3a-5c1e-7000-8000-2f9a1b3c4d5e");
+
+        const restartedDurableFunctions = new DurableFunctionsModule();
+        const restarted = new CloudModule(restartedDurableFunctions, profile);
+        modules.push({
+            cloud: restarted,
+            durableFunctions: restartedDurableFunctions,
+            profile,
+        });
+        await resolveModuleHooks(database.context, restarted);
+        const durableHooks = await resolveModuleHooks(database.context, restartedDurableFunctions);
+        await durableHooks.afterStart?.(database.context, {} as never);
+        await waitForCloud(restarted, database, { keys: { status: "create_required" } });
+        await vi.waitFor(async () => expect(await pendingDurableCallCount(database)).toBe(0));
+
+        await expect(restarted.createKeys(database.context, cloudKeyInput)).resolves.toMatchObject({
+            keys: { status: "ready" },
+        });
+    });
+
+    it("supersedes process-local key factors with a new durable generation", async () => {
+        existingCloudProfile();
+        const { database, module } = await fixture("cloud-module-key-factor-replacement");
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        const replacement = {
+            authHash: Buffer.alloc(32, 3).toString("base64url"),
+            encryptionKey: cloudKeyInput.encryptionKey,
+        };
+        const saveVault = vi
+            .spyOn(CloudWorkOS.prototype, "saveVault")
+            .mockRejectedValueOnce(new Error("network unavailable"))
+            .mockResolvedValue("01991f3a-5c1e-7000-8000-2f9a1b3c4d5e");
+        vi.useFakeTimers();
+
+        const first = module
+            .createKeys(database.context, cloudKeyInput)
+            .catch((error: unknown) => error);
+        await vi.waitFor(() => expect(saveVault).toHaveBeenCalledTimes(1));
+        const second = module.createKeys(database.context, replacement);
+
+        await expect(first).resolves.toMatchObject({ code: "conflict", status: 409 });
+        await vi.waitFor(async () => {
+            const calls = await pendingDurableCalls(database, "cloud.mutate-keys");
+            expect(calls).toHaveLength(2);
+            expect(calls.every((call) => call.operation_id === null)).toBe(true);
+            expect(calls.every((call) => call.lock_keys_json === "[]")).toBe(true);
+        });
+        await vi.advanceTimersByTimeAsync(5_000);
+        await expect(second).resolves.toMatchObject({ keys: { status: "ready" } });
+        expect(saveVault).toHaveBeenLastCalledWith(
+            expect.any(String),
+            replacement.authHash,
+            expect.any(String),
+        );
+    });
+
+    it("does not let an in-flight durable enrollment restore a disconnected account", async () => {
         const { database, module } = await fixture("cloud-module-profile-linearization");
         await connect(module, database);
         let releaseProfile!: () => void;
@@ -533,18 +1062,19 @@ describe("CloudModule", () => {
         });
 
         const updating = module.enrollProfile(database.context, { username: "ada" });
+        await expect(updating).resolves.toEqual({
+            enrollment: { status: "enrolling", username: "ada" },
+            profile: { firstName: "Ada", username: "ada" },
+        });
         await vi.waitFor(() => expect(profileStarted).toBe(true));
         const disconnecting = module.disconnect(database.context);
         releaseProfile();
 
-        await expect(updating).resolves.toEqual({
-            profile: { firstName: "Ada", username: "ada" },
-        });
         await expect(disconnecting).resolves.toMatchObject({ status: "disconnected" });
         expect(module.status(database.context).status).toBe("disconnected");
     });
 
-    it("treats an upstream profile validation rejection as contract drift", async () => {
+    it("keeps durable enrollment pending across an upstream profile rejection", async () => {
         const { database, module } = await fixture("cloud-module-profile-contract-drift");
         await connect(module, database);
         const updates: unknown[] = [];
@@ -563,18 +1093,19 @@ describe("CloudModule", () => {
                 : Response.json({ error: "invalid_profile" }, { status: 400 });
         });
 
-        await expect(
-            module.enrollProfile(database.context, { username: "ada" }),
-        ).rejects.toMatchObject({
-            cloud: { status: "connected", user },
-            code: "cloud_unavailable",
-            status: 503,
+        await expect(module.enrollProfile(database.context, { username: "ada" })).resolves.toEqual({
+            enrollment: { status: "enrolling", username: "ada" },
+            profile: { firstName: "Ada", username: "ada" },
         });
-        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
-            "refresh-b",
+        await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalled());
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toMatch(
+            /^refresh-[ab]$/,
         );
-        expect(module.status(database.context).user).toEqual(user);
-        expect(updates).toEqual([]);
+        expect(module.status(database.context)).toMatchObject({
+            enrollment: { status: "enrolling", username: "ada" },
+            user,
+        });
+        expect(updates).toHaveLength(1);
         expect(profileUpdates).toEqual([]);
     });
 

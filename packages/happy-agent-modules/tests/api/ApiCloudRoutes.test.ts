@@ -25,6 +25,7 @@ import {
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
+import { CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { ProfileModule } from "../../sources/profile/index.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
@@ -62,6 +63,10 @@ vi.mock("@workos-inc/node", async (importOriginal) => {
 const VERSION_1 = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
 const VERSION_2 = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";
 const VERSION_3 = "01991f3a-5c1e-7002-8000-2f9a1b3c4d5e";
+const cloudKeyInput = {
+    authHash: Buffer.alloc(32, 1).toString("base64url"),
+    encryptionKey: Buffer.alloc(32, 2).toString("base64url"),
+};
 
 const user = {
     email: "person@example.com",
@@ -151,10 +156,18 @@ beforeEach(() => {
         "fetch",
         vi.fn(async () => Response.json({ message: "hello", userId: user.id })),
     );
+    vi.spyOn(CloudWorkOS.prototype, "getVaultStatus").mockResolvedValue({
+        exists: false,
+        version: null,
+    });
+    vi.spyOn(CloudWorkOS.prototype, "getProfileState").mockResolvedValue({
+        profile: { firstName: null, username: null },
+    });
 });
 
 afterEach(async () => {
     for (const cleanup of cleanups.splice(0)) await cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
 });
 
@@ -180,6 +193,15 @@ describe("Cloud HTTP API", () => {
         await expect(
             fixture.client.mintCloudAccessToken({ mutationId: "cloud-mint-1" }),
         ).resolves.toEqual({ accessToken: "access-token", cloud: connected });
+        await expect(
+            fixture.client.createCloudKeys({ ...cloudKeyInput, mutationId: "cloud-keys-create-1" }),
+        ).resolves.toEqual({ cloud: connected });
+        await expect(
+            fixture.client.restoreCloudKeys({
+                ...cloudKeyInput,
+                mutationId: "cloud-keys-restore-1",
+            }),
+        ).resolves.toEqual({ cloud: connected });
         await expect(fixture.client.getCloudProfile()).resolves.toEqual({
             profile: { firstName: null, username: null },
         });
@@ -220,6 +242,14 @@ describe("Cloud HTTP API", () => {
         expect(fixture.cloud.start).toHaveBeenCalledWith(
             fixture.context,
             expect.objectContaining({ redirectUri: "desktop-app://workos/callback" }),
+        );
+        expect(fixture.cloud.createKeys).toHaveBeenCalledWith(
+            fixture.context,
+            expect.objectContaining(cloudKeyInput),
+        );
+        expect(fixture.cloud.restoreKeys).toHaveBeenCalledWith(
+            fixture.context,
+            expect.objectContaining(cloudKeyInput),
         );
     });
 
@@ -366,10 +396,9 @@ describe("Cloud HTTP API", () => {
             refreshToken: "refresh-c",
             user,
         });
-        vi.mocked(fetch)
-            .mockResolvedValueOnce(Response.json({ message: "hello", userId: user.id }))
-            .mockResolvedValueOnce(Response.json({ firstName: null, username: null }));
+        vi.mocked(fetch).mockResolvedValue(Response.json({ message: "hello", userId: user.id }));
         await expect(fixture.client.getCloudProfile()).resolves.toEqual({
+            enrollment: { status: "checking" },
             profile: { firstName: null, username: null },
         });
 
@@ -378,46 +407,61 @@ describe("Cloud HTTP API", () => {
             refreshToken: "refresh-d",
             user,
         });
-        vi.mocked(fetch)
-            .mockResolvedValueOnce(Response.json({ message: "hello", userId: user.id }))
-            .mockResolvedValueOnce(Response.json({ firstName: "Ada Lovelace", username: "ada" }));
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            expect(path).toBe("/v0/profile");
+            expect(init?.method).toBe("PUT");
+            return Response.json({ firstName: "Ada Lovelace", username: "ada" });
+        });
         await expect(
             fixture.client.enrollCloudProfile({
                 mutationId: "cloud-real-profile",
                 username: "ada",
             }),
         ).resolves.toEqual({
+            enrollment: { status: "enrolling", username: "ada" },
             profile: { firstName: "Ada Lovelace", username: "ada" },
         });
-        expect(vi.mocked(fetch).mock.calls.at(-1)?.[1]?.body).toBe(
-            JSON.stringify({ firstName: "Ada Lovelace", username: "ada" }),
-        );
-        expect((await createCloudDatabase().read(fixture.context))?.session?.refreshToken).toBe(
-            "refresh-d",
-        );
+        await vi.waitFor(async () => {
+            expect((await createCloudDatabase().read(fixture.context))?.session).toMatchObject({
+                enrollment: { status: "enrolled", username: "ada" },
+            });
+        });
+        expect(
+            vi
+                .mocked(fetch)
+                .mock.calls.some(
+                    ([, init]) =>
+                        init?.body ===
+                        JSON.stringify({ firstName: "Ada Lovelace", username: "ada" }),
+                ),
+        ).toBe(true);
 
         const events = await fixture.client.getEvents({ after: before });
-        expect(events.events).toEqual([
-            expect.objectContaining({
-                payload: { cloud: authorizing.cloud, mutationId: "cloud-real-start" },
-                type: "cloud.updated",
-            }),
-            expect.objectContaining({
-                payload: { cloud: completed.cloud, mutationId: "cloud-real-complete" },
-                type: "cloud.updated",
-            }),
-            expect.objectContaining({
-                payload: {
-                    mutationId: "cloud-real-profile",
-                    version: expect.any(String),
-                },
-                type: "cloud.social.updated",
-            }),
-            expect.objectContaining({
-                payload: { mutationId: "cloud-real-profile" },
-                type: "cloud.profile.updated",
-            }),
-        ]);
+        expect(events.events).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    payload: { cloud: authorizing.cloud, mutationId: "cloud-real-start" },
+                    type: "cloud.updated",
+                }),
+                expect.objectContaining({
+                    payload: { cloud: completed.cloud, mutationId: "cloud-real-complete" },
+                    type: "cloud.updated",
+                }),
+                expect.objectContaining({
+                    payload: {
+                        mutationId: "cloud-real-profile",
+                        cloud: expect.objectContaining({
+                            enrollment: { status: "enrolling", username: "ada" },
+                        }),
+                    },
+                    type: "cloud.updated",
+                }),
+            ]),
+        );
         expect(JSON.stringify(events)).not.toContain("access-a");
         expect(JSON.stringify(events)).not.toContain("access-b");
         expect(JSON.stringify(events)).not.toContain("access-c");
@@ -448,6 +492,7 @@ async function apiFixture(initial: Cloud = disconnected) {
             updated?.(ctx, current);
             return disconnected;
         }),
+        createKeys: vi.fn(async () => connected),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
         getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
         getSocial: vi.fn(() => ({ cloudSocial: social })),
@@ -474,6 +519,7 @@ async function apiFixture(initial: Cloud = disconnected) {
                 socialUpdated = undefined;
             };
         }),
+        restoreKeys: vi.fn(async () => connected),
         start: vi.fn(async (ctx: Context) => {
             current = authorizing;
             updated?.(ctx, current);

@@ -8,6 +8,8 @@ import {
     CloudSocialBlockedError,
     CloudSocialNotFoundError,
     CloudUsernameUnavailableError,
+    CloudVaultKeyMismatchError,
+    CloudVaultNotFoundError,
     CloudWorkOS,
 } from "../../sources/cloud/CloudWorkOS.js";
 
@@ -183,13 +185,20 @@ describe("CloudWorkOS", () => {
         await expect(
             new CloudWorkOS("production").updateProfile("access-token", {
                 firstName: "Ada",
+                identityKey: "A".repeat(43),
                 username: "ada_next",
             }),
         ).resolves.toEqual({ firstName: "Ada", username: "ada_next" });
         const [input, init] = request.mock.calls[0] ?? [];
         expect(String(input)).toBe("https://cloud.cluster-fluster.com/v0/profile");
         expect(init?.method).toBe("PUT");
-        expect(init?.body).toBe(JSON.stringify({ firstName: "Ada", username: "ada_next" }));
+        expect(init?.body).toBe(
+            JSON.stringify({
+                firstName: "Ada",
+                identityKey: "A".repeat(43),
+                username: "ada_next",
+            }),
+        );
     });
 
     it("distinguishes username conflicts from upstream profile contract drift", async () => {
@@ -205,13 +214,76 @@ describe("CloudWorkOS", () => {
                 ),
         );
         const client = new CloudWorkOS("production");
-        const request = { firstName: "Ada", username: "ada" };
+        const request = { firstName: "Ada", identityKey: "A".repeat(43), username: "ada" };
 
         await expect(client.updateProfile("access-a", request)).rejects.toBeInstanceOf(
             CloudUsernameUnavailableError,
         );
         await expect(client.updateProfile("access-b", request)).rejects.toBeInstanceOf(
             CloudProfileRejectedError,
+        );
+    });
+
+    it("uses the selected Happy Cloud vault without exposing key factors in URLs", async () => {
+        const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const request = vi
+            .fn<typeof fetch>()
+            .mockResolvedValueOnce(Response.json({ exists: false, version: null }))
+            .mockResolvedValueOnce(Response.json({ version }))
+            .mockResolvedValueOnce(Response.json({ blob: "encrypted-bundle", version }));
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("staging");
+
+        await expect(client.getVaultStatus("access-a")).resolves.toEqual({
+            exists: false,
+            version: null,
+        });
+        await expect(client.saveVault("access-b", "auth-hash", "encrypted-bundle")).resolves.toBe(
+            version,
+        );
+        await expect(client.restoreVault("access-c", "auth-hash")).resolves.toEqual({
+            blob: "encrypted-bundle",
+            version,
+        });
+
+        expect(
+            request.mock.calls.map(([input, init]) => [
+                String(input),
+                init?.method,
+                init?.body ?? null,
+            ]),
+        ).toEqual([
+            ["https://happy-cloud-staging.bulka-llc.workers.dev/v0/vault", "GET", null],
+            [
+                "https://happy-cloud-staging.bulka-llc.workers.dev/v0/vault",
+                "PUT",
+                JSON.stringify({ authKey: "auth-hash", blob: "encrypted-bundle" }),
+            ],
+            [
+                "https://happy-cloud-staging.bulka-llc.workers.dev/v0/vault/restore",
+                "POST",
+                JSON.stringify({ authKey: "auth-hash" }),
+            ],
+        ]);
+    });
+
+    it("distinguishes a rejected vault proof from a missing bundle", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(
+                    Response.json({ error: "vault_key_mismatch" }, { status: 403 }),
+                )
+                .mockResolvedValueOnce(Response.json({ error: "not_found" }, { status: 404 })),
+        );
+        const client = new CloudWorkOS("production");
+
+        await expect(client.restoreVault("access-a", "wrong-proof")).rejects.toBeInstanceOf(
+            CloudVaultKeyMismatchError,
+        );
+        await expect(client.restoreVault("access-b", "proof")).rejects.toBeInstanceOf(
+            CloudVaultNotFoundError,
         );
     });
 

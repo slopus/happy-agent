@@ -45,7 +45,9 @@ describe("Cloud storage", () => {
             {
                 error: null,
                 pending: false,
-                session: cloudSession("production", "refresh-a", user),
+                session: cloudSession("production", "refresh-a", user, {
+                    status: "create_required",
+                }),
             },
             () => 999,
         );
@@ -60,7 +62,7 @@ describe("Cloud storage", () => {
         const connected = await store.replace(database.context, {
             error: null,
             pending: false,
-            session: cloudSession("staging", "refresh-a", user),
+            session: cloudSession("staging", "refresh-a", user, { status: "restore_required" }),
         });
 
         const rotated = await store.rotateRefreshToken(database.context, "refresh-a", "refresh-b");
@@ -73,27 +75,32 @@ describe("Cloud storage", () => {
         ).rejects.toThrow("changed while it was refreshing");
     });
 
-    it("stores enrollment beside the connected account without changing the public version", async () => {
+    it("stores enrollment as public versioned Cloud state", async () => {
         const { database, store } = await fixture("cloud-storage-enrollment");
         const connected = await store.replace(database.context, {
             error: null,
             pending: false,
-            session: cloudSession("production", "refresh-a", user),
+            session: cloudSession("production", "refresh-a", user, {
+                status: "create_required",
+            }),
         });
         const profileVersion = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
 
-        const enrolled = await store.updateEnrollment(
-            database.context,
-            user.id,
-            cloudEnrollment("ada", profileVersion),
-        );
+        const enrolled = await store.replace(database.context, {
+            error: null,
+            pending: false,
+            session: {
+                ...connected.session!,
+                enrollment: cloudEnrollment("ada", profileVersion),
+            },
+        });
 
-        expect(enrolled.version).toBe(connected.version);
-        expect(enrolled.updatedAt).toBe(connected.updatedAt);
-        expect(enrolled.session?.enrollment).toEqual({ profileVersion, username: "ada" });
-        await expect(
-            store.updateEnrollment(database.context, "another-user", null),
-        ).rejects.toThrow("account changed");
+        expect(enrolled.version > connected.version).toBe(true);
+        expect(enrolled.session?.enrollment).toEqual({
+            profileVersion,
+            status: "enrolled",
+            username: "ada",
+        });
     });
 
     it("rejects malformed durable state", async () => {

@@ -1,7 +1,12 @@
 import {
     cloudEnvironmentSchema,
+    cloudKeyValueSchema,
+    cloudKeysCreateRequiredSchema,
+    cloudKeysReadySchema,
+    cloudKeysRestoreRequiredSchema,
     cloudUsernameSchema,
     type CloudEnvironment,
+    type CloudKeys,
     type CloudUser,
 } from "@slopus/happy-agent-client";
 import {
@@ -23,6 +28,7 @@ export const CLOUD_MIGRATION_KEY = "001-cloud-state";
 const CLOUD_STATE_TABLE = "happy_agent_cloud_state";
 const UUID_V7_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
 const exact = { additionalProperties: false } as const;
+const cloudDurableCallIdSchema = Type.String({ minLength: 1, maxLength: 128 });
 
 export const cloudVersionSchema = Type.String({ pattern: UUID_V7_PATTERN });
 
@@ -44,19 +50,56 @@ const storedUserSchema = Type.Object(
     exact,
 );
 
-export const cloudEnrollmentSchema = Type.Object(
+const cloudEnrollmentCheckingSchema = Type.Object(
     {
-        profileVersion: Type.Union([Type.Null(), profileVersionSchema]),
+        callId: Type.Optional(cloudDurableCallIdSchema),
+        status: Type.Literal("checking"),
+    },
+    exact,
+);
+
+const cloudEnrollmentRequiredSchema = Type.Object({ status: Type.Literal("required") }, exact);
+
+const cloudEnrollmentEnrollingSchema = Type.Object(
+    {
+        callId: Type.Optional(cloudDurableCallIdSchema),
+        status: Type.Literal("enrolling"),
         username: cloudUsernameSchema,
     },
     exact,
 );
-export type CloudEnrollment = Static<typeof cloudEnrollmentSchema>;
+
+const cloudEnrollmentEnrolledSchema = Type.Object(
+    {
+        identityKey: Type.Optional(cloudKeyValueSchema),
+        profileVersion: Type.Union([Type.Null(), profileVersionSchema]),
+        status: Type.Literal("enrolled"),
+        username: cloudUsernameSchema,
+    },
+    exact,
+);
+
+export const cloudEnrollmentStateSchema = Type.Union([
+    cloudEnrollmentCheckingSchema,
+    cloudEnrollmentRequiredSchema,
+    cloudEnrollmentEnrollingSchema,
+    cloudEnrollmentEnrolledSchema,
+]);
+export type CloudEnrollmentState = Static<typeof cloudEnrollmentStateSchema>;
+export type CloudEnrolledState = Static<typeof cloudEnrollmentEnrolledSchema>;
 
 const cloudSessionSchema = Type.Object(
     {
-        enrollment: Type.Optional(Type.Union([Type.Null(), cloudEnrollmentSchema])),
+        enrollment: cloudEnrollmentStateSchema,
         environment: cloudEnvironmentSchema,
+        keys: Type.Optional(
+            Type.Union([
+                cloudKeysCreateRequiredSchema,
+                cloudKeysRestoreRequiredSchema,
+                cloudKeysReadySchema,
+            ]),
+        ),
+        keysReconciliationCallId: Type.Optional(cloudDurableCallIdSchema),
         refreshToken: Type.String({ minLength: 1, maxLength: 32_768 }),
         user: storedUserSchema,
     },
@@ -148,6 +191,43 @@ export const cloudMigrations: readonly AgentModuleMigration[] = [
     ],
 ];
 
+export const CLOUD_ENROLLMENT_MIGRATION_KEY = "005-cloud-enrollment";
+
+export const cloudEnrollmentMigrations: readonly AgentModuleMigration[] = [
+    [
+        CLOUD_ENROLLMENT_MIGRATION_KEY,
+        async (_ctx, database) => {
+            await agentDatabaseRun(
+                database,
+                sql`UPDATE ${sql.raw(CLOUD_STATE_TABLE)}
+                    SET state_json = CASE
+                        WHEN json_type(state_json, '$.session.enrollment') = 'object'
+                         AND json_type(state_json, '$.session.enrollment.status') IS NULL
+                        THEN json_set(
+                            state_json,
+                            '$.session.enrollment.status',
+                            'enrolled'
+                        )
+                        ELSE json_set(
+                            state_json,
+                            '$.session.enrollment',
+                            json('{"status":"checking"}')
+                        )
+                    END
+                    WHERE json_type(state_json, '$.session') = 'object'
+                      AND (
+                          json_type(state_json, '$.session.enrollment') IS NULL
+                          OR json_type(state_json, '$.session.enrollment') = 'null'
+                          OR (
+                              json_type(state_json, '$.session.enrollment') = 'object'
+                              AND json_type(state_json, '$.session.enrollment.status') IS NULL
+                          )
+                      )`,
+            );
+        },
+    ],
+];
+
 /** Owner-only Cloud authentication state stored in the main Happy Agent database. */
 export function createCloudDatabase() {
     async function read(ctx: Context): Promise<CloudStoredState | undefined> {
@@ -210,29 +290,6 @@ export function createCloudDatabase() {
                 return state;
             });
         },
-
-        /** Changes private enrollment state without advancing the public Cloud snapshot. */
-        async updateEnrollment(
-            ctx: Context,
-            expectedUserId: string,
-            enrollment: CloudEnrollment | null,
-        ): Promise<CloudStoredState> {
-            return await ctx.inTx(async (txCtx) => {
-                const current = await read(txCtx);
-                if (current?.session === null || current?.session === undefined) {
-                    throw new Error("The Cloud session changed while enrollment was being stored.");
-                }
-                if (current.session.user.id !== expectedUserId) {
-                    throw new Error("The Cloud account changed while enrollment was being stored.");
-                }
-                const state: CloudStoredState = {
-                    ...current,
-                    session: { ...current.session, enrollment },
-                };
-                await write(txCtx, state);
-                return state;
-            });
-        },
     };
 }
 
@@ -242,9 +299,18 @@ export function cloudSession(
     environment: CloudEnvironment,
     refreshToken: string,
     user: CloudUser,
-    enrollment: CloudEnrollment | null = null,
+    keys?: Exclude<CloudKeys, { status: "inactive" }>,
+    enrollment: CloudEnrollmentState = { status: "checking" },
+    keysReconciliationCallId?: string,
 ): CloudSession {
-    const session = { enrollment, environment, refreshToken, user };
+    const session = {
+        enrollment,
+        environment,
+        ...(keys === undefined ? {} : { keys }),
+        ...(keysReconciliationCallId === undefined ? {} : { keysReconciliationCallId }),
+        refreshToken,
+        user,
+    };
     if (!Value.Check(cloudSessionSchema, session)) {
         throw new Error("WorkOS returned invalid Cloud session data.");
     }
@@ -254,12 +320,18 @@ export function cloudSession(
 export function cloudEnrollment(
     username: string,
     profileVersion: ProfileVersion | null,
-): CloudEnrollment {
-    const enrollment = { profileVersion, username };
-    if (!Value.Check(cloudEnrollmentSchema, enrollment)) {
+    identityKey?: string,
+): CloudEnrolledState {
+    const enrollment = {
+        ...(identityKey === undefined ? {} : { identityKey }),
+        profileVersion,
+        status: "enrolled" as const,
+        username,
+    };
+    if (!Value.Check(cloudEnrollmentEnrolledSchema, enrollment)) {
         throw new Error("The Cloud enrollment state is invalid.");
     }
-    return structuredClone(enrollment) as CloudEnrollment;
+    return structuredClone(enrollment) as CloudEnrolledState;
 }
 
 async function write(ctx: Context, state: CloudStoredState): Promise<void> {

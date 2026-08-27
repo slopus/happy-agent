@@ -137,8 +137,8 @@ importers:
         specifier: 0.0.38
         version: 0.0.38(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
-        specifier: 0.0.36
-        version: 0.0.36
+        specifier: 0.0.38
+        version: 0.0.38
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -274,8 +274,8 @@ importers:
         specifier: npm:@slopus/happy-agent-base@0.0.38
         version: 0.0.38(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
-        specifier: 0.0.36
-        version: 0.0.36
+        specifier: 0.0.38
+        version: 0.0.38
       '@slopus/happy-agent-compute':
         specifier: npm:@slopus/happy-agent-compute@0.1.9
         version: 0.1.9
@@ -359,14 +359,17 @@ importers:
         specifier: 0.1.3
         version: 0.1.3
       '@slopus/happy-agent-client':
-        specifier: 0.0.36
-        version: 0.0.36
+        specifier: 0.0.38
+        version: 0.0.38
       '@slopus/happy-agent-compute':
         specifier: npm:@slopus/happy-agent-compute@0.1.9
         version: 0.1.9
       '@slopus/happy-providers':
         specifier: 0.0.18
         version: 0.0.18(ws@8.21.1)(zod@4.4.3)
+      '@slopus/murmur':
+        specifier: 0.7.0
+        version: 0.7.0
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -586,8 +589,8 @@ importers:
         specifier: 0.1.3
         version: 0.1.3
       '@slopus/happy-agent-client':
-        specifier: 0.0.36
-        version: 0.0.36
+        specifier: 0.0.38
+        version: 0.0.38
       '@slopus/happy-providers':
         specifier: 0.0.18
         version: 0.0.18(ws@8.21.1)(zod@4.4.3)
@@ -2016,8 +2019,8 @@ packages:
     resolution: {integrity: sha512-x0Fc5XHIHc0XODS336gKG0qVQkR8njD/qkSj1CEtIt2t9a756YKOtUSgwVbiqjUwoS+dDifIX0PHdYETn592wA==}
     engines: {node: '>=22.19.0'}
 
-  '@slopus/happy-agent-client@0.0.36':
-    resolution: {integrity: sha512-Dnd01pjVYmFlDU3vZ+kt+/JfF9yTTXZjNzmN6w8G4g2IaIZSJSh9yn0CGAnyVu8IoV81xe0mSutrJPtbG6ALcg==}
+  '@slopus/happy-agent-client@0.0.38':
+    resolution: {integrity: sha512-94nqDfMUn/HazXhrh5BGGwkqCXLsSfpsbI2lWktmyt+iodS38EWdZ5izse5ehgGWp3zXfVZT2DqcLeFtnH8wjQ==}
     engines: {node: '>=20'}
 
   '@slopus/happy-agent-compute@0.1.9':
@@ -2059,6 +2062,10 @@ packages:
   '@slopus/happy-providers@0.0.18':
     resolution: {integrity: sha512-0Mcgn5sleeoyusXpZSAzWBWHfV9yvjVfO0gFw0o47LlnhuuJrAjypeQPRN/fKpoQWyTjubeksED5ovaMiWqmsQ==}
     engines: {bun: '>=1.4.0', node: '>=22.19.0'}
+
+  '@slopus/murmur@0.7.0':
+    resolution: {integrity: sha512-PUGi96ly8zvpRMEoeBNjmLMi9GYwOTjnsTzfC/QkVApMFOfyz0L/17LPcgkfW7BbVx11ebDCfFYjGdI3PF4aKg==}
+    engines: {node: '>=20'}
 
   '@smithy/abort-controller@2.2.0':
     resolution: {integrity: sha512-wRlta7GuLWpTqtFfGo+nZyOO1vEvewdNR1R4rTxpC8XU6vG/NDyrFBhwLZsqg1NUoR1noVaXJPC/7ZK47QCySw==}
@@ -5282,7 +5289,7 @@ snapshots:
       - ws
       - zod
 
-  '@slopus/happy-agent-client@0.0.36':
+  '@slopus/happy-agent-client@0.0.38':
     dependencies:
       '@sinclair/typebox': 0.34.49
 
@@ -5352,6 +5359,12 @@ snapshots:
       - supports-color
       - ws
       - zod
+
+  '@slopus/murmur@0.7.0':
+    dependencies:
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
 
   '@smithy/abort-controller@2.2.0':
     dependencies:

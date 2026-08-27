@@ -1,5 +1,6 @@
 import {
     cloudEnvironmentSchema,
+    cloudKeyValueSchema,
     cloudProfileSchema,
     cloudUsernameSchema,
     type CloudEnvironment,
@@ -102,6 +103,7 @@ const cloudFriendEntrySchema = Type.Object(
             maxLength: 64,
             pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
         }),
+        identityKey: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
         lastName: Type.Optional(
             Type.String({
                 minLength: 1,
@@ -180,6 +182,24 @@ const socialBlockedSchema = Type.Object({ error: Type.Literal("blocked") }, exac
 const socialInvalidRequestSchema = Type.Object({ error: Type.Literal("invalid_request") }, exact);
 const socialProfileRequiredSchema = Type.Object({ error: Type.Literal("profile_required") }, exact);
 
+const cloudVaultVersionSchema = Type.String({
+    pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+});
+const cloudVaultStatusSchema = Type.Object(
+    { exists: Type.Boolean(), version: Type.Union([Type.Null(), cloudVaultVersionSchema]) },
+    exact,
+);
+const cloudVaultSavedSchema = Type.Object({ version: cloudVaultVersionSchema }, exact);
+const cloudVaultRestoredSchema = Type.Object(
+    { blob: Type.String({ minLength: 1, maxLength: 4_096 }), version: cloudVaultVersionSchema },
+    exact,
+);
+const cloudVaultKeyMismatchSchema = Type.Object(
+    { error: Type.Literal("vault_key_mismatch") },
+    exact,
+);
+const cloudVaultNotFoundSchema = Type.Object({ error: Type.Literal("not_found") }, exact);
+
 const cloudProfileUpdateSchema = Type.Object(
     {
         firstName: Type.String({
@@ -187,11 +207,36 @@ const cloudProfileUpdateSchema = Type.Object(
             maxLength: 64,
             pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
         }),
+        identityKey: Type.Optional(cloudKeyValueSchema),
         username: cloudUsernameSchema,
     },
     { additionalProperties: false },
 );
 type CloudProfileUpdate = Static<typeof cloudProfileUpdateSchema>;
+
+const cloudProfileStateSchema = Type.Union([
+    Type.Object(
+        {
+            firstName: Type.Null(),
+            identityKey: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+            username: Type.Null(),
+        },
+        { additionalProperties: true },
+    ),
+    Type.Object(
+        {
+            firstName: cloudProfileUpdateSchema.properties.firstName,
+            identityKey: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+            lastName: cloudFriendEntrySchema.properties.lastName,
+            username: cloudUsernameSchema,
+        },
+        { additionalProperties: true },
+    ),
+]);
+export type CloudProfileState = {
+    readonly identityKey?: string;
+    readonly profile: CloudProfile;
+};
 
 const workOSParseErrorSchema = Type.Object(
     {
@@ -230,6 +275,20 @@ export class CloudUsernameUnavailableError extends Error {
     constructor() {
         super("The Happy Cloud username is unavailable.");
         this.name = "CloudUsernameUnavailableError";
+    }
+}
+
+export class CloudVaultKeyMismatchError extends Error {
+    constructor() {
+        super("Happy Cloud rejected the Cloud key proof.");
+        this.name = "CloudVaultKeyMismatchError";
+    }
+}
+
+export class CloudVaultNotFoundError extends Error {
+    constructor() {
+        super("Happy Cloud has no encrypted key bundle.");
+        this.name = "CloudVaultNotFoundError";
     }
 }
 
@@ -373,11 +432,23 @@ export class CloudWorkOS {
     }
 
     async getProfile(accessToken: string): Promise<CloudProfile> {
+        return (await this.getProfileState(accessToken)).profile;
+    }
+
+    async getProfileState(accessToken: string): Promise<CloudProfileState> {
         const result = await this.#request("/v0/profile", accessToken, "GET");
         if (result.status < 200 || result.status >= 300) {
             throw new CloudServiceUnavailableError("response-rejected", result.status);
         }
-        return cloudProfile(result.body);
+        if (!Value.Check(cloudProfileStateSchema, result.body)) {
+            throw new CloudServiceUnavailableError();
+        }
+        return {
+            ...(result.body.identityKey === undefined
+                ? {}
+                : { identityKey: result.body.identityKey }),
+            profile: cloudProfile(result.body),
+        };
     }
 
     async updateProfile(accessToken: string, request: CloudProfileUpdate): Promise<CloudProfile> {
@@ -390,6 +461,7 @@ export class CloudWorkOS {
             "PUT",
             {
                 firstName: request.firstName,
+                ...(request.identityKey === undefined ? {} : { identityKey: request.identityKey }),
                 username: request.username,
             },
             [400, 409],
@@ -404,6 +476,59 @@ export class CloudWorkOS {
             throw new CloudServiceUnavailableError("response-rejected", result.status);
         }
         return cloudProfile(result.body);
+    }
+
+    async getVaultStatus(
+        accessToken: string,
+    ): Promise<{ readonly exists: boolean; readonly version: string | null }> {
+        const result = await this.#request("/v0/vault", accessToken, "GET");
+        if (!result.ok || !Value.Check(cloudVaultStatusSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        if (result.body.exists !== (result.body.version !== null)) {
+            throw new CloudServiceUnavailableError("response-invalid", result.status);
+        }
+        return structuredClone(result.body);
+    }
+
+    async saveVault(accessToken: string, authHash: string, blob: string): Promise<string> {
+        const result = await this.#request(
+            "/v0/vault",
+            accessToken,
+            "PUT",
+            { authKey: authHash, blob },
+            [400, 403],
+        );
+        if (result.status === 403 && Value.Check(cloudVaultKeyMismatchSchema, result.body)) {
+            throw new CloudVaultKeyMismatchError();
+        }
+        if (!result.ok || !Value.Check(cloudVaultSavedSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        return result.body.version;
+    }
+
+    async restoreVault(
+        accessToken: string,
+        authHash: string,
+    ): Promise<{ readonly blob: string; readonly version: string }> {
+        const result = await this.#request(
+            "/v0/vault/restore",
+            accessToken,
+            "POST",
+            { authKey: authHash },
+            [400, 403, 404],
+        );
+        if (result.status === 403 && Value.Check(cloudVaultKeyMismatchSchema, result.body)) {
+            throw new CloudVaultKeyMismatchError();
+        }
+        if (result.status === 404 && Value.Check(cloudVaultNotFoundSchema, result.body)) {
+            throw new CloudVaultNotFoundError();
+        }
+        if (!result.ok || !Value.Check(cloudVaultRestoredSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        return structuredClone(result.body);
     }
 
     async getSocialSnapshot(accessToken: string): Promise<CloudRemoteSocialSnapshot> {
@@ -574,7 +699,12 @@ export class CloudWorkOS {
             throw new CloudServiceUnavailableError("response-rejected", result.status);
         }
         if (result.body.username !== username) throw new CloudSocialSnapshotChangedError();
-        return structuredClone(result.body) as CloudSocialProfile;
+        return {
+            firstName: result.body.firstName,
+            ...(result.body.lastName === undefined ? {} : { lastName: result.body.lastName }),
+            username: result.body.username,
+            version: result.body.version,
+        };
     }
 
     async #request(

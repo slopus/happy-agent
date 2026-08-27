@@ -6,8 +6,10 @@ export {
     cloudMutationRequestSchema,
     cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
+    createCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,
     invokeSlashCommandRequestSchema,
+    restoreCloudKeysRequestSchema,
     startCloudAuthorizationRequestSchema,
 } from "@slopus/happy-agent-client";
 
