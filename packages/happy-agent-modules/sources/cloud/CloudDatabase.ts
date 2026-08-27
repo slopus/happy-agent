@@ -1,6 +1,5 @@
 import {
     cloudEnvironmentSchema,
-    cloudKeyValueSchema,
     cloudKeysCreateRequiredSchema,
     cloudKeysReadySchema,
     cloudKeysRestoreRequiredSchema,
@@ -71,7 +70,6 @@ const cloudEnrollmentEnrollingSchema = Type.Object(
 
 const cloudEnrollmentEnrolledSchema = Type.Object(
     {
-        identityKey: Type.Optional(cloudKeyValueSchema),
         profileVersion: Type.Union([Type.Null(), profileVersionSchema]),
         status: Type.Literal("enrolled"),
         username: cloudUsernameSchema,
@@ -320,10 +318,8 @@ export function cloudSession(
 export function cloudEnrollment(
     username: string,
     profileVersion: ProfileVersion | null,
-    identityKey?: string,
 ): CloudEnrolledState {
     const enrollment = {
-        ...(identityKey === undefined ? {} : { identityKey }),
         profileVersion,
         status: "enrolled" as const,
         username,

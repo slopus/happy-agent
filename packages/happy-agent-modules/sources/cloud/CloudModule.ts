@@ -9,6 +9,7 @@ import type {
     CloudDisconnected,
     CloudEnrollment as PublicCloudEnrollment,
     CloudEnvironment,
+    CloudKeyBackup,
     CloudKeys,
     CloudProfile,
     CloudProfileResponse,
@@ -62,7 +63,12 @@ import {
     type CloudStoredState,
     type CloudStoredValue,
 } from "./CloudDatabase.js";
-import { createCloudKeyBundle, CloudKeyMaterialError, openCloudKeyBundle } from "./CloudKeys.js";
+import {
+    createCloudKeyBundle,
+    createCloudKeyBundleFromRoot,
+    CloudKeyMaterialError,
+    openCloudKeyBundle,
+} from "./CloudKeys.js";
 import {
     cloudKeysMigrations,
     createCloudKeysDatabase,
@@ -71,6 +77,7 @@ import {
     type StoredCloudKeys,
 } from "./CloudKeysDatabase.js";
 import { CloudMurmurStore, cloudMurmurStoreMigrations } from "./CloudMurmurStore.js";
+import { createCloudKeyTree, type CloudKeyTree } from "./CloudKeyTree.js";
 import {
     CLOUD_AUTHORIZATION_EXPIRY_FUNCTION,
     CLOUD_AUTHORIZATION_EXPIRY_OPERATION,
@@ -191,6 +198,7 @@ interface LiveCloudMurmur {
     readonly account: CloudKeysAccount;
     readonly client: MurmurClient;
     readonly controller: AbortController;
+    readonly keyTree: CloudKeyTree;
     readonly sync: Promise<void>;
 }
 
@@ -678,6 +686,36 @@ export class CloudModule implements AgentModule {
         return await this.#queueKeysMutation(ctx, "restore", request);
     }
 
+    async getKeyBackup(_ctx: Context): Promise<CloudKeyBackup> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const stored = await this.#readOwned(ctx);
+            if (stored?.session === null || stored?.session === undefined) {
+                throw this.#error(
+                    409,
+                    "cloud_not_authenticated",
+                    "Cloud is not authenticated on this Happy Agent.",
+                );
+            }
+            if (stored.session.keys?.status !== "ready") {
+                throw this.#error(409, "conflict", "Cloud keys are not ready for backup.");
+            }
+            const local = await this.#keysDatabase.read(ctx, cloudKeysAccount(stored.session));
+            if (
+                local?.status !== "ready" ||
+                local.identityKey !== stored.session.keys.identityKey ||
+                local.generatedSecret === undefined
+            ) {
+                throw new Error("The stored Cloud key backup is incomplete.");
+            }
+            return {
+                generatedSecret: local.generatedSecret,
+                rootSecret: local.rootSecret,
+            };
+        });
+    }
+
     async getProfile(_ctx: Context): Promise<CloudProfileResponse> {
         const ctx = this.#ownedContext();
         return await this.#lock.runInLock(ctx, async () => {
@@ -998,10 +1036,6 @@ export class CloudModule implements AgentModule {
                     const localProfile = await this.#profile.get(ctx);
                     return {
                         enrollment,
-                        identityKey:
-                            stored.session.keys?.status === "ready"
-                                ? stored.session.keys.identityKey
-                                : undefined,
                         localProfile,
                         minted,
                     };
@@ -1016,12 +1050,7 @@ export class CloudModule implements AgentModule {
                     if (remote.profile.username === null) {
                         enrollment = { status: "required" };
                     } else {
-                        const identityKey =
-                            prepared.identityKey !== undefined &&
-                            remote.identityKey === prepared.identityKey
-                                ? prepared.identityKey
-                                : undefined;
-                        enrollment = cloudEnrollment(remote.profile.username, null, identityKey);
+                        enrollment = cloudEnrollment(remote.profile.username, null);
                     }
                 } else {
                     const name = localProfileName(prepared.localProfile);
@@ -1032,9 +1061,6 @@ export class CloudModule implements AgentModule {
                             prepared.minted.accessToken,
                             {
                                 firstName: name,
-                                ...(prepared.identityKey === undefined
-                                    ? {}
-                                    : { identityKey: prepared.identityKey }),
                                 username: prepared.enrollment.username,
                             },
                         );
@@ -1042,7 +1068,6 @@ export class CloudModule implements AgentModule {
                         enrollment = cloudEnrollment(
                             remote.username,
                             prepared.localProfile.version,
-                            prepared.identityKey,
                         );
                     }
                 }
@@ -1155,12 +1180,10 @@ export class CloudModule implements AgentModule {
                 });
                 if (prepared === undefined) return;
 
-                const [vault, profile] = await Promise.all([
-                    this.#client(account.environment).getVaultStatus(prepared.minted.accessToken),
-                    this.#client(account.environment).getProfileState(prepared.minted.accessToken),
-                ]);
+                const remoteIdentity = await this.#client(account.environment).getVaultIdentity(
+                    prepared.minted.accessToken,
+                );
                 const localReady = prepared.local?.status === "ready" ? prepared.local : undefined;
-                const remoteIdentity = profile.identityKey;
                 const keys: Exclude<CloudKeys, { status: "inactive" }> =
                     remoteIdentity !== undefined
                         ? localReady?.identityKey === remoteIdentity
@@ -1169,11 +1192,7 @@ export class CloudModule implements AgentModule {
                                   status: "ready",
                               }
                             : { status: "restore_required" }
-                        : localReady !== undefined
-                          ? { identityKey: localReady.identityKey, status: "ready" }
-                          : vault.exists
-                            ? { status: "restore_required" }
-                            : { status: "create_required" };
+                        : { status: "create_required" };
 
                 await this.#lock.runInLock(ctx, async () => {
                     await ctx.inTx(async (txCtx) => {
@@ -1190,13 +1209,6 @@ export class CloudModule implements AgentModule {
                             pending: false,
                             session: withoutKeysReconciliation({ ...stored.session, keys }),
                         });
-                        if (keys.status === "ready") {
-                            await this.#scheduleProfileSync(
-                                txCtx,
-                                account.userId,
-                                `cloud.keys-ready:${keys.identityKey}`,
-                            );
-                        }
                     });
                 });
                 return;
@@ -1324,11 +1336,32 @@ export class CloudModule implements AgentModule {
             try {
                 staged = await this.#keysDatabase.read(ctx, factors.account);
                 if (staged?.status === "ready") {
-                    return await this.#commitReadyKeys(ctx, factors.account, staged);
-                }
-                if (staged === undefined) {
+                    const recreated = await createCloudKeyBundleFromRoot(
+                        staged.rootSecret,
+                        factors.request.encryptionKey,
+                    );
+                    if (recreated.identityKey !== staged.identityKey) {
+                        throw new CloudKeyMaterialError();
+                    }
+                    staged = {
+                        ...recreated,
+                        ...(staged.generatedSecret === undefined
+                            ? factors.request.generatedSecret === undefined
+                                ? {}
+                                : { generatedSecret: factors.request.generatedSecret }
+                            : { generatedSecret: staged.generatedSecret }),
+                        status: "staged",
+                    };
+                    await this.#keysDatabase.write(ctx, factors.account, staged);
+                } else if (staged === undefined) {
                     const created = await createCloudKeyBundle(factors.request.encryptionKey);
-                    staged = { ...created, status: "staged" };
+                    staged = {
+                        ...created,
+                        ...(factors.request.generatedSecret === undefined
+                            ? {}
+                            : { generatedSecret: factors.request.generatedSecret }),
+                        status: "staged",
+                    };
                     await this.#keysDatabase.write(ctx, factors.account, staged);
                 } else {
                     const opened = await openCloudKeyBundle(
@@ -1337,9 +1370,22 @@ export class CloudModule implements AgentModule {
                     );
                     if (
                         opened.rootSecret !== staged.rootSecret ||
-                        opened.identityKey !== staged.identityKey
+                        opened.identityKey !== staged.identityKey ||
+                        (staged.generatedSecret !== undefined &&
+                            factors.request.generatedSecret !== undefined &&
+                            staged.generatedSecret !== factors.request.generatedSecret)
                     ) {
                         throw new CloudKeyMaterialError();
+                    }
+                    if (
+                        staged.generatedSecret === undefined &&
+                        factors.request.generatedSecret !== undefined
+                    ) {
+                        staged = {
+                            ...staged,
+                            generatedSecret: factors.request.generatedSecret,
+                        };
+                        await this.#keysDatabase.write(ctx, factors.account, staged);
                     }
                 }
             } catch (error: unknown) {
@@ -1353,6 +1399,7 @@ export class CloudModule implements AgentModule {
                 await this.#client(factors.account.environment).saveVault(
                     minted.accessToken,
                     factors.request.authHash,
+                    staged.identityKey,
                     staged.bundle,
                 );
             } catch (error: unknown) {
@@ -1370,6 +1417,9 @@ export class CloudModule implements AgentModule {
             }
             try {
                 return await this.#commitReadyKeys(ctx, factors.account, {
+                    ...(staged.generatedSecret === undefined
+                        ? {}
+                        : { generatedSecret: staged.generatedSecret }),
                     identityKey: staged.identityKey,
                     rootSecret: staged.rootSecret,
                     status: "ready",
@@ -1389,9 +1439,13 @@ export class CloudModule implements AgentModule {
                 factors.request.authHash,
             );
             const restored = await openCloudKeyBundle(remote.blob, factors.request.encryptionKey);
+            if (restored.identityKey !== remote.identityKey) throw new CloudKeyMaterialError();
             try {
                 return await this.#commitReadyKeys(ctx, factors.account, {
                     ...restored,
+                    ...(factors.request.generatedSecret === undefined
+                        ? {}
+                        : { generatedSecret: factors.request.generatedSecret }),
                     status: "ready",
                 });
             } catch (error: unknown) {
@@ -1531,13 +1585,6 @@ export class CloudModule implements AgentModule {
                     },
                 }),
             );
-            if (stored.session.enrollment.status === "enrolled") {
-                await this.#scheduleProfileSync(
-                    txCtx,
-                    account.userId,
-                    `cloud.keys-ready:${ready.identityKey}`,
-                );
-            }
             return cloud;
         });
     }
@@ -1631,43 +1678,30 @@ export class CloudModule implements AgentModule {
 
         const localProfile = await this.#profile.get(ctx);
         const name = localProfileName(localProfile);
-        const synchronizedIdentityKey =
-            stored.session.enrollment.status === "enrolled"
-                ? stored.session.enrollment.identityKey
-                : undefined;
-        const readyIdentityKey =
-            stored.session.keys?.status === "ready" ? stored.session.keys.identityKey : undefined;
         if (localProfile === undefined || name === undefined) {
             await this.#persistSessionAfterProfile(
                 ctx,
                 minted,
-                cloudEnrollment(online.username, null, synchronizedIdentityKey),
+                cloudEnrollment(online.username, null),
                 "background",
             );
             return true;
         }
 
-        if (
-            online.firstName === name &&
-            online.lastName === undefined &&
-            (readyIdentityKey === undefined || readyIdentityKey === synchronizedIdentityKey)
-        ) {
+        if (online.firstName === name && online.lastName === undefined) {
             await this.#persistSessionAfterProfile(
                 ctx,
                 minted,
-                cloudEnrollment(online.username, localProfile.version, synchronizedIdentityKey),
+                cloudEnrollment(online.username, localProfile.version),
                 "background",
             );
             return true;
         }
-
-        if (readyIdentityKey === undefined && synchronizedIdentityKey !== undefined) return false;
 
         let synchronized: CloudProfile;
         try {
             synchronized = await client.updateProfile(minted.accessToken, {
                 firstName: name,
-                ...(readyIdentityKey === undefined ? {} : { identityKey: readyIdentityKey }),
                 username: online.username,
             });
         } catch (error: unknown) {
@@ -1680,7 +1714,7 @@ export class CloudModule implements AgentModule {
         await this.#persistSessionAfterProfile(
             ctx,
             minted,
-            cloudEnrollment(synchronized.username, localProfile.version, readyIdentityKey),
+            cloudEnrollment(synchronized.username, localProfile.version),
             "background",
         );
         for (const listener of this.#profileListeners) listener(ctx);
@@ -1924,7 +1958,7 @@ export class CloudModule implements AgentModule {
                     continue;
                 }
                 environment = prepared.account.environment;
-                const identity = cloudIdentity(prepared.local);
+                const derived = cloudIdentity(prepared.local);
                 const controller = new AbortController();
                 opening = controller;
                 this.#openingMurmur = controller;
@@ -1940,16 +1974,35 @@ export class CloudModule implements AgentModule {
                                     : AbortSignal.any([init.signal, controller.signal]);
                             return await fetch(input, { ...init, signal });
                         },
-                        identity,
+                        identity: derived.identity,
                         relay: murmurRelays[environment],
                         store: new CloudMurmurStore(ctx, prepared.account),
                     });
+                } catch (error: unknown) {
+                    derived.keyTree.destroy();
+                    throw error;
                 } finally {
-                    destroyIdentity(identity);
+                    destroyIdentity(derived.identity);
                 }
                 if (this.#openingMurmur === controller) this.#openingMurmur = undefined;
-                const sync = client.sync({ abort: controller.signal });
-                live = { account: prepared.account, client, controller, sync };
+                let sync: Promise<void>;
+                try {
+                    sync = client.sync({ abort: controller.signal });
+                } catch (error: unknown) {
+                    try {
+                        client.close();
+                    } finally {
+                        derived.keyTree.destroy();
+                    }
+                    throw error;
+                }
+                live = {
+                    account: prepared.account,
+                    client,
+                    controller,
+                    keyTree: derived.keyTree,
+                    sync,
+                };
                 const accepted = await this.#lock.runInLock(ctx, async () => {
                     const stored = await this.#readOwned(ctx);
                     if (
@@ -1986,6 +2039,7 @@ export class CloudModule implements AgentModule {
                     } catch {
                         // The synchronization promise has settled; close is best-effort cleanup.
                     }
+                    live.keyTree.destroy();
                     if (this.#liveMurmur === live) this.#liveMurmur = undefined;
                 }
             }
@@ -2709,6 +2763,9 @@ function pendingCloudKeyFactors(
         request: {
             authHash: request.authHash,
             encryptionKey: request.encryptionKey,
+            ...(request.generatedSecret === undefined
+                ? {}
+                : { generatedSecret: request.generatedSecret }),
             ...(request.mutationId === undefined ? {} : { mutationId: request.mutationId }),
         },
         resolve,
@@ -2721,13 +2778,30 @@ function cloudIdentity(keys: ReadyCloudKeys) {
         root.fill(0);
         throw new Error("The stored Cloud identity root is invalid.");
     }
-    const identity = importIdentityKeyPair(root);
-    root.fill(0);
-    if (Buffer.from(identity.publicKey).toString("base64url") !== keys.identityKey) {
-        destroyIdentity(identity);
-        throw new Error("The stored Cloud identity does not match its root.");
+    let keyTree: CloudKeyTree | undefined;
+    let derived: ReturnType<CloudKeyTree["deriveEd25519Key"]> | undefined;
+    let identity: ReturnType<typeof importIdentityKeyPair> | undefined;
+    try {
+        keyTree = createCloudKeyTree(root);
+        derived = keyTree.deriveEd25519Key(["murmur", "identity"]);
+        identity = importIdentityKeyPair(derived.secret);
+        const matchesDerived = Buffer.from(identity.publicKey).equals(Buffer.from(derived.public));
+        if (
+            !matchesDerived ||
+            Buffer.from(identity.publicKey).toString("base64url") !== keys.identityKey
+        ) {
+            throw new Error("The stored Cloud identity does not match its root.");
+        }
+        return { identity, keyTree };
+    } catch (error: unknown) {
+        if (identity !== undefined) destroyIdentity(identity);
+        keyTree?.destroy();
+        throw error;
+    } finally {
+        root.fill(0);
+        derived?.secret.fill(0);
+        derived?.public.fill(0);
     }
-    return identity;
 }
 
 function sameUser(left: CloudUser, right: CloudUser): boolean {

@@ -66,6 +66,11 @@ const VERSION_3 = "01991f3a-5c1e-7002-8000-2f9a1b3c4d5e";
 const cloudKeyInput = {
     authHash: Buffer.alloc(32, 1).toString("base64url"),
     encryptionKey: Buffer.alloc(32, 2).toString("base64url"),
+    generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
+};
+const cloudKeyBackup = {
+    generatedSecret: cloudKeyInput.generatedSecret,
+    rootSecret: Buffer.alloc(32, 3).toString("base64url"),
 };
 
 const user = {
@@ -156,10 +161,7 @@ beforeEach(() => {
         "fetch",
         vi.fn(async () => Response.json({ message: "hello", userId: user.id })),
     );
-    vi.spyOn(CloudWorkOS.prototype, "getVaultStatus").mockResolvedValue({
-        exists: false,
-        version: null,
-    });
+    vi.spyOn(CloudWorkOS.prototype, "getVaultIdentity").mockResolvedValue(undefined);
     vi.spyOn(CloudWorkOS.prototype, "getProfileState").mockResolvedValue({
         profile: { firstName: null, username: null },
     });
@@ -202,6 +204,9 @@ describe("Cloud HTTP API", () => {
                 mutationId: "cloud-keys-restore-1",
             }),
         ).resolves.toEqual({ cloud: connected });
+        await expect(fixture.client.getCloudKeyBackup()).resolves.toEqual({
+            backup: cloudKeyBackup,
+        });
         await expect(fixture.client.getCloudProfile()).resolves.toEqual({
             profile: { firstName: null, username: null },
         });
@@ -235,6 +240,8 @@ describe("Cloud HTTP API", () => {
             }),
         ]);
         expect(JSON.stringify(events)).not.toContain("access-token");
+        expect(JSON.stringify(events)).not.toContain(cloudKeyBackup.rootSecret);
+        expect(JSON.stringify(events)).not.toContain(cloudKeyInput.generatedSecret);
 
         await expect(
             fixture.client.disconnectCloud({ mutationId: "cloud-disconnect-1" }),
@@ -251,6 +258,7 @@ describe("Cloud HTTP API", () => {
             fixture.context,
             expect.objectContaining(cloudKeyInput),
         );
+        expect(fixture.cloud.getKeyBackup).toHaveBeenCalledWith(fixture.context);
     });
 
     it("routes every supported Cloud friends mutation and emits compact invalidations", async () => {
@@ -307,6 +315,19 @@ describe("Cloud HTTP API", () => {
             code: "cloud_unauthorized",
             status: 409,
         });
+    });
+
+    it("does not expose an incomplete stored key backup through generic API failures", async () => {
+        const fixture = await apiFixture(connected);
+        fixture.cloud.getKeyBackup.mockRejectedValueOnce(
+            new Error(`incomplete ${cloudKeyInput.generatedSecret} ${cloudKeyBackup.rootSecret}`),
+        );
+
+        const error = await fixture.client.getCloudKeyBackup().catch((caught: unknown) => caught);
+
+        expect(error).toMatchObject({ code: "internal", status: 500 });
+        expect(JSON.stringify(error)).not.toContain(cloudKeyInput.generatedSecret);
+        expect(JSON.stringify(error)).not.toContain(cloudKeyBackup.rootSecret);
     });
 
     it("accepts a genuinely empty chunked body for optional Cloud mutations", async () => {
@@ -493,6 +514,7 @@ async function apiFixture(initial: Cloud = disconnected) {
             return disconnected;
         }),
         createKeys: vi.fn(async () => connected),
+        getKeyBackup: vi.fn(async () => cloudKeyBackup),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
         getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
         getSocial: vi.fn(() => ({ cloudSocial: social })),

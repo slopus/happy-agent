@@ -83,28 +83,38 @@
 - Authentication schedules online enrollment discovery instead of performing it on the OAuth
   critical path. The durable worker repairs the local username state, never overwrites the local
   human profile, and survives daemon restarts. Account changes terminate stale work safely.
-- Later local profile changes use their own Durable Function and preserve the enrolled username and
-  last published identity. Persist refresh-token rotation before every downstream verification.
+- Later local profile changes use their own Durable Function and preserve the enrolled username.
+  Identity belongs only to the vault; profile reads, writes, and synchronization never carry it.
+  Persist refresh-token rotation before every downstream verification.
 - CloudModule owns the successful remote profile-change signal so every caller gets the same
   behavior; the API translates it into `cloud.profile.updated` as a compact invalidation.
 
 ## Cloud keys and messaging
 
 - Cloud key setup is account-scoped and begins only after username enrollment. Durable discovery
-  keeps keys absent while profile or vault status is unknown. A remote identity that is absent
-  locally or differs from the retained local identity always requires restoration.
+  keeps keys absent while vault identity is unknown. A vault identity that is absent locally or
+  differs from the retained local identity always requires restoration; an absent vault identity
+  requires creation. Cloud's vault version is not part of Happy Agent's state.
 - Each key-discovery pass has a unique durable call whose ID is stored transactionally with the
   account. Re-enrollment invalidates the old owner, and only the currently stored call ID may commit
   discovered status. Cloud Durable Functions do not use lock keys; obsolete concurrent workers are
   rejected by transactional ownership checks.
-- Enroll without an identity key when necessary, then schedule durable profile synchronization when
-  the root becomes ready so Happy Cloud receives the derived public identity. Track the last
-  identity sent with the private enrolled state: matching display names alone cannot prove that the
-  identity was published, and profile writes must wait rather than erase a known identity while the
-  local root is unavailable.
 - Persist a newly generated root and its encrypted bundle locally before the remote vault write.
-  This makes an ambiguous write retry reuse the same root and bundle. Never persist the caller's
-  already-derived encryption key or authentication hash.
+  Send the derived identity with that blob atomically, and require a restored vault identity to
+  match the identity derived from the authenticated root. This makes an ambiguous write retry reuse
+  the same root, identity, and bundle. If a vault is absent while a ready local root remains,
+  re-encrypt and upload that retained root instead of rotating the account identity. Never persist
+  the caller's already-derived encryption key or authentication hash.
+- Treat the random 32-byte root as the seed for one privacy-kit-compatible HMAC-SHA-512 key tree,
+  not as a private key. Use the `Happy Agent Cloud` root domain, reserve algorithm path suffixes,
+  and derive the Murmur Noble Ed25519 identity at `murmur / identity / #ed25519`. Keep the tree in
+  memory while account messaging is live, destroy it at shutdown or setup failure, and clear
+  temporary private bytes after each derivation.
+- Persist the canonical H1 generated secret beside the root as owner backup material. Return both
+  only from the dedicated on-demand backup API; snapshots, events, bootstrap, logs, and durable
+  operation arguments must not expose them. The password, encryption key, and vault authentication
+  hash are never retained. Pre-retention rows remain readable but an incomplete backup read fails
+  generically instead of inventing or migrating a generated secret.
 - Create and restore are durable account operations, but their authentication and encryption
   factors remain only in a process-local waiter. The API request waits while transient networking
   retries; after daemon recovery the factorless call terminates at create/restore-required so the
@@ -112,8 +122,7 @@
   Every re-entry gets a fresh non-secret generation and durable call, so a finishing old call cannot
   deduplicate, consume, or settle replacement factors.
 - Retain committed roots by deployment and WorkOS user ID across disconnects. An unknown remote
-  bundle or public identity requires restoration and must never cause a replacement identity to be
-  generated.
+  vault identity requires restoration and must never cause a replacement identity to be generated.
 - Murmur's device key belongs in its own account-scoped durable key/value store. Only an enrolled
   account with ready keys may open the client. Opening performs durable relay registration, while
   transport retries and failures remain independent from Cloud authentication and its public error

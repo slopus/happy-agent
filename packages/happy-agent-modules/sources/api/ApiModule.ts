@@ -709,6 +709,11 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, { cloud });
                 return;
             }
+            if (request.method === "GET" && url.pathname === "/v0/cloud/keys/backup") {
+                const backup = await this.#cloudOperation(() => this.#cloud.getKeyBackup(ctx));
+                sendJson(response, 200, { backup });
+                return;
+            }
             if (request.method === "GET" && url.pathname === "/v0/cloud/profile") {
                 sendJson(
                     response,

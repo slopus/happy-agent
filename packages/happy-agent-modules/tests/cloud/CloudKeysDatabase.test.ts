@@ -18,6 +18,7 @@ const databases: ModuleDatabase[] = [];
 const account: CloudKeysAccount = { environment: "production", userId: "user-a" };
 const rootSecret = Buffer.alloc(32, 1).toString("base64url");
 const identityKey = Buffer.alloc(32, 2).toString("base64url");
+const generatedSecret = "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN";
 
 afterEach(() => {
     for (const database of databases.splice(0)) database.close();
@@ -80,12 +81,14 @@ describe("Cloud key storage", () => {
 
         await store.write(database.context, account, {
             bundle: "encrypted-bundle",
+            generatedSecret,
             identityKey,
             rootSecret,
             status: "staged",
         });
         await expect(store.read(database.context, account)).resolves.toEqual({
             bundle: "encrypted-bundle",
+            generatedSecret,
             identityKey,
             rootSecret,
             status: "staged",
@@ -98,10 +101,28 @@ describe("Cloud key storage", () => {
         ).resolves.toBeUndefined();
 
         await store.write(database.context, account, {
+            generatedSecret,
             identityKey,
             rootSecret,
             status: "ready",
         });
+        await expect(store.read(database.context, account)).resolves.toEqual({
+            generatedSecret,
+            identityKey,
+            rootSecret,
+            status: "ready",
+        });
+    });
+
+    it("keeps pre-retention key rows readable without inventing a generated secret", async () => {
+        const { database, store } = await fixture("cloud-key-storage-legacy");
+
+        await store.write(database.context, account, {
+            identityKey,
+            rootSecret,
+            status: "ready",
+        });
+
         await expect(store.read(database.context, account)).resolves.toEqual({
             identityKey,
             rootSecret,

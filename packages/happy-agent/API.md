@@ -864,13 +864,21 @@ clock rollback.
 
 ### Cloud keys
 
-Every Cloud account owns one random 32-byte root secret. The account's stable Ed25519 identity is
-derived from that root; the identity is not generated or restored independently. The daemon stores
-the recovered root and the canonical H1 generated secret together in owner-only, account-scoped
-durable storage. The generated secret is the non-password factor used by the client's two-secret
-KDF; the daemon never receives or stores the password or either password-derived component. Happy
-Cloud stores only an opaque, versioned encrypted root bundle and a verifier derived from the
-supplied authentication hash.
+Every Cloud account owns one random 32-byte root secret. It is the seed for one domain-separated,
+BIP32-shaped HMAC-SHA-512 key tree rather than a private key used directly. The tree construction
+matches privacy-kit's key tree: its root is `HMAC-SHA512("Happy Agent Cloud Master Seed", root)`,
+each child is `HMAC-SHA512(parentChainCode, 0x00 || UTF8(pathElement))`, and each digest is split
+into a 32-byte derived key followed by a 32-byte child chain code. Algorithm suffixes are reserved
+path elements. The account's stable Ed25519 identity is the Noble Ed25519 public key derived at
+`murmur / identity / #ed25519`; the identity is not generated or restored independently. The live
+Cloud service retains the key tree in memory while it needs account-derived secrets and destroys
+that state when the service closes.
+
+The daemon stores the recovered root and the canonical H1 generated secret together in owner-only,
+account-scoped durable storage. The generated secret is the non-password factor used by the
+client's two-secret KDF; the daemon never receives or stores the password or either password-derived
+component. Happy Cloud stores only an opaque, versioned encrypted root bundle and a verifier
+derived from the supplied authentication hash.
 
 The optional `keys` field is one of these states:
 

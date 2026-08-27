@@ -14,13 +14,20 @@ definitive username conflict returns the account to `required`. Daemon restarts 
 enrollment, and later local profile-name changes use separate durable synchronization.
 
 Each account also owns an independent Cloud encryption root. Key discovery starts only after
-enrollment and durably retries profile and vault reads; an unknown public identity always requires
-restoration. A connected installation then creates a new authenticated encrypted vault bundle or
-restores the existing one. Create and restore are Durable Functions too, but their encryption and
-authentication factors stay only in process memory: the HTTP request waits through transient
-network failures, while a daemon restart safely requires the factors to be entered again. The
-owner-only root derives the public identity key, and a durable profile sync publishes it after keys
-become ready.
+enrollment and durably compares the identity stored with the vault against any retained local root;
+an unknown vault identity always requires restoration. A connected installation then creates a new
+authenticated encrypted vault bundle or restores the existing one. Create and restore are Durable
+Functions too, but their encryption and authentication factors stay only in process memory: the
+HTTP request waits through transient network failures, while a daemon restart safely requires the
+factors to be entered again. The owner-only root derives the public identity key, which is stored
+with the encrypted vault blob rather than in profiles or social records. The daemon durably keeps
+that root together with the non-password H1 generated secret and exposes both only through the
+on-demand owner backup endpoint.
+
+The random root seeds a privacy-kit-compatible HMAC-SHA-512 key tree under the `Happy Agent Cloud`
+usage. Cloud keeps this tree in memory while account services are live and derives the Murmur
+Ed25519 identity at `murmur / identity / #ed25519` with Noble. The raw root is never used directly
+as an Ed25519 seed, and closing the live service destroys the retained tree state.
 
 Enrolled accounts with ready keys start `@slopus/murmur` against the fixed relay for the selected
 deployment. Murmur owns a durable device identity in an account-scoped Cloud store, so opening the

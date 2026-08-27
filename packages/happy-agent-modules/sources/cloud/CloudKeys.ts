@@ -1,7 +1,8 @@
 import { cloudKeyValueSchema } from "@slopus/happy-agent-client";
-import { destroyIdentity, importIdentityKeyPair } from "@slopus/murmur";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+
+import { createCloudKeyTree, type CloudDerivedKeyPair } from "./CloudKeyTree.js";
 
 const exact = { additionalProperties: false } as const;
 const BUNDLE_ASSOCIATED_DATA = new TextEncoder().encode("happy-agent-cloud-keys/v1");
@@ -48,6 +49,20 @@ export async function createCloudKeyBundle(encryptionKey: string): Promise<Creat
     } finally {
         root.fill(0);
     }
+}
+
+/** Re-encrypts one retained account root without changing its stable identity. */
+export async function createCloudKeyBundleFromRoot(
+    rootSecret: string,
+    encryptionKey: string,
+): Promise<CreatedCloudKeyBundle> {
+    const root = decodeKey(rootSecret);
+    root.fill(0);
+    return {
+        bundle: await encryptRoot(rootSecret, encryptionKey),
+        identityKey: deriveCloudIdentityKey(rootSecret),
+        rootSecret,
+    };
 }
 
 /** Authenticates one remote bundle and returns its canonical root and public identity. */
@@ -98,12 +113,17 @@ export async function openCloudKeyBundle(
 /** Derives the stable Ed25519 public identity from one canonical account root. */
 export function deriveCloudIdentityKey(rootSecret: string): string {
     const root = decodeKey(rootSecret);
-    const identity = importIdentityKeyPair(root);
+    let tree: ReturnType<typeof createCloudKeyTree> | undefined;
+    let identity: CloudDerivedKeyPair | undefined;
     try {
-        return encodeKey(identity.publicKey);
+        tree = createCloudKeyTree(root);
+        identity = tree.deriveEd25519Key(["murmur", "identity"]);
+        return encodeKey(identity.public);
     } finally {
         root.fill(0);
-        destroyIdentity(identity);
+        identity?.secret.fill(0);
+        identity?.public.fill(0);
+        tree?.destroy();
     }
 }
 

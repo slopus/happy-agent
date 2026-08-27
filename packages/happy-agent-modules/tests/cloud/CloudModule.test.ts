@@ -62,6 +62,7 @@ const user = {
 const cloudKeyInput = {
     authHash: Buffer.alloc(32, 1).toString("base64url"),
     encryptionKey: Buffer.alloc(32, 2).toString("base64url"),
+    generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
 };
 
 const databases: ModuleDatabase[] = [];
@@ -105,10 +106,7 @@ beforeEach(() => {
         "fetch",
         vi.fn(async () => Response.json({ message: "hello", userId: user.id }, { status: 200 })),
     );
-    vi.spyOn(CloudWorkOS.prototype, "getVaultStatus").mockResolvedValue({
-        exists: false,
-        version: null,
-    });
+    vi.spyOn(CloudWorkOS.prototype, "getVaultIdentity").mockResolvedValue(undefined);
     vi.spyOn(CloudWorkOS.prototype, "getProfileState").mockResolvedValue({
         profile: { firstName: null, username: null },
     });
@@ -193,9 +191,8 @@ async function connect(
     });
 }
 
-function existingCloudProfile(identityKey?: string): void {
+function existingCloudProfile(): void {
     vi.mocked(CloudWorkOS.prototype.getProfileState).mockResolvedValue({
-        ...(identityKey === undefined ? {} : { identityKey }),
         profile: { firstName: "Ada", username: "ada" },
     });
 }
@@ -213,7 +210,7 @@ async function waitForCloud(
 describe("CloudModule", () => {
     it("keeps authentication connected while durable key discovery retries", async () => {
         existingCloudProfile();
-        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockRejectedValue(
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockRejectedValue(
             new Error("vault unavailable"),
         );
         const { database, module } = await fixture("cloud-module-vault-status-unavailable");
@@ -230,7 +227,7 @@ describe("CloudModule", () => {
 
     it("recovers the transactionally owned key discovery after restart", async () => {
         existingCloudProfile();
-        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockRejectedValue(
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockRejectedValue(
             new Error("vault unavailable"),
         );
         const { database, durableFunctions, module, profile } = await fixture(
@@ -246,10 +243,7 @@ describe("CloudModule", () => {
 
         await module.stop();
         durableFunctions.stop();
-        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockResolvedValue({
-            exists: false,
-            version: null,
-        });
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockResolvedValue(undefined);
 
         const restartedDurableFunctions = new DurableFunctionsModule();
         const restarted = new CloudModule(restartedDurableFunctions, profile);
@@ -266,12 +260,12 @@ describe("CloudModule", () => {
         await vi.waitFor(async () => expect(await pendingDurableCallCount(database)).toBe(0));
     });
 
-    it("requires restoration when Cloud already has an unknown public identity", async () => {
-        vi.mocked(CloudWorkOS.prototype.getProfileState).mockResolvedValue({
-            identityKey: "an-existing-opaque-public-identity",
-            profile: { firstName: "Ada", username: "ada" },
-        });
-        const { database, module } = await fixture("cloud-module-unknown-profile-key");
+    it("requires restoration when Cloud already has an unknown vault identity", async () => {
+        existingCloudProfile();
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockResolvedValue(
+            "an-existing-opaque-public-identity",
+        );
+        const { database, module } = await fixture("cloud-module-unknown-vault-key");
 
         await connect(module, database);
         await waitForCloud(module, database, {
@@ -283,9 +277,7 @@ describe("CloudModule", () => {
     it("requires creation when no remote bundle exists and commits the account root", async () => {
         existingCloudProfile();
         const { database, module } = await fixture("cloud-module-create-keys");
-        const saveVault = vi
-            .spyOn(CloudWorkOS.prototype, "saveVault")
-            .mockResolvedValue("01991f3a-5c1e-7000-8000-2f9a1b3c4d5e");
+        const saveVault = vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
 
         await connect(module, database);
         await waitForCloud(module, database, { keys: { status: "create_required" } });
@@ -299,30 +291,34 @@ describe("CloudModule", () => {
             "access-b",
             cloudKeyInput.authHash,
             expect.any(String),
+            expect.any(String),
         );
         const local = await createCloudKeysDatabase().read(database.context, {
             environment: "production",
             userId: user.id,
         });
         expect(local).toMatchObject({
+            generatedSecret: cloudKeyInput.generatedSecret,
             identityKey: ready.keys?.status === "ready" ? ready.keys.identityKey : undefined,
             status: "ready",
         });
+        await expect(module.getKeyBackup(database.context)).resolves.toEqual({
+            generatedSecret: cloudKeyInput.generatedSecret,
+            rootSecret: local?.rootSecret,
+        });
         expect(JSON.stringify(ready)).not.toContain(cloudKeyInput.authHash);
         expect(JSON.stringify(ready)).not.toContain(cloudKeyInput.encryptionKey);
+        expect(JSON.stringify(ready)).not.toContain(cloudKeyInput.generatedSecret);
         expect(JSON.stringify(ready)).not.toContain(local?.rootSecret);
     });
 
     it("requires restoration for an unknown remote key and authenticates its encrypted root", async () => {
         existingCloudProfile();
-        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockResolvedValue({
-            exists: true,
-            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
-        });
         const remote = await createCloudKeyBundle(cloudKeyInput.encryptionKey);
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockResolvedValue(remote.identityKey);
         vi.spyOn(CloudWorkOS.prototype, "restoreVault").mockResolvedValue({
             blob: remote.bundle,
-            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+            identityKey: remote.identityKey,
         });
         const { database, module } = await fixture("cloud-module-restore-keys");
 
@@ -337,10 +333,48 @@ describe("CloudModule", () => {
                 userId: user.id,
             }),
         ).resolves.toEqual({
+            generatedSecret: cloudKeyInput.generatedSecret,
             identityKey: remote.identityKey,
             rootSecret: remote.rootSecret,
             status: "ready",
         });
+        await expect(module.getKeyBackup(database.context)).resolves.toEqual({
+            generatedSecret: cloudKeyInput.generatedSecret,
+            rootSecret: remote.rootSecret,
+        });
+    });
+
+    it("fails backup reads generically for incomplete pre-retention key rows", async () => {
+        existingCloudProfile();
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
+        const { database, module } = await fixture("cloud-module-incomplete-key-backup");
+
+        await expect(module.getKeyBackup(database.context)).rejects.toMatchObject({
+            code: "cloud_not_authenticated",
+            status: 409,
+        });
+        await connect(module, database);
+        await waitForCloud(module, database, { keys: { status: "create_required" } });
+        await expect(module.getKeyBackup(database.context)).rejects.toMatchObject({
+            code: "conflict",
+            status: 409,
+        });
+        await module.createKeys(database.context, cloudKeyInput);
+        const account = { environment: "production", userId: user.id } as const;
+        const local = await createCloudKeysDatabase().read(database.context, account);
+        if (local?.status !== "ready") throw new Error("The fixture did not commit Cloud keys.");
+        await createCloudKeysDatabase().write(database.context, account, {
+            identityKey: local.identityKey,
+            rootSecret: local.rootSecret,
+            status: "ready",
+        });
+
+        const error = await module
+            .getKeyBackup(database.context)
+            .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(CloudOperationError);
+        expect(error).toMatchObject({ message: "The stored Cloud key backup is incomplete." });
     });
 
     it("opens the fixed relay with an account-scoped durable Murmur store once keys are ready", async () => {
@@ -350,9 +384,7 @@ describe("CloudModule", () => {
         });
         const close = vi.fn();
         const open = vi.spyOn(MurmurClient, "open").mockResolvedValue({ close, sync } as never);
-        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(
-            "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
-        );
+        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
         const { cloudHooks, database, module } = await fixture("cloud-module-murmur");
         await connect(module, database, "staging");
         await waitForCloud(module, database, { keys: { status: "create_required" } });
@@ -604,7 +636,7 @@ describe("CloudModule", () => {
         expect(fetch).not.toHaveBeenCalled();
     });
 
-    it("enrolls before key setup and durably publishes the identity after keys are ready", async () => {
+    it("keeps identity out of profiles when keys become ready", async () => {
         const { database, module } = await fixture("cloud-module-profile-key-sync");
         vi.mocked(CloudWorkOS.prototype.getProfileState).mockRestore();
         let online: Record<string, unknown> = { firstName: "Ada", username: "ada" };
@@ -620,9 +652,7 @@ describe("CloudModule", () => {
             }
             return Response.json(online);
         });
-        vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(
-            "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
-        );
+        const saveVault = vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
         await connect(module, database);
 
         await module.enrollProfile(database.context, { username: "ada" });
@@ -634,16 +664,16 @@ describe("CloudModule", () => {
         if (ready.keys?.status !== "ready") throw new Error("Expected ready Cloud keys.");
         const identityKey = ready.keys.identityKey;
 
-        await vi.waitFor(() => {
-            expect(profileWrites.at(-1)).toEqual({
-                firstName: "Ada",
-                identityKey,
-                username: "ada",
-            });
-        });
+        expect(profileWrites).toEqual([{ firstName: "Ada", username: "ada" }]);
+        expect(saveVault).toHaveBeenCalledWith(
+            expect.any(String),
+            cloudKeyInput.authHash,
+            identityKey,
+            expect.any(String),
+        );
         await expect(createCloudDatabase().read(database.context)).resolves.toMatchObject({
             session: {
-                enrollment: { identityKey, status: "enrolled", username: "ada" },
+                enrollment: { status: "enrolled", username: "ada" },
             },
         });
     });
@@ -839,10 +869,8 @@ describe("CloudModule", () => {
 
     it("gives re-enrollment a new transactional key-discovery generation", async () => {
         existingCloudProfile();
-        const finishDiscoveries: Array<
-            (status: { readonly exists: false; readonly version: null }) => void
-        > = [];
-        vi.mocked(CloudWorkOS.prototype.getVaultStatus).mockImplementation(
+        const finishDiscoveries: Array<(identityKey: string | undefined) => void> = [];
+        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockImplementation(
             async () =>
                 await new Promise((resolve) => {
                     finishDiscoveries.push(resolve);
@@ -873,7 +901,7 @@ describe("CloudModule", () => {
         });
 
         for (const finishDiscovery of finishDiscoveries) {
-            finishDiscovery({ exists: false, version: null });
+            finishDiscovery(undefined);
         }
         await waitForCloud(module, database, { keys: { status: "create_required" } });
     });
@@ -983,11 +1011,12 @@ describe("CloudModule", () => {
         expect(calls).toHaveLength(1);
         expect(calls[0]?.arguments_json).not.toContain(cloudKeyInput.authHash);
         expect(calls[0]?.arguments_json).not.toContain(cloudKeyInput.encryptionKey);
+        expect(calls[0]?.arguments_json).not.toContain(cloudKeyInput.generatedSecret);
 
         await module.stop();
         durableFunctions.stop();
         await expect(creating).resolves.toBeInstanceOf(Error);
-        saveVault.mockResolvedValue("01991f3a-5c1e-7000-8000-2f9a1b3c4d5e");
+        saveVault.mockResolvedValue(undefined);
 
         const restartedDurableFunctions = new DurableFunctionsModule();
         const restarted = new CloudModule(restartedDurableFunctions, profile);
@@ -1019,7 +1048,7 @@ describe("CloudModule", () => {
         const saveVault = vi
             .spyOn(CloudWorkOS.prototype, "saveVault")
             .mockRejectedValueOnce(new Error("network unavailable"))
-            .mockResolvedValue("01991f3a-5c1e-7000-8000-2f9a1b3c4d5e");
+            .mockResolvedValue(undefined);
         vi.useFakeTimers();
 
         const first = module
@@ -1040,6 +1069,7 @@ describe("CloudModule", () => {
         expect(saveVault).toHaveBeenLastCalledWith(
             expect.any(String),
             replacement.authHash,
+            expect.any(String),
             expect.any(String),
         );
     });

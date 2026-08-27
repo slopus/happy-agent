@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
     CloudKeyMaterialError,
     createCloudKeyBundle,
+    createCloudKeyBundleFromRoot,
     deriveCloudIdentityKey,
     openCloudKeyBundle,
 } from "../../sources/cloud/CloudKeys.js";
@@ -21,6 +22,18 @@ describe("Cloud key bundles", () => {
         expect(deriveCloudIdentityKey(opened.rootSecret)).toBe(created.identityKey);
         expect(created.identityKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
         expect(created.bundle).not.toContain(created.rootSecret);
+    });
+
+    it("re-encrypts a retained root without changing its identity", async () => {
+        const created = await createCloudKeyBundle(key(5));
+        const recreated = await createCloudKeyBundleFromRoot(created.rootSecret, key(6));
+
+        expect(recreated.rootSecret).toBe(created.rootSecret);
+        expect(recreated.identityKey).toBe(created.identityKey);
+        await expect(openCloudKeyBundle(recreated.bundle, key(6))).resolves.toEqual({
+            identityKey: created.identityKey,
+            rootSecret: created.rootSecret,
+        });
     });
 
     it("rejects a wrong encryption key and authenticated-bundle tampering", async () => {

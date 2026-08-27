@@ -1,4 +1,8 @@
-import { cloudEnvironmentSchema, cloudKeyValueSchema } from "@slopus/happy-agent-client";
+import {
+    cloudEnvironmentSchema,
+    cloudGeneratedSecretSchema,
+    cloudKeyValueSchema,
+} from "@slopus/happy-agent-client";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
@@ -24,6 +28,7 @@ const cloudKeysAccountSchema = Type.Object(
 export type CloudKeysAccount = Static<typeof cloudKeysAccountSchema>;
 
 const cloudKeysCommon = {
+    generatedSecret: Type.Optional(cloudGeneratedSecretSchema),
     identityKey: cloudKeyValueSchema,
     rootSecret: cloudKeyValueSchema,
 };

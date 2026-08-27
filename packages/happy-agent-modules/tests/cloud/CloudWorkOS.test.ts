@@ -185,7 +185,6 @@ describe("CloudWorkOS", () => {
         await expect(
             new CloudWorkOS("production").updateProfile("access-token", {
                 firstName: "Ada",
-                identityKey: "A".repeat(43),
                 username: "ada_next",
             }),
         ).resolves.toEqual({ firstName: "Ada", username: "ada_next" });
@@ -195,7 +194,6 @@ describe("CloudWorkOS", () => {
         expect(init?.body).toBe(
             JSON.stringify({
                 firstName: "Ada",
-                identityKey: "A".repeat(43),
                 username: "ada_next",
             }),
         );
@@ -214,7 +212,7 @@ describe("CloudWorkOS", () => {
                 ),
         );
         const client = new CloudWorkOS("production");
-        const request = { firstName: "Ada", identityKey: "A".repeat(43), username: "ada" };
+        const request = { firstName: "Ada", username: "ada" };
 
         await expect(client.updateProfile("access-a", request)).rejects.toBeInstanceOf(
             CloudUsernameUnavailableError,
@@ -228,22 +226,25 @@ describe("CloudWorkOS", () => {
         const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
         const request = vi
             .fn<typeof fetch>()
-            .mockResolvedValueOnce(Response.json({ exists: false, version: null }))
+            .mockResolvedValueOnce(Response.json({ identityKey: null, version: null }))
             .mockResolvedValueOnce(Response.json({ version }))
-            .mockResolvedValueOnce(Response.json({ blob: "encrypted-bundle", version }));
+            .mockResolvedValueOnce(
+                Response.json({
+                    blob: "encrypted-bundle",
+                    identityKey: "opaque-identity",
+                    version,
+                }),
+            );
         vi.stubGlobal("fetch", request);
         const client = new CloudWorkOS("staging");
 
-        await expect(client.getVaultStatus("access-a")).resolves.toEqual({
-            exists: false,
-            version: null,
-        });
-        await expect(client.saveVault("access-b", "auth-hash", "encrypted-bundle")).resolves.toBe(
-            version,
-        );
+        await expect(client.getVaultIdentity("access-a")).resolves.toBeUndefined();
+        await expect(
+            client.saveVault("access-b", "auth-hash", "opaque-identity", "encrypted-bundle"),
+        ).resolves.toBeUndefined();
         await expect(client.restoreVault("access-c", "auth-hash")).resolves.toEqual({
             blob: "encrypted-bundle",
-            version,
+            identityKey: "opaque-identity",
         });
 
         expect(
@@ -257,7 +258,11 @@ describe("CloudWorkOS", () => {
             [
                 "https://happy-cloud-staging.bulka-llc.workers.dev/v0/vault",
                 "PUT",
-                JSON.stringify({ authKey: "auth-hash", blob: "encrypted-bundle" }),
+                JSON.stringify({
+                    authKey: "auth-hash",
+                    blob: "encrypted-bundle",
+                    identityKey: "opaque-identity",
+                }),
             ],
             [
                 "https://happy-cloud-staging.bulka-llc.workers.dev/v0/vault/restore",

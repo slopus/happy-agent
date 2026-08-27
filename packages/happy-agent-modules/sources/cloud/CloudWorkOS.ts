@@ -1,6 +1,5 @@
 import {
     cloudEnvironmentSchema,
-    cloudKeyValueSchema,
     cloudProfileSchema,
     cloudUsernameSchema,
     type CloudEnvironment,
@@ -103,7 +102,6 @@ const cloudFriendEntrySchema = Type.Object(
             maxLength: 64,
             pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
         }),
-        identityKey: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
         lastName: Type.Optional(
             Type.String({
                 minLength: 1,
@@ -185,13 +183,18 @@ const socialProfileRequiredSchema = Type.Object({ error: Type.Literal("profile_r
 const cloudVaultVersionSchema = Type.String({
     pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
+const cloudVaultIdentitySchema = Type.String({ minLength: 1, maxLength: 512 });
 const cloudVaultStatusSchema = Type.Object(
-    { exists: Type.Boolean(), version: Type.Union([Type.Null(), cloudVaultVersionSchema]) },
-    exact,
+    { identityKey: Type.Union([Type.Null(), cloudVaultIdentitySchema]) },
+    { additionalProperties: true },
 );
 const cloudVaultSavedSchema = Type.Object({ version: cloudVaultVersionSchema }, exact);
 const cloudVaultRestoredSchema = Type.Object(
-    { blob: Type.String({ minLength: 1, maxLength: 4_096 }), version: cloudVaultVersionSchema },
+    {
+        blob: Type.String({ minLength: 1, maxLength: 4_096 }),
+        identityKey: cloudVaultIdentitySchema,
+        version: cloudVaultVersionSchema,
+    },
     exact,
 );
 const cloudVaultKeyMismatchSchema = Type.Object(
@@ -207,7 +210,6 @@ const cloudProfileUpdateSchema = Type.Object(
             maxLength: 64,
             pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
         }),
-        identityKey: Type.Optional(cloudKeyValueSchema),
         username: cloudUsernameSchema,
     },
     { additionalProperties: false },
@@ -218,7 +220,6 @@ const cloudProfileStateSchema = Type.Union([
     Type.Object(
         {
             firstName: Type.Null(),
-            identityKey: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
             username: Type.Null(),
         },
         { additionalProperties: true },
@@ -226,7 +227,6 @@ const cloudProfileStateSchema = Type.Union([
     Type.Object(
         {
             firstName: cloudProfileUpdateSchema.properties.firstName,
-            identityKey: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
             lastName: cloudFriendEntrySchema.properties.lastName,
             username: cloudUsernameSchema,
         },
@@ -234,7 +234,6 @@ const cloudProfileStateSchema = Type.Union([
     ),
 ]);
 export type CloudProfileState = {
-    readonly identityKey?: string;
     readonly profile: CloudProfile;
 };
 
@@ -443,12 +442,7 @@ export class CloudWorkOS {
         if (!Value.Check(cloudProfileStateSchema, result.body)) {
             throw new CloudServiceUnavailableError();
         }
-        return {
-            ...(result.body.identityKey === undefined
-                ? {}
-                : { identityKey: result.body.identityKey }),
-            profile: cloudProfile(result.body),
-        };
+        return { profile: cloudProfile(result.body) };
     }
 
     async updateProfile(accessToken: string, request: CloudProfileUpdate): Promise<CloudProfile> {
@@ -461,7 +455,6 @@ export class CloudWorkOS {
             "PUT",
             {
                 firstName: request.firstName,
-                ...(request.identityKey === undefined ? {} : { identityKey: request.identityKey }),
                 username: request.username,
             },
             [400, 409],
@@ -478,25 +471,28 @@ export class CloudWorkOS {
         return cloudProfile(result.body);
     }
 
-    async getVaultStatus(
-        accessToken: string,
-    ): Promise<{ readonly exists: boolean; readonly version: string | null }> {
+    async getVaultIdentity(accessToken: string): Promise<string | undefined> {
         const result = await this.#request("/v0/vault", accessToken, "GET");
         if (!result.ok || !Value.Check(cloudVaultStatusSchema, result.body)) {
             throw new CloudServiceUnavailableError("response-rejected", result.status);
         }
-        if (result.body.exists !== (result.body.version !== null)) {
-            throw new CloudServiceUnavailableError("response-invalid", result.status);
-        }
-        return structuredClone(result.body);
+        return result.body.identityKey ?? undefined;
     }
 
-    async saveVault(accessToken: string, authHash: string, blob: string): Promise<string> {
+    async saveVault(
+        accessToken: string,
+        authHash: string,
+        identityKey: string,
+        blob: string,
+    ): Promise<void> {
+        if (!Value.Check(cloudVaultIdentitySchema, identityKey)) {
+            throw new CloudServiceUnavailableError();
+        }
         const result = await this.#request(
             "/v0/vault",
             accessToken,
             "PUT",
-            { authKey: authHash, blob },
+            { authKey: authHash, blob, identityKey },
             [400, 403],
         );
         if (result.status === 403 && Value.Check(cloudVaultKeyMismatchSchema, result.body)) {
@@ -505,13 +501,12 @@ export class CloudWorkOS {
         if (!result.ok || !Value.Check(cloudVaultSavedSchema, result.body)) {
             throw new CloudServiceUnavailableError("response-rejected", result.status);
         }
-        return result.body.version;
     }
 
     async restoreVault(
         accessToken: string,
         authHash: string,
-    ): Promise<{ readonly blob: string; readonly version: string }> {
+    ): Promise<{ readonly blob: string; readonly identityKey: string }> {
         const result = await this.#request(
             "/v0/vault/restore",
             accessToken,
@@ -528,7 +523,7 @@ export class CloudWorkOS {
         if (!result.ok || !Value.Check(cloudVaultRestoredSchema, result.body)) {
             throw new CloudServiceUnavailableError("response-rejected", result.status);
         }
-        return structuredClone(result.body);
+        return { blob: result.body.blob, identityKey: result.body.identityKey };
     }
 
     async getSocialSnapshot(accessToken: string): Promise<CloudRemoteSocialSnapshot> {
