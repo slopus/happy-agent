@@ -86,6 +86,32 @@ export const cloudKeyValueSchema = Type.String({
     pattern: "^[A-Za-z0-9_-]+$",
 });
 
+/** A canonical, versioned H1 generated secret used as the non-password Cloud key factor. */
+export const cloudGeneratedSecretSchema = Type.String({
+    minLength: 33,
+    maxLength: 33,
+    pattern:
+        "^H1-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{6}$",
+});
+export type CloudGeneratedSecret = Static<typeof cloudGeneratedSecretSchema>;
+
+/** The daemon-owned material returned only through the on-demand Cloud key backup read. */
+export const cloudKeyBackupSchema = Type.Object(
+    {
+        generatedSecret: cloudGeneratedSecretSchema,
+        rootSecret: cloudKeyValueSchema,
+    },
+    { additionalProperties: false },
+);
+export type CloudKeyBackup = Static<typeof cloudKeyBackupSchema>;
+
+/** `GET /v0/cloud/keys/backup` */
+export const cloudKeyBackupResponseSchema = Type.Object(
+    { backup: cloudKeyBackupSchema },
+    { additionalProperties: false },
+);
+export type CloudKeyBackupResponse = Static<typeof cloudKeyBackupResponseSchema>;
+
 /** Cloud keys are unavailable without a connected account. */
 export const cloudKeysInactiveSchema = Type.Object(
     { status: Type.Literal("inactive") },
@@ -224,6 +250,8 @@ export type CloudMutationRequest = Static<typeof cloudMutationRequestSchema>;
 const cloudKeysMutationFields = {
     authHash: cloudKeyValueSchema,
     encryptionKey: cloudKeyValueSchema,
+    /** Present on clients that support durable retrieval of complete Cloud key backups. */
+    generatedSecret: Type.Optional(cloudGeneratedSecretSchema),
     mutationId: Type.Optional(mutationIdSchema),
 };
 

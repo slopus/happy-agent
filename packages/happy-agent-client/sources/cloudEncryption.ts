@@ -1,15 +1,17 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import { cloudKeyValueSchema } from "./protocol/cloud.js";
+import {
+    type CloudGeneratedSecret,
+    cloudGeneratedSecretSchema,
+    cloudKeyValueSchema,
+} from "./protocol/cloud.js";
 
 const exact = { additionalProperties: false } as const;
 const encoder = new TextEncoder();
 const GENERATED_SECRET_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTVWXYZ";
 const GENERATED_SECRET_BASE = BigInt(GENERATED_SECRET_ALPHABET.length);
 const GENERATED_SECRET_BODY_CHARACTERS = 26;
-const GENERATED_SECRET_PATTERN =
-    "^H1-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{5}-[2-9A-HJ-NP-TV-Z]{6}$";
 const GENERATED_SECRET_PREFIX = "H1";
 const GENERATED_SECRET_VALUE_LIMIT = 1n << 128n;
 const KEY_BYTES = 32;
@@ -20,14 +22,6 @@ const normalizedPasswordSchema = Type.String({ minLength: 1 });
 
 /** The number of cryptographically secure random bytes encoded by an H1 generated secret. */
 export const CLOUD_GENERATED_SECRET_SEED_BYTES = 16;
-
-/** A canonical, versioned H1 generated secret. */
-export const cloudGeneratedSecretSchema = Type.String({
-    minLength: 33,
-    maxLength: 33,
-    pattern: GENERATED_SECRET_PATTERN,
-});
-export type CloudGeneratedSecret = Static<typeof cloudGeneratedSecretSchema>;
 
 /** The two derived values accepted by the Cloud key create and restore mutations. */
 export const cloudDerivedKeysSchema = Type.Object(

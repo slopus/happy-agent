@@ -35,6 +35,7 @@ import type {
     CloudAuthorizingResponse,
     CloudConnectedResponse,
     CloudDisconnectedResponse,
+    CloudKeyBackupResponse,
     CloudMutationRequest,
     CloudProfileResponse,
     CloudResponse,
@@ -418,6 +419,15 @@ export class HappyAgentClient {
             method: "POST",
             path: "v0/cloud/keys/restore",
             json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cloud/keys/backup` — returns the retained root and generated secret on demand. */
+    async getCloudKeyBackup(options: RequestOptions = {}): Promise<CloudKeyBackupResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/cloud/keys/backup",
             signal: options.signal,
         });
     }

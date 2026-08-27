@@ -114,7 +114,10 @@ const generatedSecret = stringifyCloudGeneratedSecret(seed);
 seed.fill(0);
 
 const keys = await deriveCloudKeys(generatedSecret, password);
-await client.createCloudKeys(keys);
+await client.createCloudKeys({ ...keys, generatedSecret });
+
+// The daemon retains this pair together and exposes it only through an on-demand backup read.
+const { backup } = await client.getCloudKeyBackup();
 ```
 
 Focused agent responses and agent bootstrap include the current module-contributed slash-command

@@ -866,8 +866,11 @@ clock rollback.
 
 Every Cloud account owns one random 32-byte root secret. The account's stable Ed25519 identity is
 derived from that root; the identity is not generated or restored independently. The daemon stores
-the recovered root in owner-only, account-scoped durable storage. Happy Cloud stores only an opaque,
-versioned encrypted root bundle and a verifier derived from the supplied authentication hash.
+the recovered root and the canonical H1 generated secret together in owner-only, account-scoped
+durable storage. The generated secret is the non-password factor used by the client's two-secret
+KDF; the daemon never receives or stores the password or either password-derived component. Happy
+Cloud stores only an opaque, versioned encrypted root bundle and a verifier derived from the
+supplied authentication hash.
 
 The optional `keys` field is one of these states:
 
@@ -880,25 +883,34 @@ The optional `keys` field is one of these states:
   bundle or could not prove that no bundle exists. The person must restore it through the restore
   mutation below. If restoration authoritatively reports no bundle, the state becomes
   `create_required`.
-- `ready` — the account root is available locally. `identityKey` is the derived Ed25519 public key,
-  serialized as exactly 43 unpadded base64url characters.
+- `ready` — the account root and generated secret are available locally. `identityKey` is the
+  derived Ed25519 public key, serialized as exactly 43 unpadded base64url characters.
 
 Key setup starts only after durable username reconciliation confirms that the account is enrolled.
 The daemon then starts a separate durable key-discovery operation. It retries temporary WorkOS and
-Happy Cloud failures across daemon restarts until it can compare the Cloud profile identity, vault
-status, and matching retained local root. An unknown or mismatched Cloud profile identity requires
-restore and is never overwritten by generating a new root. A proven absent profile identity and
-vault bundle requires create; a matching retained root publishes `ready`. Until discovery reaches
-one of those conclusions, `keys` is omitted. Disconnecting stops account services and publishes
-`inactive`, but retains roots under their WorkOS user IDs so reconnecting the same account can be
-verified and resumed without another restore.
+Happy Cloud failures across daemon restarts until it can compare the identity stored with the Cloud
+vault against a retained local root. A vault identity without a matching retained root requires
+restore and is never overwritten by generating a new root. An absent vault identity requires
+create; a matching retained root publishes `ready`. Cloud's vault version is an internal service
+detail and is not part of Happy Agent's state. Until discovery reaches one of those conclusions,
+`keys` is omitted. Disconnecting stops account services and publishes `inactive`, but retains roots
+under their WorkOS user IDs so reconnecting the same account can be verified and resumed without
+another restore.
 
-The create and restore requests each contain `encryptionKey` and `authHash`. Both are already-derived
-32-byte values serialized as exactly 43 unpadded base64url characters; the daemon performs no
-password KDF. It never stores either input. `encryptionKey` encrypts or decrypts the authenticated,
-versioned bundle. `authHash` is sent as the opaque proof value for Happy Cloud's vault operation.
-Neither value, the root, the encrypted bundle, nor any private identity or device key appears in a
-response, event, bootstrap payload, log, or display-safe error.
+The create and restore requests each contain `generatedSecret`, `encryptionKey`, and `authHash`.
+`generatedSecret` is the canonical 33-character H1 value beginning with `H1-`; it is stored with the
+root for later backup. The other two values are already-derived 32-byte values serialized as exactly
+43 unpadded base64url characters; the daemon performs no password KDF and never stores either one.
+`encryptionKey` encrypts or decrypts the authenticated, versioned bundle. `authHash` is sent as the
+opaque proof value for Happy Cloud's vault operation. The root and generated secret appear only in
+the dedicated backup response described below. Neither one appears in the Cloud snapshot, events,
+bootstrap, logs, or display-safe errors. The derived factors, encrypted bundle, private identity,
+and device key never appear in any response, event, bootstrap payload, log, or display-safe error.
+
+For additive compatibility with protocol-23 clients released before generated-secret retention,
+the wire schema accepts an omitted `generatedSecret`. Current clients always send it. A setup
+completed without it can still use its local root, but its incomplete backup record is not migrated
+or backfilled and the dedicated backup read fails with the generic internal error described below.
 
 Create and restore execute through Durable Functions without persisting either factor. The pending
 account operation and staged non-factor state are durable, while the factors live only in the
@@ -907,6 +919,12 @@ service failures; disconnecting the HTTP client does not cancel the operation. I
 before completion, recovery leaves the account in `create_required` or `restore_required` and the
 person must submit the factors again. A replacement submission supersedes the process-local factors
 for the same account.
+
+The vault stores the derived identity key beside the encrypted root blob. Vault creation writes the
+authentication proof, identity key, and blob atomically. Restoration returns the identity key with
+the blob, and the daemon rejects the result unless that identity exactly matches the identity
+derived from the authenticated root. Profiles, public profiles, friend entries, and social updates
+never carry identity keys.
 
 Once keys are ready, the Cloud module opens the account's durable Murmur store using the identity
 derived from the root. Each installation owns an independent Murmur device key, and opening the
@@ -1047,6 +1065,7 @@ Creates the connected account's Cloud encryption state. Request:
 
 ```json
 {
+    "generatedSecret": "H1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX",
     "encryptionKey": "43-character unpadded base64url value",
     "authHash": "43-character unpadded base64url value",
     "mutationId": "optional-client-value"
@@ -1055,11 +1074,12 @@ Creates the connected account's Cloud encryption state. Request:
 
 This mutation is valid only while `cloud.keys.status` is `create_required`. The daemon generates a
 fresh random 32-byte root, derives its Ed25519 identity, encrypts a versioned bundle containing the
-root with `encryptionKey`, and durably stages the root and bundle before contacting Happy Cloud. It
-saves the opaque bundle using `authHash` as its proof and commits the root for use only after Happy
-Cloud accepts it. Staged material is scoped to the authenticated WorkOS user. A retry after the
-remote save succeeded but final local persistence failed reuses or restores that same bundle; it
-never silently replaces an existing bundle with a newly generated root.
+root with `encryptionKey`, and durably stages the root, generated secret, and bundle together before
+contacting Happy Cloud. It saves the opaque bundle using `authHash` as its proof and commits the root
+and generated secret for use only after Happy Cloud accepts it. Staged material is scoped to the
+authenticated WorkOS user. A retry after the remote save succeeded but final local persistence
+failed reuses or restores that same bundle; it never silently replaces an existing bundle with a
+newly generated root.
 
 Response — `200`: `{ "cloud": { ... } }` with a connected Cloud object whose `keys` are `ready`.
 The transition emits one `cloud.updated` event carrying the optional `mutationId`.
@@ -1079,6 +1099,7 @@ shape as the create mutation:
 
 ```json
 {
+    "generatedSecret": "H1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX",
     "encryptionKey": "43-character unpadded base64url value",
     "authHash": "43-character unpadded base64url value",
     "mutationId": "optional-client-value"
@@ -1088,8 +1109,9 @@ shape as the create mutation:
 This mutation is valid while `cloud.keys.status` is `restore_required`. The daemon uses `authHash`
 to retrieve the account's opaque bundle from Happy Cloud, authenticates and decrypts it with
 `encryptionKey`, validates the bundle and 32-byte root, derives the Ed25519 identity, and durably
-stores the root under the authenticated WorkOS user. Repeating the mutation with the same values
-after success is idempotent and returns the already-ready Cloud object.
+stores the root and supplied generated secret together under the authenticated WorkOS user.
+Repeating the mutation with the same values after success is idempotent and returns the
+already-ready Cloud object.
 
 Response — `200`: `{ "cloud": { ... } }` with `keys.status` `ready`. The first transition emits
 one `cloud.updated` event carrying the optional `mutationId`; an idempotent retry emits nothing.
@@ -1100,6 +1122,32 @@ conflict returns `409` with code `conflict` and the current `cloud`, without rev
 failed. A transient authentication or Happy Cloud failure keeps the request pending while its
 process-local factors remain available. A local storage failure returns `503` with code
 `cloud_unavailable` and preserves `restore_required`.
+
+### `GET /v0/cloud/keys/backup`
+
+Returns the complete locally retained backup material for the connected account. This is an
+on-demand owner-only read; it performs no WorkOS or Happy Cloud request and emits no event.
+
+Response — `200`:
+
+```json
+{
+    "backup": {
+        "rootSecret": "43-character unpadded base64url value",
+        "generatedSecret": "H1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX"
+    }
+}
+```
+
+`rootSecret` is the account's canonical 32-byte root. `generatedSecret` is the non-password H1
+factor supplied while creating or restoring the keys. Together they are sufficient backup material
+for the daemon-owned portion of Cloud encryption; the person's password is neither returned nor
+recoverable from this response.
+
+No connected account returns `409` with code `cloud_not_authenticated`. Keys that are not `ready`
+return `409` with code `conflict` and the current `cloud`. Missing or incomplete local ready-key
+material is an unexpected storage invariant failure and returns the generic `500` `internal` error;
+the daemon does not migrate or backfill key records created before generated-secret retention.
 
 ### Cloud profile and enrollment
 
@@ -1140,15 +1188,12 @@ Every enrollment-state change advances the containing Cloud object's `version` a
 emits the existing `cloud.updated` complete replacement. The `enrolling` transition carries the
 profile mutation's optional `mutationId`; later worker-owned transitions do not retain or echo it.
 
-A successful username enrollment durably stores the enrolled username, synchronized local profile
-version, and the identity key last published beside the connected account. Enrollment is
-independent from Cloud key setup. When keys are ready, enrollment publishes the derived identity
-key with the profile; otherwise the profile is enrolled without an identity key and a durable
-profile synchronization adds it after the keys become ready. While enrolled, local profile-name
+A successful username enrollment durably stores the enrolled username and synchronized local
+profile version. Enrollment is independent from Cloud key setup. While enrolled, local profile-name
 changes schedule durable Cloud profile synchronization; the complete local `name` is sent as Cloud
-`firstName`, `lastName` is omitted, and a previously published identity key is never erased merely
-because its local root currently requires restoration. Local email and photo are not part of Happy
-Cloud's current profile contract.
+`firstName` and `lastName` is omitted. Identity belongs only to the vault and never participates in
+profile synchronization. Local email and photo are not part of Happy Cloud's current profile
+contract.
 
 At daemon startup and after authentication, the module publishes `checking` and durably reconciles
 with `GET /v0/profile` in Happy Cloud. Temporary network, authentication-service, and Happy Cloud
@@ -1199,11 +1244,10 @@ contacting WorkOS or Happy Cloud. A missing local name or an unrepresentable loc
 
 Unknown fields or malformed usernames return `400` with code `invalid_request` without contacting
 Happy Cloud. The durable worker mints and verifies access tokens, sends the latest compatible local
-name as `firstName`, omits `lastName`, and includes the derived identity public key when keys are
-ready. Temporary failures retry across daemon restarts. A username authoritatively owned by another
-user clears that intent and publishes `required`; a well-formed `invalid_profile` response after
-local validation is service-contract drift and keeps retrying rather than becoming a user-input
-error.
+name as `firstName`, and omits `lastName`. Temporary failures retry across daemon restarts. A
+username authoritatively owned by another user clears that intent and publishes `required`; a
+well-formed `invalid_profile` response after local validation is service-contract drift and keeps
+retrying rather than becoming a user-input error.
 
 Response — `200`:
 

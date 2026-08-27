@@ -8,6 +8,7 @@ import {
     cloudConnectedResponseSchema,
     cloudDisconnectedResponseSchema,
     cloudEnrollmentSchema,
+    cloudKeyBackupResponseSchema,
     cloudKeysSchema,
     cloudProfileResponseSchema,
     cloudResponseSchema,
@@ -131,19 +132,43 @@ describe("Cloud protocol", () => {
         const request = {
             authHash: "A".repeat(43),
             encryptionKey: "B".repeat(43),
+            generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
             mutationId: "keys-1",
         };
 
         expect(Value.Check(createCloudKeysRequestSchema, request)).toBe(true);
         expect(Value.Check(restoreCloudKeysRequestSchema, request)).toBe(true);
+        expect(
+            Value.Check(createCloudKeysRequestSchema, {
+                authHash: request.authHash,
+                encryptionKey: request.encryptionKey,
+            }),
+        ).toBe(true);
         for (const invalid of [
             { ...request, authHash: "short" },
             { ...request, encryptionKey: "!".repeat(43) },
+            { ...request, generatedSecret: "H1-not-a-secret" },
             { ...request, extra: true },
         ]) {
             expect(Value.Check(createCloudKeysRequestSchema, invalid)).toBe(false);
             expect(Value.Check(restoreCloudKeysRequestSchema, invalid)).toBe(false);
         }
+    });
+
+    it("validates the on-demand Cloud key backup without accepting password material", () => {
+        const response = {
+            backup: {
+                generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
+                rootSecret: "A".repeat(43),
+            },
+        };
+
+        expect(Value.Check(cloudKeyBackupResponseSchema, response)).toBe(true);
+        expect(
+            Value.Check(cloudKeyBackupResponseSchema, {
+                backup: { ...response.backup, password: "must-not-appear" },
+            }),
+        ).toBe(false);
     });
 
     it("rejects credentials and authorization fields in the wrong status", () => {
