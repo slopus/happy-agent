@@ -150,6 +150,7 @@ export const cloudDeviceSchema = Type.Object(
     {
         current: Type.Boolean(),
         id: cloudKeyValueSchema,
+        lastAccessedAt: timestampSchema,
         metadata: Type.Union([cloudDeviceMetadataSchema, Type.Null()]),
     },
     { additionalProperties: false },

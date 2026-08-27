@@ -1218,8 +1218,9 @@ records created before generated-secret retention.
 
 ### `GET /v0/cloud/devices`
 
-Returns the connected account's latest locally observed Murmur device roster. This is an
-owner-only local read. It performs no WorkOS, Happy Cloud, or relay request and emits no event.
+Returns the connected account's current Murmur device roster. This is an owner-only read. The
+daemon reads the authenticated roster from the Murmur relay so relay-owned access times are
+current; it performs no WorkOS or Happy Cloud request and emits no event.
 
 Response — `200`:
 
@@ -1229,6 +1230,7 @@ Response — `200`:
         {
             "id": "43-character unpadded base64url device key",
             "current": true,
+            "lastAccessedAt": 1755400000000,
             "metadata": {
                 "installationId": "stable local installation ID",
                 "name": "Ada’s MacBook Pro",
@@ -1243,10 +1245,13 @@ Response — `200`:
 ```
 
 `id` is the stable public Murmur device key and uniquely identifies the roster entry. `current`
-is true only for the device owned by this daemon. `metadata` is encrypted by the originating Happy
-Agent with a dedicated key derived at `murmur / device-metadata / #aes256`; the authenticated
-ciphertext is bound to the account identity and exact device key. The root secret is never used as
-an encryption key. Murmur and the relay store only the opaque ciphertext.
+is true only for the device owned by this daemon. `lastAccessedAt` is the Unix timestamp in
+milliseconds when Murmur most recently issued that device a relay session token. Murmur owns this
+timestamp and updates it independently without changing the cryptographic roster revision.
+`metadata` is encrypted by the originating Happy Agent with a dedicated key derived at
+`murmur / device-metadata / #aes256`; the authenticated ciphertext is bound to the account identity
+and exact device key. The root secret is never used as an encryption key. Murmur and the relay
+store only the opaque ciphertext.
 
 The decrypted metadata identifies the originating installation: its stable private installation
 ID, host name, human-readable platform (`macOS`, `Linux`, `Windows`, or `Other`), operating-system

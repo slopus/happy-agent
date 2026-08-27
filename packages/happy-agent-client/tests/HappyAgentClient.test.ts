@@ -191,6 +191,7 @@ describe("HappyAgentClient", () => {
             {
                 current: true,
                 id: "D".repeat(43),
+                lastAccessedAt: 1_755_400_000_000,
                 metadata: {
                     agentVersion: "0.4.23",
                     architecture: "arm64",

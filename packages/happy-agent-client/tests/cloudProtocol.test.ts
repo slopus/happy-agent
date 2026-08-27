@@ -206,8 +206,18 @@ describe("Cloud protocol", () => {
         expect(
             Value.Check(cloudDevicesResponseSchema, {
                 devices: [
-                    { current: true, id: "A".repeat(43), metadata },
-                    { current: false, id: "B".repeat(43), metadata: null },
+                    {
+                        current: true,
+                        id: "A".repeat(43),
+                        lastAccessedAt: 1_755_400_000_000,
+                        metadata,
+                    },
+                    {
+                        current: false,
+                        id: "B".repeat(43),
+                        lastAccessedAt: 1_755_400_000_001,
+                        metadata: null,
+                    },
                 ],
             }),
         ).toBe(true);
@@ -218,10 +228,22 @@ describe("Cloud protocol", () => {
         ]) {
             expect(
                 Value.Check(cloudDevicesResponseSchema, {
-                    devices: [{ current: true, id: "A".repeat(43), metadata: invalid }],
+                    devices: [
+                        {
+                            current: true,
+                            id: "A".repeat(43),
+                            lastAccessedAt: 1_755_400_000_000,
+                            metadata: invalid,
+                        },
+                    ],
                 }),
             ).toBe(false);
         }
+        expect(
+            Value.Check(cloudDevicesResponseSchema, {
+                devices: [{ current: true, id: "A".repeat(43), metadata }],
+            }),
+        ).toBe(false);
     });
 
     it("rejects credentials and authorization fields in the wrong status", () => {
