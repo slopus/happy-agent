@@ -44,6 +44,7 @@ export type {
     SessionAssistantBlock,
     SessionImageBlock,
     SessionInputBlock,
+    SessionInputTool,
     SessionMessage,
     SessionOutputBlock,
     SessionReasoningBlock,
@@ -52,8 +53,12 @@ export type {
     SessionToolCallBlock,
     SessionToolResultBlock,
     SessionToolResultMessage,
+    SessionUserBlock,
+    SessionUserInputMessage,
     SessionUserMessage,
+    SessionUserToolMessage,
 } from "@/core/SessionContext.js";
+export { sessionInputToolSchema } from "@/core/SessionContext.js";
 export type { SessionModelConfiguration } from "@/core/SessionModelConfiguration.js";
 export type {
     SessionDoneState,

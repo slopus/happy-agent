@@ -20,7 +20,7 @@ import type {
     SessionTextBlock,
     SessionToolResultMessage,
     SessionToolResultBlock,
-    SessionUserMessage,
+    SessionUserInputMessage,
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
@@ -273,7 +273,7 @@ function toSessionStoreEntries(
     return entries;
 }
 
-function toSdkUserMessage(message: SessionUserMessage): SDKUserMessage {
+function toSdkUserMessage(message: SessionUserInputMessage): SDKUserMessage {
     return {
         type: "user",
         parent_tool_use_id: null,

@@ -717,12 +717,28 @@ type SessionMessage =
     | SessionCompactionMessage;
 ```
 
-A user turn contains ordered multimodal blocks:
+A provider-context user turn contains ordered multimodal input blocks. Agent queues accept the
+broader `SessionUserMessage`, which also has a tool-requesting user-message variant:
 
 ```ts
-interface SessionUserMessage {
+type SessionUserMessage = SessionUserInputMessage | SessionUserToolMessage;
+
+interface SessionUserInputMessage {
     readonly role: "user";
     readonly content: readonly SessionInputBlock[];
+}
+
+interface SessionUserToolMessage {
+    readonly role: "user";
+    readonly content: readonly [...SessionInputBlock[], SessionInputTool];
+}
+
+type SessionUserBlock = SessionInputBlock | SessionInputTool;
+
+interface SessionInputTool {
+    readonly type: "tool_call_request";
+    readonly name: string;
+    readonly arguments?: Readonly<Record<string, JSONValue>>;
 }
 
 type SessionInputBlock = SessionTextBlock | SessionImageBlock;
@@ -738,6 +754,12 @@ interface SessionImageBlock {
     readonly mimeType: string;
 }
 ```
+
+`SessionUserToolMessage` is a caller-side user message, not a provider-native tool call. The owning
+agent loop executes its `SessionInputTool` content block itself before inference, records the
+resulting assistant call and tool result through its normal lifecycle, and supplies providers with
+the ordinary user input plus that completed lifecycle. Provider sessions never execute this request
+themselves.
 
 A model turn is one ordered block array. Do not flatten or reorder it: provider replay state lives
 on the block it belongs to, so text, reasoning, client tool calls, and provider-owned tool results

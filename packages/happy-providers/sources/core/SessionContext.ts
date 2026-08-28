@@ -1,3 +1,5 @@
+import { Type, type Static } from "@sinclair/typebox";
+
 export interface SessionTextBlock {
     readonly type: "text";
     readonly text: string;
@@ -12,10 +14,47 @@ export interface SessionImageBlock {
 export type SessionInputBlock = SessionTextBlock | SessionImageBlock;
 export type SessionOutputBlock = SessionTextBlock | SessionImageBlock;
 
-export interface SessionUserMessage {
+const sessionInputToolArgumentValueSchema = Type.Recursive((value) =>
+    Type.Union([
+        Type.String(),
+        Type.Number(),
+        Type.Boolean(),
+        Type.Null(),
+        Type.Array(value),
+        Type.Record(Type.String(), value),
+    ]),
+);
+
+/** One content block requesting that the owning agent loop execute a tool before inference. */
+export const sessionInputToolSchema = Type.Object(
+    {
+        type: Type.Literal("tool_call_request"),
+        name: Type.String({ minLength: 1, maxLength: 256 }),
+        arguments: Type.Optional(Type.Record(Type.String(), sessionInputToolArgumentValueSchema)),
+    },
+    { additionalProperties: false },
+);
+
+/** One content block requesting that the owning agent loop execute a tool before inference. */
+export type SessionInputTool = Static<typeof sessionInputToolSchema>;
+
+/** What one user message may contain. */
+export type SessionUserBlock = SessionInputBlock | SessionInputTool;
+
+/** An ordinary user message safe to include in provider context. */
+export interface SessionUserInputMessage {
     readonly role: "user";
     readonly content: readonly SessionInputBlock[];
 }
+
+/** A normal user message containing a tool request for the owning agent loop. */
+export interface SessionUserToolMessage {
+    readonly role: "user";
+    readonly content: readonly [...SessionInputBlock[], SessionInputTool];
+}
+
+/** What an agent queue may accept as a user message. */
+export type SessionUserMessage = SessionUserInputMessage | SessionUserToolMessage;
 
 /** Who wrote an agent message, as the receiving model should understand them. */
 export interface SessionAgentAuthor {
@@ -119,7 +158,7 @@ export interface SessionCompactionMessage {
 
 export type SessionMessage =
     | SessionSystemMessage
-    | SessionUserMessage
+    | SessionUserInputMessage
     | SessionAgentMessage
     | SessionAssistantMessage
     | SessionToolResultMessage
