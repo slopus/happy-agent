@@ -52,6 +52,7 @@ import type {
 } from "./protocol/cloud.js";
 import type {
     AddCrdtServiceMemberRequest,
+    CrdtCloudId,
     CrdtMurmurIdentity,
     CrdtServiceListQuery,
     CrdtServiceListResponse,
@@ -653,13 +654,13 @@ export class HappyAgentClient {
     /** Adds one account participant, promoting a local service when needed. */
     async addCrdtServiceMember(
         serviceId: Cuid2,
-        identityKey: CrdtMurmurIdentity,
+        cloudId: CrdtCloudId,
         request: AddCrdtServiceMemberRequest = {},
         options: RequestOptions = {},
     ): Promise<CrdtServiceMemberMutationResult> {
         return await this.#jsonWithStatus<CrdtServiceResponse, 200 | 202>({
             method: "PUT",
-            path: `v0/services/crdt/${encodeURIComponent(serviceId)}/members/${encodeURIComponent(identityKey)}`,
+            path: `v0/services/crdt/${encodeURIComponent(serviceId)}/members/${encodeURIComponent(cloudId)}`,
             json: request,
             signal: options.signal,
         });

@@ -1808,48 +1808,48 @@ the current service without advancing versions or emitting an event.
 
 Response — `200`: `{ "service": { ...complete service... } }`.
 
-### `PUT /v0/services/crdt/:serviceId/members/:identityKey`
+### `PUT /v0/services/crdt/:serviceId/members/:cloudId`
 
-Adds one Murmur account participant. `identityKey` is the participant's 32-byte Ed25519 Murmur
-identity encoded as 43-character unpadded base64url. Request:
+Adds one Happy Cloud account participant. `cloudId` is the target account's opaque Happy Cloud user
+ID, not a Murmur identity key. It is 1–256 URL-safe ASCII letters, digits, hyphens, or underscores
+and must be treated as one indivisible value. Request:
 
 ```json
 {
-    "ticket": "AQID",
     "mutationId": "optional-client-value"
 }
 ```
 
-`ticket` is an opaque Murmur directory-claim capability of at most 8,192 decoded bytes (10,923
-unpadded base64url characters). It is short-lived and may carry a bounded claim budget; it is not
-assumed to be one-use or intrinsically bound to the path identity. The daemon charges exactly one
-claim to the `identityKey` named by this route and discards the decoded capability immediately after
-that attempt. It never persists or logs a ticket and never places one in a response or event.
-
-The ticket may be omitted only when the identity is already a confirmed participant. Syntactically malformed
-tickets are `400`. An expired, cryptographically invalid, exhausted, or identity-inapplicable
-capability returns `409` with code `conflict`; the service and its versions remain unchanged. If a
-claim succeeds, Happy Agent durably stores the returned public admission material before staging
-Murmur membership. It submits the admission for the lexicographically first claimed device as a
-bare KeyPackage; Murmur's existing device-roster convergence adds every other current account
-device after the account joins. Happy Agent retains the public admission and an attempted marker
-until Murmur confirms the account or reports a bounded terminal issue, so a daemon crash never
-causes a second directory claim implicitly.
+The client never supplies Murmur identity material, KeyPackages, or directory capabilities. The
+daemon authenticates to Happy Cloud as the current account and resolves `cloudId` to bounded public
+Murmur admission material server-side. It durably stores the target Cloud ID, resolved Murmur
+identity, public admission, and an attempted marker before staging membership. Private Cloud
+credentials and transient capabilities are never persisted, logged, returned, or placed in an
+event. Happy Agent retains the public admission and attempted marker until Murmur confirms the
+account or reports a bounded terminal issue, so a daemon crash never performs a second Cloud
+resolution or Murmur admission implicitly. It submits the admission for the lexicographically first
+resolved device as a bare KeyPackage; Murmur's existing device-roster convergence adds every other
+current account device after the account joins.
 
 Adding the first other participant explicitly promotes a local service to shared without changing
 its application ID or Loro state. The caller must have an enrolled Cloud account with ready keys
-and a live Murmur client; otherwise the request returns the applicable `cloud_not_authenticated`,
-`cloud_not_enrolled`, or `cloud_unavailable` error and the service remains local. The current Loro
-snapshot must fit Murmur's bootstrap descriptor bound; otherwise the request returns `413` with
-code `too_large` and leaves the service local.
+and Happy Cloud must be reachable for a target that has not already been durably resolved;
+otherwise the request returns the applicable `cloud_not_authenticated`, `cloud_not_enrolled`, or
+`cloud_unavailable` error and the service remains local. A retry for the same retained pending or
+confirmed Cloud target does not resolve it again and therefore remains idempotent while Cloud is
+temporarily unavailable. An unknown or non-shareable target Cloud account returns `404` with code
+`not_found`. Naming the current Cloud account is invalid and returns `400` with code
+`invalid_request`. The current Loro snapshot must fit Murmur's bootstrap descriptor bound;
+otherwise the request returns `413` with code `too_large` and leaves the service local.
 
 For an existing shared service, Murmur authorization determines whether the current account may add
 the member. Once Murmur durably accepts the membership operation, the endpoint returns; relay
 convergence may happen later. Only confirmed Murmur snapshots change `participants`, versions, and
 events. A terminal intent issue leaves the confirmed service unchanged and permits a later request
-with a fresh ticket. A malformed identity or
-ticket is `400`, an unknown service is `404`, and a prohibited or contradictory membership change
-is `409` with code `conflict`.
+after the terminal issue is resolved. A malformed Cloud ID is `400`, an unknown service is `404`,
+and a prohibited or contradictory membership change is `409` with code `conflict`. Confirmed
+participant snapshots continue to expose Murmur `identityKey` values; a Cloud ID is only the
+add-member target.
 
 Response — `202`: `{ "service": { ...complete service... } }`, except that an already-confirmed
 participant is an idempotent `200`. Promoting a local service to shared changes its summary and

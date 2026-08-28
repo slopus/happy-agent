@@ -43,13 +43,13 @@ export const crdtMurmurIdentitySchema = Type.String({
 });
 export type CrdtMurmurIdentity = Static<typeof crdtMurmurIdentitySchema>;
 
-/** An opaque Murmur directory capability of at most 8,192 decoded bytes. */
-export const crdtMurmurTicketSchema = Type.String({
-    maxLength: 10_923,
-    minLength: 2,
-    pattern: UNPADDED_BASE64URL_PATTERN,
+/** An opaque Happy Cloud user ID used to select a sharing participant. */
+export const crdtCloudIdSchema = Type.String({
+    maxLength: 256,
+    minLength: 1,
+    pattern: "^[A-Za-z0-9_-]+$",
 });
-export type CrdtMurmurTicket = Static<typeof crdtMurmurTicketSchema>;
+export type CrdtCloudId = Static<typeof crdtCloudIdSchema>;
 
 /** One structurally valid JSON value produced by Loro's document projection. */
 export const crdtJsonValueSchema = Type.Recursive(
@@ -314,12 +314,9 @@ export const updateCrdtServiceRequestSchema = Type.Object(
 );
 export type UpdateCrdtServiceRequest = Static<typeof updateCrdtServiceRequestSchema>;
 
-/** `PUT /v0/services/crdt/:serviceId/members/:identityKey` */
+/** `PUT /v0/services/crdt/:serviceId/members/:cloudId` */
 export const addCrdtServiceMemberRequestSchema = Type.Object(
-    {
-        mutationId: Type.Optional(mutationIdSchema),
-        ticket: Type.Optional(crdtMurmurTicketSchema),
-    },
+    { mutationId: Type.Optional(mutationIdSchema) },
     { additionalProperties: false },
 );
 export type AddCrdtServiceMemberRequest = Static<typeof addCrdtServiceMemberRequestSchema>;

@@ -9,9 +9,9 @@ import {
     type CrdtService,
     type CrdtSharedSharing,
     type CrdtTree,
+    crdtCloudIdSchema,
     crdtEncodedBytesSchema,
     crdtMurmurIdentitySchema,
-    crdtMurmurTicketSchema,
     crdtServiceNameSchema,
     crdtServiceListQuerySchema,
     crdtServiceListResponseSchema,
@@ -35,6 +35,7 @@ const catalogVersion = "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f";
 const updatedAt = 1_755_400_000_000;
 const identityKey = "A".repeat(43);
 const otherIdentityKey = `${"B".repeat(42)}A`;
+const cloudId = "user_01HBEQKA6K4QJAS93VPE39W1JT";
 
 const localService: CrdtService = {
     createdAt: updatedAt,
@@ -153,12 +154,11 @@ describe("Happy CRDT protocol", () => {
             false,
         );
         expect(Value.Check(addCrdtServiceMemberRequestSchema, {})).toBe(true);
-        expect(Value.Check(addCrdtServiceMemberRequestSchema, { ticket: "AQID" })).toBe(true);
-        expect(Value.Check(addCrdtServiceMemberRequestSchema, { ticket: "bad+ticket" })).toBe(
-            false,
-        );
-        expect(Value.Check(addCrdtServiceMemberRequestSchema, { ticket: "A" })).toBe(false);
-        expect(Value.Check(addCrdtServiceMemberRequestSchema, { ticket: "AB" })).toBe(false);
+        expect(Value.Check(addCrdtServiceMemberRequestSchema, { ticket: "AQID" })).toBe(false);
+        expect(Value.Check(crdtCloudIdSchema, cloudId)).toBe(true);
+        expect(Value.Check(crdtCloudIdSchema, "")).toBe(false);
+        expect(Value.Check(crdtCloudIdSchema, "user/other")).toBe(false);
+        expect(Value.Check(crdtCloudIdSchema, "a".repeat(257))).toBe(false);
         expect(Value.Check(crdtMurmurIdentitySchema, `${"A".repeat(42)}B`)).toBe(false);
         expect(
             Value.Check(createCrdtServiceRequestSchema, {
@@ -168,7 +168,6 @@ describe("Happy CRDT protocol", () => {
             }),
         ).toBe(false);
         expect(crdtEncodedBytesSchema.maxLength).toBe(699_051);
-        expect(crdtMurmurTicketSchema.maxLength).toBe(10_923);
         expect(Value.Check(removeCrdtServiceMemberRequestSchema, {})).toBe(true);
         expect(Value.Check(crdtServiceListQuerySchema, { kind: "todo", limit: 500 })).toBe(true);
         expect(Value.Check(crdtServiceListQuerySchema, { limit: 501 })).toBe(false);
@@ -303,9 +302,8 @@ describe("Happy CRDT protocol", () => {
             client.updateCrdtService("service 1", { mutationId: "update-1", update: "BAUG" }),
         ).resolves.toEqual(response);
         await expect(
-            client.addCrdtServiceMember("service 1", identityKey, {
+            client.addCrdtServiceMember("service 1", cloudId, {
                 mutationId: "add-1",
-                ticket: "AQID",
             }),
         ).resolves.toEqual({ ...response, httpStatus: 202 });
         await expect(
@@ -340,9 +338,9 @@ describe("Happy CRDT protocol", () => {
                 url: "http://agent.local/v0/services/crdt/service%201/updates",
             },
             {
-                body: JSON.stringify({ mutationId: "add-1", ticket: "AQID" }),
+                body: JSON.stringify({ mutationId: "add-1" }),
                 method: "PUT",
-                url: `http://agent.local/v0/services/crdt/service%201/members/${identityKey}`,
+                url: `http://agent.local/v0/services/crdt/service%201/members/${cloudId}`,
             },
             {
                 body: JSON.stringify({ mutationId: "remove-1" }),
