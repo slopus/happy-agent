@@ -132,6 +132,12 @@ describe("message delta application", () => {
         expect(Value.Check(toolCallRequestBlockSchema, user.content[1])).toBe(true);
         expect(
             Value.Check(toolCallRequestBlockSchema, {
+                name: "refresh_status",
+                type: "tool_call_request",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(toolCallRequestBlockSchema, {
                 arguments: {},
                 name: "load_skill",
                 type: "tool_call_request",

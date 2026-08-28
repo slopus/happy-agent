@@ -179,7 +179,7 @@ export type ClientMetadata = Static<typeof clientMetadataSchema>;
 /** An explicit request in a user message for Agent Base to execute one tool before inference. */
 export const toolCallRequestBlockSchema = Type.Object(
     {
-        arguments: Type.Record(Type.String(), clientMetadataValueSchema),
+        arguments: Type.Optional(Type.Record(Type.String(), clientMetadataValueSchema)),
         name: Type.String({ minLength: 1, maxLength: 256 }),
         type: Type.Literal("tool_call_request"),
     },

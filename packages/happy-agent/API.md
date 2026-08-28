@@ -3584,8 +3584,9 @@ See `send` for its context-reset semantics.
 }
 ```
 
-`name` is the exact tool name and `arguments` is the exact JSON object supplied to it. This
-block is valid only in a user message, and one user message carries at most one. It is a
+`name` is the exact tool name. `arguments` is the optional exact JSON object supplied to it and
+defaults to an empty object when omitted. This block is valid only in a user message, and one user
+message carries at most one. It is a
 control input, not provider-visible prose: Agent Base does not serialize the block itself to
 the provider. When the message is accepted, Base generates the stable tool-call ID, records a
 normal agent `tool_call` block, and executes the requested call through the same tool lookup,
