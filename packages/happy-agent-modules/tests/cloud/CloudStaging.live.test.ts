@@ -7,12 +7,19 @@ import {
     importIdentityKeyPair,
     MemoryMurmurStore,
     MurmurClient,
+    type DeliveryFetch,
     type IdentityKeyPair,
 } from "@slopus/murmur";
 import { ensureAgentDatabaseConnection } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { withLogger, type LogContext, type Logger } from "@steve.kite/stdlib";
+import {
+    createRootContext,
+    withLogger,
+    type Context,
+    type LogContext,
+    type Logger,
+} from "@steve.kite/stdlib";
 import { WorkOS } from "@workos-inc/node";
 import { describe, expect, test, vi } from "vitest";
 
@@ -104,8 +111,8 @@ function deviceKey(value: Uint8Array): string {
     return Buffer.from(value).toString("base64url");
 }
 
-function authenticatedFetch(accessToken: string): typeof fetch {
-    return async (input, init) => {
+function authenticatedFetch(accessToken: string): DeliveryFetch {
+    return async (_ctx, input, init) => {
         const headers = new Headers(init?.headers);
         headers.set("authorization", `Bearer ${accessToken}`);
         return await fetch(input, { ...init, headers });
@@ -141,10 +148,14 @@ function derivedIdentity(keys: ReadyCloudKeys): {
     }
 }
 
-async function openSibling(keys: ReadyCloudKeys, accessToken: string): Promise<MurmurClient> {
+async function openSibling(
+    ctx: Context,
+    keys: ReadyCloudKeys,
+    accessToken: string,
+): Promise<MurmurClient> {
     const derived = derivedIdentity(keys);
     try {
-        return await MurmurClient.open({
+        return await MurmurClient.open(ctx, {
             identity: derived.identity,
             sessionProvider: new HttpRelaySessionProvider(MURMUR_SESSION_ISSUER, {
                 fetch: authenticatedFetch(accessToken),
@@ -249,15 +260,19 @@ function recordingLogger(records: string[]): Logger {
 }
 
 async function waitForAgentDevice(
+    ctx: Context,
     sibling: MurmurClient,
     instance: LiveCloudInstance,
     account: { readonly environment: "staging"; readonly userId: string },
     openErrors: readonly string[],
 ): Promise<readonly string[]> {
     try {
-        return await waitForDevices(sibling, 2);
+        return await waitForDevices(ctx, sibling, 2);
     } catch (error: unknown) {
-        const entries = await new CloudMurmurStore(instance.database.context, account).list("");
+        const entries = await new CloudMurmurStore(instance.database.database, account).list(
+            instance.database.context,
+            "",
+        );
         throw new Error(
             `The Happy Agent device did not register; localStoreEntries=${String(entries.size)} openErrors=${openErrors.join(" | ")} logs=${instance.logs.join(" | ")}`,
             { cause: error },
@@ -273,9 +288,9 @@ function captureMurmurOpens(): {
     const errors: string[] = [];
     const opened: string[] = [];
     const original = MurmurClient.open.bind(MurmurClient);
-    const spy = vi.spyOn(MurmurClient, "open").mockImplementation(async (options) => {
+    const spy = vi.spyOn(MurmurClient, "open").mockImplementation(async (ctx, options) => {
         try {
-            const client = await original(options);
+            const client = await original(ctx, options);
             opened.push(deviceKey(client.deviceKey));
             return client;
         } catch (error: unknown) {
@@ -297,7 +312,10 @@ async function waitForDaemonMurmurOpen(
             .toBe(1);
         return murmurOpen.opened[0]!;
     } catch (error: unknown) {
-        const entries = await new CloudMurmurStore(instance.database.context, account).list("");
+        const entries = await new CloudMurmurStore(instance.database.database, account).list(
+            instance.database.context,
+            "",
+        );
         throw new Error(
             `The Happy Agent Murmur client did not open; localStoreEntries=${String(entries.size)} openErrors=${murmurOpen.errors.join(" | ")} logs=${instance.logs.join(" | ")}`,
             { cause: error },
@@ -346,13 +364,17 @@ async function cleanupStagingUser(workos: WorkOS, user: StagingUser): Promise<vo
     await workos.userManagement.deleteUser(user.id).catch(() => undefined);
 }
 
-async function waitForDevices(client: MurmurClient, expected: number): Promise<readonly string[]> {
+async function waitForDevices(
+    ctx: Context,
+    client: MurmurClient,
+    expected: number,
+): Promise<readonly string[]> {
     let latest: readonly string[] = [];
     await expect
         .poll(
             async () => {
-                await client.synchronize({ waitMilliseconds: 0 });
-                latest = (await client.devices()).map((entry) => deviceKey(entry.deviceKey));
+                await client.synchronize(ctx, { waitMilliseconds: 0 });
+                latest = (await client.devices(ctx)).map((entry) => deviceKey(entry.deviceKey));
                 return latest.length;
             },
             { interval: 250, timeout: 30_000 },
@@ -361,8 +383,8 @@ async function waitForDevices(client: MurmurClient, expected: number): Promise<r
     return latest;
 }
 
-async function directoryTicket(accessToken: string): Promise<Uint8Array> {
-    const response = await authenticatedFetch(accessToken)(MURMUR_DIRECTORY_ISSUER, {
+async function directoryTicket(ctx: Context, accessToken: string): Promise<Uint8Array> {
+    const response = await authenticatedFetch(accessToken)(ctx, MURMUR_DIRECTORY_ISSUER, {
         method: "POST",
     });
     if (!response.ok) throw new Error(`Directory ticket request failed (${response.status})`);
@@ -379,31 +401,41 @@ async function directoryTicket(accessToken: string): Promise<Uint8Array> {
     return new Uint8Array(Buffer.from(value.ticket, "base64url"));
 }
 
-async function settleMurmur(clients: readonly MurmurClient[], rounds: number = 12): Promise<void> {
+async function settleMurmur(
+    ctx: Context,
+    clients: readonly MurmurClient[],
+    rounds: number = 12,
+): Promise<void> {
     for (let round = 0; round < rounds; round += 1) {
-        for (const client of clients) await client.synchronize({ waitMilliseconds: 0 });
+        for (const client of clients) await client.synchronize(ctx, { waitMilliseconds: 0 });
     }
 }
 
-async function activatePendingSession(client: MurmurClient, sessionId: Uint8Array): Promise<void> {
-    if ((await client.session(sessionId))?.status === "pending") {
-        await client.activateSession(sessionId);
+async function activatePendingSession(
+    ctx: Context,
+    client: MurmurClient,
+    sessionId: Uint8Array,
+): Promise<void> {
+    if ((await client.session(ctx, sessionId))?.status === "pending") {
+        await client.activateSession(ctx, sessionId);
     }
 }
 
 async function receiveMessage(
+    ctx: Context,
     sender: MurmurClient,
     recipients: readonly MurmurClient[],
     expected: string,
 ): Promise<void> {
     const received = recipients.map(() => new Set<string>());
     for (let round = 0; round < 16; round += 1) {
-        await sender.synchronize({ waitMilliseconds: 0 });
+        await sender.synchronize(ctx, { waitMilliseconds: 0 });
         for (const [index, recipient] of recipients.entries()) {
             await recipient.synchronize(
+                ctx,
                 { waitMilliseconds: 0 },
                 {
-                    onUpdates: (updates) => {
+                    onUpdates: (_ctx, updates) => {
                         for (const update of updates) {
                             received[index]!.add(new TextDecoder().decode(update.bytes));
                         }
@@ -424,6 +456,7 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
     test(
         "disconnects its own device, then resets a vault after all local keys are lost",
         async () => {
+            const murmurCtx = createRootContext().named("cloud-staging-self-disconnect-murmur");
             const workos = new WorkOS({
                 apiKey: credentials!.workosApiKey,
                 clientId: WORKOS_CLIENT_ID,
@@ -459,8 +492,9 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
                 });
                 const daemonDevice = await waitForDaemonMurmurOpen(first, account, murmurOpen);
 
-                sibling = await openSibling(keys, firstAuthentication.accessToken);
+                sibling = await openSibling(murmurCtx, keys, firstAuthentication.accessToken);
                 const beforeDisconnect = await waitForAgentDevice(
+                    murmurCtx,
                     sibling,
                     first,
                     account,
@@ -489,11 +523,14 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
                     createCloudKeysDatabase().read(first.database.context, account),
                 ).resolves.toBeUndefined();
                 await expect(
-                    new CloudMurmurStore(first.database.context, account).list(""),
+                    new CloudMurmurStore(first.database.database, account).list(
+                        first.database.context,
+                        "",
+                    ),
                 ).resolves.toEqual(new Map());
                 let afterDisconnect: readonly string[];
                 try {
-                    afterDisconnect = await waitForDevices(sibling, 1);
+                    afterDisconnect = await waitForDevices(murmurCtx, sibling, 1);
                 } catch (error: unknown) {
                     throw new Error(
                         `Happy Agent locally disconnected without removing its Murmur device; openErrors=${murmurOpen.errors.join(" | ")} logs=${first.logs.join(" | ")}`,
@@ -529,8 +566,8 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
                     .toBeUndefined();
             } finally {
                 for (const instance of instances.reverse()) await instance.stop();
-                await sibling?.deleteAccount().catch(() => undefined);
-                sibling?.close();
+                await sibling?.deleteAccount(murmurCtx).catch(() => undefined);
+                sibling?.close(murmurCtx);
                 murmurOpen.restore();
                 await cleanupStagingUser(workos, user);
             }
@@ -541,6 +578,7 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
     test(
         "keeps a device registered after local instance erasure until a sibling removes it",
         async () => {
+            const murmurCtx = createRootContext().named("cloud-staging-instance-erasure-murmur");
             const workos = new WorkOS({
                 apiKey: credentials!.workosApiKey,
                 clientId: WORKOS_CLIENT_ID,
@@ -570,8 +608,9 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
                 );
                 if (keys?.status !== "ready") throw new Error("Cloud keys did not become ready.");
                 const daemonDevice = await waitForDaemonMurmurOpen(instance, account, murmurOpen);
-                sibling = await openSibling(keys, authentication.accessToken);
+                sibling = await openSibling(murmurCtx, keys, authentication.accessToken);
                 const roster = await waitForAgentDevice(
+                    murmurCtx,
                     sibling,
                     instance,
                     account,
@@ -585,13 +624,13 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
                 await instance.stop();
                 instance = undefined;
 
-                expect(await waitForDevices(sibling, 2)).toContain(orphanedDevice);
-                await sibling.removeDevice(Buffer.from(orphanedDevice, "base64url"));
-                expect(await waitForDevices(sibling, 1)).toEqual([siblingKey]);
+                expect(await waitForDevices(murmurCtx, sibling, 2)).toContain(orphanedDevice);
+                await sibling.removeDevice(murmurCtx, Buffer.from(orphanedDevice, "base64url"));
+                expect(await waitForDevices(murmurCtx, sibling, 1)).toEqual([siblingKey]);
             } finally {
                 await instance?.stop();
-                await sibling?.deleteAccount().catch(() => undefined);
-                sibling?.close();
+                await sibling?.deleteAccount(murmurCtx).catch(() => undefined);
+                sibling?.close(murmurCtx);
                 murmurOpen.restore();
                 await cleanupStagingUser(workos, user);
             }
@@ -600,6 +639,7 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
     );
 
     test("forms a group across two users with two restored devices each and exchanges messages", async () => {
+        const murmurCtx = createRootContext().named("cloud-staging-multidevice-murmur");
         const workos = new WorkOS({
             apiKey: credentials!.workosApiKey,
             clientId: WORKOS_CLIENT_ID,
@@ -649,12 +689,12 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
                 if (keys?.status !== "ready") {
                     throw new Error("Cloud keys did not become ready for the group test.");
                 }
-                const first = await openSibling(keys, authentication.accessToken);
-                const second = await openSibling(keys, authentication.accessToken);
+                const first = await openSibling(murmurCtx, keys, authentication.accessToken);
+                const second = await openSibling(murmurCtx, keys, authentication.accessToken);
                 clients.push(first, second);
-                expect(await waitForDevices(first, 3)).toContain(daemonDevice);
-                await first.removeDevice(Buffer.from(daemonDevice, "base64url"));
-                expect(new Set(await waitForDevices(first, 2))).toEqual(
+                expect(await waitForDevices(murmurCtx, first, 3)).toContain(daemonDevice);
+                await first.removeDevice(murmurCtx, Buffer.from(daemonDevice, "base64url"));
+                expect(new Set(await waitForDevices(murmurCtx, first, 2))).toEqual(
                     new Set([deviceKey(first.deviceKey), deviceKey(second.deviceKey)]),
                 );
                 await instance.stop();
@@ -667,42 +707,53 @@ describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle",
                 throw new Error("The two staging accounts did not open all Murmur devices.");
             }
             const allClients = [...aliceDevices, ...bobDevices];
-            await settleMurmur(allClients);
+            await settleMurmur(murmurCtx, allClients);
             const claim = await aliceDevices[0].claimAccount(
+                murmurCtx,
                 bobDevices[0].accountKey,
-                await directoryTicket(authentications[0].accessToken),
+                await directoryTicket(murmurCtx, authentications[0].accessToken),
             );
             expect(claim.members).toHaveLength(2);
-            const aliceSecondDevice = await aliceDevices[1].createKeyPackage();
-            const group = await aliceDevices[0].createSession({
+            const aliceSecondDevice = await aliceDevices[1].createKeyPackage(murmurCtx);
+            const group = await aliceDevices[0].createSession(murmurCtx, {
                 descriptor: new TextEncoder().encode("happy-agent-staging-multidevice-group"),
                 members: [aliceSecondDevice, claim],
                 sendPolicy: "everyone",
             });
-            await settleMurmur(allClients, 20);
+            await settleMurmur(murmurCtx, allClients, 20);
             for (const client of allClients.slice(1)) {
-                await activatePendingSession(client, group.id);
+                await activatePendingSession(murmurCtx, client, group.id);
             }
-            await settleMurmur(allClients, 8);
+            await settleMurmur(murmurCtx, allClients, 8);
             for (const client of allClients) {
-                expect((await client.session(group.id))?.status).toBe("active");
+                expect((await client.session(murmurCtx, group.id))?.status).toBe("active");
             }
 
             const aliceMessage = "hello from Alice device one";
-            await aliceDevices[0].send(group.id, new TextEncoder().encode(aliceMessage));
-            await receiveMessage(aliceDevices[0], [aliceDevices[1], ...bobDevices], aliceMessage);
+            await aliceDevices[0].send(murmurCtx, group.id, new TextEncoder().encode(aliceMessage));
+            await receiveMessage(
+                murmurCtx,
+                aliceDevices[0],
+                [aliceDevices[1], ...bobDevices],
+                aliceMessage,
+            );
 
             const bobMessage = "hello from Bob device two";
-            await bobDevices[1].send(group.id, new TextEncoder().encode(bobMessage));
-            await receiveMessage(bobDevices[1], [...aliceDevices, bobDevices[0]], bobMessage);
+            await bobDevices[1].send(murmurCtx, group.id, new TextEncoder().encode(bobMessage));
+            await receiveMessage(
+                murmurCtx,
+                bobDevices[1],
+                [...aliceDevices, bobDevices[0]],
+                bobMessage,
+            );
 
-            await aliceDevices[0].deleteSession(group.id);
-            await settleMurmur(allClients);
-            await aliceDevices[0].deleteAccount();
-            await bobDevices[0].deleteAccount();
+            await aliceDevices[0].deleteSession(murmurCtx, group.id);
+            await settleMurmur(murmurCtx, allClients);
+            await aliceDevices[0].deleteAccount(murmurCtx);
+            await bobDevices[0].deleteAccount(murmurCtx);
         } finally {
             for (const instance of instances.reverse()) await instance.stop();
-            for (const client of clients.reverse()) client.close();
+            for (const client of clients.reverse()) client.close(murmurCtx);
             murmurOpen.restore();
             for (const user of [...users].reverse()) await cleanupStagingUser(workos, user);
         }

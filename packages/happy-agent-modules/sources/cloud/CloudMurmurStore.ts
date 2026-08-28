@@ -1,12 +1,9 @@
-import {
-    MAXIMUM_STORE_SCAN_ITEMS,
-    type MurmurStore,
-    type StoreScanOptions,
-    type StoreTransaction,
-} from "@slopus/murmur";
+import { MAXIMUM_STORE_SCAN_ITEMS, type MurmurStore, type StoreScanOptions } from "@slopus/murmur";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
+    withAgentDatabase,
+    type AgentDatabase,
     type AgentModuleMigration,
 } from "@slopus/happy-agent-base";
 import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
@@ -38,102 +35,73 @@ export const cloudMurmurStoreMigrations: readonly AgentModuleMigration[] = [
     ],
 ];
 
-/** SQLite-backed, account-scoped Murmur store using the Cloud module's owned context. */
+/** SQLite-backed, account-scoped Murmur store that binds its database to each caller context. */
 export class CloudMurmurStore implements MurmurStore {
     readonly #account: CloudKeysAccount;
-    readonly #ctx: Context;
+    readonly #database: AgentDatabase;
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
 
-    constructor(ctx: Context, account: CloudKeysAccount) {
-        this.#ctx = ctx;
+    constructor(database: AgentDatabase, account: CloudKeysAccount) {
+        this.#database = database;
         this.#account = account;
     }
 
-    async get(key: string): Promise<Uint8Array | undefined> {
-        return await this.#lock.runInLock(this.#ctx, async () => {
-            return await this.#ctx.inTx(async (txCtx) => await this.#get(txCtx, key));
-        });
+    async get(ctx: Context, key: string): Promise<Uint8Array | undefined> {
+        return await this.#operation(ctx, async (txCtx) => await this.#get(txCtx, key));
     }
 
-    async set(key: string, value: Uint8Array): Promise<void> {
-        await this.#lock.runInLock(this.#ctx, async () => {
-            await this.#ctx.inTx(async (txCtx) => await this.#set(txCtx, key, value));
-        });
+    async set(ctx: Context, key: string, value: Uint8Array): Promise<void> {
+        await this.#operation(ctx, async (txCtx) => await this.#set(txCtx, key, value));
     }
 
-    async delete(key: string): Promise<void> {
-        await this.#lock.runInLock(this.#ctx, async () => {
-            await this.#ctx.inTx(async (txCtx) => await this.#delete(txCtx, key));
-        });
+    async delete(ctx: Context, key: string): Promise<void> {
+        await this.#operation(ctx, async (txCtx) => await this.#delete(txCtx, key));
     }
 
     /** Removes every durable Murmur value owned by this Cloud account. */
-    async clear(): Promise<void> {
-        await this.#lock.runInLock(this.#ctx, async () => {
-            await this.#ctx.inTx(async (txCtx) => await this.#clear(txCtx));
-        });
+    async clear(ctx: Context): Promise<void> {
+        await this.#operation(ctx, async (txCtx) => await this.#clear(txCtx));
     }
 
-    async list(prefix: string): Promise<ReadonlyMap<string, Uint8Array>> {
-        return await this.#lock.runInLock(this.#ctx, async () => {
-            return await this.#ctx.inTx(async (txCtx) => {
-                validatePrefix(prefix);
-                const values = await this.#scanRows(
-                    txCtx,
-                    prefix,
-                    undefined,
-                    MAXIMUM_STORE_SCAN_ITEMS + 1,
-                );
-                if (values.size > MAXIMUM_STORE_SCAN_ITEMS) {
-                    throw new Error("The Murmur store list is too large.");
-                }
-                return values;
-            });
+    async list(ctx: Context, prefix: string): Promise<ReadonlyMap<string, Uint8Array>> {
+        return await this.#operation(ctx, async (txCtx) => {
+            validatePrefix(prefix);
+            const values = await this.#scanRows(
+                txCtx,
+                prefix,
+                undefined,
+                MAXIMUM_STORE_SCAN_ITEMS + 1,
+            );
+            if (values.size > MAXIMUM_STORE_SCAN_ITEMS) {
+                throw new Error("The Murmur store list is too large.");
+            }
+            return values;
         });
     }
 
     async scan(
+        ctx: Context,
         prefix: string,
         options: StoreScanOptions,
     ): Promise<ReadonlyMap<string, Uint8Array>> {
-        return await this.#lock.runInLock(this.#ctx, async () => {
-            return await this.#ctx.inTx(async (txCtx) => {
-                validateScan(prefix, options);
-                return await this.#scanRows(txCtx, prefix, options.after, options.limit);
-            });
+        return await this.#operation(ctx, async (txCtx) => {
+            validateScan(prefix, options);
+            return await this.#scanRows(txCtx, prefix, options.after, options.limit);
         });
     }
 
-    async transaction<Result>(
-        operation: (transaction: StoreTransaction) => Promise<Result>,
-    ): Promise<Result> {
-        return await this.#lock.runInLock(this.#ctx, async () => {
-            return await this.#ctx.inTx(async (txCtx) => {
-                const transaction: StoreTransaction = {
-                    delete: async (key) => await this.#delete(txCtx, key),
-                    get: async (key) => await this.#get(txCtx, key),
-                    list: async (prefix) => {
-                        validatePrefix(prefix);
-                        const values = await this.#scanRows(
-                            txCtx,
-                            prefix,
-                            undefined,
-                            MAXIMUM_STORE_SCAN_ITEMS + 1,
-                        );
-                        if (values.size > MAXIMUM_STORE_SCAN_ITEMS) {
-                            throw new Error("The Murmur store list is too large.");
-                        }
-                        return values;
-                    },
-                    scan: async (prefix, options) => {
-                        validateScan(prefix, options);
-                        return await this.#scanRows(txCtx, prefix, options.after, options.limit);
-                    },
-                    set: async (key, value) => await this.#set(txCtx, key, value),
-                };
-                return await operation(transaction);
-            });
+    async tx<Result>(ctx: Context, operation: (ctx: Context) => Promise<Result>): Promise<Result> {
+        const bound = withAgentDatabase(ctx, this.#database);
+        return await this.#lock.runInLock(bound, async (lockCtx) => {
+            return await lockCtx.inTx(operation);
         });
+    }
+
+    async #operation<Result>(
+        ctx: Context,
+        operation: (ctx: Context) => Promise<Result>,
+    ): Promise<Result> {
+        return await this.tx(ctx, operation);
     }
 
     async #get(ctx: Context, key: string): Promise<Uint8Array | undefined> {

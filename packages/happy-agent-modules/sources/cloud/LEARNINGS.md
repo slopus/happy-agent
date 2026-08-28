@@ -149,6 +149,10 @@
   an `unexpected` classification must not hide the failure that produced it. Disconnect removes
   `client.deviceKey` rather than terminally deleting the shared Murmur account or touching sibling
   devices.
+- Murmur 0.8 carries stdlib context through every client, transport, callback, and store operation.
+  Keep propagating that context instead of closing over a caller context. The Cloud Murmur store
+  owns its Agent Database, binds it onto each supplied context, and implements `tx` through
+  `ctx.inTx` so nested Murmur work and Cloud teardown reuse the active transaction.
 - The runtime libSQL driver returns SQLite BLOB columns as `ArrayBuffer`, while the lightweight
   module-test adapter returns `Uint8Array`. Normalize and copy both representations at the Murmur
   store boundary; otherwise valid durable account state fails before relay session negotiation.

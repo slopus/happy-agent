@@ -513,12 +513,18 @@ export class CloudModule implements AgentModule {
 
     async getDevices(_ctx: Context): Promise<CloudDevicesResponse> {
         const ctx = this.#ownedContext();
-        return await this.#lock.runInLock(ctx, async () => {
-            const live = await this.#requireLiveMurmur(ctx);
+        return await this.#lock.runInLock(ctx, async (lockCtx) => {
+            const live = await this.#requireLiveMurmur(lockCtx);
             try {
-                return { devices: projectCloudDevices(live, await live.client.devices()) };
+                return {
+                    devices: projectCloudDevices(live, await live.client.devices(lockCtx)),
+                };
             } catch (error: unknown) {
-                ctx.log.warn("cloud:devices:error phase=read reason=murmur-unavailable", {}, error);
+                lockCtx.log.warn(
+                    "cloud:devices:error phase=read reason=murmur-unavailable",
+                    {},
+                    error,
+                );
                 throw this.#error(
                     503,
                     "cloud_unavailable",
@@ -534,10 +540,10 @@ export class CloudModule implements AgentModule {
             throw this.#error(400, "invalid_request", "The Cloud device ID is invalid.");
         }
         const ctx = this.#ownedContext();
-        return await this.#lock.runInLock(ctx, async () => {
-            const live = await this.#requireLiveMurmur(ctx);
+        return await this.#lock.runInLock(ctx, async (lockCtx) => {
+            const live = await this.#requireLiveMurmur(lockCtx);
             try {
-                let devices = projectCloudDevices(live, await live.client.devices());
+                let devices = projectCloudDevices(live, await live.client.devices(lockCtx));
                 const current = devices.find((device) => device.id === deviceId);
                 if (current?.current === true) {
                     throw new CloudOperationError(
@@ -551,17 +557,17 @@ export class CloudModule implements AgentModule {
                 }
                 if (current === undefined) return { devices };
                 try {
-                    await live.client.removeDevice(target);
+                    await live.client.removeDevice(lockCtx, target);
                 } catch (error: unknown) {
-                    devices = projectCloudDevices(live, await live.client.devices());
+                    devices = projectCloudDevices(live, await live.client.devices(lockCtx));
                     if (!devices.some((device) => device.id === deviceId)) return { devices };
                     throw error;
                 }
-                devices = projectCloudDevices(live, await live.client.devices());
+                devices = projectCloudDevices(live, await live.client.devices(lockCtx));
                 return { devices };
             } catch (error: unknown) {
                 if (error instanceof CloudOperationError) throw error;
-                ctx.log.warn(
+                lockCtx.log.warn(
                     "cloud:devices:error phase=remove reason=murmur-unavailable",
                     {},
                     error,
@@ -2325,7 +2331,7 @@ export class CloudModule implements AgentModule {
                 const current = await this.#disconnectDatabase.read(txCtx);
                 if (!sameCloudDisconnect(current, disconnect)) return;
                 await this.#keysDatabase.remove(txCtx, account);
-                await new CloudMurmurStore(txCtx, account).clear();
+                await new CloudMurmurStore(ctx.db, account).clear(txCtx);
                 if (!(await this.#disconnectDatabase.remove(txCtx, disconnect))) {
                     throw new Error("The Cloud disconnect changed before it completed.");
                 }
@@ -2402,11 +2408,10 @@ export class CloudModule implements AgentModule {
     }
 
     #disconnectMurmurSessionProvider(
-        ctx: Context,
         disconnect: CloudDisconnect & { readonly refreshToken: string },
     ): HttpRelaySessionProvider {
         let refreshToken = disconnect.refreshToken;
-        return this.#murmurSessionProvider(ctx, disconnect.environment, async () => {
+        return this.#murmurSessionProvider(disconnect.environment, async (ctx) => {
             const authenticated = await this.#client(disconnect.environment).refresh(refreshToken);
             if (authenticated.user.id !== disconnect.userId) {
                 throw new CloudMurmurLocalFailure(new CloudIdentityMismatchError());
@@ -2436,13 +2441,12 @@ export class CloudModule implements AgentModule {
     }
 
     #murmurSessionProvider(
-        ctx: Context,
         environment: CloudEnvironment,
-        accessToken: () => Promise<string>,
+        accessToken: (ctx: Context) => Promise<string>,
     ): HttpRelaySessionProvider {
         return new HttpRelaySessionProvider(`${murmurRelays[environment]}/v2/session`, {
-            fetch: async (input, init) => {
-                const token = await accessToken();
+            fetch: async (ctx, input, init) => {
+                const token = await accessToken(ctx);
                 const headers = new Headers(init?.headers);
                 headers.set("authorization", `Bearer ${token}`);
                 const signal =
@@ -2467,10 +2471,10 @@ export class CloudModule implements AgentModule {
         const derived = cloudIdentity(local);
         let client: MurmurClient;
         try {
-            client = await MurmurClient.open({
+            client = await MurmurClient.open(ctx, {
                 identity: derived.identity,
-                sessionProvider: this.#disconnectMurmurSessionProvider(ctx, disconnect),
-                store: new CloudMurmurStore(ctx, account),
+                sessionProvider: this.#disconnectMurmurSessionProvider(disconnect),
+                store: new CloudMurmurStore(ctx.db, account),
             });
         } catch (error: unknown) {
             derived.keyTree.destroy();
@@ -2483,14 +2487,14 @@ export class CloudModule implements AgentModule {
         const deviceKey = client.deviceKey;
         try {
             try {
-                await client.removeDevice(deviceKey);
+                await client.removeDevice(ctx, deviceKey);
             } catch (error: unknown) {
                 throw new CloudMurmurUnregisterFailure(error);
             }
         } finally {
             deviceKey.fill(0);
             try {
-                client.close();
+                client.close(ctx);
             } finally {
                 derived.keyTree.destroy();
             }
@@ -2560,9 +2564,10 @@ export class CloudModule implements AgentModule {
                 stop = (): void => controller.abort();
                 this.#murmurLifetime.signal.addEventListener("abort", stop, { once: true });
                 let client: MurmurClient;
+                const murmurCtx = withLifetime(ctx, controller.signal);
                 try {
-                    client = await MurmurClient.open({
-                        encryptDeviceMetadata: (deviceKey) =>
+                    client = await MurmurClient.open(murmurCtx, {
+                        encryptDeviceMetadata: (_ctx, deviceKey) =>
                             encryptCloudDeviceMetadata(
                                 derived.keyTree,
                                 derived.identity.publicKey,
@@ -2571,11 +2576,11 @@ export class CloudModule implements AgentModule {
                             ),
                         identity: derived.identity,
                         sessionProvider: this.#murmurSessionProvider(
-                            withLifetime(ctx, controller.signal),
                             environment,
-                            async () => {
-                                const minted = await this.#lock.runInLock(ctx, async () =>
-                                    this.#mintInLock(ctx, false),
+                            async (accessCtx) => {
+                                const minted = await this.#lock.runInLock(
+                                    accessCtx,
+                                    async (lockCtx) => this.#mintInLock(lockCtx, false),
                                 );
                                 if (
                                     minted.session.environment !== prepared.account.environment ||
@@ -2586,7 +2591,7 @@ export class CloudModule implements AgentModule {
                                 return minted.accessToken;
                             },
                         ),
-                        store: new CloudMurmurStore(ctx, prepared.account),
+                        store: new CloudMurmurStore(ctx.db, prepared.account),
                     });
                 } catch (error: unknown) {
                     derived.keyTree.destroy();
@@ -2597,10 +2602,10 @@ export class CloudModule implements AgentModule {
                 if (this.#openingMurmur === controller) this.#openingMurmur = undefined;
                 let sync: Promise<void>;
                 try {
-                    sync = client.sync({ abort: controller.signal });
+                    sync = client.sync(murmurCtx, { abort: controller.signal });
                 } catch (error: unknown) {
                     try {
-                        client.close();
+                        client.close(murmurCtx);
                     } finally {
                         derived.keyTree.destroy();
                     }
@@ -2647,7 +2652,7 @@ export class CloudModule implements AgentModule {
                     live.controller.abort();
                     await live.sync.catch(() => undefined);
                     try {
-                        live.client.close();
+                        live.client.close(ctx);
                     } catch {
                         // The synchronization promise has settled; close is best-effort cleanup.
                     }

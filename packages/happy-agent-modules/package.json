@@ -57,7 +57,7 @@
         "@slopus/happy-agent-client": "0.0.43",
         "@slopus/happy-agent-compute": "npm:@slopus/happy-agent-compute@0.1.9",
         "@slopus/happy-providers": "0.0.18",
-        "@slopus/murmur": "0.7.2",
+        "@slopus/murmur": "0.8.1",
         "@steve.kite/stdlib": "0.0.12",
         "@workos-inc/node": "^10.10.0",
         "drizzle-orm": "^0.45.2",

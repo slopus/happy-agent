@@ -12,7 +12,7 @@ import {
     agentDatabaseRun,
     ensureAgentDatabaseConnection,
 } from "@slopus/happy-agent-base";
-import { withLogger, type LogContext, type Logger } from "@steve.kite/stdlib";
+import { withLogger, type Context, type LogContext, type Logger } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -505,7 +505,7 @@ describe("CloudModule", () => {
 
     it("opens the fixed relay with an account-scoped durable Murmur store once keys are ready", async () => {
         existingCloudProfile();
-        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+        const sync = vi.fn((_ctx: Context, { abort }: { readonly abort: AbortSignal }) => {
             return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
         });
         const close = vi.fn();
@@ -520,12 +520,13 @@ describe("CloudModule", () => {
         await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
 
         expect(open).toHaveBeenCalledWith(
+            expect.anything(),
             expect.objectContaining({
                 sessionProvider: expect.any(HttpRelaySessionProvider),
                 store: expect.any(CloudMurmurStore),
             }),
         );
-        expect(open.mock.calls[0]?.[0]).not.toHaveProperty("relay");
+        expect(open.mock.calls[0]?.[1]).not.toHaveProperty("relay");
         expect(sync).toHaveBeenCalledTimes(1);
     });
 
@@ -534,43 +535,45 @@ describe("CloudModule", () => {
         const currentKey = new Uint8Array(32).fill(11);
         const siblingKey = new Uint8Array(32).fill(12);
         let entries: MurmurDeviceRosterEntry[] = [];
-        const removeDevice = vi.fn(async (deviceKey: Uint8Array) => {
+        const removeDevice = vi.fn(async (_ctx: Context, deviceKey: Uint8Array) => {
             entries = entries.filter(
                 (entry) => !Buffer.from(entry.deviceKey).equals(Buffer.from(deviceKey)),
             );
         });
-        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+        const sync = vi.fn((_ctx: Context, { abort }: { readonly abort: AbortSignal }) => {
             return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
         });
-        vi.spyOn(MurmurClient, "open").mockImplementation(async (options: MurmurClientOptions) => {
-            const accountKey = options.identity!.publicKey.slice();
-            entries = [
-                {
-                    deviceKey: currentKey,
-                    encryptedMetadata: await options.encryptDeviceMetadata!(currentKey),
-                    lastAccessedAt: 1_755_400_000_000,
-                    resetGeneration: 0,
-                },
-                {
-                    deviceKey: siblingKey,
-                    encryptedMetadata: await options.encryptDeviceMetadata!(siblingKey),
-                    lastAccessedAt: 1_755_400_001_000,
-                    resetGeneration: 0,
-                },
-            ];
-            return {
-                get accountKey() {
-                    return accountKey.slice();
-                },
-                close: vi.fn(),
-                get deviceKey() {
-                    return currentKey.slice();
-                },
-                devices: vi.fn(async () => entries),
-                removeDevice,
-                sync,
-            } as never;
-        });
+        vi.spyOn(MurmurClient, "open").mockImplementation(
+            async (ctx: Context, options: MurmurClientOptions) => {
+                const accountKey = options.identity!.publicKey.slice();
+                entries = [
+                    {
+                        deviceKey: currentKey,
+                        encryptedMetadata: await options.encryptDeviceMetadata!(ctx, currentKey),
+                        lastAccessedAt: 1_755_400_000_000,
+                        resetGeneration: 0,
+                    },
+                    {
+                        deviceKey: siblingKey,
+                        encryptedMetadata: await options.encryptDeviceMetadata!(ctx, siblingKey),
+                        lastAccessedAt: 1_755_400_001_000,
+                        resetGeneration: 0,
+                    },
+                ];
+                return {
+                    get accountKey() {
+                        return accountKey.slice();
+                    },
+                    close: vi.fn(),
+                    get deviceKey() {
+                        return currentKey.slice();
+                    },
+                    devices: vi.fn(async () => entries),
+                    removeDevice,
+                    sync,
+                } as never;
+            },
+        );
         vi.spyOn(CloudWorkOS.prototype, "saveVault").mockResolvedValue(undefined);
         const { cloudHooks, database, module } = await fixture("cloud-module-devices");
         await connect(module, database, "staging");
@@ -611,7 +614,7 @@ describe("CloudModule", () => {
 
     it("durably deletes local keys and Murmur state when Cloud disconnects", async () => {
         existingCloudProfile();
-        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+        const sync = vi.fn((_ctx: Context, { abort }: { readonly abort: AbortSignal }) => {
             return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
         });
         const liveClose = vi.fn();
@@ -631,12 +634,12 @@ describe("CloudModule", () => {
             "cloud-module-disconnect-deletes-account",
         );
         const account = { environment: "production", userId: user.id } as const;
-        const murmurStore = new CloudMurmurStore(database.context, account);
+        const murmurStore = new CloudMurmurStore(database.database, account);
 
         await connect(module, database);
         await waitForCloud(module, database, { keys: { status: "create_required" } });
         await module.createKeys(database.context, cloudKeyInput);
-        await murmurStore.set("device/key", new Uint8Array([1, 2, 3]));
+        await murmurStore.set(database.context, "device/key", new Uint8Array([1, 2, 3]));
         await cloudHooks.afterStart?.(database.context, {} as never);
         await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
 
@@ -645,16 +648,16 @@ describe("CloudModule", () => {
         });
         expect(liveClose).toHaveBeenCalledTimes(1);
         await vi.waitFor(() => expect(removeDevice).toHaveBeenCalledTimes(1));
-        expect(removeDevice).toHaveBeenCalledWith(deviceKey);
+        expect(removeDevice).toHaveBeenCalledWith(expect.anything(), deviceKey);
         expect(cleanupClose).toHaveBeenCalledTimes(1);
-        expect(open.mock.calls[1]?.[0]).toEqual(
+        expect(open.mock.calls[1]?.[1]).toEqual(
             expect.objectContaining({ sessionProvider: expect.any(HttpRelaySessionProvider) }),
         );
-        expect(open.mock.calls[1]?.[0]).not.toHaveProperty("relay");
+        expect(open.mock.calls[1]?.[1]).not.toHaveProperty("relay");
         await expect(
             createCloudKeysDatabase().read(database.context, account),
         ).resolves.toBeUndefined();
-        await expect(murmurStore.get("device/key")).resolves.toBeUndefined();
+        await expect(murmurStore.get(database.context, "device/key")).resolves.toBeUndefined();
 
         await module.stop();
         durableFunctions.stop();
@@ -670,12 +673,12 @@ describe("CloudModule", () => {
         await expect(
             createCloudKeysDatabase().read(database.context, account),
         ).resolves.toBeUndefined();
-        await expect(murmurStore.get("device/key")).resolves.toBeUndefined();
+        await expect(murmurStore.get(database.context, "device/key")).resolves.toBeUndefined();
     });
 
     it("retries Murmur device removal after restart before deleting local secrets", async () => {
         existingCloudProfile();
-        const sync = vi.fn(({ abort }: { readonly abort: AbortSignal }) => {
+        const sync = vi.fn((_ctx: Context, { abort }: { readonly abort: AbortSignal }) => {
             return new Promise<void>((resolve) => abort.addEventListener("abort", () => resolve()));
         });
         const deviceKey = new Uint8Array(32).fill(8);
@@ -696,12 +699,12 @@ describe("CloudModule", () => {
             "cloud-module-disconnect-recovery",
         );
         const account = { environment: "production", userId: user.id } as const;
-        const murmurStore = new CloudMurmurStore(database.context, account);
+        const murmurStore = new CloudMurmurStore(database.database, account);
 
         await connect(module, database);
         await waitForCloud(module, database, { keys: { status: "create_required" } });
         await module.createKeys(database.context, cloudKeyInput);
-        await murmurStore.set("device/key", new Uint8Array([4, 5, 6]));
+        await murmurStore.set(database.context, "device/key", new Uint8Array([4, 5, 6]));
         await cloudHooks.afterStart?.(database.context, {} as never);
         await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
         await module.disconnect(database.context);
@@ -712,7 +715,9 @@ describe("CloudModule", () => {
         ).resolves.toMatchObject({
             status: "ready",
         });
-        await expect(murmurStore.get("device/key")).resolves.toEqual(new Uint8Array([4, 5, 6]));
+        await expect(murmurStore.get(database.context, "device/key")).resolves.toEqual(
+            new Uint8Array([4, 5, 6]),
+        );
         await expect(
             module.start(database.context, {
                 environment: "production",
@@ -745,7 +750,7 @@ describe("CloudModule", () => {
         await vi.waitFor(() => expect(removeDevice).toHaveBeenCalledTimes(2));
         await vi.waitFor(async () => {
             expect(await createCloudKeysDatabase().read(database.context, account)).toBeUndefined();
-            expect(await murmurStore.get("device/key")).toBeUndefined();
+            expect(await murmurStore.get(database.context, "device/key")).toBeUndefined();
             expect(await pendingDurableCallCount(database)).toBe(0);
         });
         expect(restarted.status(database.context)).toMatchObject({ status: "disconnected" });
@@ -768,12 +773,12 @@ describe("CloudModule", () => {
             logs,
         );
         const account = { environment: "production", userId: user.id } as const;
-        const murmurStore = new CloudMurmurStore(database.context, account);
+        const murmurStore = new CloudMurmurStore(database.database, account);
 
         await connect(module, database);
         await waitForCloud(module, database, { keys: { status: "create_required" } });
         await module.createKeys(database.context, cloudKeyInput);
-        await murmurStore.set("device/key", new Uint8Array([7, 8, 9]));
+        await murmurStore.set(database.context, "device/key", new Uint8Array([7, 8, 9]));
         await module.disconnect(database.context);
 
         await vi.waitFor(
@@ -782,7 +787,7 @@ describe("CloudModule", () => {
                 expect(
                     await createCloudKeysDatabase().read(database.context, account),
                 ).toBeUndefined();
-                expect(await murmurStore.get("device/key")).toBeUndefined();
+                expect(await murmurStore.get(database.context, "device/key")).toBeUndefined();
                 expect(await pendingDurableCallCount(database)).toBe(0);
             },
             { timeout: 15_000 },
@@ -811,7 +816,7 @@ describe("CloudModule", () => {
         const { database, module } = await fixture("cloud-module-disconnect-legacy-identity");
         const account = { environment: "production", userId: user.id } as const;
         const keysDatabase = createCloudKeysDatabase();
-        const murmurStore = new CloudMurmurStore(database.context, account);
+        const murmurStore = new CloudMurmurStore(database.database, account);
 
         await connect(module, database);
         await waitForCloud(module, database, { keys: { status: "create_required" } });
@@ -829,14 +834,14 @@ describe("CloudModule", () => {
             destroyIdentity(legacyIdentity);
             root.fill(0);
         }
-        await murmurStore.set("legacy/device", new Uint8Array([7, 8, 9]));
+        await murmurStore.set(database.context, "legacy/device", new Uint8Array([7, 8, 9]));
 
         await expect(module.disconnect(database.context)).resolves.toMatchObject({
             status: "disconnected",
         });
         await vi.waitFor(async () => {
             expect(await keysDatabase.read(database.context, account)).toBeUndefined();
-            expect(await murmurStore.get("legacy/device")).toBeUndefined();
+            expect(await murmurStore.get(database.context, "legacy/device")).toBeUndefined();
             expect(await pendingDurableCallCount(database)).toBe(0);
         });
         expect(open).not.toHaveBeenCalled();
@@ -850,12 +855,12 @@ describe("CloudModule", () => {
             "cloud-module-disconnect-missing-credential",
         );
         const account = { environment: "production", userId: user.id } as const;
-        const murmurStore = new CloudMurmurStore(database.context, account);
+        const murmurStore = new CloudMurmurStore(database.database, account);
 
         await connect(module, database);
         await waitForCloud(module, database, { keys: { status: "create_required" } });
         await module.createKeys(database.context, cloudKeyInput);
-        await murmurStore.set("device/key", new Uint8Array([7, 8, 9]));
+        await murmurStore.set(database.context, "device/key", new Uint8Array([7, 8, 9]));
         durableFunctions.stop();
         await module.disconnect(database.context);
         await agentDatabaseRun(
@@ -877,7 +882,7 @@ describe("CloudModule", () => {
 
         await vi.waitFor(async () => {
             expect(await createCloudKeysDatabase().read(database.context, account)).toBeUndefined();
-            expect(await murmurStore.get("device/key")).toBeUndefined();
+            expect(await murmurStore.get(database.context, "device/key")).toBeUndefined();
             expect(await pendingDurableCallCount(database)).toBe(0);
         });
         expect(open).not.toHaveBeenCalled();
