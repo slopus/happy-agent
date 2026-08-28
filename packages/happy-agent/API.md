@@ -3073,6 +3073,33 @@ ID returns the originally stored object and never replaces it with metadata from
 
 - `text` — `{ "type": "text", "text": "..." }`
 - `image` — `{ "type": "image", "mimeType": "...", "data": "<base64>" }`
+- `tool_call_request` — an explicit request in a user message for Agent Base to execute one
+  ordinary tool before inference:
+
+```json
+{
+    "type": "tool_call_request",
+    "name": "load_skill",
+    "arguments": {
+        "name": "agent-browser",
+        "arguments": "Open example.com and take a screenshot."
+    }
+}
+```
+
+`name` is the exact tool name and `arguments` is the exact JSON object supplied to it. This
+block is valid only in a user message, and one user message carries at most one. It is a
+control input, not provider-visible prose: Agent Base does not serialize the block itself to
+the provider. When the message is accepted, Base generates the stable tool-call ID, records a
+normal agent `tool_call` block, and executes the requested call through the same tool lookup,
+argument validation, permission review, hooks, durable dispatch, result recording, restart
+recovery, and public lifecycle as a model-produced call. No inference runs before that call.
+After its result is recorded, inference continues with the user's ordinary text and images,
+the requested call, and its result in context. An unavailable tool, invalid arguments, denied
+call, or tool failure produces the ordinary failed tool result and inference still follows so
+the agent can explain or recover. Clients may submit this block through `send`; it does not
+bypass the selected permission mode or any tool-owned Auto policy.
+
 - `reasoning` — `{ "type": "reasoning", "text": "..." }` — the model's thinking summary, when
   the provider surfaces one.
 - `tool_call` — one tool invocation:
@@ -3290,7 +3317,15 @@ Request:
     },
     "content": [
         { "type": "text", "text": "Here is the screenshot:" },
-        { "type": "image", "mimeType": "image/png", "data": "<base64>" }
+        { "type": "image", "mimeType": "image/png", "data": "<base64>" },
+        {
+            "type": "tool_call_request",
+            "name": "load_skill",
+            "arguments": {
+                "name": "agent-browser",
+                "arguments": "Fix the login redirect loop shown here."
+            }
+        }
     ],
     "delivery": "queue",
     "mode": {
@@ -3315,9 +3350,11 @@ Request:
 - `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
   and echoed unchanged on every complete representation of this message, but is not interpreted
   by the daemon or sent to the model.
-- `content` — optional rich blocks (text and images) accompanying the text. Image bytes
-  travel **inline**, base64 in the block, exactly as they later appear in history — there is
-  no separate upload step or attachment store.
+- `content` — optional rich blocks accompanying the text: text, inline images, and at most one
+  `tool_call_request`. Image bytes travel **inline**, base64 in the block, exactly as they later
+  appear in history — there is no separate upload step or attachment store. A tool-call request
+  is retained on the pending and accepted user message, but Base executes it only after
+  acceptance at the same safe boundary where that message would otherwise reach inference.
 - `delivery` — optional, default `"queue"`. `"queue"` waits behind the current run; `"steer"`
   takes priority at the next inference boundary. The current assistant response and its complete
   tool-call batch finish without interruption, then pending steering messages are accepted before

@@ -8,6 +8,7 @@ import {
     clientMetadataSchema,
     type MessageHistoryResponse,
     messageHistoryResponseSchema,
+    toolCallRequestBlockSchema,
     type UserMessage,
 } from "../sources/protocol/messages.js";
 
@@ -101,7 +102,14 @@ describe("message delta application", () => {
         };
         const user: UserMessage = {
             clientMetadata,
-            content: [{ text: "Fix it", type: "text" }],
+            content: [
+                { text: "/agent-browser Fix it", type: "text" },
+                {
+                    arguments: { arguments: "Fix it", name: "agent-browser" },
+                    name: "load_skill",
+                    type: "tool_call_request",
+                },
+            ],
             createdAt: 1,
             delivery: "queue",
             id: "message2",
@@ -121,5 +129,14 @@ describe("message delta application", () => {
         expect(user.clientMetadata).toEqual(clientMetadata);
         expect(Value.Check(clientMetadataSchema, clientMetadata)).toBe(true);
         expect(Value.Check(clientMetadataSchema, ["not", "an", "object"])).toBe(false);
+        expect(Value.Check(toolCallRequestBlockSchema, user.content[1])).toBe(true);
+        expect(
+            Value.Check(toolCallRequestBlockSchema, {
+                arguments: {},
+                name: "load_skill",
+                type: "tool_call_request",
+                unexpected: true,
+            }),
+        ).toBe(false);
     });
 });

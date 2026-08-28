@@ -145,14 +145,6 @@ export const toolPresentationSchema = Type.Union([
 /** Every display-ready tool-call presentation the client understands. */
 export type ToolPresentation = Static<typeof toolPresentationSchema>;
 
-/** What is in a message, in order. */
-export type MessageBlock =
-    | TextBlock
-    | ImageBlock
-    | ReasoningBlock
-    | ToolCallBlock
-    | CompactionBlock;
-
 /** Stable provenance carried with a message without exposing internal module metadata. */
 export interface MessageMetadata {
     /** The provider that produced this message, when it came from inference. */
@@ -183,6 +175,28 @@ export const clientMetadataSchema = Type.Record(Type.String(), clientMetadataVal
 
 /** Freeform JSON supplied by a client and durably attached to one user message. */
 export type ClientMetadata = Static<typeof clientMetadataSchema>;
+
+/** An explicit request in a user message for Agent Base to execute one tool before inference. */
+export const toolCallRequestBlockSchema = Type.Object(
+    {
+        arguments: Type.Record(Type.String(), clientMetadataValueSchema),
+        name: Type.String({ minLength: 1, maxLength: 256 }),
+        type: Type.Literal("tool_call_request"),
+    },
+    { additionalProperties: false },
+);
+
+/** An explicit request in a user message for Agent Base to execute one tool before inference. */
+export type ToolCallRequestBlock = Static<typeof toolCallRequestBlockSchema>;
+
+/** What is in a message, in order. */
+export type MessageBlock =
+    | TextBlock
+    | ImageBlock
+    | ToolCallRequestBlock
+    | ReasoningBlock
+    | ToolCallBlock
+    | CompactionBlock;
 
 /** Plain text. */
 export interface TextBlock {

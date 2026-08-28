@@ -439,7 +439,7 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.url).toBe("http://agent.local/v0/workspaces?projectId=p1");
     });
 
-    it("sends a client-chosen message ID and freeform client metadata without a mutation ID", async () => {
+    it("sends a client-chosen message ID, tool request, and client metadata without a mutation ID", async () => {
         const { fetch, requests } = stubFetch(() => json({ cursor: "c1", message: {} }));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
 
@@ -448,6 +448,13 @@ describe("HappyAgentClient", () => {
                 composer: "mobile",
                 localDraft: { revision: 4, tags: ["auth", null] },
             },
+            content: [
+                {
+                    arguments: { arguments: "Open example.com", name: "agent-browser" },
+                    name: "load_skill",
+                    type: "tool_call_request",
+                },
+            ],
             id: "clientmessage1",
             mode: {
                 effort: "medium",
@@ -465,6 +472,13 @@ describe("HappyAgentClient", () => {
                     composer: "mobile",
                     localDraft: { revision: 4, tags: ["auth", null] },
                 },
+                content: [
+                    {
+                        arguments: { arguments: "Open example.com", name: "agent-browser" },
+                        name: "load_skill",
+                        type: "tool_call_request",
+                    },
+                ],
                 id: "clientmessage1",
                 mode: {
                     effort: "medium",
