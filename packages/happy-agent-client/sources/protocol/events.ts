@@ -20,6 +20,7 @@ import {
 import type { Agent, AgentDraftSnapshot } from "./agents.js";
 import { botSchema } from "./bots.js";
 import type { Cloud } from "./cloud.js";
+import { crdtServiceSummarySchema } from "./crdt.js";
 import type { GitState } from "./git.js";
 import type { HappyIntegration } from "./integrations.js";
 import type { Message, Run } from "./messages.js";
@@ -221,6 +222,30 @@ export const cloudSocialUpdatedPayloadSchema = Type.Object({
 });
 export type CloudSocialUpdatedPayload = Static<typeof cloudSocialUpdatedPayloadSchema>;
 
+/** A local creation or accepted remote session created one CRDT service. */
+export const crdtServiceCreatedPayloadSchema = Type.Object({
+    catalogVersion: resourceVersionSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+    service: crdtServiceSummarySchema,
+});
+export type CrdtServiceCreatedPayload = Static<typeof crdtServiceCreatedPayloadSchema>;
+
+/** Compact invalidation for one potentially large CRDT service. */
+export const crdtServiceUpdatedPayloadSchema = Type.Object({
+    catalogVersion: resourceVersionSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+    serviceId: cuid2Schema,
+    version: resourceVersionSchema,
+});
+export type CrdtServiceUpdatedPayload = Static<typeof crdtServiceUpdatedPayloadSchema>;
+
+/** The CRDT service's Murmur connection moved after its local commit. */
+export const crdtConnectionUpdatedPayloadSchema = Type.Object({
+    catalogVersion: resourceVersionSchema,
+    connection: Type.Union([Type.Literal("offline"), Type.Literal("online")]),
+});
+export type CrdtConnectionUpdatedPayload = Static<typeof crdtConnectionUpdatedPayloadSchema>;
+
 /** Happy integration state is computed, so the payload is a complete replacement. */
 export interface HappyIntegrationUpdatedPayload {
     integration: HappyIntegration;
@@ -270,6 +295,9 @@ export type HappyAgentEvent =
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"cloud.profile.updated", CloudProfileUpdatedPayload>
     | EventEnvelope<"cloud.social.updated", CloudSocialUpdatedPayload>
+    | EventEnvelope<"crdt.service.created", CrdtServiceCreatedPayload>
+    | EventEnvelope<"crdt.service.updated", CrdtServiceUpdatedPayload>
+    | EventEnvelope<"crdt.connection.updated", CrdtConnectionUpdatedPayload>
     | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>;
 
 /** The name of an event this client build knows. */

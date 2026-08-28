@@ -1530,6 +1530,356 @@ A malformed or self username returns `400` with code `invalid_request`; an unkno
 missing request returns `404` with code `not_found`; a request prohibited by either user's block
 state returns `409` with code `conflict`. These errors include the current `cloudSocial` object.
 
+## Happy CRDT services
+
+A Happy CRDT service is a local-first Loro document that may optionally synchronize through
+Murmur. The Murmur service identifier is exactly `crdt.loro`. Each service instance has its own
+stable application identity and immutable internal `kind`, plus a human-readable `name` and its
+current Loro state. Local services work when Cloud is absent. Sharing adds encrypted Murmur
+replication; it is never required for local reads or writes.
+
+This chapter is an additive protocol-23 capability. A protocol-23 daemon released before Happy
+CRDT services returns `404` for `GET /v0/services/crdt`; clients treat that catalog response as the
+feature being unavailable. A `404` from a focused route on a daemon whose catalog succeeds keeps
+its ordinary documented `not_found` meaning.
+
+`kind` is an application-owned discriminator such as `todo`, `scratchpad`, or
+`com.example.board`. It is 1–128 lowercase ASCII letters, digits, dots, slashes, underscores, or
+hyphens, begins with a letter, and ends with a letter or digit. Happy Agent treats it as opaque and
+does not give any kind production-specific behavior.
+
+`name` is 1–256 nonblank characters with no ASCII control characters. It is display text, not an
+identifier. A service's `id`, `kind`, and `name` are immutable in this version of the API.
+
+Loro bytes cross the JSON API as unpadded base64url strings. `state` is a complete Loro snapshot
+that a caller can import into an empty `LoroDoc`. `update` is any valid Loro export that can be
+merged with `LoroDoc.import`, including a snapshot. One decoded input and the complete canonical
+snapshot after importing it are each limited to 512 KiB. Invalid base64url or invalid Loro bytes
+return `400` with code `invalid_request`; an input or resulting snapshot over that bound returns
+`413` with code `too_large`.
+Every encoded value must be canonical: decoding it and encoding those bytes again as unpadded
+base64url must reproduce the exact input, including the unused trailing bits of the final quantum.
+
+The serialized UTF-8 JSON `tree` is limited to 4 MiB, 64 nested container levels, 100,000 total
+values, 100,000 entries in any one array or object, and 1 MiB of UTF-8 in any one string or object
+key. All numbers must be finite. These limits are checked against the complete projected result
+before a local or remote merge commits. Exceeding one returns `413` for an API mutation. A remote
+violation is transactionally retained among the newest 256 service issues, keyed by its stable Murmur
+delivery ID and then acknowledged, so malformed input cannot poison the inbox retry head. It never
+changes the replica, advances a resource or catalog version, or emits a CRDT change event.
+
+### The CRDT service summary
+
+A local service summary is:
+
+```json
+{
+    "id": "s1a2b3c4",
+    "service": "crdt.loro",
+    "kind": "todo",
+    "name": "Launch checklist",
+    "sharing": { "status": "local" },
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "createdAt": 1755400000000,
+    "updatedAt": 1755400000000
+}
+```
+
+A shared service replaces `sharing` with:
+
+```json
+{
+    "status": "shared",
+    "sessionId": "p7m8x9...",
+    "owner": "B0Y6h...",
+    "participants": [
+        { "identityKey": "B0Y6h...", "role": "owner" },
+        { "identityKey": "Qm4cA...", "role": "member" }
+    ],
+    "policies": {
+        "adminsAssignAdmins": false,
+        "anyoneCanAddMembers": false,
+        "sendPolicy": "everyone"
+    },
+    "recovery": "ready"
+}
+```
+
+- `service` — always `crdt.loro`, the stable Murmur service identifier. It is distinct from the
+  application-owned `kind`.
+- `sharing.status` — `local` or `shared`. A local service never starts synchronizing merely
+  because Murmur is online. A shared service remains writable while Murmur is offline.
+- `sessionId` — the unpadded base64url Murmur session ID. It is stable for this sharing
+  relationship and is not the service's application ID.
+- `owner` — the unpadded base64url Murmur account identity that owns the session.
+- `participants` — the confirmed account-level participant set, sorted by `identityKey`. Devices
+  are replicas of an account and never appear as participants. `role` is `owner`, `admin`, or
+  `member`; the owner appears exactly once and has the owner role even though Murmur also includes
+  it among admins. A shared service has at most 256 confirmed account participants.
+- `policies` — the complete confirmed Murmur policy snapshot. `adminsAssignAdmins` and
+  `anyoneCanAddMembers` are booleans; `sendPolicy` is `everyone` or `admins`. This API does not yet
+  mutate policies, but remote or other-device changes are observable here.
+- `recovery` — `ready` while Murmur retains a usable local sharing relationship, or `required`
+  after continuity loss until Murmur re-admits the session. A required recovery remains shared and
+  keeps the last confirmed participant and policy snapshot; local Loro reads and writes continue,
+  and outbound state stays durably dirty. Ordinary Cloud disconnection leaves recovery ready and
+  changes only the catalog connection to offline.
+- `version` — a UUIDv7 advanced whenever this service's Loro replica, sharing relationship,
+  confirmed participants, roles, or policies change. A replayed
+  Loro update that contributes no new operation does not advance it.
+- `createdAt` and `updatedAt` — local creation and most recent service-change times.
+
+The complete service returned by a focused read or mutation contains every summary field plus:
+
+```json
+{
+    "state": "AEdsb3Jv...",
+    "tree": {
+        "todos": [{ "text": "Ship it", "priority": "high", "done": false }]
+    }
+}
+```
+
+- `state` — the canonical complete Loro snapshot at this resource version.
+- `tree` — the complete JSON value returned by Loro for the document's top-level containers. It is
+  a JSON object whose descendants are strings, finite numbers, booleans, null, arrays, or objects.
+  The generic service does not interpret its keys or values.
+
+The CRDT catalog has its own synchronization state and version:
+
+```json
+{
+    "connection": "offline",
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5f",
+    "updatedAt": 1755400000000,
+    "services": [],
+    "cursor": null,
+    "hasMore": false
+}
+```
+
+`connection` is `online` only while the Happy CRDT service is registered on a live Murmur client
+whose relay synchronization connection is open; otherwise it is `offline`. Startup always begins
+offline, regardless of the last process's state. Each online/offline transition is committed before
+the matching event is emitted. The catalog `version` advances when the connection changes or a
+service is created or changes, and its `updatedAt` records that time.
+
+Local and remote operations use one commit path. A local import first merges and persists the Loro
+replica, its resource version, a stable operation ID, and one coalescing delivery generation in one
+local transaction, then emits one event. A shared service publishes the newest committed generation
+whenever Murmur is available. There is at most one submitted-but-unsettled application delivery per
+service; later local updates coalesce into the next complete snapshot until Murmur reports durable
+publication settlement. A retry after a crash reuses the generation's operation ID. This keeps
+offline editing independent of Murmur's finite outbox and makes duplicate submission harmless.
+
+A remote update is merged and its Murmur delivery ID and CRDT operation ID are deduplicated in one
+local transaction before Murmur is acknowledged, then emits the same update event. Murmur retries
+and sender echoes never become a second logical update. Disconnecting, a continuity reset, or
+losing Cloud configuration never deletes the local Loro replica.
+
+The descriptor for every Murmur session owned by this service is UTF-8 JSON with exactly this
+versioned application shape:
+
+```json
+{
+    "version": 1,
+    "id": "s1a2b3c4",
+    "kind": "todo",
+    "name": "Launch checklist",
+    "state": "AEdsb3Jv..."
+}
+```
+
+All five fields are required. `state` is the complete canonical Loro snapshot at the moment the
+local service is first shared. A receiving service validates and persists the descriptor before it
+claims and activates the Murmur session. The complete UTF-8 descriptor, including JSON syntax,
+metadata, and base64url expansion, must not exceed Murmur's 1,048,576-byte descriptor limit. The
+512-KiB snapshot bound leaves room for that exact representation.
+
+Current state after bootstrap travels in one encrypted Murmur application delivery. Its plaintext
+is UTF-8 JSON with this exact v1 envelope:
+
+```json
+{
+    "version": 1,
+    "type": "snapshot",
+    "operationId": "v4w5x6y7",
+    "serviceId": "s1a2b3c4",
+    "state": "AEdsb3Jv..."
+}
+```
+
+All five fields are required and unknown fields make the envelope invalid. `type` is `snapshot` in
+v1: the complete current snapshot is intentionally coalescible and sufficient for recovery.
+`operationId` is the stable CUID2 of the local delivery generation; `serviceId` must equal the
+application ID durably bound to the authenticated Murmur session; and `state` follows the same
+512-KiB canonical snapshot bound as the HTTP API. The encoded envelope is therefore below Murmur's
+785,920-byte default application-payload bound and 1,048,576-byte ciphertext bound and never needs
+application-level chunking.
+
+The receiver validates the complete envelope and imported Loro result before committing. Duplicate
+Murmur delivery IDs or operation IDs are acknowledged without another merge or event. Invalid or
+over-limit envelopes commit one bounded issue keyed by the delivery ID and are then acknowledged
+without changing the replica. Murmur's delivery acknowledgement is the protocol acknowledgement;
+Happy CRDT adds no parallel acknowledgement message.
+
+After a new remote session is claimed, its descriptor is the bootstrap snapshot. After a
+participant is confirmed, an account device is confirmed, a session is re-admitted, or continuity
+recovery completes, every current member eventually receives a fresh snapshot envelope. This is
+scheduled as the same coalescing delivery generation and does not depend on relay history. If the
+snapshot changes while that generation is publishing, the next generation carries the newer
+complete state.
+
+The Murmur service surface used by Happy CRDT includes one additive identity-wide durable lifecycle
+callback for complete confirmed session snapshots. It carries a stable delivery ID, owning service
+ID, session status, members, owner, admins, and policies and is acknowledged only after the service
+transaction commits participants, roles, policies, resource version, catalog version, and event
+intent. It fires for membership-, device-, role-, and policy-only
+commits, including confirmed removal of the local account, and retries with the same ID after
+failure or restart. It does not add another handler to the registered service object.
+Happy CRDT also consumes Murmur's optional identity-wide `onIssues` hook to retire its private
+admission-attempt records after bounded terminal intent failures. Issues are not part of the public
+service resource and never change confirmed participants by themselves.
+
+Murmur already multicasts every application send back to its publisher. Happy CRDT treats the
+registered service's authenticated `onUpdate` for its own stable operation ID as publication
+settlement and releases the per-service outbound slot in that same local transaction; no additional
+publication callback or polling is needed. Happy Agent must use a Murmur release providing the
+session lifecycle callback and accepting the service ID `crdt.loro`; it must not poll session state
+or maintain a parallel membership protocol.
+
+### `GET /v0/services/crdt`
+
+Lists CRDT service summaries in local creation order, oldest first. Query parameters:
+
+- `kind` — optional exact application-kind filter.
+- `after` — optional service ID cursor, exclusive. The daemon resolves the ID's position; clients
+  do not order IDs themselves.
+- `limit` — 1–500, default 100.
+
+Response — `200`: the complete catalog fields `connection`, `version`, and `updatedAt`, plus
+`services`, `cursor`, and `hasMore`. `cursor` is the last returned service ID or `null` when the
+page is empty. An unknown `after` ID returns `400` with code `invalid_request`.
+
+### `POST /v0/services/crdt`
+
+Creates one local-only CRDT service. Request:
+
+```json
+{
+    "id": "optional-client-cuid2",
+    "kind": "todo",
+    "name": "Launch checklist",
+    "state": "AEdsb3Jv...",
+    "mutationId": "optional-client-value"
+}
+```
+
+`state`, `kind`, and `name` are required. `id` is optional; when omitted the daemon generates a
+CUID2. A client-supplied ID makes creation safely retryable. Before insertion the daemon imports the
+supplied state, exports its canonical snapshot, and stores an immutable creation fingerprint over
+the canonical `{ id, kind, name, state }`. Repeating a request that canonicalizes to that same
+fingerprint returns the current service even after later updates; byte-different Loro exports that
+canonicalize to the same snapshot are equivalent. A different fingerprint returns `409` with code
+`conflict`. The resulting service is local even when the catalog connection is online.
+
+Response — `201` for a new service and `200` for an exact idempotent retry:
+`{ "service": { ...complete service... } }`. New creation commits the service and catalog versions
+together, then emits `crdt.service.created` with the optional `mutationId`; a retry emits nothing.
+
+### `GET /v0/services/crdt/:serviceId`
+
+Returns `{ "service": { ...complete service... } }` from local durable state without making a
+network request. `404` when no such service exists.
+
+### `POST /v0/services/crdt/:serviceId/updates`
+
+Merges Loro bytes into the local replica. Request:
+
+```json
+{ "update": "AEdsb3Jv...", "mutationId": "optional-client-value" }
+```
+
+This endpoint deliberately has no `If-Match`: concurrent CRDT updates merge rather than conflict.
+The merge is complete and durable before the request returns. On a shared service its publication
+intent is committed in the same transaction and delivery continues across disconnects and daemon
+restarts. Importing bytes the replica has already incorporated is an idempotent no-op: it returns
+the current service without advancing versions or emitting an event.
+
+Response — `200`: `{ "service": { ...complete service... } }`.
+
+### `PUT /v0/services/crdt/:serviceId/members/:identityKey`
+
+Adds one Murmur account participant. `identityKey` is the participant's 32-byte Ed25519 Murmur
+identity encoded as 43-character unpadded base64url. Request:
+
+```json
+{
+    "ticket": "AQID",
+    "mutationId": "optional-client-value"
+}
+```
+
+`ticket` is an opaque Murmur directory-claim capability of at most 8,192 decoded bytes (10,923
+unpadded base64url characters). It is short-lived and may carry a bounded claim budget; it is not
+assumed to be one-use or intrinsically bound to the path identity. The daemon charges exactly one
+claim to the `identityKey` named by this route and discards the decoded capability immediately after
+that attempt. It never persists or logs a ticket and never places one in a response or event.
+
+The ticket may be omitted only when the identity is already a confirmed participant. Syntactically malformed
+tickets are `400`. An expired, cryptographically invalid, exhausted, or identity-inapplicable
+capability returns `409` with code `conflict`; the service and its versions remain unchanged. If a
+claim succeeds, Happy Agent durably stores the returned public admission material before staging
+Murmur membership. It submits the admission for the lexicographically first claimed device as a
+bare KeyPackage; Murmur's existing device-roster convergence adds every other current account
+device after the account joins. Happy Agent retains the public admission and an attempted marker
+until Murmur confirms the account or reports a bounded terminal issue, so a daemon crash never
+causes a second directory claim implicitly.
+
+Adding the first other participant explicitly promotes a local service to shared without changing
+its application ID or Loro state. The caller must have an enrolled Cloud account with ready keys
+and a live Murmur client; otherwise the request returns the applicable `cloud_not_authenticated`,
+`cloud_not_enrolled`, or `cloud_unavailable` error and the service remains local. The current Loro
+snapshot must fit Murmur's bootstrap descriptor bound; otherwise the request returns `413` with
+code `too_large` and leaves the service local.
+
+For an existing shared service, Murmur authorization determines whether the current account may add
+the member. Once Murmur durably accepts the membership operation, the endpoint returns; relay
+convergence may happen later. Only confirmed Murmur snapshots change `participants`, versions, and
+events. A terminal intent issue leaves the confirmed service unchanged and permits a later request
+with a fresh ticket. A malformed identity or
+ticket is `400`, an unknown service is `404`, and a prohibited or contradictory membership change
+is `409` with code `conflict`.
+
+Response — `202`: `{ "service": { ...complete service... } }`, except that an already-confirmed
+participant is an idempotent `200`. Promoting a local service to shared changes its summary and
+emits `crdt.service.updated` with the optional `mutationId`; accepting an operation on an existing
+shared service emits nothing until confirmed state changes.
+
+### `DELETE /v0/services/crdt/:serviceId/members/:identityKey`
+
+Requests removal of one non-owner participant. The optional JSON body is
+`{ "mutationId": "..." }`; an empty body is equivalent to `{}`. Murmur durably queues the removal
+even while its relay connection is offline. Naming the current account calls Murmur's durable
+`leave` operation when that account is not the owner; the service becomes local only after the
+confirmed removal arrives. Naming the owner, including an owner trying to remove itself, is
+prohibited and returns `409` with code `conflict`. Owner unsharing is not exposed in this API.
+Removing an identity that is not confirmed is an idempotent no-op.
+
+Response — `202`: `{ "service": { ...complete service... } }` for an accepted request and `200`
+for an idempotent no-op. The confirmed participant, service version, and catalog version change—and
+`crdt.service.updated` with the optional `mutationId` emits—only after Murmur reports the converged
+session state.
+
+Owner deletion or confirmed removal of the current account preserves the Loro replica but atomically
+changes the service back to `{ "status": "local" }`; it emits `crdt.service.updated`. A remote
+session with a valid `crdt.loro` descriptor creates the corresponding local service and emits
+`crdt.service.created` only when its application ID is unused. For an existing ID, the service
+accepts a descriptor only when that exact Murmur session is already durably bound to it or a durable
+local promotion intent explicitly binds the application ID to that session. Every other collision
+is rejected without importing state or changing versions, even when `kind`, `name`, and `state`
+match.
+
 ## Happy integration
 
 The Happy integration connects this daemon to the Happy mobile app. Its state is runtime,
@@ -3862,10 +4212,11 @@ Version-chained resources use the two payload shapes below. Explicitly documente
 events such as `git.updated`, `files.updated`, and `happy.integration.updated`
 use complete replacements or compact invalidations instead.
 
-**`*.created` carries the resource in full** — the same JSON the corresponding `GET` returns,
-so a client inserts it into its cache with no follow-up read. The object carries its own `id`
-and `version`, so the payload holds no separate ID field unless it links to something the
-object does not name (a message's `agentId` and `runId`, for example).
+**`*.created` normally carries the resource in full** — the same JSON the corresponding `GET`
+returns, so a client inserts it into its cache with no follow-up read. The object carries its own
+`id` and `version`, so the payload holds no separate ID field unless it links to something the
+object does not name (a message's `agentId` and `runId`, for example). A documented bounded summary
+may replace a potentially large full resource; `crdt.service.created` is the current example.
 
 **`*.updated` carries only what changed, chained by version:**
 
@@ -4103,6 +4454,26 @@ to a different daemon process.
   a complete replacement rather than a version-chain diff; clients keep the greater embedded
   `version` when reconciling it with a snapshot.
     - `integration` (full Happy integration object).
+
+**Happy CRDT services**
+
+- `crdt.service.created` — a local creation or accepted remote Murmur session created one CRDT
+  service.
+    - `service` — the full CRDT service summary, without Loro `state` or `tree`.
+    - `catalogVersion` — the CRDT catalog version after insertion.
+    - `mutationId` — echoed when an API mutation supplied one.
+- `crdt.service.updated` — a Loro merge, sharing transition, confirmed session change, membership
+  operation, remote owner deletion, or recovery changed one service. This is a compact invalidation
+  because snapshots and trees may be large; a client holding an older version refetches only that
+  service.
+    - `serviceId` — the CRDT service ID.
+    - `version` — the service version after the change.
+    - `catalogVersion` — the CRDT catalog version after the change.
+    - `mutationId` — echoed when an API mutation supplied one.
+- `crdt.connection.updated` — the Happy CRDT service's Murmur connection changed. The transition
+  was committed before this event and does not change every individual service version.
+    - `connection` — `online` or `offline`.
+    - `catalogVersion` — the CRDT catalog version after the transition.
 
 The set grows with the product; clients skip event types they do not recognize.
 

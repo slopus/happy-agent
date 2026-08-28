@@ -39,6 +39,7 @@ export * from "./protocol/bootstrap.js";
 export * from "./protocol/bots.js";
 export * from "./protocol/cloud.js";
 export * from "./protocol/common.js";
+export * from "./protocol/crdt.js";
 export * from "./protocol/daemon.js";
 export * from "./protocol/events.js";
 export * from "./protocol/files.js";

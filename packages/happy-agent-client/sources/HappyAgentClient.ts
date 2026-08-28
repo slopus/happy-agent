@@ -51,6 +51,18 @@ import type {
     StartCloudAuthorizationRequest,
 } from "./protocol/cloud.js";
 import type {
+    AddCrdtServiceMemberRequest,
+    CrdtMurmurIdentity,
+    CrdtServiceListQuery,
+    CrdtServiceListResponse,
+    CrdtServiceMemberMutationResult,
+    CrdtServiceResponse,
+    CreateCrdtServiceResult,
+    CreateCrdtServiceRequest,
+    RemoveCrdtServiceMemberRequest,
+    UpdateCrdtServiceRequest,
+} from "./protocol/crdt.js";
+import type {
     ConfigPatch,
     ConfigResponse,
     DrainResponse,
@@ -579,6 +591,90 @@ export class HappyAgentClient {
         return await this.#json({
             method: "DELETE",
             path: `v0/cloud/social/blocked/${encodeURIComponent(username)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    // Happy CRDT services
+
+    /** Lists local-first Loro service summaries and their Murmur connection state. */
+    async listCrdtServices(
+        query: CrdtServiceListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<CrdtServiceListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/services/crdt",
+            query: { after: query.after, kind: query.kind, limit: query.limit },
+            signal: options.signal,
+        });
+    }
+
+    /** Creates one local-only Loro service from a complete snapshot. */
+    async createCrdtService(
+        request: CreateCrdtServiceRequest,
+        options: RequestOptions = {},
+    ): Promise<CreateCrdtServiceResult> {
+        return await this.#jsonWithStatus<CrdtServiceResponse, 200 | 201>({
+            method: "POST",
+            path: "v0/services/crdt",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Reads one complete local Loro snapshot and its JSON tree. */
+    async getCrdtService(
+        serviceId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<CrdtServiceResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/services/crdt/${encodeURIComponent(serviceId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** Merges Loro export bytes locally; concurrent updates need no `If-Match`. */
+    async updateCrdtService(
+        serviceId: Cuid2,
+        request: UpdateCrdtServiceRequest,
+        options: RequestOptions = {},
+    ): Promise<CrdtServiceResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/services/crdt/${encodeURIComponent(serviceId)}/updates`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Adds one account participant, promoting a local service when needed. */
+    async addCrdtServiceMember(
+        serviceId: Cuid2,
+        identityKey: CrdtMurmurIdentity,
+        request: AddCrdtServiceMemberRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CrdtServiceMemberMutationResult> {
+        return await this.#jsonWithStatus<CrdtServiceResponse, 200 | 202>({
+            method: "PUT",
+            path: `v0/services/crdt/${encodeURIComponent(serviceId)}/members/${encodeURIComponent(identityKey)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Requests removal of one non-owner account participant. */
+    async removeCrdtServiceMember(
+        serviceId: Cuid2,
+        identityKey: CrdtMurmurIdentity,
+        request: RemoveCrdtServiceMemberRequest = {},
+        options: RequestOptions = {},
+    ): Promise<CrdtServiceMemberMutationResult> {
+        return await this.#jsonWithStatus<CrdtServiceResponse, 200 | 202>({
+            method: "DELETE",
+            path: `v0/services/crdt/${encodeURIComponent(serviceId)}/members/${encodeURIComponent(identityKey)}`,
             json: request,
             signal: options.signal,
         });
@@ -1625,6 +1721,16 @@ export class HappyAgentClient {
     async #json<TResponse>(request: HttpRequest): Promise<TResponse> {
         const response = await this.#send(request);
         return (await response.json()) as TResponse;
+    }
+
+    async #jsonWithStatus<TResponse extends object, TStatus extends number>(
+        request: HttpRequest,
+    ): Promise<TResponse & { httpStatus: TStatus }> {
+        const response = await this.#send(request);
+        return {
+            ...((await response.json()) as TResponse),
+            httpStatus: response.status as TStatus,
+        };
     }
 
     async #binary(request: HttpRequest): Promise<BinaryContent | null> {
