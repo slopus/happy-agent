@@ -140,10 +140,13 @@ is the only place a model, effort, provider, and service tier can be expressed â
 carries no selection. Every later message carries none of them, so an agent that can talk to a
 collaborator cannot turn it into a different model, make it think harder, or widen its permissions.
 
-The requested selection is validated against `AgentSystemRef.models` before anything is created, so
-a model the collection does not offer is refused rather than reaching a provider. When the call
-omits `provider`, the tool uses its creator's current provider if that provider serves the requested
+The requested selection is validated against the live `AgentSystemRef.models` filtered by each
+provider's `include_subagent_models` and `exclude_subagent_models` before anything is created, so a
+model the collection does not offer to subagents is refused rather than reaching a provider. The
+same filtered list is rendered in the model-facing tool description. When the call omits
+`provider`, the tool uses its creator's current provider if that provider serves the requested
 model; otherwise an unambiguous model route is still accepted and an ambiguous one is refused.
+Direct workflow creation passes through the same validation.
 
 `max_collaborators` in `[settings]` controls how many collaborators created through `create_agent`
 one root agent tree retains across all branches and defaults to five. Collaborators are durable and

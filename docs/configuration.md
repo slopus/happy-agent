@@ -274,6 +274,7 @@ enabled = true
 auth_file = "/Users/me/.codex-work/auth.json"
 transport = "auto"
 include_models = ["openai/gpt-5.6-sol", "openai/gpt-5.6-terra"]
+include_subagent_models = ["openai/gpt-5.6-terra"]
 
 [providers.personal_claude]
 type = "claude"
@@ -298,9 +299,14 @@ profile = "work-bedrock"
 "anthropic/opus-4-8" = { endpoint = "https://bedrock-runtime.example", transport = "runtime" }
 ```
 
-Every provider accepts `enabled`, `include_models`, and `exclude_models`.
-Filters use exact Happy Agent model IDs; exclusions win when a model appears in both
-lists. Codex instances also accept `auth_file`, `base_url`, and `transport`.
+Every provider accepts `enabled`, `include_models`, `exclude_models`,
+`include_subagent_models`, and `exclude_subagent_models`. Filters use exact Happy Agent model IDs;
+exclusions win when a model appears in both matching lists. `include_models` and `exclude_models`
+control ordinary availability everywhere, including the model picker. The subagent-specific pair
+only narrows which otherwise available model/provider routes agents may choose when creating new
+subagents, including through workflows; it does not remove those models from ordinary sessions.
+Omitting both subagent fields allows every ordinarily available model. Codex instances also accept
+`auth_file`, `base_url`, and `transport`.
 Claude Code instances accept `config_dir`, `executable`, and `oauth_token`.
 Run `claude setup-token` while signed in to the additional Claude account to
 create the long-lived token used by `oauth_token`. The token applies only to

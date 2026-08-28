@@ -157,7 +157,9 @@ const providerCommonInput = {
     credential_isolation: Type.Optional(Type.Literal(true)),
     enabled: Type.Optional(Type.Boolean()),
     exclude_models: Type.Optional(boundedStringArraySchema),
+    exclude_subagent_models: Type.Optional(boundedStringArraySchema),
     include_models: Type.Optional(boundedStringArraySchema),
+    include_subagent_models: Type.Optional(boundedStringArraySchema),
     p2p_share: Type.Optional(p2pShareSchema),
 };
 const providerInputSchemas = {
@@ -236,7 +238,9 @@ const providerInputSchemas = {
             auto_enable: Type.Optional(Type.Boolean()),
             enabled: Type.Optional(Type.Boolean()),
             exclude_models: Type.Optional(boundedStringArraySchema),
+            exclude_subagent_models: Type.Optional(boundedStringArraySchema),
             include_models: Type.Optional(boundedStringArraySchema),
+            include_subagent_models: Type.Optional(boundedStringArraySchema),
             p2p_share: Type.Optional(p2pShareSchema),
             providers: Type.Optional(
                 Type.Array(configStringSchema, {
@@ -488,7 +492,9 @@ const providerRecordBase = {
     credentialIsolation: Type.Optional(Type.Literal(true)),
     enabled: Type.Boolean(),
     excludeModels: Type.Optional(boundedStringArraySchema),
+    excludeSubagentModels: Type.Optional(boundedStringArraySchema),
     includeModels: Type.Optional(boundedStringArraySchema),
+    includeSubagentModels: Type.Optional(boundedStringArraySchema),
     p2pShare: Type.Optional(p2pShareSchema),
 };
 const providerSchemas = {
@@ -567,7 +573,9 @@ const providerSchemas = {
             autoEnable: Type.Optional(Type.Boolean()),
             enabled: Type.Boolean(),
             excludeModels: Type.Optional(boundedStringArraySchema),
+            excludeSubagentModels: Type.Optional(boundedStringArraySchema),
             includeModels: Type.Optional(boundedStringArraySchema),
+            includeSubagentModels: Type.Optional(boundedStringArraySchema),
             p2pShare: Type.Optional(p2pShareSchema),
             providers: Type.Array(configStringSchema, {
                 minItems: 1,
@@ -1199,6 +1207,15 @@ export class ConfigModule implements AgentModule {
 
     isProviderEnabled(providerId: string): boolean {
         return this.#providerEnabled.get(providerId) === true;
+    }
+
+    /** Whether one otherwise available provider/model route may be chosen for a new subagent. */
+    isSubagentModelAllowed(providerId: string, modelId: string): boolean {
+        const provider = this.configuration.values.providers[providerId];
+        return (
+            provider?.includeSubagentModels?.includes(modelId) !== false &&
+            provider?.excludeSubagentModels?.includes(modelId) !== true
+        );
     }
 
     setProviderEnabled(providerId: string, enabled: boolean): void {
@@ -2643,9 +2660,15 @@ function normalizeProviderCommon(value: Record<string, unknown>): Record<string,
         ...(value["exclude_models"] === undefined
             ? {}
             : { excludeModels: value["exclude_models"] }),
+        ...(value["exclude_subagent_models"] === undefined
+            ? {}
+            : { excludeSubagentModels: value["exclude_subagent_models"] }),
         ...(value["include_models"] === undefined
             ? {}
             : { includeModels: value["include_models"] }),
+        ...(value["include_subagent_models"] === undefined
+            ? {}
+            : { includeSubagentModels: value["include_subagent_models"] }),
         ...(value["p2p_share"] === undefined ? {} : { p2pShare: value["p2p_share"] }),
     };
 }

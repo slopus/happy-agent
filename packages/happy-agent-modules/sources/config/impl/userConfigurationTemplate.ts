@@ -111,6 +111,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # transport = "auto"
 # include_models = ["openai/gpt-5.6-sol"]
 # exclude_models = []
+# include_subagent_models = ["openai/gpt-5.6-terra"]
+# exclude_subagent_models = []
 
 # [providers.claude]
 # type = "claude"
@@ -120,6 +122,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # oauth_token = "token"
 # include_models = ["anthropic/sonnet-5"]
 # exclude_models = []
+# include_subagent_models = ["anthropic/sonnet-5"]
+# exclude_subagent_models = []
 
 # [providers.grok]
 # type = "grok"
@@ -128,6 +132,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # base_url = "https://api.x.ai/v1"
 # include_models = ["xai/grok-build"]
 # exclude_models = []
+# include_subagent_models = ["xai/grok-build"]
+# exclude_subagent_models = []
 
 # [providers.bedrock]
 # type = "bedrock"
@@ -141,6 +147,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # search_model = "openai/gpt-5.6-luna"
 # include_models = ["openai/gpt-5.6-sol"]
 # exclude_models = []
+# include_subagent_models = ["openai/gpt-5.6-sol"]
+# exclude_subagent_models = []
 
 # [providers.bedrock.model_overrides."openai/gpt-5.6-sol"]
 # endpoint = "https://bedrock-mantle.us-east-1.api.aws"
@@ -156,6 +164,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # strategy = "round_robin"
 # providers = ["codex-work", "codex-personal"]
 # enabled = true
+# include_subagent_models = ["openai/gpt-5.6-terra"]
+# exclude_subagent_models = []
 
 # Gemini powers the universal media and search tools rather than chat models, so it has no
 # [providers.*] entry. The key written here wins over the GEMINI_API_KEY environment variable.

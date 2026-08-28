@@ -554,6 +554,48 @@ describe("collaboration", () => {
         expect(collection.created).toHaveLength(0);
     });
 
+    it("offers and accepts only models allowed for subagents by provider configuration", async () => {
+        const config = await temporaryTestConfig(
+            [
+                "[providers.codex]",
+                "enabled = true",
+                'include_subagent_models = ["gpt-5.6-sol"]',
+                'exclude_subagent_models = ["gpt-5.6-sol"]',
+                "",
+                "[providers.claude]",
+                "enabled = true",
+                'include_subagent_models = ["opus-5"]',
+                "",
+                "[providers.bedrock]",
+                "enabled = true",
+                "include_subagent_models = []",
+            ].join("\n"),
+        );
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection, config);
+        const tools = await hooks.tools!(ctx, {
+            agent: { id: "parent", provider: "claude" },
+        } as never);
+        const create = tools.find((tool) => tool.name === "create_agent");
+        if (create === undefined) throw new Error("The create_agent tool was not offered.");
+
+        expect(create.description).toContain("claude + opus-5");
+        expect(create.description).not.toContain("codex + gpt-5.6-sol");
+        expect(create.description).not.toContain("bedrock + opus-5");
+        await expect(module.createAgent(ctx, "parent", TASK, "blockedchild")).rejects.toThrow(
+            'Model "gpt-5.6-sol" is not available for collaborators.',
+        );
+        await expect(
+            module.createAgent(
+                ctx,
+                "parent",
+                { ...TASK, model: "opus-5", effort: "medium", provider: "claude" },
+                "allowedchild",
+            ),
+        ).resolves.toEqual({ agentId: "allowedchild" });
+        expect(collection.created).toEqual([{ id: "allowedchild", parent: "parent" }]);
+    });
+
     it("refuses an effort the chosen model does not support", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);

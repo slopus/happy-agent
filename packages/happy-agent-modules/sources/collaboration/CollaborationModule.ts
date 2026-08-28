@@ -83,11 +83,7 @@ export class CollaborationModule implements AgentModule {
         this.#assert(collaborationAgentIdSchema, agentId, "collaborator ID");
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         this.#assert(collaborationCreateOptionsSchema, options, "create agent options");
-        const agents = this.#requireAgents();
-        const selection = this.#validateSelection(
-            agents.models.filter((model) => this.#config.isProviderEnabled(model.providerId)),
-            input,
-        );
+        const selection = this.#validateSelection(this.#availableModels(), input);
 
         return await this.#createAgent(ctx, actingAgentId, input, agentId, options, selection);
     }
@@ -108,10 +104,7 @@ export class CollaborationModule implements AgentModule {
         this.#assert(collaborationAgentIdSchema, agentId, "collaborator ID");
         this.#assert(collaborationCreateInputSchema, input, "create agent");
         const agents = this.#requireAgents();
-        const selection = this.#validateSelection(
-            agents.models.filter((model) => this.#config.isProviderEnabled(model.providerId)),
-            input,
-        );
+        const selection = this.#validateSelection(this.#availableModels(), input);
 
         return await this.#serializeToolCreation(async () => {
             const existing = await agents.config(ctx, agentId);
@@ -262,7 +255,7 @@ export class CollaborationModule implements AgentModule {
                     this,
                     scope.agent.id,
                     scope.agent.provider,
-                    this.#requireAgents().models,
+                    this.#availableModels(),
                     settings.maxCollaborators,
                     settings.maxCollaborationDepth,
                 ),
@@ -543,6 +536,15 @@ export class CollaborationModule implements AgentModule {
             throw new Error("The collaboration module has not been started yet.");
         }
         return this.#agents;
+    }
+
+    /** Models that are live and explicitly available for new subagents. */
+    #availableModels(): readonly AgentModel[] {
+        return this.#requireAgents().models.filter(
+            (model) =>
+                this.#config.isProviderEnabled(model.providerId) &&
+                this.#config.isSubagentModelAllowed(model.providerId, model.id),
+        );
     }
 
     #assert(schema: TSchema, value: unknown, label: string): void {

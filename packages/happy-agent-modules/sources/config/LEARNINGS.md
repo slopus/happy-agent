@@ -42,3 +42,10 @@ exact-model session to one compatible concrete account. The random starting choi
 accounts are held per agent; authentication and account-token exhaustion advance the route, while
 other failures remain terminal. Candidate validation is deliberately silent, Bedrock routing fails
 closed across unknown or different regions, and usage remains attributed to concrete providers.
+
+## Subagent filters do not change ordinary availability
+
+Provider-level `include_subagent_models` and `exclude_subagent_models` use exact model IDs and the
+same exclusion precedence as the ordinary model filters, but they are a separate delegation policy.
+They must leave the model catalog and picker unchanged. Collaboration asks configuration about each
+provider/model route when describing and validating new subagents, including workflow-created ones.

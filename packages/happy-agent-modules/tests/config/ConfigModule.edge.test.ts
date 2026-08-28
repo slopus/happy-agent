@@ -514,7 +514,9 @@ describe("ConfigModule edge coverage", () => {
                     'auth_file = "/tmp/auth.json"',
                     'base_url = "https://api.example.test"',
                     'exclude_models = ["slow-model"]',
+                    'exclude_subagent_models = ["model-2"]',
                     'include_models = ["model-1"]',
+                    'include_subagent_models = ["model-1", "model-2"]',
                     'p2p_share = "shared"',
                     'transport = "sse"',
                     "",
@@ -652,7 +654,9 @@ describe("ConfigModule edge coverage", () => {
                             credentialIsolation: true,
                             enabled: true,
                             excludeModels: ["slow-model"],
+                            excludeSubagentModels: ["model-2"],
                             includeModels: ["model-1"],
+                            includeSubagentModels: ["model-1", "model-2"],
                             p2pShare: "shared",
                             transport: "sse",
                             type: "codex",
@@ -1229,6 +1233,8 @@ describe("ConfigModule edge coverage", () => {
                     'type = "smart"',
                     'strategy = "round_robin"',
                     'providers = ["missing", "work", "other-kind", "personal", "router"]',
+                    'include_subagent_models = ["openai/gpt-5.6-sol", "openai/gpt-5.6-terra"]',
+                    'exclude_subagent_models = ["openai/gpt-5.6-terra"]',
                 ].join("\n"),
             );
 
@@ -1238,6 +1244,8 @@ describe("ConfigModule edge coverage", () => {
                 providers: ["missing", "work", "other-kind", "personal", "router"],
                 strategy: "round_robin",
                 type: "smart",
+                includeSubagentModels: ["openai/gpt-5.6-sol", "openai/gpt-5.6-terra"],
+                excludeSubagentModels: ["openai/gpt-5.6-terra"],
             });
             expect(
                 config.offeredModels
@@ -1245,6 +1253,8 @@ describe("ConfigModule edge coverage", () => {
                     .map((model) => model.id),
             ).toEqual(["openai/gpt-5.6-sol", "openai/gpt-5.6-terra"]);
             expect(config.providers.typeOf("router")).toBe("codex");
+            expect(config.isSubagentModelAllowed("router", "openai/gpt-5.6-sol")).toBe(true);
+            expect(config.isSubagentModelAllowed("router", "openai/gpt-5.6-terra")).toBe(false);
             expect(smartProviderRoute(config.configuration, "router")?.models).toMatchObject([
                 {
                     candidates: ["work", "personal"],

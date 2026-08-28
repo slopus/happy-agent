@@ -75,6 +75,12 @@ while `offeredModels` is the stable complete set the agent systems can accept af
 Happy Agent never asks a vendor which models exist — the list is source, and a configured provider
 entry decides which of them its own key serves.
 
+A provider may independently narrow delegation with `include_subagent_models` and
+`exclude_subagent_models`. These use the same exact model IDs and exclusion precedence as
+`include_models` and `exclude_models`, but they do not change the ordinary catalog or model picker.
+Collaboration applies them when it builds the model-facing creation tool and again when it validates
+every new collaborator, including one started by a workflow.
+
 When a scan first detects credentials, configuration writes `auto_enable = true` into that
 provider's generated runtime table. The value remains true across later missing scans. A person may
 set it to false to prevent automatic use; a provider with no `auto_enable` value receives the true
