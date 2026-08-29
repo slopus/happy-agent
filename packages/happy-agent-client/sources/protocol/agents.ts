@@ -22,6 +22,36 @@ import type { BackgroundProcess } from "./processes.js";
 import type { CompactionMessage, Run } from "./messages.js";
 import type { SlashCommandCatalog } from "./slashCommands.js";
 
+export const MAX_AGENT_PROFILES = 256;
+export const MAX_AGENT_PROFILE_ID_LENGTH = 512;
+export const MAX_AGENT_PROFILE_NAME_LENGTH = 128;
+export const MAX_AGENT_PROFILE_DESCRIPTION_LENGTH = 1_024;
+
+/** One request profile offered by one focused agent. */
+export const agentProfileSchema = Type.Object({
+    /** The opaque value sent in a message's `profile` field. */
+    id: Type.String({ minLength: 1, maxLength: MAX_AGENT_PROFILE_ID_LENGTH }),
+    /** A short human-readable label. */
+    name: Type.String({ minLength: 1, maxLength: MAX_AGENT_PROFILE_NAME_LENGTH }),
+    /** A concise explanation of when to use the profile. */
+    description: Type.String({
+        minLength: 1,
+        maxLength: MAX_AGENT_PROFILE_DESCRIPTION_LENGTH,
+    }),
+});
+export type AgentProfile = Static<typeof agentProfileSchema>;
+
+/** A focused agent's complete ordered request-profile catalog. */
+export const agentProfileCatalogSchema = Type.Array(agentProfileSchema, {
+    maxItems: MAX_AGENT_PROFILES,
+});
+
+/** A response shape carrying one agent's complete current profile catalog. */
+export interface AgentProfileCatalog {
+    /** Absent only when talking to an older compatible daemon. */
+    profiles?: AgentProfile[];
+}
+
 /** What the agent is doing right now. */
 export const agentStatusSchema = Type.Union([
     Type.Literal("idle"),
@@ -85,7 +115,7 @@ export const agentSchema = Type.Object({
 export type Agent = Static<typeof agentSchema>;
 
 /** Every single-agent route answers with this. */
-export interface AgentResponse extends SlashCommandCatalog {
+export interface AgentResponse extends SlashCommandCatalog, AgentProfileCatalog {
     agent: Agent;
 }
 
@@ -107,14 +137,14 @@ export interface AgentDraftResponse {
 }
 
 /** `POST /v0/agents/:agentId/abort` */
-export interface AgentAbortResponse extends SlashCommandCatalog {
+export interface AgentAbortResponse extends SlashCommandCatalog, AgentProfileCatalog {
     agent: Agent;
     /** The run winding down arrives through events from here. */
     cursor: EventCursor;
 }
 
 /** `POST /v0/agents/:agentId/compact` */
-export interface AgentCompactResponse extends SlashCommandCatalog {
+export interface AgentCompactResponse extends SlashCommandCatalog, AgentProfileCatalog {
     agent: Agent;
     /** The standalone maintenance run created for explicit compaction. */
     run: Run;

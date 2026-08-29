@@ -18,7 +18,7 @@ import {
     resourceVersionSchema,
     timestampSchema,
 } from "./common.js";
-import type { Agent, AgentDraftSnapshot } from "./agents.js";
+import type { Agent, AgentDraftSnapshot, AgentProfile } from "./agents.js";
 import { botSchema } from "./bots.js";
 import type { Cloud } from "./cloud.js";
 import { crdtServiceSummarySchema } from "./crdt.js";
@@ -169,6 +169,12 @@ export interface AgentContextUpdatedPayload {
 export interface AgentDraftUpdatedPayload extends MutationEcho {
     agentId: Cuid2;
     draft: AgentDraftSnapshot;
+}
+
+/** The complete current request-profile catalog is a replacement, not a resource diff. */
+export interface AgentProfilesUpdatedPayload extends MutationEcho {
+    agentId: Cuid2;
+    profiles: AgentProfile[];
 }
 
 /** The complete current slash-command catalog is a replacement, not a versioned resource diff. */
@@ -337,6 +343,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"agent.updated", AgentUpdatedPayload>
     | EventEnvelope<"agent.context.updated", AgentContextUpdatedPayload>
     | EventEnvelope<"agent.draft.updated", AgentDraftUpdatedPayload>
+    | EventEnvelope<"agent.profiles.updated", AgentProfilesUpdatedPayload>
     | EventEnvelope<"agent.slash_commands.updated", AgentSlashCommandsUpdatedPayload>
     | EventEnvelope<"process.started", ProcessStartedPayload>
     | EventEnvelope<"process.updated", ProcessUpdatedPayload>

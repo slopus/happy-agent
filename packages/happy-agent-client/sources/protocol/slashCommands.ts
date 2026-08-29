@@ -3,7 +3,7 @@
 import { type Static, Type } from "@sinclair/typebox";
 
 import { messageModeSchema, mutationIdSchema, type EventCursor } from "./common.js";
-import type { Agent } from "./agents.js";
+import type { Agent, AgentProfileCatalog } from "./agents.js";
 
 export const MAX_SLASH_COMMANDS = 256;
 export const MAX_SLASH_COMMAND_NAME_LENGTH = 128;
@@ -61,7 +61,7 @@ export interface SlashCommandCatalog {
 }
 
 /** `POST /v0/agents/:agentId/slash-commands/:name` */
-export interface InvokeSlashCommandResponse extends SlashCommandCatalog {
+export interface InvokeSlashCommandResponse extends SlashCommandCatalog, AgentProfileCatalog {
     agent: Agent;
     /** The exact post-refresh descriptor that the owning module accepted. */
     command: SlashCommand;

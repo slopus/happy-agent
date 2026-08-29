@@ -2923,6 +2923,12 @@ An agent does not hold a model, effort, or permission mode of its own. Those are
 every message sent. The last submitted selection is current composer state rather than catalog
 state, so it has its own `mode` endpoint and is composed into the agent bootstrap response.
 
+Each agent has its own ordered request-profile catalog. A profile is only a choice the client can
+put in the existing message `profile` field: an opaque `id`, a short human-readable `name`, and a
+human-readable `description`. The catalog is empty by default and current daemons expose no
+profiles. It is returned only by focused agent responses and agent bootstrap, not embedded in the
+agent object copied through project, workspace, bot, activity, event, or desktop-bootstrap data.
+
 Agent Base ancestry and user visibility are separate facts. An agent with `parentAgentId` is
 managed by another agent. Ordinarily that makes it a hidden **subagent**: it has no place in a
 project or workspace list, no mutable draft, no archival, and cannot be sent messages by the user.
@@ -3056,20 +3062,41 @@ parents rather than through this endpoint. Bot agents are not created here eithe
 agent is born with the bot through `POST /v0/bots`, and creating another agent in a bot's
 workspace is refused with `409`: a bot has exactly one session.
 
-Response — `201`: `{ "agent": { ... }, "slashCommands": [ ... ] }`. Creation is complete when it
-answers: the agent exists, is `"idle"`, and is ready for work. A user-controlled root may receive
-a user message; a managed root receives work from its parent. The owning project and its same-ID
-root workspace, or the owning child workspace, also advance and emit their update with the new
-ordered `agents` series.
+Response — `201`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }`.
+Creation is complete when it answers: the agent exists, is `"idle"`, and is ready for work. A
+user-controlled root may receive a user message; a managed root receives work from its parent. The
+owning project and its same-ID root workspace, or the owning child workspace, also advance and emit
+their update with the new ordered `agents` series.
 
 ### `GET /v0/agents/:agentId`
 
 Returns one agent.
 
-Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }`; `404` when no such agent
-exists. `slashCommands` is the complete current command catalog described below. Every focused
-agent mutation response that carries `agent` also carries the same `slashCommands` field, so a
-client never has to make a second request merely to open its command menu.
+Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }`; `404`
+when no such agent exists. `profiles` and `slashCommands` are the complete current catalogs
+described here and below. Every focused agent mutation response that carries `agent` also carries
+both fields, so a client never has to make another request merely to populate its composer.
+
+The `profiles` array belongs to this exact agent. Every entry is:
+
+```json
+{
+    "id": "coding-agent-v3",
+    "name": "Coding agent",
+    "description": "Use the coding-agent session configuration."
+}
+```
+
+- `id` — the exact opaque string sent as a message's `profile`, unique within this agent's
+  catalog and at most 512 characters.
+- `name` — a short display name from 1 to 128 characters.
+- `description` — a concise explanation from 1 to 1,024 characters.
+
+The array is ordered for display. Only IDs in this catalog match the agent's active request-profile
+codec. Sending an absent, unknown, or later-removed ID still follows the tolerant message contract:
+it decodes to `null` instead of rejecting the message. Current daemons always emit `profiles: []`.
+When the catalog changes, `agent.profiles.updated` replaces a client's cached list. The field is
+optional on focused responses so clients remain compatible with older protocol-22 daemons.
 
 ### `GET /v0/agents/:agentId/mode`
 
@@ -3186,6 +3213,7 @@ Response — `202` after the owning module has durably accepted the invocation:
 ```json
 {
     "agent": { ... },
+    "profiles": [ ... ],
     "slashCommands": [ ... ],
     "command": {
         "name": "code-review",
@@ -3199,9 +3227,10 @@ Response — `202` after the owning module has durably accepted the invocation:
 
 `cursor` is captured before refresh and dispatch, so following the event stream from it observes
 the catalog replacement, message/run lifecycle, compaction lifecycle, or other durable effects the
-command causes. `slashCommands` is the post-refresh catalog and `command` is the exact descriptor
-that was invoked. An unknown or just-removed command is `404`; a command that cannot run in the
-agent's current state is `409`. A module failure is reported through the ordinary error contract.
+command causes. `profiles` and `slashCommands` are the post-refresh catalogs and `command` is the
+exact descriptor that was invoked. An unknown or just-removed command is `404`; a command that
+cannot run in the agent's current state is `409`. A module failure is reported through the ordinary
+error contract.
 
 ### Messages and runs
 
@@ -3268,9 +3297,9 @@ new group, and update activity in one frame without repeating message content.
 Every message carries its own mode — the full model selection and permission mode. There is no
 agent-level default; the client sends what its composer shows (typically prefilled from the
 agent's `mode` endpoint or bootstrap response). A user message also carries its nullable
-`profile`, the opaque request profile that decided whether accepting it reset the model's private
-conversation context. Current daemons always emit `profile`; it remains optional on the wire so
-clients stay compatible with older protocol-22 daemons.
+`profile`, the decoded opaque compatibility identity that decided whether accepting it reset the
+model's private conversation context. Current daemons always emit `profile`; it remains optional
+on the wire so clients stay compatible with older protocol-22 daemons.
 
 ### Message content
 
@@ -3297,10 +3326,12 @@ bootstrap state, `message.created` and any later full-message event, and accepte
 including after daemon restart. When omitted, the field is absent. Re-sending an existing message
 ID returns the originally stored object and never replaces it with metadata from the retry.
 
-`profile` is separate from both mode and metadata. It is `null` or an opaque string of at most 512
-characters. The daemon stores and returns it on every complete representation of a user message,
-but does not interpret its contents or send them to the model. See `send` for its context-reset
-semantics.
+`profile` is separate from both mode and metadata. On the wire it is `null` or an opaque string of
+at most 512 characters. An internal request-profile codec decides which strings are currently
+meaningful; it accepts only `null` today. A string that does not match the current codec is
+converted to `null` rather than rejected. The daemon stores and returns only the decoded value on
+every complete representation of a user message, and never sends the opaque string to the model.
+See `send` for its context-reset semantics.
 
 **Roles** say who produced the message:
 
@@ -3570,7 +3601,7 @@ Request:
         }
     ],
     "delivery": "queue",
-    "profile": "coding-agent-v3",
+    "profile": null,
     "mode": {
         "providerId": "codex",
         "modelId": "openai/gpt-5.6-sol",
@@ -3603,17 +3634,24 @@ Request:
   tool-call batch finish without interruption, then pending steering messages are accepted before
   the next inference request. On an idle agent the two are identical: a run starts.
 - `profile` — optional `null` or opaque string of at most 512 characters; omitted means `null`.
-  The effective profile starts as `null`. When inference accepts this message, the daemon compares
-  its profile with the profile of the most recently accepted request. A different value — including
-  `null` to string or string to `null` — resets the model's private conversation context at that
-  safe boundary exactly like an incompatible model switch: the old provider session is destroyed,
-  compactable Agent Base history and history-scoped state are cleared atomically, and the new
-  request starts a fresh context. The durable person-visible history remains available, and the
-  existing model-switch module uses its existing `modelChanged` hook to give the fresh model a
-  bounded handoff from that archive so completed work is not silently repeated or undone. No new
-  reset hook or module surface is introduced. An unchanged profile keeps the context. A simultaneous
-  incompatible model change and profile change perform one reset. The profile is control data; its
-  string is never sent to the provider or model.
+  The internal request-profile codec decides which strings are active and currently accepts only
+  `null`. A string that does not decode — including a profile that a later feature removed — is
+  converted to `null` on the fly. It does not reject the send, prevent a queued message or settings
+  record from being restored, or make durable history unreadable. Only the decoded profile is
+  stored for new messages and returned publicly.
+
+    The effective profile starts as `null`. When inference accepts this message, the daemon compares
+    its decoded profile with the decoded profile of the most recently accepted request. A different
+    value resets the model's private conversation context at that safe boundary exactly like an
+    incompatible model switch: the old provider session is destroyed, compactable Agent Base history
+    and history-scoped state are cleared atomically, and the new request starts a fresh context. The
+    durable person-visible history remains available, and the existing model-switch module uses its
+    existing `modelChanged` hook to give the fresh model a bounded handoff from that archive so
+    completed work is not silently repeated or undone. No new reset hook or module surface is
+    introduced. An unchanged profile keeps the context. A simultaneous incompatible model change
+    and profile change perform one reset. The profile is control data and is never sent to the
+    provider or model.
+
 - `mode` — required: the model selection and permission mode this message runs with, validated
   against the config catalog. An unknown or disabled model is `400`.
 
@@ -3621,7 +3659,7 @@ There is no `mutationId` here: the message `id` is the client's, so the client r
 own message in every event and history load by the identity it already holds.
 
 Profile selection is idempotent with the message. Re-sending an existing message ID returns the
-originally stored message and never replaces its profile with the retry's value.
+originally stored message and never replaces its decoded profile with the retry's value.
 
 A sent message is **pending** first: the daemon holds it durably, but it is not yet part of the
 real history — it has no run. It stays pending until inference **accepts** it — a queued
@@ -3647,7 +3685,7 @@ Response — `202`: the durable message as it now stands, plus the event cursor 
             "composer": "mobile",
             "localDraft": { "revision": 4 }
         },
-        "profile": "coding-agent-v3",
+        "profile": null,
         "mode": {
             "providerId": "codex",
             "modelId": "openai/gpt-5.6-sol",
@@ -3718,7 +3756,7 @@ Response — `200`:
                         "composer": "mobile",
                         "localDraft": { "revision": 4 }
                     },
-                    "profile": "coding-agent-v3",
+                    "profile": null,
                     "mode": {
                         "providerId": "codex",
                         "modelId": "openai/gpt-5.6-sol",
@@ -3877,7 +3915,7 @@ Request:
   different active run is `409`, so a client cannot race a newer message and kill the wrong
   work.
 
-Response — `202`: `{ "agent": { ... }, "slashCommands": [ ... ], "cursor": "..." }`. The abort is accepted. Each affected
+Response — `202`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ], "cursor": "..." }`. The abort is accepted. Each affected
 run winds down with terminal status `"aborted"` and reason `"abort"`. For each affected agent
 that owns a running background process, Compute first commits a one-shot notice to that agent's
 scope in Compute's shared Agent KV saying what the abort killed. Process state and
@@ -3910,6 +3948,7 @@ Response — `202`:
 ```json
 {
     "agent": { ... },
+    "profiles": [ ... ],
     "slashCommands": [ ... ],
     "run": { ... },
     "message": {
@@ -3954,7 +3993,7 @@ a stale indefinitely-running block.
 
 Marks the agent read: clears `unread`. The body is `{}`, optionally with a `mutationId`.
 
-Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }` with `unread` `null`.
+Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }` with `unread` `null`.
 
 ### `POST /v0/agents/:agentId/archive`
 
@@ -3962,14 +4001,14 @@ Archives the agent. The conversation is kept — an archived agent's history rem
 but it leaves the default list and receives no messages. Archiving a working agent aborts its
 run first. Its permanent owner association and `orderKey` are retained. Idempotent.
 
-Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }` with `archivedAt` set.
+Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }` with `archivedAt` set.
 
 ### `POST /v0/agents/:agentId/unarchive`
 
 Brings an archived agent back: it reappears in the default list and can receive messages again,
 with its history, last submitted mode, owner, and order intact. Idempotent.
 
-Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }` with `archivedAt` `null`.
+Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }` with `archivedAt` `null`.
 
 ### `POST /v0/agents/:agentId/reorder`
 
@@ -3978,7 +4017,7 @@ Moves the agent in the list order.
 Request: `{ "afterId": "pfh0haxfpzowht3oi213cqos", "mutationId": "..." }` — the agent to place
 this one after, or `null` to move it first.
 
-Response — `200`: `{ "agent": { ... }, "slashCommands": [ ... ] }`. Reordering assigns the moved agent a fractional
+Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }`. Reordering assigns the moved agent a fractional
 `orderKey` between its destination neighbours. Neighbour agent keys and versions remain unchanged;
 only the moved agent emits an `agent.updated` reorder event. Its owning project or workspace also
 advances because the embedded ordered agent list changed.
@@ -4659,6 +4698,11 @@ event is idempotent by attachment ID.
   resource version chain; replace it whole.
     - `agentId` (ID string).
     - `draft` — the complete `{ "value", "updatedAt" }` object from the draft/bootstrap response.
+- `agent.profiles.updated` — the focused agent's request-profile catalog changed because its
+  available features changed. It is computed current state and has no resource version chain;
+  replace the prior list whole. Removing a profile is ordinary and does not invalidate history.
+    - `agentId` (ID string).
+    - `profiles` — the complete ordered profile catalog from the focused agent response.
 - `agent.slash_commands.updated` — turn-time or invocation-time discovery found that the focused
   agent's slash-command catalog changed. It is computed current state and has no resource version
   chain; replace the prior list whole.
@@ -4943,6 +4987,7 @@ Response — `200`:
     "subagents": [
         /* full child-agent objects, newest first */
     ],
+    "profiles": [],
     "slashCommands": [
         {
             "name": "compact",
@@ -4964,6 +5009,9 @@ Response — `200`:
   first. This additive field may be absent when talking to an older compatible daemon.
 - `subagents` — the complete child-agent list from the focused activity response, newest first.
   This additive field may be absent when talking to an older compatible daemon.
+- `profiles` — the complete ordered profile catalog from the focused agent response. Current
+  daemons emit an empty array. This additive field may be absent when talking to an older
+  compatible daemon.
 - `slashCommands` — exactly the complete catalog from the focused agent response.
 - `cursor` — the event cursor captured before the snapshot reads. Open the global event stream
   from it; duplicate facts are harmless, while no concurrent fact can disappear.
