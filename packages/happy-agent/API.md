@@ -3608,8 +3608,9 @@ Request:
   safe boundary exactly like an incompatible model switch: the old provider session is destroyed,
   compactable Agent Base history and history-scoped state are cleared atomically, and the new
   request starts a fresh context. The durable person-visible history remains available, and the
-  session-reset module gives the fresh model a bounded handoff from that archive so completed work
-  is not silently repeated or undone. An unchanged profile keeps the context. A simultaneous
+  existing model-switch module uses its existing `modelChanged` hook to give the fresh model a
+  bounded handoff from that archive so completed work is not silently repeated or undone. No new
+  reset hook or module surface is introduced. An unchanged profile keeps the context. A simultaneous
   incompatible model change and profile change perform one reset. The profile is control data; its
   string is never sent to the provider or model.
 - `mode` — required: the model selection and permission mode this message runs with, validated

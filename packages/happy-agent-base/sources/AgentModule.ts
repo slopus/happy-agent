@@ -109,8 +109,8 @@ export interface AgentModuleScope<_Database extends AgentDatabase = AgentDatabas
     readonly runKV: AgentKV;
     /**
      * Durable state belonging only to the current conversation history. It survives turns and
-     * restarts, then is cleared and its old handle expires when compaction or an incompatible
-     * model change replaces that history.
+     * restarts, then is cleared and its old handle expires when compaction, an incompatible model
+     * change, or a request-profile change replaces that history.
      */
     readonly historyKV: AgentKV;
 }

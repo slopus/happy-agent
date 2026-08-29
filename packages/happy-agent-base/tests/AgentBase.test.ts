@@ -947,7 +947,7 @@ describe("AgentBase persistence", () => {
             },
         ]);
         expect([...persistence.pending.values()]).toEqual([
-            expect.objectContaining({ message: user("hi"), options: {} }),
+            expect.objectContaining({ message: user("hi"), options: { profile: null } }),
         ]);
         expect(provider.sessions).toHaveLength(0);
         await agent.close();
@@ -981,7 +981,7 @@ describe("AgentBase persistence", () => {
         // under its pending key rather than in the main context store.
         expect(persistence.records).toEqual([]);
         expect([...persistence.pending.values()]).toEqual([
-            expect.objectContaining({ message: user("hi"), options: {} }),
+            expect.objectContaining({ message: user("hi"), options: { profile: null } }),
         ]);
         expect(provider.sessions).toHaveLength(0);
         await agent.close();
@@ -1634,6 +1634,111 @@ describe("AgentBase per-message settings", () => {
         await agent.close();
     });
 
+    it("resets when a request profile changes and treats an omitted profile as null", async () => {
+        const persistence = new InMemoryPersistence();
+        const provider = new ScriptedProvider([
+            textTurn("first"),
+            textTurn("same profile"),
+            textTurn("default profile"),
+        ]);
+        const resets: unknown[] = [];
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            model: "openai/gpt",
+            hooks: {
+                modelChanged: (_hookCtx, change) => {
+                    resets.push(change);
+                    return system("A previous conversation is available in durable history.");
+                },
+            },
+        });
+
+        await agent.send(ctx, user("first"), { profile: "coding-agent-v3" });
+        await agent.waitForIdle();
+        await agent.send(ctx, user("same"), { profile: "coding-agent-v3" });
+        await agent.waitForIdle();
+        await agent.send(ctx, user("back to default"));
+        await agent.waitForIdle();
+
+        expect(resets).toEqual([
+            {
+                previousModel: "openai/gpt",
+                model: "openai/gpt",
+                previousProvider: "scripted",
+                provider: "scripted",
+                providers: expect.any(AgentProviders),
+                wasReset: true,
+            },
+        ]);
+        expect(provider.sessions).toHaveLength(2);
+        expect(provider.sessions[0]?.destroyed).toBe(true);
+        expect(provider.sessions[0]?.requests).toHaveLength(2);
+        expect(provider.sessions[1]?.requests[0]?.context.messages).toEqual([
+            system("A previous conversation is available in durable history."),
+            user("back to default"),
+        ]);
+        expect(persistence.records).toEqual([
+            {
+                type: "system",
+                message: system("A previous conversation is available in durable history."),
+            },
+            recordedUser("back to default"),
+            { type: "block", block: { type: "text", text: "default profile" } },
+        ]);
+        expect(persistence.values.get("settings")).toMatchObject({ profile: null });
+        await agent.close();
+    });
+
+    it("rejects a request profile longer than the public limit before queueing it", async () => {
+        const persistence = new InMemoryPersistence();
+        const provider = new ScriptedProvider([]);
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+        });
+
+        await expect(
+            agent.send(ctx, user("too long"), { profile: "x".repeat(513) }),
+        ).rejects.toThrow("The request profile is not valid.");
+        expect(persistence.pending.size).toBe(0);
+        expect(provider.sessions).toHaveLength(0);
+        await agent.close();
+    });
+
+    it("keeps a module follow-up on the profile of the turn that produced it", async () => {
+        const provider = new ScriptedProvider([textTurn("first"), textTurn("followed up")]);
+        let followedUp = false;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks: {
+                afterTurn: () => {
+                    if (followedUp) return undefined;
+                    followedUp = true;
+                    return [{ type: "send", message: user("continue") }];
+                },
+            },
+        });
+
+        await agent.send(ctx, user("start"), { profile: "coding-agent-v3" });
+        await agent.waitForIdle();
+
+        expect(provider.sessions).toHaveLength(1);
+        expect(provider.sessions[0]?.requests[1]?.context.messages).toEqual([
+            user("start"),
+            { role: "assistant", content: [{ type: "text", text: "first" }] },
+            user("continue"),
+        ]);
+        await agent.close();
+    });
+
     it("appends a queued hook notice after an incompatible model reset", async () => {
         const provider = new ScriptedProvider([textTurn("first"), textTurn("second")]);
         const notice = system("This notice belongs to the new model context.");
@@ -2205,6 +2310,38 @@ describe("AgentBase message delivery strategies", () => {
             user("follow one"),
             user("follow two"),
         ]);
+        await agent.close();
+    });
+
+    it("splits an all-mode batch at every request-profile boundary", async () => {
+        const provider = new ScriptedProvider([textTurn("one"), textTurn("red"), textTurn("blue")]);
+        let agent: AgentBase;
+        let queued = false;
+        agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            sendMode: "all",
+            hooks: {
+                onEvent: (_hookCtx, event) => {
+                    if (event.type === "text_delta" && !queued) {
+                        queued = true;
+                        void agent.send(ctx, user("for red"), { profile: "red" });
+                        void agent.send(ctx, user("for blue"), { profile: "blue" });
+                    }
+                },
+            },
+        });
+
+        await agent.send(ctx, user("go"));
+        await agent.waitForIdle();
+
+        expect(provider.sessions).toHaveLength(3);
+        expect(provider.sessions[0]?.destroyed).toBe(true);
+        expect(provider.sessions[1]?.destroyed).toBe(true);
+        expect(provider.sessions[1]?.requests[0]?.context.messages).toEqual([user("for red")]);
+        expect(provider.sessions[2]?.requests[0]?.context.messages).toEqual([user("for blue")]);
         await agent.close();
     });
 

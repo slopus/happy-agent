@@ -96,6 +96,7 @@ import type { AgentBaseState } from "./AgentBaseState.js";
 import { AgentProviders } from "./AgentProviders.js";
 import type { AgentModuleAction } from "./AgentModuleAction.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
+import { ownAgentRequestProfile, type AgentRequestProfile } from "./AgentRequestProfile.js";
 import type { AnyAgentTool } from "./AgentTool.js";
 import { agentToolArgumentsError } from "./AgentToolArgumentsError.js";
 import { setAgentSpanAttributes, type AgentSpanAttributes } from "./AgentSpanAttributes.js";
@@ -145,9 +146,9 @@ const FAILURE_RETRY_MAX_MS = 60_000;
 export type AgentBaseQueueMode = "one-at-a-time" | "all";
 
 /**
- * Inference settings carried by a queued message. An omitted field keeps the previously
- * effective value; the first message without a value falls back to the constructor default,
- * though relying on that default is discouraged — prefer sending settings with the message.
+ * Inference settings carried by a queued message. Except for `profile`, an omitted field keeps the
+ * previously effective value; the first message without a value falls back to the constructor
+ * default. A profile is request-scoped, so omission selects its `null` default.
  */
 export interface AgentBaseMessageOptions {
     /** Stable cuid2 identity for idempotent delivery; generated when omitted. */
@@ -162,6 +163,8 @@ export interface AgentBaseMessageOptions {
     readonly effort?: SessionReasoningEffort;
     /** Which of the provider's service tiers to bill and schedule the request on. */
     readonly serviceTier?: SessionServiceTier;
+    /** Opaque context compatibility identity; omission selects the `null` profile. */
+    readonly profile?: AgentRequestProfile;
     /**
      * How much of the machine the agent may touch from this message onwards. It takes effect when
      * the message is consumed rather than when it is queued, because a response and its tool batch
@@ -177,7 +180,7 @@ interface QueueEntry {
     readonly message: AgentQueuedMessage;
     readonly metadata?: AgentMessageMetadata;
     /** The settings this message makes effective when it is consumed. */
-    readonly options: AgentBaseMessageOptions;
+    readonly options: AgentBaseMessageOptions & { readonly profile: AgentRequestProfile };
 }
 
 /** One hook-provided system notice waiting for a safe append boundary. */
@@ -235,7 +238,7 @@ interface QueueRequest {
     readonly id: string;
     readonly message: AgentQueuedMessage;
     readonly metadata?: AgentMessageMetadata;
-    readonly options: AgentBaseMessageOptions;
+    readonly options: AgentBaseMessageOptions & { readonly profile: AgentRequestProfile };
 }
 
 /** Everything an agent session is constructed with; only the identity and store are required. */
@@ -336,13 +339,14 @@ export interface AgentBaseOptions {
  * history whole or not at all. A compaction nobody will carry out is rejected rather than left
  * waiting.
  *
- * ## Model changes
+ * ## Session resets
  *
- * An incompatible provider or model change resets the conversation; a compatible one keeps it.
- * Either way the change lands on one side or the other, never the old history under the new
- * model. `modelChanged` runs inside the transaction and is lent a store bound to it — a
- * capability released when the hook returns, so it cannot be retained to write after commit.
- * A failing handoff rejects an incompatible switch outright rather than costing the history.
+ * An incompatible provider/model change or a different opaque request profile resets the
+ * conversation; a compatible model change keeps it. Either way the change lands on one side or
+ * the other, never old private history under an incompatible selection. The existing
+ * `modelChanged` handoff also serves profile resets; it runs inside the transaction and is lent a
+ * store bound to it, a capability released when the hook returns. A failing reset handoff keeps
+ * the prior history and every setting that caused the reset.
  *
  * ## Permission modes
  *
@@ -449,6 +453,8 @@ export class AgentBase {
     #effort: SessionReasoningEffort | undefined;
     /** The service tier in force. */
     #serviceTier: SessionServiceTier | undefined;
+    /** The opaque request profile in force; every message selects one and `null` is the default. */
+    #profile: AgentRequestProfile;
     /**
      * How much of the machine the agent may touch. Durable, so a restart resumes in the mode the
      * conversation reached, and carried on every context the agent derives.
@@ -769,6 +775,7 @@ export class AgentBase {
         this.#model = options.model;
         this.#effort = options.effort;
         this.#serviceTier = options.serviceTier;
+        this.#profile = null;
         this.#permissionMode = options.permissionMode ?? DEFAULT_AGENT_PERMISSION_MODE;
         this.#kv = new AgentKV(this.#persistence, `kv.${options.id}.`);
         this.#historyKV = this.#newHistoryKV();
@@ -1160,12 +1167,18 @@ export class AgentBase {
         if (outerTransaction?.lifetime.aborted === true) {
             throw new Error("The agent storage transaction carried by this context has ended.");
         }
-        const { id = createId(), metadata: suppliedMetadata, ...settings } = options ?? {};
+        const {
+            id = createId(),
+            metadata: suppliedMetadata,
+            profile: suppliedProfile,
+            ...settings
+        } = options ?? {};
         if (!Value.Check(cuid2Schema, id)) {
             throw new Error("The message ID must be a cuid2 identity.");
         }
         const wait = agentIdOf(ctx) !== this.id && !insideTurn.get(ctx).includes(this.id);
         const metadata = ownAgentMessageMetadata(suppliedMetadata);
+        const profile = ownAgentRequestProfile(suppliedProfile);
         if (this.#closed) throw new Error("The agent has been closed.");
         const knownInProcess = this.#offeredMessageIds.has(id);
         if (outerTransaction === undefined) {
@@ -1177,7 +1190,7 @@ export class AgentBase {
                 id,
                 message: structuredClone(message),
                 ...(metadata === undefined ? {} : { metadata }),
-                options: settings,
+                options: { ...settings, profile },
             },
         ]);
         // Work using an outer transaction must finish its durable writes before that transaction
@@ -2419,7 +2432,9 @@ export class AgentBase {
                 id,
                 message: structuredClone(action.message),
                 ...(metadata === undefined ? {} : { metadata }),
-                options: {},
+                // A module follow-up continues the context whose hook produced it. Public
+                // requests still normalize omission to `null` at `send`/`steer` admission.
+                options: { profile: this.#profile },
             });
         }
         await flush();
@@ -3360,7 +3375,21 @@ export class AgentBase {
                 queue.splice(0, queue.length, ...remaining);
             }
             if (queue.length === 0) return false;
-            const count = mode === "all" ? queue.length : 1;
+            let count = mode === "all" ? queue.length : 1;
+            if (mode === "all" && count > 1) {
+                // "All" means every request that can safely share one provider context. A
+                // profile boundary must be answered separately: appending both sides after one
+                // reset would expose an incompatible request to the next profile.
+                let batchProfile = ownAgentRequestProfile(queue[0]?.options.profile);
+                for (let index = 1; index < count; index += 1) {
+                    const nextProfile = ownAgentRequestProfile(queue[index]?.options.profile);
+                    if (nextProfile !== batchProfile) {
+                        count = index;
+                        break;
+                    }
+                    batchProfile = nextProfile;
+                }
+            }
             const batch = queue.slice(0, count);
             // Settings carried by the consumed messages become the effective settings for the
             // inference that follows, each defined field superseding the previous value. The
@@ -3369,6 +3398,7 @@ export class AgentBase {
             let model = this.#model;
             let effort = this.#effort;
             let serviceTier = this.#serviceTier;
+            let profile = this.#profile;
             let permissionMode = this.#permissionMode;
             let changed = false;
             for (const entry of batch) {
@@ -3392,7 +3422,12 @@ export class AgentBase {
                     permissionMode = entry.options.permissionMode;
                     changed = true;
                 }
+                // Every request carries an explicit profile after admission or restoration.
+                // Unlike the other settings, omission selected `null` at that boundary.
+                profile = ownAgentRequestProfile(entry.options.profile);
             }
+            const profileChanged = profile !== this.#profile;
+            changed ||= profileChanged;
             // The mode the messages make effective, kept apart from the rest because it is the one
             // setting with hooks of its own: a change is announced, and what a module concludes
             // from it commits with the message that carried it.
@@ -3401,20 +3436,20 @@ export class AgentBase {
                     ? undefined
                     : { previousMode: this.#permissionMode, mode: permissionMode };
             // A provider or model change is checked against the provider-model compatibility
-            // matrix. An incompatible change resets the conversation: the history is erased
-            // completely, the old provider session is destroyed, and the `modelChanged` hook
-            // may inject one handoff system message at the very beginning of the fresh
-            // context. A compatible provider change keeps the history but still gets a fresh
-            // session, since a session is bound to the provider that created it.
+            // matrix. An incompatible selection or a different request profile resets the
+            // conversation: the history is erased completely, the old provider session is
+            // destroyed, and the existing model-change hook may inject one handoff message at the
+            // beginning of the fresh context. A compatible provider change keeps the history but
+            // still gets a fresh session, since a session is bound to the provider that created it.
             const selectionChanged = provider !== this.#providerId || model !== this.#model;
-            let reset = false;
+            let modelReset = false;
             let injected: SessionSystemMessage | undefined;
             if (selectionChanged) {
                 if (this.#model !== undefined && model !== undefined) {
                     const previousType = this.#providers.typeOf(this.#providerId);
                     const nextType = this.#providers.typeOf(provider);
                     if (previousType === null || nextType === null || previousType !== nextType) {
-                        reset = true;
+                        modelReset = true;
                     } else {
                         const [previousKey, nextKey] = await Promise.all([
                             this.#providers.contextCompatibilityKeyOf(
@@ -3423,7 +3458,7 @@ export class AgentBase {
                             ),
                             this.#providers.contextCompatibilityKeyOf(provider, model),
                         ]);
-                        reset =
+                        modelReset =
                             previousKey === null ||
                             nextKey === null ||
                             !areProviderModelsCompatible(
@@ -3441,64 +3476,58 @@ export class AgentBase {
                     }
                 } else {
                     // A selection without a model on either side cannot be judged compatible.
-                    reset = model !== this.#model;
+                    modelReset = model !== this.#model;
                 }
             }
+            let reset = modelReset || profileChanged;
             await this.#recordTransaction(lockCtx, async (txCtx) => {
-                if (selectionChanged) {
-                    if (this.#hooks.modelChanged !== undefined && model !== undefined) {
-                        // The hook runs inside the transaction that commits the switch, so its store executes directly on
-                        // that transaction: what it writes lands and rolls back with the change
-                        // it was told about, never on its own. The context it is given ends with
-                        // the transaction, so a store it keeps cannot outlive the switch.
-                        const committed = new AbortController();
-                        // Derived from the transaction's own context, which is what makes
-                        // the hook's writes part of the switch rather than a second,
-                        // separate commit, and ending with it.
-                        const changeLifetime = withLifetime(
-                            withAgentContext(txCtx, {
-                                id: this.id,
-                                provider,
-                                model,
-                                effort,
-                                serviceTier,
-                                permissionMode,
-                            }),
-                            committed.signal,
-                        );
-                        const changeCtx = withAgentRunKV(
-                            withAgentHistoryKV(
-                                withAgentKV(changeLifetime, this.#kv),
-                                this.#historyKV,
-                            ),
-                            this.#runKV,
-                        );
-                        try {
-                            injected = await this.#hooks.modelChanged(changeCtx, {
-                                previousModel: this.#model,
-                                model,
-                                previousProvider: this.#providerId,
-                                provider,
-                                providers: this.#providers,
-                                wasReset: reset,
-                            });
-                        } catch {
-                            // A failing handoff must not cost the conversation: an incompatible
-                            // switch is rejected outright — the previous selection stays
-                            // effective and the history is not cleared. A compatible change
-                            // proceeds; the hook only observed it.
-                            if (reset) {
-                                provider = this.#providerId;
-                                model = this.#model;
-                                reset = false;
-                            }
-                        } finally {
-                            // The store belonged to the hook's call, not to the hook.
-                            committed.abort();
+                if (
+                    (selectionChanged || (profileChanged && this.#messages.length > 0)) &&
+                    this.#hooks.modelChanged !== undefined &&
+                    model !== undefined
+                ) {
+                    // Profile resets use the existing model-change handoff path. The hook runs in
+                    // the transaction that commits the reset, so any module state it writes lands
+                    // and rolls back with the history it was told about.
+                    const committed = new AbortController();
+                    const changeLifetime = withLifetime(
+                        withAgentContext(txCtx, {
+                            id: this.id,
+                            provider,
+                            model,
+                            effort,
+                            serviceTier,
+                            permissionMode,
+                        }),
+                        committed.signal,
+                    );
+                    const changeCtx = withAgentRunKV(
+                        withAgentHistoryKV(withAgentKV(changeLifetime, this.#kv), this.#historyKV),
+                        this.#runKV,
+                    );
+                    try {
+                        injected = await this.#hooks.modelChanged(changeCtx, {
+                            previousModel: this.#model,
+                            model,
+                            previousProvider: this.#providerId,
+                            provider,
+                            providers: this.#providers,
+                            wasReset: reset,
+                        });
+                    } catch {
+                        if (modelReset) {
+                            provider = this.#providerId;
+                            model = this.#model;
+                            modelReset = false;
                         }
-                        if (!reset) injected = undefined;
+                        if (profileChanged) profile = this.#profile;
+                        reset = false;
+                    } finally {
+                        // The store belonged to the hook's call, not to the hook.
+                        committed.abort();
                     }
                 }
+                if (!reset) injected = undefined;
                 // The queue move is atomic with appending the consumed messages and recording
                 // the inference they make due. The store has one owner, so ordinary deletes
                 // are sufficient.
@@ -3532,6 +3561,7 @@ export class AgentBase {
                         ...(model === undefined ? {} : { model }),
                         ...(effort === undefined ? {} : { effort }),
                         ...(serviceTier === undefined ? {} : { serviceTier }),
+                        profile,
                         permissionMode,
                     });
                 }
@@ -3542,7 +3572,13 @@ export class AgentBase {
                 // Last, so a hook writing its own account of the consumption sees a transaction
                 // holding all of it. The mode comes before the messages: it is what they were
                 // said under, and a listener recording them wants to know that first.
-                const selection = { provider, model, effort, serviceTier, permissionMode };
+                const selection = {
+                    provider,
+                    model,
+                    effort,
+                    serviceTier,
+                    permissionMode,
+                };
                 if (modeChange !== undefined) {
                     await this.#invokeTransactHook(
                         txCtx,
@@ -3561,11 +3597,18 @@ export class AgentBase {
                             kind,
                             message: entry.message,
                             ...(entry.metadata === undefined ? {} : { metadata: entry.metadata }),
+                            profile: entry.options.profile,
                         },
                     );
                 }
             });
-            if (reset) this.#rotateHistoryKV();
+            if (reset) {
+                this.#rotateHistoryKV();
+                // A profile is deliberately absent from provider-facing configuration, but a
+                // reset still requires a fresh provider session even when every visible session
+                // option stayed the same.
+                this.#sessionConfig = undefined;
+            }
             // Committed: from here the messages are part of the conversation, so what has to be
             // announced about them is decided now and reported once the transaction commits.
             permissionChange = modeChange;
@@ -3575,6 +3618,7 @@ export class AgentBase {
                     kind,
                     message: entry.message,
                     ...(entry.metadata === undefined ? {} : { metadata: entry.metadata }),
+                    profile: entry.options.profile,
                 })),
             );
             queue.splice(0, count);
@@ -3596,6 +3640,7 @@ export class AgentBase {
                 this.#model = model;
                 this.#effort = effort;
                 this.#serviceTier = serviceTier;
+                this.#profile = profile;
                 this.#permissionMode = permissionMode;
                 this.#ctx = this.#deriveCtx();
             }
@@ -3646,12 +3691,14 @@ export class AgentBase {
             throw new Error(`The queued message under "${key}" has an invalid ID.`);
         }
         const metadata = ownAgentMessageMetadata(envelope.metadata);
+        const options = envelope.options ?? {};
+        const profile = ownAgentRequestProfile(options.profile);
         return {
             key,
             id: envelope.id,
             message: envelope.message,
             ...(metadata === undefined ? {} : { metadata }),
-            options: envelope.options ?? {},
+            options: { ...options, profile },
         };
     }
 
@@ -3735,6 +3782,7 @@ export class AgentBase {
                 this.#model = persisted.model;
                 this.#effort = persisted.effort;
                 this.#serviceTier = persisted.serviceTier;
+                this.#profile = ownAgentRequestProfile(persisted.profile);
                 // The permission mode is the one setting whose absence is not a decision: a record
                 // written before any message carried a mode says nothing about it, and a value
                 // that is not a mode at all says nothing either. Both keep the mode the agent was

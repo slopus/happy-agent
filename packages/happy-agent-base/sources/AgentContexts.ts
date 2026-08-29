@@ -220,7 +220,7 @@ export function agentRunKV(ctx: Context): AgentKV | undefined {
 
 /**
  * Carry the store belonging to the current conversation history. Agent Base clears it and
- * invalidates its old handle when compaction or an incompatible model change replaces history.
+ * invalidates its old handle when compaction or a model/profile reset replaces history.
  */
 export function withAgentHistoryKV(ctx: Context, kv: AgentKV): Context {
     return historyKVNamespace.set(ctx, kv);

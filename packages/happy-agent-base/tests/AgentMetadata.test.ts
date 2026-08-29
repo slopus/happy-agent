@@ -124,6 +124,7 @@ describe("message metadata and identity", () => {
                 hideFromUser: true,
                 nested: { source: "client" },
             },
+            profile: null,
         });
         expect(accepted[1]).toEqual(accepted[0]);
         expect(Object.isFrozen(accepted[0]?.metadata)).toBe(true);
@@ -233,6 +234,7 @@ describe("message metadata and identity", () => {
             kind: "send",
             message: user("from hook"),
             metadata: { hideFromUser: true, origin: "hook" },
+            profile: null,
         });
         await agent.close();
     });

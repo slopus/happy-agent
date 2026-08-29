@@ -565,6 +565,50 @@ describe("Agent", () => {
         await agent.close();
     });
 
+    it("reuses the model-change modules for a profile reset", async () => {
+        const provider = new ScriptedProvider([textTurn("default"), textTurn("profiled")]);
+        const observed: unknown[] = [];
+        const silent = module({
+            name: "silent",
+            modelChanged: (_hookCtx, _scope, change) => {
+                observed.push(change.previousModel === change.model);
+                return undefined;
+            },
+        });
+        const handoff = module({
+            name: "handoff",
+            modelChanged: () => system("durable history is available"),
+        });
+        const late = module({
+            name: "late",
+            modelChanged: (_hookCtx, _scope, change) => {
+                observed.push(change.previousProvider === change.provider);
+                return system("should lose");
+            },
+        });
+        const agent = await Agent.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            model: "openai/gpt",
+            persistence: new InMemoryPersistence(),
+            sharedKV: sharedKV(),
+            modules: [silent, handoff, late],
+        });
+
+        await agent.send(ctx, user("hello"));
+        await agent.waitForIdle();
+        await agent.send(ctx, user("switch"), { profile: "coding-agent-v3" });
+        await agent.waitForIdle();
+
+        expect(observed).toEqual([true, true]);
+        expect(provider.sessions[1]?.requests[0]?.context.messages).toEqual([
+            system("durable history is available"),
+            user("switch"),
+        ]);
+        await agent.close();
+    });
+
     it("isolates a throwing observer so later modules still see everything", async () => {
         const seen: string[] = [];
         const provider = new ScriptedProvider([textTurn("first"), textTurn("second")]);
@@ -805,6 +849,7 @@ describe("Agent", () => {
 
         expect(seen[0]).toEqual({
             id: "identified-agent",
+            metadata: undefined,
             provider: "scripted",
             providerKind: "gym",
             model: "gym/small",

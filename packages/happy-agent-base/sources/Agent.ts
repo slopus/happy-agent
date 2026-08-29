@@ -63,7 +63,8 @@ export interface AgentOptions<
  * module order — extending the base state, which `AgentBase` puts first — and a failure there
  * fails the turn rather than running with a wrong configuration. For a model change, every
  * module observes the change, the first returned handoff wins, and a module failure during an
- * incompatible change rejects the switch so the history survives.
+ * incompatible change rejects the switch so the history survives. Profile resets travel through
+ * that same hook and composition path.
  */
 export class Agent<
     Tool extends AnyAgentTool = AnyAgentTool,

@@ -449,7 +449,10 @@ describe("AgentBase black-box stream and request behavior", () => {
         await sent;
 
         expect([...persistence.pending.values()]).toEqual([
-            expect.objectContaining({ message: user("persist now"), options: {} }),
+            expect.objectContaining({
+                message: user("persist now"),
+                options: { profile: null },
+            }),
         ]);
         expect(done).toBe(false);
         let idleResolved = false;

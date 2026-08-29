@@ -17,7 +17,8 @@ The package also provides the primitives needed to host that runtime:
 `AgentSystemLocal` accepts `steeringMode` and `sendMode` for the collection. Each is
 `"one-at-a-time"` by default or `"all"` when every message already waiting at that queue boundary
 should be injected before one response. The choice applies consistently to newly created and
-restored agents.
+restored agents. Requests with different profiles always split an `"all"` batch because they may
+not share model context.
 
 `retryForever: true` is token-max operation: it is for a token-rich caller that wants the agent to
 keep consuming tokens and never accept an error as final. `AgentBase`, or every agent in an
@@ -136,7 +137,9 @@ created the identity or found it already present. Inside an outer transaction, d
 its durable queue write before returning because work may not retain a transaction context after
 the transaction body ends. Optional immutable metadata
 travels beside the provider message and reaches both message-accepted hooks; module-generated send
-and steer actions accept the same fields.
+and steer actions accept the same fields. Every message also selects an opaque nullable `profile`.
+Omission selects `null`; changing the effective profile clears private model history and starts a
+fresh provider session. The profile is durable control data and is never sent to the provider.
 
 Base allocates cuid2 identities for every settled-to-settled loop, turn, inference, and settlement.
 The IDs are persisted with outstanding work before their first lifecycle hook, survive restart,
@@ -162,10 +165,12 @@ call IDs.
 
 Agent hooks also receive `agentHistoryKV(ctx)`, exposed to modules as `scope.historyKV`. It is
 durable across turns and restarts but belongs only to the current conversation history: successful
-compaction and incompatible model resets clear it atomically with the replaced history and expire
-retained old handles. Lifecycle action hooks may return `{ type: "inject", message }` to queue a
-system notice. Notices are durable and append only after pending tool results and compaction have
-settled, immediately before the inference that should see them.
+compaction and model/profile resets clear it atomically with the replaced history and expire
+retained old handles. The existing `modelChanged` hook handles both model and profile reset
+handoffs; across modules, the first returned message wins and a failure preserves the old history.
+Lifecycle action hooks may return `{ type: "inject", message }` to queue a system notice. Notices
+are durable and append only after pending tool results and compaction have settled, immediately
+before the inference that should see them.
 `prepareInference` runs after queued input has joined the conversation and immediately before a
 possible provider request. It may return only `{ type: "compact" }`; the replacement runs before
 the durable inference stage opens, then preparation is evaluated against the replacement. The

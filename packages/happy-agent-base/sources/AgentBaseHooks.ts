@@ -21,6 +21,7 @@ import type { AgentMessageMetadata, AgentMetadataChange } from "./AgentMetadata.
 import type { AgentPermissionMode } from "./AgentPermissionMode.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
 import type { AgentProviders } from "./AgentProviders.js";
+import type { AgentRequestProfile } from "./AgentRequestProfile.js";
 import type { AnyAgentTool } from "./AgentTool.js";
 import type {
     AgentInstructionsContribution,
@@ -49,7 +50,7 @@ export type AgentBasePersistedEvent =
           readonly block: SessionToolCallBlock;
       });
 
-/** What the `modelChanged` hook sees when a consumed message changes the effective model. */
+/** What the `modelChanged` hook sees when a request changes the model or resets its context. */
 export interface AgentBaseModelChange {
     /** The model in force before this change, absent when none had been set yet. */
     readonly previousModel: string | undefined;
@@ -61,7 +62,7 @@ export interface AgentBaseModelChange {
     readonly provider: string;
     /** The registry the agent resolves its providers from. */
     readonly providers: AgentProviders;
-    /** True when the change was incompatible and the conversation history was erased. */
+    /** True when an incompatible model or different profile erased private conversation history. */
     readonly wasReset: boolean;
 }
 
@@ -82,6 +83,8 @@ export interface AgentBaseAcceptedMessage {
     readonly message: AgentQueuedMessage;
     /** Immutable module-owned metadata supplied with the message. */
     readonly metadata?: AgentMessageMetadata;
+    /** The opaque request profile this message made effective. */
+    readonly profile: AgentRequestProfile;
 }
 
 /** What the activation hook sees when the agent stops being settled and starts owing work. */
@@ -381,13 +384,11 @@ export interface AgentBaseHooks {
         result: SessionToolResultMessage,
     ) => MaybePromise<void>;
     /**
-     * Called when a consumed message changes the effective model. An incompatible change —
-     * judged by the provider-model compatibility matrix — erases the conversation history
-     * completely and destroys the old provider session; the handoff system message this hook
-     * returns is then injected at the very beginning of the fresh context, and without one the
-     * context starts completely empty. On a compatible change the history stays and the return
-     * value is ignored. A hook failure during an incompatible change rejects the switch: the
-     * previous selection stays effective and the history is not cleared.
+     * Called when a consumed message changes the effective model or a different opaque profile
+     * resets its context. An incompatible change erases private conversation history and destroys
+     * the old provider session; the returned handoff system message opens the fresh context. On a
+     * compatible model-only change the history stays and the return value is ignored. A hook
+     * failure during a reset preserves the history and each setting that caused the reset.
      */
     readonly modelChanged?: (
         ctx: Context,
