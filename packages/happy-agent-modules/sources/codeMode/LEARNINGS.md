@@ -14,6 +14,10 @@ Code Mode replaces the ordinary tool surface with its selected interpreter, but 
 require a tool call for every response. The model may answer directly when execution would not
 help the user's request.
 
+Code Mode tools are explicitly eager and carry capability text. The override removes every other
+tool, including provider discovery, so deferring the sole interpreter would leave the model with no
+direct execution surface. Keep Code Mode in the eager-tool policy alongside compute and user input.
+
 ## The Bun proof of concept is a stateless system process
 
 The Bun engine intentionally starts with the smallest boundary that can validate the experience:

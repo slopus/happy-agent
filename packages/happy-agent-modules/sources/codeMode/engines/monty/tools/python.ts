@@ -55,6 +55,8 @@ export type CodeModePythonRunOutcome =
 export function createCodeModePythonTool(run: CodeModePythonRun) {
     return defineAgentTool({
         name: "python",
+        defer: false,
+        capabilities: ["Run continuous sandboxed Python with durable interpreter state."],
         description:
             "Run Python in this agent's continuous isolated interpreter. Variables, imports, and functions survive later calls. Current date, time, and the agent filesystem are available; the environment is empty. Filesystem operations obey the current permission mode. Network, shell, mounts, external functions, and other host access do not exist.",
         parameters: codeModePythonInputSchema,

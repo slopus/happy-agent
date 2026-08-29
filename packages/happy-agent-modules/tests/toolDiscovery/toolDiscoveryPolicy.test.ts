@@ -8,7 +8,7 @@ import { assembleComputeTools } from "../../sources/compute/tools/assembleComput
 import { assembleReviewerTools } from "../../sources/compute/tools/assembleReviewerTools.js";
 
 const sourcesRoot = join(dirname(fileURLToPath(import.meta.url)), "../../sources");
-const eagerDirectories = ["compute", "userInput"];
+const eagerDirectories = ["codeMode", "compute", "userInput"];
 
 interface ToolDefinition {
     readonly file: string;

@@ -22,6 +22,8 @@ export type CodeModeJavaScriptRun = (
 export function createCodeModeJavaScriptTool(run: CodeModeJavaScriptRun) {
     return defineAgentTool({
         name: "javascript",
+        defer: false,
+        capabilities: ["Run stateless JavaScript and TypeScript through Bun."],
         description:
             "Run JavaScript or TypeScript in a fresh system Bun process. State does not survive later calls. Use console.log or console.error to return output. Bun starts in the agent working directory, and filesystem, process, and network access obey the current permission mode. Each invocation has a 10-second wall timeout.",
         parameters: codeModeJavaScriptInputSchema,
