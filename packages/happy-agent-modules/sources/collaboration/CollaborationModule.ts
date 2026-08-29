@@ -60,12 +60,14 @@ export class CollaborationModule implements AgentModule {
 
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
+    readonly #crossWorkspace: boolean;
     #agents: AgentSystemRef | undefined;
     #toolCreationTail: Promise<void> = Promise.resolve();
 
     constructor(config: ConfigModule, abort: AbortModule) {
         this.#config = config;
         this.#abort = abort;
+        this.#crossWorkspace = config.configuration.values.features.crossWorkspace;
     }
 
     /**
@@ -150,7 +152,7 @@ export class CollaborationModule implements AgentModule {
         return { agentId };
     }
 
-    /** Send text that steers either direction of an existing collaboration relationship. */
+    /** Send text to an Agent ID allowed by the installation's collaboration boundary. */
     async sendMessage(
         ctx: Context,
         actingAgentId: string,
@@ -159,7 +161,7 @@ export class CollaborationModule implements AgentModule {
     ): Promise<void> {
         this.#assert(collaborationAgentIdSchema, actingAgentId, "acting agent ID");
         this.#assert(collaborationSendInputSchema, input, "send message");
-        await this.#authorize(ctx, actingAgentId, input.toAgentId, "send to");
+        await this.#authorizeMessage(ctx, actingAgentId, input.toAgentId);
         await this.#deliver(
             ctx,
             actingAgentId,
@@ -179,13 +181,13 @@ export class CollaborationModule implements AgentModule {
     ): Promise<void> {
         this.#assert(collaborationAgentIdSchema, actingAgentId, "acting agent ID");
         this.#assert(collaborationAgentIdSchema, targetAgentId, "target agent ID");
-        await this.#authorize(ctx, actingAgentId, targetAgentId, "interrupt");
+        await this.#authorizeDirectRelationship(ctx, actingAgentId, targetAgentId, "interrupt");
         await this.#abort.abort(ctx, targetAgentId);
     }
 
     readonly #hooks: AgentModuleHooks = {
         /**
-         * Who this agent can reach, by ID.
+         * The identities and routing rules this agent needs to reach others by ID.
          *
          * An agent that cannot name its creator cannot send it anything. The sender's name is in each
          * delivered message, but that line ages out of history on compaction — while the relationship
@@ -198,7 +200,7 @@ export class CollaborationModule implements AgentModule {
                 agents.parentOf(ctx, scope.agent.id),
                 agents.childOf(ctx, scope.agent.id),
             ]);
-            const lines: string[] = [];
+            const lines: string[] = [`Your Agent ID is ${scope.agent.id}.`];
             if (parent !== null) {
                 lines.push(
                     `You were created by agent ${parent}. When you stop working, whatever you said last is reported to it automatically, so finish by stating your answer. Use send_agent_message only to tell it something before then.`,
@@ -207,6 +209,11 @@ export class CollaborationModule implements AgentModule {
             if (children.length > 0) {
                 lines.push(
                     `Collaborators you created: ${children.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`,
+                );
+            }
+            if (this.#crossWorkspace) {
+                lines.push(
+                    "Cross-workspace agent messaging is enabled. You can use send_agent_message to text any existing agent when you know its Agent ID. Agent IDs are unguessable, so the user or another agent must share the recipient ID with you.",
                 );
             }
             return lines.join("\n");
@@ -259,7 +266,7 @@ export class CollaborationModule implements AgentModule {
                     settings.maxCollaborators,
                     settings.maxCollaborationDepth,
                 ),
-                sendMessageTool(this, scope.agent.id),
+                sendMessageTool(this, scope.agent.id, this.#crossWorkspace),
                 interruptAgentTool(this, scope.agent.id),
             ];
         },
@@ -386,12 +393,8 @@ export class CollaborationModule implements AgentModule {
         }
     }
 
-    /**
-     * Who may reach whom. Ancestry is the whole policy, and it is read from the agent collection
-     * rather than from a roster of this module's own: an agent reaches the collaborators it
-     * created, and the agent that created it.
-     */
-    async #authorize(
+    /** Direct ancestry remains the whole authorization policy for destructive operations. */
+    async #authorizeDirectRelationship(
         ctx: Context,
         actingAgentId: string,
         targetAgentId: string,
@@ -402,6 +405,30 @@ export class CollaborationModule implements AgentModule {
         if ((await agents.parentOf(ctx, actingAgentId)) === targetAgentId) return "creator";
         throw new Error(
             `Agent "${actingAgentId}" is not authorized to ${action} agent "${targetAgentId}".`,
+        );
+    }
+
+    /**
+     * Messaging keeps direct creator/collaborator access in every configuration. When the person
+     * enables cross-workspace work, possession of another existing agent's unguessable ID is the
+     * additional routing authority. Destructive interruption deliberately remains ancestry-only.
+     */
+    async #authorizeMessage(
+        ctx: Context,
+        actingAgentId: string,
+        targetAgentId: string,
+    ): Promise<void> {
+        const agents = this.#requireAgents();
+        if ((await agents.parentOf(ctx, targetAgentId)) === actingAgentId) return;
+        if ((await agents.parentOf(ctx, actingAgentId)) === targetAgentId) return;
+        if (this.#crossWorkspace && targetAgentId !== actingAgentId) {
+            if ((await agents.config(ctx, targetAgentId)) === undefined) {
+                throw new Error(`Agent "${targetAgentId}" does not exist.`);
+            }
+            return;
+        }
+        throw new Error(
+            `Agent "${actingAgentId}" is not authorized to send to agent "${targetAgentId}".`,
         );
     }
 

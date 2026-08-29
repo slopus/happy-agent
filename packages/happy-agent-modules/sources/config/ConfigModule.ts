@@ -962,7 +962,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         permissionMode: "auto",
     },
     features: {
-        crossWorkspace: false,
+        crossWorkspace: true,
         workflows: true,
         workspaces: true,
     },

@@ -119,7 +119,8 @@ The tools exist only when both are true:
 
 - `crossWorkspace` is on. The catalog spans every project on the machine, so
   reading it is exactly what looking outside the current project means, and the
-  user's `features.cross_workspace` setting decides whether it is offered.
+  user's `features.cross_workspace` setting decides whether it is offered. The
+  setting defaults to on; explicitly setting it to `false` removes the tools.
 - The agent is somebody's own conversation. A subagent works inside the task it
   was handed and is given no view of the catalog.
 

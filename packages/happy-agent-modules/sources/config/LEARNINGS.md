@@ -1,5 +1,12 @@
 # Config module learnings
 
+## Cross-workspace work is available by default
+
+Fresh installations enable `features.cross_workspace` by default so root agents can discover the
+project catalog and message another existing agent when its unguessable Agent ID is shared. A user
+who wants the narrower boundary can explicitly set `cross_workspace = false`; generated starter
+configuration shows the default as `true`.
+
 ## Generated runtime configuration owns runtime state
 
 Treating `runtime.toml` as user-authored and placing daemon mutations in a sidecar state file was

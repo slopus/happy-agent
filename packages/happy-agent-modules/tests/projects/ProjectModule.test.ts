@@ -27,8 +27,8 @@ import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { projectsModuleFor } from "../support/projectsModule.js";
 
-/** Cross-workspace work is a feature a person turns on, so a test turns it on the same way. */
-const CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = true\n";
+/** Cross-workspace work is on by default, but a person may explicitly turn it off. */
+const NO_CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = false\n";
 
 describe("ProjectsModule", () => {
     it("owns its catalog migration and is built from the modules it depends on", async () => {
@@ -162,22 +162,23 @@ describe("ProjectsModule", () => {
         ).toBe(false);
     });
 
-    it("offers the catalog only when the user asked for cross-workspace work", async () => {
-        expect(await projectToolNames(await projectsModule(), "agent-a")).toEqual([]);
+    it("offers the catalog by default and honors the cross-workspace opt-out", async () => {
+        expect(await projectToolNames(await projectsModule(), "agent-a")).toEqual([
+            "list_projects",
+            "set_project_avatar",
+        ]);
         expect(
-            await projectToolNames(await projectsModule(CROSS_WORKSPACE_TOML), "agent-a"),
-        ).toEqual(["list_projects", "set_project_avatar"]);
+            await projectToolNames(await projectsModule(NO_CROSS_WORKSPACE_TOML), "agent-a"),
+        ).toEqual([]);
     });
 
     it("keeps the catalog out of a subagent", async () => {
-        expect(
-            await projectToolNames(await projectsModule(CROSS_WORKSPACE_TOML), "subagent-a"),
-        ).toEqual([]);
+        expect(await projectToolNames(await projectsModule(), "subagent-a")).toEqual([]);
     });
 
     it("sets a generated project avatar from an image inside that project's folder", async () => {
         const database = await migratedProjectDatabase("projects-avatar-tool-test");
-        const config = await temporaryTestConfig(CROSS_WORKSPACE_TOML);
+        const config = await temporaryTestConfig();
         const projects = projectsModuleFor(config, new GitModule());
         const projectFolder = join(config.configuration.paths.happyHome, "avatar-project");
         const outsideImage = join(config.configuration.paths.happyHome, "outside.png");

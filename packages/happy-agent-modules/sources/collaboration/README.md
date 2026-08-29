@@ -4,12 +4,13 @@ Lets one agent put another to work.
 
 ```ts
 const abort = new AbortModule(compute);
-new CollaborationModule(abort);
+new CollaborationModule(config, abort);
 ```
 
-There is nothing to configure. The module takes the abort module for transactional descendant-tree
-cancellation and reaches the rest of the runtime through the `AgentSystemRef` it is handed at
-`beforeStart`.
+The module takes the config module and abort module for transactional descendant-tree cancellation,
+then reaches the rest of the runtime through the `AgentSystemRef` it is handed at `beforeStart`.
+`features.cross_workspace`, enabled by default, controls whether a known Agent ID may route a
+message outside direct collaboration ancestry.
 
 ## How it works
 
@@ -41,10 +42,11 @@ Review the parser change.
 That name is the address. Answering is not a separate operation: the recipient calls
 `send_agent_message` back to the agent the message came from.
 
-The address is also stated in the module's instructions, rebuilt every turn from `parentOf` and
-`childOf`:
+Every agent's own address is stated in the module's instructions. Its creator and collaborator
+addresses are rebuilt every turn from `parentOf` and `childOf`:
 
 ```
+Your Agent ID is b7c1.
 You were created by agent a3f2. When you stop working, whatever you said last is reported to it
 automatically, so finish by stating your answer. Use send_agent_message only to tell it something
 before then.
@@ -127,9 +129,15 @@ that loop is busy running the tool that is waiting. Every mechanism that used to
 
 ### Who can reach whom
 
-Ancestry, read from `parentOf`. An agent may message the collaborators it created and the agent
-that created it, in both directions — which is what makes an answer an ordinary message. Anything else is refused. There is no roster, no role, no group, and no
-authorization callback.
+Direct ancestry, read from `parentOf`, is always allowed. An agent may message the collaborators it
+created and the agent that created it in both directions, which is what makes an answer an ordinary
+message.
+
+When `features.cross_workspace` is enabled, an agent may also message any existing agent whose
+unguessable Agent ID has been shared with it. Agent Base resolves that ID from its own durable
+collection, so this needs no second roster and works for roots in different workspaces. The prompt
+states the current agent's own ID and explains the routing rule. Unknown IDs are refused. This
+broader access applies only to messaging; interruption remains direct-ancestry-only.
 
 ### What a collaborator runs on
 
@@ -167,11 +175,11 @@ own — so whatever shows a person their agents names it the same way it names e
 
 ## Tools
 
-| Tool                 | Effect                                                          |
-| -------------------- | --------------------------------------------------------------- |
-| `create_agent`       | Creates a capped collaborator and delivers its opening task.    |
-| `send_agent_message` | Delivers one message to a collaborator, or back to its creator. |
-| `interrupt_agent`    | Aborts a collaborator subtree and hard-kills its processes.     |
+| Tool                 | Effect                                                       |
+| -------------------- | ------------------------------------------------------------ |
+| `create_agent`       | Creates a capped collaborator and delivers its opening task. |
+| `send_agent_message` | Delivers one message to an allowed agent by Agent ID.        |
+| `interrupt_agent`    | Aborts a collaborator subtree and hard-kills its processes.  |
 
 `interrupt_agent` is reviewed in Auto mode; the other two are not. Before process trees receive
 their immediate hard kill, Compute stores a one-shot notice for each affected process owner and

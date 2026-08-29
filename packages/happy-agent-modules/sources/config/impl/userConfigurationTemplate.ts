@@ -38,7 +38,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # enabled = false
 
 # [features]
-# cross_workspace = false
+# cross_workspace = true
 # workflows = true
 # workspaces = true
 

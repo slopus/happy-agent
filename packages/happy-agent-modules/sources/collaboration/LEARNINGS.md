@@ -17,3 +17,12 @@ Ordinary model availability and delegation availability are separate choices. Pr
 with exclusions winning. The same filtered list must drive the creation tool's description and its
 runtime validation, including direct creation from workflows, so a hidden path cannot select a
 model the creating agent was not offered.
+
+## Agent IDs and cross-workspace messaging
+
+Every agent is told its own Agent ID on every turn, including a root with no collaborators.
+`features.cross_workspace` is enabled by default; while enabled, `send_agent_message` accepts any
+existing agent whose unguessable ID was shared with the sender. Explicitly disabling it limits
+messaging to direct creator and collaborator relationships. Unknown IDs are rejected before
+delivery. Cross-workspace access does not broaden `interrupt_agent`, which remains ancestry-scoped
+because it is destructive.

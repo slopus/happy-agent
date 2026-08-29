@@ -39,6 +39,7 @@ describe("ConfigModule", () => {
         expect(configuration.sources.global.exists).toBe(false);
         expect(configuration.sources.runtime.exists).toBe(false);
         expect(configuration.values.defaults.modelId).toBe("openai/gpt-5.6-sol");
+        expect(configuration.values.features.crossWorkspace).toBe(true);
         expect(configuration.values.settings).toMatchObject({
             ethan: { enabled: false },
             maxCollaborationDepth: 3,
@@ -72,6 +73,7 @@ describe("ConfigModule", () => {
         expect(source).toContain("# [settings]");
         expect(source).toContain("# max_collaborators = 5");
         expect(source).toContain("# max_collaboration_depth = 3");
+        expect(source).toContain("# cross_workspace = true");
     });
 
     it("always generates runtime.toml even when it has no settings yet", async () => {

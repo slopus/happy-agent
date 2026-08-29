@@ -2,6 +2,12 @@
 
 Feedback and decisions gathered while building this module.
 
+## The root catalog is available by default
+
+`features.cross_workspace` defaults to enabled, so a fresh installation gives user-owned root
+agents the project catalog tools. Setting it explicitly to `false` removes those tools. Ordinary
+subagents still never receive the catalog, regardless of the setting.
+
 ## A model may choose a project picture from that project
 
 Project tools used to be read-only even though bots could choose their own pictures. A top-level

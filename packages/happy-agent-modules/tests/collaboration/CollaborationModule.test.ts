@@ -219,6 +219,8 @@ const TASK = {
     text: "Review the parser change.",
 } as const;
 
+const NO_CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = false\n";
+
 describe("collaboration", () => {
     it("creates a collaborator as a child of its creator", async () => {
         const collection = new Collection();
@@ -759,22 +761,61 @@ describe("collaboration", () => {
     });
 
     it("refuses a message between agents with no relationship", async () => {
+        const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
+        collection.seed("child", "parent");
         collection.seed("stranger", null);
-        const { module, hooks, ctx } = await started(collection);
-        await module.createAgent(ctx, "parent", TASK, "child");
+        const { module, hooks, ctx } = await started(collection, config);
 
         await expect(
             module.sendMessage(ctx, "child", { toAgentId: "stranger", text: "Hello." }, "m1"),
         ).rejects.toThrow('Agent "child" is not authorized to send to agent "stranger".');
     });
 
-    it("refuses sibling and grandchild messages because authorization is direct ancestry only", async () => {
+    it("lets an agent message an unrelated agent by ID when cross-workspace access is enabled", async () => {
         const collection = new Collection();
+        collection.seed("sender", null);
+        collection.seed("recipient", null);
+        const { module, ctx } = await started(collection);
+
+        await module.sendMessage(
+            ctx,
+            "sender",
+            { toAgentId: "recipient", text: "Coordinate across workspaces." },
+            "crossworkspacemessage",
+        );
+
+        expect(collection.steered).toContainEqual(
+            expect.objectContaining({
+                text: "Message from agent sender:\n\nCoordinate across workspaces.",
+                toAgentId: "recipient",
+            }),
+        );
+    });
+
+    it("rejects an unknown Agent ID even when cross-workspace access is enabled", async () => {
+        const collection = new Collection();
+        collection.seed("sender", null);
+        const { module, ctx } = await started(collection);
+
+        await expect(
+            module.sendMessage(
+                ctx,
+                "sender",
+                { toAgentId: "missing", text: "Are you there?" },
+                "unknownrecipient",
+            ),
+        ).rejects.toThrow('Agent "missing" does not exist.');
+        expect(collection.delivered).toHaveLength(0);
+    });
+
+    it("refuses sibling and grandchild messages because authorization is direct ancestry only", async () => {
+        const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
+        const collection = new Collection();
+        collection.seed("child", "parent");
         collection.seed("sibling", "parent");
         collection.seed("grandchild", "sibling");
-        const { module, hooks, ctx } = await started(collection);
-        await module.createAgent(ctx, "parent", TASK, "child");
+        const { module, hooks, ctx } = await started(collection, config);
 
         await expect(
             module.sendMessage(ctx, "child", { toAgentId: "sibling", text: "Hello." }, "m1"),
@@ -782,7 +823,7 @@ describe("collaboration", () => {
         await expect(
             module.sendMessage(ctx, "parent", { toAgentId: "grandchild", text: "Hello." }, "m2"),
         ).rejects.toThrow("is not authorized to send");
-        expect(collection.delivered).toHaveLength(1);
+        expect(collection.delivered).toHaveLength(0);
     });
 
     it("interrupts a collaborator it created", async () => {
@@ -834,25 +875,50 @@ describe("collaboration", () => {
     });
 
     it("includes both creator and collaborator addresses in deterministic instruction order", async () => {
+        const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
         collection.seed("sibling", "parent");
-        const { module, hooks, ctx } = await started(collection);
-        await module.createAgent(ctx, "parent", TASK, "child");
+        collection.seed("child", "parent");
+        const { module, hooks, ctx } = await started(collection, config);
 
         const instructions = await hooks.instructions!(ctx, {
             agent: { id: "parent" },
         } as never);
 
         expect(instructions).toBe(
-            "Collaborators you created: sibling, child. Each reports back on its own when it finishes; nothing waits for them.",
+            "Your Agent ID is parent.\nCollaborators you created: sibling, child. Each reports back on its own when it finishes; nothing waits for them.",
         );
     });
 
-    it("says nothing to an agent with no collaborators at all", async () => {
+    it("always tells an agent its own Agent ID", async () => {
+        const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
-        const { module, hooks, ctx } = await started(collection);
+        const { module, hooks, ctx } = await started(collection, config);
 
-        expect(await hooks.instructions!(ctx, { agent: { id: "lonely" } } as never)).toBe("");
+        expect(await hooks.instructions!(ctx, { agent: { id: "lonely" } } as never)).toBe(
+            "Your Agent ID is lonely.",
+        );
+    });
+
+    it("explains Agent-ID messaging when cross-workspace access is enabled", async () => {
+        const collection = new Collection();
+        const { hooks, ctx } = await started(collection);
+
+        const instructions = await hooks.instructions!(ctx, {
+            agent: { id: "sender" },
+        } as never);
+
+        expect(instructions).toContain("Your Agent ID is sender.");
+        expect(instructions).toContain("Cross-workspace agent messaging is enabled");
+        expect(instructions).toContain("send_agent_message");
+        expect(instructions).toContain("Agent IDs are unguessable");
+
+        const tools = await hooks.tools!(ctx, {
+            agent: { id: "sender", provider: "codex" },
+        } as never);
+        expect(tools.find((tool) => tool.name === "send_agent_message")?.description).toContain(
+            "any existing agent by its Agent ID",
+        );
     });
 
     it("reports a collaborator's last words to its creator when it stops working", async () => {
@@ -1125,7 +1191,7 @@ describe("collaboration", () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
         const create = createAgentTool(module, "parent", "codex", MODELS, 5, 3);
-        const send = sendMessageTool(module, "parent");
+        const send = sendMessageTool(module, "parent", false);
         const interrupt = interruptAgentTool(module, "parent");
 
         expect(create.shouldReviewInAutoMode(TASK, ctx)).toBe(false);
@@ -1141,7 +1207,7 @@ describe("collaboration", () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
         const create = createAgentTool(module, "parent", "codex", MODELS, 5, 3);
-        const send = sendMessageTool(module, "parent");
+        const send = sendMessageTool(module, "parent", false);
         const interrupt = interruptAgentTool(module, "parent");
 
         await expect(create.execute(ctx, TASK, toolCall("created"))).resolves.toEqual({

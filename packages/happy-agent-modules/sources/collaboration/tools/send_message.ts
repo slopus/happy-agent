@@ -7,15 +7,29 @@ import {
     type CollaborationSendInput,
 } from "../CollaborationAgent.js";
 
-/** Send one message along a direct collaboration relationship. */
-export function sendMessageTool(collaboration: CollaborationModule, actingAgentId: string) {
+/** Send one message to an Agent ID allowed by the installation's collaboration boundary. */
+export function sendMessageTool(
+    collaboration: CollaborationModule,
+    actingAgentId: string,
+    crossWorkspace: boolean,
+) {
     return defineAgentTool({
         name: "send_agent_message",
         defer: true,
-        capabilities: ["Create, message, and coordinate coding subagents."],
-        searchKeywords: ["message subagent", "reply to parent agent", "steer collaborator"],
+        capabilities: [
+            "Create, message, and coordinate coding subagents.",
+            ...(crossWorkspace ? ["Message agents by Agent ID across workspaces."] : []),
+        ],
+        searchKeywords: [
+            "message subagent",
+            "reply to parent agent",
+            "steer collaborator",
+            ...(crossWorkspace ? ["message agent by id", "cross workspace agent"] : []),
+        ],
         description: [
-            "Send a message to a collaborator you created, or back to the agent that created you.",
+            crossWorkspace
+                ? "Send a message to any existing agent by its Agent ID, including an agent in another workspace. Agent IDs are unguessable and must be shared with you."
+                : "Send a message to a collaborator you created, or back to the agent that created you.",
             "",
             "Messages are one-way and steer the recipient's active turn in either direction. This returns as soon as the message is delivered, and there is nothing to wait on.",
         ].join("\n"),
