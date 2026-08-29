@@ -9,6 +9,7 @@ import type {
     AgentModuleHooks,
     AgentProviders,
 } from "@slopus/happy-agent-base";
+import { cuid2Schema } from "@slopus/happy-agent-base";
 import type { ProviderUsage } from "@slopus/happy-providers";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -72,6 +73,7 @@ const permissionModeSchema = Type.Union([
     Type.Literal("workspace_write"),
     Type.Literal("full_access"),
 ]);
+const codeModeEngineSchema = Type.Union([Type.Literal("monty"), Type.Literal("bun")]);
 const effortSchema = Type.Union([
     Type.Literal("off"),
     Type.Literal("low"),
@@ -342,6 +344,22 @@ const partialValuesSchema = Type.Object(
                     cross_workspace: Type.Optional(Type.Boolean()),
                     workflows: Type.Optional(Type.Boolean()),
                     workspaces: Type.Optional(Type.Boolean()),
+                },
+                { additionalProperties: false },
+            ),
+        ),
+        feature: Type.Optional(
+            Type.Object(
+                {
+                    codemode: Type.Optional(
+                        Type.Object(
+                            {
+                                enabled: Type.Optional(Type.Boolean()),
+                                engine: Type.Optional(codeModeEngineSchema),
+                            },
+                            { additionalProperties: false },
+                        ),
+                    ),
                 },
                 { additionalProperties: false },
             ),
@@ -644,6 +662,15 @@ const resolvedValuesSchema = Type.Object(
                 crossWorkspace: Type.Boolean(),
                 workflows: Type.Boolean(),
                 workspaces: Type.Boolean(),
+            },
+            { additionalProperties: false },
+        ),
+        feature: Type.Object(
+            {
+                codemode: Type.Object(
+                    { enabled: Type.Boolean(), engine: codeModeEngineSchema },
+                    { additionalProperties: false },
+                ),
             },
             { additionalProperties: false },
         ),
@@ -966,6 +993,9 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         workflows: true,
         workspaces: true,
     },
+    feature: {
+        codemode: { enabled: false, engine: "monty" },
+    },
     gemini: {},
     mcpServers: {},
     observation: {
@@ -1080,6 +1110,14 @@ export class ConfigModule implements AgentModule {
     /** The public root for persistent bot folders. Configuration owns every product path. */
     get botsHome(): string {
         return join(this.configuration.paths.publicHome, "Bots");
+    }
+
+    /** The private, per-agent Code Mode interpreter snapshot owned by this installation. */
+    codeModeSnapshotPath(agentId: string): string {
+        if (!Value.Check(cuid2Schema, agentId)) {
+            throw new Error("The agent ID cannot name a Code Mode state folder.");
+        }
+        return join(this.configuration.paths.agentHome, "state", agentId, "snapshot.bin");
     }
 
     /** One immutable bot folder below the configuration-owned bot root. */
@@ -1976,6 +2014,7 @@ export function parseHappyAgentConfigToml(source: string): {
     const knownTopLevel = new Set([
         "defaults",
         "docker",
+        "feature",
         "features",
         "mcp_servers",
         "network",
@@ -1995,6 +2034,7 @@ export function parseHappyAgentConfigToml(source: string): {
     const providers = readProviders(table.providers, recordUnknown);
     const settings = readSettings(table.settings, recordUnknown);
     const features = readFeatures(table.features, recordUnknown);
+    const feature = readFeature(table.feature, recordUnknown);
     const gemini = readGemini(table.gemini, recordUnknown);
     const workspace = readWorkspace(table.workspace, recordUnknown);
     const docker = readDocker(table.docker, recordUnknown);
@@ -2012,6 +2052,7 @@ export function parseHappyAgentConfigToml(source: string): {
     const values = {
         ...(defaults === undefined ? {} : { defaults }),
         ...(features === undefined ? {} : { features }),
+        ...(feature === undefined ? {} : { feature }),
         ...(docker === undefined ? {} : { docker }),
         ...(gemini === undefined ? {} : { gemini }),
         ...(mcpServers === undefined ? {} : { mcp_servers: mcpServers }),
@@ -2072,6 +2113,7 @@ function normalizeSourceValues(values: PartialValues): Record<string, unknown> {
         ...(values.docker === undefined ? {} : { docker: normalizeDocker(values.docker) }),
         ...(values.defaults === undefined ? {} : { defaults: normalizeDefaults(values.defaults) }),
         ...(values.features === undefined ? {} : { features: normalizeFeatures(values.features) }),
+        ...(values.feature === undefined ? {} : { feature: normalizeFeature(values.feature) }),
         ...(values.gemini === undefined ? {} : { gemini: normalizeGemini(values.gemini) }),
         ...(values.mcp_servers === undefined
             ? {}
@@ -2202,6 +2244,9 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         }
         if (partial.features !== undefined)
             Object.assign(merged.features, normalizeFeatures(partial.features));
+        if (partial.feature?.codemode !== undefined) {
+            Object.assign(merged.feature.codemode, partial.feature.codemode);
+        }
         if (partial.gemini !== undefined)
             Object.assign(merged.gemini, normalizeGemini(partial.gemini));
         if (partial.mcp_servers !== undefined) {
@@ -2291,6 +2336,10 @@ function normalizeFeatures(value: NonNullable<PartialValues["features"]>): Recor
         ...(value.workflows === undefined ? {} : { workflows: value.workflows }),
         ...(value.workspaces === undefined ? {} : { workspaces: value.workspaces }),
     };
+}
+
+function normalizeFeature(value: NonNullable<PartialValues["feature"]>): Record<string, unknown> {
+    return value.codemode === undefined ? {} : { codemode: { ...value.codemode } };
 }
 
 function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Record<string, unknown> {
@@ -2805,6 +2854,18 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
         for (const section of Object.keys(source)) {
             const normalizedSection = sectionNames[section] ?? section;
             result[normalizedSection] = name;
+            if (section === "feature") {
+                const feature = source.feature;
+                if (feature?.codemode !== undefined) {
+                    result["feature.codemode"] = name;
+                    if (feature.codemode.enabled !== undefined) {
+                        result["feature.codemode.enabled"] = name;
+                    }
+                    if (feature.codemode.engine !== undefined) {
+                        result["feature.codemode.engine"] = name;
+                    }
+                }
+            }
             if (
                 section === "defaults" ||
                 section === "settings" ||
@@ -2879,6 +2940,37 @@ function readFeatures(
             { additionalProperties: false },
         ),
     ) as PartialValues["features"];
+}
+
+function readFeature(
+    value: TomlValue | undefined,
+    unknown: (path: string) => void,
+): PartialValues["feature"] {
+    if (value === undefined) return undefined;
+    if (!isTable(value)) throw new Error("feature must be a TOML table.");
+    assertTableSize(value, "feature");
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (key !== "codemode") {
+            unknown(`feature.${key}`);
+            continue;
+        }
+        if (!isTable(item)) throw new Error("feature.codemode must be a TOML table.");
+        assertTableSize(item, "feature.codemode");
+        const codemode: Record<string, unknown> = {};
+        for (const [codemodeKey, codemodeValue] of Object.entries(item)) {
+            if (codemodeKey !== "enabled" && codemodeKey !== "engine") {
+                unknown(`feature.codemode.${codemodeKey}`);
+                continue;
+            }
+            codemode[codemodeKey] = codemodeValue;
+        }
+        result.codemode = codemode;
+    }
+    if (!Value.Check(partialValuesSchema.properties.feature!, result)) {
+        throw new Error("feature contains an invalid value.");
+    }
+    return result as PartialValues["feature"];
 }
 
 function readGemini(

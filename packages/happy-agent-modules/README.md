@@ -143,6 +143,7 @@ its public methods, and its storage and event contracts.
 | [Compute](sources/compute/README.md)                  | One machine offered as each vendor's own filesystem and shell tools, with stale-file detection and background commands that outlive their wait. |
 | [Permissions](sources/permissions/README.md)          | The permission mode turned into behavior: per-call review, temporary elevation, refusal handling, and mode-change notices.                      |
 | [Tool discovery](sources/toolDiscovery/README.md)     | Provider-owned native search for deferred tools, with eager fallback on unsupported provider/model routes.                                      |
+| [Code Mode](sources/codeMode/README.md)               | Opt-in engine-selected replacement prompt and tool surface: continuous Monty Python or stateless system Bun TypeScript.                         |
 | Auto (`sources/auto`)                                 | The automatic reviewer permissions asks in Auto mode, running on its own private database and its own read-only compute.                        |
 | [MCP](sources/mcp/README.md)                          | MCP servers, tools, resources, and prompts, always reviewed in Auto.                                                                            |
 | [Search](sources/search/README.md)                    | A bounded common `web_fetch` plus explicit per-vendor search tool wrappers.                                                                     |
@@ -187,7 +188,7 @@ its public methods, and its storage and event contracts.
 Modules owning tables through their own migrations: auto, collaboration, compactions, events, goal,
 history, mcp, presence, profile, projects, scheduling, secrets, tasks, usage, user input,
 workflows, and workspaces. The rest own none: abort, compute, config, files, gemini, git, image
-generation, model switch, observation, permissions, search, skills, system prompt, and titles.
+generation, model switch, observation, permissions, search, skills, system prompt, titles, and code mode.
 Compute uses per-agent and shared Agent KV, while system prompt and titles use Agent KV only;
 terminals stores nothing anywhere because a terminal ends with the process behind it, and
 collaboration's migrations exist only to retire the tables it used to keep.

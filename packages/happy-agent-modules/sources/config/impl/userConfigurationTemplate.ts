@@ -42,6 +42,10 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # workflows = true
 # workspaces = true
 
+# [feature.codemode]
+# enabled = false
+# engine = "monty"
+
 # [workspace]
 # setup_commands = ["pnpm install"]
 # Project files copied into every workspace and re-copied whenever the project root

@@ -34,3 +34,7 @@ exit releases ownership even though the reusable lock database remains on disk.
 Every agent module is wrapped at composition time with module-labelled logging. The wrapper keeps
 Agent Base's hook ordering and failure behavior unchanged, emits bounded hook timing, and leaves
 high-volume provider deltas to the observation module's focused phase records.
+
+`CodeModeModule` is always the final module in the ordered array. Its opt-in complete instruction
+and tool overrides must see every earlier contribution; moving another module after it would let
+that module replace Code Mode's deliberately closed surface.

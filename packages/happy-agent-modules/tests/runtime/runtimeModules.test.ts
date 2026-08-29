@@ -1,15 +1,18 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
 import { CodexApiKeyCredential, CodexProvider } from "@slopus/happy-providers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { MONTY_CODE_MODE_INSTRUCTIONS } from "../../sources/codeMode/engines/monty/index.js";
+import { ConfigModule } from "../../sources/config/index.js";
 import {
     startHappyAgentRuntime,
     type HappyAgentRuntime,
 } from "../../sources/runtime/startHappyAgentRuntime.js";
+import { ScriptedProvider } from "../support/ScriptedProvider.js";
 
 /** One configured account and one model, so the runtime has something to boot against. */
 async function inference(): Promise<{ models: AgentModel[]; providers: AgentProviders }> {
@@ -74,6 +77,59 @@ describe("the runtime's modules", () => {
         const missing = composed.filter((name) => agent.module(name) === undefined);
 
         expect(composed).toContain("gemini");
+        expect(composed).toContain("code-mode");
         expect(missing).toEqual([]);
+    });
+
+    it("boots enabled Code Mode as the complete prompt and one-tool surface", async () => {
+        const bootstrapConfig = await ConfigModule.load(happyHome);
+        const paths = bootstrapConfig.configuration.paths;
+        const workspace = join(happyHome, "workspace");
+        bootstrapConfig.closeProviders();
+        await Promise.all([
+            mkdir(dirname(paths.globalConfigPath), { recursive: true }),
+            mkdir(workspace, { recursive: true }),
+        ]);
+        await writeFile(paths.globalConfigPath, "[feature.codemode]\nenabled = true\n");
+        const provider = new ScriptedProvider([
+            [
+                { type: "text_start" },
+                { type: "text_delta", delta: "done" },
+                { type: "text_end" },
+                { type: "done", state: "normal", tokens: { input: 1, output: 1 } },
+            ],
+        ]);
+        const providers = new AgentProviders();
+        providers.add("gym", provider, "codex");
+        runtime = await startHappyAgentRuntime({
+            happyHome,
+            inference: {
+                models: [
+                    {
+                        defaultEffort: "medium",
+                        effortLevels: ["low", "medium", "high"],
+                        id: "gym/model",
+                        name: "Gym Model",
+                        providerId: "gym",
+                    },
+                ],
+                providers,
+            },
+        });
+        const agent = await runtime.system.create(runtime.ctx, {
+            modules: { compute: { cwd: workspace } },
+        });
+
+        await agent.send(runtime.ctx, {
+            role: "user",
+            content: [{ type: "text", text: "calculate" }],
+        });
+        await agent.waitForIdle();
+
+        const codeModeSession = provider.sessions.find(
+            (session) => session.options.instructions === MONTY_CODE_MODE_INSTRUCTIONS,
+        );
+        expect(codeModeSession?.options.instructions).toBe(MONTY_CODE_MODE_INSTRUCTIONS);
+        expect(codeModeSession?.options.tools?.map((tool) => tool.name)).toEqual(["python"]);
     });
 });

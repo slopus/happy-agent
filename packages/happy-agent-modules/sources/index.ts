@@ -33,6 +33,9 @@ export * from "./cloud/index.js";
 export * from "./api/index.js";
 export * from "./runtime/index.js";
 
+// Code Mode: opt-in engine-selected replacement instructions and one-tool surface.
+export * from "./codeMode/index.js";
+
 // Config: the resolved filesystem layout and layered Happy Agent settings.
 export {
     ConfigModule,

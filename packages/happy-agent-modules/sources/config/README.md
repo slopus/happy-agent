@@ -51,6 +51,14 @@ agent to keep consuming tokens rather than accept an error as final. Agent work 
 forever, including provider errors, failed compactions, and fatal internal run-stage errors. Only
 explicit cancellation, provider disablement, or daemon shutdown stops active work.
 
+`[feature.codemode] enabled` is an opt-in experimental feature flag, defaulting to `false`.
+`engine` selects `"monty"` (the default continuous Python interpreter) or `"bun"` (a stateless
+system Bun JavaScript/TypeScript proof of concept). When enabled, the final Code Mode module
+replaces the complete model prompt and tool surface with the selected engine's single tool.
+Configuration owns Monty's exact private snapshot path at
+`.happy/agent/state/<agentId>/snapshot.bin` and validates the agent's cuid2 before it can become a
+path segment.
+
 `[observation]` decides what the agent records about itself, and is read only
 from the global and runtime layers. A checked-in project file that turned
 tracing on and named its own endpoint would send this machine's traces

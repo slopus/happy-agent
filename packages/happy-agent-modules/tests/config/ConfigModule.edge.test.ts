@@ -867,6 +867,7 @@ describe("ConfigModule edge coverage", () => {
             for (const section of [
                 "defaults",
                 "docker",
+                "feature",
                 "features",
                 "mcp_servers",
                 "network",

@@ -30,6 +30,7 @@ import { BotsModule } from "../bots/index.js";
 import { CollaborationModule } from "../collaboration/index.js";
 import { CompactionsModule } from "../compactions/index.js";
 import { CloudModule } from "../cloud/index.js";
+import { CodeModeModule } from "../codeMode/index.js";
 import { ComputeModule, createComputeModules, type HostCompute } from "../compute/index.js";
 import {
     ConfigModule,
@@ -124,6 +125,7 @@ export interface HappyAgentRuntimeModules {
     readonly bots: BotsModule;
     readonly collaboration: CollaborationModule;
     readonly cloud: CloudModule;
+    readonly codeMode: CodeModeModule;
     readonly compactions: CompactionsModule;
     readonly compute: ComputeModule;
     readonly config: ConfigModule;
@@ -465,6 +467,11 @@ export async function startHappyAgentRuntime(
         const slashCommands = new SlashCommandsModule(events, compactions, compute.skillsModule);
         const contextWindow = new ContextWindowModule(config);
         const workflows = new WorkflowsModule(config, collaboration, compute.computeModule);
+        const codeMode = new CodeModeModule(config, compute.computeModule);
+        registerShutdown("code-mode", async (shutdownCtx) => {
+            await system?.close(shutdownCtx);
+            await codeMode.close();
+        });
         const apiModule = new ApiModule(
             abort,
             config,
@@ -498,6 +505,7 @@ export async function startHappyAgentRuntime(
             bots,
             collaboration,
             cloud,
+            codeMode,
             compactions,
             compute: compute.computeModule,
             config,
@@ -582,6 +590,9 @@ export async function startHappyAgentRuntime(
             happy,
             installation,
             menuBar,
+            // Complete replacement modules must remain last so their overrides see and replace
+            // every ordinary contribution and every earlier override.
+            codeMode,
         ]
             .map(checkModuleToolParameters)
             .map(instrumentModuleLogging);

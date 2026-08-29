@@ -120,10 +120,8 @@ export class WorkflowScriptRunner {
                 pipeline: (items, stages) =>
                     this.#runPipeline(fromMontyValue(items), fromMontyValue(stages)),
             },
-            inputNames: ["args"],
             inputs: { args: this.#options.args },
             limits: {
-                maxAllocations: 1_000_000,
                 maxDurationSecs: 30,
                 maxMemory: 32 * 1024 * 1024,
                 maxRecursionDepth: 200,

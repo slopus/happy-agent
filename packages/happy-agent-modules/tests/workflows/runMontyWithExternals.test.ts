@@ -21,7 +21,6 @@ describe("runMontyWithExternals", () => {
             externalFunctions: {
                 checkpoint: async (value) => await Promise.resolve(value),
             },
-            inputNames: ["args"],
             inputs: { args: null },
             limits: { maxDurationSecs: 1 },
             onPrint: vi.fn(),

@@ -42,7 +42,8 @@ interface BinaryAssets {
     libsqlRelativePath: string;
     /** The macOS menu bar app, absent on the platforms that have no menu bar. */
     menuBarRelativePath?: string;
-    montyRelativePath: string;
+    montyNativeRelativePath: string;
+    montyWorkerRelativePath: string;
     supervisorRelativePaths: Record<BinaryTarget["key"], string>;
 }
 
@@ -237,6 +238,7 @@ function resolveBinaryAssets(target: BinaryTarget): BinaryAssets {
 
     const libsqlSource = resolveRequired(libsqlRequire, libsqlPackage);
     const montySource = resolveRequired(montyRequire, montyPackage);
+    const montyWorkerSource = resolveRequired(montyRequire, `${montyPackage}/monty`);
     const ffiSource = resolveRequired(fffRequire, ffiPackage);
     const fffSource = resolveRequired(fffRequire, fffPackage);
     const claudeSource = resolveRequired(providersRequire, `${claudePackage}/claude`);
@@ -277,7 +279,8 @@ export const { getQuickJS } = QJS;
     );
     const assets: EmbeddedAsset[] = [
         asset("libsqlAsset", libsqlSource, "index.node"),
-        asset("montyAsset", montySource, basename(montySource)),
+        asset("montyNativeAsset", montySource, basename(montySource)),
+        asset("montyWorkerAsset", montyWorkerSource, "monty", true),
         asset("ffiAsset", ffiSource, basename(ffiSource)),
         asset("fffAsset", fffSource, basename(fffSource)),
         asset("claudeAsset", claudeSource, "claude", true),
@@ -354,7 +357,8 @@ export const { getQuickJS } = QJS;
         },
         libsqlRelativePath: "index.node",
         ...(menuBarApp === undefined ? {} : { menuBarRelativePath: MENU_BAR_RELATIVE_PATH }),
-        montyRelativePath: basename(montySource),
+        montyNativeRelativePath: basename(montySource),
+        montyWorkerRelativePath: "monty",
         supervisorRelativePaths,
     };
 }
@@ -439,13 +443,33 @@ export async function getImageProcessor() { return imageProcessor; }
     });
     addAdapter(
         adapters,
-        join(dependencyRoot("@slopus/happy-agent-modules", "@pydantic/monty"), "index.js"),
+        join(dependencyRoot("@slopus/happy-agent-modules", "@pydantic/monty"), "native-addon.js"),
         {
             name: "Monty native loader",
             required: true,
             adapt: () => `import { loadMontyNative } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};
-const { Monty, MontyComplete, MontyException, JsMontyException, MontyNameLookup, MontyRepl, MontySnapshot, MontyTypingError, MountDir } = loadMontyNative();
-export { Monty, MontyComplete, MontyException, JsMontyException, MontyNameLookup, MontyRepl, MontySnapshot, MontyTypingError, MountDir };
+const { MontyException, JsMontyException, NativeMountDir, NativePool, NativeSession, _installTelemetryAdapter, MAX_VALUE_DEPTH } = loadMontyNative();
+export { MontyException, JsMontyException, NativeMountDir, NativePool, NativeSession, _installTelemetryAdapter, MAX_VALUE_DEPTH };
+`,
+        },
+    );
+    addAdapter(
+        adapters,
+        join(dependencyRoot("@slopus/happy-agent-modules", "@pydantic/monty"), "dist", "binary.js"),
+        {
+            name: "Monty subprocess resolver",
+            required: true,
+            adapt: () => `import { existsSync } from "node:fs";
+import { getMontyBinary } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};
+export function platformTriple() { return null; }
+export function findMontyBinary(explicit) {
+    const configured = explicit ?? process.env.MONTY_BIN;
+    if (configured !== undefined) {
+        if (!existsSync(configured)) throw new Error(\`monty binary not found: \${configured}\`);
+        return configured;
+    }
+    return getMontyBinary();
+}
 `,
         },
     );
@@ -656,7 +680,10 @@ export function loadLibsqlNative() {
     return loadNative("libsql", ${files(["libsqlAsset"])}, ${JSON.stringify(binaryAssets.libsqlRelativePath)});
 }
 export function loadMontyNative() {
-    return loadNative("monty", ${files(["montyAsset"])}, ${JSON.stringify(binaryAssets.montyRelativePath)});
+    return loadNative("monty-native", ${files(["montyNativeAsset"])}, ${JSON.stringify(binaryAssets.montyNativeRelativePath)});
+}
+export function getMontyBinary() {
+    return join(materializeEmbeddedFiles("monty-worker", ${files(["montyWorkerAsset"])}), ${JSON.stringify(binaryAssets.montyWorkerRelativePath)});
 }
 export function loadFfiRsNative() {
     return loadNative("ffi-rs", ${files(["ffiAsset"])}, ${JSON.stringify(binaryAssets.ffiRelativePath)});

@@ -3,6 +3,7 @@ import type {
     AgentModuleHooks,
     AgentModuleScope,
     AgentSystemRef,
+    AgentToolsOverride,
     AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
@@ -23,11 +24,32 @@ export function checkModuleToolParameters(module: LoadedModule): LoadedModule {
         ): Promise<LoadedHooks | void> => {
             const hooks = await beforeStart.call(module, ctx, agents);
             const tools = hooks?.tools;
-            if (hooks === undefined || tools === undefined) return hooks;
+            const overrideTools = hooks?.overrideTools;
+            if (hooks === undefined || (tools === undefined && overrideTools === undefined)) {
+                return hooks;
+            }
             return {
                 ...hooks,
-                tools: async (toolCtx: Context, scope: AgentModuleScope<LibSQLDatabase>) =>
-                    assertObjectRootedParameters(await tools(toolCtx, scope)),
+                ...(tools === undefined
+                    ? {}
+                    : {
+                          tools: async (
+                              toolCtx: Context,
+                              scope: AgentModuleScope<LibSQLDatabase>,
+                          ) => assertObjectRootedParameters(await tools(toolCtx, scope)),
+                      }),
+                ...(overrideTools === undefined
+                    ? {}
+                    : {
+                          overrideTools: async (
+                              toolCtx: Context,
+                              scope: AgentModuleScope<LibSQLDatabase>,
+                              input: AgentToolsOverride,
+                          ): Promise<readonly AnyAgentTool[]> =>
+                              assertObjectRootedParameters(
+                                  await overrideTools(toolCtx, scope, input),
+                              ),
+                      }),
             };
         },
         writable: true,

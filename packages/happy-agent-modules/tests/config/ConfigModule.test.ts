@@ -40,6 +40,8 @@ describe("ConfigModule", () => {
         expect(configuration.sources.runtime.exists).toBe(false);
         expect(configuration.values.defaults.modelId).toBe("openai/gpt-5.6-sol");
         expect(configuration.values.features.crossWorkspace).toBe(true);
+        expect(configuration.values.feature.codemode.enabled).toBe(false);
+        expect(configuration.values.feature.codemode.engine).toBe("monty");
         expect(configuration.values.settings).toMatchObject({
             ethan: { enabled: false },
             maxCollaborationDepth: 3,
@@ -62,6 +64,25 @@ describe("ConfigModule", () => {
         expect(configuration.provenance["settings.ethan"]).toBe("global");
     });
 
+    it("loads Code Mode from feature.codemode and attributes its nested setting", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-codemode-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            ["[feature.codemode]", "enabled = true", 'engine = "bun"', "unknown = true"].join("\n"),
+        );
+
+        const configuration = await loadHappyAgentConfiguration(happyHome);
+
+        expect(configuration.values.feature.codemode.enabled).toBe(true);
+        expect(configuration.values.feature.codemode.engine).toBe("bun");
+        expect(configuration.provenance["feature.codemode.enabled"]).toBe("global");
+        expect(configuration.provenance["feature.codemode.engine"]).toBe("global");
+        expect(configuration.sources.global.unknownSettings).toEqual(["feature.codemode.unknown"]);
+    });
+
     it("writes collaborator controls into the starter Happy settings", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-template-"));
         temporaryDirectories.push(root);
@@ -74,6 +95,9 @@ describe("ConfigModule", () => {
         expect(source).toContain("# max_collaborators = 5");
         expect(source).toContain("# max_collaboration_depth = 3");
         expect(source).toContain("# cross_workspace = true");
+        expect(source).toContain("# [feature.codemode]");
+        expect(source).toContain("# enabled = false");
+        expect(source).toContain('# engine = "monty"');
     });
 
     it("always generates runtime.toml even when it has no settings yet", async () => {
@@ -191,6 +215,9 @@ describe("ConfigModule", () => {
             "invalid value",
         );
         expect(() => parseHappyAgentConfigToml("[settings]\nmax_collaboration_depth = 65")).toThrow(
+            "invalid value",
+        );
+        expect(() => parseHappyAgentConfigToml('[feature.codemode]\nengine = "unknown"')).toThrow(
             "invalid value",
         );
 
