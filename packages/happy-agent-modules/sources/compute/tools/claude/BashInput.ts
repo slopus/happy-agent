@@ -64,9 +64,13 @@ export function claudeBashInputTool(compute: Compute) {
         // of the first one.
         durable: false,
         describeAutoPermissionAction: ({ input, bash_id }) =>
-            `sending ${JSON.stringify(input)} to background shell ${bash_id}`,
+            `sending ${JSON.stringify(input)} to background shell ${bash_id}. Access: the shell's existing execution boundary${
+                sessionHasSecrets(compute, bash_id)
+                    ? ". Selected secret environment variables are present in the process"
+                    : ""
+            }`,
         // Typing into a live program is new instruction reaching something already running, so it
-        // is decided on; it never widens the boundary that program started under.
+        // is decided on without changing the boundary the process started under.
         shouldReviewInAutoMode: ({ input }) => input.length > 0,
         execute: async (ctx, { bash_id, input, timeout }) => {
             const commandId = parseClaudeBashId(bash_id);
@@ -101,4 +105,12 @@ export function claudeBashInputTool(compute: Compute) {
             },
         ],
     });
+}
+
+function sessionHasSecrets(compute: Compute, bashId: string): boolean {
+    try {
+        return compute.shell.sessionUsesSecrets?.(parseClaudeBashId(bashId)) === true;
+    } catch {
+        return false;
+    }
 }

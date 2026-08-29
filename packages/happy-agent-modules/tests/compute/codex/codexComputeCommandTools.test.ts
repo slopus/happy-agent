@@ -59,6 +59,19 @@ describe("codex compute command tools", () => {
         });
     });
 
+    it("passes selected secret bundle IDs through to the machine", async () => {
+        const { compute, tool, call } = await machine();
+        compute.script("printenv TOKEN", { chunks: ["set\n"], exitCode: 0 });
+
+        await tool("exec_command").execute(
+            ctx,
+            { cmd: "printenv TOKEN", secrets: ["deployment"] },
+            call,
+        );
+
+        expect(compute.startedOptions[0]?.secrets).toEqual(["deployment"]);
+    });
+
     it("hands back a session instead of killing a command that outlasts the wait", async () => {
         const { compute, tool, call } = await machine();
         compute.script("pnpm dev", { chunks: ["listening\n"], keepRunning: true });
@@ -109,6 +122,24 @@ describe("codex compute command tools", () => {
         );
 
         expect(typed.output).toBe("echoed 1 + 1\n");
+    });
+
+    it("keeps input to a secret-bearing session under its existing boundary", async () => {
+        const { compute, tool, call } = await machine();
+        compute.script("secret repl", { keepRunning: true });
+        const started = await tool("exec_command").execute(
+            ctx,
+            { cmd: "secret repl", secrets: ["deployment"] },
+            call,
+        );
+
+        expect(tool("write_stdin").shouldRunInFullAccessInAutoMode).toBeUndefined();
+        expect(
+            tool("write_stdin").describeAutoPermissionAction?.(
+                { session_id: started.session_id, chars: "next\n" },
+                ctx,
+            ),
+        ).toContain("Selected secret environment variables are present");
     });
 
     it("refuses a session identifier that could never name a session", async () => {

@@ -67,13 +67,15 @@ import {
     ConfigModule,
     GitModule,
     ProjectsModule,
+    SecretsModule,
     TerminalsModule,
     WorkspacesModule,
 } from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
 const git = new GitModule();
-const abort = new AbortModule(new ComputeModule(config));
+const secrets = new SecretsModule();
+const abort = new AbortModule(new ComputeModule(config, secrets));
 const projects = new ProjectsModule(config, git, abort);
 const workspaces = new WorkspacesModule(config, projects, git, abort);
 const terminals = new TerminalsModule(projects, workspaces);

@@ -17,6 +17,7 @@ import {
     sendMessageTool,
 } from "../../sources/collaboration/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { testConfig } from "../support/computeModule.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
@@ -178,7 +179,7 @@ async function started(
 }
 
 function abortModule(): AbortModule {
-    return new AbortModule(new ComputeModule(testConfig));
+    return new AbortModule(new ComputeModule(testConfig, new SecretsModule()));
 }
 
 /** A stand-in run store; the module only ever keeps one note in it. */

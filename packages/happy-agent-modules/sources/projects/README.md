@@ -18,10 +18,12 @@ import {
     DurableFunctionsModule,
     GitModule,
     ProjectsModule,
+    SecretsModule,
 } from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
-const abort = new AbortModule(new ComputeModule(config));
+const secrets = new SecretsModule();
+const abort = new AbortModule(new ComputeModule(config, secrets));
 const durableFunctions = new DurableFunctionsModule();
 const projects = new ProjectsModule(config, new GitModule(), abort, durableFunctions);
 ```

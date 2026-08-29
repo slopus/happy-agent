@@ -24,11 +24,8 @@ the read authorization it has already earned.
 
 ## Deviations from the vendor descriptors
 
-Three, all deliberate:
+Two, both deliberate:
 
-- **No `secrets` argument on `Bash`.** Claude's descriptor and Happy Agent's live `Bash` both have one; this
-  module has no secret resolver, so offering the field would be an offer it cannot keep. The
-  "Happy Agent extension" sentence in the description covers `dangerouslyDisableSandbox` only.
 - **`Grep` does not claim to be ripgrep.** The search behind it is this module's own bounded
   file-content search, so the description states the limits it actually enforces — 100 entries by
   default, 40 000 characters, 400 characters per line — instead of ripgrep's, and drops the
@@ -43,6 +40,14 @@ Three, all deliberate:
   saying nothing about agents or workflows. Agents and workflows belong to the collaboration and
   workflow modules, which name their own handles. The identifier stays a string, as Claude's surface
   has it, and is parsed into the machine's numeric command ID by `impl/parseClaudeBashId.ts`.
+
+`Bash` supports Happy Agent's `secrets` selection. The IDs must already be attached to this
+agent's command scope; the host resolves them immediately before spawning and adds their values as
+environment variables only to that process. Omitted or empty means none. A non-empty selection is
+reviewed but remains sandboxed. `dangerouslyDisableSandbox` independently requests Full access, so
+either option may be used alone or both together. Later `BashInput` is reviewed and continues under
+the shell's existing boundary, including when it carries secrets. Values never enter the
+arguments, results, or transcript.
 
 ## `impl/`
 

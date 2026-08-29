@@ -22,19 +22,21 @@ import {
     DurableFunctionsModule,
     GitModule,
     ProjectsModule,
+    SecretsModule,
     WorkspacesModule,
 } from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
 const git = new GitModule();
-const compute = new ComputeModule(config);
+const secrets = new SecretsModule();
+const compute = new ComputeModule(config, secrets);
 const abort = new AbortModule(compute);
 const durableFunctions = new DurableFunctionsModule();
 const projects = new ProjectsModule(config, git, abort, durableFunctions);
 const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
 const agent = await Agent.create(ctx, {
     ...options,
-    modules: [compute, abort, durableFunctions, projects, workspaces],
+    modules: [secrets, compute, abort, durableFunctions, projects, workspaces],
 });
 ```
 

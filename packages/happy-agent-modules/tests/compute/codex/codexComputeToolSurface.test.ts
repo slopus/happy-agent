@@ -44,14 +44,18 @@ const VENDOR_PARAMETERS: Readonly<Record<string, Readonly<Record<string, boolean
 /**
  * Fields Codex declares that this module deliberately does not offer.
  *
- * `login` and `prefix_rule` describe approval machinery Happy Agent does not have, and Happy Agent's own
- * `exec_command` drops them too. There is no secret resolver here either, so no `secrets` field
- * appears in any of these tools.
+ * `login` and `prefix_rule` describe approval machinery Happy Agent does not have, and Happy
+ * Agent's own `exec_command` drops them too.
  */
 const OMITTED_BY_MODULE: Readonly<Record<string, readonly string[]>> = {
     exec_command: ["login", "prefix_rule"],
     view_image: [],
     write_stdin: [],
+};
+
+/** Happy Agent's host-owned command extension on top of Codex's schema. */
+const ADDED_BY_MODULE: Readonly<Record<string, readonly string[]>> = {
+    exec_command: ["secrets"],
 };
 
 /** The argument schema of one tool, reduced to what a fidelity check is about. */
@@ -95,9 +99,10 @@ describe("codex compute tool surface", () => {
             const shape = parameterShape(tool(name));
             const omitted = OMITTED_BY_MODULE[name] ?? [];
             expect(shape.properties).toEqual(
-                Object.keys(vendor)
-                    .filter((field) => !omitted.includes(field))
-                    .sort(),
+                [
+                    ...Object.keys(vendor).filter((field) => !omitted.includes(field)),
+                    ...(ADDED_BY_MODULE[name] ?? []),
+                ].sort(),
             );
             expect(shape.required).toEqual(
                 Object.entries(vendor)
@@ -109,12 +114,15 @@ describe("codex compute tool surface", () => {
         }
     });
 
-    it("carries no secrets field anywhere on the surface", async () => {
+    it("offers secret bundles only on the command that can receive their environment", async () => {
         const { tools } = await machine();
 
         for (const tool of tools) {
-            expect(parameterShape(tool).properties).not.toContain("secrets");
+            expect(parameterShape(tool).properties.includes("secrets"), tool.name).toBe(
+                tool.name === "exec_command",
+            );
         }
+        expect(Value.Check(tools[0]!.parameters!, { cmd: "true", secrets: ["github"] })).toBe(true);
     });
 
     it("reloads image reads without making command or mutation tools replayable", async () => {
@@ -177,6 +185,25 @@ describe("codex compute tool surface", () => {
                 ctx,
             ),
         ).toBe(true);
+        expect(
+            await execCommand.shouldReviewInAutoMode({ cmd: "ls", secrets: ["github"] }, ctx),
+        ).toBe(true);
+        expect(
+            await execCommand.shouldRunInFullAccessInAutoMode?.(
+                { cmd: "ls", secrets: ["github"] },
+                ctx,
+            ),
+        ).toBe(false);
+        expect(
+            await execCommand.shouldRunInFullAccessInAutoMode?.(
+                {
+                    cmd: "ls",
+                    sandbox_permissions: "require_escalated",
+                    secrets: ["github"],
+                },
+                ctx,
+            ),
+        ).toBe(true);
         // Another vendor's escalation field is not this vendor's surface at all.
         expect(
             Value.Check(execCommand.parameters!, {
@@ -199,11 +226,11 @@ describe("codex compute tool surface", () => {
                 ctx,
             ),
         ).toBe(
-            'running "npm publish". Working directory: "/workspace". Shell: "the machine\'s default shell". Access: unrestricted filesystem and network access outside the workspace sandbox. Reason given: the registry is outside the sandbox',
+            'running "npm publish". Working directory: "/workspace". Shell: "the machine\'s default shell". Access: unrestricted filesystem and network access outside the workspace sandbox. Secret environment bundles: none. Reason given: the registry is outside the sandbox',
         );
     });
 
-    it("reviews typing into a session without ever elevating it", async () => {
+    it("reviews typing into a session without elevating an ordinary session", async () => {
         const { tool } = await machine();
         const writeStdin = tool("write_stdin");
 
@@ -214,8 +241,6 @@ describe("codex compute tool surface", () => {
         expect(await writeStdin.shouldReviewInAutoMode({ session_id: 1, chars: "y\n" }, ctx)).toBe(
             true,
         );
-        // Input reaches nothing the session could not already reach, so it is decided on but
-        // never handed a wider boundary than the session already had.
         expect(writeStdin.shouldRunInFullAccessInAutoMode).toBeUndefined();
         expect(
             writeStdin.describeAutoPermissionAction?.({ session_id: 4, chars: "y\n" }, ctx),

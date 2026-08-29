@@ -60,10 +60,14 @@ export function codexWriteStdinTool(compute: Compute) {
         // the model two different things.
         durable: false,
         describeAutoPermissionAction: ({ chars, session_id }) =>
-            `sending ${JSON.stringify(chars ?? "")} to shell session ${String(session_id)}. Access: the session's own input, inside the sandbox it was started in`,
+            `sending ${JSON.stringify(chars ?? "")} to shell session ${String(session_id)}. Access: the session's existing execution boundary${
+                sessionHasSecrets(compute, session_id)
+                    ? ". Selected secret environment variables are present in the process"
+                    : ""
+            }`,
         // Typing into a live program is the program acting, not a lookup, so it is decided on. An
         // empty poll types nothing and only reads work Happy Agent itself started, so it is not. Neither
-        // needs elevation: input reaches nothing the session could not already reach.
+        // changes the boundary the process started under, whether or not it carries secrets.
         shouldReviewInAutoMode: ({ chars }) => chars !== undefined && chars.length > 0,
         execute: async (ctx, { chars, max_output_tokens, session_id, yield_time_ms }) => {
             const commandId = codexSessionId(session_id);
@@ -87,4 +91,12 @@ export function codexWriteStdinTool(compute: Compute) {
         isError: (result) => result.exit_code !== undefined && result.exit_code !== 0,
         toLLM: (result) => [{ type: "text", text: formatUnifiedExecOutput(result) }],
     });
+}
+
+function sessionHasSecrets(compute: Compute, sessionId: number): boolean {
+    try {
+        return compute.shell.sessionUsesSecrets?.(codexSessionId(sessionId)) === true;
+    } catch {
+        return false;
+    }
 }

@@ -74,6 +74,19 @@ describe("Claude's Bash", () => {
         expect(compute.startedOptions[0]).toMatchObject({ tty: true });
     });
 
+    it("passes selected secret bundle IDs through to the machine", async () => {
+        const { compute, tool, call } = await machine();
+        compute.script("printenv TOKEN", { chunks: ["set\n"], exitCode: 0 });
+
+        await tool("Bash").execute(
+            ctx,
+            { command: "printenv TOKEN", secrets: ["deployment"] },
+            call,
+        );
+
+        expect(compute.startedOptions[0]?.secrets).toEqual(["deployment"]);
+    });
+
     it("keeps the newest output and says how much it left out", async () => {
         const { compute, tool, call } = await machine();
         compute.script("pnpm noisy", {
@@ -106,6 +119,28 @@ describe("Claude's Bash", () => {
                 ctx,
             ),
         ).toBe(true);
+        expect(
+            await bash.shouldReviewInAutoMode(
+                { command: "printenv TOKEN", secrets: ["deployment"] },
+                ctx,
+            ),
+        ).toBe(true);
+        expect(
+            await bash.shouldRunInFullAccessInAutoMode?.(
+                { command: "printenv TOKEN", secrets: ["deployment"] },
+                ctx,
+            ),
+        ).toBe(false);
+        expect(
+            await bash.shouldRunInFullAccessInAutoMode?.(
+                {
+                    command: "printenv TOKEN",
+                    dangerouslyDisableSandbox: true,
+                    secrets: ["deployment"],
+                },
+                ctx,
+            ),
+        ).toBe(true);
         expect(bash.describeAutoPermissionAction?.({ command: "ls" }, ctx)).toContain(
             "inside the current workspace sandbox",
         );
@@ -116,6 +151,7 @@ describe("Claude's Bash", () => {
             ),
         ).toContain("outside the workspace sandbox");
         expect(bash.autoPermissionInstructions).toContain("dangerouslyDisableSandbox: true");
+        expect(bash.autoPermissionInstructions).toContain("secret");
     });
 });
 
@@ -169,7 +205,7 @@ describe("Claude's background shell tools", () => {
         expect(answered.status).toBe("running");
     });
 
-    it("asks about typing into a live program, but never widens its boundary", async () => {
+    it("asks about typing into a live program without widening an ordinary session", async () => {
         const { tool } = await machine();
         const bashInput = tool("BashInput");
 
@@ -181,8 +217,26 @@ describe("Claude's background shell tools", () => {
         );
         expect(bashInput.shouldRunInFullAccessInAutoMode).toBeUndefined();
         expect(bashInput.describeAutoPermissionAction?.({ bash_id: "1", input: "rm\n" }, ctx)).toBe(
-            'sending "rm\\n" to background shell 1',
+            'sending "rm\\n" to background shell 1. Access: the shell\'s existing execution boundary',
         );
+    });
+
+    it("keeps input to a secret-bearing shell under its existing boundary", async () => {
+        const { compute, tool, call } = await machine();
+        compute.script("secret repl", { keepRunning: true });
+        const started = await tool("Bash").execute(
+            ctx,
+            { command: "secret repl", run_in_background: true, secrets: ["deployment"] },
+            call,
+        );
+
+        expect(tool("BashInput").shouldRunInFullAccessInAutoMode).toBeUndefined();
+        expect(
+            tool("BashInput").describeAutoPermissionAction?.(
+                { bash_id: started.bash_id, input: "next\n" },
+                ctx,
+            ),
+        ).toContain("Selected secret environment variables are present");
     });
 
     it("stops a running shell, and says plainly when there was nothing left to stop", async () => {

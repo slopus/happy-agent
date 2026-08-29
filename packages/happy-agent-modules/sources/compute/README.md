@@ -10,15 +10,17 @@ surface, so a model sees the tool names, argument names, and escalation syntax i
 import { AgentSystemLocal } from "@slopus/happy-agent-base";
 import {
     ComputeModule,
+    SecretsModule,
     SystemPromptModule,
     createComputeModules,
 } from "@slopus/happy-agent-modules";
 
-const created = createComputeModules(new ComputeModule(config));
+const secrets = new SecretsModule();
+const created = createComputeModules(new ComputeModule(config, secrets));
 const systemPrompt = new SystemPromptModule({ compute: created.computeModule });
 const system = await AgentSystemLocal.create(ctx, storage, {
     ...systemOptions,
-    modules: [systemPrompt, ...created.modules],
+    modules: [secrets, systemPrompt, ...created.modules],
 });
 const agent = await system.create(ctx, {
     modules: {
@@ -31,16 +33,17 @@ const agent = await system.create(ctx, {
 ```
 
 `createComputeModules` pairs the one `ComputeModule` with the `SkillsModule` that reads its
-machines, as the set the whole agent system installs. `ComputeModule` takes only `ConfigModule`:
-it derives its host policy — the agent's private directories, the project files a write must be
-reviewed for — from the configuration itself, and creates the published host compute around a
-process manager it retains for the agent's whole machine lifetime. Retaining that manager is what
-lets abort signal every process group directly, including a detached tree whose launching shell
-already exited.
-`ComputeModule.withProvider(config, provider)` is the one alternate construction, for a test or a
-deployment that genuinely swaps how a machine is created. The first time a configured agent
-needs compute, it creates a separate host compute for that agent, caches it by agent ID, and gives
-that exact instance to the compute tools and skills discovery. A host injects the same
+machines, as the set the whole agent system installs. `ComputeModule` takes `ConfigModule` and
+`SecretsModule`. It derives its host policy — the agent's private directories, the project files a
+write must be reviewed for — from configuration, and resolves selected attached secret bundles
+through the secrets module immediately before spawning a command. It creates the published host
+compute around a process manager it retains for the agent's whole machine lifetime. Retaining that
+manager is what lets abort signal every process group directly, including a detached tree whose
+launching shell already exited.
+`ComputeModule.withProvider(config, secrets, provider)` is the one alternate construction, for a
+test or a deployment that genuinely swaps how a machine is created. The first time a configured
+agent needs compute, it creates a separate host compute for that agent, caches it by agent ID, and
+gives that exact instance to the compute tools and skills discovery. A host injects the same
 `ComputeModule` into `SystemPromptModule` for AGENTS.md discovery. This package depends on
 `@slopus/happy-agent-compute@0.1.9` and uses its `Compute`, `ComputeFileSystem`, and `ComputeShell`
 types directly; it does not maintain a second filesystem or process contract. Docker and
@@ -87,10 +90,16 @@ on. Three departures from that truth are deliberate:
   unrelated kinds of work. This module owns only the shell, so it ships that half under its own
   names, taking `bash_id`, describing only shells. Agents and workflows are other modules' work and
   name their own handles.
-- **No `secrets` argument.** The host compute's secret option has no resolver and injection seam
-  for this module, so no vendor's shell tool advertises secret bundles. Adding it needs a
-  host/provider integration rather than treating secret identifiers as ordinary environment
-  variables.
+- **`secrets` is a Happy Agent extension.** Every vendor's shell command accepts an optional array
+  of secret IDs from the shared installation catalog that are attached to the current agent. The
+  default host compute resolves those IDs at command start and exposes their values only as
+  environment variables in that process. Omitted or empty means none. Any
+  attached secret environment-variable name is removed case-insensitively from the ambient
+  environment before selected values are added, so an unselected bundle cannot leak in by ambient
+  inheritance. Selecting a bundle is reviewed but does not leave the sandbox. The vendor's explicit
+  escalation argument is a separate permission choice: secrets and Full access may each be used
+  alone or together. Later input to a secret-bearing background command is reviewed and continues
+  under the process's existing boundary.
 - **`apply_patch` takes JSON.** Codex's real `apply_patch` is a freeform tool whose whole argument
   string is the patch. Agent Base parses every tool call's arguments as JSON before a tool sees
   them (`AgentBase.ts`) and exposes no argument-parse hook, and `happy-agent-base` is frozen, so
@@ -152,8 +161,10 @@ top) and the tail for a command (whose newest lines say how it went).
 
 `ComputeModule` (`ComputeModule.ts`) implements `AgentModule`:
 
-- `constructor(config: ConfigModule)` — takes the configuration it derives its host policy from.
-- `static withProvider(config, provider)` — the same module over a caller-supplied host provider.
+- `constructor(config: ConfigModule, secrets: SecretsModule)` — takes the configuration it derives
+  its host policy from and the secret catalog it resolves command attachments through.
+- `static withProvider(config, secrets, provider)` — the same module over a caller-supplied host
+  provider. Alternate providers receive selected secret IDs and own their environment integration.
 - `readonly name = "compute"`.
 - `hostPolicy` — the private directories and protected project files this installation's
   configuration asks for, which is what every machine it creates is created behind.

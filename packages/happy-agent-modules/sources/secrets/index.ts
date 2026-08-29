@@ -29,8 +29,15 @@ export {
     secretsMigrations,
     type SecretDatabase,
 } from "./SecretDatabase.js";
-export { SecretsModule, SECRETS_OUTPUT_CHARACTERS, SECRETS_PAGE_SIZE } from "./SecretsModule.js";
+export {
+    GLOBAL_SECRET_OWNER_ID,
+    SecretsModule,
+    SECRETS_OUTPUT_CHARACTERS,
+    SECRETS_PAGE_SIZE,
+} from "./SecretsModule.js";
 export { attachSecretTool } from "./tools/attach_secret.js";
+export { createSecretTool } from "./tools/create_secret.js";
 export { detachSecretTool } from "./tools/detach_secret.js";
 export { listSecretsTool } from "./tools/list_secrets.js";
 export { referenceSecretTool } from "./tools/reference_secret.js";
+export { updateSecretTool } from "./tools/update_secret.js";

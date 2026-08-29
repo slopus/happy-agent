@@ -31,6 +31,19 @@ describe("Grok's compute command tools", () => {
         expect(compute.startedOptions[0]?.maxOutputBytes).toBe(512_000);
     });
 
+    it("passes selected secret bundle IDs through to the machine", async () => {
+        const { compute, tool } = await machine();
+        compute.script("printenv TOKEN", { chunks: ["set\n"], exitCode: 0 });
+
+        await tool("run_terminal_command").execute(ctx, {
+            command: "printenv TOKEN",
+            description: "Check the attached deployment token.",
+            secrets: ["deployment"],
+        });
+
+        expect(compute.startedOptions[0]?.secrets).toEqual(["deployment"]);
+    });
+
     it("reports a failed command as an error the model can read", async () => {
         const { compute, tool } = await machine();
         compute.script("false", { chunks: ["boom\n"], exitCode: 3 });
@@ -209,6 +222,22 @@ describe("Grok's compute command tools", () => {
                 ctx,
             ),
         ).toBe(true);
+        expect(run.shouldReviewInAutoMode({ ...ordinary, secrets: ["deployment"] }, ctx)).toBe(
+            true,
+        );
+        expect(
+            run.shouldRunInFullAccessInAutoMode!({ ...ordinary, secrets: ["deployment"] }, ctx),
+        ).toBe(false);
+        expect(
+            run.shouldRunInFullAccessInAutoMode!(
+                {
+                    ...ordinary,
+                    sandbox_permissions: "require_escalated",
+                    secrets: ["deployment"],
+                },
+                ctx,
+            ),
+        ).toBe(true);
     });
 
     it("carries the reason for leaving the sandbox in the description Grok requires", async () => {
@@ -219,7 +248,7 @@ describe("Grok's compute command tools", () => {
             'sandbox_permissions: "require_escalated"',
         );
         expect(run.autoPermissionInstructions).toContain("description");
-        expect(run.autoPermissionInstructions).not.toContain("secret");
+        expect(run.autoPermissionInstructions).toContain("secret");
         expect(
             run.describeAutoPermissionAction!(
                 {
@@ -230,7 +259,7 @@ describe("Grok's compute command tools", () => {
                 ctx,
             ),
         ).toBe(
-            'running "brew install jq" in "/workspace" outside the workspace sandbox, with unrestricted filesystem and network access. Reason given: Install a tool the workspace does not carry.',
+            'running "brew install jq" in "/workspace" outside the workspace sandbox, with unrestricted filesystem and network access. Secret environment bundles: none. Reason given: Install a tool the workspace does not carry.',
         );
         expect(
             run.describeAutoPermissionAction!(
@@ -240,7 +269,7 @@ describe("Grok's compute command tools", () => {
         ).toContain("inside the current workspace sandbox");
     });
 
-    it("reviews typing into a live command without ever elevating it", async () => {
+    it("reviews typing into a live command without elevating an ordinary session", async () => {
         const { tool } = await machine();
         const send = tool("send_command_input");
 
@@ -248,8 +277,27 @@ describe("Grok's compute command tools", () => {
         expect(send.shouldReviewInAutoMode({ task_id: "1", input: "\u0003" }, ctx)).toBe(true);
         expect(send.shouldRunInFullAccessInAutoMode).toBeUndefined();
         expect(send.describeAutoPermissionAction!({ task_id: "1", input: "y\n" }, ctx)).toBe(
-            'sending "y\\n" to background command 1. Access: the command\'s own input, inside the sandbox it was started in',
+            'sending "y\\n" to background command 1. Access: the command\'s existing execution boundary',
         );
+    });
+
+    it("keeps input to a secret-bearing command under its existing boundary", async () => {
+        const { compute, tool } = await machine();
+        compute.script("secret repl", { keepRunning: true });
+        const started = await tool("run_terminal_command").execute(ctx, {
+            command: "secret repl",
+            description: "Start the credential-bearing REPL.",
+            background: true,
+            secrets: ["deployment"],
+        });
+
+        expect(tool("send_command_input").shouldRunInFullAccessInAutoMode).toBeUndefined();
+        expect(
+            tool("send_command_input").describeAutoPermissionAction?.(
+                { task_id: started.task_id, input: "next\n" },
+                ctx,
+            ),
+        ).toContain("Selected secret environment variables are present");
     });
 
     it("asks no reviewer about work Happy Agent itself started", async () => {

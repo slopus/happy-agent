@@ -16,12 +16,14 @@ import {
     GoalModule,
     HistoryModule,
     ModelSwitchModule,
+    SecretsModule,
     SystemPromptModule,
     createComputeModules,
 } from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
-const compute = createComputeModules(new ComputeModule(config));
+const secrets = new SecretsModule();
+const compute = createComputeModules(new ComputeModule(config, secrets));
 const history = new HistoryModule();
 
 const system = await AgentSystemLocal.create(ctx, storage, {
@@ -30,6 +32,7 @@ const system = await AgentSystemLocal.create(ctx, storage, {
     providers,
     modules: [
         config,
+        secrets,
         new SystemPromptModule(config, compute.computeModule),
         history,
         new ModelSwitchModule(history),
@@ -171,13 +174,13 @@ its public methods, and its storage and event contracts.
 
 ### Places and things
 
-| Module                                     | What it adds                                                                                    |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| [Files](sources/files/README.md)           | Fast physical file trees, FFF-backed autocomplete, guarded writes, and live change events.      |
-| [Projects](sources/projects/README.md)     | Repositories registered on demand, with bounded settings and durable rename and archival.       |
-| [Workspaces](sources/workspaces/README.md) | Isolated worktrees cut from a project, created, inspected, and archived.                        |
-| [Secrets](sources/secrets/README.md)       | Safe secret metadata and attachments; a value is resolved without ever showing it to the model. |
-| [Terminals](sources/terminals/README.md)   | Real pseudo-terminals on a project or workspace folder, shared by everyone looking at it.       |
+| Module                                     | What it adds                                                                                                                |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| [Files](sources/files/README.md)           | Fast physical file trees, FFF-backed autocomplete, guarded writes, and live change events.                                  |
+| [Projects](sources/projects/README.md)     | Repositories registered on demand, with bounded settings and durable rename and archival.                                   |
+| [Workspaces](sources/workspaces/README.md) | Isolated worktrees cut from a project, created, inspected, and archived.                                                    |
+| [Secrets](sources/secrets/README.md)       | Reviewed host-side dotenv imports, safe metadata and attachments, and shell resolution without showing values to the model. |
+| [Terminals](sources/terminals/README.md)   | Real pseudo-terminals on a project or workspace folder, shared by everyone looking at it.                                   |
 
 ### Storage ownership
 

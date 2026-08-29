@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { AbortModule } from "../../sources/abort/index.js";
 import { ComputeModule, type ComputeAbortSnapshot } from "../../sources/compute/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { testConfig } from "../support/computeModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
@@ -40,7 +41,7 @@ class AbortCompute extends ComputeModule {
     readonly snapshots = new Map<string, ComputeAbortSnapshot>();
 
     constructor() {
-        super(testConfig);
+        super(testConfig, new SecretsModule());
     }
 
     override abortSnapshot(agentId: string): ComputeAbortSnapshot {

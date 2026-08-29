@@ -10,6 +10,7 @@ import {
     type HostCompute,
 } from "../../sources/compute/index.js";
 import { ConfigModule } from "../../sources/config/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 
 /**
  * Configuration read from a Happy root of its own.
@@ -39,7 +40,7 @@ class ScriptedComputeModule extends ComputeModule {
     readonly #resolve: (ctx: Context, agentId: string) => Promise<HostCompute | undefined>;
 
     constructor(resolve: (ctx: Context, agentId: string) => Promise<HostCompute | undefined>) {
-        super(testConfig);
+        super(testConfig, new SecretsModule());
         this.#resolve = resolve;
     }
 
@@ -64,7 +65,7 @@ export class ScriptedCommandsComputeModule extends ComputeModule {
     listFailure: unknown;
 
     constructor() {
-        super(testConfig);
+        super(testConfig, new SecretsModule());
     }
 
     /** Say that these command IDs are running for one agent. */

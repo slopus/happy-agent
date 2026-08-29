@@ -46,8 +46,8 @@ const VENDOR_ARGUMENTS: Readonly<
             "multiline",
         ],
     },
-    // `secrets` is deliberately absent: this module has no secret resolver. Every other Bash
-    // argument is the vendor's, plus Happy Agent's own `tty`.
+    // Every Bash argument is the vendor's, plus Happy Agent's own terminal, elevation, and
+    // host-owned secret-environment extensions.
     Bash: {
         required: ["command"],
         optional: [
@@ -56,6 +56,7 @@ const VENDOR_ARGUMENTS: Readonly<
             "run_in_background",
             "tty",
             "dangerouslyDisableSandbox",
+            "secrets",
         ],
     },
     BashOutput: { required: ["bash_id"], optional: ["block", "timeout"] },
@@ -122,8 +123,7 @@ describe("Claude compute surface", () => {
                 sandbox_permissions: "require_escalated",
             }),
         ).toBe(false);
-        // The module has no secret resolver, so Happy Agent's `secrets` argument is absent here too.
-        expect(Value.Check(tool("Bash").parameters!, { command: "ls", secrets: [] })).toBe(false);
+        expect(Value.Check(tool("Bash").parameters!, { command: "ls", secrets: [] })).toBe(true);
         // Grok reads with `target_file`, Claude with `file_path`.
         expect(Value.Check(tool("Read").parameters!, { target_file: "a.ts" })).toBe(false);
         expect(Value.Check(tool("Read").parameters!, { file_path: "a.ts" })).toBe(true);

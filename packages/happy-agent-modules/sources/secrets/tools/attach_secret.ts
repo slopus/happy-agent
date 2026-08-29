@@ -42,7 +42,9 @@ export function attachSecretTool(secrets: SecretsModule, actingAgentId: string) 
             returnType: attachSecretResultSchema,
             durable: true,
             transactional: true,
-            shouldReviewInAutoMode: () => false,
+            describeAutoPermissionAction: ({ scopeRef, secretId }) =>
+                `attaching secret reference ${JSON.stringify(secretId)} to scope ${JSON.stringify(scopeRef)}. This grants that scope access to the secret for later host operations`,
+            shouldReviewInAutoMode: () => true,
             execute: async (ctx, input: AttachSecretInput): Promise<AttachSecretResult> =>
                 await secrets.attachWithReference(ctx, actingAgentId, input),
             toLLM: ({ attachment, secret }) => [

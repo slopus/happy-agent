@@ -1,7 +1,12 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { AgentModuleScope, AnyAgentTool } from "@slopus/happy-agent-base";
 import { describe, expect, it } from "vitest";
 
 import {
+    GLOBAL_SECRET_OWNER_ID,
     SECRETS_OUTPUT_CHARACTERS,
     SECRETS_PAGE_SIZE,
     SecretsModule,
@@ -196,7 +201,7 @@ describe("SecretsModule event and tool contracts", () => {
         });
     });
 
-    it("exposes exactly four common safe tools with durable mutation semantics", async () => {
+    it("exposes exactly six common safe tools with independent review and elevation semantics", async () => {
         await withDatabase("secrets-tools-surface", async (database) => {
             const module = new SecretsModule();
             const hooks = module.beforeStart();
@@ -205,32 +210,94 @@ describe("SecretsModule event and tool contracts", () => {
             expect(tools.map((tool) => tool.name)).toEqual([
                 "list_secrets",
                 "reference_secret",
+                "create_secret",
+                "update_secret",
                 "attach_secret",
                 "detach_secret",
             ]);
             expect(
-                tools.every(
-                    (tool) => tool.shouldReviewInAutoMode?.({} as never, {} as never) === false,
+                toolByName(tools, "list_secrets").shouldReviewInAutoMode({}, database.context),
+            ).toBe(false);
+            expect(
+                toolByName(tools, "reference_secret").shouldReviewInAutoMode(
+                    { id: "tool-secret" },
+                    database.context,
                 ),
-            ).toBe(true);
-            expect(tools.every((tool) => tool.durable === true)).toBe(true);
+            ).toBe(false);
+            for (const name of ["create_secret", "update_secret"]) {
+                const tool = toolByName(tools, name);
+                const input =
+                    name === "create_secret"
+                        ? {
+                              id: "tool-secret",
+                              description: "Tool secret",
+                              dotenvFile: "/host/secrets/tool.env",
+                          }
+                        : {
+                              secretId: "tool-secret",
+                              dotenvFile: "/host/secrets/tool.env",
+                          };
+                expect(tool.shouldReviewInAutoMode(input, database.context), name).toBe(true);
+                expect(tool.shouldRunInFullAccessInAutoMode?.(input, database.context), name).toBe(
+                    true,
+                );
+                expect(tool.requiresAutoOrFullAccess, name).toBe(true);
+                expect(
+                    tool.describeAutoPermissionAction?.(input, database.context),
+                    name,
+                ).toContain('global secret "tool-secret"');
+                expect(
+                    tool.describeAutoPermissionAction?.(input, database.context),
+                    name,
+                ).toContain('dotenv file "/host/secrets/tool.env"');
+            }
+            for (const name of ["attach_secret", "detach_secret"]) {
+                const tool = toolByName(tools, name);
+                const input = { scopeRef: "agent-tools", secretId: "tool-secret" };
+                expect(tool.shouldReviewInAutoMode(input, database.context), name).toBe(true);
+                expect(tool.shouldRunInFullAccessInAutoMode, name).toBeUndefined();
+                expect(
+                    tool.describeAutoPermissionAction?.(input, database.context),
+                    name,
+                ).toContain('secret reference "tool-secret"');
+                expect(
+                    tool.describeAutoPermissionAction?.(input, database.context),
+                    name,
+                ).toContain('scope "agent-tools"');
+            }
+            expect(tools.filter((tool) => tool.durable).map((tool) => tool.name)).toEqual([
+                "list_secrets",
+                "reference_secret",
+                "attach_secret",
+                "detach_secret",
+            ]);
+            expect(tools.filter((tool) => tool.durable === false).map((tool) => tool.name)).toEqual(
+                ["create_secret", "update_secret"],
+            );
             expect(tools.filter((tool) => tool.reloadable).map((tool) => tool.name)).toEqual([
                 "list_secrets",
                 "reference_secret",
             ]);
             expect(toolByName(tools, "list_secrets").transactional).not.toBe(true);
             expect(toolByName(tools, "reference_secret").transactional).not.toBe(true);
+            expect(toolByName(tools, "create_secret").transactional).not.toBe(true);
+            expect(toolByName(tools, "update_secret").transactional).not.toBe(true);
             expect(toolByName(tools, "attach_secret").transactional).toBe(true);
             expect(toolByName(tools, "detach_secret").transactional).toBe(true);
             expect(JSON.stringify(tools)).not.toContain("resolveForHost");
             expect(JSON.stringify(tools)).not.toContain("resolveForCommand");
+            const instructions = await hooks.instructions?.(database.context, scope());
+            expect(instructions).toContain(`attachment scope is ${JSON.stringify(AGENT)}`);
+            expect(instructions).toContain("absolute host .env path");
+            expect(instructions).toContain("use an empty array for none");
+            expect(instructions).not.toContain("tool-only-value");
         });
     });
 
-    it("executes each tool through the same public operation and keeps all model output metadata-only", async () => {
+    it("executes reference and attachment tools through the same public operations", async () => {
         await withDatabase("secrets-tools-execution", async (database) => {
             const module = new SecretsModule();
-            await module.register(database.context, AGENT, {
+            await module.register(database.context, GLOBAL_SECRET_OWNER_ID, {
                 id: "tool-secret",
                 description: "Tool secret",
                 environment: { TOKEN: "tool-only-value" },
@@ -246,6 +313,12 @@ describe("SecretsModule event and tool contracts", () => {
             const listed = (await list.execute(database.context, {}, undefined as never)) as {
                 secrets: readonly Record<string, unknown>[];
             };
+            const otherAgentTools = await hooks.tools?.(database.context, scope("another-agent"));
+            if (otherAgentTools === undefined) throw new Error("Expected secret tools");
+            const otherAgentList = toolByName(otherAgentTools, "list_secrets");
+            await expect(
+                otherAgentList.execute(database.context, {}, undefined as never),
+            ).resolves.toEqual(listed);
             const referenced = (await reference.execute(
                 database.context,
                 { id: "tool-secret" },
@@ -286,6 +359,72 @@ describe("SecretsModule event and tool contracts", () => {
                 .join("\n");
             expect(rendered).toContain("tool-secret");
             expect(rendered).not.toContain("tool-only-value");
+        });
+    });
+
+    it("creates and completely replaces a global secret from reviewed dotenv files without rendering values", async () => {
+        await withDatabase("secrets-tools-dotenv", async (database) => {
+            const directory = await mkdtemp(join(tmpdir(), "happy-secret-tools-"));
+            try {
+                const firstPath = join(directory, "first.env");
+                const secondPath = join(directory, "second.env");
+                await writeFile(firstPath, "TOKEN=first-tool-value\nSTALE=remove-me\n", "utf8");
+                await writeFile(secondPath, "token=second-tool-value\nNEW=fresh-value\n", "utf8");
+
+                const module = new SecretsModule();
+                const hooks = module.beforeStart();
+                const tools = await hooks.tools?.(database.context, scope());
+                if (tools === undefined) throw new Error("Expected secret tools");
+                const create = toolByName(tools, "create_secret");
+                const update = toolByName(tools, "update_secret");
+
+                const created = (await create.execute(
+                    database.context,
+                    {
+                        id: "dotenv-tool",
+                        description: "Imported credential",
+                        dotenvFile: firstPath,
+                    },
+                    undefined as never,
+                )) as { secret: { environmentVariables: readonly string[] } };
+                expect(created.secret.environmentVariables).toEqual(["STALE", "TOKEN"]);
+                await module.attach(database.context, GLOBAL_SECRET_OWNER_ID, AGENT, "dotenv-tool");
+                await expect(
+                    module.resolveForHost(database.context, GLOBAL_SECRET_OWNER_ID, AGENT, [
+                        "dotenv-tool",
+                    ]),
+                ).resolves.toEqual({ STALE: "remove-me", TOKEN: "first-tool-value" });
+
+                const updated = (await update.execute(
+                    database.context,
+                    { secretId: "dotenv-tool", dotenvFile: secondPath },
+                    undefined as never,
+                )) as { secret: { environmentVariables: readonly string[] } | null };
+                expect(updated.secret?.environmentVariables).toEqual(["NEW", "TOKEN"]);
+                await expect(
+                    module.resolveForHost(database.context, GLOBAL_SECRET_OWNER_ID, AGENT, [
+                        "dotenv-tool",
+                    ]),
+                ).resolves.toEqual({ NEW: "fresh-value", TOKEN: "second-tool-value" });
+
+                const rendered = [
+                    ...create.toLLM(created),
+                    ...update.toLLM(updated),
+                    JSON.stringify(created),
+                    JSON.stringify(updated),
+                ].join("\n");
+                expect(rendered).toContain("dotenv-tool");
+                for (const value of [
+                    "first-tool-value",
+                    "remove-me",
+                    "second-tool-value",
+                    "fresh-value",
+                ]) {
+                    expect(rendered).not.toContain(value);
+                }
+            } finally {
+                await rm(directory, { force: true, recursive: true });
+            }
         });
     });
 

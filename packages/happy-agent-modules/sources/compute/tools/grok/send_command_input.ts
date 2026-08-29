@@ -56,9 +56,13 @@ Use it to answer a prompt, drive a REPL, or interrupt with Ctrl-C ("\\u0003"). E
         // twice and answer with nothing.
         durable: false,
         describeAutoPermissionAction: ({ input, task_id }) =>
-            `sending ${JSON.stringify(input)} to background command ${task_id}. Access: the command's own input, inside the sandbox it was started in`,
+            `sending ${JSON.stringify(input)} to background command ${task_id}. Access: the command's existing execution boundary${
+                sessionHasSecrets(compute, task_id)
+                    ? ". Selected secret environment variables are present in the process"
+                    : ""
+            }`,
         // Typing into a live program is the program acting, not a lookup, so it is decided on; it
-        // needs no elevation, because it reaches nothing the command could not already reach.
+        // does not change the boundary the process started under, whether or not it carries secrets.
         shouldReviewInAutoMode: ({ input }) => input.length > 0,
         execute: async (ctx, { task_id, input, timeout_ms }) => {
             const commandId = parseGrokTaskId(task_id);
@@ -95,4 +99,12 @@ Use it to answer a prompt, drive a REPL, or interrupt with Ctrl-C ("\\u0003"). E
             },
         ],
     });
+}
+
+function sessionHasSecrets(compute: Compute, taskId: string): boolean {
+    try {
+        return compute.shell.sessionUsesSecrets?.(parseGrokTaskId(taskId)) === true;
+    } catch {
+        return false;
+    }
 }

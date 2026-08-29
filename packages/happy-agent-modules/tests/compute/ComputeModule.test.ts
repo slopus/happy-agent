@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     ComputeModule,
+    SecretsModule,
     SystemPromptModule,
     createComputeModules,
     type HostComputeProvider,
@@ -28,7 +29,9 @@ describe("ComputeModule", () => {
                 return compute;
             },
         };
-        const created = createComputeModules(ComputeModule.withProvider(testConfig, provider));
+        const created = createComputeModules(
+            ComputeModule.withProvider(testConfig, new SecretsModule(), provider),
+        );
         const systemPrompt = new SystemPromptModule(testConfig, created.computeModule);
         const agentACtx = withAgentConfig(ctx, {
             modules: { compute: { cwd: "/workspace/a" } },
@@ -82,7 +85,7 @@ describe("ComputeModule", () => {
     });
 
     it("does nothing for an agent without compute configuration", async () => {
-        const module = new ComputeModule(testConfig);
+        const module = new ComputeModule(testConfig, new SecretsModule());
         await expect(module.resolve(ctx, "agent-a")).resolves.toBeUndefined();
         const hooks = await resolveModuleHooks(ctx, module);
         await expect(hooks.tools!(ctx, { agent: { id: "agent-a" } } as never)).resolves.toEqual([]);
@@ -147,7 +150,7 @@ describe("ComputeModule", () => {
             id: "host",
             create: async () => compute,
         };
-        const module = ComputeModule.withProvider(testConfig, provider);
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), provider);
         const agentCtx = withAgentConfig(ctx, {
             modules: { compute: { cwd: "/srv/app" } },
         });
@@ -169,7 +172,7 @@ describe("ComputeModule", () => {
 
     it("rejects invalid computes returned by the global provider", async () => {
         const dockerLike = { ...new FakeCompute(), kind: "docker" };
-        const dockerModule = ComputeModule.withProvider(testConfig, {
+        const dockerModule = ComputeModule.withProvider(testConfig, new SecretsModule(), {
             id: "host",
             create: async () => dockerLike as never,
         });
@@ -181,7 +184,7 @@ describe("ComputeModule", () => {
         );
         const mismatched = new FakeCompute();
         (mismatched.fs as { cwd: string }).cwd = "/another-workspace";
-        const mismatchedModule = ComputeModule.withProvider(testConfig, {
+        const mismatchedModule = ComputeModule.withProvider(testConfig, new SecretsModule(), {
             id: "host",
             create: async () => mismatched,
         });

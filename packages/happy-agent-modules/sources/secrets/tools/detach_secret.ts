@@ -37,7 +37,9 @@ export function detachSecretTool(secrets: SecretsModule, actingAgentId: string) 
         returnType: detachSecretResultSchema,
         durable: true,
         transactional: true,
-        shouldReviewInAutoMode: () => false,
+        describeAutoPermissionAction: ({ scopeRef, secretId }) =>
+            `detaching secret reference ${JSON.stringify(secretId)} from scope ${JSON.stringify(scopeRef)}. This revokes that scope's access to the secret for later host operations`,
+        shouldReviewInAutoMode: () => true,
         execute: async (ctx, input: DetachSecretInput): Promise<DetachSecretResult> => ({
             detached: await secrets.detach(ctx, actingAgentId, input),
             scopeRef: input.scopeRef,

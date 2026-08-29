@@ -30,6 +30,7 @@ interface FakeSession {
     readonly cwd: string;
     readonly script: ScriptedCommand;
     readonly sessionId: number;
+    readonly usesSecrets: boolean;
     /** Output produced but not yet read. */
     pending: string;
     /** Complete stdout captured so far, matching the published session snapshot. */
@@ -351,6 +352,7 @@ export class FakeCompute implements Compute {
                 exitCode: 0,
                 timedOut: false,
             }),
+            sessionUsesSecrets: (sessionId) => sessionOf(sessionId)?.usesSecrets === true,
             startSession: (options: Omit<ComputeRunOptions, "signal">) => {
                 this.startedOptions.push(options);
                 const script = this.commands.get(options.command);
@@ -369,6 +371,7 @@ export class FakeCompute implements Compute {
                     remaining: [...(script.chunks ?? [])],
                     status: "running",
                     exitCode: null,
+                    usesSecrets: (options.secrets?.length ?? 0) > 0,
                 };
                 this.sessions.push(session);
                 notifyActive();

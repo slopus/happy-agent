@@ -70,9 +70,8 @@ const vendorSchemas: Readonly<
     run_terminal_command: {
         properties: ["command", "timeout", "description", "background"],
         required: ["command", "description"],
-        // Happy Agent's own additions. `secrets` is deliberately not among them: this module has no
-        // secret resolver, so offering the argument would promise something it cannot do.
-        added: ["tty", "sandbox_permissions"],
+        // Happy Agent's own terminal, elevation, and host-owned secret-environment extensions.
+        added: ["tty", "sandbox_permissions", "secrets"],
     },
     get_command_or_subagent_output: {
         properties: ["task_ids", "timeout_ms"],
@@ -211,7 +210,7 @@ describe("Grok's compute tool surface", () => {
                 description: "List the workspace.",
                 secrets: ["github"],
             }),
-        ).toBe(false);
+        ).toBe(true);
         expect(Value.Check(parameters, { command: "ls", description: "List the workspace." })).toBe(
             true,
         );

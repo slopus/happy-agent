@@ -6,11 +6,18 @@ compute module so a generated file lands where every other file tool would put i
 
 ```ts
 import { Agent } from "@slopus/happy-agent-base";
-import { ComputeModule, ConfigModule, GeminiModule } from "@slopus/happy-agent-modules";
+import {
+    ComputeModule,
+    ConfigModule,
+    GeminiModule,
+    SecretsModule,
+} from "@slopus/happy-agent-modules";
 
 const config = await ConfigModule.load();
-const gemini = new GeminiModule(config, new ComputeModule(config));
-const agent = await Agent.create(ctx, { ...options, modules: [gemini] });
+const secrets = new SecretsModule();
+const compute = new ComputeModule(config, secrets);
+const gemini = new GeminiModule(config, compute);
+const agent = await Agent.create(ctx, { ...options, modules: [secrets, compute, gemini] });
 ```
 
 `config` is where the key comes from: Gemini is not one of the accounts a chat runs on, so it has no

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { AgentModel, AgentStorage } from "@slopus/happy-agent-base";
 import { ComputeModule, type HostComputeProvider } from "../../sources/compute/index.js";
 import { ConfigModule } from "../../sources/config/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { SystemPromptModule } from "../../sources/systemPrompt/index.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
 import { agentWorld } from "./agentWorld.js";
@@ -67,7 +68,7 @@ export async function autoWorld(script: ScriptedTurn[] = []): Promise<AutoWorld>
     await mkdir(publicHome, { recursive: true });
     const machine = new FakeCompute(publicHome);
     const hostProvider: HostComputeProvider = { id: "host", create: async () => machine };
-    const compute = ComputeModule.withProvider(config, hostProvider);
+    const compute = ComputeModule.withProvider(config, new SecretsModule(), hostProvider);
     const store = await agentWorld();
     return {
         config,

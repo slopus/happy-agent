@@ -2,7 +2,7 @@ import { withAgentConfig } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
-import { ComputeModule, type HostComputeProvider } from "../../sources/index.js";
+import { ComputeModule, SecretsModule, type HostComputeProvider } from "../../sources/index.js";
 import { testConfig } from "../support/computeModule.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { FakeCompute } from "./support/FakeCompute.js";
@@ -30,7 +30,7 @@ describe("ComputeModule edge behavior", () => {
                 return new FakeCompute(config.cwd);
             },
         };
-        const module = ComputeModule.withProvider(testConfig, provider);
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), provider);
 
         await expect(
             module.resolve(
@@ -56,7 +56,7 @@ describe("ComputeModule edge behavior", () => {
             id: "host",
             create: async (_createCtx, config) => new FakeCompute(config.cwd),
         };
-        const module = ComputeModule.withProvider(testConfig, provider);
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), provider);
 
         await module.resolve(configured("/workspace/one"), "agent-a");
         await expect(module.resolve(configured("/workspace/two"), "agent-a")).rejects.toThrow(
@@ -70,7 +70,7 @@ describe("ComputeModule edge behavior", () => {
             id: "host",
             create: async () => compute,
         };
-        const module = ComputeModule.withProvider(testConfig, provider);
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), provider);
 
         await module.resolve(configured("/workspace"), "agent-a");
         await Promise.all([module.dispose(ctx), module.dispose(ctx)]);
@@ -81,7 +81,7 @@ describe("ComputeModule edge behavior", () => {
     });
 
     it("returns safe empty and false values for unresolved agent commands", async () => {
-        const module = ComputeModule.withProvider(testConfig, {
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), {
             id: "host",
             create: async (_createCtx, config) => new FakeCompute(config.cwd),
         });
@@ -96,7 +96,7 @@ describe("ComputeModule edge behavior", () => {
 
     it("gives the reviewer only read-oriented tools for each vendor, over one machine of its own", async () => {
         const created: string[] = [];
-        const module = ComputeModule.withProvider(testConfig, {
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), {
             id: "host",
             create: async (_createCtx, config) => {
                 created.push(config.cwd);

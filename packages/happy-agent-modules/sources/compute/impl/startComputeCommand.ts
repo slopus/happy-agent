@@ -34,6 +34,7 @@ export async function startComputeCommand(
         readonly command: string;
         readonly workdir?: string;
         readonly shell?: string;
+        readonly secrets?: readonly string[];
         readonly tty?: boolean;
         readonly background?: boolean;
         readonly maxOutputBytes?: number;
@@ -47,6 +48,7 @@ export async function startComputeCommand(
         permissions,
         ...(options.workdir === undefined ? {} : { cwd: options.workdir }),
         maxOutputBytes: options.maxOutputBytes ?? COMPUTE_COMMAND_CAPTURE_MAX_BYTES,
+        ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
         ...(options.tty === undefined ? {} : { tty: options.tty }),
         ...(options.shell === undefined ? {} : { shell: options.shell }),
     });

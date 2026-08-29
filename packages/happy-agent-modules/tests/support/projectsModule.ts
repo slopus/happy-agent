@@ -7,6 +7,7 @@ import type { ConfigModule } from "../../sources/config/index.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
 import { ProjectsModule } from "../../sources/projects/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 
 /**
  * An agent collection for a catalog test: every agent is a person's own conversation, and an abort
@@ -56,7 +57,7 @@ export function projectsCatalogFor(
     readonly durableFunctions: DurableFunctionsModule;
     readonly projects: ProjectsModule;
 } {
-    const abort = new AbortModule(new ComputeModule(config));
+    const abort = new AbortModule(new ComputeModule(config, new SecretsModule()));
     const agents = new TestAgentCollection();
     const durableFunctions = new DurableFunctionsModule();
     abort.beforeStart(createRootContext(), agents.asRef());

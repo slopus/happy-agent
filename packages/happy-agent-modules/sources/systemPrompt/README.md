@@ -18,7 +18,8 @@ vendor/model prompt
 ```
 
 ```ts
-const created = createComputeModules(new ComputeModule(config));
+const secrets = new SecretsModule();
+const created = createComputeModules(new ComputeModule(config, secrets));
 const systemPrompt = new SystemPromptModule(config, created.computeModule);
 ```
 

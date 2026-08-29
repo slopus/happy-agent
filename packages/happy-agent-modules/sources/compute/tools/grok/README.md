@@ -20,8 +20,6 @@ for everything else.
 
 ## Where this surface departs from vendor truth
 
-- **`secrets` is absent** from `run_terminal_command`. Happy Agent's live Grok tool has it; this module has
-  no secret resolver, so offering the argument would promise something it cannot do.
 - **No image tool.** Grok has no vendor descriptor for viewing a local image and Happy Agent gives Grok
   none, so this surface has none either. `read_file` reads text.
 - **`read_file` has no `pages` or `format`.** Those two arguments exist on the vendor descriptor
@@ -31,6 +29,14 @@ for everything else.
 - **Subagents are not here.** `get_command_or_subagent_output` and `kill_command_or_subagent` keep
   Grok's names, because that is what the model calls, but this module runs commands only. Their
   descriptions say so rather than promising output they cannot produce.
+
+Happy Agent extends `run_terminal_command` with `secrets`: attached secret bundle IDs the host
+resolves immediately before spawning and exposes as environment variables only to that process.
+Omitted or empty means none. A non-empty selection is reviewed but remains sandboxed.
+`sandbox_permissions` independently requests Full access, so either option may be used alone or
+both together. Later `send_command_input` is reviewed and continues under the command's existing
+boundary, including when it carries secrets. Values never enter tool arguments, results, or
+transcripts.
 
 ## Task IDs
 

@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
+import { secretIdSchema } from "../../../secrets/index.js";
 import type { Compute } from "../../Compute.js";
 import {
     COMPUTE_BACKGROUND_GRACE_MS,
@@ -32,7 +33,7 @@ const CLAUDE_BASH_DESCRIPTION = `Executes a bash command in the current working 
 - Use the \`gh\` CLI for GitHub operations.
 - Commit or push only when the user asks.
 
-Happy Agent extension: \`dangerouslyDisableSandbox\` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode.
+Happy Agent extensions: \`dangerouslyDisableSandbox\` requests one reviewed Full-access execution in Auto mode; it never bypasses Read only or Workspace write mode. \`secrets\` selects attached secret bundles to expose to this command as environment variables. Secret selection is reviewed separately and stays sandboxed unless \`dangerouslyDisableSandbox\` is also true.
 
 Output is truncated to the last ${String(MAX_CLAUDE_SHELL_OUTPUT_CHARACTERS)} characters.`;
 
@@ -78,6 +79,14 @@ export function claudeBashTool(compute: Compute) {
                             "Request reviewed execution outside the workspace sandbox in Auto mode. Use only when the sandbox blocks a necessary command.",
                     }),
                 ),
+                secrets: Type.Optional(
+                    Type.Array(secretIdSchema, {
+                        description:
+                            "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none.",
+                        maxItems: 256,
+                        uniqueItems: true,
+                    }),
+                ),
             },
             exact,
         ),
@@ -96,22 +105,30 @@ export function claudeBashTool(compute: Compute) {
         // Running a command again runs it again, which is rarely the same thing twice.
         durable: false,
         autoPermissionInstructions:
-            "For Bash, request full-access execution with dangerouslyDisableSandbox: true only when the workspace sandbox blocks necessary work. Commands without it remain sandboxed.",
-        describeAutoPermissionAction: ({ command, dangerouslyDisableSandbox, description }) =>
+            "For Bash, request full-access execution with dangerouslyDisableSandbox: true only when the workspace sandbox blocks necessary work. Commands without it remain sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together.",
+        describeAutoPermissionAction: ({
+            command,
+            dangerouslyDisableSandbox,
+            description,
+            secrets,
+        }) =>
             `running ${JSON.stringify(command)} in ${JSON.stringify(compute.cwd)} ${
                 dangerouslyDisableSandbox === true
                     ? "outside the workspace sandbox, with unrestricted filesystem and network access"
                     : "inside the current workspace sandbox"
-            }${description === undefined ? "" : `. Stated purpose: ${description}`}`,
-        // A sandboxed command is the ordinary case and needs no reviewer; leaving the sandbox is
-        // the whole of what one is asked about here.
-        shouldReviewInAutoMode: ({ dangerouslyDisableSandbox }) =>
-            dangerouslyDisableSandbox === true,
+            }${describeSecretSelection(secrets)}${
+                description === undefined ? "" : `. Stated purpose: ${description}`
+            }`,
+        // Secret provisioning and leaving the sandbox are both reviewed. Only the explicit
+        // escalation argument widens the command's execution boundary.
+        shouldReviewInAutoMode: ({ dangerouslyDisableSandbox, secrets }) =>
+            dangerouslyDisableSandbox === true || hasSecrets(secrets),
         shouldRunInFullAccessInAutoMode: ({ dangerouslyDisableSandbox }) =>
             dangerouslyDisableSandbox === true,
-        execute: async (ctx, { command, run_in_background, timeout, tty }) => {
+        execute: async (ctx, { command, run_in_background, secrets, timeout, tty }) => {
             const { snapshot, wallTimeSeconds } = await startComputeCommand(compute, ctx, {
                 command,
+                ...(secrets === undefined ? {} : { secrets }),
                 ...(tty === undefined ? {} : { tty }),
                 ...(run_in_background === true ? { background: true } : {}),
                 waitMs: Math.min(MAX_TIMEOUT_MS, timeout ?? DEFAULT_TIMEOUT_MS),
@@ -150,4 +167,14 @@ export function claudeBashTool(compute: Compute) {
             return [{ type: "text", text: parts.length === 0 ? "(no output)" : parts.join("\n") }];
         },
     });
+}
+
+function hasSecrets(secrets: readonly string[] | undefined): boolean {
+    return (secrets?.length ?? 0) > 0;
+}
+
+function describeSecretSelection(secrets: readonly string[] | undefined): string {
+    return hasSecrets(secrets)
+        ? `. Secret environment bundles: ${(secrets ?? []).map((id) => JSON.stringify(id)).join(", ")}`
+        : ". Secret environment bundles: none";
 }

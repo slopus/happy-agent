@@ -528,14 +528,17 @@ export {
     type SecretStoreUpdateResult,
 } from "./secrets/SecretStore.js";
 export {
+    GLOBAL_SECRET_OWNER_ID,
     SecretsModule,
     SECRETS_OUTPUT_CHARACTERS,
     SECRETS_PAGE_SIZE,
 } from "./secrets/SecretsModule.js";
 export { attachSecretTool } from "./secrets/tools/attach_secret.js";
+export { createSecretTool } from "./secrets/tools/create_secret.js";
 export { detachSecretTool } from "./secrets/tools/detach_secret.js";
 export { listSecretsTool } from "./secrets/tools/list_secrets.js";
 export { referenceSecretTool } from "./secrets/tools/reference_secret.js";
+export { updateSecretTool } from "./secrets/tools/update_secret.js";
 
 // Search: per-vendor web search and a bounded page fetch, run by the module itself.
 export {

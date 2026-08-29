@@ -10,6 +10,7 @@ import {
 } from "../../sources/durableFunctions/index.js";
 import { GitModule } from "../../sources/git/index.js";
 import { projectMigrations, ProjectsModule } from "../../sources/projects/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { archiveWorkspaceTool } from "../../sources/workspaces/tools/archive_workspace.js";
 import { workspaceMigrations, WorkspacesModule } from "../../sources/workspaces/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
@@ -59,7 +60,7 @@ class RecordingCollection {
 async function archivingCatalog(name: string) {
     const config = await temporaryTestConfig();
     const git = new GitModule();
-    const abort = new AbortModule(new ComputeModule(config));
+    const abort = new AbortModule(new ComputeModule(config, new SecretsModule()));
     const durableFunctions = new DurableFunctionsModule();
     const projects = new ProjectsModule(config, git, abort, durableFunctions);
     const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);

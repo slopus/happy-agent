@@ -3,18 +3,20 @@
 Host-owned secret metadata and attachment management. An agent often needs a database URL, an API
 key, or some other credential to do its work, but the value itself must never enter a model's
 context, a tool argument, a transcript, or anything the model can see. This module lets a model
-discover that a secret exists, read its safe description, and attach or detach it from an opaque
-scope the host defines — while the value stays entirely on the host side, reachable only through a
-trusted-host method the module deliberately does not expose as a tool.
+import a complete environment bundle from a reviewed host-side `.env` path, discover that a secret
+exists, read its safe description, and attach or detach it from an opaque scope the host defines —
+while the value stays entirely on the host side.
 
-The module never edits `process.env`, starts a process, or decides how a host applies a resolved
-value to a command. Values are confined to the module's own SQLite-backed catalog; they never enter
-an event, model-facing result, or tool argument.
+The module never edits `process.env` or starts a process. Values are confined to the module's own
+SQLite-backed catalog; they never enter an event, model-facing result, or tool argument. The
+Compute module asks it for one selected command environment immediately before spawning that
+command.
 
 A mutation simply overwrites. Calling `register`, `update`, `attach`, or `detach` again — with the
 same value or a different one — applies again and succeeds; the store carries no retry ledger, and
 there is no way for a repeated call to be rejected because it "reused an identity" or "changed the
-input." A retried tool call is safe by construction: it just re-runs the write.
+input." Metadata and attachment tools are durable. Dotenv imports are deliberately non-durable
+because an external file could change between the original invocation and a restart.
 
 ```ts
 import { Agent } from "@slopus/happy-agent-base";
@@ -27,6 +29,8 @@ const agent = await Agent.create(ctx, { ...options, modules: [secrets] });
 The constructor takes nothing. The catalog, the clock, and identity generation are the module's own,
 and its bounds are fixed constants it exports so a caller can read them but not change them:
 
+- `GLOBAL_SECRET_OWNER_ID` (`"global"`) — the stable owner used by every agent tool and by default
+  command resolution, making the product catalog installation-wide.
 - `SECRETS_PAGE_SIZE` (50) — how many references one page returns when the caller does not ask for
   fewer.
 - `SECRETS_OUTPUT_CHARACTERS` (12,000) — the character budget every model-facing secrets result is
@@ -34,12 +38,15 @@ and its bounds are fixed constants it exports so a caller can read them but not 
 
 ## Authorization
 
-There is no authorization policy and no policy seam. Every method takes the acting agent's ID, and
-that ID is the whole of the policy: an agent sees, mutates, and resolves only the secrets registered
-under its own ID. Another agent's `reference` returns `undefined`, its `list` returns an empty page,
-its `resolveForHost` returns an empty environment, and its `attach` fails because the reference does
-not exist for it. Beyond that, and beyond the `availableToModel` flag that keeps host-only
-credentials out of agent commands and the reserved `github` / `project-git` IDs, nothing is denied.
+The Happy Agent product catalog is global to the installation. Every agent's secret tools read and
+mutate the same catalog under `GLOBAL_SECRET_OWNER_ID`; an agent ID is instead the attachment scope
+used by that agent's command host. Attaching a global reference to one agent does not automatically
+attach it to another.
+
+The lower-level storage methods retain an opaque owner-ID parameter so the module boundary remains
+explicit. Product integrations use `GLOBAL_SECRET_OWNER_ID` there. Beyond the reviewed attachment
+decision, the `availableToModel` flag that keeps host-only credentials out of agent commands, and
+the reserved `github` / `project-git` IDs, there is no additional authorization policy.
 
 ```text
 model ── safe references/attachments ──> SecretsModule ── host-only values ──> command host
@@ -49,11 +56,13 @@ model ── safe references/attachments ──> SecretsModule ── host-only 
 
 ## Tools it provides to the model
 
-The module offers four tools, all common (provider-neutral) and all `durable: true`, so a retried
-tool call simply re-runs the underlying overwrite. None of them can reach the value-bearing methods:
-`resolveForHost` and `resolveForCommand` are intentionally not tools. Every tool sets
-`shouldReviewInAutoMode: () => false`,
-since none of them can leak a value or touch anything outside the secret catalog.
+The module offers six common (provider-neutral) tools. None can return values or reach the
+value-bearing resolution methods: `resolveForHost` and `resolveForCommand` are intentionally not
+tools. Metadata-only listing and reference reads do not require Auto review. Creation and update,
+which import from an absolute host `.env` path, always require Auto review and temporarily run with
+Full access for that file read. They do not attach the resulting reference. Attach and detach also
+always require review because they grant or revoke a scope's later access to a credential, but
+those catalog-only mutations stay in the current sandbox.
 
 - **`list_secrets`** — lists a bounded page of safe metadata. Arguments: `limit`
   (1–`SECRETS_PAGE_SIZE`, defaults to `SECRETS_PAGE_SIZE`), `cursor` (an integer offset into the
@@ -66,7 +75,19 @@ since none of them can leak a value or touch anything outside the secret catalog
   still names every secret, so the model never loses an identity it could act on; a `next=<cursor>`
   line is appended only when a further page exists.
 - **`reference_secret`** — reads one safe reference by `id` and returns `{ secret: reference | null }`.
-  `null` means no such secret is registered under the acting agent's ID.
+  `null` means no such secret is registered in the shared catalog.
+- **`create_secret`** — creates or replaces a global secret from `dotenvFile`, an absolute path to a
+  UTF-8 dotenv file no larger than 1 MiB. Arguments also include the stable `id`, a safe
+  `description`, and optional `availableToModel`. The reviewed invocation reads and validates the
+  file host-side, stores its complete environment bundle, and returns `{ secret: reference }`.
+  Values do not enter the tool arguments, permission description, result, or model output. The
+  tool is non-durable because its external source may change after an interrupted call.
+- **`update_secret`** — updates an existing global secret from `dotenvFile`, with optional
+  `description` and `availableToModel`. The file replaces the complete environment bundle;
+  variables absent from it are removed, while an existing variable's casing remains stable. It
+  returns `{ secret: reference | null }`, where `null` means the ID was not registered. Existing
+  attachments are unchanged. This tool has the same review, temporary Full-access, size, value
+  isolation, and non-durability behavior as `create_secret`.
 - **`attach_secret`** — attaches a registered model-available secret to a `scopeRef`, changing what
   is _available_, never returning a value. Arguments are `scopeRef` and `secretId`. On success the
   model is told which secret was attached to which scope and shown that secret's reference; the
@@ -75,8 +96,9 @@ since none of them can leak a value or touch anything outside the secret catalog
 - **`detach_secret`** — detaches a `{ scopeRef, secretId }` pair and reports only `detached: boolean`
   plus the two identifiers, never a value.
 
-Governing principles across all four: ownership is the acting agent's ID and nothing else; every
-list and lookup is bounded by `SECRETS_PAGE_SIZE` and
+Governing principles across all six: the catalog owner is `GLOBAL_SECRET_OWNER_ID`, while
+`scopeRef` controls attachment availability; every list and lookup is bounded by
+`SECRETS_PAGE_SIZE` and
 `SECRETS_OUTPUT_CHARACTERS`; paging is a monotonically progressing integer cursor the store advances
 by exactly the number of rows returned; and no schema, tool result, or formatted string produced
 for the model carries a secret value — `secretReferenceSchema` has, by design, no value-bearing
@@ -85,7 +107,8 @@ property.
 ## External functions
 
 `SecretsModule` is a class; a host or another module calls its methods directly with a `Context`
-and the acting agent's ID, the same way the tools do internally.
+and an opaque catalog owner ID. Happy Agent integrations pass `GLOBAL_SECRET_OWNER_ID`; the agent ID
+is passed separately as `scopeRef` when attaching or resolving command secrets.
 
 - `list(ctx, actingAgentId, query?: SecretListInput): Promise<SecretPage>` — the same bounded,
   size-shrinking page logic the `list_secrets` tool uses.
@@ -94,8 +117,8 @@ and the acting agent's ID, the same way the tools do internally.
 - `register(ctx, actingAgentId, input: SecretRegistrationInput): Promise<SecretReference>` —
   registers a secret (host values plus description) and returns only its safe reference. A repeated
   call with an explicit `id` overwrites that secret's description and environment; a repeated call
-  that omits `id` registers a new secret under a freshly generated one each time. Not exposed as a
-  tool: registration is a host operation.
+  that omits `id` registers a new secret under a freshly generated one each time. The
+  `create_secret` tool calls this only after it has read a reviewed dotenv source host-side.
 - `update(ctx, actingAgentId, secretId, input: SecretUpdateInput): Promise<SecretReference | undefined>`
   — patches `description`, `environment` (a `null` value removes that variable), and/or
   `availableToModel`; `undefined` if the secret does not exist. A repeated call with the same patch
@@ -123,6 +146,16 @@ and the acting agent's ID, the same way the tools do internally.
 Resolution rejects a case-insensitive environment-name collision between selected secrets rather
 than applying silent last-write-wins. The command host owns the final merge with its ambient
 environment; the module supplies the names that must be hidden first.
+
+For the default host shell, references come from the global catalog and the acting agent ID is the
+command attachment scope. The model attaches a reference to that exact scope, then names only the
+required IDs in the shell command's `secrets` argument. Omitted or empty means no secret bundles.
+Before spawning, Compute removes all environment-variable names belonging to attached bundles from
+the ambient environment case-insensitively, then adds only the selected values. Selection is
+reviewed but stays inside the current sandbox. The shell tool's explicit escalation argument
+independently requests Full access, so credential provisioning and elevation may be used separately
+or together. Input sent later to a secret-bearing background command is reviewed and continues
+under the process's existing boundary.
 
 Every mutating method (`register`, `update`, `remove`, `attach`/`attachWithReference`, `detach`)
 runs inside the Agent Base transaction, emitting one `SecretEvent` (`secret_registered`, `secret_updated`,
@@ -172,8 +205,9 @@ those IDs belong to managed host credentials.
 
 The legacy `request_secret` interaction is intentionally not a secrets-catalog operation. Asking a
 person to enter or update a value belongs in the User Input module/client broker; this module only
-stores or resolves a value after the host has supplied it.
+stores or resolves a value after the host has supplied it. The model-facing creation and update
+tools accept a host dotenv path, never an inline value.
 
-Host integration debt remains for GitHub CLI token synchronization and the managed `project-git`
+Specialized host integration debt remains for GitHub CLI token synchronization and the managed `project-git`
 credential-proxy lease (`trustedLoopbackPorts`); those are not flat environment bundles and must be
 owned by host infrastructure.

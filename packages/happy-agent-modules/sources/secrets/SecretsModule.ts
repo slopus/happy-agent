@@ -65,14 +65,18 @@ import {
     type SecretUnsubscribe,
 } from "./SecretEvent.js";
 import { attachSecretTool } from "./tools/attach_secret.js";
+import { createSecretTool } from "./tools/create_secret.js";
 import { detachSecretTool } from "./tools/detach_secret.js";
 import { listSecretsTool } from "./tools/list_secrets.js";
 import { referenceSecretTool } from "./tools/reference_secret.js";
+import { updateSecretTool } from "./tools/update_secret.js";
 
 /** How many references one page returns when the caller does not ask for fewer. */
 export const SECRETS_PAGE_SIZE = 50;
 /** The character budget every model-facing secrets result is trimmed to fit. */
 export const SECRETS_OUTPUT_CHARACTERS = 12_000;
+/** Stable owner of the installation-wide catalog used by agent tools and command resolution. */
+export const GLOBAL_SECRET_OWNER_ID = "global";
 /** The most secrets one resolver selection may name. */
 const MAX_SECRET_LIST_ITEMS = 256;
 
@@ -88,10 +92,9 @@ type SecretChange<Result> = {
  * SQLite catalog, through `resolveForHost` and `resolveForCommand`; both are deliberately not
  * exposed as tools, and nothing outside the module supplies or intercepts a value.
  *
- * The catalog is keyed by the acting agent's ID, which is what keeps one agent's secrets away from
- * another's. Beyond that there is no authorization policy: any caller already holding the acting
- * agent's identity may list, read, register, update, remove, attach, detach, and resolve that
- * agent's secrets.
+ * Storage operations remain keyed by an opaque owner ID. Happy Agent's tools and command host use
+ * one stable global owner for their shared installation catalog, while agent IDs identify the
+ * scopes to which references are attached.
  *
  * Every mutation simply overwrites: calling `register`, `update`, `attach`, or `detach` again with
  * the same or a different value applies again and succeeds. There is no retry ledger.
@@ -562,17 +565,23 @@ export class SecretsModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        /** Common provider-neutral tools. None can call the raw host resolver. */
-        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
-            listSecretsTool(this, scope.agent.id),
-            referenceSecretTool(this, scope.agent.id),
-            attachSecretTool(this, scope.agent.id),
-            detachSecretTool(this, scope.agent.id),
+        /** Common provider-neutral tools over the installation-wide catalog. */
+        tools: (_ctx: Context, _scope: AgentModuleScope): readonly AnyAgentTool[] => [
+            listSecretsTool(this, GLOBAL_SECRET_OWNER_ID),
+            referenceSecretTool(this, GLOBAL_SECRET_OWNER_ID),
+            createSecretTool(this, GLOBAL_SECRET_OWNER_ID),
+            updateSecretTool(this, GLOBAL_SECRET_OWNER_ID),
+            attachSecretTool(this, GLOBAL_SECRET_OWNER_ID),
+            detachSecretTool(this, GLOBAL_SECRET_OWNER_ID),
         ],
 
-        /** Tell the model that metadata is available while values remain host-only. */
-        instructions: async (): Promise<string> =>
-            "Secret tools expose references and environment-variable names only. Secret values are available only to the host and must never be requested in chat, tool arguments, or model output.",
+        /** Tell the model how safe references become one command's host-only environment. */
+        instructions: async (_ctx: Context, scope: AgentModuleScope): Promise<string> =>
+            [
+                "Secret tools expose the shared installation catalog's references and environment-variable names only. Secret values are available only to the host and must never be requested in chat, tool arguments, or model output.",
+                "Create or update a global secret from an absolute host .env path; the reviewed tool reads its values host-side and never returns them. Creating or updating does not attach the reference to an agent.",
+                `This agent's shell-command attachment scope is ${JSON.stringify(scope.agent.id)}. Attach a model-available reference to that exact scope, then put only the secret IDs one shell command needs in its secrets argument. Omit secrets or use an empty array for none. Secret selection is reviewed but stays inside the current sandbox; requesting elevated permissions is a separate choice, and the two may be used independently or together.`,
+            ].join(" "),
     };
 
     readonly beforeStart = (): AgentModuleHooks => this.#hooks;

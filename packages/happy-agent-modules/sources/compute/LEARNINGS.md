@@ -1,5 +1,22 @@
 # Compute module learnings
 
+## Secret attachments are selected per command and resolved at spawn
+
+Shell tools carry only attached secret bundle IDs. The default host machine resolves those IDs
+through `SecretsModule` immediately before spawning and gives the process a one-command environment;
+values never cross a model-facing schema or compute result. Before selected values are added, every
+environment-variable name belonging to any bundle attached to that command scope is removed from
+the ambient environment case-insensitively. Omitted and empty selections therefore mean no secrets
+and cannot inherit an attached value accidentally.
+
+The catalog has one installation-wide owner; the acting agent ID is only the default host command
+scope. Secret provisioning and sandbox elevation are independent permission decisions. A non-empty
+selection triggers Auto review but keeps the command in its current sandbox; only the vendor's
+explicit escalation argument requests temporary Full access. Either may be used alone or both may
+be used together. A background session records whether it holds secrets so later reviewed input can
+disclose that fact, but input continues under the process's existing boundary. Alternate compute
+providers receive the selected IDs unchanged and own their own resolution boundary.
+
 ## Reloadable reads must be replay-safe in every permission mode
 
 Idempotent file inspection tools are both durable and reloadable. A graceful daemon reload may

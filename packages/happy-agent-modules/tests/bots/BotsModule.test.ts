@@ -15,6 +15,7 @@ import {
     type BotEvent,
 } from "../../sources/bots/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
@@ -349,7 +350,7 @@ async function started(name: string, workspacesEnabled: boolean) {
     );
     const database = moduleDatabase(botMigrations, name);
     await database.ready;
-    const compute = new ComputeModule(config);
+    const compute = new ComputeModule(config, new SecretsModule());
     const abort = new AbortModule(compute);
     const agents = new BotAgents();
     abort.beforeStart(database.context, agents.asRef());

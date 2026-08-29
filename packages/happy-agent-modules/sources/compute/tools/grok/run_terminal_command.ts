@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
+import { secretIdSchema } from "../../../secrets/index.js";
 import type { Compute } from "../../Compute.js";
 import { boundOutputText } from "../../impl/boundOutputText.js";
 import {
@@ -32,6 +33,7 @@ Usage notes:
 - Use background for long-running commands such as development servers and long builds. It waits about ${String(COMPUTE_BACKGROUND_GRACE_MS / 1_000)} seconds to see that the command did not fall over; do not add '&' to the command.
 - Read a background command with get_command_or_subagent_output, type into it with send_command_input, and stop it with kill_command_or_subagent.
 - Environment variables and shell functions do not carry over between commands.
+- Use secrets to select only the attached secret bundles this command needs as environment variables. Selection is reviewed separately and stays sandboxed unless sandbox_permissions also requests escalation.
 - Output may be truncated before it is returned.`,
         parameters: Type.Object(
             {
@@ -65,6 +67,14 @@ Usage notes:
                             "Request reviewed execution outside the workspace sandbox in Auto mode. Defaults to use_default.",
                     }),
                 ),
+                secrets: Type.Optional(
+                    Type.Array(secretIdSchema, {
+                        description:
+                            "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none.",
+                        maxItems: 256,
+                        uniqueItems: true,
+                    }),
+                ),
             },
             { additionalProperties: false },
         ),
@@ -75,23 +85,24 @@ Usage notes:
         // Running a command changes the machine, so it cannot be replayed after a restart.
         durable: false,
         autoPermissionInstructions:
-            'For run_terminal_command, request full-access execution with sandbox_permissions: "require_escalated" and say in the description why the sandbox has to be left. Keep sandbox_permissions at "use_default" or omit it for ordinary commands, which stay sandboxed.',
-        describeAutoPermissionAction: ({ command, description, sandbox_permissions }) =>
+            'For run_terminal_command, request full-access execution with sandbox_permissions: "require_escalated" and say in the description why the sandbox has to be left. Keep sandbox_permissions at "use_default" or omit it to stay sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together.',
+        describeAutoPermissionAction: ({ command, description, sandbox_permissions, secrets }) =>
             `running ${JSON.stringify(command)} in ${JSON.stringify(compute.cwd)} ${
                 sandbox_permissions === "require_escalated"
                     ? "outside the workspace sandbox, with unrestricted filesystem and network access"
                     : "inside the current workspace sandbox"
-            }. Reason given: ${description}`,
-        // A sandboxed command is the ordinary case and needs no reviewer; leaving the sandbox is
-        // the whole of what one is asked about here, and the reason travels in the description.
-        shouldReviewInAutoMode: ({ sandbox_permissions }) =>
-            sandbox_permissions === "require_escalated",
+            }${describeSecretSelection(secrets)}. Reason given: ${description}`,
+        // Secret provisioning and leaving the sandbox are both reviewed. Only the explicit
+        // escalation argument widens the command's execution boundary.
+        shouldReviewInAutoMode: ({ sandbox_permissions, secrets }) =>
+            sandbox_permissions === "require_escalated" || hasSecrets(secrets),
         shouldRunInFullAccessInAutoMode: ({ sandbox_permissions }) =>
             sandbox_permissions === "require_escalated",
-        execute: async (ctx, { command, background, timeout, tty }) => {
+        execute: async (ctx, { command, background, secrets, timeout, tty }) => {
             const outcome = await startComputeCommand(compute, ctx, {
                 command,
                 ...(background === undefined ? {} : { background }),
+                ...(secrets === undefined ? {} : { secrets }),
                 ...(tty === undefined ? {} : { tty }),
                 waitMs: timeout === undefined || timeout === 0 ? DEFAULT_TIMEOUT_MS : timeout,
             });
@@ -130,4 +141,14 @@ Usage notes:
         },
         toLLM: (result) => [{ type: "text", text: result.text }],
     });
+}
+
+function hasSecrets(secrets: readonly string[] | undefined): boolean {
+    return (secrets?.length ?? 0) > 0;
+}
+
+function describeSecretSelection(secrets: readonly string[] | undefined): string {
+    return hasSecrets(secrets)
+        ? `. Secret environment bundles: ${(secrets ?? []).map((id) => JSON.stringify(id)).join(", ")}`
+        : ". Secret environment bundles: none";
 }

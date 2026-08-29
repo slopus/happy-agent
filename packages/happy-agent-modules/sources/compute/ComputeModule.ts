@@ -1,4 +1,5 @@
 import {
+    agentDatabase,
     agentModuleConfig,
     type AgentKV,
     type AgentModule,
@@ -6,6 +7,7 @@ import {
     type AgentModuleScope,
     type AgentModuleSystemScope,
     type AnyAgentTool,
+    withAgentDatabase,
 } from "@slopus/happy-agent-base";
 import {
     createHostCompute,
@@ -24,6 +26,7 @@ import { detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.ki
 
 import type { ConfigModule } from "../config/index.js";
 import { FileReadLog } from "../impl/FileReadLog.js";
+import type { SecretsModule } from "../secrets/index.js";
 import type {
     ComputePermissions,
     ComputeSessionActivity,
@@ -38,6 +41,7 @@ import { ComputeProcessRegistry } from "./ComputeProcessRegistry.js";
 import { computeToolVendor, type ComputeToolVendor } from "./ComputeToolVendor.js";
 import { computeInstructionsForVendor } from "./impl/computeInstructionsForVendor.js";
 import { computePermissionsForContext } from "./impl/computePermissionsForContext.js";
+import { createAttachedSecretsHostShell } from "./impl/createAttachedSecretsHostShell.js";
 import { describeComputePathAction } from "./impl/describeComputePathAction.js";
 import {
     basenameComputePath,
@@ -187,14 +191,17 @@ export interface ComputeAbortSnapshot {
  * creates one host compute for that agent through the global provider, and retains that exact
  * instance in memory for every module and tool serving the same agent.
  *
- * The module is built from the configuration alone. The boundary a restricted command runs inside
- * — which directories are the product's own, which project files decide what later commands may do
- * — is a fact about this installation's layout and settings, so it is derived here from the config
- * module that owns those paths rather than handed in by whoever assembles the agent.
+ * The module is built from the configuration and secrets modules. The boundary a restricted
+ * command runs inside — which directories are the product's own, which project files decide what
+ * later commands may do — is a fact about this installation's layout and settings, so it is
+ * derived here from the config module that owns those paths. Secret bundle IDs are resolved by the
+ * secrets module immediately before a command starts, so values never enter a model-facing tool
+ * argument.
  */
 export class ComputeModule implements AgentModule {
     readonly name = "compute";
     readonly #config: ConfigModule;
+    readonly #secrets: SecretsModule;
     /** Present only for the named alternate construction used by scripted machines. */
     #provider: HostComputeProvider | undefined;
     readonly #computes = new Map<string, CachedCompute>();
@@ -218,8 +225,9 @@ export class ComputeModule implements AgentModule {
     #closed = false;
     #disposePromise: Promise<void> | undefined;
 
-    constructor(config: ConfigModule) {
+    constructor(config: ConfigModule, secrets: SecretsModule) {
         this.#config = config;
+        this.#secrets = secrets;
         this.#provider = undefined;
     }
 
@@ -231,12 +239,16 @@ export class ComputeModule implements AgentModule {
      * machine that is not the host it started on. The boundary policy still comes from the
      * configuration, so a swapped machine is a different machine and not a different set of rules.
      */
-    static withProvider(config: ConfigModule, provider: HostComputeProvider): ComputeModule {
+    static withProvider(
+        config: ConfigModule,
+        secrets: SecretsModule,
+        provider: HostComputeProvider,
+    ): ComputeModule {
         const candidate = { id: provider.id, create: provider.create };
         if (!Value.Check(hostComputeProviderSchema, candidate)) {
             throw new Error("The host compute provider is invalid.");
         }
-        const module = new ComputeModule(config);
+        const module = new ComputeModule(config, secrets);
         module.#provider = provider;
         return module;
     }
@@ -269,7 +281,12 @@ export class ComputeModule implements AgentModule {
                     return existing.compute;
                 }
 
-                const created = await this.#create(lockCtx, config, `compute.agent.${agentId}`);
+                const created = await this.#create(
+                    lockCtx,
+                    config,
+                    `compute.agent.${agentId}`,
+                    agentId,
+                );
                 const { compute } = created;
                 if (this.#closed) {
                     await compute.dispose(lockCtx);
@@ -672,6 +689,7 @@ export class ComputeModule implements AgentModule {
         ctx: Context,
         config: AgentComputeConfig,
         lifetimeName: string,
+        agentId?: string,
     ): Promise<{
         readonly compute: HostCompute;
         readonly processContext: Context;
@@ -681,7 +699,12 @@ export class ComputeModule implements AgentModule {
             cwd: config.cwd,
             hostPolicy: this.hostPolicy,
         };
-        const processContext = detach(ctx).named(lifetimeName);
+        const detachedProcessContext = detach(ctx).named(lifetimeName);
+        const database = agentDatabase(ctx);
+        const processContext =
+            database === undefined
+                ? detachedProcessContext
+                : withAgentDatabase(detachedProcessContext, database);
         const processManager =
             this.#provider === undefined ? new NativeProcessManager(processContext) : undefined;
         const compute =
@@ -705,17 +728,33 @@ export class ComputeModule implements AgentModule {
             await compute.dispose(ctx);
             throw new Error("Host compute provider returned mismatched working directories.");
         }
-        const hostCompute = compute as HostCompute;
+        const validatedCompute = compute as HostCompute;
         if (processManager === undefined) {
-            return { compute: hostCompute, processContext, processManager: undefined };
+            return { compute: validatedCompute, processContext, processManager: undefined };
         }
-        const originalDispose = hostCompute.dispose.bind(hostCompute);
-        hostCompute.dispose = async (disposeCtx: Context): Promise<void> => {
-            await originalDispose(disposeCtx);
-            await processManager.killAll(processContext, {
-                forceAfterMs: HOST_SESSION_STOP_GRACE_MS,
-                includeDetached: true,
-            });
+        const originalDispose = validatedCompute.dispose.bind(validatedCompute);
+        const shell =
+            agentId === undefined || database === undefined
+                ? validatedCompute.shell
+                : createAttachedSecretsHostShell({
+                      agentId,
+                      ctx: processContext,
+                      cwd: config.cwd,
+                      hostPolicy: this.hostPolicy,
+                      processManager,
+                      secrets: this.#secrets,
+                  });
+        const hostCompute: HostCompute = {
+            ...validatedCompute,
+            shell,
+            async dispose(disposeCtx: Context): Promise<void> {
+                await shell.killAllSessions?.();
+                await originalDispose(disposeCtx);
+                await processManager.killAll(processContext, {
+                    forceAfterMs: HOST_SESSION_STOP_GRACE_MS,
+                    includeDetached: true,
+                });
+            },
         };
         return { compute: hostCompute, processContext, processManager };
     }

@@ -14,6 +14,7 @@ import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js"
 import { ConfigModule } from "../../sources/config/ConfigModule.js";
 import { GitModule } from "../../sources/git/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { TitlesModule } from "../../sources/titles/TitlesModule.js";
 import { WorkspacesModule } from "../../sources/workspaces/WorkspacesModule.js";
 import { temporaryTestConfig } from "../support/configModule.js";
@@ -68,7 +69,7 @@ async function titles(script: SessionEvent[][], catalog: AgentModel[] = models()
         config,
         projectsModuleFor(config, git),
         git,
-        new AbortModule(new ComputeModule(config)),
+        new AbortModule(new ComputeModule(config, new SecretsModule())),
         new DurableFunctionsModule(),
     );
     const module = new TitlesModule(config, new HistoryModule(), workspaces);

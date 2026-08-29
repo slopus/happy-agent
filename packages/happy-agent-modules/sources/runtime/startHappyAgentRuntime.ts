@@ -358,11 +358,12 @@ export async function startHappyAgentRuntime(
             backgroundTasks.set(task, name);
         };
 
+        const secrets = new SecretsModule();
         const suppliedCompute = options.compute;
         const computeModule =
             suppliedCompute === undefined
-                ? new ComputeModule(config)
-                : ComputeModule.withProvider(config, {
+                ? new ComputeModule(config, secrets)
+                : ComputeModule.withProvider(config, secrets, {
                       id: "host",
                       create: async (computeCtx: Context, computeConfig: HostComputeConfig) =>
                           (await suppliedCompute(computeCtx, computeConfig)) as HostCompute,
@@ -458,7 +459,6 @@ export async function startHappyAgentRuntime(
         const modelSwitch = new ModelSwitchModule(history);
         const toolDiscovery = new ToolDiscoveryModule();
         const search = new SearchModule(config);
-        const secrets = new SecretsModule();
         const tasks = new TasksModule();
         const usage = new UsageModule(events);
         const compactions = new CompactionsModule(events, usage, history);

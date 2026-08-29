@@ -13,6 +13,7 @@ import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it, vi } from "vitest";
 
 import { ComputeModule, type ComputeProcessEvent } from "../../sources/compute/index.js";
+import { SecretsModule } from "../../sources/secrets/index.js";
 import { InMemoryPersistence } from "../support/InMemoryPersistence.js";
 import { testConfig } from "../support/computeModule.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
@@ -24,7 +25,7 @@ const permissions = computePermissions("full_access");
 describe("ComputeModule abort cleanup", () => {
     it("marks process state exited and sends SIGKILL to the complete process group", async () => {
         const cwd = await mkdtemp(join(tmpdir(), "compute-abort-"));
-        const module = new ComputeModule(testConfig);
+        const module = new ComputeModule(testConfig, new SecretsModule());
         const agentId = "abort-agent";
         const agentCtx = withAgentConfig(ctx, {
             modules: { compute: { cwd } },
@@ -107,7 +108,7 @@ describe("ComputeModule abort cleanup", () => {
             );
             return sessions.length;
         };
-        const module = ComputeModule.withProvider(testConfig, {
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), {
             id: "host",
             create: async () => compute,
         });
@@ -151,7 +152,7 @@ describe("ComputeModule abort cleanup", () => {
     it("stores one-shot kill notices in Compute's shared KV and prepends them from the instructions hook", async () => {
         const compute = new FakeCompute();
         compute.script("pnpm dev", { keepRunning: true });
-        const module = ComputeModule.withProvider(testConfig, {
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), {
             id: "host",
             create: async () => compute,
         });

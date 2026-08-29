@@ -7,6 +7,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import { ComputeModule, type HostCompute } from "../../../sources/compute/index.js";
 import { ConfigModule } from "../../../sources/config/index.js";
+import { SecretsModule } from "../../../sources/secrets/index.js";
 import { SystemPromptModule } from "../../../sources/systemPrompt/index.js";
 
 /** A catalog entry shaped the way an account reports one. */
@@ -88,7 +89,7 @@ class WorldComputeModule extends ComputeModule {
         config: ConfigModule,
         resolve: (ctx: Context, agentId: string) => Promise<HostCompute | undefined>,
     ) {
-        super(config);
+        super(config, new SecretsModule());
         this.#resolve = resolve;
     }
 

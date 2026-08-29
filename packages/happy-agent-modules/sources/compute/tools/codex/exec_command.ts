@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
+import { secretIdSchema } from "../../../secrets/index.js";
 import type { Compute } from "../../Compute.js";
 import { startComputeCommand } from "../../impl/startComputeCommand.js";
 import {
@@ -72,6 +73,14 @@ export function codexExecCommandTool(compute: Compute) {
                             "Concise user-facing reason why sandbox escalation is needed. Use only with require_escalated.",
                     }),
                 ),
+                secrets: Type.Optional(
+                    Type.Array(secretIdSchema, {
+                        description:
+                            "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none. Selection is reviewed in Auto mode but does not leave the sandbox.",
+                        maxItems: 256,
+                        uniqueItems: true,
+                    }),
+                ),
             },
             { additionalProperties: false },
         ),
@@ -80,11 +89,12 @@ export function codexExecCommandTool(compute: Compute) {
         // running it again after a restart would be a second, different command.
         durable: false,
         autoPermissionInstructions:
-            'For exec_command, request full-access execution with sandbox_permissions: "require_escalated" and include a concise justification. Keep sandbox_permissions at "use_default" or omit it for ordinary commands.',
+            'For exec_command, request full-access execution with sandbox_permissions: "require_escalated" and include a concise justification. Keep sandbox_permissions at "use_default" or omit it to stay sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together.',
         describeAutoPermissionAction: ({
             cmd,
             justification,
             sandbox_permissions,
+            secrets,
             shell,
             workdir,
         }) =>
@@ -92,18 +102,24 @@ export function codexExecCommandTool(compute: Compute) {
                 sandbox_permissions === "require_escalated"
                     ? "unrestricted filesystem and network access outside the workspace sandbox"
                     : "the current workspace sandbox"
-            }${justification === undefined ? "" : `. Reason given: ${justification}`}`,
-        // A sandboxed command is the ordinary case and needs no reviewer; leaving the sandbox is
-        // the whole of what one is asked about here.
-        shouldReviewInAutoMode: ({ sandbox_permissions }) =>
-            sandbox_permissions === "require_escalated",
+            }${describeSecretSelection(secrets)}${
+                justification === undefined ? "" : `. Reason given: ${justification}`
+            }`,
+        // Secret provisioning and leaving the sandbox are both reviewed. Only the explicit
+        // escalation argument widens the command's execution boundary.
+        shouldReviewInAutoMode: ({ sandbox_permissions, secrets }) =>
+            sandbox_permissions === "require_escalated" || hasSecrets(secrets),
         shouldRunInFullAccessInAutoMode: ({ sandbox_permissions }) =>
             sandbox_permissions === "require_escalated",
-        execute: async (ctx, { cmd, max_output_tokens, shell, tty, workdir, yield_time_ms }) => {
+        execute: async (
+            ctx,
+            { cmd, max_output_tokens, secrets, shell, tty, workdir, yield_time_ms },
+        ) => {
             const { snapshot, wallTimeSeconds } = await startComputeCommand(compute, ctx, {
                 command: cmd,
                 ...(workdir === undefined ? {} : { workdir }),
                 ...(shell === undefined ? {} : { shell }),
+                ...(secrets === undefined ? {} : { secrets }),
                 ...(tty === undefined ? {} : { tty }),
                 maxOutputBytes: CODEX_UNIFIED_EXEC_CAPTURE_MAX_BYTES,
                 waitMs: Math.max(
@@ -116,4 +132,14 @@ export function codexExecCommandTool(compute: Compute) {
         isError: (result) => result.exit_code !== undefined && result.exit_code !== 0,
         toLLM: (result) => [{ type: "text", text: formatUnifiedExecOutput(result) }],
     });
+}
+
+function hasSecrets(secrets: readonly string[] | undefined): boolean {
+    return (secrets?.length ?? 0) > 0;
+}
+
+function describeSecretSelection(secrets: readonly string[] | undefined): string {
+    return hasSecrets(secrets)
+        ? `. Secret environment bundles: ${(secrets ?? []).map((id) => JSON.stringify(id)).join(", ")}`
+        : ". Secret environment bundles: none";
 }
