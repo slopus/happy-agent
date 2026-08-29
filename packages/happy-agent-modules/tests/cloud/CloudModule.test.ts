@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     CloudModule,
     CloudOperationError,
+    CloudStorageConflictError,
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
@@ -924,6 +925,97 @@ describe("CloudModule", () => {
         expect(workos.refresh).toHaveBeenCalledWith({ refreshToken: "refresh-a" });
         expect(events.length).toBeGreaterThanOrEqual(2);
         unsubscribe();
+    });
+
+    it("exposes authenticated Cloud storage reads and conditional writes", async () => {
+        const { database, module } = await fixture("cloud-module-storage-values");
+        const first = new Uint8Array([0, 1, 127, 128, 255]);
+        const firstSha256 = "1".repeat(64);
+        const firstVersion = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const second = new Uint8Array([9, 8, 7]);
+        const secondSha256 = "2".repeat(64);
+        const secondVersion = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            expect(url.pathname).toBe("/v0/storage");
+            expect(url.searchParams.get("key")).toBe("folder/binary key");
+            if (init?.method === "GET") {
+                return new Response(first, {
+                    headers: {
+                        "content-type": "application/octet-stream",
+                        etag: `"${firstSha256}"`,
+                        "x-happy-cloud-version": firstVersion,
+                    },
+                });
+            }
+            return Response.json(
+                { sha256: secondSha256, version: secondVersion },
+                {
+                    headers: {
+                        etag: `"${secondSha256}"`,
+                        "x-happy-cloud-version": secondVersion,
+                    },
+                },
+            );
+        });
+        await connect(module, database);
+
+        await expect(module.readValue(database.context, "folder/binary key")).resolves.toEqual({
+            sha256: firstSha256,
+            value: first,
+            version: firstVersion,
+        });
+        await expect(
+            module.writeValue(database.context, "folder/binary key", second, {
+                kind: "sha256",
+                sha256: firstSha256,
+            }),
+        ).resolves.toEqual({ sha256: secondSha256, version: secondVersion });
+
+        const storageCalls = vi
+            .mocked(fetch)
+            .mock.calls.filter(([input]) => new URL(String(input)).pathname === "/v0/storage");
+        expect(storageCalls.map(([, init]) => init?.method)).toEqual(["GET", "PUT"]);
+        expect(new Headers(storageCalls[1]?.[1]?.headers).get("if-match")).toBe(`"${firstSha256}"`);
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "refresh-b",
+        );
+    });
+
+    it("maps a lost Cloud storage compare to a conflict with current metadata", async () => {
+        const { database, module } = await fixture("cloud-module-storage-conflict");
+        const current = {
+            sha256: "3".repeat(64),
+            version: "01991f3a-5c1e-7002-8000-2f9a1b3c4d5e",
+        };
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/v0/hello") {
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            return Response.json(
+                { error: "precondition_failed", ...current },
+                {
+                    headers: {
+                        etag: `"${current.sha256}"`,
+                        "x-happy-cloud-version": current.version,
+                    },
+                    status: 412,
+                },
+            );
+        });
+        await connect(module, database);
+
+        await expect(
+            module.writeValue(database.context, "state", new Uint8Array(), { kind: "empty" }),
+        ).rejects.toMatchObject({
+            code: "conflict",
+            current,
+            status: 409,
+        } satisfies Partial<CloudStorageConflictError>);
     });
 
     it("reads and updates the durable Cloud profile through rotated credentials", async () => {

@@ -23,7 +23,7 @@ import {
 import { WorkOS } from "@workos-inc/node";
 import { describe, expect, test, vi } from "vitest";
 
-import { CloudModule } from "../../sources/cloud/CloudModule.js";
+import { CloudModule, CloudStorageConflictError } from "../../sources/cloud/CloudModule.js";
 import { cloudSession, createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
 import { createCloudDisconnectDatabase } from "../../sources/cloud/CloudDisconnectDatabase.js";
 import {
@@ -105,6 +105,10 @@ const credentials = stagingCredentials();
 
 function keyFactor(): string {
     return Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+}
+
+async function storageSha256(value: Uint8Array): Promise<string> {
+    return Buffer.from(await globalThis.crypto.subtle.digest("SHA-256", value)).toString("hex");
 }
 
 function deviceKey(value: Uint8Array): string {
@@ -453,6 +457,120 @@ async function receiveMessage(
 }
 
 describe.runIf(credentials !== undefined)("Happy Agent Cloud staging lifecycle", () => {
+    test(
+        "round-trips small and large binary values through account storage",
+        async () => {
+            const workos = new WorkOS({
+                apiKey: credentials!.workosApiKey,
+                clientId: WORKOS_CLIENT_ID,
+                maxRetries: 0,
+                timeout: REQUEST_TIMEOUT_MILLISECONDS,
+            });
+            const user = await createStagingUser(workos, "sv");
+            let instance: LiveCloudInstance | undefined;
+            try {
+                const authentication = await authenticate(workos, user);
+                instance = await openCloudInstance(
+                    "cloud-staging-storage-values",
+                    authentication,
+                    "new",
+                );
+                const ctx = instance.database.context;
+                const key = `live storage/${crypto.randomUUID()}/é`;
+                const small = new Uint8Array([0, 1, 2, 127, 128, 254, 255]);
+                const large = new Uint8Array(100 * 1_024 + 1);
+                for (let index = 0; index < large.byteLength; index += 1) {
+                    large[index] = index % 251;
+                }
+
+                await expect(instance.cloud.readValue(ctx, key)).resolves.toBeUndefined();
+
+                const smallWrite = await instance.cloud.writeValue(ctx, key, small);
+                expect(smallWrite.sha256).toBe(await storageSha256(small));
+                await expect(instance.cloud.readValue(ctx, key)).resolves.toEqual({
+                    ...smallWrite,
+                    value: small,
+                });
+
+                const largeWrite = await instance.cloud.writeValue(ctx, key, large);
+                expect(largeWrite.sha256).toBe(await storageSha256(large));
+                expect(largeWrite.version).not.toBe(smallWrite.version);
+                await expect(instance.cloud.readValue(ctx, key)).resolves.toEqual({
+                    ...largeWrite,
+                    value: large,
+                });
+            } finally {
+                await instance?.stop();
+                await cleanupStagingUser(workos, user);
+            }
+        },
+        LIVE_TEST_TIMEOUT_MILLISECONDS,
+    );
+
+    test(
+        "enforces empty-only and SHA-256 conditional storage writes",
+        async () => {
+            const workos = new WorkOS({
+                apiKey: credentials!.workosApiKey,
+                clientId: WORKOS_CLIENT_ID,
+                maxRetries: 0,
+                timeout: REQUEST_TIMEOUT_MILLISECONDS,
+            });
+            const user = await createStagingUser(workos, "sc");
+            let instance: LiveCloudInstance | undefined;
+            try {
+                const authentication = await authenticate(workos, user);
+                instance = await openCloudInstance(
+                    "cloud-staging-storage-conditions",
+                    authentication,
+                    "new",
+                );
+                const ctx = instance.database.context;
+                const key = `conditional/${crypto.randomUUID()}`;
+                const initial = new TextEncoder().encode("initial live Cloud value");
+                const replacement = new TextEncoder().encode("replacement live Cloud value");
+
+                const created = await instance.cloud.writeValue(ctx, key, initial, {
+                    kind: "empty",
+                });
+                expect(created.sha256).toBe(await storageSha256(initial));
+
+                await expect(
+                    instance.cloud.writeValue(ctx, key, replacement, { kind: "empty" }),
+                ).rejects.toMatchObject({
+                    code: "conflict",
+                    current: created,
+                    status: 409,
+                } satisfies Partial<CloudStorageConflictError>);
+                await expect(
+                    instance.cloud.writeValue(ctx, key, replacement, {
+                        kind: "sha256",
+                        sha256: "0".repeat(64),
+                    }),
+                ).rejects.toMatchObject({
+                    code: "conflict",
+                    current: created,
+                    status: 409,
+                } satisfies Partial<CloudStorageConflictError>);
+
+                const replaced = await instance.cloud.writeValue(ctx, key, replacement, {
+                    kind: "sha256",
+                    sha256: created.sha256,
+                });
+                expect(replaced.sha256).toBe(await storageSha256(replacement));
+                expect(replaced.version).not.toBe(created.version);
+                await expect(instance.cloud.readValue(ctx, key)).resolves.toEqual({
+                    ...replaced,
+                    value: replacement,
+                });
+            } finally {
+                await instance?.stop();
+                await cleanupStagingUser(workos, user);
+            }
+        },
+        LIVE_TEST_TIMEOUT_MILLISECONDS,
+    );
+
     test(
         "disconnects its own device, then resets a vault after all local keys are lost",
         async () => {

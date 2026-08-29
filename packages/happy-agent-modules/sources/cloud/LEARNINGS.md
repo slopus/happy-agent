@@ -89,6 +89,27 @@
 - CloudModule owns the successful remote profile-change signal so every caller gets the same
   behavior; the API translates it into `cloud.profile.updated` as a compact invalidation.
 
+## Cloud storage
+
+- Account storage is an authenticated Happy Cloud capability, independent of profile enrollment
+  and local key readiness. Public reads and writes still pass through Cloud's serialization lock,
+  rotate and persist the WorkOS refresh token first, and verify the short-lived access token before
+  touching storage.
+- Treat values as opaque binary data. A read returns bytes plus the matching SHA-256 ETag and Cloud
+  UUIDv7 version, while a missing key returns `undefined`. Validate response bodies and metadata
+  together and bound values to 100 MiB so malformed or unbounded remote responses cannot become a
+  daemon memory sink.
+- Request identity response encoding for storage reads and writes. Cloudflare weakens a strong ETag
+  when it compresses the JSON write response, but the SHA-256 is Cloud's compare-and-write
+  validator; preventing that transform preserves strict end-to-end metadata validation.
+- Match Cloud's key contract before authentication: exactly one non-empty, well-formed string of at
+  most 1,024 UTF-8 bytes. Writes are unconditional, empty-only, or conditional on the exact current
+  SHA-256. Surface a failed condition as a conflict carrying Cloud's current hash and version; do
+  not retry an ambiguous write because it may already have committed remotely.
+- Keep real staging coverage at the public module boundary. It round-trips both inline-sized and
+  R2-offloaded binary values and proves empty-only rejection, stale-hash rejection, successful
+  compare-and-write, and returned conflict metadata using temporary WorkOS accounts.
+
 ## Cloud keys and messaging
 
 - Cloud key setup is account-scoped and begins only after username enrollment. Durable discovery

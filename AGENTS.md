@@ -156,6 +156,11 @@ Work that only consumes the package — a new feature, a new caller, a new packa
 
 Always use `pnpm` for this project. Do not use `npm`, `npx`, or `yarn` for installs, scripts, dependency changes, or lockfile updates unless the user explicitly asks for a different package manager.
 
+## WorkOS staging credentials
+
+Use the registered `workosstaging` secret for WorkOS staging live tests. If that secret is not
+available, ask the user to configure one; never place WorkOS credentials in the repository.
+
 ## Default release versions
 
 When the user asks to "release" without naming a product or version, release the next patch

@@ -7,12 +7,15 @@ import {
     CloudServiceUnavailableError,
     CloudSocialBlockedError,
     CloudSocialNotFoundError,
+    CloudStorageInvalidRequestError,
+    CloudStoragePreconditionFailedError,
     CloudUsernameUnavailableError,
     CloudVaultDeleteRejectedError,
     CloudVaultKeyMismatchError,
     CloudVaultNotFoundError,
     CloudWorkOS,
 } from "../../sources/cloud/CloudWorkOS.js";
+import { MAX_CLOUD_STORAGE_VALUE_BYTES } from "../../sources/cloud/CloudStorage.js";
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -198,6 +201,158 @@ describe("CloudWorkOS", () => {
                 username: "ada_next",
             }),
         );
+    });
+
+    it("reads and conditionally writes binary Cloud storage values with metadata", async () => {
+        const original = new Uint8Array([0, 1, 127, 128, 255]);
+        const originalSha256 = "1".repeat(64);
+        const originalVersion = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
+        const replacement = new Uint8Array([9, 8, 7]);
+        const replacementSha256 = "2".repeat(64);
+        const replacementVersion = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";
+        const request = vi
+            .fn<typeof fetch>()
+            .mockResolvedValueOnce(
+                new Response(original, {
+                    headers: {
+                        "content-type": "application/octet-stream",
+                        etag: `"${originalSha256}"`,
+                        "x-happy-cloud-version": originalVersion,
+                    },
+                }),
+            )
+            .mockResolvedValueOnce(
+                Response.json(
+                    { sha256: replacementSha256, version: replacementVersion },
+                    {
+                        headers: {
+                            etag: `"${replacementSha256}"`,
+                            "x-happy-cloud-version": replacementVersion,
+                        },
+                    },
+                ),
+            )
+            .mockResolvedValueOnce(Response.json({ error: "not_found" }, { status: 404 }));
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("staging");
+
+        await expect(client.readValue("access-a", "folder/binary key")).resolves.toEqual({
+            sha256: originalSha256,
+            value: original,
+            version: originalVersion,
+        });
+        await expect(
+            client.writeValue("access-b", "folder/binary key", replacement, {
+                kind: "sha256",
+                sha256: originalSha256,
+            }),
+        ).resolves.toEqual({
+            sha256: replacementSha256,
+            version: replacementVersion,
+        });
+        await expect(client.readValue("access-c", "missing")).resolves.toBeUndefined();
+
+        const [readInput, readInit] = request.mock.calls[0] ?? [];
+        expect(String(readInput)).toBe(
+            "https://happy-cloud-staging.bulka-llc.workers.dev/v0/storage?key=folder%2Fbinary%20key",
+        );
+        expect(readInit?.method).toBe("GET");
+        expect(new Headers(readInit?.headers).get("authorization")).toBe("Bearer access-a");
+        expect(new Headers(readInit?.headers).get("accept-encoding")).toBe("identity");
+
+        const [writeInput, writeInit] = request.mock.calls[1] ?? [];
+        expect(String(writeInput)).toBe(
+            "https://happy-cloud-staging.bulka-llc.workers.dev/v0/storage?key=folder%2Fbinary%20key",
+        );
+        expect(writeInit?.method).toBe("PUT");
+        expect(new Headers(writeInit?.headers).get("authorization")).toBe("Bearer access-b");
+        expect(new Headers(writeInit?.headers).get("accept-encoding")).toBe("identity");
+        expect(new Headers(writeInit?.headers).get("content-type")).toBe(
+            "application/octet-stream",
+        );
+        expect(new Headers(writeInit?.headers).get("if-match")).toBe(`"${originalSha256}"`);
+        expect(new Uint8Array((writeInit?.body as ArrayBuffer | undefined) ?? [])).toEqual(
+            replacement,
+        );
+    });
+
+    it("preserves current Cloud storage metadata when a conditional write loses", async () => {
+        const current = {
+            sha256: "3".repeat(64),
+            version: "01991f3a-5c1e-7002-8000-2f9a1b3c4d5e",
+        };
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json(
+                    { error: "precondition_failed", ...current },
+                    {
+                        headers: {
+                            etag: `"${current.sha256}"`,
+                            "x-happy-cloud-version": current.version,
+                        },
+                        status: 412,
+                    },
+                ),
+            ),
+        );
+
+        await expect(
+            new CloudWorkOS("production").writeValue("access-token", "state", new Uint8Array(), {
+                kind: "empty",
+            }),
+        ).rejects.toMatchObject({
+            current,
+            name: "CloudStoragePreconditionFailedError",
+        } satisfies Partial<CloudStoragePreconditionFailedError>);
+    });
+
+    it("rejects invalid Cloud storage inputs before making a request", async () => {
+        const request = vi.fn<typeof fetch>();
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("production");
+
+        await expect(client.readValue("access", "\ud800")).rejects.toBeInstanceOf(
+            CloudStorageInvalidRequestError,
+        );
+        await expect(client.readValue("access", "é".repeat(600))).rejects.toBeInstanceOf(
+            CloudStorageInvalidRequestError,
+        );
+        await expect(
+            client.writeValue("access", "key", new Uint8Array(), {
+                kind: "sha256",
+                sha256: "not-a-sha256",
+            } as never),
+        ).rejects.toBeInstanceOf(CloudStorageInvalidRequestError);
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it("bounds Cloud storage values before reading an oversized response body", async () => {
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+            cancel: () => {
+                cancelled = true;
+            },
+        });
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(
+                async () =>
+                    new Response(body, {
+                        headers: {
+                            "content-length": String(MAX_CLOUD_STORAGE_VALUE_BYTES + 1),
+                            "content-type": "application/octet-stream",
+                            etag: `"${"4".repeat(64)}"`,
+                            "x-happy-cloud-version": "01991f3a-5c1e-7003-8000-2f9a1b3c4d5e",
+                        },
+                    }),
+            ),
+        );
+
+        await expect(
+            new CloudWorkOS("production").readValue("access", "oversized"),
+        ).rejects.toBeInstanceOf(CloudServiceUnavailableError);
+        expect(cancelled).toBe(true);
     });
 
     it("distinguishes username conflicts from upstream profile contract drift", async () => {

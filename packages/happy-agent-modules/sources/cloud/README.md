@@ -65,11 +65,21 @@ The opt-in `pnpm --filter @slopus/happy-agent-modules test:live:workos-staging` 
 temporary staging WorkOS users and exercises real Happy Cloud and Murmur deployments. Put
 `{ "workosApiKey": "..." }` in the repository's ignored `.context/workos-staging.json`, or set
 `HAPPY_AGENT_WORKOS_STAGING_CREDENTIALS_FILE` to another JSON file path. The key itself must never be
-placed in an environment variable. The suite covers self-removal, sibling removal of an orphaned
-installation, lost-key vault reset, and a four-device Murmur group spanning two WorkOS users with
-messages sent in both directions to every other active device.
+placed in an environment variable. The suite covers binary account-storage round trips and
+conditional writes, self-removal, sibling removal of an orphaned installation, lost-key vault
+reset, and a four-device Murmur group spanning two WorkOS users with messages sent in both
+directions to every other active device.
 
 Cloud is independent from `HappyModule`, which connects the daemon to the Happy mobile app.
+
+The module exposes the account-scoped Happy Cloud binary store directly through `readValue` and
+`writeValue`. Reads return the opaque bytes with their SHA-256 and Cloud UUIDv7 version, or
+`undefined` when the key is absent. Writes are unconditional by default and may instead require an
+empty key or the exact current SHA-256. A lost conditional write raises `CloudStorageConflictError`
+with the metadata Happy Cloud observed. Keys follow Cloud's well-formed 1,024-byte UTF-8 bound,
+values are bounded to 100 MiB at the client boundary, and every response must carry matching ETag
+and version metadata. Storage operations use the same rotating WorkOS credential boundary as the
+rest of Cloud and are never retried after an ambiguous write.
 
 Friends activate automatically after enrollment. The module retains one account-scoped social
 snapshot, opens Happy Cloud's authenticated updates WebSocket, and uses its announced version to

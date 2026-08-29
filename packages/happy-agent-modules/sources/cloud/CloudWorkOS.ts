@@ -27,6 +27,26 @@ import {
     type CloudSocialSocketCallbacks,
     type CloudSocialSocketConnection,
 } from "./CloudSocialSocket.js";
+import {
+    cloudStorageInvalidResponseSchema,
+    cloudStorageNotFoundResponseSchema,
+    cloudStoragePreconditionFailedResponseSchema,
+    cloudStorageValueSchema,
+    cloudStorageWriteConditionSchema,
+    cloudStorageWriteResultSchema,
+    CloudStorageInvalidRequestError,
+    CloudStoragePreconditionFailedError,
+    MAX_CLOUD_STORAGE_VALUE_BYTES,
+    validCloudStorageKey,
+    type CloudStorageValue,
+    type CloudStorageWriteCondition,
+    type CloudStorageWriteResult,
+} from "./CloudStorage.js";
+
+export {
+    CloudStorageInvalidRequestError,
+    CloudStoragePreconditionFailedError,
+} from "./CloudStorage.js";
 
 const WORKOS_TIMEOUT_MS = 15_000;
 const MAX_WORKOS_RESPONSE_BYTES = 1024 * 1_024;
@@ -478,6 +498,93 @@ export class CloudWorkOS {
         return cloudProfile(result.body);
     }
 
+    async readValue(accessToken: string, key: string): Promise<CloudStorageValue | undefined> {
+        if (!validCloudStorageKey(key)) throw new CloudStorageInvalidRequestError();
+        const { response, signal } = await this.#fetchResponse(
+            `/v0/storage?key=${encodeURIComponent(key)}`,
+            accessToken,
+            "GET",
+            undefined,
+            { "accept-encoding": "identity" },
+        );
+        if (response.status === 404) {
+            const body = await parseCloudJsonResponse(response, MAX_CLOUD_RESPONSE_BYTES, signal);
+            if (Value.Check(cloudStorageNotFoundResponseSchema, body)) return undefined;
+            throw new CloudServiceUnavailableError("response-invalid", response.status);
+        }
+        if (!response.ok) {
+            await response.body?.cancel().catch(() => undefined);
+            throw new CloudServiceUnavailableError("response-rejected", response.status);
+        }
+        if (
+            response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !==
+            "application/octet-stream"
+        ) {
+            await response.body?.cancel().catch(() => undefined);
+            throw new CloudServiceUnavailableError("response-invalid", response.status);
+        }
+        const metadata = cloudStorageResponseMetadata(response);
+        const value = await readCloudBytes(response, MAX_CLOUD_STORAGE_VALUE_BYTES, signal);
+        const result = { ...metadata, value };
+        if (!Value.Check(cloudStorageValueSchema, result)) {
+            throw new CloudServiceUnavailableError("response-invalid", response.status);
+        }
+        return result;
+    }
+
+    async writeValue(
+        accessToken: string,
+        key: string,
+        value: Uint8Array,
+        condition: CloudStorageWriteCondition = { kind: "any" },
+    ): Promise<CloudStorageWriteResult> {
+        if (
+            !validCloudStorageKey(key) ||
+            !Value.Check(cloudStorageValueSchema.properties.value, value) ||
+            !Value.Check(cloudStorageWriteConditionSchema, condition)
+        ) {
+            throw new CloudStorageInvalidRequestError();
+        }
+        const conditionHeaders = cloudStorageConditionHeaders(condition);
+        const copied = new Uint8Array(value);
+        const { response, signal } = await this.#fetchResponse(
+            `/v0/storage?key=${encodeURIComponent(key)}`,
+            accessToken,
+            "PUT",
+            copied.buffer as ArrayBuffer,
+            {
+                "accept-encoding": "identity",
+                "content-type": "application/octet-stream",
+                ...conditionHeaders,
+            },
+        );
+        if (response.status !== 200 && response.status !== 400 && response.status !== 412) {
+            await response.body?.cancel().catch(() => undefined);
+            throw new CloudServiceUnavailableError("response-rejected", response.status);
+        }
+        const body = await parseCloudJsonResponse(response, MAX_CLOUD_RESPONSE_BYTES, signal);
+        if (response.status === 400 && Value.Check(cloudStorageInvalidResponseSchema, body)) {
+            throw new CloudStorageInvalidRequestError();
+        }
+        if (
+            response.status === 412 &&
+            Value.Check(cloudStoragePreconditionFailedResponseSchema, body)
+        ) {
+            if (body.sha256 === null) {
+                assertCloudStorageResponseHasNoMetadata(response);
+                throw new CloudStoragePreconditionFailedError(undefined);
+            }
+            const current = { sha256: body.sha256, version: body.version };
+            assertCloudStorageResponseMetadata(response, current);
+            throw new CloudStoragePreconditionFailedError(current);
+        }
+        if (!response.ok || !Value.Check(cloudStorageWriteResultSchema, body)) {
+            throw new CloudServiceUnavailableError("response-invalid", response.status);
+        }
+        assertCloudStorageResponseMetadata(response, body);
+        return { sha256: body.sha256, version: body.version };
+    }
+
     async getVaultIdentity(accessToken: string): Promise<string | undefined> {
         const result = await this.#request("/v0/vault", accessToken, "GET");
         if (!result.ok || !Value.Check(cloudVaultStatusSchema, result.body)) {
@@ -739,27 +846,14 @@ export class CloudWorkOS {
         callerSignal?: AbortSignal,
         discardBody = false,
     ): Promise<{ readonly body: unknown; readonly ok: boolean; readonly status: number }> {
-        const requestDeadline = AbortSignal.timeout(CLOUD_REQUEST_TIMEOUT_MS);
-        const signal =
-            callerSignal === undefined
-                ? requestDeadline
-                : AbortSignal.any([requestDeadline, callerSignal]);
-        let response: Response;
-        try {
-            response = await fetch(`${this.#cloudUrl}${path}`, {
-                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-                headers: {
-                    authorization: `Bearer ${accessToken}`,
-                    ...(body === undefined ? {} : { "content-type": "application/json" }),
-                },
-                method,
-                signal,
-            });
-        } catch {
-            throw new CloudServiceUnavailableError(
-                signal.aborted ? "request-timed-out" : "request-failed",
-            );
-        }
+        const { response, signal } = await this.#fetchResponse(
+            path,
+            accessToken,
+            method,
+            body === undefined ? undefined : JSON.stringify(body),
+            body === undefined ? undefined : { "content-type": "application/json" },
+            callerSignal,
+        );
         if (!response.ok && !parsedErrorStatuses.includes(response.status)) {
             await response.body?.cancel().catch(() => undefined);
             return { body: undefined, ok: response.ok, status: response.status };
@@ -780,6 +874,110 @@ export class CloudWorkOS {
             if (error instanceof CloudServiceUnavailableError) throw error;
             throw new CloudServiceUnavailableError("response-invalid", response.status);
         }
+    }
+
+    async #fetchResponse(
+        path: string,
+        accessToken: string,
+        method: "DELETE" | "GET" | "POST" | "PUT",
+        body?: RequestInit["body"],
+        extraHeaders?: RequestInit["headers"],
+        callerSignal?: AbortSignal,
+    ): Promise<{ readonly response: Response; readonly signal: AbortSignal }> {
+        const requestDeadline = AbortSignal.timeout(CLOUD_REQUEST_TIMEOUT_MS);
+        const signal =
+            callerSignal === undefined
+                ? requestDeadline
+                : AbortSignal.any([requestDeadline, callerSignal]);
+        const headers = new Headers(extraHeaders);
+        headers.set("authorization", `Bearer ${accessToken}`);
+        try {
+            const response = await fetch(`${this.#cloudUrl}${path}`, {
+                ...(body === undefined ? {} : { body }),
+                headers,
+                method,
+                signal,
+            });
+            return { response, signal };
+        } catch {
+            throw new CloudServiceUnavailableError(
+                signal.aborted ? "request-timed-out" : "request-failed",
+            );
+        }
+    }
+}
+
+function cloudStorageConditionHeaders(
+    condition: CloudStorageWriteCondition,
+): NonNullable<RequestInit["headers"]> {
+    switch (condition.kind) {
+        case "any":
+            return {};
+        case "empty":
+            return { "if-none-match": "*" };
+        case "sha256":
+            return { "if-match": `"${condition.sha256}"` };
+    }
+}
+
+function cloudStorageResponseMetadata(response: Response): CloudStorageWriteResult {
+    const etag = response.headers.get("etag");
+    const sha256 = etag === null ? undefined : /^"([0-9a-f]{64})"$/.exec(etag)?.[1];
+    const metadata = {
+        sha256,
+        version: response.headers.get("x-happy-cloud-version") ?? undefined,
+    };
+    if (!Value.Check(cloudStorageWriteResultSchema, metadata)) {
+        throw new CloudServiceUnavailableError("response-invalid", response.status);
+    }
+    return metadata;
+}
+
+function assertCloudStorageResponseMetadata(
+    response: Response,
+    expected: CloudStorageWriteResult,
+): void {
+    const actual = cloudStorageResponseMetadata(response);
+    if (actual.sha256 !== expected.sha256 || actual.version !== expected.version) {
+        throw new CloudServiceUnavailableError("response-invalid", response.status);
+    }
+}
+
+function assertCloudStorageResponseHasNoMetadata(response: Response): void {
+    if (
+        response.headers.get("etag") !== null ||
+        response.headers.get("x-happy-cloud-version") !== null
+    ) {
+        throw new CloudServiceUnavailableError("response-invalid", response.status);
+    }
+}
+
+async function parseCloudJsonResponse(
+    response: Response,
+    maximum: number,
+    signal: AbortSignal,
+): Promise<unknown> {
+    try {
+        const bytes = await readBounded(response, maximum, signal);
+        return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    } catch (error: unknown) {
+        if (signal.aborted) throw new CloudServiceUnavailableError("request-timed-out");
+        if (error instanceof CloudServiceUnavailableError) throw error;
+        throw new CloudServiceUnavailableError("response-invalid", response.status);
+    }
+}
+
+async function readCloudBytes(
+    response: Response,
+    maximum: number,
+    signal: AbortSignal,
+): Promise<Uint8Array> {
+    try {
+        return await readBounded(response, maximum, signal);
+    } catch (error: unknown) {
+        if (signal.aborted) throw new CloudServiceUnavailableError("request-timed-out");
+        if (error instanceof CloudServiceUnavailableError) throw error;
+        throw new CloudServiceUnavailableError("response-invalid", response.status);
     }
 }
 

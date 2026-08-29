@@ -137,6 +137,16 @@ import {
     type CloudSocialStoredState,
     type CloudSocialStoredValue,
 } from "./CloudSocialDatabase.js";
+import {
+    cloudStorageValueSchema,
+    cloudStorageWriteConditionSchema,
+    CloudStorageInvalidRequestError,
+    CloudStoragePreconditionFailedError,
+    validCloudStorageKey,
+    type CloudStorageValue,
+    type CloudStorageWriteCondition,
+    type CloudStorageWriteResult,
+} from "./CloudStorage.js";
 import type { CloudSocialSocketConnection } from "./CloudSocialSocket.js";
 import {
     CloudCredentialsRejectedError,
@@ -316,6 +326,17 @@ export class CloudOperationError extends Error {
         this.cloud = cloud;
         this.cloudSocial = cloudSocial;
         this.devices = devices;
+    }
+}
+
+/** A failed atomic Cloud storage write with the value metadata observed by Happy Cloud. */
+export class CloudStorageConflictError extends CloudOperationError {
+    readonly current: CloudStorageWriteResult | undefined;
+
+    constructor(cloud: Cloud, current: CloudStorageWriteResult | undefined) {
+        super(409, "conflict", "The Cloud storage value changed before it was written.", cloud);
+        this.name = "CloudStorageConflictError";
+        this.current = current === undefined ? undefined : Object.freeze({ ...current });
     }
 }
 
@@ -970,6 +991,94 @@ export class CloudModule implements AgentModule {
                 generatedSecret: local.generatedSecret,
                 rootSecret: local.rootSecret,
             };
+        });
+    }
+
+    async readValue(_ctx: Context, key: string): Promise<CloudStorageValue | undefined> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            if (!validCloudStorageKey(key)) {
+                throw this.#error(400, "invalid_request", "The Cloud storage key is invalid.");
+            }
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                return await this.#client(minted.cloud.environment).readValue(
+                    minted.accessToken,
+                    key,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudStorageInvalidRequestError) {
+                    throw this.#error(
+                        400,
+                        "invalid_request",
+                        "The Cloud storage request is invalid.",
+                    );
+                }
+                logCloudFailure(
+                    ctx,
+                    "storage",
+                    minted.cloud.environment,
+                    "cloud-storage-read",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud storage is temporarily unavailable.",
+                );
+            }
+        });
+    }
+
+    async writeValue(
+        _ctx: Context,
+        key: string,
+        value: Uint8Array,
+        condition: CloudStorageWriteCondition = { kind: "any" },
+    ): Promise<CloudStorageWriteResult> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            if (
+                !validCloudStorageKey(key) ||
+                !Value.Check(cloudStorageValueSchema.properties.value, value) ||
+                !Value.Check(cloudStorageWriteConditionSchema, condition)
+            ) {
+                throw this.#error(400, "invalid_request", "The Cloud storage write is invalid.");
+            }
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                return await this.#client(minted.cloud.environment).writeValue(
+                    minted.accessToken,
+                    key,
+                    value,
+                    condition,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudStoragePreconditionFailedError) {
+                    throw new CloudStorageConflictError(this.#cloud, error.current);
+                }
+                if (error instanceof CloudStorageInvalidRequestError) {
+                    throw this.#error(
+                        400,
+                        "invalid_request",
+                        "The Cloud storage request is invalid.",
+                    );
+                }
+                logCloudFailure(
+                    ctx,
+                    "storage",
+                    minted.cloud.environment,
+                    "cloud-storage-write",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud storage is temporarily unavailable.",
+                );
+            }
         });
     }
 
@@ -3089,7 +3198,7 @@ export class CloudModule implements AgentModule {
 
 function logCloudFailure(
     ctx: Context,
-    operation: "authorization" | "keys" | "profile" | "social" | "token",
+    operation: "authorization" | "keys" | "profile" | "social" | "storage" | "token",
     environment: CloudEnvironment,
     phase: string,
     error: unknown,
@@ -3114,6 +3223,10 @@ function cloudFailureDiagnostic(error: unknown): {
     if (error instanceof CloudSocialInvalidRequestError) return { reason: "invalid-request" };
     if (error instanceof CloudSocialNotFoundError) return { reason: "not-found" };
     if (error instanceof CloudSocialSnapshotChangedError) return { reason: "snapshot-changed" };
+    if (error instanceof CloudStorageInvalidRequestError) return { reason: "invalid-request" };
+    if (error instanceof CloudStoragePreconditionFailedError) {
+        return { reason: "precondition-failed", status: 412 };
+    }
     if (error instanceof CloudUsernameUnavailableError) return { reason: "username-unavailable" };
     if (error instanceof CloudServiceUnavailableError) {
         return error.status === undefined
