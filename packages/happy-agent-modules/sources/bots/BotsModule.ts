@@ -155,7 +155,12 @@ export class BotsModule implements AgentModule {
                 // from birth, which also settles the title and keeps automatic naming
                 // from writing one over it.
                 metadata: { title: input.name, updatedAt: now, version: 1 },
-                modules: { compute: { cwd: path } },
+                modules: {
+                    compute: {
+                        cwd: path,
+                        secretScope: { workspaceId },
+                    },
+                },
             };
             const agent = await agents.create(txCtx, config, { id: agentId, parent: null });
             const ordered = await readBots(txCtx);

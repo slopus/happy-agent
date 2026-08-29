@@ -1,16 +1,16 @@
 import { Type, type Static } from "@sinclair/typebox";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
 
-import { secretIdSchema, secretReferenceSchema } from "../Secret.js";
+import { secretApiRecordSchema } from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 
 const referenceSecretInputSchema = Type.Object(
-    { id: secretIdSchema },
+    { id: cuid2Schema },
     { additionalProperties: false },
 );
 const referenceSecretResultSchema = Type.Object(
     {
-        secret: Type.Union([secretReferenceSchema, Type.Null()]),
+        secret: Type.Union([secretApiRecordSchema, Type.Null()]),
     },
     { additionalProperties: false },
 );
@@ -19,7 +19,7 @@ type ReferenceSecretInput = Static<typeof referenceSecretInputSchema>;
 type ReferenceSecretResult = Static<typeof referenceSecretResultSchema>;
 
 /** Look up one bounded safe reference without exposing its values. */
-export function referenceSecretTool(secrets: SecretsModule, actingAgentId: string) {
+export function referenceSecretTool(secrets: SecretsModule) {
     return defineAgentTool({
         name: "reference_secret",
         defer: true,
@@ -33,7 +33,7 @@ export function referenceSecretTool(secrets: SecretsModule, actingAgentId: strin
         reloadable: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: ReferenceSecretInput): Promise<ReferenceSecretResult> => ({
-            secret: (await secrets.reference(ctx, actingAgentId, input.id)) ?? null,
+            secret: (await secrets.catalogSecret(ctx, input.id)) ?? null,
         }),
         toLLM: ({ secret }) => [
             {
@@ -41,9 +41,9 @@ export function referenceSecretTool(secrets: SecretsModule, actingAgentId: strin
                 text:
                     secret === null
                         ? "That secret reference is not registered."
-                        : secrets.formatForModel({
+                        : secrets.formatCatalogPageForModel({
                               secrets: [secret],
-                              limit: 1,
+                              nextCursor: null,
                           }),
             },
         ],

@@ -487,6 +487,7 @@ export async function startHappyAgentRuntime(
             profile,
             compute.computeModule,
             slashCommands,
+            secrets,
         );
         api = apiModule;
 

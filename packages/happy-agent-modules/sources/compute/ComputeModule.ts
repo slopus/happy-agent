@@ -1,6 +1,7 @@
 import {
     agentDatabase,
     agentModuleConfig,
+    cuid2Schema,
     type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
@@ -151,6 +152,15 @@ export const agentComputeConfigSchema = Type.Object(
     {
         cwd: Type.String({ minLength: 1, maxLength: 4_096 }),
         providerId: Type.Optional(Type.Literal("host")),
+        secretScope: Type.Optional(
+            Type.Object(
+                {
+                    projectId: Type.Optional(cuid2Schema),
+                    workspaceId: Type.Optional(cuid2Schema),
+                },
+                exact,
+            ),
+        ),
     },
     exact,
 );
@@ -742,6 +752,9 @@ export class ComputeModule implements AgentModule {
                       cwd: config.cwd,
                       hostPolicy: this.hostPolicy,
                       processManager,
+                      ...(config.secretScope === undefined
+                          ? {}
+                          : { targetScope: config.secretScope }),
                       secrets: this.#secrets,
                   });
         const hostCompute: HostCompute = {

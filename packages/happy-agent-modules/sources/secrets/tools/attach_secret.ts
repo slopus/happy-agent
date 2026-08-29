@@ -1,29 +1,27 @@
 import { Type, type Static } from "@sinclair/typebox";
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
 
-import {
-    secretAttachReferenceResultSchema,
-    secretIdSchema,
-    secretScopeRefSchema,
-} from "../Secret.js";
+import { secretApiAttachmentSchema, secretApiRecordSchema } from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 
 const attachSecretInputSchema = Type.Object(
     {
-        scopeRef: secretScopeRefSchema,
-        secretId: secretIdSchema,
+        secretId: cuid2Schema,
     },
     { additionalProperties: false },
 );
 
 type AttachSecretInput = Static<typeof attachSecretInputSchema>;
 
-const attachSecretResultSchema = secretAttachReferenceResultSchema;
+const attachSecretResultSchema = Type.Object(
+    { attachment: secretApiAttachmentSchema, secret: secretApiRecordSchema },
+    { additionalProperties: false },
+);
 
 type AttachSecretResult = Static<typeof attachSecretResultSchema>;
 
-/** Attach a reference to an opaque scope; the result remains metadata-only. */
-export function attachSecretTool(secrets: SecretsModule, actingAgentId: string) {
+/** Attach one global catalog secret to the exact current agent. */
+export function attachSecretTool(secrets: SecretsModule, agentId: string) {
     return {
         ...defineAgentTool({
             name: "attach_secret",
@@ -37,20 +35,27 @@ export function attachSecretTool(secrets: SecretsModule, actingAgentId: string) 
                 "secret reference availability",
             ],
             description:
-                "Attach a registered secret reference to an opaque host scope. This changes availability only; it never returns the secret value.",
+                "Attach a registered secret reference to this exact agent. This changes availability only; it never returns the secret value.",
             parameters: attachSecretInputSchema,
             returnType: attachSecretResultSchema,
             durable: true,
             transactional: true,
-            describeAutoPermissionAction: ({ scopeRef, secretId }) =>
-                `attaching secret reference ${JSON.stringify(secretId)} to scope ${JSON.stringify(scopeRef)}. This grants that scope access to the secret for later host operations`,
+            describeAutoPermissionAction: ({ secretId }) =>
+                `attaching secret reference ${JSON.stringify(secretId)} to scope ${JSON.stringify(agentId)}. This grants that exact agent access to the secret for later host operations`,
             shouldReviewInAutoMode: () => true,
-            execute: async (ctx, input: AttachSecretInput): Promise<AttachSecretResult> =>
-                await secrets.attachWithReference(ctx, actingAgentId, input),
+            execute: async (ctx, input: AttachSecretInput): Promise<AttachSecretResult> => {
+                const secret = await secrets.catalogSecret(ctx, input.secretId);
+                if (secret === undefined) throw new Error("That global secret is not registered.");
+                const { attachment } = await secrets.attachCatalogSecret(ctx, input.secretId, {
+                    type: "agent",
+                    id: agentId,
+                });
+                return { attachment, secret };
+            },
             toLLM: ({ attachment, secret }) => [
                 {
                     type: "text" as const,
-                    text: secrets.formatAttachmentForModel(attachment.scopeRef, secret),
+                    text: `Attached ${JSON.stringify(secret.id)} to exact agent ${JSON.stringify(attachment.target.id)}.\n${secrets.formatCatalogPageForModel({ secrets: [secret], nextCursor: null })}`,
                 },
             ],
         }),

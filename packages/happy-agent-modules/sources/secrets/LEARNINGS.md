@@ -1,26 +1,43 @@
 # Secrets module learnings
 
-## The catalog is global; attachments are scoped
+## The catalog is global; direct grants are typed
 
 Secrets registered for Happy Agent belong to one installation-wide catalog. Agent identities do
-not partition what references are discoverable; they identify the command scopes to which global
-references are attached. Agent tools and the default command host therefore use
-`GLOBAL_SECRET_OWNER_ID` for catalog operations and use the current agent ID only as `scopeRef`.
+not partition what references are discoverable. An immutable direct grant names a project,
+workspace, or exact agent. Project grants apply to every workspace in that project, workspace
+grants stay with that exact workspace, and agent grants do not flow to descendants. The compute
+configuration carries the agent's durable project and workspace identities so command resolution
+can take the union without reaching into another module's storage.
+
+Public records and grants have CUID2 identities. Every observable secret change mints a durable
+UUIDv7 version and updates its timestamp, including a value-only rotation whose safe variable-name
+list did not change. Events carry safe before/after metadata or an immutable grant and never carry
+the stored environment. Legacy records whose IDs cannot be represented by the public contract stay
+outside the catalog during the storage upgrade.
+
+There is no user-facing catalog deletion. A daemon feature may retire a managed secret only by
+presenting the exact managed kind that owns it. Retirement atomically removes the secret and all
+legacy and typed grants, then emits the final safe version through `secret.removed`.
 
 ## Attachment changes are permission decisions
 
-Attaching a secret grants a scope access to a credential in later host operations, and detaching
-revokes that access. Both model-facing tools therefore always require Auto review and describe the
-exact secret reference and scope being changed. The catalog mutation itself remains sandboxed and
-does not receive a Full-access override; metadata-only listing and reference reads remain
-unreviewed.
+Attaching a secret grants a target access to a credential in later host operations, and detaching
+revokes that direct access. Both model-facing tools therefore always require Auto review and
+describe the exact secret reference and agent being changed. The catalog mutation itself remains
+sandboxed and does not receive a Full-access override; metadata-only listing and reference reads
+remain unreviewed. Authenticated HTTP mutations are direct client actions and do not enter the
+agent's Auto reviewer.
 
-## Model-created secrets use reviewed host-side dotenv imports
+## Values enter through explicit trusted write boundaries
 
-Secret values do not belong in model-visible tool arguments or results. The `create_secret` and
-`update_secret` tools therefore accept an absolute `.env` path and read it only after Auto review.
-That exact file read temporarily receives Full access because it crosses the local shell sandbox;
-the resulting catalog mutation neither attaches the secret nor grants later commands elevation.
-Update replaces the complete environment bundle so values removed from the source file do not
-linger. Both tools are non-durable because the external file could change before a restarted call
-was replayed.
+The `create_secret` and `update_secret` tools accept exactly one value source: raw `environment`
+arguments, which remain in the durable transcript, or an absolute `.env` path. Both mutations
+require Auto review. An inline mutation stays in the current sandbox; only the reviewed host-file
+read receives temporary Full access. Neither source is returned in the tool result. Update replaces
+the complete environment bundle so values removed from the source do not linger. Both tools remain
+non-durable because one supported source is an external file that could change before replay.
+
+The authenticated HTTP API is a different trusted input boundary: create and update requests may
+carry raw environment values directly, including values loaded by a client from dotenv. Those
+values are write-only. Responses, conflict bodies, catalog filters, attachment objects, bootstrap
+state, and mutation events contain only safe metadata.

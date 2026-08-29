@@ -33,6 +33,7 @@ import {
     type SecretStoreRemoveResult,
     type SecretStoreUpdateResult,
 } from "./SecretStore.js";
+import { secretsApiMigrations } from "./SecretApiDatabase.js";
 
 export const SECRETS_MIGRATION_KEY = "001-secrets";
 
@@ -78,6 +79,7 @@ export const secretsMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    ...secretsApiMigrations,
 ];
 
 export interface SecretDatabase {

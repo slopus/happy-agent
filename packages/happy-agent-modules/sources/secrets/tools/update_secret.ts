@@ -1,24 +1,27 @@
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import {
     secretDescriptionSchema,
-    secretIdSchema,
-    secretReferenceSchema,
     type SecretEnvironmentVariableNames,
     type SecretHostEnvironment,
-    type SecretUpdateInput,
 } from "../Secret.js";
+import {
+    secretApiEnvironmentSchema,
+    secretApiRecordSchema,
+    type SecretApiUpdateInput,
+} from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 import { readSecretDotenv, secretDotenvFileSchema } from "./secretDotenv.js";
 
 const updateSecretInputSchema = Type.Object(
     {
-        secretId: secretIdSchema,
-        dotenvFile: secretDotenvFileSchema,
+        secretId: cuid2Schema,
+        environment: Type.Optional(secretApiEnvironmentSchema),
+        dotenvFile: Type.Optional(secretDotenvFileSchema),
         description: Type.Optional(secretDescriptionSchema),
-        availableToModel: Type.Optional(
+        availableToAgents: Type.Optional(
             Type.Boolean({
                 description:
                     "Whether agents may attach this reference to commands. Omit to preserve its current setting.",
@@ -30,15 +33,15 @@ const updateSecretInputSchema = Type.Object(
 
 const updateSecretResultSchema = Type.Object(
     {
-        secret: Type.Union([secretReferenceSchema, Type.Null()]),
+        secret: Type.Union([secretApiRecordSchema, Type.Null()]),
     },
     { additionalProperties: false },
 );
 
 type UpdateSecretInput = Static<typeof updateSecretInputSchema>;
 
-/** Replace one global secret's complete environment from a reviewed host-side dotenv source. */
-export function updateSecretTool(secrets: SecretsModule, actingAgentId: string) {
+/** Replace one global secret from reviewed inline values or a host-side dotenv source. */
+export function updateSecretTool(secrets: SecretsModule) {
     return defineAgentTool({
         name: "update_secret",
         defer: true,
@@ -47,31 +50,42 @@ export function updateSecretTool(secrets: SecretsModule, actingAgentId: string) 
         ],
         searchKeywords: ["replace secret", "rotate credentials", "update dotenv"],
         description:
-            "Update a global secret from an absolute host .env file. The file replaces its complete environment bundle so removed variables do not linger. Safe metadata is returned; attachments are unchanged.",
+            "Update a global secret from exactly one replacement source: inline environment arguments or an absolute host .env file. Removed variables do not linger. Safe metadata is returned; attachments are unchanged.",
         parameters: updateSecretInputSchema,
         returnType: updateSecretResultSchema,
         // A retry must not re-read a dotenv file whose contents may have changed.
         durable: false,
         requiresAutoOrFullAccess: true,
         autoPermissionInstructions:
-            "Updating a secret reads a host dotenv file and mutates the global secret catalog. Secret values must not be placed directly in tool arguments.",
-        describeAutoPermissionAction: ({ secretId, dotenvFile }) =>
-            `updating global secret ${quoteVisibleExact(secretId)} from dotenv file ${quoteVisibleExact(dotenvFile)}. Access: unrestricted host filesystem read and global secret catalog write`,
+            "Updating a secret mutates the global secret catalog. Inline values stay in the tool transcript. A dotenv source also reads one absolute host file.",
+        describeAutoPermissionAction: ({ secretId, dotenvFile }) => {
+            const source =
+                dotenvFile === undefined
+                    ? "inline environment arguments"
+                    : `dotenv file ${quoteVisibleExact(dotenvFile)}`;
+            return `updating global secret ${quoteVisibleExact(secretId)} from ${source}. Access: global secret catalog write${dotenvFile === undefined ? "" : " and unrestricted host filesystem read"}`;
+        },
         shouldReviewInAutoMode: () => true,
-        shouldRunInFullAccessInAutoMode: () => true,
+        shouldRunInFullAccessInAutoMode: ({ dotenvFile }) => dotenvFile !== undefined,
         execute: async (ctx, input: UpdateSecretInput) => {
-            const environment = await readSecretDotenv(input.dotenvFile);
+            const environment = await secretEnvironment(input.environment, input.dotenvFile);
             return await ctx.inTx(async (txCtx) => {
-                const current = await secrets.reference(txCtx, actingAgentId, input.secretId);
+                const current = await secrets.catalogSecret(txCtx, input.secretId);
                 if (current === undefined) return { secret: null };
-
-                const secret = await secrets.update(txCtx, actingAgentId, input.secretId, {
-                    ...(input.description === undefined ? {} : { description: input.description }),
-                    environment: replacementPatch(current.environmentVariables, environment),
-                    ...(input.availableToModel === undefined
-                        ? {}
-                        : { availableToModel: input.availableToModel }),
-                });
+                const secret = await secrets.updateCatalogSecret(
+                    txCtx,
+                    input.secretId,
+                    current.version,
+                    {
+                        ...(input.description === undefined
+                            ? {}
+                            : { description: input.description }),
+                        environment: replacementPatch(current.environmentVariables, environment),
+                        ...(input.availableToAgents === undefined
+                            ? {}
+                            : { availableToAgents: input.availableToAgents }),
+                    },
+                );
                 return { secret: secret ?? null };
             });
         },
@@ -81,16 +95,32 @@ export function updateSecretTool(secrets: SecretsModule, actingAgentId: string) 
                 text:
                     secret === null
                         ? "That global secret reference is not registered."
-                        : `Updated global secret reference.\n${secrets.formatForModel({ secrets: [secret], limit: 1 })}`,
+                        : `Updated global secret.\n${secrets.formatCatalogPageForModel({ secrets: [secret], nextCursor: null })}`,
             },
         ],
     });
 }
 
+async function secretEnvironment(
+    inline: Record<string, string> | undefined,
+    dotenvFile: string | undefined,
+): Promise<Record<string, string>> {
+    if (inline !== undefined) {
+        if (dotenvFile !== undefined) {
+            throw new Error("Supply exactly one secret value source: environment or dotenvFile.");
+        }
+        return structuredClone(inline);
+    }
+    if (dotenvFile === undefined) {
+        throw new Error("Supply exactly one secret value source: environment or dotenvFile.");
+    }
+    return await readSecretDotenv(dotenvFile);
+}
+
 function replacementPatch(
     previousNames: SecretEnvironmentVariableNames,
     replacement: SecretHostEnvironment,
-): NonNullable<SecretUpdateInput["environment"]> {
+): NonNullable<SecretApiUpdateInput["environment"]> {
     const remaining = new Map(
         Object.entries(replacement).map(([name, value]) => [name.toUpperCase(), { name, value }]),
     );

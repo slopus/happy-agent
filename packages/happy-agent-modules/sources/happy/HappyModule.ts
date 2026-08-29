@@ -1018,7 +1018,7 @@ export class HappyModule
         // to decide the session is already made.
         if (existing === undefined) {
             await ctx.inTx(async (txCtx) => {
-                await system.create(txCtx, agentConfigFor(cwd, selection), {
+                await system.create(txCtx, agentConfigFor(cwd, selection, owner), {
                     id: request.sessionId,
                 });
                 await this.#attachSpawnOwner(txCtx, request.sessionId, owner);
@@ -1617,11 +1617,24 @@ export class HappyModule
     }
 }
 
-function agentConfigFor(cwd: string, selection: HappySelection): AgentConfig {
+function agentConfigFor(
+    cwd: string,
+    selection: HappySelection,
+    owner: { readonly projectId: string; readonly workspaceId?: string },
+): AgentConfig {
     return {
         environment: { ...currentAgentEnvironment(), workingDirectory: cwd },
         metadata: { happy: selection },
-        modules: { compute: { cwd, providerId: "host" } },
+        modules: {
+            compute: {
+                cwd,
+                providerId: "host",
+                secretScope: {
+                    projectId: owner.projectId,
+                    workspaceId: owner.workspaceId ?? owner.projectId,
+                },
+            },
+        },
     };
 }
 

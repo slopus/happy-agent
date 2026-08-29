@@ -6,7 +6,6 @@ import type { AgentModuleScope, AnyAgentTool } from "@slopus/happy-agent-base";
 import { describe, expect, it } from "vitest";
 
 import {
-    GLOBAL_SECRET_OWNER_ID,
     SECRETS_OUTPUT_CHARACTERS,
     SECRETS_PAGE_SIZE,
     SecretsModule,
@@ -15,7 +14,7 @@ import { secretsMigrations } from "../../sources/secrets/SecretDatabase.js";
 import type { SecretEvent } from "../../sources/secrets/SecretEvent.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 
-const AGENT = "agent-tools";
+const AGENT = "agenttools";
 
 async function withDatabase<T>(
     name: string,
@@ -220,7 +219,7 @@ describe("SecretsModule event and tool contracts", () => {
             ).toBe(false);
             expect(
                 toolByName(tools, "reference_secret").shouldReviewInAutoMode(
-                    { id: "tool-secret" },
+                    { id: "toolsecret" },
                     database.context,
                 ),
             ).toBe(false);
@@ -229,12 +228,12 @@ describe("SecretsModule event and tool contracts", () => {
                 const input =
                     name === "create_secret"
                         ? {
-                              id: "tool-secret",
+                              id: "toolsecret",
                               description: "Tool secret",
                               dotenvFile: "/host/secrets/tool.env",
                           }
                         : {
-                              secretId: "tool-secret",
+                              secretId: "toolsecret",
                               dotenvFile: "/host/secrets/tool.env",
                           };
                 expect(tool.shouldReviewInAutoMode(input, database.context), name).toBe(true);
@@ -245,25 +244,49 @@ describe("SecretsModule event and tool contracts", () => {
                 expect(
                     tool.describeAutoPermissionAction?.(input, database.context),
                     name,
-                ).toContain('global secret "tool-secret"');
+                ).toContain('global secret "toolsecret"');
                 expect(
                     tool.describeAutoPermissionAction?.(input, database.context),
                     name,
                 ).toContain('dotenv file "/host/secrets/tool.env"');
+                const inlineInput =
+                    name === "create_secret"
+                        ? {
+                              id: "toolsecret",
+                              description: "Tool secret",
+                              environment: { TOKEN: "inline-permission-value" },
+                          }
+                        : {
+                              secretId: "toolsecret",
+                              environment: { TOKEN: "inline-permission-value" },
+                          };
+                expect(tool.shouldReviewInAutoMode(inlineInput, database.context), name).toBe(true);
+                expect(
+                    tool.shouldRunInFullAccessInAutoMode?.(inlineInput, database.context),
+                    name,
+                ).toBe(false);
+                expect(
+                    tool.describeAutoPermissionAction?.(inlineInput, database.context),
+                    name,
+                ).toContain("inline environment arguments");
+                expect(
+                    tool.describeAutoPermissionAction?.(inlineInput, database.context),
+                    name,
+                ).not.toContain("inline-permission-value");
             }
             for (const name of ["attach_secret", "detach_secret"]) {
                 const tool = toolByName(tools, name);
-                const input = { scopeRef: "agent-tools", secretId: "tool-secret" };
+                const input = { secretId: "toolsecret" };
                 expect(tool.shouldReviewInAutoMode(input, database.context), name).toBe(true);
                 expect(tool.shouldRunInFullAccessInAutoMode, name).toBeUndefined();
                 expect(
                     tool.describeAutoPermissionAction?.(input, database.context),
                     name,
-                ).toContain('secret reference "tool-secret"');
+                ).toContain('secret reference "toolsecret"');
                 expect(
                     tool.describeAutoPermissionAction?.(input, database.context),
                     name,
-                ).toContain('scope "agent-tools"');
+                ).toContain(`scope ${JSON.stringify(AGENT)}`);
             }
             expect(tools.filter((tool) => tool.durable).map((tool) => tool.name)).toEqual([
                 "list_secrets",
@@ -287,7 +310,7 @@ describe("SecretsModule event and tool contracts", () => {
             expect(JSON.stringify(tools)).not.toContain("resolveForHost");
             expect(JSON.stringify(tools)).not.toContain("resolveForCommand");
             const instructions = await hooks.instructions?.(database.context, scope());
-            expect(instructions).toContain(`attachment scope is ${JSON.stringify(AGENT)}`);
+            expect(instructions).toContain(`exact agent (${JSON.stringify(AGENT)})`);
             expect(instructions).toContain("absolute host .env path");
             expect(instructions).toContain("use an empty array for none");
             expect(instructions).not.toContain("tool-only-value");
@@ -297,8 +320,8 @@ describe("SecretsModule event and tool contracts", () => {
     it("executes reference and attachment tools through the same public operations", async () => {
         await withDatabase("secrets-tools-execution", async (database) => {
             const module = new SecretsModule();
-            await module.register(database.context, GLOBAL_SECRET_OWNER_ID, {
-                id: "tool-secret",
+            await module.createCatalogSecret(database.context, {
+                id: "toolsecret",
                 description: "Tool secret",
                 environment: { TOKEN: "tool-only-value" },
             });
@@ -321,12 +344,12 @@ describe("SecretsModule event and tool contracts", () => {
             ).resolves.toEqual(listed);
             const referenced = (await reference.execute(
                 database.context,
-                { id: "tool-secret" },
+                { id: "toolsecret" },
                 undefined as never,
             )) as { secret: Record<string, unknown> };
             const attached = (await attach.execute(
                 database.context,
-                { scopeRef: "tool-scope", secretId: "tool-secret" },
+                { secretId: "toolsecret" },
                 undefined as never,
             )) as {
                 attachment: Record<string, unknown>;
@@ -334,19 +357,24 @@ describe("SecretsModule event and tool contracts", () => {
             };
             const detached = (await detach.execute(
                 database.context,
-                { scopeRef: "tool-scope", secretId: "tool-secret" },
+                { secretId: "toolsecret" },
                 undefined as never,
-            )) as { detached: boolean; scopeRef: string; secretId: string };
-            expect(listed).toMatchObject({ secrets: [{ id: "tool-secret" }] });
+            )) as { detached: boolean; attachment: Record<string, unknown> | null };
+            expect(listed).toMatchObject({ secrets: [{ id: "toolsecret" }] });
             expect(referenced).toEqual({ secret: listed.secrets[0] });
             expect(attached).toMatchObject({
-                attachment: { scopeRef: "tool-scope", secretId: "tool-secret" },
-                secret: { id: "tool-secret" },
+                attachment: {
+                    secretId: "toolsecret",
+                    target: { type: "agent", id: AGENT },
+                },
+                secret: { id: "toolsecret" },
             });
-            expect(detached).toEqual({
+            expect(detached).toMatchObject({
                 detached: true,
-                scopeRef: "tool-scope",
-                secretId: "tool-secret",
+                attachment: {
+                    secretId: "toolsecret",
+                    target: { type: "agent", id: AGENT },
+                },
             });
 
             const rendered = [
@@ -357,7 +385,7 @@ describe("SecretsModule event and tool contracts", () => {
             ]
                 .map((block) => (block.type === "text" ? block.text : ""))
                 .join("\n");
-            expect(rendered).toContain("tool-secret");
+            expect(rendered).toContain("toolsecret");
             expect(rendered).not.toContain("tool-only-value");
         });
     });
@@ -381,31 +409,42 @@ describe("SecretsModule event and tool contracts", () => {
                 const created = (await create.execute(
                     database.context,
                     {
-                        id: "dotenv-tool",
+                        id: "dotenvtool",
                         description: "Imported credential",
                         dotenvFile: firstPath,
                     },
                     undefined as never,
                 )) as { secret: { environmentVariables: readonly string[] } };
                 expect(created.secret.environmentVariables).toEqual(["STALE", "TOKEN"]);
-                await module.attach(database.context, GLOBAL_SECRET_OWNER_ID, AGENT, "dotenv-tool");
+                await module.attachCatalogSecret(database.context, "dotenvtool", {
+                    type: "agent",
+                    id: AGENT,
+                });
                 await expect(
-                    module.resolveForHost(database.context, GLOBAL_SECRET_OWNER_ID, AGENT, [
-                        "dotenv-tool",
-                    ]),
-                ).resolves.toEqual({ STALE: "remove-me", TOKEN: "first-tool-value" });
+                    module.resolveForCommandTargets(
+                        database.context,
+                        [{ type: "agent", id: AGENT }],
+                        ["dotenvtool"],
+                    ),
+                ).resolves.toMatchObject({
+                    environment: { STALE: "remove-me", TOKEN: "first-tool-value" },
+                });
 
                 const updated = (await update.execute(
                     database.context,
-                    { secretId: "dotenv-tool", dotenvFile: secondPath },
+                    { secretId: "dotenvtool", dotenvFile: secondPath },
                     undefined as never,
                 )) as { secret: { environmentVariables: readonly string[] } | null };
                 expect(updated.secret?.environmentVariables).toEqual(["NEW", "TOKEN"]);
                 await expect(
-                    module.resolveForHost(database.context, GLOBAL_SECRET_OWNER_ID, AGENT, [
-                        "dotenv-tool",
-                    ]),
-                ).resolves.toEqual({ NEW: "fresh-value", TOKEN: "second-tool-value" });
+                    module.resolveForCommandTargets(
+                        database.context,
+                        [{ type: "agent", id: AGENT }],
+                        ["dotenvtool"],
+                    ),
+                ).resolves.toMatchObject({
+                    environment: { NEW: "fresh-value", TOKEN: "second-tool-value" },
+                });
 
                 const rendered = [
                     ...create.toLLM(created),
@@ -413,7 +452,7 @@ describe("SecretsModule event and tool contracts", () => {
                     JSON.stringify(created),
                     JSON.stringify(updated),
                 ].join("\n");
-                expect(rendered).toContain("dotenv-tool");
+                expect(rendered).toContain("dotenvtool");
                 for (const value of [
                     "first-tool-value",
                     "remove-me",
@@ -425,6 +464,93 @@ describe("SecretsModule event and tool contracts", () => {
             } finally {
                 await rm(directory, { force: true, recursive: true });
             }
+        });
+    });
+
+    it("creates and replaces a global secret from reviewed inline arguments without elevation", async () => {
+        await withDatabase("secrets-tools-inline", async (database) => {
+            const module = new SecretsModule();
+            const agentId = "agenttools";
+            const tools = await module.beforeStart().tools?.(database.context, scope(agentId));
+            if (tools === undefined) throw new Error("Expected secret tools");
+            const create = toolByName(tools, "create_secret");
+            const update = toolByName(tools, "update_secret");
+
+            const created = (await create.execute(
+                database.context,
+                {
+                    id: "inlinetool",
+                    description: "Inline credential",
+                    environment: { STALE: "remove-inline", TOKEN: "first-inline-value" },
+                },
+                undefined as never,
+            )) as { secret: { environmentVariables: readonly string[] } };
+            expect(created.secret.environmentVariables).toEqual(["STALE", "TOKEN"]);
+            await module.attachCatalogSecret(database.context, "inlinetool", {
+                type: "agent",
+                id: agentId,
+            });
+            await expect(
+                module.resolveForCommandTargets(
+                    database.context,
+                    [{ type: "agent", id: agentId }],
+                    ["inlinetool"],
+                ),
+            ).resolves.toMatchObject({
+                environment: { STALE: "remove-inline", TOKEN: "first-inline-value" },
+            });
+
+            const updated = (await update.execute(
+                database.context,
+                {
+                    secretId: "inlinetool",
+                    environment: { NEW: "fresh-inline", token: "second-inline-value" },
+                },
+                undefined as never,
+            )) as { secret: { environmentVariables: readonly string[] } | null };
+            expect(updated.secret?.environmentVariables).toEqual(["NEW", "TOKEN"]);
+            await expect(
+                module.resolveForCommandTargets(
+                    database.context,
+                    [{ type: "agent", id: agentId }],
+                    ["inlinetool"],
+                ),
+            ).resolves.toMatchObject({
+                environment: { NEW: "fresh-inline", TOKEN: "second-inline-value" },
+            });
+
+            const rendered = [
+                ...create.toLLM(created),
+                ...update.toLLM(updated),
+                JSON.stringify(created),
+                JSON.stringify(updated),
+            ].join("\n");
+            for (const value of [
+                "remove-inline",
+                "first-inline-value",
+                "fresh-inline",
+                "second-inline-value",
+            ]) {
+                expect(rendered).not.toContain(value);
+            }
+            await expect(
+                create.execute(
+                    database.context,
+                    { id: "missingsource", description: "Missing source" },
+                    undefined as never,
+                ),
+            ).rejects.toThrow("exactly one secret value source");
+            await expect(
+                update.execute(
+                    database.context,
+                    {
+                        secretId: "inlinetool",
+                        environment: { TOKEN: "inline" },
+                        dotenvFile: "/host/also.env",
+                    },
+                    undefined as never,
+                ),
+            ).rejects.toThrow("exactly one secret value source");
         });
     });
 

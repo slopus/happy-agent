@@ -93,6 +93,52 @@ describe("RemoteAgent", () => {
             },
         });
     });
+
+    it("ignores API tool-call request blocks that are not transcript output", () => {
+        const mode = {
+            effort: "low",
+            modelId: "openai/gpt-5.6-sol",
+            permissionMode: "auto",
+            providerId: "codex",
+            serviceTier: null,
+        } as const;
+        const agent = { id: "agent", status: "idle" };
+        const bootstrap = {
+            context: null,
+            draft: { updatedAt: null, value: null },
+            mode,
+            pending: [],
+        };
+        const remote = new RemoteAgent({
+            agent: agent as never,
+            bootstrap: bootstrap as never,
+            client: {} as never,
+            config: { defaults: mode, models: {}, providers: {} } as never,
+            events: {} as never,
+            history: { runs: [] } as never,
+        });
+
+        expect(
+            remote.applyEvent(
+                frame("message.created", {
+                    agentId: agent.id,
+                    message: {
+                        content: [
+                            {
+                                arguments: { question: "hidden request" },
+                                name: "request_user_input",
+                                type: "tool_call_request",
+                            },
+                        ],
+                        id: "assistant",
+                        metadata: {},
+                        role: "agent",
+                    },
+                    runId: "run",
+                }) as never,
+            ),
+        ).toEqual({ blocks: [], id: "assistant", role: "agent" });
+    });
 });
 
 function frame(type: string, payload: unknown) {

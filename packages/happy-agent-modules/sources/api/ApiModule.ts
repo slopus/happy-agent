@@ -8,6 +8,9 @@ import { dirname, join } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
+    createSecretRequestSchema,
+    secretAttachmentMutationRequestSchema,
+    updateSecretRequestSchema,
     archiveBotRequestSchema,
     cloudKeyValueSchema,
     createBotRequestSchema,
@@ -19,6 +22,7 @@ import {
     type MessageMode,
 } from "@slopus/happy-agent-client";
 import {
+    cuid2Schema,
     currentAgentEnvironment,
     type AgentConfig,
     type AgentBaseMessageOptions,
@@ -95,6 +99,14 @@ import {
     SlashCommandsModule,
     slashCommandCatalogEventPayloadSchema,
 } from "../slashCommands/index.js";
+import {
+    SecretApiConflictError,
+    SecretApiInputError,
+    SecretsModule,
+    type SecretApiRecord,
+    type SecretApiTarget,
+    type SecretEvent,
+} from "../secrets/index.js";
 import {
     TerminalError,
     TerminalsModule,
@@ -277,6 +289,7 @@ export class ApiModule implements AgentModule {
     readonly #profile: ProfileModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
+    readonly #secrets: SecretsModule;
     readonly #daemonId = createId();
     readonly #daemonStartedAt = Date.now();
     readonly #mutationIds = new AsyncLocalStorage<string>();
@@ -352,6 +365,7 @@ export class ApiModule implements AgentModule {
         profile: ProfileModule,
         compute: ComputeModule,
         slashCommands: SlashCommandsModule,
+        secrets: SecretsModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -374,6 +388,7 @@ export class ApiModule implements AgentModule {
         this.#profile = profile;
         this.#compute = compute;
         this.#slashCommands = slashCommands;
+        this.#secrets = secrets;
     }
 
     readonly beforeStart = async (
@@ -914,6 +929,7 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, { profile: profileResource(profile) });
                 return;
             }
+            if (await this.#handleSecretRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/bots") {
                 sendJson(response, 200, {
                     bots: await Promise.all(
@@ -1254,7 +1270,45 @@ export class ApiModule implements AgentModule {
             this.#compute.onProcessEvent(async (event) => {
                 await this.#convertProcessEvent(ctx, event);
             }),
+            this.#secrets.onEvent(async (_eventCtx, event) => {
+                this.#convertSecretEvent(event);
+            }),
         );
+    }
+
+    #convertSecretEvent(event: SecretEvent): void {
+        if (event.type === "secret_api_created") {
+            this.#journal.append("secret.created", { secret: event.secret }, event.at);
+            return;
+        }
+        if (event.type === "secret_api_updated") {
+            this.#journal.append(
+                "secret.updated",
+                {
+                    secretId: event.secret.id,
+                    previousVersion: event.previousSecret.version,
+                    version: event.secret.version,
+                    changes: secretChanges(event.previousSecret, event.secret),
+                },
+                event.at,
+            );
+            return;
+        }
+        if (event.type === "secret_api_removed") {
+            this.#journal.append(
+                "secret.removed",
+                { secretId: event.secretId, previousVersion: event.previousVersion },
+                event.at,
+            );
+            return;
+        }
+        if (event.type === "secret_api_attached") {
+            this.#journal.append("secret.attached", { attachment: event.attachment }, event.at);
+            return;
+        }
+        if (event.type === "secret_api_detached") {
+            this.#journal.append("secret.detached", { attachment: event.attachment }, event.at);
+        }
     }
 
     async #convertProcessEvent(ctx: Context, event: ComputeProcessEvent): Promise<void> {
@@ -2323,7 +2377,13 @@ export class ApiModule implements AgentModule {
                     version: 1,
                 },
                 modules: {
-                    compute: { cwd: ownership.root },
+                    compute: {
+                        cwd: ownership.root,
+                        secretScope: {
+                            projectId: ownership.projectId,
+                            workspaceId: body.workspaceId,
+                        },
+                    },
                 },
             };
             const created = await this.#withMutationId(
@@ -4421,6 +4481,209 @@ export class ApiModule implements AgentModule {
         sendJson(response, 200, { profile: profileResource(updated) });
     }
 
+    async #handleSecretRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        if (url.pathname === "/v0/secrets" && request.method === "GET") {
+            assertOnlyQueryParameters(url, ["cursor", "limit", "targetId", "targetType"]);
+            const cursor = url.searchParams.get("cursor") ?? undefined;
+            if (cursor !== undefined && !Value.Check(cuid2Schema, cursor)) {
+                throw invalidRequest("The secret cursor is invalid.");
+            }
+            const targetId = url.searchParams.get("targetId") ?? undefined;
+            const targetType = url.searchParams.get("targetType") ?? undefined;
+            if ((targetId === undefined) !== (targetType === undefined)) {
+                throw invalidRequest("Secret targetType and targetId must be supplied together.");
+            }
+            const target =
+                targetId === undefined || targetType === undefined
+                    ? undefined
+                    : secretTarget(targetType, targetId);
+            if (target !== undefined) await this.#requireSecretTarget(ctx, target, false);
+            sendJson(
+                response,
+                200,
+                await this.#secrets.listCatalog(ctx, {
+                    ...(cursor === undefined ? {} : { cursor }),
+                    limit: integerParameter(url.searchParams.get("limit"), 50, 1, 100),
+                    ...(target === undefined ? {} : { target }),
+                }),
+            );
+            return true;
+        }
+        if (url.pathname === "/v0/secrets" && request.method === "POST") {
+            const body = await bodyAs(request, createSecretRequestSchema, "secret creation");
+            const { mutationId, ...input } = body;
+            try {
+                const secret = await this.#withMutationId(
+                    mutationId,
+                    async () => await this.#secrets.createCatalogSecret(ctx, input),
+                );
+                sendJson(response, 201, { secret });
+            } catch (error: unknown) {
+                throw secretMutationError(error);
+            }
+            return true;
+        }
+
+        const attachment =
+            /^\/v0\/secrets\/([^/]+)\/attachments\/(project|workspace|agent)\/([^/]+)$/u.exec(
+                url.pathname,
+            );
+        if (attachment !== null && (request.method === "PUT" || request.method === "DELETE")) {
+            const secretId = secretPathId(attachment[1]!, "secret ID");
+            const target = secretTarget(
+                attachment[2]!,
+                decodePathSegment(attachment[3]!, "secret target ID"),
+            );
+            const current = await this.#secrets.catalogSecret(ctx, secretId);
+            if (current === undefined) throw notFound("The secret was not found.");
+            await this.#requireSecretTarget(ctx, target, request.method === "PUT");
+            const body = await optionalBodyAs(
+                request,
+                secretAttachmentMutationRequestSchema,
+                "secret attachment mutation",
+                2 * 1_024,
+            );
+            try {
+                if (request.method === "PUT") {
+                    const result = await this.#withMutationId(
+                        body.mutationId,
+                        async () => await this.#secrets.attachCatalogSecret(ctx, secretId, target),
+                    );
+                    sendJson(response, result.created ? 201 : 200, result);
+                } else {
+                    const removed = await this.#withMutationId(
+                        body.mutationId,
+                        async () => await this.#secrets.detachCatalogSecret(ctx, secretId, target),
+                    );
+                    sendJson(response, 200, {
+                        detached: removed !== undefined,
+                        attachment: removed ?? null,
+                    });
+                }
+            } catch (error: unknown) {
+                throw secretMutationError(error);
+            }
+            return true;
+        }
+
+        const attachments = /^\/v0\/secrets\/([^/]+)\/attachments$/u.exec(url.pathname);
+        if (attachments !== null && request.method === "GET") {
+            assertOnlyQueryParameters(url, ["cursor", "limit"]);
+            const secretId = secretPathId(attachments[1]!, "secret ID");
+            const cursor = url.searchParams.get("cursor") ?? undefined;
+            if (cursor !== undefined && !Value.Check(cuid2Schema, cursor)) {
+                throw invalidRequest("The secret attachment cursor is invalid.");
+            }
+            const page = await this.#secrets.listCatalogAttachments(ctx, secretId, {
+                ...(cursor === undefined ? {} : { cursor }),
+                limit: integerParameter(url.searchParams.get("limit"), 50, 1, 100),
+            });
+            if (page === undefined) throw notFound("The secret was not found.");
+            sendJson(response, 200, page);
+            return true;
+        }
+
+        const single = /^\/v0\/secrets\/([^/]+)$/u.exec(url.pathname);
+        if (single === null) return false;
+        const secretId = secretPathId(single[1]!, "secret ID");
+        if (request.method === "GET") {
+            const secret = await this.#secrets.catalogSecret(ctx, secretId);
+            if (secret === undefined) throw notFound("The secret was not found.");
+            sendJson(response, 200, { secret });
+            return true;
+        }
+        if (request.method === "PATCH") {
+            const current = await this.#secrets.catalogSecret(ctx, secretId);
+            if (current === undefined) throw notFound("The secret was not found.");
+            const expectedVersion = requireIfMatch(request, current.version, {
+                currentVersion: current.version,
+                secret: current,
+            });
+            const body = await bodyAs(request, updateSecretRequestSchema, "secret update");
+            const { mutationId, ...input } = body;
+            try {
+                const secret = await this.#withMutationId(
+                    mutationId,
+                    async () =>
+                        await this.#secrets.updateCatalogSecret(
+                            ctx,
+                            secretId,
+                            expectedVersion,
+                            input,
+                        ),
+                );
+                if (secret === undefined) throw notFound("The secret was not found.");
+                sendJson(response, 200, { secret });
+            } catch (error: unknown) {
+                throw secretMutationError(error);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    async #requireSecretTarget(
+        ctx: Context,
+        target: SecretApiTarget,
+        requireActive: boolean,
+    ): Promise<void> {
+        if (target.type === "project") {
+            const project = await this.#projects.get(ctx, target.id);
+            if (project === undefined)
+                throw notFound("The secret attachment project was not found.");
+            if (requireActive && project.status !== "active") {
+                throw new ApiError(409, "conflict", "The secret attachment project is archived.");
+            }
+            return;
+        }
+        if (target.type === "workspace") {
+            const bot = await this.#bots.forWorkspace(ctx, target.id);
+            if (bot !== undefined) {
+                if (requireActive && bot.status !== "active") {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "The secret attachment workspace is archived.",
+                    );
+                }
+                return;
+            }
+            const project = await this.#projects.get(ctx, target.id);
+            if (project !== undefined) {
+                if (requireActive && project.status !== "active") {
+                    throw new ApiError(
+                        409,
+                        "conflict",
+                        "The secret attachment workspace is archived.",
+                    );
+                }
+                return;
+            }
+            const workspace = await this.#workspaces.get(ctx, target.id);
+            if (workspace === undefined) {
+                throw notFound("The secret attachment workspace was not found.");
+            }
+            if (requireActive && workspace.status !== "ready") {
+                throw new ApiError(
+                    409,
+                    "conflict",
+                    "The secret attachment workspace is unavailable.",
+                );
+            }
+            return;
+        }
+        const agent = await this.#agentSystem().config(ctx, target.id);
+        if (agent === undefined) throw notFound("The secret attachment agent was not found.");
+        if (requireActive && typeof agent.metadata?.["archivedAt"] === "number") {
+            throw new ApiError(409, "conflict", "The secret attachment agent is archived.");
+        }
+    }
+
     async #onboarding(ctx: Context): Promise<Record<string, unknown>> {
         const [profile, projects, marker] = await Promise.all([
             this.#profile.get(ctx),
@@ -4850,6 +5113,10 @@ export class ApiModule implements AgentModule {
         }
         if (error instanceof ApiError) {
             sendJson(response, error.status, error.body());
+            return;
+        }
+        if (error instanceof SecretApiInputError) {
+            sendJson(response, 400, { code: "invalid_request", error: error.message });
             return;
         }
         if (error instanceof BotNotFoundError) {
@@ -5303,6 +5570,56 @@ function integerParameter(
         throw invalidRequest("A numeric query parameter is outside its allowed range.");
     }
     return parsed;
+}
+
+function assertOnlyQueryParameters(url: URL, allowed: readonly string[]): void {
+    const names = new Set(allowed);
+    for (const name of url.searchParams.keys()) {
+        if (!names.has(name)) throw invalidRequest(`The ${name} query parameter is not supported.`);
+    }
+}
+
+function secretPathId(value: string, name: string): string {
+    const decoded = decodePathSegment(value, name);
+    if (!Value.Check(cuid2Schema, decoded)) throw invalidRequest(`The ${name} is invalid.`);
+    return decoded;
+}
+
+function secretTarget(type: string, id: string): SecretApiTarget {
+    const target = { type, id };
+    if (
+        (type !== "project" && type !== "workspace" && type !== "agent") ||
+        !Value.Check(cuid2Schema, id)
+    ) {
+        throw invalidRequest("The secret attachment target is invalid.");
+    }
+    return target as SecretApiTarget;
+}
+
+function secretMutationError(error: unknown): Error {
+    if (error instanceof SecretApiConflictError) {
+        const details =
+            error.current === undefined
+                ? {}
+                : { currentVersion: error.current.version, secret: error.current };
+        return new ApiError(409, "conflict", error.message, details);
+    }
+    return error instanceof Error ? error : new Error("The secret mutation failed.");
+}
+
+function secretChanges(
+    previous: SecretApiRecord,
+    current: SecretApiRecord,
+): Record<string, unknown> {
+    const changes: Record<string, unknown> = { updatedAt: current.updatedAt };
+    if (previous.description !== current.description) changes["description"] = current.description;
+    if (previous.availableToAgents !== current.availableToAgents) {
+        changes["availableToAgents"] = current.availableToAgents;
+    }
+    if (!sameStrings(previous.environmentVariables, current.environmentVariables)) {
+        changes["environmentVariables"] = current.environmentVariables;
+    }
+    return changes;
 }
 
 function booleanParameter(value: string | null, fallback: boolean): boolean {

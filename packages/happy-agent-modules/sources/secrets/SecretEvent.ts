@@ -8,6 +8,11 @@ import {
     secretReferenceSchema,
     secretScopeRefSchema,
 } from "./Secret.js";
+import {
+    secretApiAttachmentSchema,
+    secretApiRecordSchema,
+    secretApiVersionSchema,
+} from "./SecretApi.js";
 
 export const secretEventIdSchema = Type.String({
     minLength: 1,
@@ -73,6 +78,48 @@ export const secretEventSchema = Type.Union([
             type: Type.Literal("secret_detached"),
             scopeRef: secretScopeRefSchema,
             secretId: secretIdSchema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...eventEnvelope,
+            type: Type.Literal("secret_api_created"),
+            secret: secretApiRecordSchema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...eventEnvelope,
+            type: Type.Literal("secret_api_updated"),
+            previousSecret: secretApiRecordSchema,
+            secret: secretApiRecordSchema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...eventEnvelope,
+            type: Type.Literal("secret_api_removed"),
+            secretId: secretApiRecordSchema.properties.id,
+            previousVersion: secretApiVersionSchema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...eventEnvelope,
+            type: Type.Literal("secret_api_attached"),
+            attachment: secretApiAttachmentSchema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...eventEnvelope,
+            type: Type.Literal("secret_api_detached"),
+            attachment: secretApiAttachmentSchema,
         },
         { additionalProperties: false },
     ),

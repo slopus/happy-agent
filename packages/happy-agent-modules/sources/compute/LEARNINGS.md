@@ -9,13 +9,15 @@ environment-variable name belonging to any bundle attached to that command scope
 the ambient environment case-insensitively. Omitted and empty selections therefore mean no secrets
 and cannot inherit an attached value accidentally.
 
-The catalog has one installation-wide owner; the acting agent ID is only the default host command
-scope. Secret provisioning and sandbox elevation are independent permission decisions. A non-empty
-selection triggers Auto review but keeps the command in its current sandbox; only the vendor's
-explicit escalation argument requests temporary Full access. Either may be used alone or both may
-be used together. A background session records whether it holds secrets so later reviewed input can
-disclose that fact, but input continues under the process's existing boundary. Alternate compute
-providers receive the selected IDs unchanged and own their own resolution boundary.
+The catalog has one installation-wide owner. A native agent compute carries its project and exact
+workspace identity; command resolution unions matching project, workspace, and agent grants before
+checking the explicit selection. Secret provisioning and sandbox elevation are independent
+permission decisions. A non-empty selection triggers Auto review but keeps the command in its
+current sandbox; only the vendor's explicit escalation argument requests temporary Full access.
+Either may be used alone or both may be used together. A background session records whether it
+holds secrets so later reviewed input can disclose that fact, but input continues under the
+process's existing boundary. Alternate compute providers receive the selected IDs unchanged and
+own their own resolution boundary.
 
 ## Reloadable reads must be replay-safe in every permission mode
 

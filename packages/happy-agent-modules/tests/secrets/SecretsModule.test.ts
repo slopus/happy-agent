@@ -3,13 +3,17 @@ import { describe, expect, it } from "vitest";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { SecretsModule } from "../../sources/secrets/SecretsModule.js";
 import { SECRETS_MIGRATION_KEY, secretsMigrations } from "../../sources/secrets/SecretDatabase.js";
+import { SECRETS_API_MIGRATION_KEY } from "../../sources/secrets/SecretApiDatabase.js";
 
 describe("SecretsModule", () => {
     it("owns a stable migration and persists safe metadata", async () => {
         const database = moduleDatabase(secretsMigrations, "secrets-test");
         await database.ready;
         try {
-            expect(secretsMigrations.map(([key]) => key)).toEqual([SECRETS_MIGRATION_KEY]);
+            expect(secretsMigrations.map(([key]) => key)).toEqual([
+                SECRETS_MIGRATION_KEY,
+                SECRETS_API_MIGRATION_KEY,
+            ]);
             const module = new SecretsModule();
             const reference = await module.register(database.context, "agent-a", {
                 id: "secret-1",

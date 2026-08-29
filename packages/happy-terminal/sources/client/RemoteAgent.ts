@@ -925,6 +925,7 @@ function toTerminalAgentBlocks(
     }
     if (block.type === "reasoning") return [{ thinking: block.text, type: "thinking" }];
     if (block.type === "compaction") return [];
+    if (block.type === "tool_call_request") return [];
     const toolCallId = `${messageId}:tool:${String(index)}`;
     const callPresentation = toToolCallPresentation(block);
     const call: ToolCallBlock = {

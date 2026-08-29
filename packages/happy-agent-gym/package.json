@@ -17,7 +17,7 @@
         "@sinclair/typebox": "^0.34.49",
         "@slopus/happy-agent": "workspace:*",
         "@slopus/happy-agent-base": "npm:@slopus/happy-agent-base@0.0.39",
-        "@slopus/happy-agent-client": "0.0.43",
+        "@slopus/happy-agent-client": "0.0.46",
         "@slopus/happy-agent-compute": "npm:@slopus/happy-agent-compute@0.1.9",
         "@slopus/happy-agent-modules": "workspace:*",
         "@slopus/happy-providers": "0.0.18",

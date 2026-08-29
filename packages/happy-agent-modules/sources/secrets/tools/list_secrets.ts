@@ -1,10 +1,21 @@
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
+import { Type, type Static } from "@sinclair/typebox";
 
-import { secretListInputSchema, secretPageSchema, type SecretListInput } from "../Secret.js";
+import { secretApiPageSchema } from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 
+const listSecretsInputSchema = Type.Object(
+    {
+        cursor: Type.Optional(cuid2Schema),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+    },
+    { additionalProperties: false },
+);
+
+type ListSecretsInput = Static<typeof listSecretsInputSchema>;
+
 /** List bounded safe metadata; this tool never asks the module to resolve values. */
-export function listSecretsTool(secrets: SecretsModule, actingAgentId: string) {
+export function listSecretsTool(secrets: SecretsModule) {
     return defineAgentTool({
         name: "list_secrets",
         defer: true,
@@ -12,17 +23,16 @@ export function listSecretsTool(secrets: SecretsModule, actingAgentId: string) {
         searchKeywords: ["secret catalog", "credential references", "environment variable names"],
         description:
             "List bounded secret references and environment-variable names. Secret values are never available to the model.",
-        parameters: secretListInputSchema,
-        returnType: secretPageSchema,
+        parameters: listSecretsInputSchema,
+        returnType: secretApiPageSchema,
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx, query: SecretListInput) =>
-            await secrets.list(ctx, actingAgentId, query),
+        execute: async (ctx, query: ListSecretsInput) => await secrets.listCatalog(ctx, query),
         toLLM: (page) => [
             {
                 type: "text" as const,
-                text: secrets.formatPageForModel(page),
+                text: secrets.formatCatalogPageForModel(page),
             },
         ],
     });

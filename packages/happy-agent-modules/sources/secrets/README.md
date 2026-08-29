@@ -59,50 +59,41 @@ model ── safe references/attachments ──> SecretsModule ── host-only 
 The module offers six common (provider-neutral) tools. None can return values or reach the
 value-bearing resolution methods: `resolveForHost` and `resolveForCommand` are intentionally not
 tools. Metadata-only listing and reference reads do not require Auto review. Creation and update,
-which import from an absolute host `.env` path, always require Auto review and temporarily run with
-Full access for that file read. They do not attach the resulting reference. Attach and detach also
-always require review because they grant or revoke a scope's later access to a credential, but
-those catalog-only mutations stay in the current sandbox.
+which accept either inline values or an absolute host `.env` path, always require Auto review. An
+inline mutation stays sandboxed; only the host file read temporarily receives Full access. They do
+not attach the resulting reference. Attach and detach also always require review because they grant
+or revoke the current agent's later access to a credential, but those catalog-only mutations stay
+in the current sandbox.
 
-- **`list_secrets`** — lists a bounded page of safe metadata. Arguments: `limit`
-  (1–`SECRETS_PAGE_SIZE`, defaults to `SECRETS_PAGE_SIZE`), `cursor` (an integer offset into the
-  filtered result set), and
-  `scopeRef` (restrict the page to secrets attached to one opaque scope). The model sees each
-  secret's `id`, `description`, sorted-and-deduplicated `environmentVariables` names, `revision`,
-  and, when the host marked it, `availableToModel` and `kind`. A reference marked
-  `availableToModel: false` is host-only and cannot be attached by an agent. If a page's rendered
-  text would exceed `SECRETS_OUTPUT_CHARACTERS`, the module falls back to a compact rendering that
-  still names every secret, so the model never loses an identity it could act on; a `next=<cursor>`
-  line is appended only when a further page exists.
+- **`list_secrets`** — lists the global catalog as bounded safe metadata. Arguments are `limit`
+  (1–`SECRETS_PAGE_SIZE`) and a CUID2 `cursor`. The model sees each secret's ID, description,
+  sorted environment-variable names, availability, ownership, UUIDv7 version, and timestamps. If
+  detailed rendering would exceed `SECRETS_OUTPUT_CHARACTERS`, it falls back to all IDs plus the
+  continuation cursor, so no actionable identity is lost.
 - **`reference_secret`** — reads one safe reference by `id` and returns `{ secret: reference | null }`.
   `null` means no such secret is registered in the shared catalog.
-- **`create_secret`** — creates or replaces a global secret from `dotenvFile`, an absolute path to a
-  UTF-8 dotenv file no larger than 1 MiB. Arguments also include the stable `id`, a safe
-  `description`, and optional `availableToModel`. The reviewed invocation reads and validates the
-  file host-side, stores its complete environment bundle, and returns `{ secret: reference }`.
-  Values do not enter the tool arguments, permission description, result, or model output. The
-  tool is non-durable because its external source may change after an interrupted call.
-- **`update_secret`** — updates an existing global secret from `dotenvFile`, with optional
-  `description` and `availableToModel`. The file replaces the complete environment bundle;
-  variables absent from it are removed, while an existing variable's casing remains stable. It
-  returns `{ secret: reference | null }`, where `null` means the ID was not registered. Existing
-  attachments are unchanged. This tool has the same review, temporary Full-access, size, value
-  isolation, and non-durability behavior as `create_secret`.
-- **`attach_secret`** — attaches a registered model-available secret to a `scopeRef`, changing what
-  is _available_, never returning a value. Arguments are `scopeRef` and `secretId`. On success the
-  model is told which secret was attached to which scope and shown that secret's reference; the
-  host resolves the actual value later, out of the model's sight, using `resolveForCommand` against
-  the same scope.
-- **`detach_secret`** — detaches a `{ scopeRef, secretId }` pair and reports only `detached: boolean`
-  plus the two identifiers, never a value.
+- **`create_secret`** — creates a global secret from exactly one source: inline `environment`
+  arguments or `dotenvFile`, an absolute path to a UTF-8 dotenv file no larger than 1 MiB. The ID
+  is optional, and `availableToAgents` defaults to true. Inline values remain in the tool
+  transcript; neither source enters the permission description, result, or model output.
+- **`update_secret`** — replaces an existing global secret's complete environment from exactly one
+  inline or dotenv source, with optional `description` and `availableToAgents`. Variables absent
+  from the replacement are removed, while existing variable casing remains stable. Existing
+  attachments are unchanged. It returns `{ secret: reference | null }`.
+- **`attach_secret`** — attaches `secretId` to the exact current agent, changing what is
+  _available_ without returning a value. Project and workspace grants are created through the
+  client API rather than this agent-local tool.
+- **`detach_secret`** — removes the exact current agent's direct grant for `secretId` and reports
+  only safe identifiers plus `detached: boolean`.
 
-Governing principles across all six: the catalog owner is `GLOBAL_SECRET_OWNER_ID`, while
-`scopeRef` controls attachment availability; every list and lookup is bounded by
+Governing principles across all six: the catalog owner is `GLOBAL_SECRET_OWNER_ID`, while typed
+project, workspace, and exact-agent grants control attachment availability; every list and lookup is bounded by
 `SECRETS_PAGE_SIZE` and
 `SECRETS_OUTPUT_CHARACTERS`; paging is a monotonically progressing integer cursor the store advances
 by exactly the number of rows returned; and no schema, tool result, or formatted string produced
-for the model carries a secret value — `secretReferenceSchema` has, by design, no value-bearing
-property.
+for the model carries a secret value — except the explicitly supported inline environment input,
+which remains in the tool transcript. `secretReferenceSchema` has, by design, no value-bearing
+property, so values never appear in results.
 
 ## External functions
 
@@ -118,7 +109,7 @@ is passed separately as `scopeRef` when attaching or resolving command secrets.
   registers a secret (host values plus description) and returns only its safe reference. A repeated
   call with an explicit `id` overwrites that secret's description and environment; a repeated call
   that omits `id` registers a new secret under a freshly generated one each time. The
-  `create_secret` tool calls this only after it has read a reviewed dotenv source host-side.
+  This is the legacy storage seam; the model-facing tool uses `createCatalogSecret`.
 - `update(ctx, actingAgentId, secretId, input: SecretUpdateInput): Promise<SecretReference | undefined>`
   — patches `description`, `environment` (a `null` value removes that variable), and/or
   `availableToModel`; `undefined` if the secret does not exist. A repeated call with the same patch
@@ -147,9 +138,9 @@ Resolution rejects a case-insensitive environment-name collision between selecte
 than applying silent last-write-wins. The command host owns the final merge with its ambient
 environment; the module supplies the names that must be hidden first.
 
-For the default host shell, references come from the global catalog and the acting agent ID is the
-command attachment scope. The model attaches a reference to that exact scope, then names only the
-required IDs in the shell command's `secrets` argument. Omitted or empty means no secret bundles.
+For the default host shell, references come from the global catalog. Effective availability is the
+union of the agent's project, exact workspace, and exact-agent grants. The model then names only
+the required IDs in the shell command's `secrets` argument. Omitted or empty means no secret bundles.
 Before spawning, Compute removes all environment-variable names belonging to attached bundles from
 the ambient environment case-insensitively, then adds only the selected values. Selection is
 reviewed but stays inside the current sandbox. The shell tool's explicit escalation argument
@@ -204,9 +195,8 @@ escapes the module's boundary. Registrations under `github` and `project-git` ar
 those IDs belong to managed host credentials.
 
 The legacy `request_secret` interaction is intentionally not a secrets-catalog operation. Asking a
-person to enter or update a value belongs in the User Input module/client broker; this module only
-stores or resolves a value after the host has supplied it. The model-facing creation and update
-tools accept a host dotenv path, never an inline value.
+person to enter or update a value belongs in the User Input module/client broker. The reviewed
+model-facing creation and update tools accept either inline raw values or a host dotenv path.
 
 Specialized host integration debt remains for GitHub CLI token synchronization and the managed `project-git`
 credential-proxy lease (`trustedLoopbackPorts`); those are not flat environment bundles and must be

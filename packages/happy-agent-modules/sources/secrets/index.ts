@@ -1,5 +1,6 @@
 export * from "./Secret.js";
 export * from "./SecretEvent.js";
+export * from "./SecretApi.js";
 export {
     assertSecretAttachment,
     assertSecretCommandEnvironment,
@@ -29,6 +30,13 @@ export {
     secretsMigrations,
     type SecretDatabase,
 } from "./SecretDatabase.js";
+export {
+    createSecretApiDatabase,
+    SECRETS_API_MIGRATION_KEY,
+    secretsApiMigrations,
+    type SecretApiDatabase,
+    type SecretApiUpdateResult,
+} from "./SecretApiDatabase.js";
 export {
     GLOBAL_SECRET_OWNER_ID,
     SecretsModule,

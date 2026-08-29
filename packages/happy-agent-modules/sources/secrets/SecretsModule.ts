@@ -4,7 +4,8 @@ import {
     type AgentModuleScope,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
-import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import { createId } from "@paralleldrive/cuid2";
+import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
@@ -54,6 +55,26 @@ import {
     type SecretStoreUpdateResult,
 } from "./SecretStore.js";
 import { createSecretDatabase, secretsMigrations, type SecretDatabase } from "./SecretDatabase.js";
+import { createSecretApiDatabase, type SecretApiDatabase } from "./SecretApiDatabase.js";
+import {
+    SecretApiConflictError,
+    SecretApiInputError,
+    secretApiAttachmentListQuerySchema,
+    secretApiCreateInputSchema,
+    secretApiListQuerySchema,
+    secretApiPageSchema,
+    secretApiTargetSchema,
+    secretApiUpdateInputSchema,
+    type SecretApiAttachment,
+    type SecretApiAttachmentListQuery,
+    type SecretApiAttachmentPage,
+    type SecretApiCreateInput,
+    type SecretApiListQuery,
+    type SecretApiPage,
+    type SecretApiRecord,
+    type SecretApiTarget,
+    type SecretApiUpdateInput,
+} from "./SecretApi.js";
 import {
     secretContextSchema,
     secretEventIdSchema,
@@ -77,6 +98,11 @@ export const SECRETS_PAGE_SIZE = 50;
 export const SECRETS_OUTPUT_CHARACTERS = 12_000;
 /** Stable owner of the installation-wide catalog used by agent tools and command resolution. */
 export const GLOBAL_SECRET_OWNER_ID = "global";
+const secretManagedKindSchema = Type.String({
+    minLength: 1,
+    maxLength: 128,
+    pattern: "^[A-Za-z0-9._:-]+$",
+});
 /** The most secrets one resolver selection may name. */
 const MAX_SECRET_LIST_ITEMS = 256;
 
@@ -104,6 +130,7 @@ export class SecretsModule implements AgentModule {
     readonly migrations = secretsMigrations;
 
     readonly #store: SecretDatabase = createSecretDatabase();
+    readonly #apiStore: SecretApiDatabase = createSecretApiDatabase();
 
     /** Subscribers taken after construction, inside and after the committing transaction. */
     readonly #transactionalListeners = new Set<SecretEventListener>();
@@ -127,6 +154,335 @@ export class SecretsModule implements AgentModule {
      */
     onEvent(listener: SecretEventListener): SecretUnsubscribe {
         return this.#subscribe(this.#postCommitListeners, listener);
+    }
+
+    /** List the installation-wide public catalog without reading any value into the API layer. */
+    async listCatalog(
+        ctx: Context,
+        query: Partial<SecretApiListQuery> = {},
+    ): Promise<SecretApiPage> {
+        const normalized = { ...structuredClone(query), limit: query.limit ?? 50 };
+        this.#assertApiInput(secretApiListQuerySchema, normalized, "catalog list");
+        return await this.#apiStore.list(ctx, GLOBAL_SECRET_OWNER_ID, normalized);
+    }
+
+    /** Read one public catalog record. */
+    async catalogSecret(ctx: Context, secretId: string): Promise<SecretApiRecord | undefined> {
+        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        return await this.#apiStore.get(ctx, GLOBAL_SECRET_OWNER_ID, secretId);
+    }
+
+    /** Create one user-owned catalog record. Existing IDs are conflicts, never replacements. */
+    async createCatalogSecret(ctx: Context, input: SecretApiCreateInput): Promise<SecretApiRecord> {
+        this.#assertApiInput(secretApiCreateInputSchema, input, "catalog creation");
+        const normalized = this.#normalizeApiInput(() => ({
+            ...structuredClone(input),
+            id: input.id ?? createId(),
+            description: normalizeText(input.description),
+            environment: normalizeEnvironment(input.environment),
+            availableToAgents: input.availableToAgents ?? true,
+        }));
+        this.#assertApiInput(secretApiCreateInputSchema, normalized, "normalized catalog creation");
+        return await this.#runTransaction(ctx, "catalog create", async (txCtx) => {
+            const result = await this.#apiStore.create(txCtx, GLOBAL_SECRET_OWNER_ID, normalized);
+            if (!result.created) {
+                throw new SecretApiConflictError(
+                    "That secret ID is already in use.",
+                    result.secret,
+                );
+            }
+            if (result.secret === undefined) {
+                throw new Error("The new global secret has no public catalog metadata.");
+            }
+            return {
+                result: result.secret,
+                event: this.#event(
+                    { type: "secret_api_created", secret: result.secret },
+                    GLOBAL_SECRET_OWNER_ID,
+                    this.#newEventId(),
+                    result.secret.createdAt,
+                ),
+            };
+        });
+    }
+
+    /** Apply one version-checked public update and emit only safe before/after metadata. */
+    async updateCatalogSecret(
+        ctx: Context,
+        secretId: string,
+        expectedVersion: string,
+        input: SecretApiUpdateInput,
+    ): Promise<SecretApiRecord | undefined> {
+        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiUpdateInputSchema, input, "catalog update");
+        const normalized = this.#normalizeApiInput(() => ({
+            ...(input.description === undefined
+                ? {}
+                : { description: normalizeText(input.description) }),
+            ...(input.environment === undefined
+                ? {}
+                : { environment: normalizeEnvironmentPatch(input.environment) }),
+            ...(input.availableToAgents === undefined
+                ? {}
+                : { availableToAgents: input.availableToAgents }),
+        }));
+        this.#assertApiInput(secretApiUpdateInputSchema, normalized, "normalized catalog update");
+        return await this.#runTransaction(ctx, "catalog update", async (txCtx) => {
+            const result = await this.#apiStore.update(
+                txCtx,
+                GLOBAL_SECRET_OWNER_ID,
+                secretId,
+                expectedVersion,
+                normalized,
+            );
+            if (result.type === "not_found") return { result: undefined };
+            if (result.type === "conflict") {
+                throw new SecretApiConflictError("The secret has changed.", result.current);
+            }
+            if (result.type === "managed") {
+                throw new SecretApiConflictError(
+                    "This secret is managed by another daemon feature.",
+                    result.current,
+                );
+            }
+            if (result.type === "attached") {
+                throw new SecretApiConflictError(
+                    "Detach this secret everywhere before disabling agent access.",
+                    result.current,
+                );
+            }
+            if (result.type === "empty") {
+                throw new SecretApiConflictError(
+                    "A secret environment must contain at least one variable.",
+                    result.current,
+                );
+            }
+            return {
+                result: result.secret,
+                event: result.changed
+                    ? this.#event(
+                          {
+                              type: "secret_api_updated",
+                              previousSecret: result.previous,
+                              secret: result.secret,
+                          },
+                          GLOBAL_SECRET_OWNER_ID,
+                          this.#newEventId(),
+                          result.secret.updatedAt,
+                      )
+                    : undefined,
+            };
+        });
+    }
+
+    /** Retire one daemon-managed secret only when the calling feature owns its managed kind. */
+    async retireManagedCatalogSecret(
+        ctx: Context,
+        managedKind: string,
+        secretId: string,
+    ): Promise<boolean> {
+        this.#assertApiInput(secretManagedKindSchema, managedKind, "managed kind");
+        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        return await this.#runTransaction(ctx, "managed catalog retirement", async (txCtx) => {
+            const result = await this.#apiStore.removeManaged(
+                txCtx,
+                GLOBAL_SECRET_OWNER_ID,
+                secretId,
+                managedKind,
+            );
+            if (result.type === "not_found") return { result: false };
+            if (result.type === "not_owned") {
+                throw new SecretApiConflictError(
+                    "This daemon feature does not own that managed secret.",
+                    result.current,
+                );
+            }
+            return {
+                result: true,
+                event: this.#event(
+                    {
+                        type: "secret_api_removed",
+                        secretId: result.previous.id,
+                        previousVersion: result.previous.version,
+                    },
+                    GLOBAL_SECRET_OWNER_ID,
+                    this.#newEventId(),
+                    Date.now(),
+                ),
+            };
+        });
+    }
+
+    /** List one secret's immutable direct grants. */
+    async listCatalogAttachments(
+        ctx: Context,
+        secretId: string,
+        query: Partial<SecretApiAttachmentListQuery> = {},
+    ): Promise<SecretApiAttachmentPage | undefined> {
+        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        const normalized = { ...structuredClone(query), limit: query.limit ?? 50 };
+        this.#assertApiInput(secretApiAttachmentListQuerySchema, normalized, "attachment list");
+        if ((await this.#apiStore.get(ctx, GLOBAL_SECRET_OWNER_ID, secretId)) === undefined) {
+            return undefined;
+        }
+        return await this.#apiStore.listAttachments(
+            ctx,
+            GLOBAL_SECRET_OWNER_ID,
+            secretId,
+            normalized,
+        );
+    }
+
+    /** Idempotently create one typed direct grant. Target existence is owned by the caller. */
+    async attachCatalogSecret(
+        ctx: Context,
+        secretId: string,
+        target: SecretApiTarget,
+    ): Promise<{ readonly attachment: SecretApiAttachment; readonly created: boolean }> {
+        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiTargetSchema, target, "attachment target");
+        return await this.#runTransaction(ctx, "catalog attach", async (txCtx) => {
+            const secret = await this.#apiStore.get(txCtx, GLOBAL_SECRET_OWNER_ID, secretId);
+            if (secret === undefined) throw new Error("The secret reference does not exist.");
+            if (!secret.availableToAgents) {
+                throw new SecretApiConflictError("This secret is not available to agents.", secret);
+            }
+            const candidate: SecretApiAttachment = {
+                id: createId(),
+                secretId,
+                target: structuredClone(target),
+                createdAt: Date.now(),
+            };
+            const result = await this.#apiStore.attach(txCtx, GLOBAL_SECRET_OWNER_ID, candidate);
+            return {
+                result,
+                event: result.created
+                    ? this.#event(
+                          { type: "secret_api_attached", attachment: result.attachment },
+                          GLOBAL_SECRET_OWNER_ID,
+                          this.#newEventId(),
+                          result.attachment.createdAt,
+                      )
+                    : undefined,
+            };
+        });
+    }
+
+    /** Idempotently remove one exact typed direct grant. */
+    async detachCatalogSecret(
+        ctx: Context,
+        secretId: string,
+        target: SecretApiTarget,
+    ): Promise<SecretApiAttachment | undefined> {
+        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiTargetSchema, target, "attachment target");
+        return await this.#runTransaction(ctx, "catalog detach", async (txCtx) => {
+            const attachment = await this.#apiStore.detach(
+                txCtx,
+                GLOBAL_SECRET_OWNER_ID,
+                secretId,
+                target,
+            );
+            return {
+                result: attachment,
+                event:
+                    attachment === undefined
+                        ? undefined
+                        : this.#event(
+                              { type: "secret_api_detached", attachment },
+                              GLOBAL_SECRET_OWNER_ID,
+                              this.#newEventId(),
+                              Date.now(),
+                          ),
+            };
+        });
+    }
+
+    /** Resolve the union of project, workspace, and exact-agent grants for one command. */
+    async resolveForCommandTargets(
+        ctx: Context,
+        targets: readonly SecretApiTarget[],
+        secretIds?: readonly string[],
+    ): Promise<SecretCommandEnvironment> {
+        if (
+            !Array.isArray(targets) ||
+            targets.length === 0 ||
+            targets.length > 3 ||
+            targets.some(
+                (target) =>
+                    (target.type !== "project" &&
+                        target.type !== "workspace" &&
+                        target.type !== "agent") ||
+                    (target.type === "agent"
+                        ? !Value.Check(secretAgentIdSchema, target.id)
+                        : !Value.Check(secretApiTargetSchema.properties.id, target.id)),
+            ) ||
+            new Set(targets.map((target) => `${target.type}:${target.id}`)).size !== targets.length
+        ) {
+            throw new Error("Secret command targets are invalid.");
+        }
+        const normalizedSecretIds = this.#normalizeSecretSelection(secretIds);
+        return await ctx.inTx(async (txCtx) => {
+            const effective = new Set(
+                await this.#apiStore.effectiveSecretIds(txCtx, GLOBAL_SECRET_OWNER_ID, targets),
+            );
+            const agentTarget = targets.find((target) => target.type === "agent");
+            if (agentTarget !== undefined) {
+                for (const legacyId of await this.#store.attachedSecretIdsForScope(
+                    txCtx,
+                    GLOBAL_SECRET_OWNER_ID,
+                    agentTarget.id,
+                )) {
+                    effective.add(legacyId);
+                }
+            }
+            const selected = normalizedSecretIds ?? [...effective].sort();
+            for (const secretId of selected) {
+                if (!effective.has(secretId)) {
+                    throw new Error(`Secret '${secretId}' is not attached to this agent.`);
+                }
+                const publicSecret = await this.#apiStore.get(
+                    txCtx,
+                    GLOBAL_SECRET_OWNER_ID,
+                    secretId,
+                );
+                if (publicSecret !== undefined && !publicSecret.availableToAgents) {
+                    throw new Error(`Secret '${secretId}' is not available to agent commands.`);
+                }
+                if (publicSecret === undefined) {
+                    const legacySecret = await this.#reference(
+                        txCtx,
+                        GLOBAL_SECRET_OWNER_ID,
+                        secretId,
+                    );
+                    if (legacySecret === undefined) {
+                        throw new Error("Secret command selection refers to a missing secret.");
+                    }
+                    if (legacySecret.availableToModel === false) {
+                        throw new Error(`Secret '${secretId}' is not available to agent commands.`);
+                    }
+                }
+            }
+            const allEffective = [...effective].sort();
+            const environment = await this.#apiStore.resolveByIds(
+                txCtx,
+                GLOBAL_SECRET_OWNER_ID,
+                selected,
+            );
+            const result = {
+                environment,
+                hiddenEnvironmentVariables: mergeEnvironmentVariableNames(
+                    await this.#apiStore.environmentVariableNamesByIds(
+                        txCtx,
+                        GLOBAL_SECRET_OWNER_ID,
+                        allEffective,
+                    ),
+                    Object.keys(environment),
+                ),
+            };
+            assertSecretCommandEnvironment(result);
+            return structuredClone(result);
+        });
     }
 
     /** Return a bounded page of safe secret metadata, optionally filtered by an opaque scope. */
@@ -567,20 +923,20 @@ export class SecretsModule implements AgentModule {
     readonly #hooks: AgentModuleHooks = {
         /** Common provider-neutral tools over the installation-wide catalog. */
         tools: (_ctx: Context, _scope: AgentModuleScope): readonly AnyAgentTool[] => [
-            listSecretsTool(this, GLOBAL_SECRET_OWNER_ID),
-            referenceSecretTool(this, GLOBAL_SECRET_OWNER_ID),
-            createSecretTool(this, GLOBAL_SECRET_OWNER_ID),
-            updateSecretTool(this, GLOBAL_SECRET_OWNER_ID),
-            attachSecretTool(this, GLOBAL_SECRET_OWNER_ID),
-            detachSecretTool(this, GLOBAL_SECRET_OWNER_ID),
+            listSecretsTool(this),
+            referenceSecretTool(this),
+            createSecretTool(this),
+            updateSecretTool(this),
+            attachSecretTool(this, _scope.agent.id),
+            detachSecretTool(this, _scope.agent.id),
         ],
 
         /** Tell the model how safe references become one command's host-only environment. */
         instructions: async (_ctx: Context, scope: AgentModuleScope): Promise<string> =>
             [
-                "Secret tools expose the shared installation catalog's references and environment-variable names only. Secret values are available only to the host and must never be requested in chat, tool arguments, or model output.",
-                "Create or update a global secret from an absolute host .env path; the reviewed tool reads its values host-side and never returns them. Creating or updating does not attach the reference to an agent.",
-                `This agent's shell-command attachment scope is ${JSON.stringify(scope.agent.id)}. Attach a model-available reference to that exact scope, then put only the secret IDs one shell command needs in its secrets argument. Omit secrets or use an empty array for none. Secret selection is reviewed but stays inside the current sandbox; requesting elevated permissions is a separate choice, and the two may be used independently or together.`,
+                "Secret tools expose the shared installation catalog's references and environment-variable names. Create or update may receive raw values in the reviewed tool arguments, where they remain in the transcript, or read them from an absolute host .env path. Values are never returned in tool results or model output.",
+                "Creating or updating a secret does not attach the reference to an agent. A reviewed inline mutation stays sandboxed; a reviewed .env file source separately requests host filesystem access.",
+                `The attach_secret and detach_secret tools change only this exact agent (${JSON.stringify(scope.agent.id)}). Project and workspace attachments may also make secrets available here. Put only the secret IDs one shell command needs in its secrets argument. Omit secrets or use an empty array for none. Secret selection is reviewed but stays inside the current sandbox; requesting elevated permissions is a separate choice, and the two may be used independently or together.`,
             ].join(" "),
     };
 
@@ -602,6 +958,40 @@ export class SecretsModule implements AgentModule {
         const output = this.#formatPage(normalized, true);
         if (output.length > SECRETS_OUTPUT_CHARACTERS) {
             throw new Error("Secret page output cannot fit complete metadata and cursor.");
+        }
+        return output;
+    }
+
+    /** Render the public global catalog without ever introducing value-bearing fields. */
+    formatCatalogPageForModel(page: SecretApiPage): string {
+        if (!Value.Check(secretApiPageSchema, page)) {
+            throw new Error("Secret catalog page is invalid.");
+        }
+        const cursor = page.nextCursor === null ? "" : `\nnext=${JSON.stringify(page.nextCursor)}`;
+        const detailed = `${
+            page.secrets.length === 0
+                ? "No secrets are registered."
+                : page.secrets
+                      .map((secret) =>
+                          [
+                              `${JSON.stringify(secret.id)}: ${secret.description}`,
+                              `  Environment variables: ${secret.environmentVariables.join(", ")}`,
+                              ...(secret.availableToAgents
+                                  ? []
+                                  : ["  Availability: not available to agents"]),
+                              ...(secret.managed ? ["  Ownership: daemon managed"] : []),
+                          ].join("\n"),
+                      )
+                      .join("\n\n")
+        }${cursor}`;
+        const compact = `${
+            page.secrets.length === 0
+                ? "No secrets are registered."
+                : page.secrets.map((secret) => secret.id).join("\n")
+        }${cursor}`;
+        const output = detailed.length <= SECRETS_OUTPUT_CHARACTERS ? detailed : compact;
+        if (output.length > SECRETS_OUTPUT_CHARACTERS) {
+            throw new Error("Secret catalog output cannot fit complete identities and cursor.");
         }
         return output;
     }
@@ -985,6 +1375,24 @@ export class SecretsModule implements AgentModule {
                   readonly type: "secret_detached";
                   readonly scopeRef: SecretScopeRef;
                   readonly secretId: SecretId;
+              }
+            | {
+                  readonly type: "secret_api_created";
+                  readonly secret: SecretApiRecord;
+              }
+            | {
+                  readonly type: "secret_api_updated";
+                  readonly previousSecret: SecretApiRecord;
+                  readonly secret: SecretApiRecord;
+              }
+            | {
+                  readonly type: "secret_api_removed";
+                  readonly secretId: SecretApiRecord["id"];
+                  readonly previousVersion: SecretApiRecord["version"];
+              }
+            | {
+                  readonly type: "secret_api_attached" | "secret_api_detached";
+                  readonly attachment: SecretApiAttachment;
               },
         actingAgentId: SecretAgentId,
         eventId: string,
@@ -1191,6 +1599,23 @@ export class SecretsModule implements AgentModule {
     #assertInput(schema: TSchema, value: unknown, label: string): void {
         if (!Value.Check(schema, value)) {
             throw new Error(`Secret ${label} input is invalid.`);
+        }
+    }
+
+    #assertApiInput(schema: TSchema, value: unknown, label: string): void {
+        if (!Value.Check(schema, value)) {
+            throw new SecretApiInputError(`Secret ${label} input is invalid.`);
+        }
+    }
+
+    #normalizeApiInput<Value>(normalize: () => Value): Value {
+        try {
+            return normalize();
+        } catch (error: unknown) {
+            if (error instanceof SecretApiInputError) throw error;
+            throw new SecretApiInputError(
+                error instanceof Error ? error.message : "Secret input is invalid.",
+            );
         }
     }
 

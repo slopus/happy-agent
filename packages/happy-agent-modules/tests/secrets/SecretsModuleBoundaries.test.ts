@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { SecretsModule } from "../../sources/secrets/SecretsModule.js";
 import { SECRETS_MIGRATION_KEY, secretsMigrations } from "../../sources/secrets/SecretDatabase.js";
+import { SECRETS_API_MIGRATION_KEY } from "../../sources/secrets/SecretApiDatabase.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 
 const AGENT = "agent-a";
@@ -61,7 +62,10 @@ describe("SecretsModule boundary contracts", () => {
             expect([...listed.secrets].sort((a, b) => a.id.localeCompare(b.id))).toEqual(
                 [first, second].sort((a, b) => a.id.localeCompare(b.id)),
             );
-            expect(secretsMigrations.map(([key]) => key)).toEqual([SECRETS_MIGRATION_KEY]);
+            expect(secretsMigrations.map(([key]) => key)).toEqual([
+                SECRETS_MIGRATION_KEY,
+                SECRETS_API_MIGRATION_KEY,
+            ]);
         });
     });
 

@@ -13,7 +13,7 @@ import {
 } from "@slopus/happy-agent-compute";
 import type { Context } from "@steve.kite/stdlib";
 
-import { GLOBAL_SECRET_OWNER_ID, type SecretsModule } from "../../secrets/index.js";
+import type { SecretApiTarget, SecretsModule } from "../../secrets/index.js";
 
 interface AttachedSecretsHostSession {
     active: boolean;
@@ -35,6 +35,10 @@ export interface AttachedSecretsHostShellOptions {
     readonly hostPolicy: ComputeHostPolicy;
     readonly processManager: NativeProcessManager;
     readonly secrets: SecretsModule;
+    readonly targetScope?: {
+        readonly projectId?: string;
+        readonly workspaceId?: string;
+    };
 }
 
 /**
@@ -123,10 +127,18 @@ export function createAttachedSecretsHostShell(
         runOptions: ComputeRunOptions,
     ): Promise<{ readonly environment: NodeJS.ProcessEnv; readonly shell: ComputeShell }> => {
         const selected = runOptions.secrets ?? [];
-        const resolved = await options.secrets.resolveForCommand(
+        const targets: SecretApiTarget[] = [
+            { type: "agent", id: options.agentId },
+            ...(options.targetScope?.workspaceId === undefined
+                ? []
+                : [{ type: "workspace" as const, id: options.targetScope.workspaceId }]),
+            ...(options.targetScope?.projectId === undefined
+                ? []
+                : [{ type: "project" as const, id: options.targetScope.projectId }]),
+        ];
+        const resolved = await options.secrets.resolveForCommandTargets(
             options.ctx,
-            GLOBAL_SECRET_OWNER_ID,
-            options.agentId,
+            targets,
             selected,
         );
         const environment = mergeCommandEnvironment(

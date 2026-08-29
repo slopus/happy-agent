@@ -452,6 +452,7 @@ export * from "./contextWindow/index.js";
 export * from "./imageGeneration/index.js";
 
 // Secrets: safe metadata/reference operations backed by a host-owned registry.
+export * from "./secrets/SecretApi.js";
 export {
     secretAgentIdSchema,
     secretAttachReferenceResultSchema,
