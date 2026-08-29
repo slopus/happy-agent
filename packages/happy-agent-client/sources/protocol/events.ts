@@ -16,6 +16,7 @@ import {
     type Timestamp,
     mutationIdSchema,
     resourceVersionSchema,
+    timestampSchema,
 } from "./common.js";
 import type { Agent, AgentDraftSnapshot } from "./agents.js";
 import { botSchema } from "./bots.js";
@@ -28,6 +29,12 @@ import type { BackgroundProcess } from "./processes.js";
 import type { Profile } from "./profile.js";
 import type { Project } from "./projects.js";
 import type { Question } from "./questions.js";
+import {
+    secretAttachmentSchema,
+    secretDescriptionSchema,
+    secretEnvironmentVariableNameSchema,
+    secretSchema,
+} from "./secrets.js";
 import type { Terminal } from "./terminals.js";
 import type { AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
@@ -67,6 +74,54 @@ export type ProjectUpdatedPayload = ResourceUpdate<Project> & { projectId: Cuid2
 
 export type WorkspaceCreatedPayload = MutationEcho & { workspace: Workspace };
 export type WorkspaceUpdatedPayload = ResourceUpdate<Workspace> & { workspaceId: Cuid2 };
+
+/** A global secret entered the catalog; values are absent by construction. */
+export const secretCreatedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    secret: secretSchema,
+});
+export type SecretCreatedPayload = Static<typeof secretCreatedPayloadSchema>;
+
+/** The safe fields that may appear in a version-chained secret update. */
+export const secretUpdatedChangesSchema = Type.Object({
+    availableToAgents: Type.Optional(Type.Boolean()),
+    description: Type.Optional(secretDescriptionSchema),
+    environment: Type.Optional(Type.Never()),
+    environmentVariables: Type.Optional(
+        Type.Array(secretEnvironmentVariableNameSchema, { maxItems: 256, uniqueItems: true }),
+    ),
+    updatedAt: timestampSchema,
+    values: Type.Optional(Type.Never()),
+});
+export type SecretUpdatedChanges = Static<typeof secretUpdatedChangesSchema>;
+
+/** A version-chained metadata change or value-only rotation. */
+export const secretUpdatedPayloadSchema = Type.Object({
+    changes: secretUpdatedChangesSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    secretId: cuid2Schema,
+    version: resourceVersionSchema,
+});
+export type SecretUpdatedPayload = Static<typeof secretUpdatedPayloadSchema>;
+
+/** One direct project, workspace, or agent grant was created. */
+export const secretAttachedPayloadSchema = Type.Object({
+    attachment: secretAttachmentSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type SecretAttachedPayload = Static<typeof secretAttachedPayloadSchema>;
+
+/** One direct grant was removed. */
+export const secretDetachedPayloadSchema = secretAttachedPayloadSchema;
+export type SecretDetachedPayload = Static<typeof secretDetachedPayloadSchema>;
+
+/** A daemon-owned feature retired one managed secret and all its grants. */
+export const secretRemovedPayloadSchema = Type.Object({
+    previousVersion: resourceVersionSchema,
+    secretId: cuid2Schema,
+});
+export type SecretRemovedPayload = Static<typeof secretRemovedPayloadSchema>;
 
 /** A bot was created together with its dedicated workspace and one agent. */
 export const botCreatedPayloadSchema = Type.Object({
@@ -267,6 +322,11 @@ export type HappyAgentEvent =
     | EventEnvelope<"project.updated", ProjectUpdatedPayload>
     | EventEnvelope<"workspace.created", WorkspaceCreatedPayload>
     | EventEnvelope<"workspace.updated", WorkspaceUpdatedPayload>
+    | EventEnvelope<"secret.created", SecretCreatedPayload>
+    | EventEnvelope<"secret.updated", SecretUpdatedPayload>
+    | EventEnvelope<"secret.attached", SecretAttachedPayload>
+    | EventEnvelope<"secret.detached", SecretDetachedPayload>
+    | EventEnvelope<"secret.removed", SecretRemovedPayload>
     | EventEnvelope<"bot.created", BotCreatedPayload>
     | EventEnvelope<"bot.updated", BotUpdatedPayload>
     | EventEnvelope<"terminal.created", TerminalCreatedPayload>

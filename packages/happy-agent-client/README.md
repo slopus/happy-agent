@@ -47,6 +47,13 @@ carry configured credentials. A desktop client installs the bootstrap snapshot, 
 The integration remains separate from required onboarding, so a product may present pairing as an
 optional onboarding screen or later in settings without changing onboarding completion.
 
+The global secrets surface exposes only safe metadata: descriptions, environment-variable names,
+availability, attachments, versions, and timestamps. Raw values appear only in typed create and
+update request bodies. Project, workspace, and exact-agent attachment targets are discriminated by
+`type`; attach results preserve the meaningful `200` versus `201` status. The event union includes
+versioned secret changes and immutable attachment creation/removal without introducing a value-
+bearing response or event type.
+
 ```ts
 const reducer = new HappyReducer(client);
 const hideAgent = reducer.agentVisible(agentId);

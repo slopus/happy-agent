@@ -80,15 +80,15 @@ section).
 ### Resource versions and `If-Match`
 
 Every resource that appears in version-chained `*.updated` events — projects, workspaces,
-terminals, agents, bots, questions, processes, and the profile — carries a `version` field: a **UUIDv7** minted at the
-moment of the change. Because versions are time-ordered, a client holding two copies of the
-same resource compares their versions and keeps the greater one; this is how a REST snapshot
-and the event stream reconcile without bookkeeping. Versions also chain updates together:
-every `*.updated` event names the version it replaced, so a client can tell whether its cached
-copy is current or dirty (see the events chapter).
+terminals, agents, bots, secrets, questions, processes, and the profile — carries a `version`
+field: a **UUIDv7** minted at the moment of the change. Because versions are time-ordered, a
+client holding two copies of the same resource compares their versions and keeps the greater
+one; this is how a REST snapshot and the event stream reconcile without bookkeeping. Versions
+also chain updates together: every `*.updated` event names the version it replaced, so a client
+can tell whether its cached copy is current or dirty (see the events chapter).
 
-Mutations of projects, workspaces, bots, and the profile additionally require an `If-Match` header
-carrying the version the client last saw (creation excepted):
+Mutations of projects, workspaces, bots, secrets, and the profile additionally require an
+`If-Match` header carrying the version the client last saw (creation excepted):
 
 ```
 If-Match: 01991f3a-5c1e-7000-8000-2f9a1b3c4d5e
@@ -2021,6 +2021,239 @@ they change state. When disabled, the request returns `503` with code `unsupport
 integration. When Happy cannot create the fresh authorization request, it returns `503` with code
 `happy_unavailable` and the now-unlinked `"disconnected"` integration; the previous credentials
 remain removed so a later retry cannot silently reconnect the account the person chose to replace.
+
+## Secrets
+
+Secrets are an installation-wide catalog of named environment bundles. They do not belong to the
+agent that created them. A secret becomes usable by an agent only through an attachment to a
+project, workspace, or exact agent.
+
+Secret values are **write-only** through this API. They are accepted in the `environment` field of
+create and update requests, but no response, event, conflict body, or bootstrap object ever contains
+them. Safe metadata includes the description and environment-variable names. An update that rotates
+a value without changing its variable name still advances the secret version and emits an update,
+but does not disclose what changed inside the value.
+
+### The secret object
+
+```json
+{
+    "id": "s4e6c8r0e2t4i6d8",
+    "description": "Deployment API credentials",
+    "environmentVariables": ["DEPLOY_API_TOKEN", "DEPLOY_ORGANIZATION"],
+    "managed": false,
+    "availableToAgents": true,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "createdAt": 1755400000000,
+    "updatedAt": 1755400000000
+}
+```
+
+- `id` — the secret's CUID2 identity.
+- `description` — human-readable text, 1–2,000 characters after trimming.
+- `environmentVariables` — the bundle's variable names, sorted lexically. Names match
+  `[A-Za-z_][A-Za-z0-9_]*`, are case-insensitively unique, and never reveal their values.
+- `managed` — `false` for a secret created through this API; `true` when another daemon feature or
+  integration owns its lifecycle. Managed secrets are visible here but cannot be updated through
+  the public secret mutation endpoint.
+- `availableToAgents` — whether an attachment may grant agents access to the secret. A secret set
+  to `false` has no attachments.
+- `version` — the UUIDv7 concurrency version used by `If-Match` and `secret.updated`.
+- `createdAt`, `updatedAt` — lifecycle timestamps. Rotating a value changes `updatedAt` even when
+  every safe metadata field remains the same.
+
+One secret contains at most 256 variables. Each value is a string of at most 65,536 characters and
+must not contain NUL. Variable names are safe metadata, but callers should still choose names that
+do not themselves contain confidential information.
+
+### Attachments and effective availability
+
+An attachment is an immutable grant from one secret to one typed target:
+
+```json
+{
+    "id": "a7t5t3a1c9h7m5n3",
+    "secretId": "s4e6c8r0e2t4i6d8",
+    "target": { "type": "workspace", "id": "w9x8y7z6" },
+    "createdAt": 1755400000000
+}
+```
+
+The allowed target types are `"project"`, `"workspace"`, and `"agent"`. The target type is part
+of the identity: because a project and its root workspace share an ID, a project attachment and a
+root-workspace attachment are distinct grants with different reach.
+
+- A project attachment applies to agents in the project's root workspace and every descendant
+  workspace.
+- A workspace attachment applies to agents whose `workspaceId` is exactly that workspace. It does
+  not flow into child workspaces.
+- An agent attachment applies only to that exact agent, not to its subagents.
+
+An agent's effective secrets are the union of those three sources. The grant follows current and
+future agents that match it; updating a secret leaves every attachment intact. Archiving a target
+preserves its attachments, but attaching to an archived or archiving target is a `409` conflict.
+Detaching remains allowed. An unknown target is `404`.
+
+An attachment only makes the secret eligible for explicit use. It does not inject the bundle into
+every command. A shell tool call names the attached secret IDs it needs, and only those bundles are
+added to that command's environment. In Auto permission mode, selecting any secret always triggers
+review. Secret provisioning and sandbox elevation are separate decisions: the command may stay
+sandboxed with a secret, run elevated without a secret, or request both. Agent tools that create,
+update, attach, or detach secrets also require Auto review. Direct authenticated HTTP mutations are
+client actions and do not pass through the agent's Auto reviewer.
+
+### `GET /v0/secrets`
+
+Lists the global catalog as safe metadata, oldest first. It may instead list the secrets directly
+attached to one exact typed target; inherited project or workspace grants are not expanded by this
+filter.
+
+Query parameters:
+
+- `cursor` — optional secret ID.
+- `limit` — optional, `1`–`100`, default `50`.
+- `targetType`, `targetId` — optional paired filter. Supply both or neither. `targetType` is
+  `project`, `workspace`, or `agent`; an unknown target is `404`.
+
+Response — `200`:
+
+```json
+{
+    "secrets": [
+        /* secret objects; never values */
+    ],
+    "nextCursor": null
+}
+```
+
+`nextCursor` is the last returned secret ID when another page exists, otherwise `null`.
+
+### `GET /v0/secrets/:secretId`
+
+Returns one safe secret object.
+
+Response — `200`: `{ "secret": { ... } }`; `404` when no such secret exists. Values are never
+included.
+
+### `POST /v0/secrets`
+
+Creates one user-created global secret without attaching it anywhere.
+
+Request:
+
+```json
+{
+    "id": "optional-client-supplied-cuid2",
+    "description": "Deployment API credentials",
+    "environment": {
+        "DEPLOY_API_TOKEN": "raw-value",
+        "DEPLOY_ORGANIZATION": "acme"
+    },
+    "availableToAgents": true,
+    "mutationId": "optional-client-value"
+}
+```
+
+`id` is optional; the daemon mints one when omitted. `environment` contains 1–256 variables.
+`availableToAgents` is optional and defaults to `true`. Client-created secrets always have
+`managed: false`. An existing explicit ID is a `409` conflict; creation never replaces an existing
+secret.
+
+Response — `201`: `{ "secret": { ... } }`, containing metadata only. The mutation emits
+`secret.created` with the optional `mutationId`.
+
+### `PATCH /v0/secrets/:secretId`
+
+Partially updates one user-created secret. Requires `If-Match` with the secret version.
+
+Request — at least one mutable field:
+
+```json
+{
+    "description": "Rotated deployment credentials",
+    "environment": {
+        "DEPLOY_API_TOKEN": "new-raw-value",
+        "DEPLOY_ORGANIZATION": null
+    },
+    "availableToAgents": true,
+    "mutationId": "optional-client-value"
+}
+```
+
+Omitted fields stay unchanged. In the `environment` patch, a string creates or replaces one value
+and `null` removes that variable. The resulting bundle must contain 1–256 variables. Names in one
+request must be case-insensitively unique. Setting `availableToAgents` to `false` while any
+attachment exists is a `409` conflict; detach it everywhere first. A managed secret is also a
+`409` conflict because its owner is responsible for rotation.
+
+A stale `If-Match` returns the standard `409` with `currentVersion` and the safe current `secret`,
+never its values. Response — `200`: `{ "secret": { ... } }`. A changed secret emits
+`secret.updated`; a request that leaves description, environment, and availability identical does
+not advance the version or emit an event.
+
+There is no public secret-removal endpoint in this contract. Detaching revokes grants but does not
+remove the global catalog entry. If a daemon feature retires a managed secret that it owns, the
+secret and its direct attachments disappear atomically through `secret.removed`.
+
+### `GET /v0/secrets/:secretId/attachments`
+
+Lists the secret's direct attachments, oldest first. This does not expand project or workspace
+inheritance into one row per effective agent.
+
+Query parameters: `cursor` (optional attachment ID), `limit` (optional, `1`–`100`, default `50`).
+
+Response — `200`:
+
+```json
+{
+    "attachments": [
+        /* attachment objects */
+    ],
+    "nextCursor": null
+}
+```
+
+`404` when the secret does not exist. `nextCursor` follows the same convention as the secret list.
+
+### `PUT /v0/secrets/:secretId/attachments/:targetType/:targetId`
+
+Attaches the secret directly to one `project`, `workspace`, or `agent`. The JSON body is optionally
+`{ "mutationId": "..." }`; an empty body is equivalent to `{}`. No `If-Match` is needed because
+the relation has one composite identity and the operation is idempotent.
+
+Response — `201` for a new grant or `200` when it already existed:
+
+```json
+{
+    "attachment": {
+        /* attachment object */
+    },
+    "created": true
+}
+```
+
+`created` is `false` for the idempotent case. A new grant emits `secret.attached`; a no-op emits
+nothing. A secret with `availableToAgents: false` is a `409` conflict.
+
+### `DELETE /v0/secrets/:secretId/attachments/:targetType/:targetId`
+
+Detaches the exact direct grant. Inherited access from another matching attachment is unaffected.
+The optional JSON body is `{ "mutationId": "..." }`; an empty body is equivalent to `{}`. No
+`If-Match` is needed and the operation is idempotent.
+
+Response — `200`:
+
+```json
+{
+    "detached": true,
+    "attachment": {
+        /* the attachment that was removed */
+    }
+}
+```
+
+A removed grant emits `secret.detached`; a no-op returns `detached: false`, `attachment: null`, and
+emits nothing.
 
 ## Projects and workspaces
 
@@ -4266,8 +4499,9 @@ may replace a potentially large full resource; `crdt.service.created` is the cur
 }
 ```
 
-- the resource ID (`projectId`, `workspaceId`, `terminalId`, `agentId`, `botId`, `compactionId`,
-  `processId`, `questionId`) — an ID string naming what changed, since the full object is not here;
+- the resource ID (`projectId`, `workspaceId`, `terminalId`, `agentId`, `botId`, `secretId`,
+  `compactionId`, `processId`, `questionId`) — an ID string naming what changed, since the full
+  object is not here;
 - `previousVersion` — the resource's version **before** this change;
 - `version` — its version after;
 - `changes` — a partial resource object: only the fields that changed, with their new values
@@ -4310,6 +4544,33 @@ to a different daemon process.
 - `workspace.updated` — rename, reorder, archive progress, initialization settling, or a change
   to the workspace's top-level-agent association.
     - `workspaceId` (ID string), `previousVersion`, `version`, `changes`.
+
+**Secrets**
+
+Secret events contain safe metadata only. They are emitted for changes made through the HTTP API,
+agent tools, and daemon-owned integrations. An HTTP mutation's optional `mutationId` is echoed;
+changes from another source omit it.
+
+- `secret.created` — a global secret entered the catalog.
+    - `secret` (full safe secret object).
+- `secret.updated` — a secret's description, environment bundle, or agent availability changed.
+    - `secretId` (ID string), `previousVersion`, `version`, `changes`.
+    - `changes` may contain `description`, `environmentVariables`, `availableToAgents`, and always
+      `updatedAt`, but never environment values. A value-only rotation therefore carries only
+      `updatedAt` plus the version chain.
+- `secret.attached` — one direct project, workspace, or agent grant was created.
+    - `attachment` (full attachment object).
+- `secret.detached` — one direct grant was removed.
+    - `attachment` (the full attachment object as it existed before removal).
+- `secret.removed` — a daemon-owned feature retired one managed secret. There is no public API
+  mutation for this event.
+    - `secretId` (ID string), `previousVersion` (the final safe secret version).
+    - Every attachment whose `secretId` matches is removed by the same atomic change; clients
+      discard those cached relations without waiting for separate detach events.
+
+Attachments are immutable relation resources, so their create/remove events are not version
+chained and do not advance the attached secret or target version. Replaying either attachment
+event is idempotent by attachment ID.
 
 **Bots**
 

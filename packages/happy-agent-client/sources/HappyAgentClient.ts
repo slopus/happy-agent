@@ -124,6 +124,20 @@ import type {
     QuestionResponse,
 } from "./protocol/questions.js";
 import type {
+    CreateSecretRequest,
+    SecretAttachmentListQuery,
+    SecretAttachmentListResponse,
+    SecretAttachmentMutationRequest,
+    SecretAttachmentTarget,
+    SecretAttachResponse,
+    SecretAttachResult,
+    SecretDetachResponse,
+    SecretListQuery,
+    SecretListResponse,
+    SecretResponse,
+    UpdateSecretRequest,
+} from "./protocol/secrets.js";
+import type {
     OpenTerminalRequest,
     ResizeTerminalRequest,
     TerminalListResponse,
@@ -726,6 +740,108 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/integrations/happy/re-pair",
+            signal: options.signal,
+        });
+    }
+
+    // Secrets
+
+    /** `GET /v0/secrets` — global safe metadata, optionally for one direct target. */
+    async listSecrets(
+        query: SecretListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<SecretListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/secrets",
+            query: {
+                cursor: query.cursor,
+                limit: query.limit,
+                ...("targetType" in query
+                    ? { targetId: query.targetId, targetType: query.targetType }
+                    : {}),
+            },
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/secrets/:secretId` — safe metadata only. */
+    async getSecret(secretId: Cuid2, options: RequestOptions = {}): Promise<SecretResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/secrets/${encodeURIComponent(secretId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/secrets` — stores a write-only environment bundle without attaching it. */
+    async createSecret(
+        request: CreateSecretRequest,
+        options: RequestOptions = {},
+    ): Promise<SecretResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/secrets",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `PATCH /v0/secrets/:secretId` — updates metadata or write-only values. */
+    async updateSecret(
+        secretId: Cuid2,
+        request: UpdateSecretRequest,
+        options: VersionedRequestOptions,
+    ): Promise<SecretResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/secrets/${encodeURIComponent(secretId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/secrets/:secretId/attachments` — direct grants only. */
+    async listSecretAttachments(
+        secretId: Cuid2,
+        query: SecretAttachmentListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<SecretAttachmentListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/secrets/${encodeURIComponent(secretId)}/attachments`,
+            query: { cursor: query.cursor, limit: query.limit },
+            signal: options.signal,
+        });
+    }
+
+    /** Attaches one secret directly to a project, workspace, or exact agent. */
+    async attachSecret(
+        secretId: Cuid2,
+        target: SecretAttachmentTarget,
+        request: SecretAttachmentMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<SecretAttachResult> {
+        return await this.#jsonWithStatus<SecretAttachResponse, 200 | 201>({
+            method: "PUT",
+            path: secretAttachmentPath(secretId, target),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Detaches one exact direct grant; inherited access is unaffected. */
+    async detachSecret(
+        secretId: Cuid2,
+        target: SecretAttachmentTarget,
+        request: SecretAttachmentMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<SecretDetachResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: secretAttachmentPath(secretId, target),
+            json: request,
             signal: options.signal,
         });
     }
@@ -1790,4 +1906,8 @@ export class HappyAgentClient {
  */
 function bodyOf(options: { mutationId?: string }): { mutationId?: string } {
     return options.mutationId === undefined ? {} : { mutationId: options.mutationId };
+}
+
+function secretAttachmentPath(secretId: Cuid2, target: SecretAttachmentTarget): string {
+    return `v0/secrets/${encodeURIComponent(secretId)}/attachments/${encodeURIComponent(target.type)}/${encodeURIComponent(target.id)}`;
 }
