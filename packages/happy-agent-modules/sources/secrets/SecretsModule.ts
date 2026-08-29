@@ -61,6 +61,7 @@ import {
     SecretApiInputError,
     secretApiAttachmentListQuerySchema,
     secretApiCreateInputSchema,
+    secretApiIdSchema,
     secretApiListQuerySchema,
     secretApiPageSchema,
     secretApiTargetSchema,
@@ -168,7 +169,7 @@ export class SecretsModule implements AgentModule {
 
     /** Read one public catalog record. */
     async catalogSecret(ctx: Context, secretId: string): Promise<SecretApiRecord | undefined> {
-        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiIdSchema, secretId, "catalog secret ID");
         return await this.#apiStore.get(ctx, GLOBAL_SECRET_OWNER_ID, secretId);
     }
 
@@ -213,7 +214,7 @@ export class SecretsModule implements AgentModule {
         expectedVersion: string,
         input: SecretApiUpdateInput,
     ): Promise<SecretApiRecord | undefined> {
-        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiIdSchema, secretId, "catalog secret ID");
         this.#assertApiInput(secretApiUpdateInputSchema, input, "catalog update");
         const normalized = this.#normalizeApiInput(() => ({
             ...(input.description === undefined
@@ -282,7 +283,7 @@ export class SecretsModule implements AgentModule {
         secretId: string,
     ): Promise<boolean> {
         this.#assertApiInput(secretManagedKindSchema, managedKind, "managed kind");
-        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiIdSchema, secretId, "catalog secret ID");
         return await this.#runTransaction(ctx, "managed catalog retirement", async (txCtx) => {
             const result = await this.#apiStore.removeManaged(
                 txCtx,
@@ -319,7 +320,7 @@ export class SecretsModule implements AgentModule {
         secretId: string,
         query: Partial<SecretApiAttachmentListQuery> = {},
     ): Promise<SecretApiAttachmentPage | undefined> {
-        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiIdSchema, secretId, "catalog secret ID");
         const normalized = { ...structuredClone(query), limit: query.limit ?? 50 };
         this.#assertApiInput(secretApiAttachmentListQuerySchema, normalized, "attachment list");
         if ((await this.#apiStore.get(ctx, GLOBAL_SECRET_OWNER_ID, secretId)) === undefined) {
@@ -339,7 +340,7 @@ export class SecretsModule implements AgentModule {
         secretId: string,
         target: SecretApiTarget,
     ): Promise<{ readonly attachment: SecretApiAttachment; readonly created: boolean }> {
-        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiIdSchema, secretId, "catalog secret ID");
         this.#assertApiInput(secretApiTargetSchema, target, "attachment target");
         return await this.#runTransaction(ctx, "catalog attach", async (txCtx) => {
             const secret = await this.#apiStore.get(txCtx, GLOBAL_SECRET_OWNER_ID, secretId);
@@ -374,7 +375,7 @@ export class SecretsModule implements AgentModule {
         secretId: string,
         target: SecretApiTarget,
     ): Promise<SecretApiAttachment | undefined> {
-        this.#assertApiInput(secretApiTargetSchema.properties.id, secretId, "catalog secret ID");
+        this.#assertApiInput(secretApiIdSchema, secretId, "catalog secret ID");
         this.#assertApiInput(secretApiTargetSchema, target, "attachment target");
         return await this.#runTransaction(ctx, "catalog detach", async (txCtx) => {
             const attachment = await this.#apiStore.detach(

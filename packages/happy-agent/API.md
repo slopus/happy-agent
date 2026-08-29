@@ -66,16 +66,15 @@ details (paths, tokens, provider diagnostics) are never exposed through error bo
 
 ### Identifiers
 
-Nearly every identifier in this API — project, workspace, agent, message, run, terminal, and
-secret IDs among them — is a [CUID2](https://github.com/paralleldrive/cuid2): a lowercase
-alphanumeric string that is opaque, URL-safe, and carries no embedded meaning. In particular,
-CUID2s do not sort by creation time. Clients compare IDs for equality and nothing else; when an
-ID is used as a paging cursor, the daemon resolves its position — the client never needs to
-order IDs itself.
+Nearly every identifier in this API — project, workspace, agent, message, run, and terminal IDs
+among them — is a [CUID2](https://github.com/paralleldrive/cuid2): a lowercase alphanumeric string
+that is opaque, URL-safe, and carries no embedded meaning. Secret IDs are the named-credential
+exception described in the secrets chapter. In particular, CUID2s do not sort by creation time.
+Clients compare IDs for equality and nothing else; when an ID is used as a paging cursor, the
+daemon resolves its position — the client never needs to order IDs itself.
 
-Two version-like kinds of identifier are the exception, and both are **UUIDv7** — time-ordered,
-so greater means newer: event cursors (defined in the events chapter) and resource versions (next
-section).
+The two version-like identifier kinds are both **UUIDv7** — time-ordered, so greater means newer:
+event cursors (defined in the events chapter) and resource versions (next section).
 
 ### Resource versions and `If-Match`
 
@@ -2049,7 +2048,9 @@ but does not disclose what changed inside the value.
 }
 ```
 
-- `id` — the secret's CUID2 identity.
+- `id` — the secret's installation-wide name: 2–32 characters matching
+  `[a-z][a-z0-9_-]*`. A daemon-generated name is a CUID2, while a caller-supplied name may also
+  contain underscores and dashes.
 - `description` — human-readable text, 1–2,000 characters after trimming.
 - `environmentVariables` — the bundle's variable names, sorted lexically. Names match
   `[A-Za-z_][A-Za-z0-9_]*`, are case-insensitively unique, and never reveal their values.
@@ -2143,7 +2144,7 @@ Request:
 
 ```json
 {
-    "id": "optional-client-supplied-cuid2",
+    "id": "optional-client-supplied-name",
     "description": "Deployment API credentials",
     "environment": {
         "DEPLOY_API_TOKEN": "raw-value",
@@ -2154,10 +2155,10 @@ Request:
 }
 ```
 
-`id` is optional; the daemon mints one when omitted. `environment` contains 1–256 variables.
-`availableToAgents` is optional and defaults to `true`. Client-created secrets always have
-`managed: false`. An existing explicit ID is a `409` conflict; creation never replaces an existing
-secret.
+`id` is optional and, when supplied, follows the secret-name syntax above; the daemon mints a
+CUID2 name when omitted. `environment` contains 1–256 variables. `availableToAgents` is optional
+and defaults to `true`. Client-created secrets always have `managed: false`. An existing explicit
+ID is a `409` conflict; creation never replaces an existing secret.
 
 Response — `201`: `{ "secret": { ... } }`, containing metadata only. The mutation emits
 `secret.created` with the optional `mutationId`.

@@ -7,6 +7,13 @@ import {
     secretEnvironmentVariableValueSchema,
 } from "./Secret.js";
 
+/** Installation-wide secret name. Generated values remain valid CUID2 identities. */
+export const secretApiIdSchema = Type.String({
+    minLength: 2,
+    maxLength: 32,
+    pattern: "^[a-z][a-z0-9_-]*$",
+});
+
 export const secretApiVersionSchema = Type.String({
     pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
@@ -30,7 +37,7 @@ export const secretApiEnvironmentPatchSchema = Type.Record(
 
 export const secretApiRecordSchema = Type.Object(
     {
-        id: cuid2Schema,
+        id: secretApiIdSchema,
         description: secretDescriptionSchema,
         environmentVariables: Type.Array(secretEnvironmentVariableNameSchema, {
             maxItems: 256,
@@ -59,7 +66,7 @@ export const secretApiTargetSchema = Type.Object(
 export const secretApiAttachmentSchema = Type.Object(
     {
         id: cuid2Schema,
-        secretId: cuid2Schema,
+        secretId: secretApiIdSchema,
         target: secretApiTargetSchema,
         createdAt: secretApiTimestampSchema,
     },
@@ -68,7 +75,7 @@ export const secretApiAttachmentSchema = Type.Object(
 
 export const secretApiCreateInputSchema = Type.Object(
     {
-        id: Type.Optional(cuid2Schema),
+        id: Type.Optional(secretApiIdSchema),
         description: secretDescriptionSchema,
         environment: secretApiEnvironmentSchema,
         availableToAgents: Type.Optional(Type.Boolean()),
@@ -87,7 +94,7 @@ export const secretApiUpdateInputSchema = Type.Object(
 
 export const secretApiListQuerySchema = Type.Object(
     {
-        cursor: Type.Optional(cuid2Schema),
+        cursor: Type.Optional(secretApiIdSchema),
         limit: Type.Integer({ minimum: 1, maximum: 100 }),
         target: Type.Optional(secretApiTargetSchema),
     },
@@ -105,7 +112,7 @@ export const secretApiAttachmentListQuerySchema = Type.Object(
 export const secretApiPageSchema = Type.Object(
     {
         secrets: Type.Array(secretApiRecordSchema, { maxItems: 100 }),
-        nextCursor: Type.Union([cuid2Schema, Type.Null()]),
+        nextCursor: Type.Union([secretApiIdSchema, Type.Null()]),
     },
     { additionalProperties: false },
 );
@@ -118,6 +125,7 @@ export const secretApiAttachmentPageSchema = Type.Object(
     { additionalProperties: false },
 );
 
+export type SecretApiId = Static<typeof secretApiIdSchema>;
 export type SecretApiVersion = Static<typeof secretApiVersionSchema>;
 export type SecretApiEnvironment = Static<typeof secretApiEnvironmentSchema>;
 export type SecretApiEnvironmentPatch = Static<typeof secretApiEnvironmentPatchSchema>;

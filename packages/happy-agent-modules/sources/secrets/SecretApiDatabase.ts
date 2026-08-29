@@ -16,6 +16,7 @@ import {
 import {
     secretApiAttachmentPageSchema,
     secretApiAttachmentSchema,
+    secretApiIdSchema,
     secretApiPageSchema,
     secretApiRecordSchema,
     SecretApiInputError,
@@ -32,6 +33,7 @@ import {
 import { createSecretVersion } from "./createSecretVersion.js";
 
 export const SECRETS_API_MIGRATION_KEY = "002-secrets-api";
+export const SECRETS_NAMES_MIGRATION_KEY = "003-secret-names";
 const SECRETS_TABLE = "happy_agent_secrets";
 const LEGACY_ATTACHMENTS_TABLE = "happy_agent_secret_attachments";
 const ATTACHMENTS_TABLE = "happy_agent_secret_api_attachments";
@@ -105,6 +107,38 @@ export const secretsApiMigrations: readonly AgentModuleMigration[] = [
                     skippedLegacySecrets: rows.length - publicRows.length,
                 },
                 "Secrets API storage is ready.",
+            );
+        },
+    ],
+    [
+        SECRETS_NAMES_MIGRATION_KEY,
+        async (ctx, database) => {
+            const rows = await agentDatabaseRows<{ owner_agent_id: string; id: string }>(
+                database,
+                sql`SELECT owner_agent_id, id FROM happy_agent_secrets
+                    WHERE (public_version IS NULL OR created_at IS NULL OR updated_at IS NULL)
+                      AND length(id) BETWEEN 2 AND 32
+                      AND substr(id, 1, 1) GLOB '[a-z]'
+                      AND id NOT GLOB '*[^a-z0-9_-]*'
+                    ORDER BY owner_agent_id, id`,
+            );
+            const publicRows = rows.filter((row) => Value.Check(secretApiIdSchema, row.id));
+            let previousVersion: string | undefined;
+            for (const row of publicRows) {
+                const at = Date.now();
+                const version = createSecretVersion(previousVersion, () => at);
+                previousVersion = version;
+                await agentDatabaseRun(
+                    database,
+                    sql`UPDATE happy_agent_secrets
+                        SET public_version = ${version}, created_at = ${at}, updated_at = ${at}
+                        WHERE owner_agent_id = ${row.owner_agent_id} AND id = ${row.id}
+                          AND (public_version IS NULL OR created_at IS NULL OR updated_at IS NULL)`,
+                );
+            }
+            ctx.log.info(
+                { migratedSecrets: publicRows.length },
+                "Expanded secret names are available to the public catalog.",
             );
         },
     ],

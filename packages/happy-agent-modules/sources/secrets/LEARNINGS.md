@@ -9,11 +9,13 @@ grants stay with that exact workspace, and agent grants do not flow to descendan
 configuration carries the agent's durable project and workspace identities so command resolution
 can take the union without reaching into another module's storage.
 
-Public records and grants have CUID2 identities. Every observable secret change mints a durable
-UUIDv7 version and updates its timestamp, including a value-only rotation whose safe variable-name
-list did not change. Events carry safe before/after metadata or an immutable grant and never carry
-the stored environment. Legacy records whose IDs cannot be represented by the public contract stay
-outside the catalog during the storage upgrade.
+Public secret records have installation-wide names of 2–32 characters: they start with a lowercase
+letter and otherwise accept lowercase letters, digits, underscores, and dashes. Generated names
+remain CUID2s. Direct grants retain their own CUID2 identities. Every observable secret change
+mints a durable UUIDv7 version and updates its timestamp, including a value-only rotation whose
+safe variable-name list did not change. Events carry safe before/after metadata or an immutable
+grant and never carry the stored environment. Legacy records whose IDs cannot be represented by
+the public contract stay outside the catalog during the storage upgrade.
 
 There is no user-facing catalog deletion. A daemon feature may retire a managed secret only by
 presenting the exact managed kind that owns it. Retirement atomically removes the secret and all

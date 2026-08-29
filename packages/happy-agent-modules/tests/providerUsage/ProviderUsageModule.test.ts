@@ -187,14 +187,12 @@ describe("ProviderUsageModule", () => {
         const config = await ConfigModule.load(home);
         const module = new ProviderUsageModule(config);
         const ctx = createRootContext().named("provider-usage-retry-test");
-        const load = vi
-            .spyOn(config, "readProviderUsage")
-            .mockRejectedValue(
-                new ProviderUsageRequestError("Claude usage returned HTTP 429.", {
-                    retryAt: Date.now() + 2_699_000,
-                    status: 429,
-                }),
-            );
+        const load = vi.spyOn(config, "readProviderUsage").mockRejectedValue(
+            new ProviderUsageRequestError("Claude usage returned HTTP 429.", {
+                retryAt: Date.now() + 2_699_000,
+                status: 429,
+            }),
+        );
 
         await module.refresh(ctx, "claude");
         expect(load).toHaveBeenCalledTimes(1);

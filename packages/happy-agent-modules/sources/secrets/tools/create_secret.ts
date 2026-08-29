@@ -1,15 +1,19 @@
-import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import { secretDescriptionSchema } from "../Secret.js";
-import { secretApiEnvironmentSchema, secretApiRecordSchema } from "../SecretApi.js";
+import {
+    secretApiEnvironmentSchema,
+    secretApiIdSchema,
+    secretApiRecordSchema,
+} from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 import { readSecretDotenv, secretDotenvFileSchema } from "./secretDotenv.js";
 
 const createSecretInputSchema = Type.Object(
     {
-        id: Type.Optional(cuid2Schema),
+        id: Type.Optional(secretApiIdSchema),
         description: secretDescriptionSchema,
         environment: Type.Optional(secretApiEnvironmentSchema),
         dotenvFile: Type.Optional(secretDotenvFileSchema),

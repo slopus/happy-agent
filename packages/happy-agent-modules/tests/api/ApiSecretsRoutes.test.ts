@@ -21,6 +21,33 @@ afterEach(async () => {
 });
 
 describe("Secrets API routes", () => {
+    it("uses underscored and dashed secret names across catalog and attachment routes", async () => {
+        const fixture = await secretsApiFixture();
+        const secretId = "deploy_api-key";
+
+        const created = await fixture.client.createSecret({
+            id: secretId,
+            description: "Deployment credentials",
+            environment: { DEPLOY_TOKEN: "hidden-value" },
+        });
+        await expect(fixture.client.getSecret(secretId)).resolves.toEqual(created);
+        await expect(fixture.client.listSecrets({ cursor: secretId })).resolves.toMatchObject({
+            secrets: [],
+        });
+
+        const attached = await fixture.client.attachSecret(secretId, {
+            type: "agent",
+            id: "agentone",
+        });
+        expect(attached.attachment.secretId).toBe(secretId);
+        await expect(fixture.client.listSecretAttachments(secretId)).resolves.toMatchObject({
+            attachments: [{ secretId }],
+        });
+        await expect(
+            fixture.client.detachSecret(secretId, { type: "agent", id: "agentone" }),
+        ).resolves.toMatchObject({ detached: true, attachment: { secretId } });
+    });
+
     it("keeps values write-only across CRUD, typed grants, conflicts, and events", async () => {
         const fixture = await secretsApiFixture();
         const cursor = fixture.api.cursor();

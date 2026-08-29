@@ -1,12 +1,12 @@
-import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 
-import { secretApiPageSchema } from "../SecretApi.js";
+import { secretApiIdSchema, secretApiPageSchema } from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 
 const listSecretsInputSchema = Type.Object(
     {
-        cursor: Type.Optional(cuid2Schema),
+        cursor: Type.Optional(secretApiIdSchema),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
     },
     { additionalProperties: false },

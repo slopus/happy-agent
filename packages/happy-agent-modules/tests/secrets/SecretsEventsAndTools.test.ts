@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AgentModuleScope, AnyAgentTool } from "@slopus/happy-agent-base";
+import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -222,6 +223,20 @@ describe("SecretsModule event and tool contracts", () => {
                     { id: "toolsecret" },
                     database.context,
                 ),
+            ).toBe(false);
+            expect(
+                Value.Check(toolByName(tools, "create_secret").parameters, {
+                    id: "tool_secret-name",
+                    description: "Tool secret",
+                    environment: { TOKEN: "value" },
+                }),
+            ).toBe(true);
+            expect(
+                Value.Check(toolByName(tools, "create_secret").parameters, {
+                    id: "tool.secret",
+                    description: "Tool secret",
+                    environment: { TOKEN: "value" },
+                }),
             ).toBe(false);
             for (const name of ["create_secret", "update_secret"]) {
                 const tool = toolByName(tools, name);
@@ -471,6 +486,7 @@ describe("SecretsModule event and tool contracts", () => {
         await withDatabase("secrets-tools-inline", async (database) => {
             const module = new SecretsModule();
             const agentId = "agenttools";
+            const secretId = "inline_tool-secret";
             const tools = await module.beforeStart().tools?.(database.context, scope(agentId));
             if (tools === undefined) throw new Error("Expected secret tools");
             const create = toolByName(tools, "create_secret");
@@ -479,14 +495,14 @@ describe("SecretsModule event and tool contracts", () => {
             const created = (await create.execute(
                 database.context,
                 {
-                    id: "inlinetool",
+                    id: secretId,
                     description: "Inline credential",
                     environment: { STALE: "remove-inline", TOKEN: "first-inline-value" },
                 },
                 undefined as never,
             )) as { secret: { environmentVariables: readonly string[] } };
             expect(created.secret.environmentVariables).toEqual(["STALE", "TOKEN"]);
-            await module.attachCatalogSecret(database.context, "inlinetool", {
+            await module.attachCatalogSecret(database.context, secretId, {
                 type: "agent",
                 id: agentId,
             });
@@ -494,7 +510,7 @@ describe("SecretsModule event and tool contracts", () => {
                 module.resolveForCommandTargets(
                     database.context,
                     [{ type: "agent", id: agentId }],
-                    ["inlinetool"],
+                    [secretId],
                 ),
             ).resolves.toMatchObject({
                 environment: { STALE: "remove-inline", TOKEN: "first-inline-value" },
@@ -503,7 +519,7 @@ describe("SecretsModule event and tool contracts", () => {
             const updated = (await update.execute(
                 database.context,
                 {
-                    secretId: "inlinetool",
+                    secretId,
                     environment: { NEW: "fresh-inline", token: "second-inline-value" },
                 },
                 undefined as never,
@@ -513,7 +529,7 @@ describe("SecretsModule event and tool contracts", () => {
                 module.resolveForCommandTargets(
                     database.context,
                     [{ type: "agent", id: agentId }],
-                    ["inlinetool"],
+                    [secretId],
                 ),
             ).resolves.toMatchObject({
                 environment: { NEW: "fresh-inline", TOKEN: "second-inline-value" },
@@ -544,7 +560,7 @@ describe("SecretsModule event and tool contracts", () => {
                 update.execute(
                     database.context,
                     {
-                        secretId: "inlinetool",
+                        secretId,
                         environment: { TOKEN: "inline" },
                         dotenvFile: "/host/also.env",
                     },

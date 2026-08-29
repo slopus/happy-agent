@@ -1,21 +1,37 @@
 import { agentDatabaseRun } from "@slopus/happy-agent-base";
+import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { SecretApiConflictError } from "../../sources/secrets/SecretApi.js";
+import { secretApiIdSchema, SecretApiConflictError } from "../../sources/secrets/SecretApi.js";
 import { secretsApiMigrations } from "../../sources/secrets/SecretApiDatabase.js";
 import { secretsMigrations } from "../../sources/secrets/SecretDatabase.js";
 import { SecretsModule } from "../../sources/secrets/SecretsModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
 describe("SecretsModule public catalog", () => {
-    it("publishes only legacy records whose IDs fit the public contract during migration", async () => {
+    it("accepts lowercase secret names with underscores and dashes", () => {
+        expect(Value.Check(secretApiIdSchema, "openai_prod-key")).toBe(true);
+        expect(Value.Check(secretApiIdSchema, "ab")).toBe(true);
+        expect(Value.Check(secretApiIdSchema, "a")).toBe(false);
+        expect(Value.Check(secretApiIdSchema, "OpenAI")).toBe(false);
+        expect(Value.Check(secretApiIdSchema, "openai.prod")).toBe(false);
+        expect(Value.Check(secretApiIdSchema, "openai key")).toBe(false);
+        expect(Value.Check(secretApiIdSchema, `a${"b".repeat(32)}`)).toBe(false);
+    });
+
+    it("publishes expanded legacy names when the new migration follows the original API migration", async () => {
         const baseMigration = secretsMigrations[0];
         const apiMigration = secretsApiMigrations[0];
-        if (baseMigration === undefined || apiMigration === undefined) {
-            throw new Error("Expected both secrets migrations.");
+        const namesMigration = secretsApiMigrations[1];
+        if (
+            baseMigration === undefined ||
+            apiMigration === undefined ||
+            namesMigration === undefined
+        ) {
+            throw new Error("Expected all secrets migrations.");
         }
-        const database = moduleDatabase([baseMigration], "secrets-api-migration");
+        const database = moduleDatabase([baseMigration, apiMigration], "secrets-api-migration");
         await database.ready;
         try {
             const module = new SecretsModule();
@@ -26,13 +42,27 @@ describe("SecretsModule public catalog", () => {
             });
             await module.register(database.context, "global", {
                 id: "legacy-secret",
-                description: "Private legacy credentials",
-                environment: { PRIVATE_TOKEN: "private-legacy-value" },
+                description: "Dashed legacy credentials",
+                environment: { DASHED_TOKEN: "dashed-legacy-value" },
             });
-            await apiMigration[1](database.context, database.database);
+            await module.register(database.context, "global", {
+                id: "legacy_secret",
+                description: "Underscored legacy credentials",
+                environment: { UNDERSCORED_TOKEN: "underscored-legacy-value" },
+            });
+            await module.register(database.context, "global", {
+                id: "legacy.secret",
+                description: "Unsupported legacy credentials",
+                environment: { UNSUPPORTED_TOKEN: "unsupported-legacy-value" },
+            });
+            await namesMigration[1](database.context, database.database);
 
             await expect(module.listCatalog(database.context)).resolves.toMatchObject({
-                secrets: [{ id: "legacysecret", environmentVariables: ["PUBLIC_TOKEN"] }],
+                secrets: [
+                    { id: "legacy-secret", environmentVariables: ["DASHED_TOKEN"] },
+                    { id: "legacy_secret", environmentVariables: ["UNDERSCORED_TOKEN"] },
+                    { id: "legacysecret", environmentVariables: ["PUBLIC_TOKEN"] },
+                ],
             });
             await expect(
                 module.catalogSecret(database.context, "legacysecret"),
@@ -46,6 +76,9 @@ describe("SecretsModule public catalog", () => {
             ).rejects.toBeInstanceOf(SecretApiConflictError);
             expect(JSON.stringify(await module.listCatalog(database.context))).not.toContain(
                 "legacy-value",
+            );
+            await expect(module.catalogSecret(database.context, "legacy.secret")).rejects.toThrow(
+                "invalid",
             );
         } finally {
             database.close();

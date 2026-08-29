@@ -101,6 +101,7 @@ import {
 } from "../slashCommands/index.js";
 import {
     SecretApiConflictError,
+    secretApiIdSchema,
     SecretApiInputError,
     SecretsModule,
     type SecretApiRecord,
@@ -4490,7 +4491,7 @@ export class ApiModule implements AgentModule {
         if (url.pathname === "/v0/secrets" && request.method === "GET") {
             assertOnlyQueryParameters(url, ["cursor", "limit", "targetId", "targetType"]);
             const cursor = url.searchParams.get("cursor") ?? undefined;
-            if (cursor !== undefined && !Value.Check(cuid2Schema, cursor)) {
+            if (cursor !== undefined && !Value.Check(secretApiIdSchema, cursor)) {
                 throw invalidRequest("The secret cursor is invalid.");
             }
             const targetId = url.searchParams.get("targetId") ?? undefined;
@@ -5581,7 +5582,7 @@ function assertOnlyQueryParameters(url: URL, allowed: readonly string[]): void {
 
 function secretPathId(value: string, name: string): string {
     const decoded = decodePathSegment(value, name);
-    if (!Value.Check(cuid2Schema, decoded)) throw invalidRequest(`The ${name} is invalid.`);
+    if (!Value.Check(secretApiIdSchema, decoded)) throw invalidRequest(`The ${name} is invalid.`);
     return decoded;
 }
 

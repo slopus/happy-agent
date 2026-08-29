@@ -66,7 +66,7 @@ or revoke the current agent's later access to a credential, but those catalog-on
 in the current sandbox.
 
 - **`list_secrets`** — lists the global catalog as bounded safe metadata. Arguments are `limit`
-  (1–`SECRETS_PAGE_SIZE`) and a CUID2 `cursor`. The model sees each secret's ID, description,
+  (1–`SECRETS_PAGE_SIZE`) and a secret-name `cursor`. The model sees each secret's ID, description,
   sorted environment-variable names, availability, ownership, UUIDv7 version, and timestamps. If
   detailed rendering would exceed `SECRETS_OUTPUT_CHARACTERS`, it falls back to all IDs plus the
   continuation cursor, so no actionable identity is lost.

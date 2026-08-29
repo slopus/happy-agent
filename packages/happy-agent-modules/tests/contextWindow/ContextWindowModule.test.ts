@@ -1,6 +1,4 @@
-import type {
-    AgentModuleScope,
-} from "@slopus/happy-agent-base";
+import type { AgentModuleScope } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 

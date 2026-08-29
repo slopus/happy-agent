@@ -1,7 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
-import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool } from "@slopus/happy-agent-base";
 
-import { secretApiAttachmentSchema } from "../SecretApi.js";
+import { secretApiAttachmentSchema, secretApiIdSchema } from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 
 const detachSecretResultSchema = Type.Object(
@@ -14,7 +14,7 @@ const detachSecretResultSchema = Type.Object(
 
 const detachSecretInputSchema = Type.Object(
     {
-        secretId: cuid2Schema,
+        secretId: secretApiIdSchema,
     },
     { additionalProperties: false },
 );

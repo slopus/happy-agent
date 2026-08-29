@@ -1,12 +1,16 @@
 import { Type, type Static } from "@sinclair/typebox";
-import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool } from "@slopus/happy-agent-base";
 
-import { secretApiAttachmentSchema, secretApiRecordSchema } from "../SecretApi.js";
+import {
+    secretApiAttachmentSchema,
+    secretApiIdSchema,
+    secretApiRecordSchema,
+} from "../SecretApi.js";
 import type { SecretsModule } from "../SecretsModule.js";
 
 const attachSecretInputSchema = Type.Object(
     {
-        secretId: cuid2Schema,
+        secretId: secretApiIdSchema,
     },
     { additionalProperties: false },
 );
