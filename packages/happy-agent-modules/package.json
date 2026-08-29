@@ -54,7 +54,7 @@
         "@sinclair/typebox": "^0.34.49",
         "@slopus/ghostty-wasm": "1.3.6",
         "@slopus/ghostty-web": "0.1.3",
-        "@slopus/happy-agent-client": "0.0.46",
+        "@slopus/happy-agent-client": "0.0.48",
         "@slopus/happy-agent-compute": "npm:@slopus/happy-agent-compute@0.1.9",
         "@slopus/happy-providers": "0.0.18",
         "@slopus/murmur": "0.8.1",
@@ -69,7 +69,7 @@
         "ws": "^8.21.1"
     },
     "devDependencies": {
-        "@slopus/happy-agent-base": "npm:@slopus/happy-agent-base@0.0.39",
+        "@slopus/happy-agent-base": "npm:@slopus/happy-agent-base@0.0.41",
         "@types/node": "^24.0.10",
         "@types/turndown": "^5.0.5",
         "@types/ws": "^8.18.1",
@@ -77,7 +77,7 @@
         "vitest": "^3.2.4"
     },
     "peerDependencies": {
-        "@slopus/happy-agent-base": "0.0.39"
+        "@slopus/happy-agent-base": "0.0.41"
     },
     "engines": {
         "node": ">=22.19.0"

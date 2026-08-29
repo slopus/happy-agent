@@ -28,6 +28,7 @@ import {
 } from "@slopus/happy-agent-base";
 
 import { isUserOriginMetadata, senderAgentIdOf } from "../impl/messageOrigin.js";
+import { decodeRequestProfile } from "../impl/requestProfile.js";
 import type { EventsModule } from "../events/index.js";
 import {
     toolPermissionReviewSchema,
@@ -1696,6 +1697,7 @@ export class HistoryModule implements AgentModule {
                               pending?.delivery ??
                               (accepted.kind === "steering" ? "steer" : "queue"),
                           ...(mode === undefined ? {} : { mode }),
+                          profile: pending?.profile ?? accepted.profile,
                           ...(mutationId === undefined ? {} : { mutationId }),
                           ...(clientMetadata === undefined ? {} : { clientMetadata }),
                       }
@@ -2051,7 +2053,7 @@ function parseStoredMessage(encoded: string): HistoryMessage {
     ) {
         throw new Error("The history module found an invalid persisted message.");
     }
-    return parsed;
+    return normalizeHistoryMessageProfile(parsed);
 }
 
 async function readPendingMessage(
@@ -2079,12 +2081,22 @@ function parsePendingRow(row: HistoryPendingRow, agentId: string): HistoryPendin
     if (!Value.Check(historyPendingMessageSchema, parsed)) {
         throw new Error("The history module found an invalid pending message.");
     }
-    const candidate = parsed as HistoryPendingMessage;
+    const candidate: HistoryPendingMessage =
+        parsed.profile === undefined
+            ? parsed
+            : { ...parsed, profile: decodeRequestProfile(parsed.profile) };
     if (candidate.agentId !== agentId || candidate.id !== row.message_id) {
         throw new Error("The history module found a mismatched pending message.");
     }
     toSafeInteger(row.position, "pending message position");
     return candidate;
+}
+
+/** Decode a persisted profile without making removed feature identities a history failure. */
+function normalizeHistoryMessageProfile(message: HistoryMessage): HistoryMessage {
+    return message.profile === undefined
+        ? message
+        : { ...message, profile: decodeRequestProfile(message.profile) };
 }
 
 async function readPendingMessages(

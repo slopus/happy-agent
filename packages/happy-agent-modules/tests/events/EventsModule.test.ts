@@ -599,6 +599,7 @@ describe("EventsModule", () => {
                 id: "message-hooks",
                 kind: "send",
                 message: { role: "user", content: [{ type: "text", text: "Continue." }] },
+                profile: null,
             });
             await hooks.beforeAgentLoopTransact?.(database.context, agentScope, {
                 loopId: "loop-hooks",
@@ -671,6 +672,7 @@ describe("EventsModule", () => {
                 id: "message-tool-result",
                 kind: "send",
                 message: { role: "user", content: [{ type: "text", text: "Run it." }] },
+                profile: null,
             });
             await hooks.onEvent?.(database.context, scope, { type: "block_start" });
             await hooks.onEvent?.(database.context, scope, {
@@ -761,6 +763,7 @@ describe("EventsModule", () => {
                 id: "message-tool-rollback",
                 kind: "send",
                 message: { role: "user", content: [{ type: "text", text: "Run it." }] },
+                profile: null,
             });
             await hooks.onEvent?.(database.context, scope, { type: "block_start" });
             await hooks.onEvent?.(database.context, scope, {
@@ -865,11 +868,13 @@ describe("EventsModule", () => {
                     id: "message-send",
                     kind: "send",
                     message: { role: "user", content: [{ type: "text", text: "Start." }] },
+                    profile: null,
                 });
                 await hooks.messageAcceptedTransact?.(txCtx, scope, {
                     id: "message-steer",
                     kind: "steering",
                     message: { role: "user", content: [{ type: "text", text: "Adjust." }] },
+                    profile: null,
                 });
             });
 
@@ -894,12 +899,14 @@ describe("EventsModule", () => {
                 id: "message-first",
                 kind: "send",
                 message: { role: "user", content: [{ type: "text", text: "Start." }] },
+                profile: null,
             });
             await hooks.onEvent?.(database.context, scope, { type: "text_start" });
             await hooks.messageAcceptedTransact?.(database.context, scope, {
                 id: "message-steering",
                 kind: "steering",
                 message: { role: "user", content: [{ type: "text", text: "Adjust." }] },
+                profile: null,
             });
 
             const accepted = events
@@ -1028,6 +1035,7 @@ describe("EventsModule", () => {
                 id: "message-projection",
                 kind: "send",
                 message: { role: "user", content: [{ type: "text", text: "Project." }] },
+                profile: null,
             });
 
             await hooks.onEvent?.(database.context, scope, { type: "block_start" });
@@ -1172,6 +1180,7 @@ describe("EventsModule", () => {
                 id: "message-retry-state",
                 kind: "send",
                 message: { role: "user", content: [{ type: "text", text: "Retry." }] },
+                profile: null,
             });
             await hooks.onEvent?.(database.context, scope, {
                 type: "done",
@@ -1215,6 +1224,7 @@ describe("EventsModule", () => {
                 id: "message-recovery",
                 kind: "send",
                 message: { role: "user", content: [{ type: "text", text: "Recover." }] },
+                profile: null,
             });
             await firstHooks.onEvent?.(database.context, scope, { type: "text_start" });
             await firstHooks.onEvent?.(database.context, scope, {

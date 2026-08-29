@@ -84,8 +84,21 @@ describe("messageResource", () => {
             status: "accepted",
             delivery: "queue",
             mode: null,
+            profile: null,
             runId: null,
         });
+    });
+
+    it("projects an unsupported or removed request profile as null", () => {
+        expect(
+            messageResource({
+                at: 100,
+                blocks: [{ type: "text", text: "Use the coding profile." }],
+                profile: "coding-agent-v3",
+                recordId: "message-profile",
+                role: "user",
+            }),
+        ).toMatchObject({ profile: null });
     });
 
     it("projects a durable system notice with its role intact", () => {

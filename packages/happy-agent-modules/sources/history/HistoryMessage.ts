@@ -1,6 +1,6 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { cuid2Schema } from "@slopus/happy-agent-base";
+import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
 import { clientMetadataSchema, type ClientMetadata } from "@slopus/happy-agent-client";
 
 import { toolPermissionReviewSchema } from "../permissions/ToolPermissionReview.js";
@@ -364,6 +364,8 @@ const historyMessageFields = {
     delivery: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
     /** The selection a user message made effective. */
     mode: Type.Optional(historyMessageModeSchema),
+    /** Transport-safe profile identity; readers decode profiles removed by later feature sets. */
+    profile: Type.Optional(agentRequestProfileSchema),
     /** Optimistic client mutation identity, echoed but never interpreted or deduplicated. */
     mutationId: Type.Optional(historyMutationIdSchema),
     /** Opaque JSON owned by the client that submitted this user message. */

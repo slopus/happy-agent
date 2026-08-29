@@ -117,6 +117,29 @@ describe("ModelSwitchModule lifecycle", () => {
             database.close();
         }
     });
+
+    it("uses the same hook to explain a request-profile reset", async () => {
+        const database = moduleDatabase([], "model-switch-profile-reset");
+        try {
+            const result = await modelSwitchNoticeFromHook(
+                new ModelSwitchModule(),
+                database.context,
+                {
+                    change: modelChange({
+                        previousModel: "openai/gpt-5.6-sol",
+                        model: "openai/gpt-5.6-sol",
+                    }),
+                },
+            );
+            const text = textFromNotice(result);
+
+            expect(text).toContain("<profile-reset-history-context>");
+            expect(text).toContain("The request profile changed");
+            expect(text).not.toContain("configuration changed from");
+        } finally {
+            database.close();
+        }
+    });
 });
 
 describe("ModelSwitchModule history handoff", () => {
@@ -314,13 +337,13 @@ describe("ModelSwitchModule hook input boundaries", () => {
                     change: modelChange({
                         previousModel: "",
                         model: "",
-                        previousProvider: "",
+                        previousProvider: "old",
                         provider: "",
                     }),
                 },
             );
 
-            expect(textFromNotice(result)).toContain("changed from  on  to  on");
+            expect(textFromNotice(result)).toContain("changed from  on old to  on");
         } finally {
             database.close();
         }

@@ -57,6 +57,24 @@ describe("createModelSwitchNotice", () => {
         expect(text).not.toContain("Beginning history excerpt:");
     });
 
+    it("describes a request-profile reset without claiming the model configuration changed", () => {
+        const text = createModelSwitchNotice(
+            notice({
+                model: "Same model",
+                previousModel: "Same model",
+                previousProvider: "same-provider",
+                provider: "same-provider",
+                profileReset: true,
+            }),
+        );
+
+        expect(text).toContain("<profile-reset-history-context>");
+        expect(text).toContain("The request profile changed");
+        expect(text).toContain("the request profile requires a fresh context");
+        expect(text).not.toContain("configuration changed from");
+        expect(text).not.toContain("same-provider");
+    });
+
     it("renders a complete exact excerpt and tells the model when more history is available", () => {
         const text = createModelSwitchNotice(
             notice({ historyTool: "read_agent_history", excerpt: excerpt() }),

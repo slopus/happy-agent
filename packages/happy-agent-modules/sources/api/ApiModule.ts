@@ -72,6 +72,7 @@ import {
     type HistoryRunState,
 } from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
+import { decodeRequestProfile, requestProfilesForAgent } from "../impl/requestProfile.js";
 import {
     PermissionsModule,
     type PermissionEvent,
@@ -2444,6 +2445,7 @@ export class ApiModule implements AgentModule {
             }
             sendJson(response, 201, {
                 agent,
+                profiles: requestProfilesForAgent(created.id),
                 slashCommands,
             });
             return true;
@@ -2499,8 +2501,7 @@ export class ApiModule implements AgentModule {
                     async () => await this.#abort.abort(ctx, agentId),
                 );
                 sendJson(response, 202, {
-                    agent: await this.#requireAgentResource(ctx, agentId),
-                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
+                    ...(await this.#focusedAgentResponse(ctx, agentId)),
                     cursor,
                 });
                 return true;
@@ -2533,8 +2534,7 @@ export class ApiModule implements AgentModule {
                     throw new Error("The manual compaction response has no durable run.");
                 }
                 sendJson(response, 202, {
-                    agent: await this.#requireAgentResource(ctx, agentId),
-                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
+                    ...(await this.#focusedAgentResponse(ctx, agentId)),
                     run: await this.#runResource(ctx, run),
                     message: messageResource(this.#compactions.historyMessage(compaction)),
                     cursor,
@@ -2548,10 +2548,7 @@ export class ApiModule implements AgentModule {
                     body.mutationId,
                     async () => await this.#updateAgentMetadata(ctx, agentId, { unread: null }),
                 );
-                sendJson(response, 200, {
-                    agent: await this.#requireAgentResource(ctx, agentId),
-                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
-                });
+                sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
             }
             if (
@@ -2584,10 +2581,7 @@ export class ApiModule implements AgentModule {
                         });
                     });
                 }
-                sendJson(response, 200, {
-                    agent: await this.#requireAgentResource(ctx, agentId),
-                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
-                });
+                sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
             }
             if (operation === "reorder" && request.method === "POST") {
@@ -2635,10 +2629,7 @@ export class ApiModule implements AgentModule {
                             }),
                     );
                 }
-                sendJson(response, 200, {
-                    agent: await this.#requireAgentResource(ctx, agentId),
-                    slashCommands: await this.#slashCommands.catalog(ctx, agentId),
-                });
+                sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
             }
             if (operation === "draft" && request.method === "PUT") {
@@ -2750,6 +2741,7 @@ export class ApiModule implements AgentModule {
             }
             sendJson(response, 202, {
                 agent: await this.#requireAgentResource(ctx, agentId),
+                profiles: requestProfilesForAgent(agentId),
                 slashCommands: invoked.slashCommands,
                 command: invoked.command,
                 cursor,
@@ -2873,6 +2865,7 @@ export class ApiModule implements AgentModule {
                           (candidate) => candidate === body.mode.serviceTier,
                       );
             const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
+            const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
                 id,
                 provider: body.mode.providerId,
@@ -2880,6 +2873,7 @@ export class ApiModule implements AgentModule {
                 effort,
                 ...(serviceTier === undefined ? {} : { serviceTier }),
                 permissionMode: body.mode.permissionMode,
+                profile,
                 metadata: {
                     ...USER_MESSAGE_ORIGIN_METADATA,
                     mode: body.mode,
@@ -2908,6 +2902,7 @@ export class ApiModule implements AgentModule {
                           },
                 ),
                 mode: body.mode,
+                profile,
                 ...(body.clientMetadata === undefined
                     ? {}
                     : { clientMetadata: body.clientMetadata }),
@@ -3065,6 +3060,7 @@ export class ApiModule implements AgentModule {
             draft,
             mode,
             pending: pending.map(pendingMessageResource),
+            profiles: requestProfilesForAgent(agentId),
             slashCommands,
             cursor,
         };
@@ -3090,6 +3086,7 @@ export class ApiModule implements AgentModule {
         const agent = await this.#requireAgentResource(ctx, agentId);
         return {
             agent,
+            profiles: requestProfilesForAgent(agentId),
             slashCommands: await this.#slashCommands.catalog(ctx, agentId),
         };
     }
@@ -5651,6 +5648,7 @@ function pendingMessageResource(pending: HistoryPendingMessage): Record<string, 
                 : { clientMetadata: pending.clientMetadata }),
             delivery: pending.delivery,
             mode: pending.mode,
+            profile: pending.profile ?? null,
         }),
         status: "pending",
         runId: null,

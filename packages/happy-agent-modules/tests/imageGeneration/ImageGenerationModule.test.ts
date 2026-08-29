@@ -251,6 +251,7 @@ describe("ImageGenerationModule", () => {
                 role: "user",
                 content: [{ type: "image", data: "AQID", mimeType: "image/png" }],
             },
+            profile: null,
         });
         await module.generate(
             ctx,

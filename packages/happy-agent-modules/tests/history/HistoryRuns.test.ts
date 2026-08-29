@@ -43,6 +43,7 @@ function accepted(id: string, kind: "send" | "steering"): AgentBaseAcceptedMessa
         kind,
         message: { role: "user", content: [{ type: "text", text: id }] },
         metadata: USER_MESSAGE_ORIGIN_METADATA,
+        profile: null,
     };
 }
 
@@ -138,6 +139,25 @@ async function finishInference(
 }
 
 describe("HistoryModule run history", () => {
+    it("normalizes a removed pending request profile when the message is accepted", async () => {
+        const world = await setup("history-runs-request-profile");
+        try {
+            await world.history.queuePending(world.database.context, {
+                ...pending("message-profile", 100),
+                profile: "coding-agent-v3",
+            });
+            await acceptBatch(world, [
+                { ...accepted("message-profile", "send"), profile: "retry-profile" },
+            ]);
+
+            expect(
+                await world.history.message(world.database.context, "agent-a", "message-profile"),
+            ).toMatchObject({ profile: null });
+        } finally {
+            world.database.close();
+        }
+    });
+
     it("keeps the original client metadata when a pending user message is accepted", async () => {
         const world = await setup("history-runs-client-metadata");
         const clientMetadata = {

@@ -10,6 +10,8 @@ export interface ModelSwitchNotice {
     readonly model: string;
     /** The registry ID of the provider now serving it. */
     readonly provider: string;
+    /** Whether the same model/provider started fresh because the opaque request profile changed. */
+    readonly profileReset?: boolean | undefined;
     /** The tool that reads the durable history, when the agent has one. */
     readonly historyTool?: string | undefined;
     /** The two ends of the erased conversation, when a history was there to read. */
@@ -30,13 +32,21 @@ export interface ModelSwitchNotice {
  */
 export function createModelSwitchNotice(notice: ModelSwitchNotice): string {
     const excerpt = notice.excerpt;
+    const tag =
+        notice.profileReset === true
+            ? "profile-reset-history-context"
+            : "model-switch-history-context";
     return [
-        "<model-switch-history-context>",
-        `The active model/provider configuration changed from ${notice.previousModel} on ${notice.previousProvider} to ${notice.model} on ${notice.provider}.`,
+        `<${tag}>`,
+        notice.profileReset === true
+            ? "The request profile changed, so the active model started a fresh private context."
+            : `The active model/provider configuration changed from ${notice.previousModel} on ${notice.previousProvider} to ${notice.model} on ${notice.provider}.`,
         investigate(notice),
         ...(excerpt === undefined
             ? [
-                  "The conversation itself is not part of this context: the two configurations are incompatible, so none of it is visible to you, and the work it describes still stands. Do not repeat or undo work that may already be done.",
+                  notice.profileReset === true
+                      ? "The conversation itself is not part of this context: the request profile requires a fresh context, so none of it is visible to you, and the work it describes still stands. Do not repeat or undo work that may already be done."
+                      : "The conversation itself is not part of this context: the two configurations are incompatible, so none of it is visible to you, and the work it describes still stands. Do not repeat or undo work that may already be done.",
               ]
             : [
                   `The excerpt${notice.historyTool === undefined ? " exposes" : " and tool expose"} the durable inference-oriented history, not raw provider protocol traffic or hidden reasoning. Exposed thinking and conversation are prioritized; tool calls are summarized and tool outputs are truncated.`,
@@ -46,7 +56,7 @@ export function createModelSwitchNotice(notice: ModelSwitchNotice): string {
                       ? []
                       : [`Recent history excerpt:\n${excerpt.recent}`]),
               ]),
-        "</model-switch-history-context>",
+        `</${tag}>`,
     ].join("\n");
 }
 

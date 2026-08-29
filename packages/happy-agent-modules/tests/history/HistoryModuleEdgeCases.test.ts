@@ -594,6 +594,7 @@ describe("HistoryModule edge cases", () => {
                     kind: "send",
                     message: { content: [{ text: "message", type: "text" }], role: "user" },
                     metadata,
+                    profile: null,
                 }) as AgentBaseAcceptedMessage;
             await hooks.messageAcceptedTransact!(
                 database.context,

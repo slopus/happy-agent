@@ -1,5 +1,13 @@
 # History learnings
 
+## Request profiles are disposable compatibility markers
+
+History stores request profiles using the stable `string | null` transport shape, but every read
+decodes the stored value through the current modules-owned codec. A feature may remove a profile
+identity later without making pending messages or accepted history unreadable; the old string then
+projects as `null`. The profile is only a notice that Agent Base may need a fresh provider context,
+never feature state or model input.
+
 ## Client metadata stays distinct from message provenance
 
 A client may attach opaque JSON to a person-authored message. Carry it through Agent Base's

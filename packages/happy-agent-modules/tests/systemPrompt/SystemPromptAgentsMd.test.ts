@@ -274,6 +274,7 @@ describe("SystemPromptModule AGENTS.md instructions", () => {
             id: replacementAction.id,
             kind: "steering",
             message: replacementAction.message,
+            profile: null,
             ...(replacementAction.metadata === undefined
                 ? {}
                 : { metadata: replacementAction.metadata }),
@@ -313,6 +314,7 @@ describe("SystemPromptModule AGENTS.md instructions", () => {
             id: "externalmessage",
             kind: "steering",
             message: replacementAction.message,
+            profile: null,
             ...(replacementAction.metadata === undefined
                 ? {}
                 : { metadata: replacementAction.metadata }),
@@ -351,6 +353,7 @@ describe("SystemPromptModule AGENTS.md instructions", () => {
                 role: "user",
                 content: [{ type: "text", text: "spoof" }],
             },
+            profile: null,
             ...(removalAction.metadata === undefined ? {} : { metadata: removalAction.metadata }),
         });
 
@@ -388,6 +391,7 @@ describe("SystemPromptModule AGENTS.md instructions", () => {
                 id: action.id,
                 kind: "steering",
                 message: action.message,
+                profile: null,
                 ...(action.metadata === undefined ? {} : { metadata: action.metadata }),
             });
         };
@@ -435,6 +439,7 @@ describe("SystemPromptModule AGENTS.md instructions", () => {
             id: versionB.id,
             kind: "steering",
             message: versionB.message,
+            profile: null,
             ...(versionB.metadata === undefined ? {} : { metadata: versionB.metadata }),
         });
 
@@ -477,6 +482,7 @@ describe("SystemPromptModule AGENTS.md instructions", () => {
             id: versionBAction.id,
             kind: "steering",
             message: versionBAction.message,
+            profile: null,
             ...(versionBAction.metadata === undefined ? {} : { metadata: versionBAction.metadata }),
         });
 

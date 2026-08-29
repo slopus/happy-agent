@@ -192,6 +192,7 @@ describe("SkillsModule", () => {
             id: sent?.options?.id ?? "missing",
             kind: "send",
             message: sent?.message ?? { role: "user", content: [] },
+            profile: null,
             ...(acceptedMetadata === undefined ? {} : { metadata: acceptedMetadata }),
         });
         await expect(hooks.instructions?.(ctx, invokedScope)).resolves.toContain(

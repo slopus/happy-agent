@@ -7,6 +7,7 @@ import {
     type HistoryMessage,
     type HistoryToolPresentation,
 } from "../history/index.js";
+import { decodeRequestProfile } from "../impl/requestProfile.js";
 import { toolCallResource, type MessageResourceOptions } from "./ApiToolPresentation.js";
 
 type ReviewedHistoryToolCall = Extract<HistoryBlock, { type: "tool_call" }> & {
@@ -89,6 +90,7 @@ export function messageResource(
                   status: "accepted",
                   delivery: message.delivery ?? "queue",
                   mode: message.mode ?? null,
+                  profile: decodeRequestProfile(message.profile),
                   runId: message.runId ?? null,
               }
             : {}),

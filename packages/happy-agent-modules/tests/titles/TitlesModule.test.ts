@@ -300,6 +300,7 @@ describe("TitlesModule user-message lifecycle", () => {
                     role: "system",
                     content: [{ type: "text", text: "Internal wake-up" }],
                 },
+                profile: null,
             });
         });
         await lifecycleDatabase.context.inTx(async (txCtx) => {
@@ -310,6 +311,7 @@ describe("TitlesModule user-message lifecycle", () => {
                     role: "user",
                     content: [{ type: "text", text: "Rewrite the retry policy." }],
                 },
+                profile: null,
             });
         });
         await vi.waitFor(() => expect(metadata["title"]).toBe("Retry policy rewrite"));
@@ -354,6 +356,7 @@ describe("TitlesModule user-message lifecycle", () => {
                     id,
                     kind: "send",
                     message: { role: "user", content: [{ type: "text", text }] },
+                    profile: null,
                 });
             });
         }

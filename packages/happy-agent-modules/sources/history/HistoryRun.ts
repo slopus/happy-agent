@@ -1,4 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
+import { agentRequestProfileSchema } from "@slopus/happy-agent-base";
 
 import {
     historyAgentIdSchema,
@@ -43,6 +44,8 @@ export const historyPendingMessageSchema = Type.Object(
         createdAt: historyTimestampSchema,
         blocks: Type.Array(historyBlockSchema, { maxItems: MAX_HISTORY_BLOCKS_PER_MESSAGE }),
         mode: historyMessageModeSchema,
+        /** Transport-safe profile identity; readers decode unsupported values to `null`. */
+        profile: Type.Optional(agentRequestProfileSchema),
         clientMetadata: Type.Optional(historyClientMetadataSchema),
         mutationId: Type.Optional(historyMutationIdSchema),
         runId: Type.Null(),

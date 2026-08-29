@@ -1,11 +1,11 @@
 # Model switch
 
-Switching between incompatible models erases the conversation: their transcripts cannot be
-replayed to one another, so `@slopus/happy-agent-base` gives the new model an empty context while
-the work the old one did still stands. Left alone, the new model would answer the next message as
-though nothing had happened, silently repeating or undoing work it cannot see. This module puts
-one system message at the head of that fresh context saying what changed and that a conversation
-it cannot see came before, so the model orients itself instead.
+Switching between incompatible models or changing the request's opaque profile erases the private
+model conversation. `@slopus/happy-agent-base` gives the active model an empty context while the
+work already done still stands. Left alone, the model would answer the next message as though
+nothing had happened, silently repeating or undoing work it cannot see. This module puts one
+system message at the head of that fresh context saying what changed and that a conversation it
+cannot see came before, so the model orients itself instead.
 
 A compatible switch — one that keeps the history intact — needs no notice, and none is produced.
 Neither does a new agent's first message. An agent that never had a model never held a conversation
@@ -38,9 +38,10 @@ than only being told that something did.
 
 ## Tools
 
-This module provides no tools of its own. It acts entirely through the `modelChanged` hook on
+This module provides no tools of its own. It acts entirely through the existing `modelChanged` hook on
 `AgentModule`, producing a single system-role notice message that `@slopus/happy-agent-base`
-inserts at the start of the new model's context. When `history` is supplied, the notice names
+also invokes for profile resets. It produces a single system-role notice message that Base inserts
+at the start of the fresh context. When `history` is supplied, the notice names
 `read_agent_history` and tells the model to call it proactively; that tool itself belongs to
 `HistoryModule`, not to this one, and the history module must be in the `modules` array itself for
 the tool to actually be available to the model.
@@ -53,12 +54,14 @@ and passing it into `Agent.create`'s `modules` array. Its hooks:
 - `beforeStart(ctx, agents: AgentSystemRef): Promise<void>` — keeps a reference to the agent
   collection, which is where a model's picker label comes from when naming it in the notice.
 - `modelChanged(ctx, scope: AgentModuleScope, change: AgentBaseModelChange): Promise<SessionSystemMessage | undefined>` —
-  called by the agent base whenever a consumed message changes the effective model. Returns
+  called by the agent base whenever a consumed message changes the effective model or its opaque
+  profile resets the context. A profile reset is the reset case where the previous and current
+  model/provider values are equal. Returns
   `undefined` when `change.wasReset` is false (a compatible switch) and when `change.previousModel`
   is `undefined` (a new agent settling its first selection). Otherwise it builds and
   returns one `{ role: "system", content: [{ type: "text", text }] }` message. `change` carries
   `previousModel`, `model`, `previousProvider`, `provider`, `providers` (the `AgentProviders`
-  registry), and `wasReset`.
+  registry), and `wasReset`; no profile value is exposed or placed in model input.
 
 The package also exports `createModelSwitchNotice(notice: ModelSwitchNotice): string`, the pure
 function that renders the notice text from `previousModel`, `previousProvider`, `model`,
@@ -85,7 +88,7 @@ reference to `AgentSystemRef` captured in `beforeStart`, which lives only for th
 
 It depends on state owned elsewhere:
 
-- The agent's model and provider, and whether the last change was a reset, come from
+- The agent's model and provider, and whether the last change was a model/profile reset, come from
   `AgentBaseModelChange`, computed and persisted by `@slopus/happy-agent-base` itself.
   `ModelSwitchModule` only reads it.
 - The optional `history` is the same `HistoryModule` instance that owns and persists the archive

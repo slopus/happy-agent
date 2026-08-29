@@ -299,6 +299,7 @@ describe("HistoryModule durability", () => {
                 kind: "send",
                 message: { role: "user", content: [{ text: "Please deploy.", type: "text" }] },
                 metadata: { ...USER_MESSAGE_ORIGIN_METADATA },
+                profile: null,
             });
             await hooks.messageAcceptedTransact!(database.context, scope, {
                 id: "accepted-agent",
@@ -308,11 +309,13 @@ describe("HistoryModule durability", () => {
                     ...AGENT_MESSAGE_ORIGIN_METADATA,
                     ...senderAgentIdMetadata("agent-b"),
                 },
+                profile: null,
             });
             await hooks.messageAcceptedTransact!(database.context, scope, {
                 id: "accepted-unstamped",
                 kind: "steering",
                 message: { role: "user", content: [{ text: "Unstamped.", type: "text" }] },
+                profile: null,
             });
             await hooks.messageAcceptedTransact!(database.context, scope, {
                 id: "accepted-system",
@@ -330,6 +333,7 @@ describe("HistoryModule durability", () => {
                     ...AGENT_MESSAGE_ORIGIN_METADATA,
                     hideFromUser: true,
                 },
+                profile: null,
             });
 
             const page = await history.read(database.context, "agent-a");

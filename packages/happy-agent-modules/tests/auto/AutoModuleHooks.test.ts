@@ -82,6 +82,7 @@ function userAccepted(text: string, metadata?: Record<string, unknown>): AgentBa
         id: `message-${text}`,
         kind: "send",
         message: { role: "user", content: [{ type: "text", text }] },
+        profile: null,
         ...(metadata === undefined ? {} : { metadata }),
     } as AgentBaseAcceptedMessage;
 }

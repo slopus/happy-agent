@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { cuid2Schema } from "@slopus/happy-agent-base";
+import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
 import { clientMetadataSchema } from "@slopus/happy-agent-client";
 
 export {
@@ -184,6 +184,7 @@ export const messageSendBodySchema = Type.Object(
         delivery: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
         id: Type.Optional(apiIdSchema),
         mode: agentModeSchema,
+        profile: Type.Optional(agentRequestProfileSchema),
         text: Type.String({ minLength: 1, maxLength: 1_000_000 }),
     },
     { additionalProperties: false },
