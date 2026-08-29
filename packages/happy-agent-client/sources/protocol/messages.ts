@@ -347,6 +347,8 @@ export interface UserMessage {
     metadata: MessageMetadata;
     /** Opaque client-owned JSON, when the sender supplied it. */
     clientMetadata?: ClientMetadata;
+    /** Opaque request profile; a change resets the model's private conversation context. */
+    profile?: string | null;
     /** `"pending"` until inference takes the message up. */
     status: "pending" | "accepted";
     delivery: MessageDelivery;
@@ -421,6 +423,8 @@ export interface SendMessageRequest {
     content?: MessageBlock[];
     /** Defaults to `"queue"`. On an idle agent the two are identical. */
     delivery?: MessageDelivery;
+    /** Opaque context profile. Omitted and `null` both select the default profile. */
+    profile?: string | null;
     /** The model selection and permission mode this message runs with. */
     mode: MessageMode;
 }

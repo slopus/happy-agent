@@ -439,7 +439,7 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.url).toBe("http://agent.local/v0/workspaces?projectId=p1");
     });
 
-    it("sends a client-chosen message ID, tool request, and client metadata without a mutation ID", async () => {
+    it("sends a client-chosen message ID, profile, tool request, and client metadata without a mutation ID", async () => {
         const { fetch, requests } = stubFetch(() => json({ cursor: "c1", message: {} }));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
 
@@ -463,6 +463,7 @@ describe("HappyAgentClient", () => {
                 providerId: "provider1",
                 serviceTier: null,
             },
+            profile: "coding-agent-v3",
             text: "Hello",
         });
 
@@ -487,6 +488,7 @@ describe("HappyAgentClient", () => {
                     providerId: "provider1",
                     serviceTier: null,
                 },
+                profile: "coding-agent-v3",
                 text: "Hello",
             }),
         );

@@ -3266,7 +3266,10 @@ new group, and update activity in one frame without repeating message content.
 
 Every message carries its own mode — the full model selection and permission mode. There is no
 agent-level default; the client sends what its composer shows (typically prefilled from the
-agent's `mode` endpoint or bootstrap response).
+agent's `mode` endpoint or bootstrap response). A user message also carries its nullable
+`profile`, the opaque request profile that decided whether accepting it reset the model's private
+conversation context. Current daemons always emit `profile`; it remains optional on the wire so
+clients stay compatible with older protocol-22 daemons.
 
 ### Message content
 
@@ -3292,6 +3295,11 @@ is durably attached to that user message and returned unchanged in the send resp
 bootstrap state, `message.created` and any later full-message event, and accepted history,
 including after daemon restart. When omitted, the field is absent. Re-sending an existing message
 ID returns the originally stored object and never replaces it with metadata from the retry.
+
+`profile` is separate from both mode and metadata. It is `null` or an opaque string of at most 512
+characters. The daemon stores and returns it on every complete representation of a user message,
+but does not interpret its contents or send them to the model. See `send` for its context-reset
+semantics.
 
 **Roles** say who produced the message:
 
@@ -3561,6 +3569,7 @@ Request:
         }
     ],
     "delivery": "queue",
+    "profile": "coding-agent-v3",
     "mode": {
         "providerId": "codex",
         "modelId": "openai/gpt-5.6-sol",
@@ -3592,11 +3601,25 @@ Request:
   takes priority at the next inference boundary. The current assistant response and its complete
   tool-call batch finish without interruption, then pending steering messages are accepted before
   the next inference request. On an idle agent the two are identical: a run starts.
+- `profile` — optional `null` or opaque string of at most 512 characters; omitted means `null`.
+  The effective profile starts as `null`. When inference accepts this message, the daemon compares
+  its profile with the profile of the most recently accepted request. A different value — including
+  `null` to string or string to `null` — resets the model's private conversation context at that
+  safe boundary exactly like an incompatible model switch: the old provider session is destroyed,
+  compactable Agent Base history and history-scoped state are cleared atomically, and the new
+  request starts a fresh context. The durable person-visible history remains available, and the
+  session-reset module gives the fresh model a bounded handoff from that archive so completed work
+  is not silently repeated or undone. An unchanged profile keeps the context. A simultaneous
+  incompatible model change and profile change perform one reset. The profile is control data; its
+  string is never sent to the provider or model.
 - `mode` — required: the model selection and permission mode this message runs with, validated
   against the config catalog. An unknown or disabled model is `400`.
 
 There is no `mutationId` here: the message `id` is the client's, so the client recognizes its
 own message in every event and history load by the identity it already holds.
+
+Profile selection is idempotent with the message. Re-sending an existing message ID returns the
+originally stored message and never replaces its profile with the retry's value.
 
 A sent message is **pending** first: the daemon holds it durably, but it is not yet part of the
 real history — it has no run. It stays pending until inference **accepts** it — a queued
@@ -3622,6 +3645,7 @@ Response — `202`: the durable message as it now stands, plus the event cursor 
             "composer": "mobile",
             "localDraft": { "revision": 4 }
         },
+        "profile": "coding-agent-v3",
         "mode": {
             "providerId": "codex",
             "modelId": "openai/gpt-5.6-sol",
@@ -3692,6 +3716,7 @@ Response — `200`:
                         "composer": "mobile",
                         "localDraft": { "revision": 4 }
                     },
+                    "profile": "coding-agent-v3",
                     "mode": {
                         "providerId": "codex",
                         "modelId": "openai/gpt-5.6-sol",
