@@ -59,6 +59,17 @@ Configuration owns Monty's exact private snapshot path at
 `.happy/agent/state/<agentId>/snapshot.bin` and validates the agent's cuid2 before it can become a
 path segment.
 
+`[feature.team] enabled` selects the opt-in team deployment mode and defaults to `false`. It is a
+machine setting, so a project's checked-in `happy.toml` cannot enable it. Team mode has no private
+local API socket or bearer-token file. Instead, it exposes the WorkOS-authenticated API over TCP.
+`host` and `port` select the listener and default to `0.0.0.0` and `3000`.
+Port `0` asks the operating system to select an ephemeral port.
+`workos_client_id` defaults to the production Happy Cloud WorkOS client and may select another
+WorkOS project; the expected issuer and JWKS URL are derived from it. An enabled team deployment
+also requires `workos_organization_id` and `owner_workos_user_id`. Access tokens must carry that
+organization, and the matching owner identity receives the owner flag when their profile first
+creates a user.
+
 `[observation]` decides what the agent records about itself, and is read only
 from the global and runtime layers. A checked-in project file that turned
 tracing on and named its own endpoint would send this machine's traces

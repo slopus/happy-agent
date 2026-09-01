@@ -65,6 +65,7 @@ import { SlashCommandsModule } from "../slashCommands/index.js";
 import { SkillsModule } from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TasksModule } from "../tasks/index.js";
+import { TeamModule } from "../team/index.js";
 import { TerminalsModule } from "../terminals/index.js";
 import { TitlesModule } from "../titles/index.js";
 import { ToolDiscoveryModule } from "../toolDiscovery/index.js";
@@ -156,6 +157,7 @@ export interface HappyAgentRuntimeModules {
     readonly skills: SkillsModule;
     readonly systemPrompt: SystemPromptModule;
     readonly tasks: TasksModule;
+    readonly team: TeamModule<LibSQLDatabase>;
     readonly terminals: TerminalsModule;
     readonly titles: TitlesModule;
     readonly toolDiscovery: ToolDiscoveryModule;
@@ -419,6 +421,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("files", async () => await files.close());
 
         const profile = new ProfileModule<LibSQLDatabase>();
+        const team = new TeamModule<LibSQLDatabase>(config, profile);
         const collaboration = new CollaborationModule(config, abort);
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
@@ -495,6 +498,7 @@ export async function startHappyAgentRuntime(
             compute.computeModule,
             slashCommands,
             secrets,
+            team,
         );
         api = apiModule;
 
@@ -536,6 +540,7 @@ export async function startHappyAgentRuntime(
             skills: compute.skillsModule,
             systemPrompt,
             tasks,
+            team,
             terminals,
             titles,
             toolDiscovery,
@@ -568,7 +573,7 @@ export async function startHappyAgentRuntime(
             compactions,
             slashCommands,
             contextWindow,
-            profile,
+            ...(team.enabled ? [team] : [profile]),
             git,
             durableFunctions,
             bots,
@@ -671,7 +676,7 @@ export async function startHappyAgentRuntime(
             await workspaces.open(withDatabase(ctx));
         }
 
-        profile.open(installation.epoch);
+        if (!team.enabled) profile.open(installation.epoch);
 
         await apiModule.markReady();
 

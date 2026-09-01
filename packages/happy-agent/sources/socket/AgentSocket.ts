@@ -19,6 +19,13 @@ export interface BoundAgentSocket {
     close(): Promise<void>;
 }
 
+export interface BoundAgentHttpServer {
+    readonly host: string;
+    readonly port: number;
+    readonly url: string;
+    close(): Promise<void>;
+}
+
 export function resolveAgentDaemonPaths(configuration: HappyAgentConfiguration): AgentDaemonPaths {
     return {
         agentHome: configuration.paths.agentHome,
@@ -44,7 +51,68 @@ export async function bindNodeAgentSocket(
     options: { readonly maxRequestsPerSocket?: number } = {},
 ): Promise<BoundAgentSocket> {
     await prepareAgentSocketPath(socketPath);
+    const { connections, server } = createAgentHttpServer(prepared);
+    if (options.maxRequestsPerSocket !== undefined) {
+        server.maxRequestsPerSocket = options.maxRequestsPerSocket;
+    }
 
+    const previousUmask = process.umask(0o077);
+    try {
+        await listenOnSocket(server, socketPath);
+        await chmod(socketPath, 0o600);
+    } catch (error) {
+        await closeServer(server, connections, socketPath).catch(() => undefined);
+        throw error;
+    } finally {
+        process.umask(previousUmask);
+    }
+
+    let closing: Promise<void> | undefined;
+    return {
+        socketPath,
+        close: () => {
+            closing ??= closeServer(server, connections, socketPath);
+            return closing;
+        },
+    };
+}
+
+/** Bind the team API to an authenticated TCP HTTP listener. */
+export async function bindAgentHttpServer(
+    prepared: PreparedHappyAgentRuntime,
+    host: string,
+    port: number,
+): Promise<BoundAgentHttpServer> {
+    const { connections, server } = createAgentHttpServer(prepared);
+    try {
+        await listenOnTcp(server, host, port);
+    } catch (error) {
+        await closeHttpServer(server, connections).catch(() => undefined);
+        throw error;
+    }
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+        await closeHttpServer(server, connections);
+        throw new Error("The Happy Agent team HTTP listener has no TCP address.");
+    }
+    const boundHost = address.address;
+    const boundPort = address.port;
+    let closing: Promise<void> | undefined;
+    return {
+        host: boundHost,
+        port: boundPort,
+        url: `http://${urlHost(boundHost)}:${String(boundPort)}`,
+        close: () => {
+            closing ??= closeHttpServer(server, connections);
+            return closing;
+        },
+    };
+}
+
+function createAgentHttpServer(prepared: PreparedHappyAgentRuntime): {
+    readonly connections: Set<Socket>;
+    readonly server: Server;
+} {
     const connections = new Set<Socket>();
     const server = createServer((request, response) => {
         void prepared.api
@@ -55,9 +123,6 @@ export async function bindNodeAgentSocket(
     });
     server.headersTimeout = 10_000;
     server.keepAliveTimeout = 5_000;
-    if (options.maxRequestsPerSocket !== undefined) {
-        server.maxRequestsPerSocket = options.maxRequestsPerSocket;
-    }
     server.requestTimeout = 30_000;
     server.on("connection", (socket) => {
         connections.add(socket);
@@ -79,26 +144,7 @@ export async function bindNodeAgentSocket(
             })
             .catch(() => socket.destroy());
     });
-
-    const previousUmask = process.umask(0o077);
-    try {
-        await listen(server, socketPath);
-        await chmod(socketPath, 0o600);
-    } catch (error) {
-        await closeServer(server, connections, socketPath).catch(() => undefined);
-        throw error;
-    } finally {
-        process.umask(previousUmask);
-    }
-
-    let closing: Promise<void> | undefined;
-    return {
-        socketPath,
-        close: () => {
-            closing ??= closeServer(server, connections, socketPath);
-            return closing;
-        },
-    };
+    return { connections, server };
 }
 
 export async function prepareAgentSocketPath(socketPath: string): Promise<void> {
@@ -129,6 +175,29 @@ export async function prepareAgentSocketPath(socketPath: string): Promise<void> 
     await unlink(socketPath);
 }
 
+/** Remove an inactive socket left by an interrupted daemon without preparing a new listener. */
+export async function removeInactiveAgentSocket(socketPath: string): Promise<void> {
+    let information;
+    try {
+        information = await lstat(socketPath);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+    }
+    if (!information.isSocket()) return;
+    if (
+        process.getuid !== undefined &&
+        typeof information.uid === "number" &&
+        information.uid !== process.getuid()
+    ) {
+        throw new Error(`Refusing to remove a socket owned by another user: ${socketPath}`);
+    }
+    if (await socketIsActive(socketPath)) {
+        throw new Error(`Another Happy agent is already listening on ${socketPath}.`);
+    }
+    await unlink(socketPath);
+}
+
 async function socketIsActive(socketPath: string): Promise<boolean> {
     return await new Promise<boolean>((resolve, reject) => {
         const socket = connect(socketPath);
@@ -147,7 +216,7 @@ async function socketIsActive(socketPath: string): Promise<boolean> {
     });
 }
 
-async function listen(server: Server, socketPath: string): Promise<void> {
+async function listenOnSocket(server: Server, socketPath: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
         const failed = (error: Error): void => {
             server.off("listening", listening);
@@ -160,6 +229,22 @@ async function listen(server: Server, socketPath: string): Promise<void> {
         server.once("error", failed);
         server.once("listening", listening);
         server.listen(socketPath);
+    });
+}
+
+async function listenOnTcp(server: Server, host: string, port: number): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        const failed = (error: Error): void => {
+            server.off("listening", listening);
+            reject(error);
+        };
+        const listening = (): void => {
+            server.off("error", failed);
+            resolve();
+        };
+        server.once("error", failed);
+        server.once("listening", listening);
+        server.listen({ host, port });
     });
 }
 
@@ -187,6 +272,19 @@ async function closeServer(
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+}
+
+async function closeHttpServer(server: Server, connections: Set<Socket>): Promise<void> {
+    for (const connection of connections) connection.destroy();
+    await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+    }).catch((error: unknown) => {
+        if (!(error instanceof Error) || !/not running/i.test(error.message)) throw error;
+    });
+}
+
+function urlHost(host: string): string {
+    return host.includes(":") ? `[${host}]` : host;
 }
 
 function sendUnexpectedError(response: ServerResponse, error: unknown): void {

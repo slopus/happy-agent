@@ -360,6 +360,43 @@ const partialValuesSchema = Type.Object(
                             { additionalProperties: false },
                         ),
                     ),
+                    team: Type.Optional(
+                        Type.Object(
+                            {
+                                enabled: Type.Optional(Type.Boolean()),
+                                host: Type.Optional(
+                                    Type.String({
+                                        maxLength: 255,
+                                        minLength: 1,
+                                        pattern: "^[^\\s\\u0000-\\u001f\\u007f]+$",
+                                    }),
+                                ),
+                                owner_workos_user_id: Type.Optional(
+                                    Type.String({
+                                        maxLength: 160,
+                                        minLength: 7,
+                                        pattern: "^user_[A-Za-z0-9]+$",
+                                    }),
+                                ),
+                                port: Type.Optional(Type.Integer({ maximum: 65_535, minimum: 0 })),
+                                workos_client_id: Type.Optional(
+                                    Type.String({
+                                        maxLength: 160,
+                                        minLength: 8,
+                                        pattern: "^client_[A-Za-z0-9]+$",
+                                    }),
+                                ),
+                                workos_organization_id: Type.Optional(
+                                    Type.String({
+                                        maxLength: 160,
+                                        minLength: 6,
+                                        pattern: "^org_[A-Za-z0-9]+$",
+                                    }),
+                                ),
+                            },
+                            { additionalProperties: false },
+                        ),
+                    ),
                 },
                 { additionalProperties: false },
             ),
@@ -671,6 +708,58 @@ const resolvedValuesSchema = Type.Object(
                     { enabled: Type.Boolean(), engine: codeModeEngineSchema },
                     { additionalProperties: false },
                 ),
+                team: Type.Union([
+                    Type.Object(
+                        {
+                            enabled: Type.Literal(false),
+                            host: Type.String({ maxLength: 255, minLength: 1 }),
+                            ownerWorkOSUserId: Type.Optional(
+                                Type.String({
+                                    maxLength: 160,
+                                    minLength: 7,
+                                    pattern: "^user_[A-Za-z0-9]+$",
+                                }),
+                            ),
+                            port: Type.Integer({ maximum: 65_535, minimum: 0 }),
+                            workosClientId: Type.String({
+                                maxLength: 160,
+                                minLength: 8,
+                                pattern: "^client_[A-Za-z0-9]+$",
+                            }),
+                            workosOrganizationId: Type.Optional(
+                                Type.String({
+                                    maxLength: 160,
+                                    minLength: 6,
+                                    pattern: "^org_[A-Za-z0-9]+$",
+                                }),
+                            ),
+                        },
+                        { additionalProperties: false },
+                    ),
+                    Type.Object(
+                        {
+                            enabled: Type.Literal(true),
+                            host: Type.String({ maxLength: 255, minLength: 1 }),
+                            ownerWorkOSUserId: Type.String({
+                                maxLength: 160,
+                                minLength: 7,
+                                pattern: "^user_[A-Za-z0-9]+$",
+                            }),
+                            port: Type.Integer({ maximum: 65_535, minimum: 0 }),
+                            workosClientId: Type.String({
+                                maxLength: 160,
+                                minLength: 8,
+                                pattern: "^client_[A-Za-z0-9]+$",
+                            }),
+                            workosOrganizationId: Type.String({
+                                maxLength: 160,
+                                minLength: 6,
+                                pattern: "^org_[A-Za-z0-9]+$",
+                            }),
+                        },
+                        { additionalProperties: false },
+                    ),
+                ]),
             },
             { additionalProperties: false },
         ),
@@ -995,6 +1084,12 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
     },
     feature: {
         codemode: { enabled: false, engine: "monty" },
+        team: {
+            enabled: false,
+            host: "0.0.0.0",
+            port: 3_000,
+            workosClientId: "client_01KZD3XE9YAFAMT0P8TD4HP73E",
+        },
     },
     gemini: {},
     mcpServers: {},
@@ -2247,6 +2342,9 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (partial.feature?.codemode !== undefined) {
             Object.assign(merged.feature.codemode, partial.feature.codemode);
         }
+        if (partial.feature?.team !== undefined) {
+            Object.assign(merged.feature.team, normalizeTeam(partial.feature.team));
+        }
         if (partial.gemini !== undefined)
             Object.assign(merged.gemini, normalizeGemini(partial.gemini));
         if (partial.mcp_servers !== undefined) {
@@ -2339,7 +2437,27 @@ function normalizeFeatures(value: NonNullable<PartialValues["features"]>): Recor
 }
 
 function normalizeFeature(value: NonNullable<PartialValues["feature"]>): Record<string, unknown> {
-    return value.codemode === undefined ? {} : { codemode: { ...value.codemode } };
+    return {
+        ...(value.codemode === undefined ? {} : { codemode: { ...value.codemode } }),
+        ...(value.team === undefined ? {} : { team: normalizeTeam(value.team) }),
+    };
+}
+
+function normalizeTeam(
+    value: NonNullable<NonNullable<PartialValues["feature"]>["team"]>,
+): Record<string, unknown> {
+    return {
+        ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
+        ...(value.host === undefined ? {} : { host: value.host }),
+        ...(value.owner_workos_user_id === undefined
+            ? {}
+            : { ownerWorkOSUserId: value.owner_workos_user_id }),
+        ...(value.port === undefined ? {} : { port: value.port }),
+        ...(value.workos_client_id === undefined ? {} : { workosClientId: value.workos_client_id }),
+        ...(value.workos_organization_id === undefined
+            ? {}
+            : { workosOrganizationId: value.workos_organization_id }),
+    };
 }
 
 function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Record<string, unknown> {
@@ -2767,10 +2885,12 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         provider_default_enable: _providerDefaultEnable,
         providers: _providers,
         defaults,
+        feature,
         settings,
         ...rest
     } = values;
     const { permission_mode: _permissionMode, ...projectDefaults } = defaults ?? {};
+    const { team: _team, ...projectFeature } = feature ?? {};
     const {
         daemon_heap_snapshots: _daemonHeapSnapshots,
         durable_global_event_queue: _durableGlobalEventQueue,
@@ -2787,6 +2907,7 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
     return {
         ...rest,
         ...(Object.keys(projectDefaults).length === 0 ? {} : { defaults: projectDefaults }),
+        ...(Object.keys(projectFeature).length === 0 ? {} : { feature: projectFeature }),
         ...(Object.keys(projectSettings).length === 0 ? {} : { settings: projectSettings }),
     };
 }
@@ -2863,6 +2984,27 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                     }
                     if (feature.codemode.engine !== undefined) {
                         result["feature.codemode.engine"] = name;
+                    }
+                }
+                if (feature?.team !== undefined) {
+                    result["feature.team"] = name;
+                    if (feature.team.enabled !== undefined) {
+                        result["feature.team.enabled"] = name;
+                    }
+                    if (feature.team.host !== undefined) {
+                        result["feature.team.host"] = name;
+                    }
+                    if (feature.team.owner_workos_user_id !== undefined) {
+                        result["feature.team.ownerWorkOSUserId"] = name;
+                    }
+                    if (feature.team.port !== undefined) {
+                        result["feature.team.port"] = name;
+                    }
+                    if (feature.team.workos_client_id !== undefined) {
+                        result["feature.team.workosClientId"] = name;
+                    }
+                    if (feature.team.workos_organization_id !== undefined) {
+                        result["feature.team.workosOrganizationId"] = name;
                     }
                 }
             }
@@ -2951,6 +3093,27 @@ function readFeature(
     assertTableSize(value, "feature");
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
+        if (key === "team") {
+            if (!isTable(item)) throw new Error("feature.team must be a TOML table.");
+            assertTableSize(item, "feature.team");
+            const team: Record<string, unknown> = {};
+            for (const [teamKey, teamValue] of Object.entries(item)) {
+                if (
+                    teamKey !== "enabled" &&
+                    teamKey !== "host" &&
+                    teamKey !== "owner_workos_user_id" &&
+                    teamKey !== "port" &&
+                    teamKey !== "workos_client_id" &&
+                    teamKey !== "workos_organization_id"
+                ) {
+                    unknown(`feature.team.${teamKey}`);
+                    continue;
+                }
+                team[teamKey] = teamValue;
+            }
+            result.team = team;
+            continue;
+        }
         if (key !== "codemode") {
             unknown(`feature.${key}`);
             continue;

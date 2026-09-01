@@ -46,6 +46,15 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # enabled = false
 # engine = "monty"
 
+# Team deployments expose an authenticated TCP HTTP API instead of the private local socket.
+# [feature.team]
+# enabled = false
+# host = "0.0.0.0"
+# port = 3000
+# workos_client_id = "client_01KZD3XE9YAFAMT0P8TD4HP73E"
+# workos_organization_id = "org_01EXAMPLE"
+# owner_workos_user_id = "user_01EXAMPLE"
+
 # [workspace]
 # setup_commands = ["pnpm install"]
 # Project files copied into every workspace and re-copied whenever the project root

@@ -42,6 +42,12 @@ describe("ConfigModule", () => {
         expect(configuration.values.features.crossWorkspace).toBe(true);
         expect(configuration.values.feature.codemode.enabled).toBe(false);
         expect(configuration.values.feature.codemode.engine).toBe("monty");
+        expect(configuration.values.feature.team).toEqual({
+            enabled: false,
+            host: "0.0.0.0",
+            port: 3_000,
+            workosClientId: "client_01KZD3XE9YAFAMT0P8TD4HP73E",
+        });
         expect(configuration.values.settings).toMatchObject({
             ethan: { enabled: false },
             maxCollaborationDepth: 3,
@@ -83,6 +89,73 @@ describe("ConfigModule", () => {
         expect(configuration.sources.global.unknownSettings).toEqual(["feature.codemode.unknown"]);
     });
 
+    it("loads team mode from the machine configuration", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-team-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            [
+                "[feature.team]",
+                "enabled = true",
+                'host = "127.0.0.1"',
+                "port = 4321",
+                'workos_client_id = "client_staging123"',
+                'workos_organization_id = "org_staging123"',
+                'owner_workos_user_id = "user_owner123"',
+                "unknown = true",
+            ].join("\n"),
+        );
+
+        const configuration = await loadHappyAgentConfiguration(happyHome);
+
+        expect(configuration.values.feature.team).toEqual({
+            enabled: true,
+            host: "127.0.0.1",
+            ownerWorkOSUserId: "user_owner123",
+            port: 4_321,
+            workosClientId: "client_staging123",
+            workosOrganizationId: "org_staging123",
+        });
+        expect(configuration.provenance["feature.team.enabled"]).toBe("global");
+        expect(configuration.provenance["feature.team.host"]).toBe("global");
+        expect(configuration.provenance["feature.team.ownerWorkOSUserId"]).toBe("global");
+        expect(configuration.provenance["feature.team.port"]).toBe("global");
+        expect(configuration.provenance["feature.team.workosClientId"]).toBe("global");
+        expect(configuration.provenance["feature.team.workosOrganizationId"]).toBe("global");
+        expect(configuration.sources.global.unknownSettings).toEqual(["feature.team.unknown"]);
+    });
+
+    it("requires organization and owner identities when team mode is enabled", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-team-identities-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            ["[feature.team]", "enabled = true"].join("\n"),
+        );
+
+        await expect(loadHappyAgentConfiguration(join(root, ".happy"))).rejects.toThrow(
+            "The merged Happy Agent configuration is invalid.",
+        );
+    });
+
+    it("does not let a project configuration enable team mode", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-project-team-"));
+        temporaryDirectories.push(root);
+        const previous = process.cwd();
+        await writeFile(join(root, "happy.toml"), "[feature.team]\nenabled = true\n");
+        process.chdir(root);
+        try {
+            const configuration = await loadHappyAgentConfiguration(join(root, ".happy"));
+            expect(configuration.values.feature.team.enabled).toBe(false);
+            expect(configuration.provenance["feature.team.enabled"]).toBeUndefined();
+        } finally {
+            process.chdir(previous);
+        }
+    });
+
     it("writes collaborator controls into the starter Happy settings", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-template-"));
         temporaryDirectories.push(root);
@@ -98,6 +171,12 @@ describe("ConfigModule", () => {
         expect(source).toContain("# [feature.codemode]");
         expect(source).toContain("# enabled = false");
         expect(source).toContain('# engine = "monty"');
+        expect(source).toContain("# [feature.team]");
+        expect(source).toContain('# host = "0.0.0.0"');
+        expect(source).toContain("# port = 3000");
+        expect(source).toContain('# workos_client_id = "client_01KZD3XE9YAFAMT0P8TD4HP73E"');
+        expect(source).toContain('# workos_organization_id = "org_01EXAMPLE"');
+        expect(source).toContain('# owner_workos_user_id = "user_01EXAMPLE"');
     });
 
     it("always generates runtime.toml even when it has no settings yet", async () => {

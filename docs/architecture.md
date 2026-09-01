@@ -11,19 +11,21 @@ direction runs ahead of what ships today, that is called out explicitly in
 
 ## 1. The core idea
 
-Happy Agent is one local harness that recreates several first-party coding agents on
-top of a single runtime. GPT models receive Codex-shaped prompts and tools,
+Happy Agent is one harness that recreates several first-party coding agents on top of a single
+runtime. It normally runs for one person on their machine and can instead be deployed as a
+multi-user service for one WorkOS organization. GPT models receive Codex-shaped prompts and tools,
 Claude models receive Claude Code-shaped prompts and tools, and Grok receives the
 Grok Build prompt and tool contracts. Everything around inference — sessions,
 permissions, sandboxing, persistence, subagents, MCP, the terminal — is shared.
 
 Two consequences shape the whole system:
 
-- **There is no Happy Agent account.** Happy Agent authenticates as the user's existing
-  installations do: it reads the credentials that Codex, Claude Code, and the
-  Grok CLI already manage on the machine, plus a Bedrock bearer token from the
-  environment when configured. The daemon only checks whether a credential is
-  present locally, and never asks a provider server which models exist.
+- **Provider access has no Happy Agent account.** Happy Agent authenticates to model providers as
+  the user's existing installations do: it reads the credentials that Codex, Claude Code, and the
+  Grok CLI already manage on the machine, plus a Bedrock bearer token from the environment when
+  configured. Team-mode WorkOS users are a separate access-control identity and do not replace or
+  pool those provider credentials. The daemon only checks whether a provider credential is present
+  locally, and never asks a provider server which models exist.
 - **Provider differences are confined to inference and the tool surface.** They
   are not allowed to create a second security path, a second session model, or a
   second persistence path. Every provider is routed through the same
@@ -41,30 +43,45 @@ Happy Terminal is the official TUI client, available through the `happy` CLI, it
 Happy Terminal installation also locates and starts a compatible Happy Agent release.
 
 ```text
-   happy / happy-terminal / embedded host  (Happy Terminal, one per window)
-            |
-            |  HTTP + SSE over a unix socket, bearer token
-            v
-   happy-agent run  (the daemon: sessions, agents, tools, SQLite)
-            |
-            +-- provider inference  (happy-agent-base -> happy-providers -> vendor APIs)
-            +-- sandboxed shell, filesystem, Docker, MCP, background terminals
-            +-- sessions.sqlite
+   standalone client                         team client
+   Happy Terminal / embedded host            web or service client
+          |                                         |
+          | HTTP + SSE + WebSocket                  | HTTP + SSE + WebSocket
+          | Unix socket + local token               | TCP + WorkOS access token
+          +--------------------+--------------------+
+                               |
+                               v
+                 happy-agent run  (sessions, agents, tools, SQLite)
+                               |
+                               +-- provider inference
+                               +-- sandboxed shell, files, Docker, MCP, terminals
 ```
 
 ### The daemon
 
-The daemon:
+In standalone mode, the daemon:
 
 - creates its private runtime directory at `~/.happy/agent` (or beneath
   `HAPPY_HOME_DIR`), holding `server.sock`, `token`, `daemon.pid`, `daemon.log`,
   the SQLite stores, and `observation/agent.log`;
-- listens on the unix socket only, with the socket `chmod`ed to `0600`, and
+- listens on the Unix socket only, with the socket `chmod`ed to `0600`, and
   authorizes every request against the token file;
+- can be located, started, and stopped by Happy Terminal's local daemon lifecycle.
+
+In team mode, the daemon instead:
+
+- listens over TCP at the globally configured host and port;
+- creates neither the local API socket nor its bearer-token file;
+- verifies WorkOS access tokens for one configured organization and maps them to durable users;
+- runs in the foreground under an external process supervisor rather than the socket-based local
+  daemon lifecycle.
+
+In either mode it:
+
 - serves the protocol HTTP routes and WebSocket terminals;
 - streams events as `text/event-stream`;
 - owns the SQLite database and the domain modules for sessions, projects, Git,
-  the model catalog, file search, MCP, Happy sync, and scheduling.
+  users and profiles, the model catalog, file search, MCP, Happy sync, and scheduling.
 
 The daemon holds the agent loop, tool execution, and the sandbox. The terminal UI
 holds no agent logic; if it dies, the session keeps running.
@@ -83,10 +100,11 @@ and protocol compatibility facts without starting or contacting the daemon. A cl
 upgradeable inspection exits 0; incompatible, damaged, busy, or unreadable data exits 2 after
 printing the same complete human or JSON result.
 
-Before doing anything else, an interactive or headless run finds a running
-daemon, checks that its identity matches the current build, and spawns one when
-it does not. When the running daemon is older than the current build, the CLI
-asks before restarting it. The client talks HTTP over the unix socket.
+Before doing anything else, a standalone interactive or headless run finds a running daemon,
+checks that its identity matches the current build, and spawns one when it does not. When the
+running daemon is older than the current build, the CLI asks before restarting it. The client
+talks HTTP over the Unix socket. These local discovery and lifecycle commands are disabled in team
+mode, whose clients connect to the deployment's HTTP endpoint directly.
 
 The interactive interface is built on Pi TUI. Its layout rules are strict: the
 logical transcript is append-only, live above-composer status is compact and
@@ -366,8 +384,8 @@ local, and continuing after one is not an option.
 
 ### What is stored
 
-The schema holds projects, project workspaces and avatar
-assets, sessions, session events, session messages, session context messages,
+The schema holds projects, project workspaces and avatar assets, profiles and team users with their
+photo assets, sessions, session events, session messages, session context messages,
 session turns, queued runs, durable user inputs, durable waits, scheduled
 messages, secret registrations and their environment variables,
 project secret attachments, Happy sync sessions and outbox, and the durable
@@ -378,9 +396,9 @@ Secrets are stored as plaintext JSON in this database. The file is mode `0600`
 and its directory `0700`, which is access control, not encryption: replaced values
 may persist in SQLite pages and the WAL.
 
-Non-database daemon state under `~/.happy/agent` includes runtime settings, Happy credentials,
-logs, the socket, and the authentication token. Happy Terminal keeps its client-specific runtime
-settings under `~/.happy/happy-terminal`. User
+Non-database daemon state under `~/.happy/agent` includes runtime settings, Happy credentials, and
+logs. Standalone mode also stores its socket and authentication token there; team mode keeps both
+absent. Happy Terminal keeps its client-specific runtime settings under `~/.happy/happy-terminal`. User
 configuration is separate, in `~/Happy/Config/happy.toml` (macOS) or
 `~/happy/config/happy.toml` (Linux), with repository settings in `happy.toml`.
 

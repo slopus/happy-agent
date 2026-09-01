@@ -116,6 +116,15 @@ import {
     type TerminalScope,
 } from "../terminals/index.js";
 import {
+    teamUser,
+    TEAM_ONBOARDING_PROFILE_VERSION,
+    TeamAuthenticationError,
+    TeamModule,
+    TeamProfileInputError,
+    TeamProfileVersionConflictError,
+    type TeamUser,
+} from "../team/index.js";
+import {
     createNodeBinaryWebSocket,
     createSseWriter,
     type SseWriter,
@@ -139,6 +148,7 @@ import {
     reviewedToolCalls,
     toolResultPresentations,
 } from "./ApiMessageProjection.js";
+import { prepareLocalApiToken } from "./prepareLocalApiToken.js";
 import {
     agentResource,
     agentModeFromConfig,
@@ -189,7 +199,6 @@ const API_PROTOCOL_VERSION = 23;
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
 const HEARTBEAT_MS = 15_000;
-const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 const MAX_ANNOUNCED_PENDING_MESSAGES = 10_000;
 const MAX_ANNOUNCED_AGENT_CREATIONS = 10_000;
@@ -289,6 +298,7 @@ export class ApiModule implements AgentModule {
     readonly #providerScan: ProviderScanModule;
     readonly #happy: HappyModule;
     readonly #profile: ProfileModule;
+    readonly #team: TeamModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
     readonly #secrets: SecretsModule;
@@ -368,6 +378,7 @@ export class ApiModule implements AgentModule {
         compute: ComputeModule,
         slashCommands: SlashCommandsModule,
         secrets: SecretsModule,
+        team: TeamModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -391,6 +402,7 @@ export class ApiModule implements AgentModule {
         this.#compute = compute;
         this.#slashCommands = slashCommands;
         this.#secrets = secrets;
+        this.#team = team;
     }
 
     readonly beforeStart = async (
@@ -431,7 +443,10 @@ export class ApiModule implements AgentModule {
     /** Prepare authentication before the executable exposes the starting-health socket. */
     async prepare(): Promise<void> {
         this.#preparePromise ??= (async () => {
-            this.#token = await loadOrCreateToken(this.#config.configuration.paths.tokenPath);
+            this.#token = await prepareLocalApiToken(
+                this.#config.configuration.paths.tokenPath,
+                this.#config.configuration.values?.feature?.team?.enabled ?? false,
+            );
         })();
         await this.#preparePromise;
     }
@@ -505,7 +520,7 @@ export class ApiModule implements AgentModule {
         setCommonHeaders(response);
         let finishMutation: (() => void) | undefined;
         try {
-            this.#authenticate(request);
+            ctx = await this.#authenticate(ctx, request.headers.authorization);
             const url = requestUrl(request);
             if (request.method === "GET" && url.pathname === "/v0/health") {
                 sendJson(response, 200, this.#health(ctx));
@@ -513,6 +528,13 @@ export class ApiModule implements AgentModule {
             }
             if (!this.#ready) {
                 throw new ApiError(503, "not_initialized", "Happy Agent is still starting.");
+            }
+            if (
+                this.#team.enabled &&
+                teamUser(ctx) === undefined &&
+                !isTeamOnboardingRoute(request.method, url.pathname)
+            ) {
+                throw new ApiError(401, "unauthorized", "Unauthorized");
             }
             if (this.#isMutation(request, url)) {
                 if (this.#draining) {
@@ -865,16 +887,24 @@ export class ApiModule implements AgentModule {
             }
             if (request.method === "GET" && url.pathname === "/v0/profile") {
                 sendJson(response, 200, {
-                    profile: profileResource(await this.#profile.ensure(ctx)),
+                    profile: this.#team.enabled
+                        ? teamProfileResource(await this.#team.currentUser(ctx))
+                        : profileResource(await this.#profile.ensure(ctx)),
                 });
                 return;
             }
             if (request.method === "PATCH" && url.pathname === "/v0/profile") {
-                await this.#handleProfilePatch(ctx, request, response);
+                if (this.#team.enabled) {
+                    await this.#handleTeamProfilePatch(ctx, request, response);
+                } else {
+                    await this.#handleProfilePatch(ctx, request, response);
+                }
                 return;
             }
             if (url.pathname === "/v0/profile/photo" && request.method === "GET") {
-                const photo = await this.#profile.getPhoto(ctx);
+                const photo = this.#team.enabled
+                    ? await this.#team.getCurrentUserPhoto(ctx)
+                    : await this.#profile.getPhoto(ctx);
                 if (photo === undefined) throw notFound("The profile has no photo.");
                 if (request.headers["if-none-match"] === photo.etag) {
                     response.writeHead(304, {
@@ -894,8 +924,9 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (url.pathname === "/v0/profile/photo" && request.method === "PUT") {
-                const current = await this.#profile.ensure(ctx);
-                const resource = profileResource(current);
+                const resource = this.#team.enabled
+                    ? teamProfileResource(await this.#team.currentUser(ctx))
+                    : profileResource(await this.#profile.ensure(ctx));
                 const expectedVersion = requireIfMatch(request, resource["version"], {
                     currentVersion: resource["version"],
                     profile: resource,
@@ -909,26 +940,42 @@ export class ApiModule implements AgentModule {
                     throw invalidRequest("The profile photo must be a PNG, JPEG, or WebP image.");
                 }
                 const bytes = await readBytes(request, 8 * 1024 * 1024);
-                const profile = await this.#profile.putPhoto(
-                    ctx,
-                    bytes,
-                    contentType as ProfilePhotoContentType,
-                    { expectedVersion },
-                );
-                sendJson(response, 200, { profile: profileResource(profile) });
+                if (this.#team.enabled) {
+                    const user = await this.#team.putCurrentUserPhoto(
+                        ctx,
+                        bytes,
+                        contentType as ProfilePhotoContentType,
+                        expectedVersion,
+                    );
+                    sendJson(response, 200, { profile: teamProfileResource(user) });
+                } else {
+                    const profile = await this.#profile.putPhoto(
+                        ctx,
+                        bytes,
+                        contentType as ProfilePhotoContentType,
+                        { expectedVersion },
+                    );
+                    sendJson(response, 200, { profile: profileResource(profile) });
+                }
                 return;
             }
             if (url.pathname === "/v0/profile/photo" && request.method === "DELETE") {
-                const current = await this.#profile.ensure(ctx);
-                const resource = profileResource(current);
+                const resource = this.#team.enabled
+                    ? teamProfileResource(await this.#team.currentUser(ctx))
+                    : profileResource(await this.#profile.ensure(ctx));
                 const expectedVersion = requireIfMatch(request, resource["version"], {
                     currentVersion: resource["version"],
                     profile: resource,
                 });
-                const profile = await this.#profile.deletePhoto(ctx, {
-                    expectedVersion,
-                });
-                sendJson(response, 200, { profile: profileResource(profile) });
+                if (this.#team.enabled) {
+                    const user = await this.#team.deleteCurrentUserPhoto(ctx, expectedVersion);
+                    sendJson(response, 200, { profile: teamProfileResource(user) });
+                } else {
+                    const profile = await this.#profile.deletePhoto(ctx, {
+                        expectedVersion,
+                    });
+                    sendJson(response, 200, { profile: profileResource(profile) });
+                }
                 return;
             }
             if (await this.#handleSecretRoute(ctx, request, response, url)) return;
@@ -1114,7 +1161,8 @@ export class ApiModule implements AgentModule {
             );
         if (match === null) return { handled: false };
         try {
-            this.#authenticateHeader(authorization);
+            ctx = await this.#authenticate(ctx, authorization);
+            this.#assertTeamUser(ctx);
             this.#assertSocketReady();
             const workspaceId = match[1] as string;
             const terminalId = match[2] as string;
@@ -1143,7 +1191,8 @@ export class ApiModule implements AgentModule {
         const match = /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/proxy$/.exec(pathname);
         if (match === null) return { handled: false };
         try {
-            this.#authenticateHeader(authorization);
+            ctx = await this.#authenticate(ctx, authorization);
+            this.#assertTeamUser(ctx);
             this.#assertSocketReady();
             await this.#resolveWorkspaceScope(ctx, match[1] as string);
             return { handled: true };
@@ -1245,6 +1294,11 @@ export class ApiModule implements AgentModule {
                     version: event.data.version,
                     profile,
                 });
+            }),
+            this.#team.onProfileUpdated((_eventCtx, event) => {
+                // Team profile events are server-wide invalidations. Keep private profile fields
+                // out of the shared journal while identifying exactly which user became stale.
+                this.#journal.append("profile.updated", { userId: event.user.id });
             }),
             this.#cloud.onUpdated((_eventCtx, cloud) => {
                 this.#journal.append("cloud.updated", { cloud }, cloud.updatedAt);
@@ -4479,6 +4533,36 @@ export class ApiModule implements AgentModule {
         sendJson(response, 200, { profile: profileResource(updated) });
     }
 
+    async #handleTeamProfilePatch(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+    ): Promise<void> {
+        const body = await bodyAs(request, profilePatchBodySchema, "profile update");
+        if (body.name === undefined && body.email === undefined) {
+            throw invalidRequest("A profile update must change a name or email address.");
+        }
+        const current = await this.#team.currentUser(ctx);
+        const resource = teamProfileResource(current);
+        const expectedVersion = requireIfMatch(request, resource["version"], {
+            currentVersion: resource["version"],
+            profile: resource,
+        });
+        const updated = await this.#withMutationId(
+            body.mutationId,
+            async () =>
+                await this.#team.updateCurrentProfile(
+                    ctx,
+                    {
+                        ...(body.name === undefined ? {} : { name: body.name }),
+                        ...(body.email === undefined ? {} : { email: body.email }),
+                    },
+                    expectedVersion,
+                ),
+        );
+        sendJson(response, 200, { profile: teamProfileResource(updated) });
+    }
+
     async #handleSecretRoute(
         ctx: Context,
         request: IncomingMessage,
@@ -4683,8 +4767,10 @@ export class ApiModule implements AgentModule {
     }
 
     async #onboarding(ctx: Context): Promise<Record<string, unknown>> {
-        const [profile, projects, marker] = await Promise.all([
-            this.#profile.get(ctx),
+        const [profileDone, projects, marker] = await Promise.all([
+            this.#team.enabled
+                ? this.#team.currentUser(ctx).then((user) => user !== undefined)
+                : this.#profile.get(ctx).then((profile) => profile?.name != null),
             this.#allProjects(ctx, false),
             readFile(this.#onboardingMarker(), "utf8").catch((error: NodeJS.ErrnoException) => {
                 if (error.code === "ENOENT") return undefined;
@@ -4696,7 +4782,7 @@ export class ApiModule implements AgentModule {
             completed: marker !== undefined,
             steps: {
                 providers: { done: signedIn.length > 0, signedIn },
-                profile: { done: profile?.name != null },
+                profile: { done: profileDone },
                 project: { done: projects.length > 0 },
             },
         };
@@ -4707,7 +4793,9 @@ export class ApiModule implements AgentModule {
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
         const [profile, onboarding, projects, workspaces, bots] = await Promise.all([
-            this.#profile.ensure(ctx),
+            this.#team.enabled
+                ? this.#team.currentUser(ctx).then(teamProfileResource)
+                : this.#profile.ensure(ctx).then(profileResource),
             this.#onboarding(ctx),
             this.#allProjects(ctx, false),
             this.#config.configuration.values.features.workspaces
@@ -4720,7 +4808,7 @@ export class ApiModule implements AgentModule {
         );
         return {
             config: this.#sanitizedConfig(),
-            profile: profileResource(profile),
+            profile,
             onboarding,
             cloud: this.#cloud.status(ctx),
             cloudSocial: this.#cloud.socialStatus(ctx),
@@ -5063,14 +5151,24 @@ export class ApiModule implements AgentModule {
         return { models, providers };
     }
 
-    #authenticate(request: IncomingMessage): void {
-        this.#authenticateHeader(request.headers.authorization);
-    }
-
-    #authenticateHeader(authorization: string | string[] | undefined): void {
+    async #authenticate(
+        ctx: Context,
+        authorization: string | string[] | undefined,
+    ): Promise<Context> {
+        if (this.#team.enabled) {
+            try {
+                return this.#ready
+                    ? await this.#team.authenticate(ctx, authorization)
+                    : await this.#team.authenticateIdentity(ctx, authorization);
+            } catch (error: unknown) {
+                if (!(error instanceof TeamAuthenticationError)) throw error;
+                throw new ApiError(401, "unauthorized", "Unauthorized");
+            }
+        }
         if (!this.#authorizedHeader(authorization)) {
             throw new ApiError(401, "unauthorized", "Unauthorized");
         }
+        return ctx;
     }
 
     #authorizedHeader(authorization: string | string[] | undefined): boolean {
@@ -5086,6 +5184,12 @@ export class ApiModule implements AgentModule {
         const supplied = authorization.slice("Bearer ".length);
         if (supplied.length !== token.length) return false;
         return timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
+    }
+
+    #assertTeamUser(ctx: Context): void {
+        if (this.#team.enabled && teamUser(ctx) === undefined) {
+            throw new ApiError(401, "unauthorized", "Unauthorized");
+        }
     }
 
     #assertSocketReady(): void {
@@ -5191,6 +5295,20 @@ export class ApiModule implements AgentModule {
             });
             return;
         }
+        if (error instanceof TeamProfileInputError) {
+            sendJson(response, 400, {
+                error: error.message,
+                code: "invalid_request",
+            });
+            return;
+        }
+        if (error instanceof TeamAuthenticationError) {
+            sendJson(response, 401, {
+                error: "Unauthorized",
+                code: "unauthorized",
+            });
+            return;
+        }
         // A folder archived while this request was in flight. The request was legitimate when it
         // arrived and the caller simply lost the race, so it reads as a conflict rather than a
         // daemon fault the person can do nothing about.
@@ -5203,6 +5321,16 @@ export class ApiModule implements AgentModule {
         }
         if (error instanceof ProfileVersionConflictError) {
             const profile = profileResource(error.current);
+            sendJson(response, 409, {
+                error: error.message,
+                code: "conflict",
+                currentVersion: profile["version"],
+                profile,
+            });
+            return;
+        }
+        if (error instanceof TeamProfileVersionConflictError) {
+            const profile = teamProfileResource(error.current);
             sendJson(response, 409, {
                 error: error.message,
                 code: "conflict",
@@ -5234,36 +5362,30 @@ export class ApiModule implements AgentModule {
     }
 }
 
-async function loadOrCreateToken(path: string): Promise<string> {
-    const existing = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return undefined;
-        throw error;
-    });
-    if (existing !== undefined) {
-        const token = existing.trim();
-        if (!TOKEN_PATTERN.test(token)) {
-            throw new Error("The Happy Agent API token is invalid.");
-        }
-        await chmod(path, 0o600);
-        return token;
+function isTeamOnboardingRoute(method: string | undefined, pathname: string): boolean {
+    return (
+        (method === "GET" && pathname === "/v0/onboarding") ||
+        ((method === "GET" || method === "PATCH") && pathname === "/v0/profile")
+    );
+}
+
+function teamProfileResource(user: TeamUser | undefined): Record<string, unknown> {
+    if (user === undefined) {
+        return {
+            name: null,
+            email: null,
+            photo: null,
+            version: TEAM_ONBOARDING_PROFILE_VERSION,
+            updatedAt: 0,
+        };
     }
-    const token = randomBytes(32).toString("base64url");
-    const directory = dirname(path);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
-    const temporary = `${path}.${process.pid}.tmp`;
-    await writeFile(temporary, `${token}\n`, { flag: "wx", mode: 0o600 });
-    try {
-        await rename(temporary, path);
-    } catch (error) {
-        const raced = await readFile(path, "utf8").catch(() => undefined);
-        if (raced === undefined) throw error;
-        const value = raced.trim();
-        if (!TOKEN_PATTERN.test(value)) throw error;
-        return value;
-    }
-    await chmod(path, 0o600);
-    return token;
+    return {
+        name: user.lastName === null ? user.firstName : `${user.firstName} ${user.lastName}`,
+        email: user.email,
+        photo: user.photo === null ? null : { thumbhash: user.photo.thumbhash },
+        version: user.version,
+        updatedAt: user.updatedAt,
+    };
 }
 
 function requestUrl(request: IncomingMessage): URL {

@@ -6,6 +6,7 @@ import {
     HAPPY_AGENT_PROTOCOL_VERSION,
     type HealthResponse,
 } from "@slopus/happy-agent-client";
+import { loadHappyAgentConfiguration } from "@slopus/happy-agent-modules";
 
 import { AgentDaemonError } from "./AgentDaemonError.js";
 import { createUnixSocketFetch } from "./createUnixSocketFetch.js";
@@ -130,6 +131,12 @@ async function startAgentDaemonProcess(
     paths: HappyDaemonPaths,
     options: EnsureAgentDaemonOptions,
 ): Promise<AgentDaemonConnection> {
+    const configuration = await loadHappyAgentConfiguration(paths.happyHome);
+    if (configuration.values.feature.team.enabled) {
+        throw new AgentDaemonError("Local daemon connections are disabled in team mode.", {
+            hint: "Run 'happy-agent run' under the team deployment's process supervisor.",
+        });
+    }
     const token = await readOrCreateDaemonToken(paths.tokenPath);
     let child: ChildProcess | undefined;
     if (options.runInProcess === true) {

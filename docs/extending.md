@@ -481,8 +481,8 @@ behavior stay shared.
 External applications drive the daemon through `@slopus/happy-agent-client`.
 The host supplies a Fetch implementation and bearer token; the client exposes
 the typed `/v0` request and SSE contracts without reading credentials or daemon
-state directly. See `packages/happy-agent/API.md` for the complete public
-surface.
+state directly. Installed releases include the complete public contract as `API.md` beside this
+page; in a source checkout, see [`packages/happy-agent/API.md`](../packages/happy-agent/API.md).
 
 ### Other integration surfaces
 

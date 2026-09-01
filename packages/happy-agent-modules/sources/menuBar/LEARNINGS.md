@@ -22,6 +22,9 @@ flag; `menu_bar = false` under `[settings]` is the way off. The app itself decid
 actually has a menu bar, by checking for a login session, and exits cleanly when there is none — a
 daemon started over SSH must not look like a failure.
 
+Team mode is the deployment exception. It has no private local API socket or token, so it never
+starts the socket-dependent menu bar app even when `menu_bar` retains its standalone default.
+
 ## The app never outlives its daemon
 
 A daemon that is killed outright never runs its shutdown handlers, so the app has to notice on its

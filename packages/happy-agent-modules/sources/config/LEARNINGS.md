@@ -1,5 +1,16 @@
 # Config module learnings
 
+## Team mode is machine-scoped and owns a separate network identity boundary
+
+`[feature.team] enabled = true` is a global or runtime deployment choice, never a project choice.
+The default remains standalone mode. A team deployment does not create or retain the private local
+API bearer token. It listens on its configured TCP `host` and `port` and authenticates WorkOS
+access tokens against one required WorkOS organization rather than inheriting the single-user local
+credential. The WorkOS client ID is also machine-scoped: it defaults to production Happy Cloud but
+remains configurable for staging and other deployments, with issuer and JWKS locations derived
+from it. Team mode also requires the WorkOS owner user ID; owner status is derived from that value
+when profile onboarding creates the local user.
+
 ## Cross-workspace work is available by default
 
 Fresh installations enable `features.cross_workspace` by default so root agents can discover the

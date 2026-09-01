@@ -33,6 +33,9 @@ export * from "./cloud/index.js";
 export * from "./api/index.js";
 export * from "./runtime/index.js";
 
+// Team: multi-user identity, membership, and WorkOS request authentication.
+export * from "./team/index.js";
+
 // Code Mode: opt-in engine-selected replacement instructions and one-tool surface.
 export * from "./codeMode/index.js";
 

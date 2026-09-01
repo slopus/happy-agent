@@ -239,6 +239,7 @@ async function secretsApiFixture() {
         subscriptions as never,
         subscriptions as never,
         secrets,
+        { enabled: false, onProfileUpdated: () => () => undefined } as never,
     );
     const agents = {
         config: async (_ctx: Context, agentId: string) =>

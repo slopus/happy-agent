@@ -32,6 +32,7 @@ export class MenuBarModule implements AgentModule {
     }
 
     readonly beforeStart = (ctx: Context): void => {
+        if (this.#config.configuration.values.feature.team.enabled) return;
         if (!this.#config.configuration.values.settings.menuBar) return;
         const executable = resolveMenuBarApp();
         if (executable === undefined) return;

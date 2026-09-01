@@ -11,10 +11,11 @@ Repository settings come only from `happy.toml`. Repository values win where
 both are allowed. MCP is separate: user-wide servers live in `~/Happy/Config/mcp.toml`, and a
 workspace can add servers in its root `mcp.toml`. Provider configuration files are not imported.
 
-Happy Agent keeps daemon state in `~/.happy/agent`, including its databases, token, socket, logs,
-and runtime configuration. `HAPPY_HOME_DIR` moves the `.happy` root. Happy Terminal keeps only
-client-specific runtime settings beneath `~/.happy/happy-terminal`; set `HAPPY_TERMINAL_HOME` to
-an absolute path to move that client state.
+Happy Agent keeps daemon state in `~/.happy/agent`, including its databases, logs, and runtime
+configuration. A standalone deployment also keeps its private API token and socket there; team
+mode deliberately creates neither. `HAPPY_HOME_DIR` moves the `.happy` root. Happy Terminal keeps
+only client-specific runtime settings beneath `~/.happy/happy-terminal`; set
+`HAPPY_TERMINAL_HOME` to an absolute path to move that client state.
 
 Managed workspaces are user-facing folders rather than internal Happy Agent state. New
 workspaces default to `~/Happy/Workspaces` on macOS and
@@ -58,6 +59,59 @@ enabled = true
 ```
 
 A repository `happy.toml` cannot enable Ethan mode.
+
+## Team deployment mode
+
+Team mode turns one Happy Agent daemon into an organization-authenticated service. It replaces the
+private Unix socket and local token with a TCP HTTP listener authenticated by WorkOS access tokens.
+Configure it only in the user-wide `happy.toml`:
+
+```toml
+[feature.team]
+enabled = true
+host = "0.0.0.0"
+port = 3000
+workos_organization_id = "org_01EXAMPLE"
+owner_workos_user_id = "user_01EXAMPLE"
+```
+
+`workos_client_id` defaults to Happy Cloud's production WorkOS client. Set it when the deployment
+uses another WorkOS project:
+
+```toml
+[feature.team]
+enabled = true
+host = "0.0.0.0"
+port = 3000
+workos_client_id = "client_01EXAMPLE"
+workos_organization_id = "org_01EXAMPLE"
+owner_workos_user_id = "user_01EXAMPLE"
+```
+
+| Setting                  | Default                               | Meaning                                                                                 |
+| ------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `enabled`                | `false`                               | Selects team deployment mode.                                                           |
+| `host`                   | `"0.0.0.0"`                           | TCP interface for the HTTP listener.                                                    |
+| `port`                   | `3000`                                | TCP port; `0` asks the operating system to choose an ephemeral port.                    |
+| `workos_client_id`       | `"client_01KZD3XE9YAFAMT0P8TD4HP73E"` | WorkOS client whose issuer and JWKS authenticate access tokens.                         |
+| `workos_organization_id` | required when enabled                 | Exact `org_id` claim required in every accepted token.                                  |
+| `owner_workos_user_id`   | required when enabled                 | WorkOS identity whose user receives the owner flag when their profile is first created. |
+
+The daemon verifies RS256 signatures and required WorkOS claims locally after retrieving and
+caching that client's JWKS. A token must match both the configured client and organization. Every
+HTTP request, including health, requires `Authorization: Bearer <workos-access-token>`.
+
+Team mode does not seed users. A valid member of the configured WorkOS organization can read
+health, onboarding, and their current profile before a local user exists. Their first profile
+update must provide a non-null `name`; that update creates the durable user and derives its owner
+flag from `owner_workos_user_id`. All other product routes require an onboarded user. The existing
+profile wire contract remains unchanged: Happy Agent splits the first token of `name` into the
+stored first name and stores the trimmed remainder as the optional last name.
+
+Run a team deployment with `happy-agent run` under a process supervisor. Local socket-based daemon
+management and the macOS menu bar integration are disabled. The listener serves plain HTTP, so put
+it behind TLS-capable ingress before exposing it outside a trusted network. See
+[team-mode.md](team-mode.md) for the complete deployment and onboarding behavior.
 
 ## Protected paths
 

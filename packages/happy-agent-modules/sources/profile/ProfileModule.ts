@@ -14,7 +14,11 @@ import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
 
 import { createProfileVersion } from "./createProfileVersion.js";
-import { MAX_PROFILE_PHOTO_BYTES, normalizeProfilePhoto } from "./normalizeProfilePhoto.js";
+import {
+    MAX_PROFILE_PHOTO_BYTES,
+    normalizeProfilePhoto,
+    type NormalizedProfilePhoto,
+} from "./normalizeProfilePhoto.js";
 import {
     createProfileInputSchema,
     instanceIdSchema,
@@ -279,6 +283,20 @@ export class ProfileModule<Database extends AgentDatabase = AgentDatabase> imple
         return asset;
     }
 
+    /** Validate and normalize profile media for this module or a dependent identity module. */
+    async normalizePhoto(
+        bytes: Uint8Array,
+        contentType: ProfilePhotoContentType,
+    ): Promise<NormalizedProfilePhoto> {
+        if (
+            !Value.Check(Type.Uint8Array(), bytes) ||
+            !Value.Check(profilePhotoContentTypeSchema, contentType)
+        ) {
+            throw new Error("The profile photo update is not valid.");
+        }
+        return await normalizeProfilePhoto(bytes, contentType);
+    }
+
     /** Normalize and atomically replace the one retained photo. */
     async putPhoto(
         ctx: Context,
@@ -293,7 +311,7 @@ export class ProfileModule<Database extends AgentDatabase = AgentDatabase> imple
         ) {
             throw new Error("The profile photo update is not valid.");
         }
-        const normalized = await normalizeProfilePhoto(bytes, contentType);
+        const normalized = await this.normalizePhoto(bytes, contentType);
         const instanceId = this.#requireInstance();
         const changed = await ctx.inTx(async (txCtx) => {
             const current = await this.#ensureInTransaction(txCtx, instanceId);

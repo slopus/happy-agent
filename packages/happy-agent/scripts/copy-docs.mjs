@@ -7,3 +7,4 @@ const packagedDocs = join(packageRoot, "dist", "docs");
 
 await rm(packagedDocs, { force: true, recursive: true });
 await cp(repositoryDocs, packagedDocs, { recursive: true });
+await cp(join(packageRoot, "API.md"), join(packagedDocs, "API.md"));
