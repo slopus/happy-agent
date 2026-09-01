@@ -45,7 +45,7 @@ concurrency:
 jobs:
     test:
         name: Unprivileged Linux
-        runs-on: ubuntu-22.04
+        runs-on: ubuntu-24.04
         timeout-minutes: 60
         env:
             HOME: ${{ github.workspace }}/.local/happy-agent-api-home
