@@ -51,7 +51,7 @@ export type ConfiguredAgentModel = AgentModel & {
 };
 
 const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freeze({
-    "anthropic/fable-5": Object.freeze({
+    "anthropic/fable-5-1": Object.freeze({
         contextWindow: 1_000_000,
         autoCompactWindow: 333_000,
     }),
@@ -114,7 +114,7 @@ const CATALOG: readonly CatalogAgentModel[] = [
     model("codex", "openai/gpt-5.6-luna", "GPT-5.6 Luna", EVERY_EFFORT, "medium", ["priority"]),
     model("claude", "anthropic/opus-5", "Opus 5 1M"),
     model("claude", "anthropic/sonnet-5", "Sonnet 5"),
-    model("claude", "anthropic/fable-5", "Fable 5"),
+    model("claude", "anthropic/fable-5-1", "Fable 5.1", ALL_BUT_OFF, "high"),
     model("claude", "anthropic/opus-4-8", "Opus 4.8 1M"),
     model("grok", "xai/grok-4.6", "Grok 4.6", ["low", "medium", "high", "xhigh"], "high"),
     model("grok", "xai/grok-build", "Grok Build", ["medium"]),

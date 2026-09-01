@@ -49,6 +49,31 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("catalogs Fable 5.1 with its always-on adaptive thinking levels", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-fable-5-1-"));
+        temporaryDirectories.push(root);
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+        const fable = module.catalog.find(
+            (candidate) =>
+                candidate.providerId === "claude" && candidate.id === "anthropic/fable-5-1",
+        );
+
+        expect(fable).toMatchObject({
+            autoCompactWindow: 333_000,
+            contextWindow: 1_000_000,
+            defaultEffort: "high",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            name: "Fable 5.1",
+        });
+        expect(
+            module.catalog.some(
+                (candidate) =>
+                    candidate.providerId === "claude" && candidate.id === "anthropic/fable-5",
+            ),
+        ).toBe(false);
+    });
+
     it("loads Ethan mode from its nested machine setting", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-ethan-"));
         temporaryDirectories.push(root);

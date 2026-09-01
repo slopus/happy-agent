@@ -104,11 +104,15 @@ describe("SystemPromptModule", () => {
 
         const opus5 = await instructions(ctx, scopeOf("anthropic/opus-5", "claude"));
         const opus48 = await instructions(ctx, scopeOf("anthropic/opus-4-8", "claude"));
+        const fable51 = await instructions(ctx, scopeOf("anthropic/fable-5-1", "claude"));
         const codex = await instructions(ctx, scopeOf("openai/gpt-5.6-sol", "codex"));
 
         expect(opus5).toContain("mid-conversation system turns");
         expect(opus48).not.toContain("mid-conversation system turns");
+        expect(fable51).toContain("This iteration of Claude is Claude Fable 5.1.");
+        expect(fable51).toContain("Knowledge cutoff: June 2026.");
         expect(opus5).not.toBe(opus48);
+        expect(fable51).not.toBe(opus5);
         expect(codex).not.toBe(opus5);
         expect(codex.length).toBeGreaterThan(0);
     });

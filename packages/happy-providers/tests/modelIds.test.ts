@@ -9,6 +9,7 @@ import { resolveGrokModelId } from "@/vendors/grok/impl/resolveGrokModelId.js";
 describe("Rig model IDs", () => {
     it.each([
         [resolveClaudeModelId, "anthropic/sonnet-5", "claude-sonnet-5[1m]"],
+        [resolveClaudeModelId, "anthropic/fable-5-1", "claude-fable-5-1"],
         [resolveClaudeModelId, "anthropic/fable-5", "claude-fable-5[1m]"],
         [resolveClaudeModelId, "anthropic/opus-5", "claude-opus-5[1m]"],
         [resolveClaudeModelId, "anthropic/opus-4-8", "claude-opus-4-8[1m]"],
@@ -17,6 +18,7 @@ describe("Rig model IDs", () => {
         [resolveGrokModelId, "xai/grok-4.6", "grok-4.6"],
         [resolveGrokModelId, "xai/grok-4.5", "grok-4.5"],
         [resolveBedrockModelId, "anthropic/sonnet-5", "anthropic.claude-sonnet-5"],
+        [resolveBedrockModelId, "anthropic/fable-5-1", "anthropic.claude-fable-5-1"],
         [resolveBedrockModelId, "openai/gpt-5.6-sol", "openai.gpt-5.6-sol"],
     ])("resolves %s", (resolve, modelId, expected) => {
         expect(resolve(modelId)).toBe(expected);

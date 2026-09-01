@@ -8,7 +8,7 @@ export function resolveAnthropicBedrockModelId(
     if (!model.startsWith("anthropic/")) return model;
     const modelName = model.slice("anthropic/".length);
     const base = `anthropic.claude-${modelName}`;
-    if (!["fable-5", "opus-5", "opus-4-8", "sonnet-5"].includes(modelName)) {
+    if (!["fable-5-1", "fable-5", "opus-5", "opus-4-8", "sonnet-5"].includes(modelName)) {
         throw new Error(
             `Anthropic model "${model}" is not available through Rig's Bedrock catalog. Pass a Bedrock model or inference-profile ID directly to use an unlisted model.`,
         );
@@ -23,7 +23,7 @@ export function resolveAnthropicBedrockModelId(
         if (region.startsWith("us-")) return `us.${base}`;
         return `global.${base}`;
     }
-    if (modelName === "fable-5") {
+    if (modelName === "fable-5-1" || modelName === "fable-5") {
         if (region.startsWith("eu-")) return `eu.${base}`;
         if (region.startsWith("us-")) return `us.${base}`;
         return `global.${base}`;

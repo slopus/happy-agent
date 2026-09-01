@@ -349,7 +349,7 @@ describe("Happy Agent onboarding and usage matrix", () => {
             expect(claude?.models).toEqual([
                 { id: "anthropic/opus-5", enabled: true },
                 { id: "anthropic/sonnet-5", enabled: false },
-                { id: "anthropic/fable-5", enabled: false },
+                { id: "anthropic/fable-5-1", enabled: false },
                 { id: "anthropic/opus-4-8", enabled: false },
             ]);
             expect(providers.find((provider) => provider.providerId === "codex")?.models).toEqual([
