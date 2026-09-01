@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+
 import {
     computePermissions,
     createHostCompute,
@@ -81,7 +84,7 @@ export async function runScanGit(options: {
     const compute = createHostCompute({
         ctx: scanContext,
         cwd: options.cwd,
-        environment: scanEnvironment(options.gitCeilingDirectories),
+        environment: scanEnvironment(options.cwd, options.gitCeilingDirectories),
     });
     try {
         // Happy Agent Compute is the shared host execution boundary in v2. It deliberately accepts
@@ -179,13 +182,16 @@ export function gitCommandRunnerFromScanGitRunner(runGit: ScanGitRunner): GitCom
     };
 }
 
-function scanEnvironment(gitCeilingDirectories?: string): NodeJS.ProcessEnv {
+function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.ProcessEnv {
     const environment: NodeJS.ProcessEnv = { ...process.env };
     for (const name of STRIPPED_ENVIRONMENT) delete environment[name];
     // The shared sandbox correctly withholds private home-directory files. Tell Git not to probe
     // those files at all, rather than letting an inaccessible ~/.gitconfig turn a repository read
     // into a failure. Repository config remains available for the hostile-helper hardening above.
-    environment.GIT_CONFIG_GLOBAL = "/__happy_agent_no_global_git_config__";
+    // Keep the deliberately absent file inside the readable sandbox. A made-up root path can be
+    // reported as EACCES on Linux, which Git treats as a fatal global-config error rather than an
+    // absent file. Randomizing the name prevents repository content from supplying that config.
+    environment.GIT_CONFIG_GLOBAL = join(cwd, `.happy-agent-git-config-${randomUUID()}`);
     environment.GIT_CONFIG_NOSYSTEM = "1";
     environment.GIT_ATTR_NOSYSTEM = "1";
     environment.GIT_TERMINAL_PROMPT = "0";
