@@ -180,6 +180,15 @@ describe("AnthropicBedrockProvider", () => {
         expect(resolveAnthropicBedrockModelId("anthropic/sonnet-5", "eu-west-1", "mantle")).toBe(
             "anthropic.claude-sonnet-5",
         );
+        expect(resolveAnthropicBedrockModelId("anthropic/fable-5-1", "us-east-1")).toBe(
+            "us.anthropic.claude-fable-5-1",
+        );
+        expect(resolveAnthropicBedrockModelId("anthropic/fable-5-1", "eu-west-1")).toBe(
+            "eu.anthropic.claude-fable-5-1",
+        );
+        expect(resolveAnthropicBedrockModelId("anthropic/fable-5-1", "us-east-1", "mantle")).toBe(
+            "anthropic.claude-fable-5-1",
+        );
         expect(resolveAnthropicBedrockModelId("custom-bedrock-profile", "us-east-1")).toBe(
             "custom-bedrock-profile",
         );

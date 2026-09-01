@@ -41,7 +41,7 @@ describe("reviewerModelForAgent", () => {
         const sonnetLevels: SessionReasoningEffort[] = ["off", "low", "medium", "high", "xhigh"];
         const models = [
             model("claude", "anthropic/opus-5", sonnetLevels, "medium"),
-            model("claude", "anthropic/fable-5", sonnetLevels, "medium"),
+            model("claude", "anthropic/fable-5-1", sonnetLevels, "medium"),
             model("claude", "anthropic/sonnet-5", sonnetLevels, "medium"),
         ];
 
@@ -49,7 +49,10 @@ describe("reviewerModelForAgent", () => {
             reviewerModelForAgent({ models, active: active("claude", "anthropic/opus-5", "high") }),
         ).toEqual({ providerId: "claude", modelId: "anthropic/sonnet-5", effort: "medium" });
         expect(
-            reviewerModelForAgent({ models, active: active("claude", "anthropic/fable-5", "low") }),
+            reviewerModelForAgent({
+                models,
+                active: active("claude", "anthropic/fable-5-1", "low"),
+            }),
         ).toEqual({ providerId: "claude", modelId: "anthropic/sonnet-5", effort: "medium" });
     });
 
