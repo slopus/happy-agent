@@ -22,7 +22,7 @@
         "@earendil-works/pi-tui": "^0.80.3",
         "@slopus/happy-agent-gym": "workspace:*",
         "@slopus/happy-agent-modules": "workspace:*",
-        "@slopus/happy-providers": "0.0.18",
+        "@slopus/happy-providers": "0.0.19",
         "@slopus/happy-terminal-gym": "workspace:*",
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",

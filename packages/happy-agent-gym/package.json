@@ -20,7 +20,7 @@
         "@slopus/happy-agent-client": "0.0.48",
         "@slopus/happy-agent-compute": "npm:@slopus/happy-agent-compute@0.1.9",
         "@slopus/happy-agent-modules": "workspace:*",
-        "@slopus/happy-providers": "0.0.18",
+        "@slopus/happy-providers": "0.0.19",
         "@steve.kite/stdlib": "0.0.12",
         "ws": "^8.21.1"
     },
