@@ -197,6 +197,35 @@ describe("ConfigModule", () => {
         ).toEqual(["gym/model", "gym/model-2"]);
     });
 
+    it("offers Fable 5.1 through Claude with its full context and effort ladder", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-fable-5-1-catalog-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            "[providers.claude]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "claude" && model.id === "anthropic/fable-5-1",
+            ),
+        ).toMatchObject({
+            contextWindow: 1_000_000,
+            defaultEffort: "medium",
+            effortLevels: ["off", "low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "Fable 5.1",
+        });
+        expect(
+            module.catalog.some(
+                (model) => model.providerId === "bedrock" && model.id === "anthropic/fable-5-1",
+            ),
+        ).toBe(false);
+    });
+
     it("ignores unknown TOML fields while retaining their source locations", () => {
         const parsed = parseHappyAgentConfigToml(
             ["unknown = true", "[settings]", "show_usage = true", "show_usgae = false"].join("\n"),

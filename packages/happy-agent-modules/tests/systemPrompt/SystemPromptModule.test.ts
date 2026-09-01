@@ -431,5 +431,11 @@ describe("SystemPromptModule", () => {
         expect(systemPromptForModel({ model: "__proto__" })).toContain(
             "You are an expert coding assistant.",
         );
+        expect(systemPromptForModel({ model: "anthropic/fable-5-1" })).toContain(
+            "This iteration of Claude is Claude Fable 5.1",
+        );
+        expect(systemPromptForModel({ model: "anthropic/fable-5-1" })).toContain(
+            "Knowledge cutoff: June 2026.",
+        );
     });
 });

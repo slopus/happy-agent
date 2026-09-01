@@ -9,6 +9,7 @@ import { resolveGrokModelId } from "@/vendors/grok/impl/resolveGrokModelId.js";
 describe("Rig model IDs", () => {
     it.each([
         [resolveClaudeModelId, "anthropic/sonnet-5", "claude-sonnet-5[1m]"],
+        [resolveClaudeModelId, "anthropic/fable-5-1", "claude-fable-5-1"],
         [resolveClaudeModelId, "anthropic/fable-5", "claude-fable-5[1m]"],
         [resolveClaudeModelId, "anthropic/opus-5", "claude-opus-5[1m]"],
         [resolveClaudeModelId, "anthropic/opus-4-8", "claude-opus-4-8[1m]"],

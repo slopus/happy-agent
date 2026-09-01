@@ -332,7 +332,7 @@ function verificationModel(
 ): AgentModel | undefined {
     const preferred: Readonly<Record<string, string>> = {
         bedrock: "anthropic/fable-5",
-        claude: "anthropic/fable-5",
+        claude: "anthropic/fable-5-1",
         codex: "openai/gpt-5.6-luna",
         grok: "xai/grok-composer-2.5-fast",
     };

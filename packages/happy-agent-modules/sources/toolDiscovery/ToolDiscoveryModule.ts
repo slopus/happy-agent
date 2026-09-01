@@ -33,6 +33,7 @@ const CODEX_TOOL_SEARCH_DESCRIPTION =
 const CLAUDE_TOOL_SEARCH_MODELS = [
     "anthropic/opus-5",
     "anthropic/sonnet-5",
+    "anthropic/fable-5-1",
     "anthropic/fable-5",
     "anthropic/opus-4-8",
 ] as const;
