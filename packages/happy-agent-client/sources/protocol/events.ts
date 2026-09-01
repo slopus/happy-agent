@@ -263,10 +263,9 @@ export interface MessageDeletedPayload {
 /** Deliberately empty: a nudge to refetch the config endpoints when convenient. */
 export type ConfigUpdatedPayload = Record<string, never>;
 
-/** The profile changed; the payload is the whole profile, not a diff. */
-export interface ProfileUpdatedPayload extends MutationEcho {
-    profile: Profile;
-}
+/** A standalone full-profile replacement or a team-wide identity-only invalidation. */
+export type ProfileUpdatedPayload = MutationEcho &
+    ({ profile: Profile; userId?: never } | { profile?: never; userId: Cuid2 });
 
 /** Cloud state is a complete replacement rather than a version-chain diff. */
 export interface CloudUpdatedPayload extends MutationEcho {
