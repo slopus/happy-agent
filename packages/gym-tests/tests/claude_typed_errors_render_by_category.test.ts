@@ -13,7 +13,6 @@ describe("Claude typed inference errors", () => {
     it("renders exhausted tokens, ordinary rate limits, and unclassified failures distinctly", async () => {
         const gym = await createGym({
             environment: {
-                HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES: "kirill_claude",
                 HAPPY_TERMINAL_PROVIDER: "kirill_claude",
             },
             homeFiles: {
@@ -22,6 +21,7 @@ describe("Claude typed inference errors", () => {
                     "enabled = false",
                     "",
                     "[providers.kirill_claude]",
+                    "enabled = true",
                     'type = "claude"',
                     'oauth_token = "test-only-token"',
                     "",

@@ -29,6 +29,7 @@ describe("Codex retry configuration", () => {
                     "inference_max_retries = 0",
                     "",
                     "[providers.codex]",
+                    "enabled = true",
                     `base_url = "${codex.baseUrl}"`,
                     'transport = "websocket"',
                     "",

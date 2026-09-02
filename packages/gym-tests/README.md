@@ -144,10 +144,12 @@ This opt-in test costs real tokens and requires either `XAI_API_KEY` or the Grok
 `$GROK_HOME/auth.json` or `~/.grok/auth.json`. An API key reaches the session as an environment
 variable and a CLI sign-in is named by path; neither is ever copied into the Gym or printed.
 
-A live scenario reaches its provider by naming that provider's own `base_url` in the Gym's
-`happy.toml`. The Gym replaces inference for every configured account except one already aimed at
-an explicit endpoint, so without that line the mock server answers and nothing live is proven.
-Asserting that `gym.inference.requests` stays empty is what makes the difference visible.
+A live scenario sets `liveInference: true` and reaches its provider by naming that provider's own
+`base_url` in the Gym's `happy.toml`. The host must also set `HAPPY_TERMINAL_LIVE_TEST=1`. Without
+both opt-ins, external inference fails closed. Otherwise the Gym replaces inference for every
+configured account except one already aimed at an explicit endpoint, so without that line the mock
+server answers and nothing live is proven. Asserting that `gym.inference.requests` stays empty is
+what makes the difference visible.
 
 The scenario asks Grok 4.6 to call a real terminal tool, waits for the tool result and final answer
 at the PTY boundary, and checks the nonzero input, output, and session-work counters xAI reported.
@@ -261,11 +263,12 @@ interface GymOptions {
     httpProxy?: true | { handler?: HttpInterceptHandler };
     image?: string;
     inference?: readonly GymMockResponse[] | GymInferenceHandler;
+    liveInference?: boolean;
     mode?: "docker" | "just-bash";
     modelId?: string;
     permissionMode?: "auto" | "from_config" | "full_access" | "read_only" | "workspace_write";
-    providerId?: "bedrock" | "claude" | "codex" | "grok" | "gym";
-    providerOverrides?: readonly ("claude" | "codex" | "grok")[];
+    providerId?: "bedrock" | "claude" | "codex" | "grok" | "gym" | "kimi";
+    providerOverrides?: readonly ("claude" | "codex" | "grok" | "kimi")[];
     rows?: number;
     startupText?: string;
     terminalColorScheme?: "dark" | "light";
@@ -286,6 +289,7 @@ interface GymOptions {
 | `httpProxy`           | Disabled                            | Record, replace, rewrite, or forward provider HTTP               |
 | `image`               | Runtime dependency tag              | Docker image tag to build or run                                 |
 | `inference`           | `[]`                                | Ordered gym-provider responses or a request handler              |
+| `liveInference`       | `false`                             | Allows an external endpoint; requires the live-test host opt-in  |
 | `modelId`             | Provider default                    | Model selected for the session                                   |
 | `mode`                | `just-bash`                         | Use `docker` only for a real-shell or container contract         |
 | `permissionMode`      | `full_access`                       | Permission mode, or `from_config` to leave the environment unset |
@@ -300,6 +304,11 @@ Set `startupText` to a stable visible fragment only when a deliberately narrow s
 truncates the default placeholder.
 
 Use explicit `cols` and `rows` when layout, wrapping, resize behavior, or cursor placement matters. Otherwise prefer the defaults.
+
+When `providerOverrides` is present, Gym generates an isolated `Happy/Config/happy.toml` that
+disables production accounts and explicitly enables the scripted Gym account plus each requested
+provider. A scenario-supplied `Happy/Config/happy.toml` is preserved unchanged, so that fixture
+must explicitly enable every provider it needs.
 
 ## Fixture filesystem
 

@@ -22,9 +22,18 @@ import {
 import type { GymFixture, GymOptions } from "./types.js";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+const LIVE_INFERENCE_ENV = "HAPPY_TERMINAL_GYM_LIVE_INFERENCE";
 
 export async function createGym(options: GymOptions): Promise<Gym> {
     const createStartedAt = performance.now();
+    if (Object.hasOwn(options.environment ?? {}, LIVE_INFERENCE_ENV)) {
+        throw new Error(
+            `Gym environment cannot set ${LIVE_INFERENCE_ENV}; use the liveInference option.`,
+        );
+    }
+    if (options.liveInference === true && process.env.HAPPY_TERMINAL_LIVE_TEST !== "1") {
+        throw new Error("Live Gym inference requires the HAPPY_TERMINAL_LIVE_TEST=1 opt-in.");
+    }
     const cols = options.cols ?? 100;
     const rows = options.rows ?? 32;
     const execution = resolveGymExecution(options);
@@ -149,6 +158,9 @@ export async function createGym(options: GymOptions): Promise<Gym> {
                       "--env",
                       `HAPPY_TERMINAL_PROVIDER=${providerId}`,
                       ...environmentArguments(options.environment, httpProxy?.url),
+                      ...(options.liveInference === true
+                          ? ["--env", `${LIVE_INFERENCE_ENV}=1`]
+                          : []),
                       ...(httpProxy === undefined
                           ? []
                           : [
@@ -327,6 +339,7 @@ function createLocalEnvironment(
             ? {}
             : { HAPPY_TERMINAL_PERMISSION_MODE: options.permissionMode ?? "full_access" }),
         ...localEnvironmentValues(options.environment, httpProxy?.localUrl),
+        ...(options.liveInference === true ? { [LIVE_INFERENCE_ENV]: "1" } : {}),
     };
     if (httpProxy === undefined) return environment;
     return {
@@ -354,6 +367,10 @@ function configureGymProviders(
     const source = [
         "[providers]",
         "default_enable = false",
+        "",
+        "[providers.gym]",
+        "enabled = true",
+        'type = "codex"',
         ...providerOverrides.flatMap((providerId) => [
             "",
             `[providers.${providerId}]`,

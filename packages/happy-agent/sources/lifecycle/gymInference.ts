@@ -53,21 +53,24 @@ export function createGymInferenceFromEnvironment(
     const endpoint = env.HAPPY_GYM_INFERENCE_URL?.trim();
     if (endpoint === undefined || endpoint.length === 0) return undefined;
     const token = env.HAPPY_GYM_TOKEN?.trim();
+    const liveInference = env.HAPPY_TERMINAL_GYM_LIVE_INFERENCE === "1";
 
     // The configuration decides which providers exist and which models they serve, exactly as
     // in production; the gym only replaces how each of those accounts serves inference. A
-    // provider the configuration aims at an explicit base URL already targets a
-    // scenario-controlled fixture, so it keeps its real implementation.
+    // provider the configuration aims at an explicit base URL keeps its real implementation only
+    // for a scenario-owned loopback fixture or an explicitly opted-in live test.
     return (real, configuration) => {
         const providers = new AgentProviders();
         providers.add("gym", new GymHttpProvider({ endpoint, providerId: "gym", token }), "gym");
-        for (const providerId of new Set(real.models.map((model) => model.providerId))) {
+        const productionModels = real.models.filter((model) => model.providerId !== "gym");
+        for (const providerId of new Set(productionModels.map((model) => model.providerId))) {
             const configured = configuration.values.providers[providerId];
             const configuredBaseUrl =
                 configured?.type === "codex" || configured?.type === "grok"
                     ? configured.baseUrl
                     : undefined;
             if (configuredBaseUrl !== undefined) {
+                assertGymProviderEndpointAllowed(configuredBaseUrl, liveInference);
                 providers.add(
                     providerId,
                     async (selection) => {
@@ -90,8 +93,28 @@ export function createGymInferenceFromEnvironment(
                 gymProviderType(real.providers, providerId, configured?.type),
             );
         }
-        return { models: [GYM_MODEL, ...real.models], providers };
+        return { models: [GYM_MODEL, ...productionModels], providers };
     };
+}
+
+/** Keep deterministic gyms off external provider endpoints unless the scenario explicitly opts in. */
+export function assertGymProviderEndpointAllowed(value: string, liveInference: boolean): void {
+    if (liveInference || isLoopbackUrl(value)) return;
+    throw new Error(`Non-live Gym inference cannot use external provider endpoint "${value}".`);
+}
+
+function isLoopbackUrl(value: string): boolean {
+    try {
+        const hostname = new URL(value).hostname.toLowerCase();
+        return (
+            hostname === "localhost" ||
+            hostname === "127.0.0.1" ||
+            hostname === "::1" ||
+            hostname === "[::1]"
+        );
+    } catch {
+        return false;
+    }
 }
 
 function gymProviderType(
@@ -207,8 +230,7 @@ class GymHttpSession extends BaseSession {
                 modelId: request.model ?? GYM_MODEL.id,
                 options: {
                     ...(request.effort === undefined ? {} : { effort: request.effort }),
-                    ...(request.serviceTier === undefined ||
-                    String(request.serviceTier) === "default"
+                    ...(request.serviceTier === undefined
                         ? {}
                         : { serviceTier: request.serviceTier }),
                     sessionId: wireSessionId(session.id),

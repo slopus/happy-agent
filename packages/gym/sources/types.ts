@@ -34,6 +34,8 @@ export interface GymOptions {
     httpProxy?: true | { handler?: HttpInterceptHandler };
     image?: string;
     inference?: readonly GymMockResponse[] | GymInferenceHandler | undefined;
+    /** Permit a scenario to retain an explicitly configured external provider endpoint. */
+    liveInference?: boolean;
     mode?: "docker" | "just-bash";
     modelId?: string;
     mountWorkspaceIntoDockerSession?: boolean;

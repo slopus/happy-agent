@@ -39,6 +39,7 @@ describe.skipIf(!LIVE)("Grok 4.6 real inference Gym", () => {
                     "",
                 ].join("\n"),
             },
+            liveInference: true,
             modelId: "xai/grok-4.6",
             permissionMode: "full_access",
             providerId: "grok",

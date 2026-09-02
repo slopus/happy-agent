@@ -305,35 +305,6 @@ describe("ConfigModule", () => {
         ).toBe(false);
     });
 
-    it("keeps a scripted-only provider outside the configured provider default", async () => {
-        const root = await mkdtemp(join(tmpdir(), "happy-agent-scripted-provider-default-"));
-        temporaryDirectories.push(root);
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
-        await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
-            ["[providers]", "default_enable = false"].join("\n"),
-        );
-        const providers = new AgentProviders();
-        providers.add("gym", async () => null as never, "gym");
-        const module = await ConfigModule.load(join(root, ".happy"), {
-            inference: {
-                models: [
-                    {
-                        defaultEffort: "off",
-                        effortLevels: ["off"],
-                        id: "openai/gym",
-                        name: "Gym",
-                        providerId: "gym",
-                    },
-                ],
-                providers,
-            },
-        });
-
-        expect(module.models.map((model) => model.id)).toEqual(["openai/gym"]);
-        expect(module.isProviderEnabled("gym")).toBe(true);
-    });
-
     it("ignores unknown TOML fields while retaining their source locations", () => {
         const parsed = parseHappyAgentConfigToml(
             ["unknown = true", "[settings]", "show_usage = true", "show_usgae = false"].join("\n"),

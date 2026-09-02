@@ -14,7 +14,6 @@ describe("named Claude OAuth-token accounts", () => {
         const responseMarker = "NAMED_CLAUDE_ACCOUNT_RESPONSE";
         const gym = await createGym({
             environment: {
-                HAPPY_TERMINAL_GYM_PROVIDER_OVERRIDES: "work_claude",
                 HAPPY_TERMINAL_PROVIDER: "work_claude",
             },
             homeFiles: {
@@ -23,6 +22,7 @@ describe("named Claude OAuth-token accounts", () => {
                     "enabled = false",
                     "",
                     "[providers.work_claude]",
+                    "enabled = true",
                     'type = "claude"',
                     'oauth_token = "work-claude-oauth-token"',
                     "",
