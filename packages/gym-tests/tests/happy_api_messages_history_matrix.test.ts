@@ -336,7 +336,7 @@ describe("public message and history matrix", () => {
         });
     });
 
-    it("MH-13 preserves reasoning and text block order in the agent message", async () => {
+    it("MH-13 preserves reasoning and text block order in history and the final stream snapshot", async () => {
         const gym = await startGym({
             inference: [
                 {
@@ -351,6 +351,18 @@ describe("public message and history matrix", () => {
         const history = await gym.client.getMessages(gym.defaultSessionId);
         const agent = history.runs[0]?.messages.find((message) => message.role === "agent");
         expect(agent?.content).toEqual([
+            { text: "thinking", type: "reasoning" },
+            { text: "answer", type: "text" },
+        ]);
+        const finalSnapshot = (await gym.events())
+            .filter(
+                (event): event is Extract<GymAgentEvent, { type: "message.updated" }> =>
+                    event.type === "message.updated" &&
+                    event.payload.agentId === gym.defaultSessionId &&
+                    event.payload.message.role === "agent",
+            )
+            .at(-1);
+        expect(finalSnapshot?.payload.message.content).toEqual([
             { text: "thinking", type: "reasoning" },
             { text: "answer", type: "text" },
         ]);
