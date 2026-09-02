@@ -73,7 +73,7 @@ export interface AgentTool<Args extends TSchema = TSchema, Result extends TSchem
     readonly capabilities?: readonly string[];
     /**
      * Product-defined roles allowed to use this tool. Agent Base carries this metadata without
-     * interpreting it; a product role module filters the final tool array before inference.
+     * interpreting it; a product role module enforces access before execution.
      */
     readonly roles?: readonly string[];
     /** Provider-facing terms used by native tool discovery to find this deferred tool. */
