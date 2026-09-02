@@ -558,6 +558,7 @@ describe("HappyAgentClient", () => {
         await expect(
             client.createBot({
                 id: "bot1",
+                isAdmin: true,
                 mutationId: "create-1",
                 name: "Research Assistant",
                 username: "research_assistant",
@@ -602,6 +603,7 @@ describe("HappyAgentClient", () => {
             {
                 body: JSON.stringify({
                     id: "bot1",
+                    isAdmin: true,
                     mutationId: "create-1",
                     name: "Research Assistant",
                     username: "research_assistant",

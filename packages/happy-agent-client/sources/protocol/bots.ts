@@ -46,6 +46,8 @@ export const botSchema = Type.Object({
     compute: computeSchema,
     createdAt: timestampSchema,
     id: cuid2Schema,
+    /** Whether this bot has the `admin_bot` tool role. Older compatible daemons omit it. */
+    isAdmin: Type.Optional(Type.Boolean()),
     name: botNameSchema,
     /** An opaque catalog sort key. */
     orderKey: Type.String(),
@@ -71,6 +73,8 @@ export type BotResponse = Static<typeof botResponseSchema>;
 export const createBotRequestSchema = Type.Object({
     /** Optional client-supplied ID, which makes creation safely retryable. */
     id: Type.Optional(cuid2Schema),
+    /** Grants the new bot the `admin_bot` tool role. Omitted means non-admin. */
+    isAdmin: Type.Optional(Type.Boolean()),
     mutationId: Type.Optional(mutationIdSchema),
     name: botNameSchema,
     /** Omitted, the daemon derives a unique username from `name`. */

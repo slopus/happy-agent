@@ -54,6 +54,7 @@ const bot: Bot = {
     compute: { path: "/Users/steve/Happy/Bots/research_assistant", type: "host" },
     createdAt: updatedAt - 10_000,
     id: "bot1",
+    isAdmin: true,
     name: "Research Assistant",
     orderKey: "00000000000000000001",
     status: "active",
@@ -72,18 +73,29 @@ describe("bots protocol", () => {
         expect(Value.Check(botSchema, { ...bot, status: "deleted" })).toBe(false);
         expect(Value.Check(botSchema, { ...bot, username: "Research-Assistant" })).toBe(false);
         expect(Value.Check(botSchema, { ...bot, name: "   " })).toBe(false);
+        expect(Value.Check(botSchema, { ...bot, isAdmin: "yes" })).toBe(false);
+
+        const { isAdmin: _isAdmin, ...legacyBot } = bot;
+        expect(Value.Check(botSchema, legacyBot)).toBe(true);
     });
 
     it("validates creation, immutable username, and nullable reorder destinations", () => {
         expect(
             Value.Check(createBotRequestSchema, {
                 id: "bot1",
+                isAdmin: true,
                 mutationId: "create-1",
                 name: "Research Assistant",
                 username: "research_assistant",
             }),
         ).toBe(true);
         expect(Value.Check(createBotRequestSchema, { name: "Research Assistant" })).toBe(true);
+        expect(
+            Value.Check(createBotRequestSchema, {
+                isAdmin: "yes",
+                name: "Research Assistant",
+            }),
+        ).toBe(false);
         expect(
             Value.Check(createBotRequestSchema, {
                 name: "Research Assistant",
