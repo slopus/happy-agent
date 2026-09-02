@@ -73,4 +73,15 @@ describe("Happy Agent macOS release signing", () => {
         assert.ok(unlockKeychain < updateSearchList);
         assert.ok(updateSearchList < signTailcat);
     });
+
+    it("verifies bare executables through notarization and strict code signatures", async () => {
+        const workflow = await readFile(
+            join(WORKFLOWS_DIRECTORY, HAPPY_AGENT_RELEASE_WORKFLOW),
+            "utf8",
+        );
+
+        assert.match(workflow, /notary_status[^\n]+"Accepted"/u);
+        assert.equal(occurrences(workflow, /codesign --verify --strict/gu), 4);
+        assert.doesNotMatch(workflow, /\bspctl\b/u);
+    });
 });

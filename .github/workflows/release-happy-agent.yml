@@ -327,8 +327,6 @@ jobs:
 
                   codesign --verify --strict --verbose=2 "$binary"
                   codesign --verify --strict --verbose=2 "$HAPPY_AGENT_SIGNED_TAILCAT_PATH"
-                  spctl --assess --type execute --verbose=4 "$binary"
-                  spctl --assess --type execute --verbose=4 "$HAPPY_AGENT_SIGNED_TAILCAT_PATH"
               env:
                   TARGET: ${{ matrix.target }}
 
