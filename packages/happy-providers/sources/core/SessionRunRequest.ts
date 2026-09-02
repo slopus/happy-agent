@@ -10,7 +10,13 @@ export type SessionReasoningEffort =
     | "xhigh"
     | "max";
 
-export type SessionServiceTier = "priority";
+/**
+ * Opaque provider-owned service-tier identifier.
+ *
+ * Shared session code may preserve and forward this value, but only the selected provider may
+ * interpret or validate it.
+ */
+export type SessionServiceTier = string;
 
 export interface SessionStructuredOutput {
     name: string;

@@ -189,7 +189,7 @@ find reproduced in this source tree are reference data for protocol tests, and t
 intentionally not exported.
 
 Each `run()` takes a stdlib context first, then the complete transcript plus anything you want to
-vary per turn: model, reasoning effort, priority service tier, and structured output schema.
+vary per turn: model, reasoning effort, service-tier intent, and structured output schema.
 Cancellation travels through `ctx.lifetime`; use `withLifetime` to attach an operation signal:
 
 ```ts
@@ -689,7 +689,7 @@ interface SessionRunRequest {
 
 type SessionReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-type SessionServiceTier = "priority";
+type SessionServiceTier = string;
 
 interface SessionStructuredOutput {
     name: string;
@@ -697,8 +697,10 @@ interface SessionStructuredOutput {
 }
 ```
 
-Providers map `effort` onto whatever their protocol supports, and `serviceTier: "priority"`
-requests priority processing where the vendor offers it.
+Providers map `effort` onto whatever their protocol supports. A service tier is an opaque
+provider-owned identifier at the shared session boundary: the selected provider validates it
+against its own typed schema and maps it onto its own wire contract. Omitting `serviceTier` selects
+ordinary provider behavior.
 
 ### `SessionMessage` — the transcript
 

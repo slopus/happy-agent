@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createCodexBedrockRequest } from "@/vendors/codex/impl/createCodexBedrockRequest.js";
+import { parseCodexServiceTier } from "@/vendors/codex/impl/codexServiceTier.js";
 import { createCodexCliRequest } from "@/vendors/codex/impl/createCodexCliRequest.js";
 
 describe("Codex service tier", () => {
@@ -18,7 +19,13 @@ describe("Codex service tier", () => {
         expect(request.service_tier).toBe("priority");
     });
 
-    it("drops the tier on Bedrock, which only offers the implicit default tier", () => {
+    it("rejects a tier Codex does not own before request construction", () => {
+        expect(() => parseCodexServiceTier("economy")).toThrow(
+            'Codex does not support service tier "economy".',
+        );
+    });
+
+    it("drops the tier on the Codex Bedrock route", () => {
         const request = createCodexCliRequest({
             clientMetadata: {},
             context: { instructions: "Test", messages: [] },

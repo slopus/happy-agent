@@ -9,7 +9,7 @@ import { responseInputItems } from "@/protocol/responses/responseInputItems.js";
 
 export function createCodexBedrockRequest(request: CodexResponseRequest): CodexResponseRequest {
     const output: CodexResponseRequest = structuredClone(request);
-    // Bedrock offers GPT models only on the implicit default tier, so an explicit tier is rejected.
+    // The Codex Bedrock route uses its implicit/default tier, so no Codex service tier is sent.
     delete output.service_tier;
     const normalizedInput = responseInputItems(output.input).map((item): ResponseInputItem => {
         if (!isStringInputMessage(item)) return item;

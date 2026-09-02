@@ -41,6 +41,10 @@ import { createCodexClientMetadata } from "@/vendors/codex/impl/createCodexClien
 import { CodexSseConnection } from "@/vendors/codex/impl/CodexSseConnection.js";
 import { CodexTurnState } from "@/vendors/codex/impl/CodexTurnState.js";
 import { CodexWebSocketConnection } from "@/vendors/codex/impl/CodexWebSocketConnection.js";
+import {
+    parseCodexServiceTier,
+    type CodexServiceTier,
+} from "@/vendors/codex/impl/codexServiceTier.js";
 import { createCodexCliRequest } from "@/vendors/codex/impl/createCodexCliRequest.js";
 import { createCodexModelSwitchMessage } from "@/vendors/codex/impl/createCodexModelSwitchMessage.js";
 import { getCodexContextSuffix } from "@/vendors/codex/impl/getCodexContextSuffix.js";
@@ -490,6 +494,7 @@ export class CodexSession extends BaseSession {
         if (model === undefined) throw new Error("A model is required for Codex inference.");
         const configuration = this.resolveConfiguration(model);
         const effort = resolveCodexReasoningEffort(model, request.effort);
+        const serviceTier = parseCodexServiceTier(request.serviceTier);
         const modelChanged = this.activeModel !== undefined && this.activeModel !== model;
         // The caller's rebuilt context is authoritative. The session's own copy is preferred only
         // when the rebuilt context extends it, because that copy retains provider state such as
@@ -540,7 +545,7 @@ export class CodexSession extends BaseSession {
                 turnConfiguration,
                 model,
                 effort,
-                request.serviceTier,
+                serviceTier,
                 request.structuredOutput,
             );
             const serverToolNames = new Set(
@@ -839,7 +844,7 @@ export class CodexSession extends BaseSession {
         configuration: SessionModelConfiguration,
         model: string,
         effort: SessionReasoningEffort,
-        serviceTier?: SessionRunRequest["serviceTier"],
+        serviceTier?: CodexServiceTier,
         structuredOutput?: SessionRunRequest["structuredOutput"],
     ): CodexResponseRequest {
         return createCodexCliRequest({
