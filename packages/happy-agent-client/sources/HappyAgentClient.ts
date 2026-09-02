@@ -39,12 +39,16 @@ import type {
     CloudDevicesResponse,
     CloudKeyBackupResponse,
     CloudMutationRequest,
+    CloudOrganizationsResponse,
     CloudProfileResponse,
     CloudResponse,
     CloudSocialMutationRequest,
     CloudSocialResponse,
     CompleteCloudAuthorizationRequest,
+    CreateCloudOrganizationRequest,
+    CreateCloudOrganizationResponse,
     CreateCloudKeysRequest,
+    DeleteCloudOrganizationResponse,
     DeleteCloudKeysRequest,
     EnrollCloudProfileRequest,
     RestoreCloudKeysRequest,
@@ -422,6 +426,44 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/cloud/access-token",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cloud/organizations` — lists the connected user's WorkOS organizations. */
+    async listCloudOrganizations(
+        options: RequestOptions = {},
+    ): Promise<CloudOrganizationsResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/cloud/organizations",
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/cloud/organizations` — creates a WorkOS organization for the Cloud user. */
+    async createCloudOrganization(
+        request: CreateCloudOrganizationRequest,
+        options: RequestOptions = {},
+    ): Promise<CreateCloudOrganizationResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/cloud/organizations",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/cloud/organizations/:id` — deletes an administered organization. */
+    async deleteCloudOrganization(
+        organizationId: string,
+        request: CloudMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<DeleteCloudOrganizationResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/cloud/organizations/${encodeURIComponent(organizationId)}`,
             json: request,
             signal: options.signal,
         });

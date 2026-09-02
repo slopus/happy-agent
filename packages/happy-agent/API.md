@@ -1125,6 +1125,81 @@ Cloud's rejection alone is not treated as proof of revocation because its token-
 dependencies may themselves be temporarily unavailable. No access token is returned unless the
 verification succeeds.
 
+### Cloud organizations
+
+Cloud organizations are managed only by a standalone Happy Agent. They are the WorkOS
+organizations associated with the currently connected Cloud user's WorkOS identity. An
+organization is:
+
+```json
+{
+    "id": "org_01H...",
+    "name": "Analytical Engines"
+}
+```
+
+`id` is an opaque WorkOS organization ID rather than a Happy Agent CUID2. `name` is non-empty
+human-readable text of at most 512 characters. The daemon validates and bounds every Happy Cloud
+response before returning it.
+
+These endpoints are unavailable in team mode. Every organization request in team mode returns
+`501` with code `unsupported` before parsing a mutation body, refreshing Cloud credentials, or
+contacting Happy Cloud. A team deployment's configured organization is deployment-owned and cannot
+be listed or changed through its own API.
+
+Organization reads and mutations emit no Happy Agent event and do not change the local Cloud
+snapshot. The daemon serializes them with other Cloud authentication operations, stores a rotated
+refresh token before making the Happy Cloud request, verifies the minted access token, and never
+returns that token. It does not automatically replay an ambiguous organization mutation.
+
+#### `GET /v0/cloud/organizations`
+
+Lists every organization associated with the connected Cloud user. Response — `200`:
+
+```json
+{
+    "organizations": [{ "id": "org_01H...", "name": "Analytical Engines" }]
+}
+```
+
+The array contains at most 10,000 organizations and preserves Happy Cloud's order.
+
+#### `POST /v0/cloud/organizations`
+
+Creates a WorkOS organization and makes the connected Cloud user its administrator. Request:
+
+```json
+{
+    "name": "Analytical Engines",
+    "mutationId": "optional-client-value"
+}
+```
+
+`name` must contain 1–255 Unicode characters after surrounding whitespace is trimmed and may not
+contain control or format characters. `mutationId` provides the normal process-local
+duplicate-mutation protection and is not sent to Happy Cloud. Response — `201`:
+
+```json
+{
+    "organization": { "id": "org_01H...", "name": "Analytical Engines" }
+}
+```
+
+#### `DELETE /v0/cloud/organizations/:id`
+
+Deletes an organization only when the connected Cloud user is an active administrator. The
+optional JSON body is `{ "mutationId": "optional-client-value" }`; an empty body is equivalent to
+`{}`. Response — `200`: `{ "deleted": true }`.
+
+For all three endpoints, no connected Cloud account returns `409` with code
+`cloud_not_authenticated` and the current `cloud`. Invalid names, malformed IDs, and malformed
+bodies return `400` with code `invalid_request` without performing the requested Happy Cloud
+organization operation. Deleting an organization the connected user does not administer returns
+`403` with code `forbidden`. WorkOS refresh rejection returns `409` with code
+`cloud_unauthorized`; transient WorkOS failures, rejected or malformed Happy Cloud responses, and
+Happy Cloud availability failures return `503` with code `cloud_unavailable`. Cloud errors include
+the authoritative current `cloud` and never include credentials or upstream response bodies.
+
 ### `POST /v0/cloud/keys/create`
 
 Creates the connected account's Cloud encryption state. Request:

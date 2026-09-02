@@ -11,12 +11,16 @@ import {
     cloudEnrollmentSchema,
     cloudKeyBackupResponseSchema,
     cloudKeysSchema,
+    cloudOrganizationsResponseSchema,
     cloudProfileResponseSchema,
     cloudResponseSchema,
     cloudSocialMutationRequestSchema,
     cloudSocialResponseSchema,
     completeCloudAuthorizationRequestSchema,
+    createCloudOrganizationRequestSchema,
+    createCloudOrganizationResponseSchema,
     createCloudKeysRequestSchema,
+    deleteCloudOrganizationResponseSchema,
     deleteCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,
     restoreCloudKeysRequestSchema,
@@ -311,6 +315,37 @@ describe("Cloud protocol", () => {
                 },
             }),
         ).toBe(true);
+    });
+
+    it("validates Cloud organization requests and bounded responses", () => {
+        const organization = { id: "org_01H", name: "Analytical Engines" };
+
+        expect(
+            Value.Check(createCloudOrganizationRequestSchema, {
+                mutationId: "organization-create-1",
+                name: organization.name,
+            }),
+        ).toBe(true);
+        for (const invalid of [
+            {},
+            { name: "   " },
+            { name: "A".repeat(256) },
+            { extra: true, name: organization.name },
+        ]) {
+            expect(Value.Check(createCloudOrganizationRequestSchema, invalid)).toBe(false);
+        }
+
+        expect(
+            Value.Check(cloudOrganizationsResponseSchema, { organizations: [organization] }),
+        ).toBe(true);
+        expect(Value.Check(createCloudOrganizationResponseSchema, { organization })).toBe(true);
+        expect(Value.Check(deleteCloudOrganizationResponseSchema, { deleted: true })).toBe(true);
+        expect(Value.Check(deleteCloudOrganizationResponseSchema, { deleted: false })).toBe(false);
+        expect(
+            Value.Check(cloudOrganizationsResponseSchema, {
+                organizations: [{ id: "", name: organization.name }],
+            }),
+        ).toBe(false);
     });
 
     it("rejects success snapshots with the wrong status", () => {

@@ -202,9 +202,17 @@ describe("HappyAgentClient", () => {
                 },
             },
         ];
+        const organization = { id: "org_01H", name: "Analytical Engines" };
         const { fetch, requests } = stubFetch((request) => {
             if (request.url.endsWith("/access-token")) {
                 return json({ accessToken: "access-token", cloud });
+            }
+            if (request.url.includes("/organizations/")) return json({ deleted: true });
+            if (request.url.endsWith("/organizations") && request.method === "POST") {
+                return json({ organization }, 201);
+            }
+            if (request.url.endsWith("/organizations")) {
+                return json({ organizations: [organization] });
             }
             if (request.url.endsWith("/keys/backup")) return json({ backup });
             if (request.url.includes("/devices/")) return json({ devices: [] });
@@ -236,6 +244,18 @@ describe("HappyAgentClient", () => {
             accessToken: "access-token",
             cloud,
         });
+        await expect(client.listCloudOrganizations()).resolves.toEqual({
+            organizations: [organization],
+        });
+        await expect(
+            client.createCloudOrganization({
+                mutationId: "organization-create-1",
+                name: organization.name,
+            }),
+        ).resolves.toEqual({ organization });
+        await expect(
+            client.deleteCloudOrganization("org/one", { mutationId: "organization-delete-1" }),
+        ).resolves.toEqual({ deleted: true });
         const keyInput = {
             authHash: "A".repeat(43),
             encryptionKey: "B".repeat(43),
@@ -308,6 +328,24 @@ describe("HappyAgentClient", () => {
                 body: JSON.stringify({ mutationId: "mint-1" }),
                 method: "POST",
                 url: "http://agent.local/v0/cloud/access-token",
+            },
+            {
+                body: null,
+                method: "GET",
+                url: "http://agent.local/v0/cloud/organizations",
+            },
+            {
+                body: JSON.stringify({
+                    mutationId: "organization-create-1",
+                    name: organization.name,
+                }),
+                method: "POST",
+                url: "http://agent.local/v0/cloud/organizations",
+            },
+            {
+                body: JSON.stringify({ mutationId: "organization-delete-1" }),
+                method: "DELETE",
+                url: "http://agent.local/v0/cloud/organizations/org%2Fone",
             },
             {
                 body: JSON.stringify({ ...keyInput, mutationId: "keys-create-1" }),

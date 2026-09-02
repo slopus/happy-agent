@@ -345,6 +345,47 @@ export const cloudAccessTokenResponseSchema = Type.Object({
 });
 export type CloudAccessTokenResponse = Static<typeof cloudAccessTokenResponseSchema>;
 
+/** One WorkOS organization associated with the connected Cloud user. */
+export const cloudOrganizationSchema = Type.Object({
+    id: Type.String({ minLength: 1, maxLength: 512 }),
+    name: Type.String({ minLength: 1, maxLength: 512 }),
+});
+export type CloudOrganization = Static<typeof cloudOrganizationSchema>;
+
+/** `GET /v0/cloud/organizations` */
+export const cloudOrganizationsResponseSchema = Type.Object({
+    organizations: Type.Array(cloudOrganizationSchema, { maxItems: 10_000 }),
+});
+export type CloudOrganizationsResponse = Static<typeof cloudOrganizationsResponseSchema>;
+
+const cloudOrganizationNameInputSchema = Type.String({
+    minLength: 1,
+    maxLength: 255,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+});
+
+/** Creates a WorkOS organization for the connected Cloud user. */
+export const createCloudOrganizationRequestSchema = Type.Object(
+    {
+        mutationId: Type.Optional(mutationIdSchema),
+        name: cloudOrganizationNameInputSchema,
+    },
+    { additionalProperties: false },
+);
+export type CreateCloudOrganizationRequest = Static<typeof createCloudOrganizationRequestSchema>;
+
+/** `POST /v0/cloud/organizations` */
+export const createCloudOrganizationResponseSchema = Type.Object({
+    organization: cloudOrganizationSchema,
+});
+export type CreateCloudOrganizationResponse = Static<typeof createCloudOrganizationResponseSchema>;
+
+/** `DELETE /v0/cloud/organizations/:id` */
+export const deleteCloudOrganizationResponseSchema = Type.Object({
+    deleted: Type.Literal(true),
+});
+export type DeleteCloudOrganizationResponse = Static<typeof deleteCloudOrganizationResponseSchema>;
+
 const cloudVisibleNameSchema = Type.String({
     minLength: 1,
     maxLength: 64,
