@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-base",
-    "version": "0.0.44",
+    "version": "0.0.45",
     "description": "Durable runtime for Happy agents.",
     "license": "MIT",
     "repository": {
