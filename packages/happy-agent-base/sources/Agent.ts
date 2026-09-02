@@ -697,7 +697,9 @@ function moduleScope<Tool extends AnyAgentTool, Database extends AgentDatabase>(
             providerKind: options.providers.typeOf(provider) ?? undefined,
             model: agentModel(ctx) ?? options.model,
             effort: agentEffort(ctx) ?? options.effort,
-            tier: agentServiceTier(ctx) ?? options.serviceTier,
+            // Agent Base always installs the effective tier on hook contexts. Reading it directly
+            // preserves an explicit clear instead of reviving the constructor's initial tier.
+            tier: agentServiceTier(ctx),
             permissionMode: agentPermissionMode(ctx),
         },
         kv: kv.scoped("module", module.name),

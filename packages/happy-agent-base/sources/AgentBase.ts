@@ -148,7 +148,8 @@ export type AgentBaseQueueMode = "one-at-a-time" | "all";
 /**
  * Inference settings carried by a queued message. Except for `profile`, an omitted field keeps the
  * previously effective value; the first message without a value falls back to the constructor
- * default. A profile is request-scoped, so omission selects its `null` default.
+ * default. A profile is request-scoped, so omission selects its `null` default. An explicit
+ * `null` service tier clears the previously effective tier.
  */
 export interface AgentBaseMessageOptions {
     /** Stable cuid2 identity for idempotent delivery; generated when omitted. */
@@ -161,8 +162,8 @@ export interface AgentBaseMessageOptions {
     readonly model?: string;
     /** How hard the model should think about the request. */
     readonly effort?: SessionReasoningEffort;
-    /** Which of the provider's service tiers to bill and schedule the request on. */
-    readonly serviceTier?: SessionServiceTier;
+    /** A provider-owned service tier, or `null` to return to ordinary provider service. */
+    readonly serviceTier?: SessionServiceTier | null;
     /** Opaque context compatibility identity; omission selects the `null` profile. */
     readonly profile?: AgentRequestProfile;
     /**
@@ -3415,7 +3416,7 @@ export class AgentBase {
                     changed = true;
                 }
                 if (entry.options.serviceTier !== undefined) {
-                    serviceTier = entry.options.serviceTier;
+                    serviceTier = entry.options.serviceTier ?? undefined;
                     changed = true;
                 }
                 if (entry.options.permissionMode !== undefined) {
@@ -3781,7 +3782,7 @@ export class AgentBase {
                 if (persisted.provider !== undefined) this.#providerId = persisted.provider;
                 this.#model = persisted.model;
                 this.#effort = persisted.effort;
-                this.#serviceTier = persisted.serviceTier;
+                this.#serviceTier = persisted.serviceTier ?? undefined;
                 this.#profile = ownAgentRequestProfile(persisted.profile);
                 // The permission mode is the one setting whose absence is not a decision: a record
                 // written before any message carried a mode says nothing about it, and a value

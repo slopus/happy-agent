@@ -860,6 +860,35 @@ describe("Agent", () => {
         await agent.close();
     });
 
+    it("does not revive the constructor service tier in module scope after an explicit clear", async () => {
+        const provider = new ScriptedProvider([textTurn("priority"), textTurn("ordinary")]);
+        const tiers: (string | undefined)[] = [];
+        const agent = await Agent.create(ctx, {
+            id: "cleared-tier-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            sharedKV: sharedKV(),
+            serviceTier: "priority",
+            modules: [
+                module({
+                    name: "tier-observer",
+                    beforeInference: (_hookCtx, scope) => {
+                        tiers.push(scope.agent.tier);
+                    },
+                }),
+            ],
+        });
+
+        await agent.send(ctx, user("priority"));
+        await agent.waitForIdle();
+        await agent.send(ctx, user("ordinary"), { serviceTier: null });
+        await agent.waitForIdle();
+
+        expect(tiers).toEqual(["priority", undefined]);
+        await agent.close();
+    });
+
     it("lends each module a run store that the settling transaction erases", async () => {
         const provider = new ScriptedProvider([textTurn("first"), textTurn("second")]);
         const persistence = new InMemoryPersistence();

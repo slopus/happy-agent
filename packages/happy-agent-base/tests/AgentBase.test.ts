@@ -1549,6 +1549,48 @@ describe("AgentBase per-message settings", () => {
         await agent.close();
     });
 
+    it("clears a service tier explicitly and keeps it cleared across omission and restart", async () => {
+        const persistence = new InMemoryPersistence();
+        const provider = new ScriptedProvider([
+            textTurn("priority"),
+            textTurn("ordinary"),
+            textTurn("still ordinary"),
+        ]);
+        const agent = await AgentBase.create(ctx, {
+            id: "service-tier-reset-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+        });
+
+        await agent.send(ctx, user("priority"), { serviceTier: "priority" });
+        await agent.waitForIdle();
+        await agent.send(ctx, user("ordinary"), { serviceTier: null });
+        await agent.waitForIdle();
+        await agent.send(ctx, user("plain"));
+        await agent.waitForIdle();
+
+        const session = provider.sessions[0];
+        expect(session?.requests[0]?.serviceTier).toBe("priority");
+        expect(session?.requests[1]).not.toHaveProperty("serviceTier");
+        expect(session?.requests[2]).not.toHaveProperty("serviceTier");
+        expect(agentServiceTier(session?.requestContexts[1] ?? ctx)).toBeUndefined();
+        await agent.close();
+
+        const reloadedProvider = new ScriptedProvider([textTurn("ordinary after restart")]);
+        const reloaded = await AgentBase.create(ctx, {
+            id: "service-tier-reset-agent",
+            providers: providersOf(reloadedProvider),
+            provider: "scripted",
+            persistence,
+        });
+        await reloaded.send(ctx, user("after restart"));
+        await reloaded.waitForIdle();
+
+        expect(reloadedProvider.sessions[0]?.requests[0]).not.toHaveProperty("serviceTier");
+        await reloaded.close();
+    });
+
     it("resets on an incompatible model change: erases history, destroys the session, and lets the hook seed the fresh context", async () => {
         const persistence = new InMemoryPersistence();
         const provider = new ScriptedProvider([textTurn("claude says"), textTurn("gpt says")]);
