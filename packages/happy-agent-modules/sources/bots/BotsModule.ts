@@ -50,6 +50,7 @@ import {
 } from "./BotStore.js";
 import { formatBotIdentityPrompt } from "./impl/formatBotIdentityPrompt.js";
 import { formatChiefOfStaffInstructions } from "./impl/formatChiefOfStaffInstructions.js";
+import { loadChiefOfStaffAvatar } from "./impl/loadChiefOfStaffAvatar.js";
 import { createBotTool } from "./tools/create_bot.js";
 import { listBotsTool } from "./tools/list_bots.js";
 import { sendBotMessageTool } from "./tools/send_bot_message.js";
@@ -139,6 +140,7 @@ export class BotsModule implements AgentModule {
         ctx: Context,
         input: CreateBotInput,
         systemKey?: BotSystemKey,
+        initialAvatar?: BotInitialAvatar,
     ): Promise<BotRecord> {
         if (!Value.Check(createBotInputSchema, input)) {
             throw new Error("Bot creation input is invalid.");
@@ -193,12 +195,24 @@ export class BotsModule implements AgentModule {
                 agentId: agent.id,
                 path,
                 status: "active",
+                ...(initialAvatar === undefined
+                    ? {}
+                    : {
+                          avatar: {
+                              kind: "image" as const,
+                              source: initialAvatar.source,
+                              thumbhash: initialAvatar.asset.thumbhash,
+                          },
+                      }),
                 orderKey: orderKeyBetween(ordered.at(-1)?.orderKey ?? null, null),
                 version: 1,
                 createdAt: now,
                 updatedAt: now,
             };
             await insertBot(txCtx, bot);
+            if (initialAvatar !== undefined) {
+                await writeBotAvatar(txCtx, bot.id, initialAvatar.asset);
+            }
             // The unique username, path, workspace, and agent columns have all accepted this bot
             // by now, so the folder is the last thing that can fail. An existing directory is the
             // folder of a creation that was rolled back after making it, and is taken up again.
@@ -222,6 +236,10 @@ export class BotsModule implements AgentModule {
 
     /** Seed the installation's built-in coordinator once; archival deliberately keeps it seeded. */
     async #ensureChiefOfStaff(ctx: Context): Promise<void> {
+        // This first read is only an optimization: image decoding stays off every startup after
+        // the seed is present. The transaction repeats the read before it decides to create.
+        if ((await readSystemBotSeed(ctx, CHIEF_OF_STAFF_SYSTEM_KEY)) !== undefined) return;
+        const avatar = await normalizeBotAvatar(await loadChiefOfStaffAvatar(), "image/webp");
         await ctx.inTx(async (txCtx) => {
             if ((await readSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY)) !== undefined) return;
             const created = await this.#create(
@@ -231,6 +249,7 @@ export class BotsModule implements AgentModule {
                     name: "Chief of Staff",
                 },
                 CHIEF_OF_STAFF_SYSTEM_KEY,
+                { asset: avatar, source: "generated" },
             );
             await insertSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, created.id);
         });
@@ -544,6 +563,11 @@ export class BotsModule implements AgentModule {
         if (this.#agents === undefined) throw new Error("The bots module has not started.");
         return this.#agents;
     }
+}
+
+interface BotInitialAvatar {
+    readonly asset: BotAvatarAsset;
+    readonly source: "generated" | "user";
 }
 
 function deepFreeze<Value>(value: Value): Value {

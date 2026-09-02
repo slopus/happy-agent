@@ -1,14 +1,19 @@
 # Bots — learnings
 
-## Built-in bot instructions are resolved entirely at runtime
+## Built-in bot seeding is permanent and instructions are resolved at runtime
 
 The installation seeds one admin `Chief of Staff` bot after the agent system opens. It receives an
-ordinary generated ID and the internal system key `chief_of_staff`. The system key explicitly marks
-which built-in behavior the bot receives and is an extensible union for future system bots.
+ordinary generated ID, a bundled avatar, and the internal system key `chief_of_staff`. The system
+key explicitly marks which built-in behavior the bot receives and is an extensible union for future
+system bots. Avatar decoding happens before the creation transaction; the normalized asset and its
+public metadata are then inserted in the same transaction as the bot, so `bot_created` already
+contains the picture and no follow-up version or update event is needed.
 
 A separate seed ledger records each system key and generated bot ID. Startup checks the ledger
 rather than the bot catalog, and deletion must leave the ledger intact. An active, archived, or
-deleted system bot therefore suppresses reseeding permanently.
+deleted system bot therefore suppresses reseeding permanently. The bundled picture is creation
+state, not a migration: an installation whose seed ledger already exists is never backfilled or
+silently changed on startup.
 
 No prompt or instruction profile is stored. The bots module switches on the bot row's system key at
 runtime, resolves the current Chief of Staff guidance from source on every inference, and combines

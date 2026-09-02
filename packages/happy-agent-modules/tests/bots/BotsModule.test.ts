@@ -123,13 +123,35 @@ describe("BotsModule", () => {
             await fixture.start();
             const [chief] = await fixture.bots.list(fixture.database.context);
             expect(chief).toMatchObject({
+                avatar: {
+                    kind: "image",
+                    source: "generated",
+                    thumbhash: expect.any(String),
+                },
                 isAdmin: true,
                 name: "Chief of Staff",
                 status: "active",
                 systemKey: "chief_of_staff",
                 username: "chief_of_staff",
+                version: 1,
             });
             if (chief === undefined) throw new Error("The Chief of Staff bot was not seeded.");
+            const avatar = await fixture.bots.avatar(fixture.database.context, chief.id);
+            expect(avatar).toMatchObject({
+                contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+                thumbhash: chief.avatar?.thumbhash,
+                height: 256,
+                width: 256,
+            });
+            await expect(sharp(avatar?.bytes).metadata()).resolves.toMatchObject({
+                format: "webp",
+            });
+            expect(fixture.events).toEqual([
+                expect.objectContaining({
+                    type: "bot_created",
+                    bot: expect.objectContaining({ avatar: chief.avatar, version: 1 }),
+                }),
+            ]);
             await expect(fixture.instructions(chief.agentId)).resolves.toContain(
                 "# Chief of Staff\n\nYou are the user's persistent chief of staff.",
             );

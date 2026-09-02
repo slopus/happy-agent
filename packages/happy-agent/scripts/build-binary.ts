@@ -35,6 +35,7 @@ interface JustBashWorkerGroup {
 
 interface BinaryAssets {
     assets: EmbeddedAsset[];
+    chiefOfStaffAvatarVariable: string;
     claudeRelativePath: string;
     fffRelativePath: string;
     ffiRelativePath: string;
@@ -281,6 +282,11 @@ export const { getQuickJS } = QJS;
         "just-bash SQLite worker",
     );
     const assets: EmbeddedAsset[] = [
+        asset(
+            "chiefOfStaffAvatarAsset",
+            join(modulesRoot, "dist", "bots", "assets", "chief-of-staff.webp"),
+            "chief-of-staff.webp",
+        ),
         asset("libsqlAsset", libsqlSource, "index.node"),
         asset("montyNativeAsset", montySource, basename(montySource)),
         asset("montyWorkerAsset", montyWorkerSource, "monty", true),
@@ -345,6 +351,7 @@ export const { getQuickJS } = QJS;
 
     return {
         assets,
+        chiefOfStaffAvatarVariable: "chiefOfStaffAvatarAsset",
         claudeRelativePath: "claude",
         fffRelativePath: basename(fffSource),
         ffiRelativePath: basename(ffiSource),
@@ -456,6 +463,12 @@ function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter>
 const imageProcessor = createBunImageProcessor();
 export async function getImageProcessor() { return imageProcessor; }
 `,
+    });
+    addAdapter(adapters, join(modulesRoot, "dist", "bots", "impl", "loadChiefOfStaffAvatar.js"), {
+        name: "Chief of Staff avatar",
+        required: true,
+        adapt: () =>
+            `export { loadChiefOfStaffAvatar } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
     });
     addAdapter(
         adapters,
@@ -728,6 +741,9 @@ ${
 }
 export function loadGhosttyWasm() {
     return Uint8Array.from(readFileSync(${binaryAssets.ghosttyVariable})).buffer;
+}
+export async function loadChiefOfStaffAvatar() {
+    return Uint8Array.from(readFileSync(${binaryAssets.chiefOfStaffAvatarVariable}));
 }
 function justBashWorker(kind) {
     switch (kind) {
