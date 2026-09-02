@@ -16,6 +16,7 @@ export const botPathSchema = Type.String({ minLength: 1, maxLength: 4_096 });
 export const botRecordSchema = Type.Object(
     {
         id: cuid2Schema,
+        isAdmin: Type.Boolean(),
         name: botNameSchema,
         username: botUsernameSchema,
         workspaceId: cuid2Schema,
@@ -37,6 +38,7 @@ export const botRecordSchema = Type.Object(
 export const createBotInputSchema = Type.Object(
     {
         id: Type.Optional(cuid2Schema),
+        isAdmin: Type.Optional(Type.Boolean()),
         name: botNameSchema,
         username: Type.Optional(botUsernameSchema),
     },

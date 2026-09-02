@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { agentDatabaseRows, agentDatabaseRun, type AgentDatabase } from "@slopus/happy-agent-base";
+import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
@@ -15,6 +15,7 @@ import { BOT_AVATARS_TABLE, BOTS_TABLE } from "./BotMigrations.js";
 
 interface BotRow {
     readonly id: string;
+    readonly is_admin: number | string;
     readonly name: string;
     readonly username: string;
     readonly workspace_id: string;
@@ -86,11 +87,11 @@ export async function insertBot(ctx: Context, bot: BotRecord): Promise<void> {
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(BOTS_TABLE)} (
-            id, name, username, workspace_id, workspace_version, workspace_updated_at,
+            id, is_admin, name, username, workspace_id, workspace_version, workspace_updated_at,
             agent_id, path, status, avatar_source,
             avatar_thumbhash, order_key, version, created_at, updated_at, archived_at
         ) VALUES (
-            ${bot.id}, ${bot.name}, ${bot.username}, ${bot.workspaceId},
+            ${bot.id}, ${bot.isAdmin ? 1 : 0}, ${bot.name}, ${bot.username}, ${bot.workspaceId},
             ${bot.workspaceVersion}, ${bot.workspaceUpdatedAt}, ${bot.agentId},
             ${bot.path}, ${bot.status}, ${bot.avatar?.source ?? null},
             ${bot.avatar?.thumbhash ?? null}, ${bot.orderKey}, ${bot.version},
@@ -108,7 +109,7 @@ export async function updateBot(
     const changed = await agentDatabaseRows<{ readonly id: string }>(
         ctx.db,
         sql`UPDATE ${sql.raw(BOTS_TABLE)} SET
-            name = ${bot.name}, status = ${bot.status},
+            is_admin = ${bot.isAdmin ? 1 : 0}, name = ${bot.name}, status = ${bot.status},
             workspace_version = ${bot.workspaceVersion},
             workspace_updated_at = ${bot.workspaceUpdatedAt},
             avatar_source = ${bot.avatar?.source ?? null},
@@ -189,6 +190,7 @@ function botFromRow(row: BotRow): BotRecord {
     const hasAvatar = row.avatar_source !== null && row.avatar_thumbhash !== null;
     const bot: BotRecord = {
         id: row.id,
+        isAdmin: Number(row.is_admin) === 1,
         name: row.name,
         username: row.username,
         workspaceId: row.workspace_id,

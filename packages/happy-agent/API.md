@@ -4435,8 +4435,8 @@ A bot's identity is:
   is derived from it. The username is chosen at creation and is immutable ever after — the
   folder never moves.
 - `id` — the stable CUID2 the database knows the bot by, like every other resource.
-- `isAdmin` — whether this bot may use tools reserved for administrator bots. New and migrated
-  bots are non-admin by default; an authenticated client may opt a bot into administration when
+- `isAdmin` — whether this bot may create other bots through `create_bot`. New and migrated bots
+  are non-admin by default; an authenticated client may opt a bot into administration when
   creating it.
 - an optional avatar, exactly like a project's picture.
 
@@ -4500,9 +4500,11 @@ Fields:
 - `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
   characters.
 - `username` — the local snake_case name and on-disk folder name, under the rules above.
-- `isAdmin` — whether the bot has the `admin_bot` tool role. A daemon implementing this field
-  always returns a boolean. The field is additive and may be absent when talking to an older
-  protocol-22-compatible daemon.
+- `isAdmin` — whether the bot may create other bots through `create_bot`. The tool remains visible
+  to non-admin bots, but calling it returns a tool error that explains the restriction and lists
+  the installation's admin bots when any exist. Human-owned agents are unrestricted. A daemon
+  implementing this field always returns a boolean. The field is additive and may be absent when
+  talking to an older protocol-22-compatible daemon.
 - `workspaceId` — the bot's dedicated workspace, its own distinct ID. The workspace object is
   fetched from `GET /v0/workspaces/:workspaceId` like any other; it is simply not listed.
 - `compute` — where the bot's folder lives, same shape as on projects and workspaces. Currently
@@ -4544,9 +4546,9 @@ Request:
   non-alphanumeric runs collapsed to underscores) and resolves a collision by appending a
   numeric suffix. A supplied username that is malformed is `400`; one already taken by any bot,
   archived included, is `409` with code `conflict`.
-- `isAdmin` — optional. `true` grants the bot the `admin_bot` tool role. Omitted or `false`, the
-  bot is non-admin. The bot-facing `create_bot` tool does not expose this field, so a bot cannot
-  grant administration to a bot it creates.
+- `isAdmin` — optional. `true` allows the bot to create other bots through `create_bot`. Omitted
+  or `false`, the bot is non-admin. The bot-facing `create_bot` tool does not expose this field,
+  so a bot cannot grant administration to a bot it creates.
 - `id` — optional client-supplied CUID2. Creating with the ID of a bot that already exists
   returns that bot unchanged, making creation safely retryable.
 

@@ -74,4 +74,14 @@ export const botMigrations = [
             );
         },
     ],
+    [
+        "003-bot-admin",
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(BOTS_TABLE)}
+                    ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`,
+            );
+        },
+    ],
 ] as const;

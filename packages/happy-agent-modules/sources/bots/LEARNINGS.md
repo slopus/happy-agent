@@ -1,5 +1,18 @@
 # Bots — learnings
 
+## Bot creation stays discoverable and enforces administration when called
+
+A bot is non-admin by default, including every bot predating the admin column. Authenticated API
+creation may set `isAdmin`, while bot-driven creation cannot grant it. Every direct bot can see
+`create_bot`, but the tool resolves the calling agent's bot record before creating anything and
+throws for a non-admin bot. The error names every admin bot when one exists and says so plainly
+when none exist. Human-owned agents are not bots and remain unrestricted.
+
+Authorization belongs in this specific tool because administration currently controls only bot
+creation. The acting agent ID is captured from the tool's module scope rather than accepted as a
+model argument, so a caller cannot claim another bot's identity. The `isAdmin` input is also absent
+from the tool, ensuring an allowed bot-driven creation always produces a non-admin bot.
+
 ## The module holds no lock; one transaction is the whole guarantee
 
 The catalog is stateless apart from its event listeners, so it serializes nothing itself. Every

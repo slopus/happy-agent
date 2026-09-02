@@ -1,18 +1,28 @@
 import { rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { AgentConfig, AgentModuleScope, AgentSystemRef } from "@slopus/happy-agent-base";
+import {
+    agentDatabaseRows,
+    agentDatabaseRun,
+    type AgentConfig,
+    type AgentModuleScope,
+    type AgentSystemRef,
+    type AnyAgentTool,
+} from "@slopus/happy-agent-base";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
+import { sql } from "drizzle-orm";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { AbortModule } from "../../sources/abort/index.js";
 import {
     botMigrations,
+    BOTS_TABLE,
     BotConflictError,
     BotNotFoundError,
     BotsModule,
     type BotEvent,
+    type BotRecord,
 } from "../../sources/bots/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
@@ -67,11 +77,44 @@ class BotAgents {
 }
 
 describe("BotsModule", () => {
+    it("migrates every existing bot to non-admin", async () => {
+        const database = moduleDatabase(botMigrations.slice(0, 2), "bots-admin-migration");
+        try {
+            await database.ready;
+            await agentDatabaseRun(
+                database.database,
+                sql`INSERT INTO ${sql.raw(BOTS_TABLE)} (
+                    id, name, username, workspace_id, workspace_version, workspace_updated_at,
+                    agent_id, path, status, avatar_source, avatar_thumbhash, order_key,
+                    version, created_at, updated_at, archived_at
+                ) VALUES (
+                    'legacybot', 'Legacy Bot', 'legacy_bot', 'legacyworkspace', 1, 100,
+                    'legacyagent', '/tmp/legacy-bot', 'active', NULL, NULL, '5',
+                    1, 100, 100, NULL
+                )`,
+            );
+
+            const migration = botMigrations[2]?.[1];
+            if (migration === undefined) throw new Error("The bot admin migration is missing.");
+            await migration(database.context, database.database);
+
+            await expect(
+                agentDatabaseRows<{ readonly is_admin: number }>(
+                    database.database,
+                    sql`SELECT is_admin FROM ${sql.raw(BOTS_TABLE)} WHERE id = 'legacybot'`,
+                ),
+            ).resolves.toEqual([{ is_admin: 0 }]);
+        } finally {
+            database.close();
+        }
+    });
+
     it("creates one durable folder/workspace/agent identity and derives collision-safe usernames", async () => {
         const fixture = await started("bots-create", false);
         try {
             const first = await fixture.bots.create(fixture.database.context, {
                 id: "researchbot",
+                isAdmin: false,
                 name: "Research Assistant",
             });
             const second = await fixture.bots.create(fixture.database.context, {
@@ -80,6 +123,7 @@ describe("BotsModule", () => {
 
             expect(first).toMatchObject({
                 id: "researchbot",
+                isAdmin: false,
                 name: "Research Assistant",
                 username: "research_assistant",
                 status: "active",
@@ -101,6 +145,7 @@ describe("BotsModule", () => {
             await expect(
                 fixture.bots.create(fixture.database.context, {
                     id: first.id,
+                    isAdmin: true,
                     name: "Ignored retry name",
                     username: "ignored_retry_name",
                 }),
@@ -290,19 +335,45 @@ describe("BotsModule", () => {
         }
     });
 
-    it("gives a bot the roster its owner has, plus its own picture", async () => {
+    it("keeps creation visible but allows only people and admin bots to use it", async () => {
         const fixture = await started("bots-tools", true);
         try {
-            const created = await fixture.bots.create(fixture.database.context, {
-                name: "Toolbelt",
+            const nonAdmin = await fixture.bots.create(fixture.database.context, {
+                name: "Ordinary Toolbelt",
             });
             const roster = ["list_bots", "create_bot", "send_bot_message"];
-            await expect(fixture.tools(created.agentId)).resolves.toEqual([
+            await expect(fixture.tools(nonAdmin.agentId)).resolves.toEqual([
                 ...roster,
                 "set_bot_avatar",
             ]);
+            await expect(fixture.executeCreate(nonAdmin.agentId, "Denied Child")).rejects.toThrow(
+                "Only an admin bot can create other bots. There are no admin bots on this installation.",
+            );
+
+            const admin = await fixture.bots.create(fixture.database.context, {
+                isAdmin: true,
+                name: "Admin Toolbelt",
+            });
+            await expect(
+                fixture.executeCreate(nonAdmin.agentId, "Still Denied Child"),
+            ).rejects.toThrow(
+                `Only an admin bot can create other bots. Admin bots on this installation:\n- Admin Toolbelt — id ${admin.id}`,
+            );
+            await expect(fixture.tools(admin.agentId)).resolves.toEqual([
+                ...roster,
+                "set_bot_avatar",
+            ]);
+            await expect(
+                fixture.executeCreate(admin.agentId, "Admin Child"),
+            ).resolves.toMatchObject({
+                isAdmin: false,
+                name: "Admin Child",
+            });
             // A person's own agent runs the roster but has no picture of its own to set.
             await expect(fixture.tools("someoneelsesagent")).resolves.toEqual(roster);
+            await expect(
+                fixture.executeCreate("someoneelsesagent", "Human Child"),
+            ).resolves.toMatchObject({ isAdmin: false, name: "Human Child" });
         } finally {
             await fixture.close();
         }
@@ -360,15 +431,34 @@ async function started(name: string, workspacesEnabled: boolean) {
     bots.onEvent((_ctx, event) => {
         events.push(event);
     });
+    const toolsFor = async (agentId: string): Promise<readonly AnyAgentTool[]> => {
+        const scope = { agent: { id: agentId } } as unknown as AgentModuleScope;
+        return (await hooks.tools?.(database.context, scope)) ?? [];
+    };
     return {
         agents,
         bots,
         database,
         events,
         tools: async (agentId: string): Promise<readonly string[]> => {
-            const scope = { agent: { id: agentId } } as unknown as AgentModuleScope;
-            const offered = await hooks.tools?.(database.context, scope);
-            return (offered ?? []).map((tool) => tool.name);
+            return (await toolsFor(agentId)).map((tool) => tool.name);
+        },
+        executeCreate: async (agentId: string, name: string): Promise<BotRecord> => {
+            const tool = (await toolsFor(agentId)).find(
+                (candidate) => candidate.name === "create_bot",
+            );
+            if (tool === undefined) throw new Error("The create_bot tool is missing.");
+            return (await tool.execute(database.context, { name }, {
+                id: `create-${name}`,
+                kv: {
+                    getOrCreate: async (
+                        _ctx: Context,
+                        _key: string,
+                        create: () => unknown,
+                    ): Promise<unknown> => await create(),
+                },
+                commit: async (_ctx: Context, result: unknown): Promise<unknown> => result,
+            } as never)) as BotRecord;
         },
         instructions: async (agentId: string): Promise<string> => {
             const scope = { agent: { id: agentId } } as unknown as AgentModuleScope;

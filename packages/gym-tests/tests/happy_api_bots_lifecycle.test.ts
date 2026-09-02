@@ -28,12 +28,14 @@ describe("persistent bots through the public API", () => {
             const created = (
                 await gym.client.createBot({
                     id: "researchassistant",
+                    isAdmin: true,
                     mutationId: "create-research-bot",
                     name: "Research Assistant",
                 })
             ).bot;
             expect(created).toMatchObject({
                 id: "researchassistant",
+                isAdmin: true,
                 username: "research_assistant",
                 status: "active",
                 agent: {
@@ -105,6 +107,7 @@ describe("persistent bots through the public API", () => {
                     "- Username: `research_assistant`",
                 ].join("\n"),
             );
+            expect(botRequest?.tools.map((tool) => tool.name)).toContain("create_bot");
 
             await expect(gym.client.archiveAgent(created.agent.id)).rejects.toMatchObject({
                 code: "conflict",
@@ -214,6 +217,7 @@ describe("persistent bots through the public API", () => {
             );
             expect(new Set([first.bot.id, second.bot.id]).size).toBe(2);
             for (const created of [first.bot, second.bot]) {
+                expect(created.isAdmin).toBe(false);
                 if (created.compute.type !== "host") throw new Error("Bot compute must be local.");
                 expect((await stat(created.compute.path)).isDirectory()).toBe(true);
             }
@@ -253,6 +257,16 @@ describe("persistent bots through the public API", () => {
             const gym = await createAgentGym({
                 config: "[features]\nworkspaces = false\n",
                 inference: [
+                    {
+                        content: [
+                            {
+                                arguments: { name: "Denied Child" },
+                                callId: "denied-bot-creation",
+                                name: "create_bot",
+                                type: "tool_call",
+                            },
+                        ],
+                    },
                     { content: [{ text: "The independent bot route works.", type: "text" }] },
                 ],
                 timeoutMs: 20_000,
@@ -265,6 +279,7 @@ describe("persistent bots through the public API", () => {
                     name: "Independent Bot",
                 })
             ).bot;
+            expect(created.isAdmin).toBe(false);
             await expect(gym.client.getBot(created.id)).resolves.toEqual({ bot: created });
             await expect(gym.client.listBots()).resolves.toMatchObject({
                 bots: [expect.objectContaining({ id: created.id })],
@@ -288,6 +303,23 @@ describe("persistent bots through the public API", () => {
             expect(JSON.stringify(await gym.sessionEvents(created.agent.id))).toContain(
                 "The independent bot route works.",
             );
+            const botRequest = gym.inference.requests.find(
+                (request) => request.sessionId === created.agent.id,
+            );
+            expect(botRequest?.tools.map((tool) => tool.name)).toContain("create_bot");
+            expect(botRequest?.tools.map((tool) => tool.name)).toEqual(
+                expect.arrayContaining(["list_bots", "send_bot_message", "set_bot_avatar"]),
+            );
+            expect(
+                gym.inference
+                    .toolResults()
+                    .find((result) => result.callId === "denied-bot-creation")?.text,
+            ).toContain(
+                "Only an admin bot can create other bots. There are no admin bots on this installation.",
+            );
+            await expect(gym.client.listBots()).resolves.toMatchObject({
+                bots: [expect.objectContaining({ id: created.id })],
+            });
             expect(gym.errors).toEqual([]);
         },
     );

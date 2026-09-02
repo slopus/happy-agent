@@ -159,6 +159,7 @@ export function botResource(
 ): Record<string, unknown> {
     return {
         id: bot.id,
+        isAdmin: bot.isAdmin,
         name: bot.name,
         username: bot.username,
         workspaceId: bot.workspaceId,

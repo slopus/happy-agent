@@ -75,7 +75,7 @@ export class BotsModule implements AgentModule {
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             const roster = [
                 listBotsTool(this),
-                createBotTool(this),
+                createBotTool(this, scope.agent.id),
                 sendBotMessageTool(this, scope.agent.id),
             ];
             // A bot is a peer of every other bot, and additionally manages its own picture.
@@ -166,6 +166,7 @@ export class BotsModule implements AgentModule {
             const ordered = await readBots(txCtx);
             const bot: BotRecord = {
                 id: botId,
+                isAdmin: input.isAdmin ?? false,
                 name: input.name,
                 username,
                 workspaceId,

@@ -3,7 +3,7 @@ import { botNameSchema, botUsernameSchema } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 
-import { botRecordSchema } from "../Bot.js";
+import { botRecordSchema, type BotRecord } from "../Bot.js";
 import type { BotsModule } from "../BotsModule.js";
 
 const createBotToolInputSchema = Type.Object(
@@ -16,7 +16,7 @@ const createBotToolInputSchema = Type.Object(
 type CreateBotToolInput = Static<typeof createBotToolInputSchema>;
 
 /** Create one persistent bot: its identity, its folder, and its one conversation. */
-export function createBotTool(bots: BotsModule) {
+export function createBotTool(bots: BotsModule, actingAgentId: string) {
     return defineAgentTool({
         name: "create_bot",
         defer: true,
@@ -31,11 +31,16 @@ export function createBotTool(bots: BotsModule) {
         // A bot outlives the call that made it, so its identity is minted once and remembered in
         // this invocation's own store. A repeated call after an interruption finds the bot it
         // already created instead of minting a duplicate.
-        execute: async (ctx, input: CreateBotToolInput, call) =>
-            await bots.create(ctx, {
+        execute: async (ctx, input: CreateBotToolInput, call) => {
+            const actingBot = await bots.forAgent(ctx, actingAgentId);
+            if (actingBot !== undefined && !actingBot.isAdmin) {
+                throw new Error(formatAdminBotRequired(await bots.list(ctx)));
+            }
+            return await bots.create(ctx, {
                 ...input,
                 id: await call.kv.getOrCreate(ctx, "botId", () => createId()),
-            }),
+            });
+        },
         toLLM: (bot) => [
             {
                 type: "text",
@@ -43,4 +48,18 @@ export function createBotTool(bots: BotsModule) {
             },
         ],
     });
+}
+
+function formatAdminBotRequired(bots: readonly BotRecord[]): string {
+    const admins = bots.filter((bot) => bot.isAdmin);
+    if (admins.length === 0) {
+        return "Only an admin bot can create other bots. There are no admin bots on this installation.";
+    }
+    return [
+        "Only an admin bot can create other bots. Admin bots on this installation:",
+        ...admins.map(
+            (bot) =>
+                `- ${bot.name}${bot.status === "archived" ? " (archived)" : ""} — id ${bot.id}`,
+        ),
+    ].join("\n");
 }

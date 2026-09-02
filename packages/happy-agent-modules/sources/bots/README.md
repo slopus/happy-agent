@@ -2,8 +2,14 @@
 
 Bots are persistent single-conversation assistants. This module owns each bot's immutable
 username, dedicated folder and workspace identity, one root-agent identity, catalog order,
-lifecycle, and avatar. The dedicated workspace uses the username as its immutable name; changing
+lifecycle, administrator status, and avatar. The dedicated workspace uses the username as its immutable name; changing
 the bot's human display name therefore does not version or rename the workspace.
+
+Every bot is non-admin unless its authenticated API creator explicitly sets `isAdmin`. The
+`create_bot` tool remains visible to every direct bot, but rejects calls from non-admin bots with
+an explanation that names the admin bots on the installation when any exist. The tool does not
+expose `isAdmin` in its input, so an admin bot can create only non-admin bots. Human-owned root
+agents remain unrestricted.
 
 A bot's one agent is born with its conversation title set to the bot's display name, and renaming
 the bot renames the conversation with it: a bot is one continuous chat, so its session is called
