@@ -182,6 +182,15 @@ jobs:
                   security create-keychain -p "$keychain_password" "$keychain"
                   security set-keychain-settings -lut 21600 "$keychain"
                   security unlock-keychain -p "$keychain_password" "$keychain"
+                  keychains=("$keychain")
+                  while IFS= read -r existing_keychain; do
+                      existing_keychain="${existing_keychain#*\"}"
+                      existing_keychain="${existing_keychain%\"*}"
+                      if [[ -n "$existing_keychain" && "$existing_keychain" != "$keychain" ]]; then
+                          keychains+=("$existing_keychain")
+                      fi
+                  done < <(security list-keychains -d user)
+                  security list-keychains -d user -s "${keychains[@]}"
                   security import "$certificate" \
                       -k "$keychain" \
                       -P "$CSC_KEY_PASSWORD" \

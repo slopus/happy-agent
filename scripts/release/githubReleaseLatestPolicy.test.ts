@@ -54,3 +54,23 @@ describe("GitHub Release latest policy", () => {
         }
     });
 });
+
+describe("Happy Agent macOS release signing", () => {
+    it("adds the temporary signing keychain to the user search list before codesigning", async () => {
+        const workflow = await readFile(
+            join(WORKFLOWS_DIRECTORY, HAPPY_AGENT_RELEASE_WORKFLOW),
+            "utf8",
+        );
+        const unlockKeychain = workflow.indexOf("security unlock-keychain");
+        const updateSearchList = workflow.indexOf(
+            'security list-keychains -d user -s "${keychains[@]}"',
+        );
+        const signTailcat = workflow.indexOf("codesign \\");
+
+        assert.notEqual(unlockKeychain, -1);
+        assert.notEqual(updateSearchList, -1);
+        assert.notEqual(signTailcat, -1);
+        assert.ok(unlockKeychain < updateSearchList);
+        assert.ok(updateSearchList < signTailcat);
+    });
+});
