@@ -13,8 +13,10 @@ import { EventsModule } from "../../sources/events/EventsModule.js";
 import {
     MAX_USAGE_GROUPS,
     MAX_USAGE_OUTPUT_CHARACTERS,
+    MAX_USAGE_TIER_LENGTH,
     MAX_USAGE_TREE_PATH_LENGTH,
     MAX_USAGE_TREE_SESSIONS,
+    usageTierSchema,
     type UsageAgentTree,
     type UsageInferenceRecord,
     type UsageSummary,
@@ -235,6 +237,12 @@ function warnedPhases(warnings: readonly unknown[][]): readonly string[] {
 }
 
 describe("UsageModule edge cases", () => {
+    it("accepts bounded provider-owned service-tier identifiers", () => {
+        expect(Value.Check(usageTierSchema, "economy")).toBe(true);
+        expect(Value.Check(usageTierSchema, "")).toBe(false);
+        expect(Value.Check(usageTierSchema, "x".repeat(MAX_USAGE_TIER_LENGTH + 1))).toBe(false);
+    });
+
     afterEach(() => {
         vi.useRealTimers();
     });

@@ -31,6 +31,7 @@ export const MAX_USAGE_OUTPUT_CHARACTERS = 20_000;
 export const MAX_USAGE_AGENT_ID_LENGTH = 256;
 export const MAX_USAGE_PROVIDER_LENGTH = 256;
 export const MAX_USAGE_MODEL_LENGTH = 512;
+export const MAX_USAGE_TIER_LENGTH = 256;
 export const MAX_USAGE_TREE_TITLE_LENGTH = 512;
 export const MAX_USAGE_TREE_PATH_LENGTH = 1_024;
 export const MAX_USAGE_ID_LENGTH = 128;
@@ -76,7 +77,10 @@ export const usageEffortSchema = Type.Union([
     Type.Literal("max"),
 ]);
 
-export const usageTierSchema = Type.Literal("priority");
+export const usageTierSchema = Type.String({
+    minLength: 1,
+    maxLength: MAX_USAGE_TIER_LENGTH,
+});
 
 export const usageStateSchema = Type.Union([
     Type.Literal("cancelled"),

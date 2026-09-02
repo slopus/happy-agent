@@ -15,9 +15,7 @@ advertises a capability the caller does not have and invites guaranteed failures
 tool keeps its target field for collection administration, while an agent tool can read only the
 agent identity captured when it was constructed.
 
-## Provider-default inference has no usage tier
+## Service tiers are opaque provider identifiers
 
-The public API uses `null` to select ordinary provider service, while Agent Base needs an explicit
-internal `default` value to replace a previously selected priority tier. Usage records omit that
-internal value: only actual priority inference is attributed to a tier, and provider-default
-inference remains in the ordinary untiered bucket.
+Usage preserves a concrete tier ID reported by the agent context without interpreting it. Ordinary
+provider service has no tier and is omitted; clearing a tier happens before the usage boundary.

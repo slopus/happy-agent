@@ -196,12 +196,6 @@ import {
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
 
-// Agent Base interprets an omitted tier as "keep the previous tier". The public API's null mode
-// instead means the provider's ordinary tier, so carry the provider-native explicit value through
-// the core. Codex accepts `default` as the semantic equivalent of omitting service_tier.
-const DEFAULT_PROVIDER_SERVICE_TIER = "default" as unknown as NonNullable<
-    AgentBaseMessageOptions["serviceTier"]
->;
 const API_PROTOCOL_VERSION = 23;
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
@@ -2921,11 +2915,11 @@ export class ApiModule implements AgentModule {
             if (effort === undefined) throw invalidRequest("The selected effort is unavailable.");
             const serviceTier =
                 body.mode.serviceTier === null
-                    ? DEFAULT_PROVIDER_SERVICE_TIER
+                    ? undefined
                     : selected.serviceTiers?.find(
                           (candidate) => candidate === body.mode.serviceTier,
                       );
-            if (serviceTier === undefined) {
+            if (body.mode.serviceTier !== null && serviceTier === undefined) {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
             const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
@@ -2935,7 +2929,10 @@ export class ApiModule implements AgentModule {
                 provider: body.mode.providerId,
                 model: body.mode.modelId,
                 effort,
-                serviceTier,
+                // The currently published Agent Base cannot yet represent an explicit tier clear.
+                // Omit ordinary service until nullable tier support is released and pinned; never
+                // invent a shared sentinel that could leak onto a provider wire request.
+                ...(serviceTier === undefined ? {} : { serviceTier }),
                 permissionMode: body.mode.permissionMode,
                 profile,
                 metadata: {

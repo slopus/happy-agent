@@ -637,7 +637,6 @@ export class UsageModule implements AgentModule {
                     throw new Error("Inference did not report provider token counts.");
                 }
                 assertUsageTokens(inference.tokens);
-                const tier = usageTier(scope.agent.tier);
                 const record: UsageInferenceRecord = {
                     id: inference.inferenceId,
                     agentId: scope.agent.id,
@@ -655,7 +654,7 @@ export class UsageModule implements AgentModule {
                     durationMs,
                     ...(scope.agent.model === undefined ? {} : { model: scope.agent.model }),
                     ...(scope.agent.effort === undefined ? {} : { effort: scope.agent.effort }),
-                    ...(tier === undefined ? {} : { tier }),
+                    ...(scope.agent.tier === undefined ? {} : { tier: scope.agent.tier }),
                     ...(inference.state === undefined ? {} : { state: inference.state }),
                     ...(inference.errorMessage === undefined
                         ? {}
@@ -689,7 +688,6 @@ export class UsageModule implements AgentModule {
                 ) {
                     throw new Error("Turn context tokens are invalid.");
                 }
-                const tier = usageTier(scope.agent.tier);
                 const record: UsageTurnRecord = {
                     id: turn.turnId,
                     agentId: scope.agent.id,
@@ -702,7 +700,7 @@ export class UsageModule implements AgentModule {
                     durationMs,
                     ...(scope.agent.model === undefined ? {} : { model: scope.agent.model }),
                     ...(scope.agent.effort === undefined ? {} : { effort: scope.agent.effort }),
-                    ...(tier === undefined ? {} : { tier }),
+                    ...(scope.agent.tier === undefined ? {} : { tier: scope.agent.tier }),
                     ...(turn.contextTokens === undefined
                         ? {}
                         : { contextTokens: turn.contextTokens }),
@@ -1046,10 +1044,6 @@ export class UsageModule implements AgentModule {
         this.#agents = agents;
         return this.#hooks;
     };
-}
-
-function usageTier(tier: string | undefined): "priority" | undefined {
-    return tier === "priority" ? tier : undefined;
 }
 
 function assertUsageEventListener(value: unknown): asserts value is UsageEventListener {
