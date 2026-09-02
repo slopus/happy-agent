@@ -1368,6 +1368,7 @@ describe("AgentBase black-box tool validation and ordering", () => {
             name: "known",
             parameters: Type.Object({ path: Type.String() }),
             returnType: Type.Object({ value: Type.String() }),
+            roles: ["admin_bot"],
             shouldReviewInAutoMode: () => false,
             execute: async () => ({ value: "ok" }),
             toLLM: (result) => [{ type: "text", text: result.value }],
@@ -1406,6 +1407,7 @@ describe("AgentBase black-box tool validation and ordering", () => {
         const tool = knownTool();
 
         expect(defineAgentTool(tool)).toBe(tool);
+        expect(tool.roles).toEqual(["admin_bot"]);
     });
 
     it("turns missing, incomplete, invalid-JSON, and schema-mismatched calls into error results", async () => {
