@@ -70,7 +70,7 @@
         "ws": "^8.21.1"
     },
     "devDependencies": {
-        "@slopus/happy-agent-base": "npm:@slopus/happy-agent-base@0.0.42",
+        "@slopus/happy-agent-base": "npm:@slopus/happy-agent-base@0.0.43",
         "@types/node": "^24.0.10",
         "@types/turndown": "^5.0.5",
         "@types/ws": "^8.18.1",
@@ -78,7 +78,7 @@
         "vitest": "^3.2.4"
     },
     "peerDependencies": {
-        "@slopus/happy-agent-base": "0.0.42"
+        "@slopus/happy-agent-base": "0.0.43"
     },
     "engines": {
         "node": ">=22.19.0"
