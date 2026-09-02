@@ -12,6 +12,11 @@ import { afterEach, describe, expect, it } from "vitest";
 type Project = Awaited<ReturnType<AgentGym["client"]["listProjects"]>>["projects"][number];
 type Workspace = Awaited<ReturnType<AgentGym["client"]["getWorkspace"]>>["workspace"];
 type ProfileEvent = Extract<GymAgentEvent, { type: "profile.updated" }>;
+type StandaloneProfileEvent = ProfileEvent & {
+    readonly payload: ProfileEvent["payload"] & {
+        readonly profile: NonNullable<ProfileEvent["payload"]["profile"]>;
+    };
+};
 type WorkspaceResponse = Awaited<ReturnType<AgentGym["client"]["renameWorkspace"]>>;
 
 interface ApiErrorLike {
@@ -91,7 +96,7 @@ describe("public sync races, bootstrap boundaries, and recovery", () => {
             const replayed = replay.events.some(
                 (event) =>
                     event.type === "profile.updated" &&
-                    event.payload.profile.version === updated.profile.version,
+                    event.payload.profile?.version === updated.profile.version,
             );
 
             expect(bootstrap.profile.version === updated.profile.version || replayed).toBe(true);
@@ -294,7 +299,9 @@ describe("public sync races, bootstrap boundaries, and recovery", () => {
                     candidate.payload.mutationId === mutationId,
                 "the profile convergence event",
             );
-            if (event.type !== "profile.updated") throw new Error("Expected profile.updated.");
+            if (event.type !== "profile.updated" || event.payload.profile === undefined) {
+                throw new Error("Expected a standalone profile.updated event.");
+            }
 
             expect(event.payload.profile).toEqual(updated.profile);
             expect(event.payload.profile.version).not.toBe(before.profile.version);
@@ -366,8 +373,10 @@ describe("public sync races, bootstrap boundaries, and recovery", () => {
             );
             const events = await gym.waitUntil(async () => {
                 const profileEvents = streamEvents(stream).filter(
-                    (event): event is ProfileEvent =>
-                        event.type === "profile.updated" && event.payload.mutationId === mutationId,
+                    (event): event is StandaloneProfileEvent =>
+                        event.type === "profile.updated" &&
+                        event.payload.profile !== undefined &&
+                        event.payload.mutationId === mutationId,
                 );
                 return profileEvents.length === 2 ? profileEvents : undefined;
             }, "both reused-mutation profile events");
@@ -638,16 +647,17 @@ describe("public sync races, bootstrap boundaries, and recovery", () => {
             }
             const profileEvents = await gym.waitUntil(async () => {
                 const events = (await gym.events()).filter(
-                    (event): event is ProfileEvent =>
+                    (event): event is StandaloneProfileEvent =>
                         event.type === "profile.updated" &&
+                        event.payload.profile !== undefined &&
                         updates.some(
-                            (profile) => profile.version === event.payload.profile.version,
+                            (profile) => profile.version === event.payload.profile?.version,
                         ),
                 );
                 return events.length === updates.length ? events : undefined;
             }, "all profile version events");
             const deliveries = [...profileEvents, ...[...profileEvents].reverse()];
-            let latest: ProfileEvent | undefined;
+            let latest: StandaloneProfileEvent | undefined;
             for (const candidate of deliveries) {
                 if (
                     latest === undefined ||

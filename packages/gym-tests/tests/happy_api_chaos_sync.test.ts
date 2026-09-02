@@ -377,7 +377,7 @@ function applyEvent(
             return profile;
         }
         case "profile.updated":
-            return clone(event.payload.profile);
+            return event.payload.profile === undefined ? profile : clone(event.payload.profile);
         default:
             return profile;
     }

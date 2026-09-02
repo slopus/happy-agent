@@ -209,6 +209,9 @@ describe("event synchronization and concurrency at the public Happy Agent API", 
             const typed = clientFrameEvent(event);
             expect(typed?.type).toBe("profile.updated");
             if (typed?.type !== "profile.updated") throw new Error("Expected profile.updated.");
+            if (typed.payload.profile === undefined) {
+                throw new Error("Expected a standalone profile.updated event.");
+            }
             expect(typed.payload.profile).toEqual(winner.profile);
             expect(typed.payload.profile.version).toBe(winner.profile.version);
 
