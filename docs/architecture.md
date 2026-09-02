@@ -53,6 +53,7 @@ Happy Terminal installation also locates and starts a compatible Happy Agent rel
                                v
                  happy-agent run  (sessions, agents, tools, SQLite)
                                |
+                               +-- optional Tailcat v0.4.0 tunnel
                                +-- provider inference
                                +-- sandboxed shell, files, Docker, MCP, terminals
 ```
@@ -82,6 +83,12 @@ In either mode it:
 - streams events as `text/event-stream`;
 - owns the SQLite database and the domain modules for sessions, projects, Git,
   users and profiles, the model catalog, file search, MCP, Happy sync, and scheduling.
+
+An explicit machine-only Tailcat feature can wrap either transport. A private loopback TCP relay
+adapts the Unix socket and keeps the same path for the team listener. The daemon generates one
+fixed-region Tailcat key, supervises the bundled v0.4.0 process for its whole lifetime, and closes
+the tunnel before its underlying API transport. Tailcat supplies connectivity and WireGuard
+encryption only; the API's bearer or WorkOS authentication remains the authority boundary.
 
 The daemon holds the agent loop, tool execution, and the sandbox. The terminal UI
 holds no agent logic; if it dies, the session keeps running.
@@ -398,7 +405,9 @@ may persist in SQLite pages and the WAL.
 
 Non-database daemon state under `~/.happy/agent` includes runtime settings, Happy credentials, and
 logs. Standalone mode also stores its socket and authentication token there; team mode keeps both
-absent. Happy Terminal keeps its client-specific runtime settings under `~/.happy/happy-terminal`. User
+absent. When enabled, Tailcat keeps its durable identity key and live endpoint files in the private
+`tailcat/` subdirectory. Happy Terminal keeps its client-specific runtime settings under
+`~/.happy/happy-terminal`. User
 configuration is separate, in `~/Happy/Config/happy.toml` (macOS) or
 `~/happy/config/happy.toml` (Linux), with repository settings in `happy.toml`.
 

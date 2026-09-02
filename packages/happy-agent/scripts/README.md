@@ -22,6 +22,19 @@ cross-platform Bun package into `node_modules`. The four-target outputs are
 `dist/bin/happy-agent-darwin-arm64`, `happy-agent-darwin-x64`,
 `happy-agent-linux-arm64`, and `happy-agent-linux-x64`.
 
+Each target embeds a checked-in Tailcat v0.4.0 executable after verifying its pinned SHA-256. The
+Linux assets come unchanged from Tailcat's official release archives. Tailcat publishes no macOS
+archives, so the two Darwin assets were built once from the exact v0.4.0 tag with the upstream
+release flags; their provenance is recorded in `../assets/tailcat/README.md`. A normal Happy Agent
+build neither downloads nor compiles Tailcat. The Tailcat executable and BSD-3-Clause license are
+materialized together only when Tailcat exposure is enabled.
+
+macOS release jobs use the same Apple credentials as Happy Desktop. They Developer ID-sign the
+selected Tailcat executable before embedding it, sign Happy Agent with the shared hardened-runtime
+entitlements, and require Apple to accept a notarization payload containing both exact signed
+executables. Standalone executables cannot carry stapled tickets, so Gatekeeper retrieves their
+notarization tickets online.
+
 The manual GitHub release workflow supplies `HAPPY_AGENT_RELEASE_VERSION`; local builds omit it
 and use the package manifest version. The override changes only the version embedded in the
 compiled executable, leaving the Node-compatible package manifest untouched.

@@ -169,6 +169,10 @@ describe("ConfigModule edge coverage", () => {
                 runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),
                 securityPath: join(root, "Happy", "Config", "SECURITY.md"),
                 socketPath: join(root, ".happy", "agent", "server.sock"),
+                tailcatAddressPath: join(root, ".happy", "agent", "tailcat", "address"),
+                tailcatHome: join(root, ".happy", "agent", "tailcat"),
+                tailcatKeyPath: join(root, ".happy", "agent", "tailcat", "default.private.json"),
+                tailcatPortPath: join(root, ".happy", "agent", "tailcat", "port"),
                 tokenPath: join(root, ".happy", "agent", "token"),
             });
             expect(Value.Check(happyAgentConfigurationPathsSchema, explicit.paths)).toBe(true);

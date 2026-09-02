@@ -133,6 +133,9 @@ importers:
 
   packages/happy-agent:
     dependencies:
+      '@sinclair/typebox':
+        specifier: ^0.34.49
+        version: 0.34.49
       '@slopus/happy-agent-base':
         specifier: 0.0.43
         version: 0.0.43(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)

@@ -9,6 +9,7 @@ the Agent System itself. This package owns the daemon process and its whole life
 - start the modules-owned runtime;
 - in standalone mode, bind its API to the configured Unix domain socket;
 - in team mode, bind its API to the configured TCP host and port;
+- when enabled, keep an account-free Tailcat tunnel open around either API transport;
 - forward HTTP, WebSocket upgrades, and `CONNECT` tunnels to the API module;
 - secure and remove the local socket when one is used;
 - stop the active transport and runtime cleanly;
@@ -49,12 +50,14 @@ pnpm build:bun
 `pnpm build:bun:all` produces macOS and Linux binaries for arm64 and x64 under
 `packages/happy-agent/dist/bin/`. The normal TypeScript package stays Node-compatible; native
 libraries, WebAssembly, workers, and provider executables are adapted only at the binary build
-boundary.
+boundary. Each release binary also embeds the matching Tailcat v0.4.0 executable for its macOS or
+Linux arm64/x64 target.
 
 Releases are created from the manual **Release Happy Agent** GitHub Actions workflow on `main`.
 The workflow takes a semantic version without the leading `v` and Markdown release notes, runs the
-Happy Agent checks and tests, builds and smokes all four binaries, and only then publishes the
-GitHub Release and its `v<version>` tag. Happy Terminal's npm releases use the separate
+Happy Agent checks and tests, builds and smokes all four binaries, Developer ID-signs and notarizes
+the macOS Happy Agent and embedded Tailcat executables, and only then publishes the GitHub Release
+and its `v<version>` tag. Happy Terminal's npm releases use the separate
 `happy-terminal-v<version>` tag namespace.
 
 ## Library
@@ -94,6 +97,37 @@ production Happy Cloud WorkOS access tokens for members of the configured organi
 `workos_client_id` in the same section to authenticate against another WorkOS project. Team mode
 also requires `workos_organization_id` and `owner_workos_user_id`; the matching owner receives the
 owner flag during profile onboarding.
+
+## Tailcat exposure
+
+Enable the machine-only transport in the global `happy.toml`:
+
+```toml
+[feature.tailcat]
+enabled = true
+```
+
+The daemon generates one fixed-region Tailcat key on first start and keeps it at
+`~/.happy/agent/tailcat/default.private.json`. The resulting connection address is stable across
+restarts. While the tunnel is open, `address` and `port` files in that directory identify the live
+endpoint; both disappear on clean shutdown while the key remains. Tailcat is supervised and
+reopened after an unexpected exit.
+
+Tailcat can wrap either the standalone Unix socket or the team HTTP listener. It requires no
+Tailscale or Tailcat account and applies no Tailcat client allowlist, but it does not bypass Happy
+Agent authentication: standalone requests still need the local bearer token, and team requests
+still need a valid WorkOS token. A client with Tailcat v0.4.0 can reach the endpoint with:
+
+```sh
+address="$(cat ~/.happy/agent/tailcat/address)"
+port="$(cat ~/.happy/agent/tailcat/port)"
+token="$(cat ~/.happy/agent/token)"
+tailcat socks "$address" curl \
+  -H "Authorization: Bearer $token" \
+  "http://server.tailcat:$port/v0/health"
+```
+
+Set a team listener's `host` to `127.0.0.1` when Tailcat should be its only network path.
 
 Use `@slopus/happy-agent-client` to call the API. The complete HTTP contract is specified in
 [`API.md`](API.md).

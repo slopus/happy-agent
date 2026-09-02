@@ -1,5 +1,13 @@
 # Config module learnings
 
+## Tailcat exposure is an explicit machine setting
+
+`[feature.tailcat] enabled = true` asks the daemon executable to expose whichever API transport is
+active through its bundled Tailcat. A repository cannot turn it on. Configuration owns the
+private Tailcat home, fixed-region identity key, live address, and live port paths under the agent
+home; the key survives restarts while the address and port files exist only while the tunnel is
+open. Tailcat removes the need for a Tailscale account, not Happy API authentication.
+
 ## Team mode is machine-scoped and owns a separate network identity boundary
 
 `[feature.team] enabled = true` is a global or runtime deployment choice, never a project choice.

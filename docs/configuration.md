@@ -60,6 +60,26 @@ enabled = true
 
 A repository `happy.toml` cannot enable Ethan mode.
 
+## Tailcat exposure
+
+Tailcat v0.4.0 gives either daemon transport an account-free, WireGuard-encrypted path across the
+Internet. It remains explicit and machine-scoped:
+
+```toml
+[feature.tailcat]
+enabled = true
+```
+
+The bundled Tailcat generates a fixed-region identity key on first start. The key remains at
+`~/.happy/agent/tailcat/default.private.json`, so the Tailcat address is stable across restarts.
+While open, the same directory contains `address` and `port`; shutdown removes those two live-state
+files and keeps the key. An unexpected Tailcat exit is supervised and restarted.
+
+Tailcat itself has no account login or client allowlist here. Happy API authentication is unchanged:
+the standalone socket still requires its local bearer token and team mode still verifies WorkOS.
+Anyone who knows the Tailcat address may reach that authentication boundary, so do not publish the
+address unnecessarily. A project `happy.toml` cannot enable Tailcat.
+
 ## Team deployment mode
 
 Team mode turns one Happy Agent daemon into an organization-authenticated service. It replaces the

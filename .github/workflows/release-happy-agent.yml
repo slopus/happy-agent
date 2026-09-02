@@ -114,7 +114,14 @@ jobs:
         name: Build ${{ matrix.target }}
         needs: verify
         runs-on: ${{ matrix.runner }}
-        timeout-minutes: 45
+        timeout-minutes: 60
+        env:
+            APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+            APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+            APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+            APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+            CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+            CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
         strategy:
             fail-fast: false
             matrix:
@@ -151,13 +158,97 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
-            - name: Build Happy Agent
+            - name: Build Happy Agent JavaScript
               run: |
                   pnpm --filter @slopus/happy-agent-modules build
                   pnpm --filter @slopus/happy-agent build
+
+            - name: Prepare Happy Desktop signing credentials
+              if: runner.os == 'macOS'
+              shell: bash
+              run: |
+                  test -n "$CSC_LINK"
+                  test -n "$CSC_KEY_PASSWORD"
+                  test -n "$APPLE_NOTARY_KEY_P8_BASE64"
+                  test -n "$APPLE_API_KEY_ID"
+                  test -n "$APPLE_API_ISSUER"
+                  test -n "$APPLE_TEAM_ID"
+                  test "$APPLE_TEAM_ID" = "466DQWDR8C"
+
+                  certificate="$RUNNER_TEMP/happy-agent-signing.p12"
+                  keychain="$RUNNER_TEMP/happy-agent-signing.keychain-db"
+                  keychain_password="$(openssl rand -hex 32)"
+                  printf '%s' "$CSC_LINK" | base64 -D > "$certificate"
+                  security create-keychain -p "$keychain_password" "$keychain"
+                  security set-keychain-settings -lut 21600 "$keychain"
+                  security unlock-keychain -p "$keychain_password" "$keychain"
+                  security import "$certificate" \
+                      -k "$keychain" \
+                      -P "$CSC_KEY_PASSWORD" \
+                      -T /usr/bin/codesign
+                  security set-key-partition-list \
+                      -S apple-tool:,apple: \
+                      -s \
+                      -k "$keychain_password" \
+                      "$keychain"
+                  identity="$(security find-identity -v -p codesigning "$keychain" \
+                      | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+                      | head -1)"
+                  test -n "$identity"
+
+                  notary_key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+                  printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | base64 -D > "$notary_key"
+                  chmod 600 "$notary_key"
+
+                  printf 'HAPPY_AGENT_CODESIGN_IDENTITY=%s\n' "$identity" >> "$GITHUB_ENV"
+                  printf 'HAPPY_AGENT_SIGNING_KEYCHAIN=%s\n' "$keychain" >> "$GITHUB_ENV"
+                  printf 'APPLE_API_KEY=%s\n' "$notary_key" >> "$GITHUB_ENV"
+
+            - name: Sign Tailcat before embedding
+              if: runner.os == 'macOS'
+              shell: bash
+              run: |
+                  source="packages/happy-agent/assets/tailcat/v0.4.0/$TARGET/tailcat"
+                  signed="$GITHUB_WORKSPACE/packages/happy-agent/dist/vendor/tailcat-v0.4.0-$TARGET-signed"
+                  mkdir -p "$(dirname "$signed")"
+                  cp "$source" "$signed"
+                  codesign \
+                      --force \
+                      --identifier com.slopus.happy.agent.tailcat \
+                      --keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" \
+                      --options runtime \
+                      --sign "$HAPPY_AGENT_CODESIGN_IDENTITY" \
+                      --timestamp \
+                      "$signed"
+                  codesign --verify --strict --verbose=2 "$signed"
+                  test "$("$signed" version)" = "v0.4.0"
+                  printf 'HAPPY_AGENT_SIGNED_TAILCAT_PATH=%s\n' "$signed" >> "$GITHUB_ENV"
+              env:
+                  TARGET: ${{ matrix.target }}
+
+            - name: Compile Happy Agent standalone binary
+              run: |
                   pnpm --filter @slopus/happy-agent build:bun --target "$TARGET"
               env:
                   HAPPY_AGENT_RELEASE_VERSION: ${{ inputs.version }}
+                  TARGET: ${{ matrix.target }}
+
+            - name: Sign Happy Agent
+              if: runner.os == 'macOS'
+              shell: bash
+              run: |
+                  binary="packages/happy-agent/dist/bin/happy-agent-$TARGET"
+                  codesign \
+                      --force \
+                      --identifier com.slopus.happy.agent \
+                      --keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" \
+                      --options runtime \
+                      --sign "$HAPPY_AGENT_CODESIGN_IDENTITY" \
+                      --timestamp \
+                      --entitlements packages/happy-agent/assets/macos/entitlements.plist \
+                      "$binary"
+                  codesign --verify --strict --verbose=2 "$binary"
+              env:
                   TARGET: ${{ matrix.target }}
 
             - name: Smoke test the release binary
@@ -191,6 +282,47 @@ jobs:
               env:
                   TARGET: ${{ matrix.target }}
 
+            - name: Notarize Happy Agent and embedded Tailcat
+              if: runner.os == 'macOS'
+              shell: bash
+              run: |
+                  binary="$GITHUB_WORKSPACE/packages/happy-agent/dist/bin/happy-agent-$TARGET"
+                  payload="$RUNNER_TEMP/happy-agent-notary-$TARGET"
+                  archive="$RUNNER_TEMP/happy-agent-notary-$TARGET.zip"
+                  mkdir -p "$payload"
+                  cp "$binary" "$payload/happy-agent"
+                  cp "$HAPPY_AGENT_SIGNED_TAILCAT_PATH" "$payload/tailcat"
+                  ditto -c -k --keepParent "$payload" "$archive"
+
+                  set +e
+                  submission="$(xcrun notarytool submit "$archive" \
+                      --issuer "$APPLE_API_ISSUER" \
+                      --key "$APPLE_API_KEY" \
+                      --key-id "$APPLE_API_KEY_ID" \
+                      --output-format json \
+                      --wait)"
+                  submit_status=$?
+                  set -e
+                  printf '%s\n' "$submission"
+                  submission_id="$(jq -r '.id // empty' <<< "$submission")"
+                  notary_status="$(jq -r '.status // empty' <<< "$submission")"
+                  if [[ $submit_status -ne 0 || "$notary_status" != "Accepted" ]]; then
+                      if [[ -n "$submission_id" ]]; then
+                          xcrun notarytool log "$submission_id" \
+                              --issuer "$APPLE_API_ISSUER" \
+                              --key "$APPLE_API_KEY" \
+                              --key-id "$APPLE_API_KEY_ID"
+                      fi
+                      exit 1
+                  fi
+
+                  codesign --verify --strict --verbose=2 "$binary"
+                  codesign --verify --strict --verbose=2 "$HAPPY_AGENT_SIGNED_TAILCAT_PATH"
+                  spctl --assess --type execute --verbose=4 "$binary"
+                  spctl --assess --type execute --verbose=4 "$HAPPY_AGENT_SIGNED_TAILCAT_PATH"
+              env:
+                  TARGET: ${{ matrix.target }}
+
             - name: Package release asset
               shell: bash
               run: |
@@ -213,6 +345,17 @@ jobs:
                   path: release-assets/*
                   if-no-files-found: error
                   retention-days: 7
+
+            - name: Remove Apple signing credentials
+              if: always() && runner.os == 'macOS'
+              shell: bash
+              run: |
+                  if [[ -n "${HAPPY_AGENT_SIGNING_KEYCHAIN:-}" ]]; then
+                      security delete-keychain "$HAPPY_AGENT_SIGNING_KEYCHAIN" || true
+                  fi
+                  rm -f \
+                      "$RUNNER_TEMP/happy-agent-signing.p12" \
+                      "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
 
     publish:
         name: Publish GitHub Release

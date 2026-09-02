@@ -13,6 +13,7 @@ import {
     type BoundAgentHttpServer,
     type BoundAgentSocket,
 } from "./socket/AgentSocket.js";
+import { startTailcatExposure, type TailcatExposure } from "./tailcat/startTailcatExposure.js";
 
 const SLOW_SHUTDOWN_STEP_MS = 1_000;
 
@@ -32,6 +33,8 @@ export interface HappyAgentDaemon {
     /** Present only for a team deployment's TCP HTTP transport. */
     readonly httpUrl?: string;
     readonly socketPath: string;
+    /** Present while the configured Tailcat transport is open. */
+    readonly tailcat?: { readonly address: string; readonly port: number };
     readonly tokenPath: string;
     close(reason?: HappyAgentShutdownReason): Promise<void>;
 }
@@ -42,13 +45,14 @@ export async function startHappyAgentDaemon(
 ): Promise<HappyAgentDaemon> {
     const { persistPid = false, ...runtimeOptions } = options;
     let bound: BoundAgentSocket | BoundAgentHttpServer | undefined;
+    let tailcat: TailcatExposure | undefined;
     let preparedRuntime: Parameters<typeof bindAgentSocket>[0] | undefined;
     let unsubscribeShutdown: (() => void) | undefined;
     let closeDaemon: ((reason?: HappyAgentShutdownReason) => Promise<void>) | undefined;
     let pidPath: string | undefined;
     let pidWritten = false;
     let shutdownRequested = false;
-    let runtime: HappyAgentRuntime;
+    let runtime: HappyAgentRuntime | undefined;
     let resolveClosed!: () => void;
     let rejectClosed!: (error: unknown) => void;
     const closed = new Promise<void>((resolve, reject) => {
@@ -94,24 +98,44 @@ export async function startHappyAgentDaemon(
             const { host, port } = runtime.configuration.values.feature.team;
             bound = await bindAgentHttpServer(preparedRuntime, host, port);
         }
+        if (runtime.configuration.values.feature.tailcat.enabled) {
+            if (bound === undefined) {
+                throw new Error("The Happy Agent API transport was not ready for Tailcat.");
+            }
+            const paths = runtime.configuration.paths;
+            tailcat = await startTailcatExposure(
+                runtime.ctx.named("tailcat"),
+                "url" in bound
+                    ? { host: bound.host, port: bound.port }
+                    : { socketPath: bound.socketPath },
+                {
+                    addressPath: paths.tailcatAddressPath,
+                    home: paths.tailcatHome,
+                    keyPath: paths.tailcatKeyPath,
+                    portPath: paths.tailcatPortPath,
+                },
+            );
+        }
     } catch (error) {
         unsubscribeShutdown?.();
+        await tailcat?.close().catch(() => undefined);
         await bound?.close().catch(() => undefined);
+        await runtime?.close().catch(() => undefined);
         if (pidWritten && pidPath !== undefined) {
             await removeDaemonPid(pidPath, process.pid).catch(() => undefined);
         }
         throw error;
     }
 
-    if (bound === undefined) {
-        await runtime.close().catch(() => undefined);
+    if (bound === undefined || runtime === undefined) {
+        await runtime?.close().catch(() => undefined);
         throw new Error("The Happy agent runtime started without binding its API transport.");
     }
 
     let closing: Promise<void> | undefined;
     closeDaemon = (reason = "requested") => {
         if (closing === undefined) {
-            closing = closeHappyAgentDaemon(runtime, bound, unsubscribeShutdown, reason);
+            closing = closeHappyAgentDaemon(runtime, bound, tailcat, unsubscribeShutdown, reason);
             void closing.then(resolveClosed, rejectClosed);
         }
         return closing;
@@ -125,6 +149,9 @@ export async function startHappyAgentDaemon(
             ? { httpUrl: bound.url }
             : {}),
         socketPath: runtime.configuration.paths.socketPath,
+        ...(tailcat === undefined
+            ? {}
+            : { tailcat: { address: tailcat.address, port: tailcat.port } }),
         tokenPath: runtime.configuration.paths.tokenPath,
     };
 }
@@ -132,6 +159,7 @@ export async function startHappyAgentDaemon(
 async function closeHappyAgentDaemon(
     runtime: HappyAgentRuntime,
     bound: BoundAgentSocket | BoundAgentHttpServer | undefined,
+    tailcat: TailcatExposure | undefined,
     unsubscribeShutdown: (() => void) | undefined,
     reason: HappyAgentShutdownReason,
 ): Promise<void> {
@@ -151,6 +179,9 @@ async function closeHappyAgentDaemon(
         },
         failures,
     );
+    if (tailcat !== undefined) {
+        await runShutdownStep(ctx, "tailcat", async () => await tailcat.close(), failures);
+    }
     if (bound !== undefined) {
         await runShutdownStep(ctx, "transport", async () => await bound.close(), failures);
     }

@@ -37,6 +37,24 @@ happy-agent run
 Team mode defaults to `0.0.0.0:3000`. The listener is plain HTTP; terminate TLS at a trusted
 reverse proxy or ingress before exposing it outside a trusted network.
 
+Alternatively, bind only to loopback and opt into the bundled Tailcat v0.4.0 transport:
+
+```toml
+[feature.team]
+enabled = true
+host = "127.0.0.1"
+port = 3000
+workos_organization_id = "org_01EXAMPLE"
+owner_workos_user_id = "user_01EXAMPLE"
+
+[feature.tailcat]
+enabled = true
+```
+
+Tailcat provides end-to-end WireGuard encryption, NAT traversal, and DERP fallback without a
+Tailscale account. It does not replace WorkOS authentication. The stable connection address and
+current forwarded port are written under `~/.happy/agent/tailcat/` while the daemon is open.
+
 ## What changes
 
 Standalone mode serves its API over an owner-only Unix socket and checks a generated local bearer

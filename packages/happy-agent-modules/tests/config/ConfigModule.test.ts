@@ -42,6 +42,7 @@ describe("ConfigModule", () => {
         expect(configuration.values.features.crossWorkspace).toBe(true);
         expect(configuration.values.feature.codemode.enabled).toBe(false);
         expect(configuration.values.feature.codemode.engine).toBe("monty");
+        expect(configuration.values.feature.tailcat).toEqual({ enabled: false });
         expect(configuration.values.feature.team).toEqual({
             enabled: false,
             host: "0.0.0.0",
@@ -127,6 +128,23 @@ describe("ConfigModule", () => {
         expect(configuration.sources.global.unknownSettings).toEqual(["feature.team.unknown"]);
     });
 
+    it("loads Tailcat exposure only from machine configuration", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-tailcat-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            ["[feature.tailcat]", "enabled = true", "unknown = true"].join("\n"),
+        );
+
+        const configuration = await loadHappyAgentConfiguration(happyHome);
+
+        expect(configuration.values.feature.tailcat).toEqual({ enabled: true });
+        expect(configuration.provenance["feature.tailcat.enabled"]).toBe("global");
+        expect(configuration.sources.global.unknownSettings).toEqual(["feature.tailcat.unknown"]);
+    });
+
     it("requires organization and owner identities when team mode is enabled", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-team-identities-"));
         temporaryDirectories.push(root);
@@ -156,6 +174,21 @@ describe("ConfigModule", () => {
         }
     });
 
+    it("does not let a project configuration expose the daemon through Tailcat", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-project-tailcat-"));
+        temporaryDirectories.push(root);
+        const previous = process.cwd();
+        await writeFile(join(root, "happy.toml"), "[feature.tailcat]\nenabled = true\n");
+        process.chdir(root);
+        try {
+            const configuration = await loadHappyAgentConfiguration(join(root, ".happy"));
+            expect(configuration.values.feature.tailcat.enabled).toBe(false);
+            expect(configuration.provenance["feature.tailcat.enabled"]).toBeUndefined();
+        } finally {
+            process.chdir(previous);
+        }
+    });
+
     it("writes collaborator controls into the starter Happy settings", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-template-"));
         temporaryDirectories.push(root);
@@ -171,6 +204,7 @@ describe("ConfigModule", () => {
         expect(source).toContain("# [feature.codemode]");
         expect(source).toContain("# enabled = false");
         expect(source).toContain('# engine = "monty"');
+        expect(source).toContain("# [feature.tailcat]");
         expect(source).toContain("# [feature.team]");
         expect(source).toContain('# host = "0.0.0.0"');
         expect(source).toContain("# port = 3000");

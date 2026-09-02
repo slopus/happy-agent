@@ -4,6 +4,7 @@ import { createRequire, type Require } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBinaryVersion } from "./resolveBinaryVersion.js";
+import { resolveTailcatBinaryAsset } from "./resolveTailcatBinaryAsset.js";
 
 const MINIMUM_BUN_VERSION = [1, 4, 0] as const;
 const VIRTUAL_ASSETS_MODULE = "happy-agent:binary-assets";
@@ -45,6 +46,7 @@ interface BinaryAssets {
     montyNativeRelativePath: string;
     montyWorkerRelativePath: string;
     supervisorRelativePaths: Record<BinaryTarget["key"], string>;
+    tailcatRelativePath: string;
 }
 
 interface SourceAdapter {
@@ -100,7 +102,8 @@ async function main(): Promise<void> {
 }
 
 async function buildTarget(target: BinaryTarget): Promise<void> {
-    const assets = resolveBinaryAssets(target);
+    const tailcatSource = resolveTailcatBinaryAsset(happyAgentRoot, target);
+    const assets = resolveBinaryAssets(target, tailcatSource);
     const adapters = resolveSourceAdapters(target);
     const appliedAdapters = new Set<string>();
     const outfile = join(happyAgentRoot, "dist", "bin", `happy-agent-${target.key}`);
@@ -209,7 +212,7 @@ function readPackageVersion(): string {
     return manifest.version;
 }
 
-function resolveBinaryAssets(target: BinaryTarget): BinaryAssets {
+function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): BinaryAssets {
     const modulesRoot = directPackageRoot("@slopus/happy-agent-modules");
     const modulesRequire = createRequire(join(modulesRoot, "package.json"));
     const libsqlRoot = packageDependencyRoot(
@@ -285,6 +288,12 @@ export const { getQuickJS } = QJS;
         asset("fffAsset", fffSource, basename(fffSource)),
         asset("claudeAsset", claudeSource, "claude", true),
         asset("ghosttyWasmAsset", ghosttySource, "ghostty-vt.wasm"),
+        asset("tailcatAsset", tailcatSource, "tailcat", true),
+        asset(
+            "tailcatLicenseAsset",
+            join(happyAgentRoot, "assets", "tailcat", "LICENSE"),
+            "LICENSE",
+        ),
         generatedAsset(
             "justBashJavascriptWorkerAsset",
             javascriptWorker,
@@ -360,6 +369,7 @@ export const { getQuickJS } = QJS;
         montyNativeRelativePath: basename(montySource),
         montyWorkerRelativePath: "monty",
         supervisorRelativePaths,
+        tailcatRelativePath: "tailcat",
     };
 }
 
@@ -411,6 +421,12 @@ function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter>
             adapt: adaptBunComputePtyTransport,
         },
     );
+    addAdapter(adapters, join(happyAgentRoot, "dist", "tailcat", "resolveTailcatExecutable.js"), {
+        name: "Tailcat executable resolver",
+        required: true,
+        adapt: () =>
+            `export { getTailcatExecutable as resolveTailcatExecutable } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
+    });
 
     addAdapter(adapters, join(libsqlRoot, "index.js"), {
         name: "libSQL native loader",
@@ -699,6 +715,9 @@ export function getSupervisorBinary(key) {
 }
 export function getClaudeExecutable() {
     return join(materializeEmbeddedFiles("claude", ${files(["claudeAsset"])}), ${JSON.stringify(binaryAssets.claudeRelativePath)});
+}
+export function getTailcatExecutable() {
+    return join(materializeEmbeddedFiles("tailcat", ${files(["tailcatAsset", "tailcatLicenseAsset"])}), ${JSON.stringify(binaryAssets.tailcatRelativePath)});
 }
 ${
     binaryAssets.menuBarRelativePath === undefined

@@ -360,6 +360,14 @@ const partialValuesSchema = Type.Object(
                             { additionalProperties: false },
                         ),
                     ),
+                    tailcat: Type.Optional(
+                        Type.Object(
+                            {
+                                enabled: Type.Optional(Type.Boolean()),
+                            },
+                            { additionalProperties: false },
+                        ),
+                    ),
                     team: Type.Optional(
                         Type.Object(
                             {
@@ -708,6 +716,7 @@ const resolvedValuesSchema = Type.Object(
                     { enabled: Type.Boolean(), engine: codeModeEngineSchema },
                     { additionalProperties: false },
                 ),
+                tailcat: Type.Object({ enabled: Type.Boolean() }, { additionalProperties: false }),
                 team: Type.Union([
                     Type.Object(
                         {
@@ -997,6 +1006,10 @@ const pathSchemaSet = Type.Object(
         runtimeConfigPath: pathSchema,
         securityPath: pathSchema,
         socketPath: pathSchema,
+        tailcatAddressPath: pathSchema,
+        tailcatHome: pathSchema,
+        tailcatKeyPath: pathSchema,
+        tailcatPortPath: pathSchema,
         tokenPath: pathSchema,
     },
     { additionalProperties: false },
@@ -1084,6 +1097,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
     },
     feature: {
         codemode: { enabled: false, engine: "monty" },
+        tailcat: { enabled: false },
         team: {
             enabled: false,
             host: "0.0.0.0",
@@ -2312,6 +2326,10 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         runtimeConfigPath: join(agentHome, "runtime.toml"),
         securityPath: join(configHome, "SECURITY.md"),
         socketPath: join(agentHome, "server.sock"),
+        tailcatAddressPath: join(agentHome, "tailcat", "address"),
+        tailcatHome: join(agentHome, "tailcat"),
+        tailcatKeyPath: join(agentHome, "tailcat", "default.private.json"),
+        tailcatPortPath: join(agentHome, "tailcat", "port"),
         tokenPath: join(agentHome, "token"),
     };
     if (!Value.Check(happyAgentConfigurationPathsSchema, paths)) {
@@ -2341,6 +2359,9 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
             Object.assign(merged.features, normalizeFeatures(partial.features));
         if (partial.feature?.codemode !== undefined) {
             Object.assign(merged.feature.codemode, partial.feature.codemode);
+        }
+        if (partial.feature?.tailcat !== undefined) {
+            Object.assign(merged.feature.tailcat, partial.feature.tailcat);
         }
         if (partial.feature?.team !== undefined) {
             Object.assign(merged.feature.team, normalizeTeam(partial.feature.team));
@@ -2439,6 +2460,7 @@ function normalizeFeatures(value: NonNullable<PartialValues["features"]>): Recor
 function normalizeFeature(value: NonNullable<PartialValues["feature"]>): Record<string, unknown> {
     return {
         ...(value.codemode === undefined ? {} : { codemode: { ...value.codemode } }),
+        ...(value.tailcat === undefined ? {} : { tailcat: { ...value.tailcat } }),
         ...(value.team === undefined ? {} : { team: normalizeTeam(value.team) }),
     };
 }
@@ -2890,7 +2912,7 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         ...rest
     } = values;
     const { permission_mode: _permissionMode, ...projectDefaults } = defaults ?? {};
-    const { team: _team, ...projectFeature } = feature ?? {};
+    const { tailcat: _tailcat, team: _team, ...projectFeature } = feature ?? {};
     const {
         daemon_heap_snapshots: _daemonHeapSnapshots,
         durable_global_event_queue: _durableGlobalEventQueue,
@@ -2984,6 +3006,12 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                     }
                     if (feature.codemode.engine !== undefined) {
                         result["feature.codemode.engine"] = name;
+                    }
+                }
+                if (feature?.tailcat !== undefined) {
+                    result["feature.tailcat"] = name;
+                    if (feature.tailcat.enabled !== undefined) {
+                        result["feature.tailcat.enabled"] = name;
                     }
                 }
                 if (feature?.team !== undefined) {
@@ -3093,6 +3121,20 @@ function readFeature(
     assertTableSize(value, "feature");
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
+        if (key === "tailcat") {
+            if (!isTable(item)) throw new Error("feature.tailcat must be a TOML table.");
+            assertTableSize(item, "feature.tailcat");
+            const tailcat: Record<string, unknown> = {};
+            for (const [tailcatKey, tailcatValue] of Object.entries(item)) {
+                if (tailcatKey !== "enabled") {
+                    unknown(`feature.tailcat.${tailcatKey}`);
+                    continue;
+                }
+                tailcat[tailcatKey] = tailcatValue;
+            }
+            result.tailcat = tailcat;
+            continue;
+        }
         if (key === "team") {
             if (!isTable(item)) throw new Error("feature.team must be a TOML table.");
             assertTableSize(item, "feature.team");
