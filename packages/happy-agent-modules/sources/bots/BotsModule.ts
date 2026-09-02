@@ -26,6 +26,8 @@ import {
     type BotRecord,
     type CreateBotInput,
 } from "./Bot.js";
+import { insertSystemBotSeed, readSystemBotSeed } from "./BotSystemSeedStore.js";
+import { CHIEF_OF_STAFF_SYSTEM_KEY, type BotSystemKey } from "./BotSystemKey.js";
 import { normalizeBotAvatar } from "./impl/normalizeBotAvatar.js";
 import {
     botEventSchema,
@@ -47,6 +49,7 @@ import {
     writeBotAvatar,
 } from "./BotStore.js";
 import { formatBotIdentityPrompt } from "./impl/formatBotIdentityPrompt.js";
+import { formatChiefOfStaffInstructions } from "./impl/formatChiefOfStaffInstructions.js";
 import { createBotTool } from "./tools/create_bot.js";
 import { listBotsTool } from "./tools/list_bots.js";
 import { sendBotMessageTool } from "./tools/send_bot_message.js";
@@ -68,9 +71,15 @@ export class BotsModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
+        afterStart: async (ctx: Context): Promise<void> => {
+            await this.#ensureChiefOfStaff(ctx);
+        },
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const bot = await readBotByAgent(ctx, scope.agent.id);
-            return bot === undefined ? "" : formatBotIdentityPrompt(bot);
+            if (bot === undefined) return "";
+            return bot.systemKey === CHIEF_OF_STAFF_SYSTEM_KEY
+                ? formatChiefOfStaffInstructions(bot)
+                : formatBotIdentityPrompt(bot);
         },
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             const roster = [
@@ -123,6 +132,14 @@ export class BotsModule implements AgentModule {
      * a name the database refuses aborts the transaction before anything reaches the disk.
      */
     async create(ctx: Context, input: CreateBotInput): Promise<BotRecord> {
+        return await this.#create(ctx, input);
+    }
+
+    async #create(
+        ctx: Context,
+        input: CreateBotInput,
+        systemKey?: BotSystemKey,
+    ): Promise<BotRecord> {
         if (!Value.Check(createBotInputSchema, input)) {
             throw new Error("Bot creation input is invalid.");
         }
@@ -167,6 +184,7 @@ export class BotsModule implements AgentModule {
             const bot: BotRecord = {
                 id: botId,
                 isAdmin: input.isAdmin ?? false,
+                ...(systemKey === undefined ? {} : { systemKey }),
                 name: input.name,
                 username,
                 workspaceId,
@@ -199,6 +217,22 @@ export class BotsModule implements AgentModule {
                 bot,
             });
             return structuredClone(bot);
+        });
+    }
+
+    /** Seed the installation's built-in coordinator once; archival deliberately keeps it seeded. */
+    async #ensureChiefOfStaff(ctx: Context): Promise<void> {
+        await ctx.inTx(async (txCtx) => {
+            if ((await readSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY)) !== undefined) return;
+            const created = await this.#create(
+                txCtx,
+                {
+                    isAdmin: true,
+                    name: "Chief of Staff",
+                },
+                CHIEF_OF_STAFF_SYSTEM_KEY,
+            );
+            await insertSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, created.id);
         });
     }
 

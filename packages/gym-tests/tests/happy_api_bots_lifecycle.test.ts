@@ -11,6 +11,54 @@ afterEach(async () => {
 });
 
 describe("persistent bots through the public API", () => {
+    it("seeds one updatable Chief of Staff and honors its archival across restarts", async () => {
+        const gym = await createAgentGym({
+            inference: [{ content: [{ text: "Chief ready.", type: "text" }] }],
+            timeoutMs: 20_000,
+        });
+        running.add(gym);
+
+        const chiefs = (await gym.client.listBots()).bots.filter(
+            (bot) => bot.username === "chief_of_staff",
+        );
+        expect(chiefs).toHaveLength(1);
+        const chief = chiefs[0];
+        expect(chief).toMatchObject({
+            isAdmin: true,
+            name: "Chief of Staff",
+            status: "active",
+        });
+        expect(chief).not.toHaveProperty("systemKey");
+        if (chief === undefined) throw new Error("The Chief of Staff bot was not seeded.");
+
+        await gym.send("Confirm your role.", { sessionId: chief.agent.id });
+        const chiefRequest = gym.inference.requests.find(
+            (request) => request.sessionId === chief.agent.id,
+        );
+        expect(chiefRequest?.instructions).toContain(
+            "# Chief of Staff\n\nYou are the user's persistent chief of staff.",
+        );
+
+        const archived = (
+            await gym.client.archiveBot(chief.id, {
+                ifMatch: chief.version,
+                mutationId: "archive-chief-of-staff",
+            })
+        ).bot;
+        await gym.restart();
+
+        const restartedChiefs = (await gym.client.listBots()).bots.filter(
+            (bot) => bot.username === "chief_of_staff",
+        );
+        expect(restartedChiefs).toHaveLength(1);
+        expect(restartedChiefs[0]).toMatchObject({
+            id: archived.id,
+            isAdmin: true,
+            status: "archived",
+        });
+        expect(gym.errors).toEqual([]);
+    });
+
     it(
         "creates an isolated bot, runs its agent, archives it logically, and restores it",
         { timeout: 60_000 },
@@ -66,7 +114,7 @@ describe("persistent bots through the public API", () => {
                 expect.objectContaining({ id: created.workspaceId }),
             );
             await expect(gym.client.getDesktopBootstrap()).resolves.toMatchObject({
-                bots: [expect.objectContaining({ id: created.id })],
+                bots: expect.arrayContaining([expect.objectContaining({ id: created.id })]),
                 workspaces: expect.not.arrayContaining([
                     expect.objectContaining({ id: created.workspaceId }),
                 ]),
@@ -282,10 +330,10 @@ describe("persistent bots through the public API", () => {
             expect(created.isAdmin).toBe(false);
             await expect(gym.client.getBot(created.id)).resolves.toEqual({ bot: created });
             await expect(gym.client.listBots()).resolves.toMatchObject({
-                bots: [expect.objectContaining({ id: created.id })],
+                bots: expect.arrayContaining([expect.objectContaining({ id: created.id })]),
             });
             await expect(gym.client.getDesktopBootstrap()).resolves.toMatchObject({
-                bots: [expect.objectContaining({ id: created.id })],
+                bots: expect.arrayContaining([expect.objectContaining({ id: created.id })]),
             });
 
             await expect(gym.client.listWorkspaces()).rejects.toMatchObject({
@@ -315,11 +363,21 @@ describe("persistent bots through the public API", () => {
                     .toolResults()
                     .find((result) => result.callId === "denied-bot-creation")?.text,
             ).toContain(
-                "Only an admin bot can create other bots. There are no admin bots on this installation.",
+                "Only an admin bot can create other bots. Admin bots on this installation:",
             );
-            await expect(gym.client.listBots()).resolves.toMatchObject({
-                bots: [expect.objectContaining({ id: created.id })],
-            });
+            expect(
+                gym.inference
+                    .toolResults()
+                    .find((result) => result.callId === "denied-bot-creation")?.text,
+            ).toContain("- Chief of Staff — id ");
+            const listed = (await gym.client.listBots()).bots;
+            expect(listed).toHaveLength(2);
+            expect(listed).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ id: created.id }),
+                    expect.objectContaining({ name: "Chief of Staff" }),
+                ]),
+            );
             expect(gym.errors).toEqual([]);
         },
     );

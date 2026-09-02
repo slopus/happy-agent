@@ -1,5 +1,21 @@
 # Bots — learnings
 
+## Built-in bot instructions are resolved entirely at runtime
+
+The installation seeds one admin `Chief of Staff` bot after the agent system opens. It receives an
+ordinary generated ID and the internal system key `chief_of_staff`. The system key explicitly marks
+which built-in behavior the bot receives and is an extensible union for future system bots.
+
+A separate seed ledger records each system key and generated bot ID. Startup checks the ledger
+rather than the bot catalog, and deletion must leave the ledger intact. An active, archived, or
+deleted system bot therefore suppresses reseeding permanently.
+
+No prompt or instruction profile is stored. The bots module switches on the bot row's system key at
+runtime, resolves the current Chief of Staff guidance from source on every inference, and combines
+it with the bot's live identity. This preserves the bot's folder, conversation, rename, and archival
+state while allowing a newer Happy Agent version to improve the built-in instructions without a
+prompt migration or row rewrite.
+
 ## Bot creation stays discoverable and enforces administration when called
 
 A bot is non-admin by default, including every bot predating the admin column. Authenticated API

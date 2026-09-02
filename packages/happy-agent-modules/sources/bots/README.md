@@ -11,6 +11,14 @@ an explanation that names the admin bots on the installation when any exist. The
 expose `isAdmin` in its input, so an admin bot can create only non-admin bots. Human-owned root
 agents remain unrestricted.
 
+On first startup, the module creates one admin bot named `Chief of Staff` with an ordinary generated
+ID and the internal system key `chief_of_staff`. A separate seed ledger records that this system bot
+was created and deliberately survives deletion, so neither archival nor deletion causes startup to
+replace it. No instruction is stored in the database. The bots module uses the system key to inject
+the current source guidance on every inference, so an upgrade updates its built-in instructions
+while preserving its identity and conversation. Future built-in bots receive their own system keys
+and seed-ledger entries through the same path.
+
 A bot's one agent is born with its conversation title set to the bot's display name, and renaming
 the bot renames the conversation with it: a bot is one continuous chat, so its session is called
 whatever the bot is called rather than waiting for a generated title. A titled agent is never

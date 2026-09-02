@@ -2,6 +2,8 @@ import { cuid2Schema } from "@slopus/happy-agent-base";
 import { botAvatarSchema, botNameSchema, botUsernameSchema } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { botSystemKeySchema } from "./BotSystemKey.js";
+
 export const botStatusSchema = Type.Union([Type.Literal("active"), Type.Literal("archived")]);
 export const botOrderKeySchema = Type.String({
     minLength: 1,
@@ -17,6 +19,7 @@ export const botRecordSchema = Type.Object(
     {
         id: cuid2Schema,
         isAdmin: Type.Boolean(),
+        systemKey: Type.Optional(botSystemKeySchema),
         name: botNameSchema,
         username: botUsernameSchema,
         workspaceId: cuid2Schema,

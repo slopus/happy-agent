@@ -4,6 +4,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 export const BOTS_TABLE = "happy_agent_module_bots";
 export const BOT_AVATARS_TABLE = "happy_agent_module_bot_avatars";
+export const BOT_SYSTEM_SEEDS_TABLE = "happy_agent_module_bot_system_seeds";
 
 export const botMigrations = [
     [
@@ -81,6 +82,28 @@ export const botMigrations = [
                 database,
                 sql`ALTER TABLE ${sql.raw(BOTS_TABLE)}
                     ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`,
+            );
+        },
+    ],
+    [
+        "004-system-bots",
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(BOTS_TABLE)} ADD COLUMN system_key TEXT`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE UNIQUE INDEX ${sql.raw(`${BOTS_TABLE}_system_key`)}
+                    ON ${sql.raw(BOTS_TABLE)} (system_key)
+                    WHERE system_key IS NOT NULL`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`CREATE TABLE ${sql.raw(BOT_SYSTEM_SEEDS_TABLE)} (
+                    system_key TEXT PRIMARY KEY,
+                    bot_id TEXT NOT NULL UNIQUE
+                )`,
             );
         },
     ],

@@ -16,6 +16,7 @@ import { BOT_AVATARS_TABLE, BOTS_TABLE } from "./BotMigrations.js";
 interface BotRow {
     readonly id: string;
     readonly is_admin: number | string;
+    readonly system_key: string | null;
     readonly name: string;
     readonly username: string;
     readonly workspace_id: string;
@@ -87,11 +88,13 @@ export async function insertBot(ctx: Context, bot: BotRecord): Promise<void> {
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(BOTS_TABLE)} (
-            id, is_admin, name, username, workspace_id, workspace_version, workspace_updated_at,
+            id, is_admin, system_key, name, username,
+            workspace_id, workspace_version, workspace_updated_at,
             agent_id, path, status, avatar_source,
             avatar_thumbhash, order_key, version, created_at, updated_at, archived_at
         ) VALUES (
-            ${bot.id}, ${bot.isAdmin ? 1 : 0}, ${bot.name}, ${bot.username}, ${bot.workspaceId},
+            ${bot.id}, ${bot.isAdmin ? 1 : 0}, ${bot.systemKey ?? null}, ${bot.name},
+            ${bot.username}, ${bot.workspaceId},
             ${bot.workspaceVersion}, ${bot.workspaceUpdatedAt}, ${bot.agentId},
             ${bot.path}, ${bot.status}, ${bot.avatar?.source ?? null},
             ${bot.avatar?.thumbhash ?? null}, ${bot.orderKey}, ${bot.version},
@@ -191,6 +194,9 @@ function botFromRow(row: BotRow): BotRecord {
     const bot: BotRecord = {
         id: row.id,
         isAdmin: Number(row.is_admin) === 1,
+        ...(row.system_key === null
+            ? {}
+            : { systemKey: row.system_key as NonNullable<BotRecord["systemKey"]> }),
         name: row.name,
         username: row.username,
         workspaceId: row.workspace_id,

@@ -77,7 +77,7 @@ class BotAgents {
 }
 
 describe("BotsModule", () => {
-    it("migrates every existing bot to non-admin", async () => {
+    it("migrates every existing bot to non-admin and non-system", async () => {
         const database = moduleDatabase(botMigrations.slice(0, 2), "bots-admin-migration");
         try {
             await database.ready;
@@ -97,15 +97,59 @@ describe("BotsModule", () => {
             const migration = botMigrations[2]?.[1];
             if (migration === undefined) throw new Error("The bot admin migration is missing.");
             await migration(database.context, database.database);
+            const systemMigration = botMigrations[3]?.[1];
+            if (systemMigration === undefined)
+                throw new Error("The system bot migration is missing.");
+            await systemMigration(database.context, database.database);
 
             await expect(
-                agentDatabaseRows<{ readonly is_admin: number }>(
+                agentDatabaseRows<{
+                    readonly is_admin: number;
+                    readonly system_key: string | null;
+                }>(
                     database.database,
-                    sql`SELECT is_admin FROM ${sql.raw(BOTS_TABLE)} WHERE id = 'legacybot'`,
+                    sql`SELECT is_admin, system_key FROM ${sql.raw(BOTS_TABLE)}
+                        WHERE id = 'legacybot'`,
                 ),
-            ).resolves.toEqual([{ is_admin: 0 }]);
+            ).resolves.toEqual([{ is_admin: 0, system_key: null }]);
         } finally {
             database.close();
+        }
+    });
+
+    it("seeds one marked Chief of Staff and never replaces it after archive or deletion", async () => {
+        const fixture = await started("bots-chief-of-staff", true);
+        try {
+            await fixture.start();
+            const [chief] = await fixture.bots.list(fixture.database.context);
+            expect(chief).toMatchObject({
+                isAdmin: true,
+                name: "Chief of Staff",
+                status: "active",
+                systemKey: "chief_of_staff",
+                username: "chief_of_staff",
+            });
+            if (chief === undefined) throw new Error("The Chief of Staff bot was not seeded.");
+            await expect(fixture.instructions(chief.agentId)).resolves.toContain(
+                "# Chief of Staff\n\nYou are the user's persistent chief of staff.",
+            );
+
+            const archived = await fixture.bots.archive(
+                fixture.database.context,
+                chief.id,
+                chief.version,
+            );
+            await fixture.start();
+            await expect(fixture.bots.list(fixture.database.context)).resolves.toEqual([archived]);
+
+            await agentDatabaseRun(
+                fixture.database.database,
+                sql`DELETE FROM ${sql.raw(BOTS_TABLE)} WHERE id = ${chief.id}`,
+            );
+            await fixture.start();
+            await expect(fixture.bots.list(fixture.database.context)).resolves.toEqual([]);
+        } finally {
+            await fixture.close();
         }
     });
 
@@ -440,6 +484,9 @@ async function started(name: string, workspacesEnabled: boolean) {
         bots,
         database,
         events,
+        start: async (): Promise<void> => {
+            await hooks.afterStart?.(database.context, agents.asRef());
+        },
         tools: async (agentId: string): Promise<readonly string[]> => {
             return (await toolsFor(agentId)).map((tool) => tool.name);
         },
