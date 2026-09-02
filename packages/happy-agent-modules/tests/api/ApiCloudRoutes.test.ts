@@ -87,6 +87,8 @@ const siblingDevice: CloudDevice = {
     lastAccessedAt: 1_755_400_001_000,
     metadata: null,
 };
+const existingOrganization = { id: "org_existing", name: "Existing Team" };
+const createdOrganization = { id: "org_created", name: "Analytical Engines" };
 
 const user = {
     email: "person@example.com",
@@ -210,6 +212,20 @@ describe("Cloud HTTP API", () => {
         await expect(
             fixture.client.mintCloudAccessToken({ mutationId: "cloud-mint-1" }),
         ).resolves.toEqual({ accessToken: "access-token", cloud: connected });
+        await expect(fixture.client.listCloudOrganizations()).resolves.toEqual({
+            organizations: [existingOrganization],
+        });
+        await expect(
+            fixture.client.createCloudOrganization({
+                mutationId: "cloud-organization-create-1",
+                name: createdOrganization.name,
+            }),
+        ).resolves.toEqual({ organization: createdOrganization });
+        await expect(
+            fixture.client.deleteCloudOrganization(createdOrganization.id, {
+                mutationId: "cloud-organization-delete-1",
+            }),
+        ).resolves.toEqual({ deleted: true });
         await expect(
             fixture.client.createCloudKeys({ ...cloudKeyInput, mutationId: "cloud-keys-create-1" }),
         ).resolves.toEqual({ cloud: connected });
@@ -292,6 +308,70 @@ describe("Cloud HTTP API", () => {
         expect(fixture.cloud.getKeyBackup).toHaveBeenCalledWith(fixture.context);
         expect(fixture.cloud.getDevices).toHaveBeenCalledWith(fixture.context);
         expect(fixture.cloud.removeDevice).toHaveBeenCalledWith(fixture.context, siblingDeviceId);
+        expect(fixture.cloud.listOrganizations).toHaveBeenCalledWith(fixture.context);
+        expect(fixture.cloud.createOrganization).toHaveBeenCalledWith(
+            fixture.context,
+            createdOrganization.name,
+        );
+        expect(fixture.cloud.deleteOrganization).toHaveBeenCalledWith(
+            fixture.context,
+            createdOrganization.id,
+        );
+    });
+
+    it("rejects malformed organization input before invoking Cloud", async () => {
+        const fixture = await apiFixture(connected);
+
+        await expect(fixture.client.createCloudOrganization({ name: "   " })).rejects.toMatchObject(
+            { code: "invalid_request", status: 400 },
+        );
+        await expect(fixture.client.deleteCloudOrganization("x".repeat(513))).rejects.toMatchObject(
+            { code: "invalid_request", status: 400 },
+        );
+        expect(fixture.cloud.createOrganization).not.toHaveBeenCalled();
+        expect(fixture.cloud.deleteOrganization).not.toHaveBeenCalled();
+    });
+
+    it("returns forbidden when Cloud refuses organization deletion", async () => {
+        const fixture = await apiFixture(connected);
+        fixture.cloud.deleteOrganization.mockRejectedValueOnce(
+            new CloudOperationError(
+                403,
+                "forbidden",
+                "You do not have permission to delete this Cloud organization.",
+                connected,
+            ),
+        );
+
+        await expect(fixture.client.deleteCloudOrganization("org_other")).rejects.toMatchObject({
+            body: { cloud: connected },
+            code: "forbidden",
+            status: 403,
+        });
+    });
+
+    it("rejects every organization operation before parsing bodies in team mode", async () => {
+        const fixture = await apiFixture(connected, { team: true });
+
+        await expect(fixture.client.listCloudOrganizations()).rejects.toMatchObject({
+            code: "unsupported",
+            status: 501,
+        });
+        const malformedCreate = await apiFetch(fixture.api, fixture.context)(
+            "http://happy-agent.test/v0/cloud/organizations",
+            {
+                body: "not-json",
+                headers: { authorization: `Bearer ${fixture.token}` },
+                method: "POST",
+            },
+        );
+        expect(malformedCreate.status).toBe(501);
+        await expect(
+            fixture.client.deleteCloudOrganization(existingOrganization.id),
+        ).rejects.toMatchObject({ code: "unsupported", status: 501 });
+        expect(fixture.cloud.listOrganizations).not.toHaveBeenCalled();
+        expect(fixture.cloud.createOrganization).not.toHaveBeenCalled();
+        expect(fixture.cloud.deleteOrganization).not.toHaveBeenCalled();
     });
 
     it("rejects malformed device IDs and request bodies before invoking Cloud", async () => {
@@ -638,7 +718,10 @@ describe("Cloud HTTP API", () => {
     });
 });
 
-async function apiFixture(initial: Cloud = disconnected) {
+async function apiFixture(
+    initial: Cloud = disconnected,
+    options: { readonly team?: boolean } = {},
+) {
     const directory = await mkdtemp(join(tmpdir(), "happy-cloud-api-"));
     const context = createRootContext().named("cloud-api-test");
     let current = initial;
@@ -658,10 +741,13 @@ async function apiFixture(initial: Cloud = disconnected) {
             updated?.(ctx, current);
             return disconnected;
         }),
+        createOrganization: vi.fn(async () => createdOrganization),
         createKeys: vi.fn(async () => connected),
+        deleteOrganization: vi.fn(async () => undefined),
         deleteKeys: vi.fn(async () => connected),
         getKeyBackup: vi.fn(async () => cloudKeyBackup),
         getDevices: vi.fn(async () => ({ devices })),
+        listOrganizations: vi.fn(async () => ({ organizations: [existingOrganization] })),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
         getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
         getSocial: vi.fn(() => ({ cloudSocial: social })),
@@ -719,13 +805,22 @@ async function apiFixture(initial: Cloud = disconnected) {
                 agentHome: directory,
                 tokenPath: join(directory, "api-token"),
             },
+            ...(options.team === true ? { values: { feature: { team: { enabled: true } } } } : {}),
         },
     };
-    const api = createApi(cloud, config, subscriptions);
+    const team =
+        options.team === true
+            ? {
+                  authenticate: vi.fn(async (ctx: Context) => ctx),
+                  authenticateIdentity: vi.fn(async (ctx: Context) => ctx),
+                  enabled: true,
+                  onProfileUpdated: () => () => undefined,
+              }
+            : undefined;
+    const api = createApi(cloud, config, subscriptions, team);
     await api.beforeStart(context, {} as never);
     await api.markReady();
-    const token = api.token();
-    if (token === undefined) throw new Error("The API fixture did not create a token.");
+    const token = api.token() ?? "team-token";
     const client = new HappyAgentClient({
         endpoint: "http://happy-agent.test",
         fetch: apiFetch(api, context),
@@ -789,7 +884,12 @@ async function actualCloudApiFixture() {
     return { api, client, cloud, context: database.context, token };
 }
 
-function createApi(cloud: unknown, config: unknown, subscriptions: unknown): ApiModule {
+function createApi(
+    cloud: unknown,
+    config: unknown,
+    subscriptions: unknown,
+    team: unknown = { enabled: false, onProfileUpdated: () => () => undefined },
+): ApiModule {
     return new ApiModule(
         subscriptions as never,
         config as never,
@@ -813,7 +913,7 @@ function createApi(cloud: unknown, config: unknown, subscriptions: unknown): Api
         subscriptions as never,
         subscriptions as never,
         subscriptions as never,
-        { enabled: false, onProfileUpdated: () => () => undefined } as never,
+        team as never,
     );
 }
 

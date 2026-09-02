@@ -140,7 +140,7 @@ import {
     type Workspace,
     type WorkspaceEvent,
 } from "../workspaces/index.js";
-import { ApiError, invalidRequest, notFound, type ApiErrorCode } from "./ApiError.js";
+import { ApiError, invalidRequest, notFound, unsupported, type ApiErrorCode } from "./ApiError.js";
 import { ApiEventJournal, type ApiEvent } from "./ApiEventJournal.js";
 import {
     messageHiddenFromUser,
@@ -169,8 +169,10 @@ import {
     agentCreateBodySchema,
     apiIdSchema,
     cloudMutationRequestSchema,
+    cloudOrganizationSchema,
     cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
+    createCloudOrganizationRequestSchema,
     createCloudKeysRequestSchema,
     deleteCloudKeysRequestSchema,
     documentBodySchema,
@@ -530,6 +532,9 @@ export class ApiModule implements AgentModule {
             if (!this.#ready) {
                 throw new ApiError(503, "not_initialized", "Happy Agent is still starting.");
             }
+            if (this.#team.enabled && isCloudOrganizationRoute(url.pathname)) {
+                throw unsupported("Cloud organizations are unavailable in team mode.");
+            }
             if (
                 this.#team.enabled &&
                 teamUser(ctx) === undefined &&
@@ -720,6 +725,59 @@ export class ApiModule implements AgentModule {
                     async () => await this.#cloudOperation(() => this.#cloud.mint(ctx)),
                 );
                 sendJson(response, 200, result);
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/v0/cloud/organizations") {
+                sendJson(
+                    response,
+                    200,
+                    await this.#cloudOperation(() => this.#cloud.listOrganizations(ctx)),
+                );
+                return;
+            }
+            if (request.method === "POST" && url.pathname === "/v0/cloud/organizations") {
+                const body = await bodyAs(
+                    request,
+                    createCloudOrganizationRequestSchema,
+                    "Cloud organization",
+                    2 * 1_024,
+                );
+                const organization = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await this.#cloudOperation(() =>
+                            this.#cloud.createOrganization(ctx, body.name),
+                        ),
+                );
+                sendJson(response, 201, { organization });
+                return;
+            }
+            if (
+                request.method === "DELETE" &&
+                url.pathname.startsWith("/v0/cloud/organizations/")
+            ) {
+                const match = /^\/v0\/cloud\/organizations\/([^/]+)$/.exec(url.pathname);
+                if (match === null) {
+                    throw invalidRequest("The Cloud organization route is invalid.");
+                }
+                const body = await optionalBodyAs(
+                    request,
+                    cloudMutationRequestSchema,
+                    "Cloud organization deletion",
+                    2 * 1_024,
+                );
+                const organizationId = decodePathSegment(match[1]!, "Cloud organization ID");
+                if (!Value.Check(cloudOrganizationSchema.properties.id, organizationId)) {
+                    throw invalidRequest("The Cloud organization ID is invalid.");
+                }
+                await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await this.#cloudOperation(() =>
+                            this.#cloud.deleteOrganization(ctx, organizationId),
+                        ),
+                );
+                sendJson(response, 200, { deleted: true });
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/cloud/keys/create") {
@@ -5929,6 +5987,12 @@ function parseCloudSocialMutation(
     } catch {
         throw invalidRequest("The Cloud username is invalid.");
     }
+}
+
+function isCloudOrganizationRoute(pathname: string): boolean {
+    return (
+        pathname === "/v0/cloud/organizations" || pathname.startsWith("/v0/cloud/organizations/")
+    );
 }
 
 function stringValue(value: unknown): string | undefined {

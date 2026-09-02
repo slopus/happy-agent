@@ -110,6 +110,19 @@
   R2-offloaded binary values and proves empty-only rejection, stale-hash rejection, successful
   compare-and-write, and returned conflict metadata using temporary WorkOS accounts.
 
+## Cloud organizations
+
+- Organization management belongs to the standalone connected Cloud identity. Run list, create,
+  and delete through the same serialized refresh-token rotation and Happy Cloud verification as
+  other account operations; project only bounded IDs and names and never release the access token.
+- Organization mutations are remote control-plane changes with no local durable mirror or event.
+  Do not retry an ambiguous create or delete. Preserve Happy Cloud's administrator check as a
+  display-safe `forbidden` result and map malformed or unavailable upstream responses without
+  reflecting their bodies.
+- Team mode's organization is deployment-owned configuration, so its local API must reject every
+  organization route before body parsing, Cloud credential refresh, or Happy Cloud access. Keep
+  this deployment policy at the API seam rather than coupling CloudModule to TeamModule.
+
 ## Cloud keys and messaging
 
 - Cloud key setup is account-scoped and begins only after username enrollment. Durable discovery

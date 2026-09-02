@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     boundedWorkOSFetch,
     CloudCredentialsRejectedError,
+    CloudOrganizationForbiddenError,
+    CloudOrganizationInvalidRequestError,
     CloudProfileRejectedError,
     CloudServiceUnavailableError,
     CloudSocialBlockedError,
@@ -43,6 +45,96 @@ describe("CloudWorkOS", () => {
         await expect(
             new CloudWorkOS("production").verify("access-token", "user-a"),
         ).resolves.toBeUndefined();
+    });
+
+    it("lists, creates, and deletes organizations through the authenticated Cloud routes", async () => {
+        const request = vi
+            .fn<typeof fetch>()
+            .mockResolvedValueOnce(
+                Response.json({
+                    organizations: [
+                        {
+                            id: "org_existing",
+                            internal: "must-not-cross-the-agent-boundary",
+                            name: "Existing Team",
+                        },
+                    ],
+                }),
+            )
+            .mockResolvedValueOnce(
+                Response.json({ id: "org_created", name: "Analytical Engines" }, { status: 201 }),
+            )
+            .mockResolvedValueOnce(Response.json({ status: "deleted" }));
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("production");
+
+        await expect(client.listOrganizations("access-token")).resolves.toEqual([
+            { id: "org_existing", name: "Existing Team" },
+        ]);
+        await expect(
+            client.createOrganization("access-token", "Analytical Engines"),
+        ).resolves.toEqual({ id: "org_created", name: "Analytical Engines" });
+        await expect(
+            client.deleteOrganization("access-token", "org/created"),
+        ).resolves.toBeUndefined();
+
+        expect(
+            request.mock.calls.map(([input, init]) => ({
+                authorization: new Headers(init?.headers).get("authorization"),
+                body: init?.body,
+                method: init?.method,
+                path: new URL(String(input)).pathname,
+            })),
+        ).toEqual([
+            {
+                authorization: "Bearer access-token",
+                body: undefined,
+                method: "GET",
+                path: "/v0/organizations",
+            },
+            {
+                authorization: "Bearer access-token",
+                body: JSON.stringify({ name: "Analytical Engines" }),
+                method: "POST",
+                path: "/v0/organizations",
+            },
+            {
+                authorization: "Bearer access-token",
+                body: undefined,
+                method: "DELETE",
+                path: "/v0/organizations/org%2Fcreated",
+            },
+        ]);
+    });
+
+    it("classifies rejected and malformed organization responses", async () => {
+        const request = vi
+            .fn<typeof fetch>()
+            .mockResolvedValueOnce(
+                Response.json({ error: "invalid_organization" }, { status: 400 }),
+            )
+            .mockResolvedValueOnce(Response.json({ error: "forbidden" }, { status: 403 }))
+            .mockResolvedValueOnce(Response.json({ organizations: [{ id: "missing-name" }] }))
+            .mockResolvedValueOnce(Response.json({ error: "not_found" }, { status: 404 }));
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("production");
+
+        await expect(client.createOrganization("access", "Valid name")).rejects.toBeInstanceOf(
+            CloudOrganizationInvalidRequestError,
+        );
+        await expect(client.deleteOrganization("access", "org_other")).rejects.toBeInstanceOf(
+            CloudOrganizationForbiddenError,
+        );
+        await expect(client.listOrganizations("access")).rejects.toBeInstanceOf(
+            CloudServiceUnavailableError,
+        );
+        await expect(
+            client.deleteOrganization("access", "not-an-organization"),
+        ).rejects.toBeInstanceOf(CloudOrganizationInvalidRequestError);
+        await expect(client.createOrganization("access", "   ")).rejects.toBeInstanceOf(
+            CloudOrganizationInvalidRequestError,
+        );
+        expect(request).toHaveBeenCalledTimes(4);
     });
 
     it("loads one version-consistent social snapshot and hydrates every public profile", async () => {

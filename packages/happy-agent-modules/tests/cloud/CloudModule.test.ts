@@ -27,6 +27,7 @@ import { createCloudKeyBundle } from "../../sources/cloud/CloudKeys.js";
 import { createCloudKeysDatabase } from "../../sources/cloud/CloudKeysDatabase.js";
 import { CloudMurmurStore } from "../../sources/cloud/CloudMurmurStore.js";
 import {
+    CloudOrganizationForbiddenError,
     CloudUsernameUnavailableError,
     CloudVaultDeleteRejectedError,
     CloudWorkOS,
@@ -925,6 +926,70 @@ describe("CloudModule", () => {
         expect(workos.refresh).toHaveBeenCalledWith({ refreshToken: "refresh-a" });
         expect(events.length).toBeGreaterThanOrEqual(2);
         unsubscribe();
+    });
+
+    it("manages organizations through the serialized authenticated Cloud boundary", async () => {
+        const { database, module } = await fixture("cloud-module-organizations");
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
+        let refresh = 0;
+        workos.refresh.mockImplementation(async () => {
+            refresh += 1;
+            return {
+                accessToken: `organization-access-${String(refresh)}`,
+                refreshToken: `organization-refresh-${String(refresh)}`,
+                user,
+            };
+        });
+        const list = vi
+            .spyOn(CloudWorkOS.prototype, "listOrganizations")
+            .mockResolvedValue([{ id: "org_existing", name: "Existing Team" }]);
+        const create = vi
+            .spyOn(CloudWorkOS.prototype, "createOrganization")
+            .mockResolvedValue({ id: "org_created", name: "Analytical Engines" });
+        const remove = vi
+            .spyOn(CloudWorkOS.prototype, "deleteOrganization")
+            .mockResolvedValue(undefined);
+
+        await expect(module.listOrganizations(database.context)).resolves.toEqual({
+            organizations: [{ id: "org_existing", name: "Existing Team" }],
+        });
+        await expect(
+            module.createOrganization(database.context, "Analytical Engines"),
+        ).resolves.toEqual({ id: "org_created", name: "Analytical Engines" });
+        await expect(
+            module.deleteOrganization(database.context, "org_created"),
+        ).resolves.toBeUndefined();
+
+        expect(list).toHaveBeenCalledWith("organization-access-1");
+        expect(create).toHaveBeenCalledWith("organization-access-2", "Analytical Engines");
+        expect(remove).toHaveBeenCalledWith("organization-access-3", "org_created");
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "organization-refresh-3",
+        );
+    });
+
+    it("rejects invalid and unauthorized organization mutations with display-safe errors", async () => {
+        const { database, module } = await fixture("cloud-module-organization-errors");
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
+        const create = vi.spyOn(CloudWorkOS.prototype, "createOrganization");
+        const remove = vi
+            .spyOn(CloudWorkOS.prototype, "deleteOrganization")
+            .mockRejectedValue(new CloudOrganizationForbiddenError());
+
+        await expect(module.createOrganization(database.context, "   ")).rejects.toMatchObject({
+            code: "invalid_request",
+            status: 400,
+        } satisfies Partial<CloudOperationError>);
+        expect(create).not.toHaveBeenCalled();
+        await expect(
+            module.deleteOrganization(database.context, "org_other"),
+        ).rejects.toMatchObject({
+            code: "forbidden",
+            status: 403,
+        } satisfies Partial<CloudOperationError>);
+        expect(remove).toHaveBeenCalledTimes(1);
     });
 
     it("exposes authenticated Cloud storage reads and conditional writes", async () => {

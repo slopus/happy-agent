@@ -4,8 +4,10 @@ import { clientMetadataSchema } from "@slopus/happy-agent-client";
 
 export {
     cloudMutationRequestSchema,
+    cloudOrganizationSchema,
     cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
+    createCloudOrganizationRequestSchema,
     createCloudKeysRequestSchema,
     deleteCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,

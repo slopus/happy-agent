@@ -81,6 +81,14 @@ values are bounded to 100 MiB at the client boundary, and every response must ca
 and version metadata. Storage operations use the same rotating WorkOS credential boundary as the
 rest of Cloud and are never retried after an ambiguous write.
 
+Standalone deployments also expose the connected WorkOS user's Happy Cloud organizations through
+the same serialized refresh-and-verify boundary. Listing returns only the bounded organization ID
+and name. Creation makes the connected user an administrator, while deletion relies on Happy Cloud
+to require that active administrator role. Organization changes are remote control-plane
+operations: they are not persisted locally, emit no organization event, and are never replayed
+after an ambiguous response. The API rejects this surface before authentication refresh or body
+parsing in team mode because that deployment's organization is externally owned configuration.
+
 Friends activate automatically after enrollment. The module retains one account-scoped social
 snapshot, opens Happy Cloud's authenticated updates WebSocket, and uses its announced version to
 drive Durable Function reconciliation of friends, requests, blocked users, and public profiles.

@@ -77,7 +77,7 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   class. Common codes: `invalid_request` (400), `unauthorized` (401), `not_found` (404),
   `conflict` (409, the generic `If-Match` and state conflicts), `cursor_unavailable` (the
   events `409`), `hash_mismatch` (the file-write `409`), `not_initialized` (a workspace still
-  building), `cloud_not_authenticated` (409), `cloud_unauthorized` (409),
+  building), `forbidden` (403), `cloud_not_authenticated` (409), `cloud_unauthorized` (409),
   `cloud_not_enrolled` (409), `cloud_unavailable` (503), `draining` (503, the daemon no longer
   admits mutations),
   `too_large` (413), `unsupported` (501), `internal` (500).
@@ -1147,10 +1147,12 @@ These endpoints are unavailable in team mode. Every organization request in team
 contacting Happy Cloud. A team deployment's configured organization is deployment-owned and cannot
 be listed or changed through its own API.
 
-Organization reads and mutations emit no Happy Agent event and do not change the local Cloud
-snapshot. The daemon serializes them with other Cloud authentication operations, stores a rotated
-refresh token before making the Happy Cloud request, verifies the minted access token, and never
-returns that token. It does not automatically replay an ambiguous organization mutation.
+Organization changes themselves emit no Happy Agent event. The daemon serializes the requests with
+other Cloud authentication operations, stores a rotated refresh token before making the Happy
+Cloud request, verifies the minted access token, and never returns that token. Authentication side
+effects such as discovering changed WorkOS user metadata or rejected credentials may still replace
+the normal Cloud snapshot and emit `cloud.updated`. The daemon does not automatically replay an
+ambiguous organization mutation.
 
 #### `GET /v0/cloud/organizations`
 
@@ -1176,8 +1178,9 @@ Creates a WorkOS organization and makes the connected Cloud user its administrat
 ```
 
 `name` must contain 1–255 Unicode characters after surrounding whitespace is trimmed and may not
-contain control or format characters. `mutationId` provides the normal process-local
-duplicate-mutation protection and is not sent to Happy Cloud. Response — `201`:
+contain control or format characters. `mutationId` is not sent to Happy Cloud and does not dedupe
+the remote mutation; it tags any synchronous `cloud.updated` event caused by authentication side
+effects while preparing the request. Response — `201`:
 
 ```json
 {

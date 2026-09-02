@@ -1,8 +1,11 @@
 import {
     cloudEnvironmentSchema,
+    cloudOrganizationSchema,
     cloudProfileSchema,
     cloudUsernameSchema,
+    createCloudOrganizationRequestSchema,
     type CloudEnvironment,
+    type CloudOrganization,
     type CloudProfile,
     type CloudSocialProfile,
 } from "@slopus/happy-agent-client";
@@ -53,7 +56,9 @@ const MAX_WORKOS_RESPONSE_BYTES = 1024 * 1_024;
 const CLOUD_REQUEST_TIMEOUT_MS = 15_000;
 const CLOUD_SOCIAL_SYNC_TIMEOUT_MS = 30_000;
 const MAX_CLOUD_RESPONSE_BYTES = 8 * 1_024;
+const MAX_CLOUD_ORGANIZATIONS_RESPONSE_BYTES = 1 * 1_024 * 1_024;
 const MAX_CLOUD_SOCIAL_RESPONSE_BYTES = 2 * 1_024 * 1_024;
+const MAX_CLOUD_ORGANIZATIONS = 10_000;
 const MAX_CLOUD_SOCIAL_PROFILES = 5_000;
 const CLOUD_PROFILE_CONCURRENCY = 8;
 const exact = { additionalProperties: false } as const;
@@ -114,6 +119,22 @@ const usernameUnavailableSchema = Type.Object(
     { error: Type.Literal("username_unavailable") },
     { additionalProperties: false },
 );
+
+const cloudOrganizationsResponseSchema = Type.Object(
+    {
+        organizations: Type.Array(cloudOrganizationSchema, {
+            maxItems: MAX_CLOUD_ORGANIZATIONS,
+        }),
+    },
+    exact,
+);
+const invalidOrganizationSchema = Type.Object(
+    { error: Type.Literal("invalid_organization") },
+    exact,
+);
+const organizationForbiddenSchema = Type.Object({ error: Type.Literal("forbidden") }, exact);
+const organizationNotFoundSchema = Type.Object({ error: Type.Literal("not_found") }, exact);
+const organizationDeletedSchema = Type.Object({ status: Type.Literal("deleted") }, exact);
 
 const cloudFriendEntrySchema = Type.Object(
     {
@@ -297,6 +318,20 @@ export class CloudUsernameUnavailableError extends Error {
     }
 }
 
+export class CloudOrganizationInvalidRequestError extends Error {
+    constructor() {
+        super("Happy Cloud rejected the organization request.");
+        this.name = "CloudOrganizationInvalidRequestError";
+    }
+}
+
+export class CloudOrganizationForbiddenError extends Error {
+    constructor() {
+        super("Happy Cloud rejected the organization deletion.");
+        this.name = "CloudOrganizationForbiddenError";
+    }
+}
+
 export class CloudVaultKeyMismatchError extends Error {
     constructor() {
         super("Happy Cloud rejected the Cloud key proof.");
@@ -455,6 +490,69 @@ export class CloudWorkOS {
         }
         if (!Value.Check(helloSchema, result.body)) throw new CloudServiceUnavailableError();
         if (result.body.userId !== expectedUserId) throw new CloudIdentityMismatchError();
+    }
+
+    async listOrganizations(accessToken: string): Promise<CloudOrganization[]> {
+        const result = await this.#request(
+            "/v0/organizations",
+            accessToken,
+            "GET",
+            undefined,
+            [],
+            MAX_CLOUD_ORGANIZATIONS_RESPONSE_BYTES,
+        );
+        if (!result.ok) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        if (!Value.Check(cloudOrganizationsResponseSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-invalid", result.status);
+        }
+        return result.body.organizations.map(cloudOrganization);
+    }
+
+    async createOrganization(accessToken: string, name: string): Promise<CloudOrganization> {
+        if (!Value.Check(createCloudOrganizationRequestSchema.properties.name, name)) {
+            throw new CloudOrganizationInvalidRequestError();
+        }
+        const result = await this.#request(
+            "/v0/organizations",
+            accessToken,
+            "POST",
+            { name },
+            [400],
+        );
+        if (result.status === 400 && Value.Check(invalidOrganizationSchema, result.body)) {
+            throw new CloudOrganizationInvalidRequestError();
+        }
+        if (!result.ok) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        return cloudOrganization(result.body);
+    }
+
+    async deleteOrganization(accessToken: string, organizationId: string): Promise<void> {
+        if (!Value.Check(cloudOrganizationSchema.properties.id, organizationId)) {
+            throw new CloudOrganizationInvalidRequestError();
+        }
+        const result = await this.#request(
+            `/v0/organizations/${encodeURIComponent(organizationId)}`,
+            accessToken,
+            "DELETE",
+            undefined,
+            [403, 404],
+        );
+        if (result.status === 403 && Value.Check(organizationForbiddenSchema, result.body)) {
+            throw new CloudOrganizationForbiddenError();
+        }
+        if (result.status === 404 && Value.Check(organizationNotFoundSchema, result.body)) {
+            throw new CloudOrganizationInvalidRequestError();
+        }
+        if (!result.ok) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        if (!Value.Check(organizationDeletedSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-invalid", result.status);
+        }
     }
 
     async getProfile(accessToken: string): Promise<CloudProfile> {
@@ -1019,6 +1117,13 @@ function socialMutationRequest(
         case "unblock":
             return { method: "DELETE", path: `/v0/friends/blocked/${encoded}` };
     }
+}
+
+function cloudOrganization(value: unknown): CloudOrganization {
+    if (!Value.Check(cloudOrganizationSchema, value)) {
+        throw new CloudServiceUnavailableError();
+    }
+    return { id: value.id, name: value.name };
 }
 
 function cloudProfile(value: unknown): CloudProfile {

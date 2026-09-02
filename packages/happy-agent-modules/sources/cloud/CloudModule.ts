@@ -13,6 +13,8 @@ import type {
     CloudEnvironment,
     CloudKeyBackup,
     CloudKeys,
+    CloudOrganization,
+    CloudOrganizationsResponse,
     CloudProfile,
     CloudProfileResponse,
     CloudSocial,
@@ -27,7 +29,9 @@ import type {
 } from "@slopus/happy-agent-client";
 import {
     cloudKeyValueSchema,
+    cloudOrganizationSchema,
     cloudUsernameSchema,
+    createCloudOrganizationRequestSchema,
     createCloudKeysRequestSchema,
     deleteCloudKeysRequestSchema,
     enrollCloudProfileRequestSchema,
@@ -151,6 +155,8 @@ import type { CloudSocialSocketConnection } from "./CloudSocialSocket.js";
 import {
     CloudCredentialsRejectedError,
     CloudIdentityMismatchError,
+    CloudOrganizationForbiddenError,
+    CloudOrganizationInvalidRequestError,
     CloudProfileRejectedError,
     CloudProfileRequiredError,
     CloudServiceUnavailableError,
@@ -300,6 +306,7 @@ export type CloudOperationErrorCode =
     | "cloud_unauthorized"
     | "cloud_unavailable"
     | "conflict"
+    | "forbidden"
     | "invalid_request"
     | "not_found";
 
@@ -309,10 +316,10 @@ export class CloudOperationError extends Error {
     readonly devices: readonly CloudDevice[] | undefined;
     readonly cloudSocial: CloudSocial | undefined;
     readonly code: CloudOperationErrorCode;
-    readonly status: 400 | 404 | 409 | 503;
+    readonly status: 400 | 403 | 404 | 409 | 503;
 
     constructor(
-        status: 400 | 404 | 409 | 503,
+        status: 400 | 403 | 404 | 409 | 503,
         code: CloudOperationErrorCode,
         message: string,
         cloud: Cloud,
@@ -896,6 +903,119 @@ export class CloudModule implements AgentModule {
             this.#assertRunning();
             const minted = await this.#mintInLock(ctx, true);
             return { accessToken: minted.accessToken, cloud: minted.cloud };
+        });
+    }
+
+    async listOrganizations(_ctx: Context): Promise<CloudOrganizationsResponse> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                return {
+                    organizations: await this.#client(minted.cloud.environment).listOrganizations(
+                        minted.accessToken,
+                    ),
+                };
+            } catch (error: unknown) {
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "cloud-organizations-list",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud organizations are temporarily unavailable.",
+                );
+            }
+        });
+    }
+
+    async createOrganization(_ctx: Context, name: string): Promise<CloudOrganization> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            if (!Value.Check(createCloudOrganizationRequestSchema.properties.name, name)) {
+                throw this.#error(
+                    400,
+                    "invalid_request",
+                    "The Cloud organization name is invalid.",
+                );
+            }
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                return await this.#client(minted.cloud.environment).createOrganization(
+                    minted.accessToken,
+                    name,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudOrganizationInvalidRequestError) {
+                    throw this.#error(
+                        400,
+                        "invalid_request",
+                        "The Cloud organization name is invalid.",
+                    );
+                }
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "cloud-organization-create",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud organizations are temporarily unavailable.",
+                );
+            }
+        });
+    }
+
+    async deleteOrganization(_ctx: Context, organizationId: string): Promise<void> {
+        const ctx = this.#ownedContext();
+        await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            if (!Value.Check(cloudOrganizationSchema.properties.id, organizationId)) {
+                throw this.#error(400, "invalid_request", "The Cloud organization ID is invalid.");
+            }
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                await this.#client(minted.cloud.environment).deleteOrganization(
+                    minted.accessToken,
+                    organizationId,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudOrganizationInvalidRequestError) {
+                    throw this.#error(
+                        400,
+                        "invalid_request",
+                        "The Cloud organization ID is invalid.",
+                    );
+                }
+                if (error instanceof CloudOrganizationForbiddenError) {
+                    throw this.#error(
+                        403,
+                        "forbidden",
+                        "You do not have permission to delete this Cloud organization.",
+                    );
+                }
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "cloud-organization-delete",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Cloud organizations are temporarily unavailable.",
+                );
+            }
         });
     }
 
@@ -3140,7 +3260,7 @@ export class CloudModule implements AgentModule {
     }
 
     #error(
-        status: 400 | 404 | 409 | 503,
+        status: 400 | 403 | 404 | 409 | 503,
         code: CloudOperationErrorCode,
         message: string,
         includeSocial = false,
@@ -3198,7 +3318,14 @@ export class CloudModule implements AgentModule {
 
 function logCloudFailure(
     ctx: Context,
-    operation: "authorization" | "keys" | "profile" | "social" | "storage" | "token",
+    operation:
+        | "authorization"
+        | "keys"
+        | "organizations"
+        | "profile"
+        | "social"
+        | "storage"
+        | "token",
     environment: CloudEnvironment,
     phase: string,
     error: unknown,
@@ -3217,6 +3344,8 @@ function cloudFailureDiagnostic(error: unknown): {
     if (error instanceof CloudOperationError) return { reason: error.code, status: error.status };
     if (error instanceof CloudCredentialsRejectedError) return { reason: "credentials-rejected" };
     if (error instanceof CloudIdentityMismatchError) return { reason: "identity-mismatch" };
+    if (error instanceof CloudOrganizationForbiddenError) return { reason: "forbidden" };
+    if (error instanceof CloudOrganizationInvalidRequestError) return { reason: "invalid-request" };
     if (error instanceof CloudProfileRejectedError) return { reason: "profile-rejected" };
     if (error instanceof CloudProfileRequiredError) return { reason: "profile-required" };
     if (error instanceof CloudSocialBlockedError) return { reason: "blocked" };

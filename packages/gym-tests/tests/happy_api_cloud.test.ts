@@ -142,6 +142,22 @@ describe("Happy Cloud API", () => {
                 code: "cloud_not_authenticated",
                 status: 409,
             });
+            await expect(gym.client.listCloudOrganizations()).rejects.toMatchObject({
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
+            await expect(
+                gym.client.createCloudOrganization({ name: "Analytical Engines" }),
+            ).rejects.toMatchObject({
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
+            await expect(
+                gym.client.deleteCloudOrganization("organization_test"),
+            ).rejects.toMatchObject({
+                code: "cloud_not_authenticated",
+                status: 409,
+            });
             const deviceId = Buffer.alloc(32, 7).toString("base64url");
             await expect(gym.client.removeCloudDevice(deviceId)).rejects.toMatchObject({
                 code: "cloud_not_authenticated",
