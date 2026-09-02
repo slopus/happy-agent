@@ -151,7 +151,7 @@ describe("Happy message mapping", () => {
         expect(spoken).toEqual([]);
     });
 
-    it("names a tool the way a person reads it", () => {
+    it("keeps an unfamiliar tool in the canonical generic fallback", () => {
         const mapper = new HappyMessageMapper();
         mapper.map(blockStart());
         const started = mapper.map(
@@ -160,7 +160,7 @@ describe("Happy message mapping", () => {
                     toolCall: {
                         arguments: { path: "README.md" },
                         id: "call-1",
-                        name: "read_file",
+                        name: "custom_tool",
                         type: "toolCall",
                     },
                     type: "tool_execution_start",
@@ -171,10 +171,10 @@ describe("Happy message mapping", () => {
         expect(started[0]?.content.ev).toEqual({
             args: { path: "README.md" },
             call: "call-1",
-            description: "Running Read File",
-            name: "read_file",
+            description: "Running Custom Tool",
+            name: "custom_tool",
             t: "tool-call-start",
-            title: "Read File",
+            title: "Custom Tool",
         });
 
         const finished = mapper.map(
@@ -187,7 +187,189 @@ describe("Happy message mapping", () => {
                 runId: RUN,
             }),
         );
-        expect(finished[0]?.content.ev).toEqual({ call: "call-1", t: "tool-call-end" });
+        expect(finished[0]?.content.ev).toEqual({
+            call: "call-1",
+            result: "ok",
+            t: "tool-call-end",
+        });
+    });
+
+    it("presents Happy Agent coordination tools in the terms a person needs", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+
+        const calls = [
+            {
+                arguments: { input: { name: "Security review", script: "{'ok': True}" } },
+                id: "workflow-1",
+                name: "run_workflow",
+            },
+            {
+                arguments: { text: "Check the authentication path.", toAgentId: "agent42" },
+                id: "message-1",
+                name: "send_agent_message",
+            },
+            {
+                arguments: { targetAgentId: "agent42" },
+                id: "interrupt-1",
+                name: "interrupt_agent",
+            },
+        ];
+
+        const presented = calls.map(
+            (toolCall) =>
+                mapper.map(
+                    event("tool.started", {
+                        rigEvent: {
+                            toolCall: { ...toolCall, type: "toolCall" },
+                            type: "tool_execution_start",
+                        },
+                        runId: RUN,
+                    }),
+                )[0]?.content.ev,
+        );
+
+        expect(presented).toEqual([
+            {
+                args: calls[0]?.arguments,
+                call: "workflow-1",
+                description: "Starting workflow Security review",
+                name: "run_workflow",
+                t: "tool-call-start",
+                title: "Run Workflow",
+            },
+            {
+                args: calls[1]?.arguments,
+                call: "message-1",
+                description: "Sending a message to agent42",
+                name: "send_agent_message",
+                t: "tool-call-start",
+                title: "Send Agent Message",
+            },
+            {
+                args: calls[2]?.arguments,
+                call: "interrupt-1",
+                description: "Interrupting agent42",
+                name: "interrupt_agent",
+                t: "tool-call-start",
+                title: "Interrupt Agent",
+            },
+        ]);
+    });
+
+    it("normalizes apply_patch into Happy's Codex patch tool shape", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+        const patch = [
+            "*** Begin Patch",
+            "*** Add File: sources/new.ts",
+            "+export const answer = 42;",
+            "*** Update File: sources/old.ts",
+            "*** Move to: sources/moved.ts",
+            "@@ export function answer()",
+            "-    return 41;",
+            "+    return 42;",
+            "*** Delete File: sources/unused.ts",
+            "*** End Patch",
+        ].join("\n");
+
+        const started = mapper.map(
+            event("tool.started", {
+                rigEvent: {
+                    toolCall: {
+                        arguments: { patch, workdir: "packages/mobile" },
+                        id: "patch-1",
+                        name: "apply_patch",
+                        type: "toolCall",
+                    },
+                    type: "tool_execution_start",
+                },
+                runId: RUN,
+            }),
+        );
+
+        expect(started[0]?.content.ev).toEqual({
+            args: {
+                changes: {
+                    "packages/mobile/sources/old.ts": {
+                        kind: {
+                            move_path: "packages/mobile/sources/moved.ts",
+                            type: "update",
+                        },
+                        modify: {
+                            old_content: ["export function answer()", "    return 41;"].join("\n"),
+                            new_content: ["export function answer()", "    return 42;"].join("\n"),
+                        },
+                    },
+                    "packages/mobile/sources/new.ts": {
+                        add: { content: "export const answer = 42;" },
+                        kind: { move_path: null, type: "add" },
+                    },
+                    "packages/mobile/sources/unused.ts": {
+                        kind: { move_path: null, type: "delete" },
+                    },
+                },
+            },
+            call: "patch-1",
+            description: "Applying patch to 3 files",
+            name: "CodexPatch",
+            t: "tool-call-start",
+            title: "Apply patch",
+        });
+    });
+
+    it("keeps malformed apply_patch calls on Happy's generic tool fallback", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+
+        const started = mapper.map(
+            event("tool.started", {
+                rigEvent: {
+                    toolCall: {
+                        arguments: { patch: "not a Codex patch" },
+                        id: "patch-bad",
+                        name: "apply_patch",
+                        type: "toolCall",
+                    },
+                    type: "tool_execution_start",
+                },
+                runId: RUN,
+            }),
+        );
+
+        expect(started[0]?.content.ev).toMatchObject({
+            args: { patch: "not a Codex patch" },
+            name: "apply_patch",
+            title: "Apply Patch",
+        });
+    });
+
+    it("tells Happy when a tool failed and what it reported", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+
+        const finished = mapper.map(
+            event("tool.completed", {
+                callId: "call-failed",
+                rigEvent: {
+                    result: {
+                        display: "The collaborator could not be interrupted.",
+                        isError: true,
+                        toolCallId: "call-failed",
+                        type: "tool_result",
+                    },
+                    type: "tool_execution_end",
+                },
+                runId: RUN,
+            }),
+        );
+
+        expect(finished[0]?.content.ev).toEqual({
+            call: "call-failed",
+            isError: true,
+            result: "The collaborator could not be interrupted.",
+            t: "tool-call-end",
+        });
     });
 
     it("reports a tool the provider ran on its own side", () => {

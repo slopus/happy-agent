@@ -11,7 +11,7 @@ import { searchComputeFileContents } from "../../../sources/compute/impl/searchC
 import { startComputeCommand } from "../../../sources/compute/impl/startComputeCommand.js";
 import { walkComputeFiles } from "../../../sources/compute/impl/walkComputeFiles.js";
 import { writeComputeCommandInput } from "../../../sources/compute/impl/writeComputeCommandInput.js";
-import { parseCodexPatch } from "../../../sources/compute/tools/codex/impl/parseCodexPatch.js";
+import { parseCodexPatch } from "../../../sources/impl/parseCodexPatch.js";
 import { parseClaudeBashId } from "../../../sources/compute/tools/claude/impl/parseClaudeBashId.js";
 import { parseGrokTaskId } from "../../../sources/compute/tools/grok/impl/parseGrokTaskId.js";
 import { FakeCompute } from "../support/FakeCompute.js";

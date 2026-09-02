@@ -1,6 +1,5 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-
 import type { AgentEvent } from "../events/index.js";
 import type { HistoryMessage } from "../history/index.js";
 import type {
@@ -9,6 +8,7 @@ import type {
     HappySessionProtocolMessage,
     HappyUsage,
 } from "./HappyProtocol.js";
+import { happyToolCallPresentation, normalizeHappyToolCall } from "./normalizeHappyToolCall.js";
 
 /** How many event ids are remembered so a replayed event is not shown twice. */
 const MAX_REMEMBERED_EVENTS = 16_384;
@@ -70,7 +70,11 @@ const toolEndSchema = Type.Object(
         rigEvent: Type.Object(
             {
                 result: Type.Object(
-                    { toolCallId: Type.String({ minLength: 1 }) },
+                    {
+                        display: Type.Optional(Type.String()),
+                        isError: Type.Optional(Type.Boolean()),
+                        toolCallId: Type.String({ minLength: 1 }),
+                    },
                     { additionalProperties: true },
                 ),
                 type: Type.Literal("tool_execution_end"),
@@ -253,7 +257,7 @@ export class HappyMessageMapper {
             if (block.type === "tool_result") {
                 output.push(
                     this.#createMessage({
-                        ev: this.#toolResultEvent(block.callId),
+                        ev: this.#toolResultEvent(block.callId, block.display, block.isError),
                         id,
                         role: "agent",
                         time,
@@ -322,9 +326,13 @@ export class HappyMessageMapper {
             ];
         }
         if (Value.Check(toolEndSchema, event.payload)) {
-            const callId = event.payload.rigEvent.result.toolCallId;
+            const result = event.payload.rigEvent.result;
             return [
-                this.#agentMessage(event, `tool-result:${callId}`, this.#toolResultEvent(callId)),
+                this.#agentMessage(
+                    event,
+                    `tool-result:${result.toolCallId}`,
+                    this.#toolResultEvent(result.toolCallId, result.display, result.isError),
+                ),
             ];
         }
         return [];
@@ -335,19 +343,30 @@ export class HappyMessageMapper {
         id: string;
         name: string;
     }): Extract<HappySessionEvent, { t: "tool-call-start" }> {
-        const title = humanizeToolName(call.name);
+        const args = call.arguments === undefined ? {} : toRecord(call.arguments);
+        const normalized = normalizeHappyToolCall(call.name, args);
+        const presentation = happyToolCallPresentation(call.name, normalized);
         return {
-            args: call.arguments === undefined ? {} : toRecord(call.arguments),
+            args: normalized.args,
             call: call.id,
-            description: `Running ${title}`,
-            name: call.name,
+            description: presentation.description,
+            name: normalized.name,
             t: "tool-call-start",
-            title,
+            title: presentation.title,
         };
     }
 
-    #toolResultEvent(callId: string): Extract<HappySessionEvent, { t: "tool-call-end" }> {
-        return { call: callId, t: "tool-call-end" };
+    #toolResultEvent(
+        callId: string,
+        result?: string,
+        isError?: boolean,
+    ): Extract<HappySessionEvent, { t: "tool-call-end" }> {
+        return {
+            call: callId,
+            ...(result === undefined ? {} : { result }),
+            ...(isError === true ? { isError: true } : {}),
+            t: "tool-call-end",
+        };
     }
 
     #mapInference(event: AgentEvent): readonly HappySessionProtocolMessage[] {
@@ -471,20 +490,6 @@ export class HappyMessageMapper {
             this.#appliedEventIds.delete(oldest);
         }
     }
-}
-
-/** Turns a tool's identifier into the words a person reads on the phone. */
-function humanizeToolName(value: string): string {
-    const spaced = value
-        .replaceAll(/[_-]+/gu, " ")
-        .replaceAll(/([a-z])([A-Z])/gu, "$1 $2")
-        .trim();
-    return spaced.length === 0
-        ? "Tool"
-        : spaced
-              .split(/\s+/u)
-              .map((part) => part[0]!.toUpperCase() + part.slice(1))
-              .join(" ");
 }
 
 function toRecord(value: unknown): Record<string, unknown> {

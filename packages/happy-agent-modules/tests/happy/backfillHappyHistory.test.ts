@@ -147,7 +147,7 @@ describe("mapping archived Happy history", () => {
                 blocks: [
                     { text: "checking the config", type: "text" },
                     {
-                        arguments: { path: "/etc/hosts" },
+                        arguments: { file_path: "/etc/hosts" },
                         callId: "call-1",
                         name: "Read",
                         type: "tool_call",
@@ -173,9 +173,9 @@ describe("mapping archived Happy history", () => {
             },
             {
                 ev: {
-                    args: { path: "/etc/hosts" },
+                    args: { file_path: "/etc/hosts" },
                     call: "call-1",
-                    description: "Running Read",
+                    description: "Reading /etc/hosts",
                     name: "Read",
                     t: "tool-call-start",
                     title: "Read",
@@ -186,13 +186,53 @@ describe("mapping archived Happy history", () => {
                 turn: "history:tool-message",
             },
             {
-                ev: { call: "call-1", t: "tool-call-end" },
+                ev: { call: "call-1", result: "Read complete", t: "tool-call-end" },
                 id: "history:tool-message:2",
                 role: "agent",
                 time: 1_000,
                 turn: "history:tool-message",
             },
         ]);
+    });
+
+    it("uses the same Codex patch wire shape for archived apply_patch calls", () => {
+        const queued = mapHistory([
+            historyMessage({
+                recordId: "patch-message",
+                blocks: [
+                    {
+                        arguments: {
+                            patch: [
+                                "*** Begin Patch",
+                                "*** Add File: note.txt",
+                                "+hello",
+                                "*** End Patch",
+                            ].join("\n"),
+                        },
+                        callId: "patch-call",
+                        name: "apply_patch",
+                        type: "tool_call",
+                    },
+                ],
+                role: "assistant",
+            }),
+        ]);
+
+        expect(shown(queued)[0]?.ev).toEqual({
+            args: {
+                changes: {
+                    "note.txt": {
+                        add: { content: "hello" },
+                        kind: { move_path: null, type: "add" },
+                    },
+                },
+            },
+            call: "patch-call",
+            description: "Applying patch to 1 file",
+            name: "CodexPatch",
+            t: "tool-call-start",
+            title: "Apply patch",
+        });
     });
 
     it("leaves private reasoning out without disturbing the visible message identity", () => {

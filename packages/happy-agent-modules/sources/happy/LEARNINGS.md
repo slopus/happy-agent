@@ -1,5 +1,18 @@
 # Happy module learnings
 
+## Mobile tool wire normalization
+
+- Normalize tool calls at the Happy sync boundary only when the mobile app already owns the same
+  semantic renderer and argument contract. Preserve every other real tool name and send a precise
+  activity description through the generic canonical tool-call envelope; a familiar but false
+  tool shape is worse than an honest generic row.
+- Parse Codex `apply_patch` text inside Happy Agent and send the established mobile
+  `CodexPatch { changes }` payload. Mobile clients should render structured file changes and must
+  never need to parse Codex's patch grammar.
+- Send Codex update hunks as `modify { old_content, new_content }`, which mobile already routes
+  through the same paired, intra-line diff renderer as Claude `Edit`. A raw unified patch sends
+  native mobile down its simpler prefix-colored fallback instead.
+
 ## Pairing and public state
 
 - Resolve the Happy CLI home and server URL through `ConfigModule` even before credentials exist. Reading `process.env` directly bypasses daemon-owned environment overrides and can accidentally inspect another installation during hermetic tests.
