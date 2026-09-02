@@ -188,10 +188,13 @@ function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.Pr
     // The shared sandbox correctly withholds private home-directory files. Tell Git not to probe
     // those files at all, rather than letting an inaccessible ~/.gitconfig turn a repository read
     // into a failure. Repository config remains available for the hostile-helper hardening above.
-    // Keep the deliberately absent file inside the readable sandbox. A made-up root path can be
-    // reported as EACCES on Linux, which Git treats as a fatal global-config error rather than an
-    // absent file. Randomizing the name prevents repository content from supplying that config.
-    environment.GIT_CONFIG_GLOBAL = join(cwd, `.happy-agent-git-config-${randomUUID()}`);
+    // GIT_CONFIG_GLOBAL itself is a sensitive-path variable, so the sandbox intentionally denies
+    // the path it names. Give Git and the login shell a random, absent home instead: their ordinary
+    // config probes receive ENOENT, repository content cannot predict the path, and read-only mode
+    // prevents either process from creating it.
+    const isolatedHome = join(cwd, `.happy-agent-git-home-${randomUUID()}`);
+    environment.HOME = isolatedHome;
+    environment.XDG_CONFIG_HOME = isolatedHome;
     environment.GIT_CONFIG_NOSYSTEM = "1";
     environment.GIT_ATTR_NOSYSTEM = "1";
     environment.GIT_TERMINAL_PROMPT = "0";
