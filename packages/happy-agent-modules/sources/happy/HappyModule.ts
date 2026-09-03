@@ -1215,11 +1215,15 @@ export class HappyModule
     }
 
     /** Project sync is best effort and never participates in session event transactions. */
-    async #syncProjectEvent(ctx: Context, project: Project): Promise<void> {
+    async #syncProjectEvent(
+        ctx: Context,
+        project: Project,
+        options: { readonly verifyRemote?: boolean } = {},
+    ): Promise<void> {
         const client = this.#projectClient;
         if (client === undefined) return;
         try {
-            await client.sync(project);
+            await client.sync(project, options);
         } catch (error) {
             ctx.log.debug(
                 "Happy could not synchronize a project.",
@@ -1309,26 +1313,6 @@ export class HappyModule
         const session = await this.session(ctx, agentId);
         if (session === undefined) return undefined;
         const localProjectId = session.project?.id;
-        if (localProjectId !== undefined) {
-            const projectClient = this.#projectClient;
-            if (projectClient !== undefined) {
-                try {
-                    const project = await this.#projects.get(ctx, localProjectId);
-                    if (project !== undefined) {
-                        await projectClient.sync(project, { verifyRemote: true });
-                    }
-                } catch (error) {
-                    ctx.log.debug(
-                        "Happy project sync did not block session attachment.",
-                        {
-                            agentId,
-                            projectId: localProjectId,
-                        },
-                        error,
-                    );
-                }
-            }
-        }
         await this.#sync.ensureSession(
             ctx,
             {
@@ -1351,7 +1335,8 @@ export class HappyModule
                 ...(localProjectId === undefined
                     ? {}
                     : {
-                          projectId: async () => await this.#remoteProjectId(ctx, localProjectId),
+                          projectId: async () =>
+                              await this.#remoteProjectId(context, localProjectId),
                       }),
                 sessionId: session.sessionId,
                 sync: this.#sync,
@@ -1366,6 +1351,14 @@ export class HappyModule
         this.#agents.set(agentId, attached);
         afterCommit(ctx, () => {
             attached.client.start();
+            if (localProjectId !== undefined) {
+                this.#runTask(async () => {
+                    const project = await this.#projects.get(context, localProjectId);
+                    if (project === undefined) return;
+                    await this.#syncProjectEvent(context, project, { verifyRemote: true });
+                    attached.client.kick();
+                });
+            }
         });
         return attached;
     }
