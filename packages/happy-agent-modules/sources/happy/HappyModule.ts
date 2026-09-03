@@ -1864,6 +1864,9 @@ function messageOptionsFor(selection: HappySelection): AgentBaseMessageOptions {
         model: selection.modelId,
         permissionMode: selection.permissionMode,
         provider: selection.providerId,
+        // The phone has no tier selector, and the stamped mode above says null. Send the explicit
+        // clear so a stale persisted tier cannot outlive the mode the message claims to run with.
+        serviceTier: null,
     };
 }
 

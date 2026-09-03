@@ -164,9 +164,7 @@ export class SkillsModule implements AgentModule {
                 model: input.mode.modelId,
                 permissionMode: input.mode.permissionMode,
                 provider: input.mode.providerId,
-                ...(input.mode.serviceTier === null
-                    ? {}
-                    : { serviceTier: input.mode.serviceTier as never }),
+                serviceTier: input.mode.serviceTier as never,
             },
         );
         await agents.updateMetadata(ctx, agentId, { lastMode: input.mode });

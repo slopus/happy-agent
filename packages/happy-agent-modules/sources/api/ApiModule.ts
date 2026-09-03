@@ -2973,11 +2973,11 @@ export class ApiModule implements AgentModule {
             if (effort === undefined) throw invalidRequest("The selected effort is unavailable.");
             const serviceTier =
                 body.mode.serviceTier === null
-                    ? undefined
+                    ? null
                     : selected.serviceTiers?.find(
                           (candidate) => candidate === body.mode.serviceTier,
                       );
-            if (body.mode.serviceTier !== null && serviceTier === undefined) {
+            if (serviceTier === undefined) {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
             const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
@@ -2987,10 +2987,10 @@ export class ApiModule implements AgentModule {
                 provider: body.mode.providerId,
                 model: body.mode.modelId,
                 effort,
-                // The currently published Agent Base cannot yet represent an explicit tier clear.
-                // Omit ordinary service until nullable tier support is released and pinned; never
-                // invent a shared sentinel that could leak onto a provider wire request.
-                ...(serviceTier === undefined ? {} : { serviceTier }),
+                // A null mode means the provider's ordinary tier. Send the explicit clear rather
+                // than omitting, because an omitted tier keeps whatever the agent last persisted —
+                // including the retired "default" sentinel that Codex rejects on every turn.
+                serviceTier,
                 permissionMode: body.mode.permissionMode,
                 profile,
                 metadata: {

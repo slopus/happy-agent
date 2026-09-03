@@ -23,6 +23,10 @@
 
 ## Session state
 
+- The phone composer has no tier selector and stamps `serviceTier: null` on every message's mode,
+  so its sends must carry an explicit `null` service tier option. Omitting the option tells Agent
+  Base to keep the previously persisted tier, which contradicts the stamped mode and leaves a stale
+  tier — such as the retired `"default"` sentinel Codex rejects — in force forever.
 - Account quota and per-turn token usage are different projections. The native Happy app reads plan limits from each session's encrypted `agentState.usageLimits`, so Happy Agent maps the selected provider's latest account snapshot into the legacy open-window shape and republishes attached sessions whenever that snapshot changes. Fable's separate allowance uses Claude's native `seven_day_fable` id so current and older apps can render it without a new machine-metadata contract.
 
 ## Tests
