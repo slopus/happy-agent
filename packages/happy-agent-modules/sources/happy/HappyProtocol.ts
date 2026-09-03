@@ -42,7 +42,11 @@ export type HappySessionEvent =
           reason?: "abort" | "completed" | "error" | "steering";
           turnElapsedMs: number;
       }
-    | { t: "turn-start" };
+    | { t: "turn-start" }
+    // A content-free receipt for a message the phone itself sent: `ref` is the server message ID
+    // the phone already holds, and the receipt's own position in the stream is where acceptance
+    // landed, so a client can align its copy with the run order instead of arrival order.
+    | { t: "user-message-accepted"; id: string; ref: string; runId: string };
 
 /** One rendered moment, with the identity and the turn it belongs to. */
 export interface HappySessionEnvelope {
@@ -108,4 +112,9 @@ export const HAPPY_SENT_FROM_RIG = "rig";
 /** Namespaces the identity of a message that came from Happy. */
 export function happyRemoteMessageId(remoteId: string): string {
     return `happy:${remoteId}`;
+}
+
+/** Recovers the Happy server's own message ID from a namespaced remote identity. */
+export function happyServerMessageId(namespacedId: string): string {
+    return namespacedId.startsWith("happy:") ? namespacedId.slice("happy:".length) : namespacedId;
 }

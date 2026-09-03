@@ -1296,6 +1296,22 @@ export class ApiModule implements AgentModule {
                     event.at,
                 );
             }),
+            this.#history.onPending((_ctx, pending) => {
+                // API-originated submissions announce themselves after their route has built the
+                // response. Every other producer still enters through History, so project that
+                // same durable pending row before Agent Base can publish its acceptance.
+                if (this.#apiPendingMessageIds.has(pending.id)) return;
+                this.#journal.append(
+                    "message.created",
+                    {
+                        agentId: pending.agentId,
+                        runId: null,
+                        message: pendingMessageResource(pending),
+                    },
+                    pending.createdAt,
+                );
+                boundedAdd(this.#apiPendingMessageIds, pending.id, MAX_ANNOUNCED_PENDING_MESSAGES);
+            }),
             this.#history.onAppend((_ctx, agentId, messages) => {
                 for (const message of messages) {
                     if (

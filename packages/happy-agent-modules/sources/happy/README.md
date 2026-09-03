@@ -102,6 +102,17 @@ contract each of them needs — `HappySessionOperations` for the session client,
 `HappySpawnOperations` for a phone starting something new — so the wire handling
 can be exercised without a daemon behind it.
 
+A phone message is always steering. Happy first writes its complete pending
+history row and offers the same message identity to Agent Base with `steer` in
+one transaction. History's committed-pending notification lets the API publish
+that row immediately, so an open desktop transcript shows the message while the
+active run is still reaching its steering boundary. Once accepted, the ordinary
+Agent Base event path promotes that exact row into the successor run. At that
+same acceptance the session stream answers the phone with a content-free
+`user-message-accepted` receipt instead of an echo: it closes the interrupted
+turn and tells the client, by server message ID, where its own message entered
+the run order. An older app that cannot name the receipt drops it silently.
+
 The module registers its projection listener on the journal in its own
 constructor, because the journal must carry that listener from the moment it
 records anything; it takes its lifetime and the agent collection at

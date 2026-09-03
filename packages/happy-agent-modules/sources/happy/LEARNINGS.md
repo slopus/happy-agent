@@ -28,6 +28,8 @@
   Base to keep the previously persisted tier, which contradicts the stamped mode and leaves a stale
   tier — such as the retired `"default"` sentinel Codex rejects — in force forever.
 - Account quota and per-turn token usage are different projections. The native Happy app reads plan limits from each session's encrypted `agentState.usageLimits`, so Happy Agent maps the selected provider's latest account snapshot into the legacy open-window shape and republishes attached sessions whenever that snapshot changes. Fable's separate allowance uses Claude's native `seven_day_fable` id so current and older apps can render it without a new machine-metadata contract.
+- A message received from the phone is steering, not an ordinary queued send. Store its pending History row and offer the same ID through `AgentSystemRef.steer` in one transaction. History's committed-pending notification is what makes the message visible to an already-open desktop transcript before Agent Base accepts it at the next run boundary.
+- Acceptance of a phone-originated message must not stay silent on the session stream. Suppressing the text echo also withheld the acceptance position, so the phone could not align its transcript with run order or tell "daemon offline" from "steering queued". The mapper now emits a content-free `user-message-accepted` receipt — server message ID, durable message ID, run ID — after the same steering turn close every other accepted user message causes. The phone's vocabulary silently drops unknown event kinds, so the receipt is additive and needs no server change: the server relays opaque encrypted payloads.
 
 ## Tests
 

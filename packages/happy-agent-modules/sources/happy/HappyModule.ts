@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { basename } from "node:path";
 
+import { createId } from "@paralleldrive/cuid2";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { HappyIntegration, HappyIntegrationError } from "@slopus/happy-agent-client";
@@ -21,7 +22,11 @@ import type { AgentEvent, EventsModuleListener } from "../events/index.js";
 import { ComputeModule } from "../compute/index.js";
 import { EventsModule } from "../events/index.js";
 import { GitModule, type GitChangeSnapshot, type GitTrackedEntity } from "../git/index.js";
-import { HistoryModule } from "../history/index.js";
+import {
+    HistoryModule,
+    type HistoryMessageMode,
+    type HistoryPendingMessage,
+} from "../history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ProjectsModule, type Project } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
@@ -935,16 +940,41 @@ export class HappyModule
             );
         }
         const messageOptions = messageOptionsFor(next);
+        const content = messageFrom(message);
+        const id = createId();
+        const pending: HistoryPendingMessage = {
+            agentId,
+            blocks: content.content.map((block) =>
+                block.type === "text"
+                    ? { text: block.text, type: "text" as const }
+                    : {
+                          data: block.data,
+                          mediaType: block.mimeType,
+                          type: "image" as const,
+                      },
+            ),
+            createdAt: Date.now(),
+            delivery: "steer",
+            id,
+            mode: modeForSelection(next),
+            role: "user",
+            runId: null,
+            status: "pending",
+        };
         try {
-            await system.send(ctx, agentId, messageFrom(message), {
-                ...messageOptions,
-                metadata: {
-                    ...messageOptions.metadata,
-                    happy: { remoteMessageId: message.remoteMessageId },
-                },
+            await ctx.inTx(async (txCtx) => {
+                await this.#history.queuePending(txCtx, pending);
+                await system.steer(txCtx, agentId, content, {
+                    ...messageOptions,
+                    id,
+                    metadata: {
+                        ...messageOptions.metadata,
+                        happy: { remoteMessageId: message.remoteMessageId },
+                    },
+                });
             });
         } catch (cause) {
-            throw new Error("Agent Base rejected the phone's message.", { cause });
+            throw new Error("Happy Agent rejected the phone's message.", { cause });
         }
         this.#scheduling.interruptWaits(ctx, agentId);
         await system.updateMetadata(ctx, agentId, { happy: next });
@@ -1853,19 +1883,23 @@ function messageOptionsFor(selection: HappySelection): AgentBaseMessageOptions {
             ...USER_MESSAGE_ORIGIN_METADATA,
             // The composer selection this message runs with, stamped the way the API
             // stamps its own sends so history shows the phone's mode too.
-            mode: {
-                effort: selection.effort,
-                modelId: selection.modelId,
-                permissionMode: selection.permissionMode,
-                providerId: selection.providerId,
-                serviceTier: null,
-            },
+            mode: modeForSelection(selection),
         },
         model: selection.modelId,
         permissionMode: selection.permissionMode,
         provider: selection.providerId,
         // The phone has no tier selector, and the stamped mode above says null. Send the explicit
         // clear so a stale persisted tier cannot outlive the mode the message claims to run with.
+        serviceTier: null,
+    };
+}
+
+function modeForSelection(selection: HappySelection): HistoryMessageMode {
+    return {
+        effort: selection.effort,
+        modelId: selection.modelId,
+        permissionMode: selection.permissionMode,
+        providerId: selection.providerId,
         serviceTier: null,
     };
 }

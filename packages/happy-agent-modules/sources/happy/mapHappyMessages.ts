@@ -9,6 +9,7 @@ import type {
     HappySessionProtocolMessage,
     HappyUsage,
 } from "./HappyProtocol.js";
+import { happyServerMessageId } from "./HappyProtocol.js";
 
 /** How many event ids are remembered so a replayed event is not shown twice. */
 const MAX_REMEMBERED_EVENTS = 16_384;
@@ -179,8 +180,27 @@ export class HappyMessageMapper {
         const accepted = event.payload;
         this.#rememberRunStart(accepted.runId, event.occurredAt);
         if (message?.recordId !== accepted.id) return [];
-        // The phone already shows a message it sent; the typed History marker prevents its echo.
-        if (message.remoteMessageId !== undefined || message.hideFromUser === true) return [];
+        if (message.hideFromUser === true) return [];
+        // The phone already shows a message it sent, so its text must never echo back. What the
+        // phone cannot see is where acceptance landed, so a content-free receipt carries that
+        // position, after the same turn close any other accepted user message causes.
+        if (message.remoteMessageId !== undefined) {
+            if (message.role !== "user") return [];
+            return [
+                ...this.#closeTurn(event, accepted.runId, "completed", "steering"),
+                this.#createMessage({
+                    ev: {
+                        id: accepted.id,
+                        ref: happyServerMessageId(message.remoteMessageId),
+                        runId: accepted.runId,
+                        t: "user-message-accepted",
+                    },
+                    id: `accepted:${accepted.id}`,
+                    role: "agent",
+                    time: event.occurredAt,
+                }),
+            ];
+        }
         const text = message.blocks
             .flatMap((block) => (block.type === "text" ? [block.text] : []))
             .join("\n")

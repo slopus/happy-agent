@@ -94,6 +94,12 @@ async function fixture() {
     };
     const projectAgents = new Map<string, string>();
     const workspaceAgents = new Map<string, string>();
+    const pendingMessages: Record<string, unknown>[] = [];
+    const steered: {
+        agentId: string;
+        message: Record<string, unknown>;
+        options: Record<string, unknown>;
+    }[] = [];
     const projects = new Map([
         [
             "project-1",
@@ -137,6 +143,15 @@ async function fixture() {
         create: async (_ctx: unknown, config: AgentConfig, options: { id: string }) => {
             configs.set(options.id, config);
             return options.id;
+        },
+        steer: async (
+            _ctx: unknown,
+            agentId: string,
+            message: Record<string, unknown>,
+            options: Record<string, unknown>,
+        ) => {
+            steered.push({ agentId, message, options });
+            return { accepted: "created", delivery: "steer", id: options.id };
         },
         updateMetadata: async (
             _ctx: unknown,
@@ -226,6 +241,9 @@ async function fixture() {
         } as never,
         {
             latestUserOrFinalAssistantTextMessageAt: async () => activity.textMessageAt,
+            queuePending: async (_ctx: unknown, message: Record<string, unknown>) => {
+                pendingMessages.push(message);
+            },
         } as never,
         projectModule as never,
         { list: () => [], onChanged: () => () => undefined } as never,
@@ -247,12 +265,64 @@ async function fixture() {
         createdWorkspaces,
         gitState,
         module,
+        pendingMessages,
         projectAgents,
         projects,
+        steered,
         workspaceAgents,
         workspaces,
     };
 }
+
+describe("Happy mobile messages", () => {
+    it("publishes a pending steering message before delivering it to Agent Base", async () => {
+        const test = await fixture();
+        test.configs.set("agent-active", {
+            environment: {
+                osVersion: "test",
+                platform: "darwin",
+                shell: "/bin/zsh",
+                workingDirectory: "/projects/rig",
+            },
+            metadata: { happy: SELECTION },
+        });
+
+        await test.module.submit(databases.at(-1)!.context, "agent-active", {
+            images: [],
+            remoteMessageId: "happy:mobile-message-1",
+            selection: {},
+            text: "Steer this active run.",
+        });
+
+        expect(test.pendingMessages).toEqual([
+            expect.objectContaining({
+                agentId: "agent-active",
+                blocks: [{ text: "Steer this active run.", type: "text" }],
+                delivery: "steer",
+                role: "user",
+                runId: null,
+                status: "pending",
+            }),
+        ]);
+        const pendingId = test.pendingMessages[0]?.id;
+        expect(pendingId).toEqual(expect.any(String));
+        expect(test.steered).toEqual([
+            expect.objectContaining({
+                agentId: "agent-active",
+                message: {
+                    content: [{ text: "Steer this active run.", type: "text" }],
+                    role: "user",
+                },
+                options: expect.objectContaining({
+                    id: pendingId,
+                    metadata: expect.objectContaining({
+                        happy: { remoteMessageId: "happy:mobile-message-1" },
+                    }),
+                }),
+            }),
+        ]);
+    });
+});
 
 describe("HappyModule spawn ownership", () => {
     it("starts at a project root and attaches there", async () => {

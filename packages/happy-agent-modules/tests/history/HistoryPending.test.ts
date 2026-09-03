@@ -26,6 +26,32 @@ function pending(id: string, createdAt: number): HistoryPendingMessage {
 }
 
 describe("HistoryModule pending messages", () => {
+    it("notifies subscribers only after a pending message commits", async () => {
+        const history = new HistoryModule();
+        const database = moduleDatabase(history.migrations, "history-pending-notification");
+        await database.ready;
+        const received: HistoryPendingMessage[] = [];
+        history.onPending((_ctx, message) => {
+            received.push(message);
+        });
+
+        try {
+            await expect(
+                database.context.inTx(async (txCtx) => {
+                    await history.queuePending(txCtx, pending("rolled-back", 99));
+                    expect(received).toEqual([]);
+                    throw new Error("roll back");
+                }),
+            ).rejects.toThrow("roll back");
+            expect(received).toEqual([]);
+
+            await history.queuePending(database.context, pending("committed", 100));
+            expect(received).toEqual([pending("committed", 100)]);
+        } finally {
+            database.close();
+        }
+    });
+
     it("keeps the complete durable queue ordered and visible through a fresh module instance", async () => {
         const first = new HistoryModule();
         const database = moduleDatabase(first.migrations, "history-pending-restart");

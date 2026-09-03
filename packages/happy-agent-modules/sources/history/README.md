@@ -113,6 +113,10 @@ tool calls, and tool results), let the model size what it did and did not see wi
   function unsubscribes. Subscribers are independent: one that fails is logged through `ctx.log`
   and the rest are still told. This is how the observation module's history dump follows the
   archive.
+- `onPending(listener): () => void` — subscribe to committed pending user messages. The listener
+  receives a private clone only after the outer transaction that stores the pending row and offers
+  it to Agent Base commits. API projection uses this so submissions from non-HTTP producers are
+  visible immediately while they wait.
 
 The module also implements the `AgentModule` lifecycle hooks that do the recording:
 `beforeInferenceTransact` (retains the inference identity until its message commits),

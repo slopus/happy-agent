@@ -67,12 +67,35 @@ describe("Happy message mapping", () => {
         expect(messages[0]?.localId).toBe(`rig:${messages[0]?.content.id ?? ""}`);
     });
 
-    it("stays silent about a message that came from the phone", () => {
+    it("answers a phone message with an acceptance receipt instead of an echo", () => {
         const mapper = new HappyMessageMapper();
         const echo = accepted();
-        expect(
-            mapper.map(echo, historyMessage("sent from Happy", { remoteMessageId: "remote-1" })),
-        ).toEqual([]);
+        const record = historyMessage("sent from Happy", { remoteMessageId: "happy:remote-1" });
+        const messages = mapper.map(echo, record);
+        expect(messages).toHaveLength(1);
+        expect(messages[0]?.content.role).toBe("agent");
+        expect(messages[0]?.content.id).toBe(`accepted:${record.recordId}`);
+        expect(messages[0]?.content.ev).toEqual({
+            id: record.recordId,
+            ref: "remote-1",
+            runId: RUN,
+            t: "user-message-accepted",
+        });
+    });
+
+    it("closes an interrupted turn before the phone's acceptance receipt", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+        const steering = accepted({ kind: "steering" });
+        const messages = mapper.map(
+            steering,
+            historyMessage("steer this", { remoteMessageId: "happy:remote-2" }),
+        );
+        expect(messages.map((message) => message.content.ev.t)).toEqual([
+            "turn-end",
+            "user-message-accepted",
+        ]);
+        expect(messages[0]?.content.ev).toMatchObject({ reason: "steering", status: "completed" });
     });
 
     it("stays silent about a message meant to stay out of sight", () => {

@@ -156,6 +156,12 @@ export type HistoryAppendListener = (
     messages: readonly HistoryMessage[],
 ) => void | Promise<void>;
 
+/** Called once a user message waiting for Agent Base has committed. */
+export type HistoryPendingListener = (
+    ctx: Context,
+    message: HistoryPendingMessage,
+) => void | Promise<void>;
+
 /**
  * The agent's own record of what happened, which it can read back.
  *
@@ -180,6 +186,8 @@ export class HistoryModule implements AgentModule {
 
     /** Who is watching the archive: the live subscriptions this module supervises. */
     readonly #appendListeners = new Set<HistoryAppendListener>();
+    /** Who projects newly committed pending messages into live client surfaces. */
+    readonly #pendingListeners = new Set<HistoryPendingListener>();
 
     constructor(events?: EventsModule) {
         this.#events = events;
@@ -298,6 +306,14 @@ export class HistoryModule implements AgentModule {
         this.#appendListeners.add(listener);
         return () => {
             this.#appendListeners.delete(listener);
+        };
+    }
+
+    /** Watch durable pending user messages after their outermost transaction commits. */
+    onPending(listener: HistoryPendingListener): () => void {
+        this.#pendingListeners.add(listener);
+        return () => {
+            this.#pendingListeners.delete(listener);
         };
     }
 
@@ -458,6 +474,7 @@ export class HistoryModule implements AgentModule {
                         ${message.agentId}, ${position}, ${message.id}, ${encoded}
                     )`,
             );
+            this.#schedulePendingNotification(txCtx, message);
         });
     }
 
@@ -1600,6 +1617,24 @@ export class HistoryModule implements AgentModule {
                         "A history append subscriber failed.",
                         error,
                     );
+                }
+            }
+        });
+    }
+
+    #schedulePendingNotification(ctx: Context, message: HistoryPendingMessage): void {
+        if (this.#pendingListeners.size === 0) return;
+        const listeners = [...this.#pendingListeners];
+        const snapshot = structuredClone(message);
+        afterCommit(ctx, async (postCommitCtx) => {
+            for (const listener of listeners) {
+                try {
+                    await listener(postCommitCtx, structuredClone(snapshot));
+                } catch (error: unknown) {
+                    withLogContext(postCommitCtx, {
+                        agentId: snapshot.agentId,
+                        messageId: snapshot.id,
+                    }).log.error("A history pending-message subscriber failed.", error);
                 }
             }
         });
