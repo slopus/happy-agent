@@ -26,7 +26,7 @@ export type HappySessionEvent =
     // and a truer-looking event does not.
     | { t: "service"; text: string }
     | { t: "text"; text: string; thinking?: boolean }
-    | { t: "tool-call-end"; call: string }
+    | { t: "tool-call-end"; call: string; result?: string; isError?: boolean }
     | {
           t: "tool-call-start";
           args: Record<string, unknown>;

@@ -13,7 +13,7 @@ import { moveComputeFile } from "../../../impl/moveComputeFile.js";
 import { iterateDiffContentLines } from "../../../impl/iterateDiffContentLines.js";
 import { resolveComputePath } from "../../../impl/resolveComputePath.js";
 import { writeComputeTextFile } from "../../../impl/writeComputeTextFile.js";
-import { parseCodexPatch, type CodexPatchHunk } from "./parseCodexPatch.js";
+import { parseCodexPatch, type CodexPatchHunk } from "../../../../impl/parseCodexPatch.js";
 
 /** One file the patch changed, named both as the patch wrote it and as the machine sees it. */
 export interface CodexPatchChange {
