@@ -248,6 +248,12 @@ export const messageDeltaPayloadSchema = Type.Object({
 /** Streaming text with an absolute prior-text offset. */
 export type MessageDeltaPayload = Static<typeof messageDeltaPayloadSchema>;
 
+/** A pending user message was withdrawn before inference accepted it. */
+export type MessageWithdrawnPayload = MutationEcho & {
+    agentId: Cuid2;
+    messageId: Cuid2;
+};
+
 /**
  * The message is gone from history.
  *
@@ -355,6 +361,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"message.created", MessageCreatedPayload>
     | EventEnvelope<"message.updated", MessageUpdatedPayload>
     | EventEnvelope<"message.delta", MessageDeltaPayload>
+    | EventEnvelope<"message.withdrawn", MessageWithdrawnPayload>
     | EventEnvelope<"message.deleted", MessageDeletedPayload>
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>

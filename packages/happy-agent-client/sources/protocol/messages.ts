@@ -15,6 +15,7 @@ import {
     type Cuid2,
     type EventCursor,
     type MessageMode,
+    type MutationId,
     type Timestamp,
 } from "./common.js";
 import type { UsageBreakdown } from "./usage.js";
@@ -433,6 +434,18 @@ export interface SendMessageRequest {
 export interface SendMessageResponse {
     message: UserMessage;
     /** The event cursor at send; streaming from it replays everything this causes. */
+    cursor: EventCursor;
+}
+
+/** `POST /v0/agents/:agentId/messages/:messageId/withdraw` */
+export interface WithdrawMessageRequest {
+    /** Echoed on the event caused by the first successful withdrawal. */
+    mutationId?: MutationId;
+}
+
+/** `POST /v0/agents/:agentId/messages/:messageId/withdraw` */
+export interface WithdrawMessageResponse {
+    messageId: Cuid2;
     cursor: EventCursor;
 }
 

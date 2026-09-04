@@ -532,6 +532,22 @@ describe("HappyAgentClient", () => {
         );
     });
 
+    it("withdraws one pending message and preserves both encoded identities", async () => {
+        const response = { cursor: "c2", messageId: "message/one" };
+        const { fetch, requests } = stubFetch(() => json(response));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(
+            client.withdrawMessage("agent/team", "message/one", { mutationId: "mutation-one" }),
+        ).resolves.toEqual(response);
+
+        expect(requests[0]?.url).toBe(
+            "http://agent.local/v0/agents/agent%2Fteam/messages/message%2Fone/withdraw",
+        );
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.body).toBe(JSON.stringify({ mutationId: "mutation-one" }));
+    });
+
     it("creates a user-visible agent with a different-workspace managing parent", async () => {
         const { fetch, requests } = stubFetch(() => json({ agent: {}, slashCommands: [] }, 201));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });

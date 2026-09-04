@@ -108,6 +108,8 @@ import type {
     MessageHistoryResponse,
     SendMessageRequest,
     SendMessageResponse,
+    WithdrawMessageRequest,
+    WithdrawMessageResponse,
 } from "./protocol/messages.js";
 import type { BackgroundProcessResponse } from "./protocol/processes.js";
 import type { ProfileResponse, ProfileUpdateRequest } from "./protocol/profile.js";
@@ -1566,6 +1568,21 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: `v0/agents/${encodeURIComponent(agentId)}/send`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/agents/:agentId/messages/:messageId/withdraw` — removes pending input. */
+    async withdrawMessage(
+        agentId: Cuid2,
+        messageId: Cuid2,
+        request: WithdrawMessageRequest = {},
+        options: RequestOptions = {},
+    ): Promise<WithdrawMessageResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/agents/${encodeURIComponent(agentId)}/messages/${encodeURIComponent(messageId)}/withdraw`,
             json: request,
             signal: options.signal,
         });
