@@ -157,13 +157,15 @@ start — see `POST /v0/agents/:agentId/send`.
 
 ### Archival, not deletion
 
-Nothing durable is ever permanently deleted through this API — that is deliberate, not an
-omission. Projects, workspaces, agents, and bots **archive**: they leave the active lists but keep
-their history and can be inspected. Only agents and bots can be unarchived for now; an archived project
-is revived by registering its path again, and an archived workspace stays archived. There are
-no hard-delete endpoints. The only things that end are runtime state — a terminal, a background process — and
-the transcript resets described under `message.deleted`, none of which is a client deleting a
-durable resource.
+Nothing in accepted history is ever permanently deleted through this API — that is deliberate,
+not an omission. Projects, workspaces, agents, and bots **archive**: they leave the active lists
+but keep their history and can be inspected. Only agents and bots can be unarchived for now; an
+archived project is revived by registering its path again, and an archived workspace stays
+archived. There are no hard-delete endpoints. A pending user message is the one exception: its
+sender may withdraw it before inference accepts it, because it has not entered a run or accepted
+history yet. The daemon retains its identity as a tombstone so a lost-response retry cannot
+resurrect it. The only other things that end are runtime state — a terminal, a background process
+— and the transcript resets described under `message.deleted`.
 
 ## Endpoints
 
@@ -3730,7 +3732,8 @@ Request:
   optimistic copy: whichever way the authoritative message arrives, it carries the ID the
   client already keys by. Omitted, the daemon generates one. Sending again with an `id` the
   agent already has creates nothing and returns the message as it now stands, which makes
-  retrying a send whose response was lost safe.
+  retrying a send whose response was lost safe. An ID whose pending message was withdrawn
+  remains reserved and returns `409` (`conflict`) instead of recreating the message.
 - `text` — the message text. Required.
 - `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
   and echoed unchanged on every complete representation of this message, but is not interpreted
@@ -3816,6 +3819,37 @@ Response — `202`: the durable message as it now stands, plus the event cursor 
   the `runId` it brings is the handle for `abort`.
 - `cursor` — the event cursor at send; streaming from it replays everything this message
   causes, from its acceptance through its run's completion.
+
+### `POST /v0/agents/:agentId/messages/:messageId/withdraw`
+
+Withdraws one user message while it is still pending. Queue removal, the durable withdrawal
+tombstone, and the event commit atomically with respect to inference acceptance: exactly one side
+of the race wins. If withdrawal wins, the message never enters a run, disappears from every agent
+bootstrap, and never appears in message history. If acceptance wins, withdrawal returns `409`
+(`conflict`) and the accepted message remains unchanged.
+
+Request:
+
+```json
+{ "mutationId": "..." }
+```
+
+`mutationId` is optional and is echoed on the event caused by the first successful withdrawal.
+
+Response — `200`:
+
+```json
+{
+    "messageId": "tz4a98xxat96iws9zmbrgj3a",
+    "cursor": "01991f3a-6272-7000-8000-905162a30425"
+}
+```
+
+The first successful withdrawal emits one `message.withdrawn` event after the transaction
+commits. Repeating the same withdrawal is idempotent: it returns `200` with the message ID and the
+current event cursor, and emits no second event. The withdrawn ID stays reserved, so retrying the
+original send cannot put the message back. A message ID that never existed is `404`; a message
+already accepted into a run, or an ID belonging to any non-pending record, is `409` (`conflict`).
 
 ### `GET /v0/agents/:agentId/messages`
 
@@ -4912,6 +4946,13 @@ event is idempotent by attachment ID.
     - when the block is absent or not textual, the current text is shorter than `offset`, or text
       after `offset` conflicts with `append`, stop applying deltas for that message and reconcile
       it from authoritative history (or a later full `message.updated`).
+
+- `message.withdrawn` — a pending user message was withdrawn before inference accepted it.
+  Clients remove that ID from their pending composer queue. It never belongs to a run and is not
+  a transcript deletion.
+    - `agentId` (ID string).
+    - `messageId` (ID string).
+    - `mutationId` — echoed when the withdrawal request supplied one.
 
 - `message.deleted` — the message is gone from history; clients remove it from rendering.
   There is no REST operation behind this: deletion happens only when the daemon **resets a
