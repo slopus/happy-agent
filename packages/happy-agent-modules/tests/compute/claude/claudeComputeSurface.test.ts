@@ -95,6 +95,14 @@ describe("Claude compute surface", () => {
         }
     });
 
+    it("tells Claude that each Bash call starts from the primary working directory", async () => {
+        const { tool } = await claudeTools();
+
+        expect(tool("Bash").description).toContain(
+            "Every Bash call starts in the primary working directory. A directory change affects only that call.",
+        );
+    });
+
     it("matches the vendor descriptors' argument names and required split", async () => {
         const { tool } = await claudeTools();
 

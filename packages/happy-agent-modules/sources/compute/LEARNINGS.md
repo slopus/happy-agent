@@ -1,5 +1,13 @@
 # Compute module learnings
 
+## Bash calls start from a fixed working directory
+
+Each Bash invocation opens a fresh shell in the compute's primary working directory. A directory
+change belongs to that invocation, including a background process that continues from it, and does
+not alter where a later Bash call starts. Claude's Bash description states this positively so the
+model can use relative paths without adding a redundant absolute directory change. Do not describe
+the working directory as mutable session-wide shell state.
+
 ## Secret attachments are selected per command and resolved at spawn
 
 Shell tools carry only attached secret bundle IDs. The default host machine resolves those IDs

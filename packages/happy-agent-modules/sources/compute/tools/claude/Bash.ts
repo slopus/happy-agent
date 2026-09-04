@@ -22,6 +22,7 @@ const exact = { additionalProperties: false } as const;
 
 const CLAUDE_BASH_DESCRIPTION = `Executes a bash command in the current working directory and returns its output.
 
+- Every Bash call starts in the primary working directory. A directory change affects only that call.
 - Environment variables and shell functions do not carry over between commands.
 - Prefer the dedicated file and search tools over shell equivalents when one fits.
 - \`timeout\` is in milliseconds: default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)}. It is how long you wait, not how long the command may live: a command still running when the wait ends keeps running in the background and comes back with a shell ID.
