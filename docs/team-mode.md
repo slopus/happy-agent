@@ -51,9 +51,11 @@ owner_workos_user_id = "user_01EXAMPLE"
 enabled = true
 ```
 
-Tailcat provides end-to-end WireGuard encryption, NAT traversal, and DERP fallback without a
-Tailscale account. It does not replace WorkOS authentication. The stable connection address and
+Tailcat provides end-to-end WireGuard encryption, NAT traversal, and DERP fallback without an
+account. It does not replace WorkOS authentication. The stable connection address and
 current forwarded port are written under `~/.happy/agent/tailcat/` while the daemon is open.
+See [tailcat.md](tailcat.md) for live Tailcat control through an admin bot, endpoint discovery, and
+remote client commands.
 
 ## What changes
 

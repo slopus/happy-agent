@@ -60,7 +60,7 @@ Configuration owns Monty's exact private snapshot path at
 `.happy/agent/state/<agentId>/snapshot.bin` and validates the agent's cuid2 before it can become a
 path segment.
 
-`[feature.tailcat] enabled = true` is a machine-only opt-in. The daemon executable opens its active
+`[feature.tailcat] enabled = true` is a machine-only opt-in. The Tailcat module opens the daemon's active
 Unix-socket or team HTTP transport through bundled Tailcat v0.4.0, while the Happy API continues
 to require its ordinary local bearer token or WorkOS token. The fixed-region Tailcat identity key
 lives under `.happy/agent/tailcat/` and survives daemon restarts. The live address and forwarded

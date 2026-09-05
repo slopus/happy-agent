@@ -2,18 +2,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdir, open, rm, writeFile } from "node:fs/promises";
 
-import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { resolveTailcatExecutable } from "./resolveTailcatExecutable.js";
 import { startTcpRelay, type TcpRelay, type TcpRelayTarget } from "./startTcpRelay.js";
+import { tailcatAddressSchema } from "../Tailcat.js";
 
-const TAILCAT_ADDRESS_SCHEMA = Type.String({
-    maxLength: 8_192,
-    minLength: 3,
-    pattern: "^tc[A-Za-z0-9_-]+$",
-});
 const MAX_PROCESS_OUTPUT_BYTES = 8_192;
 
 export interface TailcatExposurePaths {
@@ -316,7 +311,7 @@ async function readTailcatAddress(path: string): Promise<string | undefined> {
         const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
         if (bytesRead > 8_192) throw new Error("The Tailcat address file is too large.");
         const value = bytes.subarray(0, bytesRead).toString("utf8").trim();
-        if (!Value.Check(TAILCAT_ADDRESS_SCHEMA, value)) {
+        if (!Value.Check(tailcatAddressSchema, value)) {
             throw new Error("Tailcat wrote an invalid connection address.");
         }
         return value;

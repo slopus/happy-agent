@@ -428,12 +428,16 @@ function resolveSourceAdapters(target: BinaryTarget): Map<string, SourceAdapter>
             adapt: adaptBunComputePtyTransport,
         },
     );
-    addAdapter(adapters, join(happyAgentRoot, "dist", "tailcat", "resolveTailcatExecutable.js"), {
-        name: "Tailcat executable resolver",
-        required: true,
-        adapt: () =>
-            `export { getTailcatExecutable as resolveTailcatExecutable } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
-    });
+    addAdapter(
+        adapters,
+        join(modulesRoot, "dist", "tailcat", "impl", "resolveTailcatExecutable.js"),
+        {
+            name: "Tailcat executable resolver",
+            required: true,
+            adapt: () =>
+                `export { getTailcatExecutable as resolveTailcatExecutable } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
+        },
+    );
 
     addAdapter(adapters, join(libsqlRoot, "index.js"), {
         name: "libSQL native loader",

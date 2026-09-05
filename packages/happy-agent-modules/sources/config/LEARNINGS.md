@@ -9,11 +9,13 @@ through Bedrock even though AWS does not serve it.
 
 ## Tailcat exposure is an explicit machine setting
 
-`[feature.tailcat] enabled = true` asks the daemon executable to expose whichever API transport is
-active through its bundled Tailcat. A repository cannot turn it on. Configuration owns the
-private Tailcat home, fixed-region identity key, live address, and live port paths under the agent
-home; the key survives restarts while the address and port files exist only while the tunnel is
-open. Tailcat removes the need for a Tailscale account, not Happy API authentication.
+`[feature.tailcat] enabled = true` asks the Tailcat module to expose whichever API transport the
+daemon attaches. A repository cannot turn it on. Configuration owns the private Tailcat home,
+fixed-region identity key, live address, and live port paths under the agent home; the key survives
+restarts while the address and port files exist only while the tunnel is open. Admin-bot live
+mutations persist the same setting in generated `runtime.toml`, which outranks the global default.
+Tailcat is a dedicated account-free transport, not a Tailscale access path. It does not remove
+Happy API authentication.
 
 ## Team mode is machine-scoped and owns a separate network identity boundary
 

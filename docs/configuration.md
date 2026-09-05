@@ -78,7 +78,10 @@ files and keeps the key. An unexpected Tailcat exit is supervised and restarted.
 Tailcat itself has no account login or client allowlist here. Happy API authentication is unchanged:
 the standalone socket still requires its local bearer token and team mode still verifies WorkOS.
 Anyone who knows the Tailcat address may reach that authentication boundary, so do not publish the
-address unnecessarily. A project `happy.toml` cannot enable Tailcat.
+address unnecessarily. A project `happy.toml` cannot enable Tailcat. An active admin bot can use
+`set_tailcat_enabled` to persist and immediately apply a runtime override, and
+`get_tailcat_status` to read the live address and port. See [tailcat.md](tailcat.md) for the
+complete Tailcat setup and client commands.
 
 ## Team deployment mode
 
@@ -131,7 +134,8 @@ stored first name and stores the trimmed remainder as the optional last name.
 Run a team deployment with `happy-agent run` under a process supervisor. Local socket-based daemon
 management and the macOS menu bar integration are disabled. The listener serves plain HTTP, so put
 it behind TLS-capable ingress before exposing it outside a trusted network. See
-[team-mode.md](team-mode.md) for the complete deployment and onboarding behavior.
+[team-mode.md](team-mode.md) for the complete deployment and onboarding behavior, or
+[tailcat.md](tailcat.md) to expose it through Tailcat.
 
 ## Protected paths
 

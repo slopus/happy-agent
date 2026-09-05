@@ -25,6 +25,9 @@ export * from "./files/index.js";
 // Bots: persistent single-conversation assistants with dedicated folders and agents.
 export * from "./bots/index.js";
 
+// Tailcat: stable account-free internet exposure, controlled only by active admin bots.
+export * from "./tailcat/index.js";
+
 // Happy: the optional mobile connection and its durable remote projection.
 export * from "./happy/index.js";
 

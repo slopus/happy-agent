@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { startTailcatExposure } from "../sources/tailcat/startTailcatExposure.js";
-import { startTcpRelay } from "../sources/tailcat/startTcpRelay.js";
+import { startTailcatExposure } from "../../sources/tailcat/impl/startTailcatExposure.js";
+import { startTcpRelay } from "../../sources/tailcat/impl/startTcpRelay.js";
 
 const roots: string[] = [];
 

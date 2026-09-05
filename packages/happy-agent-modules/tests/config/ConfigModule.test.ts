@@ -640,6 +640,27 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("persists live Tailcat enablement in runtime.toml and updates its current value", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-runtime-tailcat-"));
+        temporaryDirectories.push(root);
+        const happyHome = join(root, ".happy");
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            "[feature.tailcat]\nenabled = true\n",
+        );
+        const config = await ConfigModule.load(happyHome);
+
+        expect(config.tailcatEnabled).toBe(true);
+        await config.updateRuntimeTailcatEnabled(createRootContext(), false);
+
+        expect(config.tailcatEnabled).toBe(false);
+        const source = await readFile(config.configuration.paths.runtimeConfigPath, "utf8");
+        expect(parseHappyAgentConfigToml(source).values.feature?.tailcat).toEqual({
+            enabled: false,
+        });
+    });
+
     it("uses the ambient Grok CLI session without an explicit auth file", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-grok-session-"));
         temporaryDirectories.push(root);

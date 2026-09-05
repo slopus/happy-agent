@@ -9,7 +9,7 @@ the Agent System itself. This package owns the daemon process and its whole life
 - start the modules-owned runtime;
 - in standalone mode, bind its API to the configured Unix domain socket;
 - in team mode, bind its API to the configured TCP host and port;
-- when enabled, keep an account-free Tailcat tunnel open around either API transport;
+- attach either API transport to the modules-owned Tailcat tunnel controller;
 - forward HTTP, WebSocket upgrades, and `CONNECT` tunnels to the API module;
 - secure and remove the local socket when one is used;
 - stop the active transport and runtime cleanly;
@@ -113,10 +113,10 @@ restarts. While the tunnel is open, `address` and `port` files in that directory
 endpoint; both disappear on clean shutdown while the key remains. Tailcat is supervised and
 reopened after an unexpected exit.
 
-Tailcat can wrap either the standalone Unix socket or the team HTTP listener. It requires no
-Tailscale or Tailcat account and applies no Tailcat client allowlist, but it does not bypass Happy
-Agent authentication: standalone requests still need the local bearer token, and team requests
-still need a valid WorkOS token. A client with Tailcat v0.4.0 can reach the endpoint with:
+Tailcat can wrap either the standalone Unix socket or the team HTTP listener. It is a dedicated,
+account-free transport and applies no Tailcat client allowlist, but it does not bypass Happy Agent
+authentication: standalone requests still need the local bearer token, and team requests still
+need a valid WorkOS token. A client with Tailcat v0.4.0 can reach the endpoint with:
 
 ```sh
 address="$(cat ~/.happy/agent/tailcat/address)"
@@ -128,6 +128,10 @@ tailcat socks "$address" curl \
 ```
 
 Set a team listener's `host` to `127.0.0.1` when Tailcat should be its only network path.
+
+An active admin bot can change the persisted setting without restarting the daemon with
+`set_tailcat_enabled`, then read the live state and stable address with `get_tailcat_status`.
+Ordinary bots, archived admins, human-root agents, and subagents do not receive either tool.
 
 Use `@slopus/happy-agent-client` to call the API. The complete HTTP contract is specified in
 [`API.md`](API.md).

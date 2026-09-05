@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
     bindAgentSocket: vi.fn(),
     removeInactiveAgentSocket: vi.fn(),
     removeDaemonPid: vi.fn(),
-    startTailcatExposure: vi.fn(),
     startHappyAgentRuntime: vi.fn(),
     writeDaemonPid: vi.fn(),
 }));
@@ -23,10 +22,6 @@ vi.mock("../sources/socket/AgentSocket.js", () => ({
     bindAgentSocket: mocks.bindAgentSocket,
     removeInactiveAgentSocket: mocks.removeInactiveAgentSocket,
 }));
-vi.mock("../sources/tailcat/startTailcatExposure.js", () => ({
-    startTailcatExposure: mocks.startTailcatExposure,
-}));
-
 import { startHappyAgentDaemon } from "../sources/main.js";
 
 beforeEach(() => {
@@ -80,38 +75,24 @@ describe("startHappyAgentDaemon", () => {
     });
 
     it("opens Tailcat around the active transport and closes it with the daemon", async () => {
-        arrangeRuntime(true, true);
+        const runtime = arrangeRuntime(true, true);
         const closeHttp = vi.fn();
-        const closeTailcat = vi.fn(async () => undefined);
         mocks.bindAgentHttpServer.mockResolvedValue({
             close: closeHttp,
             host: "127.0.0.1",
             port: 3_000,
             url: "http://127.0.0.1:3000",
         });
-        mocks.startTailcatExposure.mockResolvedValue({
-            address: "tcTailcatTestAddress",
-            close: closeTailcat,
-            port: 43_210,
-        });
-
         const daemon = await startHappyAgentDaemon();
 
-        expect(mocks.startTailcatExposure).toHaveBeenCalledWith(
-            expect.anything(),
-            { host: "127.0.0.1", port: 3_000 },
-            {
-                addressPath: "/tmp/happy-team/tailcat/address",
-                home: "/tmp/happy-team/tailcat",
-                keyPath: "/tmp/happy-team/tailcat/default.private.json",
-                portPath: "/tmp/happy-team/tailcat/port",
-            },
-        );
+        expect(runtime.attachTransport).toHaveBeenCalledWith(expect.anything(), {
+            host: "127.0.0.1",
+            port: 3_000,
+        });
         expect(daemon.tailcat).toEqual({ address: "tcTailcatTestAddress", port: 43_210 });
 
         await daemon.close();
-        expect(closeTailcat).toHaveBeenCalledOnce();
-        expect(closeTailcat.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(runtime.shutdown.mock.invocationCallOrder[0]).toBeLessThan(
             closeHttp.mock.invocationCallOrder[0]!,
         );
     });
@@ -121,6 +102,7 @@ function arrangeRuntime(
     teamModeEnabled: boolean,
     tailcatEnabled = false,
 ): {
+    readonly attachTransport: ReturnType<typeof vi.fn>;
     readonly close: ReturnType<typeof vi.fn>;
     readonly shutdown: ReturnType<typeof vi.fn>;
 } {
@@ -147,8 +129,23 @@ function arrangeRuntime(
             },
         },
     };
+    const status = tailcatEnabled
+        ? {
+              address: "tcTailcatTestAddress",
+              enabled: true,
+              port: 43_210,
+              state: "open",
+          }
+        : { enabled: false, state: "disabled" };
+    const attachTransport = vi.fn(async () => status);
     const runtime = {
         api: { onShutdown: vi.fn(() => vi.fn()) },
+        modules: {
+            tailcat: {
+                attachTransport,
+                currentStatus: vi.fn(() => status),
+            },
+        },
         close: vi.fn(async () => undefined),
         configuration,
         ctx,
@@ -170,5 +167,5 @@ function arrangeRuntime(
             return runtime;
         },
     );
-    return runtime;
+    return { attachTransport, close: runtime.close, shutdown: runtime.shutdown };
 }

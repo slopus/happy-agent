@@ -1211,6 +1211,7 @@ export class ConfigModule implements AgentModule {
     #projectsHome: string | undefined;
     #providers: AgentProviders | undefined;
     #sourceProviders: AgentProviders | undefined;
+    #tailcatEnabled: boolean;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
     #resolvedScripted: ConfigInferenceOverride | undefined;
     #scriptedModelSnapshot: readonly AgentModel[] | undefined;
@@ -1248,6 +1249,7 @@ export class ConfigModule implements AgentModule {
         this.#runtimeValues = structuredClone(runtimeValues);
         this.#scripted = scripted;
         this.#environment = environment;
+        this.#tailcatEnabled = configuration.values.feature.tailcat.enabled;
         for (const id of Object.keys(configuration.values.providers)) {
             this.#providerEnabled.set(id, this.configuredProviderOverride(id) ?? false);
         }
@@ -1352,6 +1354,11 @@ export class ConfigModule implements AgentModule {
         return this.#providerSource().ids;
     }
 
+    /** The current daemon-owned Tailcat setting, including live runtime mutations. */
+    get tailcatEnabled(): boolean {
+        return this.#tailcatEnabled;
+    }
+
     isProviderEnabled(providerId: string): boolean {
         return this.#providerEnabled.get(providerId) === true;
     }
@@ -1447,6 +1454,26 @@ export class ConfigModule implements AgentModule {
             }
             await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
             this.#runtimeValues = next;
+        });
+    }
+
+    /** Atomically persist and publish the machine's live Tailcat enablement. */
+    async updateRuntimeTailcatEnabled(ctx: Context, enabled: boolean): Promise<void> {
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const next = structuredClone(this.#runtimeValues);
+            next.feature = {
+                ...next.feature,
+                tailcat: {
+                    ...next.feature?.tailcat,
+                    enabled,
+                },
+            };
+            if (!Value.Check(partialValuesSchema, next)) {
+                throw new Error("The generated runtime configuration is invalid.");
+            }
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+            this.#tailcatEnabled = enabled;
         });
     }
 

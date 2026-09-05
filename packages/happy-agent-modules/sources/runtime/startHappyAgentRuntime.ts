@@ -64,6 +64,7 @@ import { SecretsModule } from "../secrets/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
 import { SkillsModule } from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
+import { TailcatModule } from "../tailcat/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { TeamModule } from "../team/index.js";
 import { TerminalsModule } from "../terminals/index.js";
@@ -156,6 +157,7 @@ export interface HappyAgentRuntimeModules {
     readonly slashCommands: SlashCommandsModule;
     readonly skills: SkillsModule;
     readonly systemPrompt: SystemPromptModule;
+    readonly tailcat: TailcatModule;
     readonly tasks: TasksModule;
     readonly team: TeamModule<LibSQLDatabase>;
     readonly terminals: TerminalsModule;
@@ -414,6 +416,8 @@ export async function startHappyAgentRuntime(
         const projects = new ProjectsModule(config, git, abort, durableFunctions);
         const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
         const bots = new BotsModule(config, abort);
+        const tailcat = new TailcatModule(config, bots, durableFunctions);
+        registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
         const titles = new TitlesModule(config, history, workspaces);
         const terminals = new TerminalsModule(projects, workspaces, bots);
         registerShutdown("terminals", async () => await terminals.close());
@@ -539,6 +543,7 @@ export async function startHappyAgentRuntime(
             slashCommands,
             skills: compute.skillsModule,
             systemPrompt,
+            tailcat,
             tasks,
             team,
             terminals,
@@ -577,6 +582,7 @@ export async function startHappyAgentRuntime(
             git,
             durableFunctions,
             bots,
+            tailcat,
             projects,
             titles,
             workspaces,
