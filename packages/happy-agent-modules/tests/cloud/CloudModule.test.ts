@@ -1024,6 +1024,36 @@ describe("CloudModule", () => {
         );
     });
 
+    it("mints a team token with organization scope and durably rotates the shared credential", async () => {
+        const { database, module } = await fixture("cloud-module-team-mint");
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
+        workos.refresh.mockClear();
+        const previousToken = (await createCloudDatabase().read(database.context))?.session
+            ?.refreshToken;
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: "team-access",
+            refreshToken: "team-refresh",
+            user,
+        });
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            "team-access",
+        );
+        expect(workos.refresh).toHaveBeenCalledWith({
+            refreshToken: previousToken,
+            organizationId: "org_target",
+        });
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "team-refresh",
+        );
+        workos.refresh.mockClear();
+        const cancelled = AbortSignal.abort();
+        await expect(
+            module.mintForOrganization(database.context, "org_target", cancelled),
+        ).rejects.toThrow();
+        expect(workos.refresh).not.toHaveBeenCalled();
+    });
+
     it.each([
         ["production", "client_01KZD3XE9YAFAMT0P8TD4HP73E"],
         ["staging", "client_01KZD3XE4EW1AF1P6WTFHBPR4J"],

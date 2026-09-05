@@ -912,6 +912,24 @@ export class CloudModule implements AgentModule {
         });
     }
 
+    /** Mint for a configured team through the same serialized credential-rotation boundary. */
+    async mintForOrganization(
+        _ctx: Context,
+        organizationId: string,
+        signal?: AbortSignal,
+    ): Promise<string> {
+        signal?.throwIfAborted();
+        if (!Value.Check(cloudOrganizationSchema.properties.id, organizationId)) {
+            throw this.#error(400, "invalid_request", "The team organization ID is invalid.");
+        }
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            signal?.throwIfAborted();
+            this.#assertRunning();
+            return (await this.#mintInLock(ctx, true, organizationId)).accessToken;
+        });
+    }
+
     async listOrganizations(_ctx: Context): Promise<CloudOrganizationsResponse> {
         const ctx = this.#ownedContext();
         return await this.#lock.runInLock(ctx, async () => {
@@ -1573,7 +1591,11 @@ export class CloudModule implements AgentModule {
         });
     }
 
-    async #mintInLock(ctx: Context, publishUserChange: boolean): Promise<MintedCloudCredential> {
+    async #mintInLock(
+        ctx: Context,
+        publishUserChange: boolean,
+        organizationId?: string,
+    ): Promise<MintedCloudCredential> {
         const stored = await this.#readOwned(ctx);
         const session = stored?.session;
         if (session === null || session === undefined || this.#cloud.status !== "connected") {
@@ -1586,7 +1608,10 @@ export class CloudModule implements AgentModule {
 
         let authenticated;
         try {
-            authenticated = await this.#client(session.environment).refresh(session.refreshToken);
+            authenticated = await this.#client(session.environment).refresh(
+                session.refreshToken,
+                organizationId,
+            );
         } catch (error: unknown) {
             logCloudFailure(ctx, "token", session.environment, "workos-refresh", error);
             if (error instanceof CloudCredentialsRejectedError) {

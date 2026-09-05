@@ -1,4 +1,5 @@
 import { chmod, mkdir } from "node:fs/promises";
+import { ConnectionsModule } from "../connections/index.js";
 
 import {
     AgentStorage,
@@ -132,6 +133,7 @@ export interface HappyAgentRuntimeModules {
     readonly compactions: CompactionsModule;
     readonly compute: ComputeModule;
     readonly config: ConfigModule;
+    readonly connections: ConnectionsModule;
     readonly contextWindow: ContextWindowModule;
     readonly durableFunctions: DurableFunctionsModule;
     readonly events: EventsModule;
@@ -449,6 +451,11 @@ export async function startHappyAgentRuntime(
         const installation = new InstallationModule(projects);
         const cloud = new CloudModule(durableFunctions, profile, config);
         const happyTeams = new HappyTeamsModule(cloud, bots);
+        const connections = new ConnectionsModule(config, bots, cloud, tailcat, durableFunctions);
+        registerShutdown(
+            "connections",
+            async (shutdownCtx) => await connections.close(shutdownCtx),
+        );
         const providerUsage = new ProviderUsageModule(config);
         registerShutdown("provider-usage", async () => await providerUsage.close());
         const happy = new HappyModule(
@@ -506,6 +513,7 @@ export async function startHappyAgentRuntime(
             slashCommands,
             secrets,
             team,
+            connections,
         );
         api = apiModule;
 
@@ -521,6 +529,7 @@ export async function startHappyAgentRuntime(
             compute: compute.computeModule,
             config,
             contextWindow,
+            connections,
             durableFunctions,
             events,
             files,
@@ -588,6 +597,7 @@ export async function startHappyAgentRuntime(
             bots,
             tailcat,
             ...(team.enabled ? [] : [happyTeams]),
+            connections,
             projects,
             titles,
             workspaces,

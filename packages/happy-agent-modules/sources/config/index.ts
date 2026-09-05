@@ -16,3 +16,10 @@ export {
     type HappyAgentConfigurationInput,
     type HappyAgentConfigurationPaths,
 } from "./ConfigModule.js";
+export {
+    remoteConnectionConfigSchema,
+    remoteConnectionEntrySchema,
+    apiTokenSchema,
+    type RemoteConnectionConfig,
+    type RemoteConnectionEntry,
+} from "./RemoteConnectionConfig.js";

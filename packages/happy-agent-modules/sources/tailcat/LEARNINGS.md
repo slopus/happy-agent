@@ -26,3 +26,12 @@ Binding the loopback relay to port zero made the remote endpoint change on every
 even though the Tailcat identity was stable. Tailcat now binds the exact machine-configured port,
 which defaults to the IANA-unassigned `24779`. A collision is a startup failure, never permission
 to choose another port, because remote nodes may have stored the address and port together.
+
+## Outbound carriers are persistent native sockets
+
+Remote connections use one persistent Tailcat SOCKS process per active configured endpoint and
+native TCP sockets for its HTTP pool. A stdio-backed Duplex worked on Node but did not satisfy
+Bun's HTTP transport. Tailcat still carries and encrypts the remote traffic; the loopback SOCKS
+hop adapts it to both runtimes without exposing the remote API token to the carrier process.
+Processes, handshake buffers, concurrent sockets, startup, and shutdown are bounded. Recreating a
+failed carrier is allowed for a new request, never a replay of an interrupted mutation.

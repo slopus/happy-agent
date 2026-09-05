@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
+import { ConnectionsModule, RemoteConnectionError } from "../connections/index.js";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -302,6 +303,7 @@ export class ApiModule implements AgentModule {
     readonly #happy: HappyModule;
     readonly #profile: ProfileModule;
     readonly #team: TeamModule;
+    readonly #connections: ConnectionsModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
     readonly #secrets: SecretsModule;
@@ -382,6 +384,7 @@ export class ApiModule implements AgentModule {
         slashCommands: SlashCommandsModule,
         secrets: SecretsModule,
         team: TeamModule,
+        connections: ConnectionsModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -406,6 +409,7 @@ export class ApiModule implements AgentModule {
         this.#slashCommands = slashCommands;
         this.#secrets = secrets;
         this.#team = team;
+        this.#connections = connections;
     }
 
     readonly beforeStart = async (
@@ -449,6 +453,7 @@ export class ApiModule implements AgentModule {
             this.#token = await prepareLocalApiToken(
                 this.#config.configuration.paths.tokenPath,
                 this.#config.configuration.values?.feature?.team?.enabled ?? false,
+                this.#config.configuration.values?.api?.token,
             );
         })();
         await this.#preparePromise;
@@ -551,6 +556,17 @@ export class ApiModule implements AgentModule {
                     );
                 }
                 finishMutation = this.#admitMutation(request, url);
+            }
+            if (request.method === "GET" && url.pathname === "/v0/connections") {
+                sendJson(response, 200, { connections: this.#connections.list() });
+                return;
+            }
+            const remote = remoteRoute(request.url);
+            if (remote !== undefined) {
+                await this.#cloudOperation(() =>
+                    this.#connections.forward(ctx, request, response, remote.id, remote.path),
+                );
+                return;
             }
             if (request.method === "GET" && url.pathname === "/") {
                 sendJson(response, 200, { text: "Welcome to Happy Agent!" });
@@ -1163,6 +1179,7 @@ export class ApiModule implements AgentModule {
         socket: Socket,
         head: Buffer,
     ): Promise<boolean> {
+        if (await this.handleRemoteAttachment(ctx, request, socket, head)) return true;
         const prepared = await this.prepareTerminalSocket(
             ctx,
             requestUrl(request).pathname,
@@ -1190,6 +1207,7 @@ export class ApiModule implements AgentModule {
         socket: Socket,
         head: Buffer,
     ): Promise<boolean> {
+        if (await this.handleRemoteAttachment(ctx, request, socket, head)) return true;
         const prepared = await this.prepareWorkspaceProxySocket(
             ctx,
             requestUrl(request).pathname,
@@ -1240,6 +1258,39 @@ export class ApiModule implements AgentModule {
                 rejection: this.#socketRejection(ctx, error, "The terminal was not found."),
             };
         }
+    }
+
+    async handleRemoteAttachment(
+        ctx: Context,
+        request: IncomingMessage,
+        socket: import("node:stream").Duplex,
+        head: Buffer,
+    ): Promise<boolean> {
+        const remote = remoteRoute(request.url);
+        if (remote === undefined) return false;
+        try {
+            ctx = await this.#authenticate(ctx, request.headers.authorization);
+            this.#assertTeamUser(ctx);
+            if (!this.#ready)
+                throw new ApiError(503, "not_initialized", "Happy Agent is still starting.");
+            if (this.#draining)
+                throw new ApiError(
+                    503,
+                    "draining",
+                    "Happy Agent is draining and no longer accepts attachments.",
+                );
+            await this.#cloudOperation(() =>
+                this.#connections.forward(ctx, request, socket, remote.id, remote.path, head),
+            );
+        } catch (error) {
+            const rejection = this.#socketRejection(
+                ctx,
+                error,
+                "The remote connection was not found.",
+            );
+            writeSocketError(socket, rejection.status, rejection.message, rejection.code);
+        }
+        return true;
     }
 
     async prepareWorkspaceProxySocket(
@@ -5298,6 +5349,10 @@ export class ApiModule implements AgentModule {
             sendJson(response, error.status, error.body());
             return;
         }
+        if (error instanceof RemoteConnectionError) {
+            sendJson(response, error.status, { error: error.message, code: error.code });
+            return;
+        }
         if (error instanceof SecretApiInputError) {
             sendJson(response, 400, { code: "invalid_request", error: error.message });
             return;
@@ -5428,6 +5483,8 @@ export class ApiModule implements AgentModule {
     }
 
     #socketRejection(ctx: Context, error: unknown, notFoundMessage: string): ApiSocketRejection {
+        if (error instanceof RemoteConnectionError)
+            return { code: error.code, status: error.status, message: error.message };
         if (error instanceof ApiError) {
             return { code: error.code, message: error.message, status: error.status };
         }
@@ -5441,6 +5498,14 @@ export class ApiModule implements AgentModule {
             status: 500,
         };
     }
+}
+
+function remoteRoute(target: string | undefined): { id: string; path: string } | undefined {
+    const match = /^\/v0\/connections\/([a-z][a-z0-9_-]{0,63})\/api(\/[^\r\n]*)?$/.exec(
+        target ?? "",
+    );
+    if (match === null) return undefined;
+    return { id: match[1]!, path: match[2] ?? "/" };
 }
 
 function isTeamOnboardingRoute(method: string | undefined, pathname: string): boolean {
@@ -5702,7 +5767,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function writeSocketError(
-    socket: Socket,
+    socket: import("node:stream").Duplex,
     status: number,
     message: string,
     code: ApiErrorCode = socketErrorCode(status),
@@ -5735,6 +5800,7 @@ function httpStatusText(status: number): string {
     if (status === 413) return "Content Too Large";
     if (status === 501) return "Not Implemented";
     if (status === 503) return "Service Unavailable";
+    if (status === 504) return "Gateway Timeout";
     return "Internal Server Error";
 }
 

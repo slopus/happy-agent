@@ -21,6 +21,9 @@ import {
 import { startTailcatExposure, type TailcatExposure } from "./impl/startTailcatExposure.js";
 import { getTailcatStatusTool } from "./tools/get_tailcat_status.js";
 import { setTailcatEnabledTool } from "./tools/set_tailcat_enabled.js";
+import { TailcatConnection } from "./impl/TailcatConnection.js";
+import { resolveTailcatExecutable } from "./impl/resolveTailcatExecutable.js";
+import { tailcatAddressSchema } from "./Tailcat.js";
 
 const TAILCAT_RECONCILE_FUNCTION = "tailcat-reconcile";
 const TAILCAT_RECONCILE_LOCK = "tailcat-exposure";
@@ -40,6 +43,19 @@ export class TailcatModule implements AgentModule {
     #exposure: TailcatExposure | undefined;
     #state: TailcatState;
     #target: TailcatTransportTarget | undefined;
+    readonly #outbound = new Set<TailcatConnection>();
+
+    /** Open an outgoing carrier without enabling this installation's inbound exposure. */
+    openRemote(address: string): TailcatConnection {
+        if (this.#closed || !Value.Check(tailcatAddressSchema, address)) {
+            throw new Error("The remote Tailcat connection is unavailable.");
+        }
+        const connection = new TailcatConnection(resolveTailcatExecutable(), address, () =>
+            this.#outbound.delete(connection),
+        );
+        this.#outbound.add(connection);
+        return connection;
+    }
 
     constructor(config: ConfigModule, bots: BotsModule, durableFunctions: DurableFunctionsModule) {
         this.#bots = bots;
@@ -134,6 +150,8 @@ export class TailcatModule implements AgentModule {
         await this.#lock.runInLock(this.#moduleContext(ctx), async () => {
             if (this.#closed) return;
             this.#closed = true;
+            const outbound = [...this.#outbound];
+            await Promise.all(outbound.map((connection) => connection.close()));
             const exposure = this.#exposure;
             this.#exposure = undefined;
             if (exposure !== undefined) await exposure.close();

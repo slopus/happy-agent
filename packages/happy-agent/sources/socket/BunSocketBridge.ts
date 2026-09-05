@@ -1,4 +1,5 @@
 import type { ApiSocketRejection, PreparedWorkspaceProxySocket } from "@slopus/happy-agent-modules";
+import { Duplex } from "node:stream";
 
 const MAX_HEADER_BYTES = 64 * 1024;
 // Ordinary API requests may legally carry a 48 MiB JSON body. The native front door normally
@@ -18,6 +19,8 @@ interface BunSocket {
     end(data?: string | Uint8Array): number | void;
     timeout?(seconds: number): void;
     write(data: string | Uint8Array): number;
+    pause?(): void;
+    resume?(): void;
 }
 
 export interface BunRuntime {
@@ -26,6 +29,7 @@ export interface BunRuntime {
 }
 
 interface OutboundState {
+    drained?: ((error?: Error | null) => void) | undefined;
     endAfterFlush: boolean;
     outboundBytes: number;
     outboundOffset: number;
@@ -33,6 +37,7 @@ interface OutboundState {
 }
 
 interface ClientState extends OutboundState {
+    remote?: Duplex | undefined;
     buffer: Buffer;
     closed: boolean;
     connectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -49,6 +54,7 @@ interface PeerState extends OutboundState {
 type SocketState = ClientState | PeerState;
 
 interface ParsedRequestHead {
+    readonly headers: Record<string, string | string[]>;
     readonly authorization: string | string[] | undefined;
     readonly bytes: number;
     readonly connection: string | undefined;
@@ -58,6 +64,11 @@ interface ParsedRequestHead {
 }
 
 export interface BunSocketBridgeOptions {
+    readonly forwardRemoteAttachment?: (
+        request: { method: string; target: string; headers: Record<string, string | string[]> },
+        stream: Duplex,
+        head: Buffer,
+    ) => Promise<void>;
     readonly httpSocketPath: string;
     readonly prepareWorkspaceProxy: (
         pathname: string,
@@ -91,6 +102,11 @@ export function startBunSocketBridge(
                 flushOutbound(socket);
             },
             end(socket: BunSocket) {
+                const remote = clientStateOf(socket).remote;
+                if (remote !== undefined) {
+                    remote.push(null);
+                    return;
+                }
                 const upstream = clientUpstream(socket);
                 if (upstream !== undefined) finishOutbound(upstream);
             },
@@ -116,6 +132,14 @@ function receiveClientData(
 ): void {
     const state = clientStateOf(socket);
     if (state.closed) return;
+    if (state.remote !== undefined) {
+        if (state.remote.readableLength + data.length > MAX_BUFFERED_BYTES) {
+            closeBridge(socket);
+            return;
+        }
+        if (!state.remote.push(data)) socket.pause?.();
+        return;
+    }
     if (state.phase === "raw" && state.upstream !== undefined) {
         enqueueWrite(state.upstream, data);
         return;
@@ -144,6 +168,44 @@ function routeInitialRequest(
     state.phase = "routing";
     socket.timeout?.(0);
     const pathname = requestPathname(parsed.target);
+    // Bun's node:http server does not own native upgrade/CONNECT sockets. Give the
+    // shared authenticated API gateway a Duplex over this native socket instead.
+    if (
+        pathname?.startsWith("/v0/connections/") === true &&
+        options.forwardRemoteAttachment !== undefined &&
+        (parsed.method === "CONNECT" || parsed.upgrade?.toLowerCase() === "websocket")
+    ) {
+        const remote = new Duplex({
+            allowHalfOpen: true,
+            read() {
+                socket.resume?.();
+            },
+            write(chunk: Buffer, _encoding, callback) {
+                enqueueWrite(socket, chunk);
+                if (state.closed) callback(new Error("The remote attachment closed."));
+                else if (state.outboundBytes === 0) callback();
+                else state.drained = callback;
+            },
+            final(callback) {
+                finishOutbound(socket);
+                callback();
+            },
+            destroy(error, callback) {
+                const drained = state.drained;
+                state.drained = undefined;
+                drained?.(error ?? new Error("The remote attachment closed."));
+                closeBridge(socket);
+                callback(error);
+            },
+        });
+        remote.on("error", () => closeBridge(socket));
+        state.remote = remote;
+        state.phase = "raw";
+        const head = state.buffer.subarray(parsed.bytes);
+        state.buffer = Buffer.alloc(0);
+        void options.forwardRemoteAttachment(parsed, remote, head).catch(() => closeBridge(socket));
+        return;
+    }
     if (parsed.method === "CONNECT" && pathname !== undefined) {
         void options
             .prepareWorkspaceProxy(pathname, parsed.authorization)
@@ -305,6 +367,7 @@ function parseRequestHead(buffer: Buffer): ParsedRequestHead | undefined {
         else headers.set(name, [existing, value]);
     }
     return {
+        headers: Object.fromEntries(headers),
         authorization: headers.get("authorization"),
         bytes,
         connection: singleHeader(headers.get("connection")),
@@ -316,6 +379,7 @@ function parseRequestHead(buffer: Buffer): ParsedRequestHead | undefined {
 
 function invalidParsedHead(bytes: number): ParsedRequestHead {
     return {
+        headers: {},
         authorization: undefined,
         bytes,
         connection: undefined,
@@ -414,6 +478,9 @@ function flushOutbound(socket: BunSocket): void {
         state.outboundOffset = 0;
     }
     if (state.endAfterFlush) socket.end();
+    const drained = state.drained;
+    state.drained = undefined;
+    drained?.();
 }
 
 function finishOutbound(socket: BunSocket): void {
@@ -427,6 +494,7 @@ function closeBridge(socket: BunSocket): void {
     if (state.kind === "client") {
         if (state.closed) return;
         state.closed = true;
+        state.remote?.destroy();
         clearConnectTimer(state);
         const upstream = state.upstream;
         state.upstream = undefined;
@@ -448,6 +516,7 @@ function closeClientState(socket: BunSocket): void {
     const state = clientStateOf(socket);
     if (state.closed) return;
     state.closed = true;
+    state.remote?.destroy();
     clearConnectTimer(state);
     const upstream = state.upstream;
     state.upstream = undefined;

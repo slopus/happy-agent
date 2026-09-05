@@ -112,6 +112,12 @@
 
 ## Cloud organizations
 
+Managed team connections request an organization-scoped WorkOS access token through Cloud's same
+serialized refresh-and-verify path. Persist rotation before downstream verification, preserve the
+connected human identity, and do not return the token through roster or health tools. Cancelled
+checks waiting for the credential lock stop before consuming a token; an exchange already in
+flight finishes its owned credential-persistence boundary.
+
 - Organization management belongs to the standalone connected Cloud identity. Run list, create,
   and delete through the same serialized refresh-token rotation and Happy Cloud verification as
   other account operations; project only bounded IDs and names and never release the access token.

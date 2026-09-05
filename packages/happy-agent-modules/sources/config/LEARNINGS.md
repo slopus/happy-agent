@@ -32,6 +32,15 @@ remains configurable for staging and other deployments, with issuer and JWKS loc
 from it. Team mode also requires the WorkOS owner user ID; owner status is derived from that value
 when profile onboarding creates the local user.
 
+## Managed remote connections are machine settings
+
+The main daemon's remote roster comes from machine `[connections.<id>]` entries and active admin
+bot tools. Project configuration cannot grant a remote API authority or set `[api] token`. Each
+runtime connection replaces its whole global entry, so switching authentication cannot accidentally
+retain an old token. A disabled runtime entry suppresses its global entry without changing remote
+data. Standalone deployments may pin their socket bearer token; team deployments continue to use
+WorkOS and reject a standalone token setting.
+
 ## Cross-workspace work is available by default
 
 Fresh installations enable `features.cross_workspace` by default so root agents can discover the

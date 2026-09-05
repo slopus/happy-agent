@@ -32,6 +32,13 @@ import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegist
 import { readGlobalInstructions } from "./impl/readGlobalInstructions.js";
 import { HAPPY_TOML_TEMPLATE, MCP_TOML_TEMPLATE } from "./impl/userConfigurationTemplate.js";
 import { readSecurityDocument } from "./impl/readSecurityDocument.js";
+import {
+    apiConfigSchema,
+    remoteConnectionsConfigSchema,
+    remoteConnectionEntrySchema,
+    type RemoteConnectionEntry,
+} from "./RemoteConnectionConfig.js";
+import { connectionIdSchema } from "@slopus/happy-agent-client";
 
 const MAX_PATH_LENGTH = 4_096;
 const MAX_CONFIG_STRING_LENGTH = 16_384;
@@ -337,6 +344,8 @@ const mcpInputSchema = Type.Record(
 );
 const partialValuesSchema = Type.Object(
     {
+        api: Type.Optional(apiConfigSchema),
+        connections: Type.Optional(remoteConnectionsConfigSchema),
         docker: Type.Optional(dockerInputSchema),
         defaults: Type.Optional(defaultsInputSchema),
         features: Type.Optional(
@@ -663,6 +672,8 @@ const providerSchema = Type.Union([
 
 const resolvedValuesSchema = Type.Object(
     {
+        api: Type.Optional(apiConfigSchema),
+        connections: Type.Optional(remoteConnectionsConfigSchema),
         docker: Type.Optional(
             Type.Object(
                 {
@@ -1220,6 +1231,7 @@ export class ConfigModule implements AgentModule {
     #providers: AgentProviders | undefined;
     #sourceProviders: AgentProviders | undefined;
     #tailcatEnabled: boolean;
+    #connections: Record<string, RemoteConnectionEntry>;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
     #resolvedScripted: ConfigInferenceOverride | undefined;
     #scriptedModelSnapshot: readonly AgentModel[] | undefined;
@@ -1258,6 +1270,7 @@ export class ConfigModule implements AgentModule {
         this.#scripted = scripted;
         this.#environment = environment;
         this.#tailcatEnabled = configuration.values.feature.tailcat.enabled;
+        this.#connections = structuredClone(configuration.values.connections ?? {});
         for (const id of Object.keys(configuration.values.providers)) {
             this.#providerEnabled.set(id, this.configuredProviderOverride(id) ?? false);
         }
@@ -1370,6 +1383,39 @@ export class ConfigModule implements AgentModule {
     /** The fixed loopback and remote service port selected for Tailcat. */
     get tailcatPort(): number {
         return this.configuration.values.feature.tailcat.port;
+    }
+
+    /** Machine-owned remote roster; callers never receive mutable configuration state. */
+    get connections(): Readonly<Record<string, RemoteConnectionEntry>> {
+        return structuredClone(this.#connections);
+    }
+
+    get remoteConnectionEntrySchema() {
+        return remoteConnectionEntrySchema;
+    }
+
+    async updateRuntimeConnection(
+        ctx: Context,
+        id: string,
+        entry: RemoteConnectionEntry,
+    ): Promise<void> {
+        if (
+            !Value.Check(connectionIdSchema, id) ||
+            !Value.Check(remoteConnectionEntrySchema, entry)
+        ) {
+            throw new Error("The remote connection configuration is invalid.");
+        }
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const connections = { ...this.#connections, [id]: structuredClone(entry) };
+            if (!Value.Check(remoteConnectionsConfigSchema, connections)) {
+                throw new Error("At most 100 remote connections may be configured.");
+            }
+            const next = structuredClone(this.#runtimeValues);
+            next.connections = { ...next.connections, [id]: structuredClone(entry) };
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+            this.#connections = connections;
+        });
     }
 
     isProviderEnabled(providerId: string): boolean {
@@ -2161,6 +2207,8 @@ export function parseHappyAgentConfigToml(source: string): {
         unknownSettings.push(path);
     };
     const knownTopLevel = new Set([
+        "api",
+        "connections",
         "defaults",
         "docker",
         "feature",
@@ -2199,6 +2247,8 @@ export function parseHappyAgentConfigToml(source: string): {
             ? readBoolean(table.providers, "default_enable", "providers.default_enable")
             : undefined;
     const values = {
+        ...(table.api === undefined ? {} : { api: table.api }),
+        ...(table.connections === undefined ? {} : { connections: table.connections }),
         ...(defaults === undefined ? {} : { defaults }),
         ...(features === undefined ? {} : { features }),
         ...(feature === undefined ? {} : { feature }),
@@ -2389,6 +2439,9 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
     const merged = structuredClone(DEFAULT_VALUES) as MutableResolvedValues;
     const explicitProviderEnabled = new Set<string>();
     for (const partial of partials) {
+        if (partial.api !== undefined) merged.api = { ...merged.api, ...partial.api };
+        if (partial.connections !== undefined)
+            merged.connections = { ...merged.connections, ...partial.connections };
         if (partial.docker !== undefined) merged.docker = normalizeDocker(partial.docker);
         if (partial.defaults !== undefined) {
             const defaults = normalizeDefaults(partial.defaults);
@@ -2456,6 +2509,9 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (!explicitProviderEnabled.has(id)) {
             provider.enabled = merged.providerDefaultEnable;
         }
+    }
+    if (merged.feature.team.enabled && merged.api?.token !== undefined) {
+        throw new Error("Team deployments cannot configure a standalone API token.");
     }
     if (!Value.Check(happyAgentConfigValuesSchema, merged)) {
         throw new Error("The merged Happy Agent configuration is invalid.");
@@ -2935,6 +2991,8 @@ function inferProviderType(
 
 function withoutProjectMachineSettings(values: PartialValues): PartialValues {
     const {
+        api: _api,
+        connections: _connections,
         docker: _docker,
         // A credential is this machine's, never a repository's: a checked-in project file must not
         // choose which Gemini account this installation's tools bill against.

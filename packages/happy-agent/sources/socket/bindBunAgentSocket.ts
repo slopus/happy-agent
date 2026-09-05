@@ -1,5 +1,7 @@
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { IncomingMessage } from "node:http";
+import { Socket } from "node:net";
 
 import {
     type PreparedHappyAgentRuntime,
@@ -68,6 +70,24 @@ export async function bindBunAgentSocket(
         await prepared.api.listenWorkspaceProxyHttp(proxyHttpSocketPath);
         webSockets = startWebSocketServer(bun, prepared, webSocketPath);
         bridge = startBunSocketBridge(bun, {
+            forwardRemoteAttachment: async (head, stream, bytes) => {
+                const request = new IncomingMessage(new Socket());
+                request.method = head.method;
+                request.url = head.target;
+                request.headers = head.headers;
+                request.complete = true;
+                try {
+                    const handled = await prepared.api.handleRemoteAttachment(
+                        prepared.context("bun-remote-attachment"),
+                        request,
+                        stream,
+                        bytes,
+                    );
+                    if (!handled) stream.destroy();
+                } finally {
+                    request.destroy();
+                }
+            },
             httpSocketPath,
             prepareWorkspaceProxy: async (pathname, authorization) =>
                 await prepared.api.prepareWorkspaceProxySocket(

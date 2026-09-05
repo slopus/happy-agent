@@ -507,10 +507,13 @@ export class CloudWorkOS {
         }
     }
 
-    async refresh(refreshToken: string): Promise<CloudAuthentication> {
+    async refresh(refreshToken: string, organizationId?: string): Promise<CloudAuthentication> {
         try {
             return authentication(
-                await this.#workos.userManagement.authenticateWithRefreshToken({ refreshToken }),
+                await this.#workos.userManagement.authenticateWithRefreshToken({
+                    refreshToken,
+                    ...(organizationId === undefined ? {} : { organizationId }),
+                }),
             );
         } catch (error: unknown) {
             if (error instanceof OauthException && error.error === "invalid_grant") {
