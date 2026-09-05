@@ -165,6 +165,7 @@ export function botResource(
         workspaceId: bot.workspaceId,
         compute: { type: "host", path: bot.path },
         status: bot.status,
+        systemKey: bot.systemKey ?? null,
         avatar: bot.avatar ?? null,
         agent,
         orderKey: bot.orderKey,

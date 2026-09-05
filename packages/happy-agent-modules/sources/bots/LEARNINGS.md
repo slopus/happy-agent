@@ -21,6 +21,12 @@ it with the bot's live identity. This preserves the bot's folder, conversation, 
 state while allowing a newer Happy Agent version to improve the built-in instructions without a
 prompt migration or row rewrite.
 
+The public bot resource projects that durable key as `systemKey`, using `null` for ordinary bots.
+Clients can specialize presentation for a recognized built-in without inferring its identity from
+its editable name, immutable username, admin status, or generated ID. The client field remains
+optional only because protocol-compatible older daemons predate the projection, and unknown future
+snake_case keys retain ordinary bot behavior.
+
 ## Bot creation stays discoverable and enforces administration when called
 
 A bot is non-admin by default, including every bot predating the admin column. Authenticated API

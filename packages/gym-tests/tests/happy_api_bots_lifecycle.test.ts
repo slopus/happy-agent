@@ -27,8 +27,8 @@ describe("persistent bots through the public API", () => {
             isAdmin: true,
             name: "Chief of Staff",
             status: "active",
+            systemKey: "chief_of_staff",
         });
-        expect(chief).not.toHaveProperty("systemKey");
         if (chief === undefined) throw new Error("The Chief of Staff bot was not seeded.");
 
         await gym.send("Confirm your role.", { sessionId: chief.agent.id });
@@ -55,6 +55,7 @@ describe("persistent bots through the public API", () => {
             id: archived.id,
             isAdmin: true,
             status: "archived",
+            systemKey: "chief_of_staff",
         });
         expect(gym.errors).toEqual([]);
     });
@@ -84,6 +85,7 @@ describe("persistent bots through the public API", () => {
             expect(created).toMatchObject({
                 id: "researchassistant",
                 isAdmin: true,
+                systemKey: null,
                 username: "research_assistant",
                 status: "active",
                 agent: {
