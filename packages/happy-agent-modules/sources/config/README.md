@@ -60,12 +60,14 @@ Configuration owns Monty's exact private snapshot path at
 `.happy/agent/state/<agentId>/snapshot.bin` and validates the agent's cuid2 before it can become a
 path segment.
 
-`[feature.tailcat] enabled = true` is a machine-only opt-in. The Tailcat module opens the daemon's active
-Unix-socket or team HTTP transport through bundled Tailcat v0.4.0, while the Happy API continues
-to require its ordinary local bearer token or WorkOS token. The fixed-region Tailcat identity key
-lives under `.happy/agent/tailcat/` and survives daemon restarts. The live address and forwarded
-port files are present beside it only while the tunnel is open. A project configuration cannot
-enable this Internet-reachable transport.
+`[feature.tailcat] enabled = true` is a machine-only opt-in. The Tailcat module opens the daemon's
+active Unix-socket or team HTTP transport through bundled Tailcat v0.4.0, while the Happy API
+continues to require its ordinary local bearer token or WorkOS token. `port` defaults to the fixed,
+IANA-unassigned port `24779`; another nonzero TCP port may be selected in the same global section.
+The module binds exactly that port and never falls back to an ephemeral one. The fixed-region
+Tailcat identity key lives under `.happy/agent/tailcat/` and survives daemon restarts. The live
+address and forwarded port files are present beside it only while the tunnel is open. A project
+configuration cannot enable this Internet-reachable transport.
 
 `[feature.team] enabled` selects the opt-in team deployment mode and defaults to `false`. It is a
 machine setting, so a project's checked-in `happy.toml` cannot enable it. Team mode has no private

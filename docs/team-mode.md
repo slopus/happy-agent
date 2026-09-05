@@ -49,11 +49,13 @@ owner_workos_user_id = "user_01EXAMPLE"
 
 [feature.tailcat]
 enabled = true
+port = 24779
 ```
 
 Tailcat provides end-to-end WireGuard encryption, NAT traversal, and DERP fallback without an
 account. It does not replace WorkOS authentication. The stable connection address and
-current forwarded port are written under `~/.happy/agent/tailcat/` while the daemon is open.
+fixed forwarded port are written under `~/.happy/agent/tailcat/` while the daemon is open. Port
+`24779` is the default and can be overridden in `[feature.tailcat]`.
 See [tailcat.md](tailcat.md) for live Tailcat control through an admin bot, endpoint discovery, and
 remote client commands.
 

@@ -36,13 +36,14 @@ export async function startTailcatExposure(
     ctx: Context,
     target: TcpRelayTarget,
     paths: TailcatExposurePaths,
+    port: number,
     options: TailcatExposureOptions = {},
 ): Promise<TailcatExposure> {
     await mkdir(paths.home, { mode: 0o700, recursive: true });
     await chmod(paths.home, 0o700);
     const executable = options.executable ?? resolveTailcatExecutable();
     await ensureTailcatKey(executable, paths, options.startupTimeoutMs ?? 60_000);
-    const relay = await startTcpRelay(target);
+    const relay = await startTcpRelay(target, port);
     const exposure = new SupervisedTailcatExposure(ctx, executable, paths, relay, options);
     try {
         return await exposure.open();

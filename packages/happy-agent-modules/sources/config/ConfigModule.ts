@@ -48,6 +48,7 @@ const MAX_INFERENCE_MAX_RETRIES = 100;
 const MAX_TOOL_RESULT_RETENTION_DAYS = 36_500;
 const MAX_MCP_TIMEOUT_SECONDS = 600;
 const MAX_LOCAL_CREDENTIAL_FILE_BYTES = 256 * 1024;
+const DEFAULT_TAILCAT_PORT = 24_779;
 
 const pathSchema = Type.String({
     minLength: 1,
@@ -364,6 +365,7 @@ const partialValuesSchema = Type.Object(
                         Type.Object(
                             {
                                 enabled: Type.Optional(Type.Boolean()),
+                                port: Type.Optional(Type.Integer({ maximum: 65_535, minimum: 1 })),
                             },
                             { additionalProperties: false },
                         ),
@@ -716,7 +718,13 @@ const resolvedValuesSchema = Type.Object(
                     { enabled: Type.Boolean(), engine: codeModeEngineSchema },
                     { additionalProperties: false },
                 ),
-                tailcat: Type.Object({ enabled: Type.Boolean() }, { additionalProperties: false }),
+                tailcat: Type.Object(
+                    {
+                        enabled: Type.Boolean(),
+                        port: Type.Integer({ maximum: 65_535, minimum: 1 }),
+                    },
+                    { additionalProperties: false },
+                ),
                 team: Type.Union([
                     Type.Object(
                         {
@@ -1097,7 +1105,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
     },
     feature: {
         codemode: { enabled: false, engine: "monty" },
-        tailcat: { enabled: false },
+        tailcat: { enabled: false, port: DEFAULT_TAILCAT_PORT },
         team: {
             enabled: false,
             host: "0.0.0.0",
@@ -1357,6 +1365,11 @@ export class ConfigModule implements AgentModule {
     /** The current daemon-owned Tailcat setting, including live runtime mutations. */
     get tailcatEnabled(): boolean {
         return this.#tailcatEnabled;
+    }
+
+    /** The fixed loopback and remote service port selected for Tailcat. */
+    get tailcatPort(): number {
+        return this.configuration.values.feature.tailcat.port;
     }
 
     isProviderEnabled(providerId: string): boolean {
@@ -3040,6 +3053,9 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                     if (feature.tailcat.enabled !== undefined) {
                         result["feature.tailcat.enabled"] = name;
                     }
+                    if (feature.tailcat.port !== undefined) {
+                        result["feature.tailcat.port"] = name;
+                    }
                 }
                 if (feature?.team !== undefined) {
                     result["feature.team"] = name;
@@ -3153,7 +3169,7 @@ function readFeature(
             assertTableSize(item, "feature.tailcat");
             const tailcat: Record<string, unknown> = {};
             for (const [tailcatKey, tailcatValue] of Object.entries(item)) {
-                if (tailcatKey !== "enabled") {
+                if (tailcatKey !== "enabled" && tailcatKey !== "port") {
                     unknown(`feature.tailcat.${tailcatKey}`);
                     continue;
                 }

@@ -21,16 +21,18 @@ describe("Tailcat exposure", () => {
         const fake = await fakeTailcat(root);
         const paths = tailcatPaths(root);
         const target = { host: "127.0.0.1", port: 9 } as const;
+        const port = 24_781;
 
         const first = await startTailcatExposure(
             createRootContext().named("tailcat-first"),
             target,
             paths,
+            port,
             { executable: fake, restartDelayMs: 10, startupTimeoutMs: 5_000, stopGraceMs: 50 },
         );
 
         expect(first.address).toBe("tcStableTailcatAddress123");
-        expect(first.port).toBeGreaterThan(0);
+        expect(first.port).toBe(port);
         expect((await readFile(paths.portPath, "utf8")).trim()).toBe(String(first.port));
         expect((await stat(paths.keyPath)).mode & 0o777).toBe(0o600);
         expect((await stat(paths.addressPath)).mode & 0o777).toBe(0o600);
@@ -44,9 +46,11 @@ describe("Tailcat exposure", () => {
             createRootContext().named("tailcat-second"),
             target,
             paths,
+            port,
             { executable: fake, restartDelayMs: 10, startupTimeoutMs: 5_000, stopGraceMs: 50 },
         );
         expect(second.address).toBe(first.address);
+        expect(second.port).toBe(first.port);
         await second.close();
 
         const invocations = (await readFile(join(root, "tailcat-invocations"), "utf8"))
@@ -64,6 +68,7 @@ describe("Tailcat exposure", () => {
             createRootContext().named("tailcat-restart"),
             { host: "127.0.0.1", port: 9 },
             tailcatPaths(root),
+            24_782,
             { executable: fake, restartDelayMs: 10, startupTimeoutMs: 5_000, stopGraceMs: 50 },
         );
 
@@ -83,14 +88,36 @@ describe("Tailcat TCP relay", () => {
             server.once("error", reject);
             server.listen(socketPath, resolve);
         });
-        const relay = await startTcpRelay({ socketPath });
+        const relay = await startTcpRelay({ socketPath }, 24_783);
         try {
+            expect(relay.port).toBe(24_783);
             const response = await fetch(`http://127.0.0.1:${String(relay.port)}/test`);
             await expect(response.text()).resolves.toBe("through socket");
         } finally {
             await relay.close();
             await new Promise<void>((resolve, reject) => {
                 server.close((error) => (error === undefined ? resolve() : reject(error)));
+            });
+        }
+    });
+
+    it("fails instead of selecting another port when the configured port is occupied", async () => {
+        const occupied = createServer();
+        await new Promise<void>((resolve, reject) => {
+            occupied.once("error", reject);
+            occupied.listen({ host: "127.0.0.1", port: 0 }, resolve);
+        });
+        const address = occupied.address();
+        if (address === null || typeof address === "string") {
+            throw new Error("The occupied test server has no TCP port.");
+        }
+        try {
+            await expect(
+                startTcpRelay({ host: "127.0.0.1", port: 9 }, address.port),
+            ).rejects.toThrow(`Tailcat port ${String(address.port)} is already in use.`);
+        } finally {
+            await new Promise<void>((resolve, reject) => {
+                occupied.close((error) => (error === undefined ? resolve() : reject(error)));
             });
         }
     });

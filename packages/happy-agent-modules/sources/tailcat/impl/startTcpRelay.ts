@@ -10,7 +10,7 @@ export interface TcpRelay {
 }
 
 /** Give Tailcat a loopback TCP port even when the daemon itself owns a Unix socket. */
-export async function startTcpRelay(target: TcpRelayTarget): Promise<TcpRelay> {
+export async function startTcpRelay(target: TcpRelayTarget, port: number): Promise<TcpRelay> {
     const sockets = new Set<Socket>();
     const server = createServer({ pauseOnConnect: true }, (incoming) => {
         sockets.add(incoming);
@@ -39,9 +39,12 @@ export async function startTcpRelay(target: TcpRelayTarget): Promise<TcpRelay> {
         });
     });
     try {
-        await listen(server);
+        await listen(server, port);
     } catch (error) {
         await closeServer(server, sockets).catch(() => undefined);
+        if (isAddressInUse(error)) {
+            throw new Error(`Tailcat port ${String(port)} is already in use.`, { cause: error });
+        }
         throw error;
     }
     const address = server.address();
@@ -65,7 +68,7 @@ function connectableHost(host: string): string {
     return host;
 }
 
-async function listen(server: Server): Promise<void> {
+async function listen(server: Server, port: number): Promise<void> {
     await new Promise<void>((resolve, reject) => {
         const failed = (error: Error) => {
             server.off("listening", listening);
@@ -77,8 +80,12 @@ async function listen(server: Server): Promise<void> {
         };
         server.once("error", failed);
         server.once("listening", listening);
-        server.listen({ host: "127.0.0.1", port: 0 });
+        server.listen({ host: "127.0.0.1", port });
     });
+}
+
+function isAddressInUse(error: unknown): boolean {
+    return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
 }
 
 async function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {

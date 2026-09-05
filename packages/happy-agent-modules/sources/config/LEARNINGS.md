@@ -17,6 +17,10 @@ mutations persist the same setting in generated `runtime.toml`, which outranks t
 Tailcat is a dedicated account-free transport, not a Tailscale access path. It does not remove
 Happy API authentication.
 
+The forwarded port is deterministic configuration, defaulting to the IANA-unassigned `24779`.
+Only the global or generated runtime layer may override it, and zero is invalid: the module must
+fail on a collision rather than silently changing the endpoint another node has stored.
+
 ## Team mode is machine-scoped and owns a separate network identity boundary
 
 `[feature.team] enabled = true` is a global or runtime deployment choice, never a project choice.

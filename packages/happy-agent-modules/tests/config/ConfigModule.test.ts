@@ -42,7 +42,7 @@ describe("ConfigModule", () => {
         expect(configuration.values.features.crossWorkspace).toBe(true);
         expect(configuration.values.feature.codemode.enabled).toBe(false);
         expect(configuration.values.feature.codemode.engine).toBe("monty");
-        expect(configuration.values.feature.tailcat).toEqual({ enabled: false });
+        expect(configuration.values.feature.tailcat).toEqual({ enabled: false, port: 24_779 });
         expect(configuration.values.feature.team).toEqual({
             enabled: false,
             host: "0.0.0.0",
@@ -135,14 +135,29 @@ describe("ConfigModule", () => {
         await mkdir(join(root, "Happy", "Config"), { recursive: true });
         await writeFile(
             join(root, "Happy", "Config", "happy.toml"),
-            ["[feature.tailcat]", "enabled = true", "unknown = true"].join("\n"),
+            ["[feature.tailcat]", "enabled = true", "port = 24781", "unknown = true"].join("\n"),
         );
 
         const configuration = await loadHappyAgentConfiguration(happyHome);
 
-        expect(configuration.values.feature.tailcat).toEqual({ enabled: true });
+        expect(configuration.values.feature.tailcat).toEqual({ enabled: true, port: 24_781 });
         expect(configuration.provenance["feature.tailcat.enabled"]).toBe("global");
+        expect(configuration.provenance["feature.tailcat.port"]).toBe("global");
         expect(configuration.sources.global.unknownSettings).toEqual(["feature.tailcat.unknown"]);
+    });
+
+    it("rejects zero and out-of-range Tailcat ports instead of enabling random allocation", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-tailcat-port-"));
+        temporaryDirectories.push(root);
+        const globalConfig = join(root, "Happy", "Config", "happy.toml");
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+
+        for (const port of [0, 65_536]) {
+            await writeFile(globalConfig, `[feature.tailcat]\nport = ${String(port)}\n`);
+            await expect(loadHappyAgentConfiguration(join(root, ".happy"))).rejects.toThrow(
+                "feature contains an invalid value",
+            );
+        }
     });
 
     it("requires organization and owner identities when team mode is enabled", async () => {
@@ -178,12 +193,19 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-project-tailcat-"));
         temporaryDirectories.push(root);
         const previous = process.cwd();
-        await writeFile(join(root, "happy.toml"), "[feature.tailcat]\nenabled = true\n");
+        await writeFile(
+            join(root, "happy.toml"),
+            "[feature.tailcat]\nenabled = true\nport = 24781\n",
+        );
         process.chdir(root);
         try {
             const configuration = await loadHappyAgentConfiguration(join(root, ".happy"));
-            expect(configuration.values.feature.tailcat.enabled).toBe(false);
+            expect(configuration.values.feature.tailcat).toEqual({
+                enabled: false,
+                port: 24_779,
+            });
             expect(configuration.provenance["feature.tailcat.enabled"]).toBeUndefined();
+            expect(configuration.provenance["feature.tailcat.port"]).toBeUndefined();
         } finally {
             process.chdir(previous);
         }
@@ -205,6 +227,7 @@ describe("ConfigModule", () => {
         expect(source).toContain("# enabled = false");
         expect(source).toContain('# engine = "monty"');
         expect(source).toContain("# [feature.tailcat]");
+        expect(source).toContain("# port = 24779");
         expect(source).toContain("# [feature.team]");
         expect(source).toContain('# host = "0.0.0.0"');
         expect(source).toContain("# port = 3000");

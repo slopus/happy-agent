@@ -56,7 +56,7 @@ describe("TailcatModule", () => {
             expect(opened).toEqual({
                 address: "tcStableTailcatAddress123",
                 enabled: true,
-                port: expect.any(Number),
+                port: 24_784,
                 state: "open",
             });
             await expect(
@@ -129,6 +129,7 @@ setInterval(() => undefined, 1_000);
                 tailcatPortPath: paths.portPath,
             },
         },
+        tailcatPort: 24_784,
         get tailcatEnabled() {
             return enabled;
         },

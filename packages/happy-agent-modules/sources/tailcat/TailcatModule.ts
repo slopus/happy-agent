@@ -175,12 +175,17 @@ export class TailcatModule implements AgentModule {
         this.#error = undefined;
         try {
             const paths = this.#config.configuration.paths;
-            this.#exposure = await startTailcatExposure(this.#moduleContext(ctx), this.#target, {
-                addressPath: paths.tailcatAddressPath,
-                home: paths.tailcatHome,
-                keyPath: paths.tailcatKeyPath,
-                portPath: paths.tailcatPortPath,
-            });
+            this.#exposure = await startTailcatExposure(
+                this.#moduleContext(ctx),
+                this.#target,
+                {
+                    addressPath: paths.tailcatAddressPath,
+                    home: paths.tailcatHome,
+                    keyPath: paths.tailcatKeyPath,
+                    portPath: paths.tailcatPortPath,
+                },
+                this.#config.tailcatPort,
+            );
             this.#state = "open";
             return this.currentStatus();
         } catch (error: unknown) {

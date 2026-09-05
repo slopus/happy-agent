@@ -50,6 +50,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # WireGuard-encrypted tunnel. Happy API bearer or WorkOS authentication still applies.
 # [feature.tailcat]
 # enabled = false
+# port = 24779
 
 # Team deployments expose an authenticated TCP HTTP API instead of the private local socket.
 # [feature.team]

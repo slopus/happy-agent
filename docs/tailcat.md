@@ -24,11 +24,17 @@ Agent:
 ```toml
 [feature.tailcat]
 enabled = true
+port = 24779
 ```
 
 The configuration file is `~/Happy/Config/happy.toml` on macOS and
 `~/happy/config/happy.toml` on Linux unless the configuration directory was overridden. A
 repository's `happy.toml` cannot enable Tailcat.
+
+`port` defaults to the fixed, IANA-unassigned port `24779`. Override it with any nonzero TCP port
+when the default conflicts with another local service. Happy Agent binds the configured loopback
+port exactly and never substitutes a random one, so both the Tailcat address and port remain stable
+for another node's configuration. Changing the port requires restarting the daemon.
 
 To change it while the daemon is running, ask the active admin bot—initially the built-in Chief of
 Staff—to enable or disable Tailcat. Admin bots receive these tools:
@@ -50,8 +56,8 @@ exact enable or disable operation before the admin bot's tool runs.
 
 On first enablement, Happy Agent generates
 `~/.happy/agent/tailcat/default.private.json`. It reuses that private key so the Tailcat address
-stays stable across daemon restarts and disable/enable cycles. Do not copy or share the private
-key.
+stays stable across daemon restarts and disable/enable cycles. The configured Tailcat port is fixed
+across those cycles too. Do not copy or share the private key.
 
 Happy Agent starts Tailcat after its local API transport has bound and keeps Tailcat open until it
 is disabled or the daemon stops. If the Tailcat process exits unexpectedly, Happy Agent supervises
@@ -99,12 +105,12 @@ Tailcat looks like this:
 
 ```sh
 TAILCAT_ADDRESS="tc..."
-HAPPY_PORT="3000"
+TAILCAT_PORT="24779"
 HAPPY_TOKEN="..."
 
 tailcat socks "$TAILCAT_ADDRESS" curl \
   -H "Authorization: Bearer $HAPPY_TOKEN" \
-  "http://server.tailcat:$HAPPY_PORT/v0/health"
+  "http://server.tailcat:$TAILCAT_PORT/v0/health"
 ```
 
 Replace the example values with those transferred from the server. `server.tailcat` is the default
@@ -122,7 +128,7 @@ Then point a proxy-aware client at it and let the proxy resolve `server.tailcat`
 curl \
   --socks5-hostname 127.0.0.1:1080 \
   -H "Authorization: Bearer $HAPPY_TOKEN" \
-  "http://server.tailcat:$HAPPY_PORT/v0/health"
+  "http://server.tailcat:$TAILCAT_PORT/v0/health"
 ```
 
 ## Connect to a team daemon
@@ -134,7 +140,7 @@ token:
 ```sh
 tailcat socks "$TAILCAT_ADDRESS" curl \
   -H "Authorization: Bearer $HAPPY_ACCESS_TOKEN" \
-  "http://server.tailcat:$HAPPY_PORT/v0/health"
+  "http://server.tailcat:$TAILCAT_PORT/v0/health"
 ```
 
 When Tailcat should be the team server's only network path, bind the team listener to loopback:
@@ -172,6 +178,8 @@ running.
   again after the daemon is ready.
 - If the status is `failed`, read the returned error and `~/.happy/agent/daemon.log`. Fix the cause,
   then disable and re-enable Tailcat to reconcile it immediately.
+- If port `24779` is already in use, choose another fixed `port` under `[feature.tailcat]`, restart
+  the daemon, and use that same port in the remote-node configuration.
 - If `address` or `port` is missing, Tailcat is not currently open. Ask an active admin bot for the
   authoritative status rather than relying only on files.
 - Resolve `server.tailcat` through Tailcat. For a local SOCKS listener, use SOCKS5 hostname

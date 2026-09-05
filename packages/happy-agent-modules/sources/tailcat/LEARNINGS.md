@@ -19,3 +19,10 @@ bots, human-root agents, and subagents do not receive them. Every tool operation
 bot record again at execution so a stale tool list cannot grant authority. Enabling is an Auto
 reviewed, full-access action because it opens an account-free external network path; reading status
 is local and read-only. Happy Agent's own API authentication remains in force inside the tunnel.
+
+## The service port is deterministic
+
+Binding the loopback relay to port zero made the remote endpoint change on every daemon restart,
+even though the Tailcat identity was stable. Tailcat now binds the exact machine-configured port,
+which defaults to the IANA-unassigned `24779`. A collision is a startup failure, never permission
+to choose another port, because remote nodes may have stored the address and port together.
