@@ -8,6 +8,12 @@ export function checkConnectionHealthTool(module: ConnectionsModule, agentId: st
     return defineAgentTool({
         name: "check_remote_connection_health",
         defer: true,
+        capabilities: ["Configure and inspect remote Happy Agent connections."],
+        searchKeywords: [
+            "remote endpoint health",
+            "check connection",
+            "Tailcat readiness authentication",
+        ],
         description:
             "Check a configured remote Happy Agent's authenticated health endpoint through Tailcat. Reports reachability, authentication, readiness, and protocol version without exposing credentials. Bounded to 30 seconds. Team checks use the connected Cloud user's organization-scoped token. Available only to active admin bots.",
         parameters: Type.Object({ id: connectionIdSchema }, { additionalProperties: false }),
