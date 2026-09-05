@@ -16,6 +16,8 @@ The implementation is checked against:
 - the vanilla Codex checkout at `~/Developer/coding-assistant-sources/codex`, reviewed at commit
   `d4fcb2873bf23464cfacd804a31d46529db943b0`;
 - real Codex CLI 0.145.0 SSE and WebSocket traffic under `tests/vendors/fixtures/`;
+- the official GPT-6 Astra API documentation and merged Codex model metadata in
+  `openai/codex#42605`;
 - real multi-turn captures containing two turns, native compaction, post-compaction inference,
   a same-family Sol-to-Terra switch, and a 5.6-to-5.5 switch;
 - literal prompt fragments under `sources/vendors/codex/prompts/`;
@@ -73,6 +75,7 @@ retry behavior, or compaction.
 | Successful Bedrock inference and local compaction                 | Not live-verified                |
 | ChatGPT credential rotation after session creation                | Deterministic auth-recovery test |
 | Image input and image-bearing tool output                         | Request serialization tests      |
+| Astra Lite/full tools over SSE/WebSocket and all API efforts      | Live provider probes             |
 
 ## Models and configuration
 
@@ -85,11 +88,19 @@ shape, a 272,000-token compaction window, and no known compaction hash.
 The reviewed model contracts are:
 
 - `gpt-5.5`: ordinary Responses request shape, compaction hash `2911`, default medium effort;
+- `gpt-6-astra`: Responses Lite by default and ordinary Responses for parallel tool calls,
+  compaction hash `3000`, default low effort, and API efforts low through max;
 - `gpt-5.6-sol`: Responses Lite shape, compaction hash `3000`, default low effort;
 - `gpt-5.6-terra`: Responses Lite shape, compaction hash `3000`, default medium effort;
 - `gpt-5.6-luna`: Responses Lite shape, compaction hash `3000`, default medium effort;
 - Bedrock model names use the `openai.` prefix and currently inherit the 5.5-style request and
   compaction contract.
+
+Astra's active Codex context is 272,000 tokens and its automatic compaction threshold is 244,800.
+Codex metadata also advertises an opt-in 872,000-token ceiling; Rig does not currently expose that
+separate extended-context setting. The public Astra API supports `low`, `medium`, `high`, `xhigh`,
+and `max`. Codex also advertises an `ultra` UI preset that adds automatic delegation, but `ultra`
+is not a public Astra API reasoning effort and is not part of the shared provider contract.
 
 Sol and Terra share a prompt/tool configuration and can switch without the caller supplying a
 second configuration. Luna and 5.5 have distinct configurations. A switch to either therefore

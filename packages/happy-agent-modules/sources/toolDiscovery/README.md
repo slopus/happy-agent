@@ -7,7 +7,7 @@ so the selected provider owns the call, result, replay, and any local BM25 settl
 The provider/model selection is deliberately closed:
 
 - Claude models use Claude Code's built-in `ToolSearch`.
-- Codex GPT-5.6 models use provider-owned client BM25 through `tool_search`.
+- Codex GPT-5.6 models and GPT-6 Astra use provider-owned client BM25 through `tool_search`.
 - Bedrock, Grok, Gym, unknown models, and future unverified routes receive no search descriptor.
   Providers therefore expose every deferred client tool eagerly on those routes. Bedrock's hosted
   search remains disabled because the released Anthropic adapter does not include caller-supplied

@@ -10,7 +10,12 @@ const CLAUDE_MODELS = [
     "anthropic/opus-4-8",
 ] as const;
 
-const CODEX_MODELS = ["openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.6-luna"] as const;
+const CODEX_MODELS = [
+    "openai/gpt-6-astra",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.6-terra",
+    "openai/gpt-5.6-luna",
+] as const;
 
 describe("ToolDiscoveryModule", () => {
     it.each(CLAUDE_MODELS)("selects Claude ToolSearch for %s", (model) => {

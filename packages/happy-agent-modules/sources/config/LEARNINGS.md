@@ -1,5 +1,12 @@
 # Config module learnings
 
+## Reseller catalogs are explicit subsets
+
+Adding a model to its native provider must not automatically advertise it through a reseller.
+Keep the Bedrock catalog limited to models AWS currently documents, and add a reseller route only
+after its model ID and wire behavior are known. A native Codex model can otherwise appear usable
+through Bedrock even though AWS does not serve it.
+
 ## Tailcat exposure is an explicit machine setting
 
 `[feature.tailcat] enabled = true` asks the daemon executable to expose whichever API transport is

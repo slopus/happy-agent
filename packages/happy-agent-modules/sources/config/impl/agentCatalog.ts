@@ -75,6 +75,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: 272_000,
         autoCompactWindow: 244_800,
     }),
+    "openai/gpt-6-astra": Object.freeze({
+        contextWindow: 272_000,
+        autoCompactWindow: 244_800,
+    }),
     "openai/gpt-5.6-luna": Object.freeze({
         contextWindow: 272_000,
         autoCompactWindow: 244_800,
@@ -113,6 +117,7 @@ const ALL_BUT_OFF: AgentModel["effortLevels"] = ["low", "medium", "high", "xhigh
  * configured provider entry decides which of these its own key serves.
  */
 const CATALOG: readonly CatalogAgentModel[] = [
+    model("codex", "openai/gpt-6-astra", "GPT-6 Astra", ALL_BUT_OFF, "high", ["priority"]),
     model("codex", "openai/gpt-5.6-sol", "GPT-5.6 Sol", ALL_BUT_OFF, "medium", ["priority"]),
     model("codex", "openai/gpt-5.6-terra", "GPT-5.6 Terra", EVERY_EFFORT, "medium", ["priority"]),
     model("codex", "openai/gpt-5.6-luna", "GPT-5.6 Luna", EVERY_EFFORT, "medium", ["priority"]),
@@ -127,10 +132,13 @@ const CATALOG: readonly CatalogAgentModel[] = [
     model("grok", "xai/grok-composer-2.5-fast", "Composer 2.5", ["off"], "off"),
 ];
 
-/** Bedrock resells the same families, minus Grok, and adds one of its own. */
+/** Bedrock resells a documented subset of the native catalogs and adds one model of its own. */
 const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
     ...CATALOG.filter(
-        (candidate) => candidate.providerId !== "grok" && candidate.id !== "anthropic/fable-5-1",
+        (candidate) =>
+            candidate.providerId !== "grok" &&
+            candidate.id !== "anthropic/fable-5-1" &&
+            candidate.id !== "openai/gpt-6-astra",
     ).map((candidate) => {
         const { serviceTiers: _unsupported, ...rest } = candidate;
         return { ...rest, providerId: "bedrock" };

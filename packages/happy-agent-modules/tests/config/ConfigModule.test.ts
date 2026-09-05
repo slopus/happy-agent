@@ -339,6 +339,40 @@ describe("ConfigModule", () => {
         ).toBe(false);
     });
 
+    it("offers GPT-6 Astra only through Codex with Happy's operating profile", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-astra-catalog-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await writeFile(
+            join(root, "Happy", "Config", "happy.toml"),
+            "[providers.codex]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "codex" && model.id === "openai/gpt-6-astra",
+            ),
+        ).toMatchObject({
+            contextWindow: 272_000,
+            defaultEffort: "high",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "GPT-6 Astra",
+            serviceTiers: ["priority"],
+        });
+        expect(module.modelContext("codex", "openai/gpt-6-astra")).toEqual({
+            contextWindow: 272_000,
+            autoCompactWindow: 244_800,
+        });
+        expect(
+            module.catalog.some(
+                (model) => model.providerId === "bedrock" && model.id === "openai/gpt-6-astra",
+            ),
+        ).toBe(false);
+    });
+
     it("ignores unknown TOML fields while retaining their source locations", () => {
         const parsed = parseHappyAgentConfigToml(
             ["unknown = true", "[settings]", "show_usage = true", "show_usgae = false"].join("\n"),
