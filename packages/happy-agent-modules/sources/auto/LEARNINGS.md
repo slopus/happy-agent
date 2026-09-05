@@ -1,5 +1,12 @@
 # Auto module — learnings
 
+- The reviewer already accounts for explicit informed user approval after a denial, but the
+  agent-facing refusal used to forbid all retries without explaining that path. Agents therefore
+  treated a prior denial as permanent even after the user authorized the exact action and its
+  disclosed risks. The refusal now permits one fresh Auto review with that new authorization,
+  while still forbidding workarounds, repeated retries, and bypassing policy restrictions. This
+  changes the guidance, not the reviewer's decision rules or the runtime's independent enforcement.
+
 - The private reviewer system inherits the runtime's stdlib graceful-shutdown coordinator through
   its detached context. It must register as `auto-agent-system`, distinct from the main
   `agent-system`, so both store locks remain visible and awaited instead of one named handler

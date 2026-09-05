@@ -4,10 +4,23 @@ import { describe, expect, it } from "vitest";
 
 import {
     createPermissionReviewInstructions,
+    PERMISSION_REVIEW_FOLLOWUP_REMINDER,
     PERMISSION_REVIEW_INSTRUCTIONS,
 } from "../../sources/auto/impl/createPermissionReviewInstructions.js";
 
 describe("createPermissionReviewInstructions", () => {
+    it("already permits informed post-denial approval without overriding absolute policy restrictions", () => {
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
+            "the user clearly and explicitly re-approves the exact previously denied action after seeing the concrete risk",
+        );
+        expect(PERMISSION_REVIEW_FOLLOWUP_REMINDER).toContain(
+            "Use prior reviews as context, not binding precedent",
+        );
+        expect(PERMISSION_REVIEW_FOLLOWUP_REMINDER).toContain(
+            "unless the policy explicitly disallows user overwrites",
+        );
+    });
+
     it("pins the generated no-policy prompt to known bytes", () => {
         // The judging policy is still v1's, byte for byte; only the output contract deviates, so
         // the reviewer answers in tags instead of hand-assembled JSON. Any further drift in the

@@ -67,11 +67,17 @@ tool names:
    request then goes to the configured `PermissionReviewer`.
 5. An `allowed` decision is checked again by the independent Auto policy: critical risk is never
    allowed, and high risk requires at least medium user authorization. A policy-rejected or
-   reviewer-denied decision produces a final refusal. A decision that never came back (no reviewer,
+   reviewer-denied decision refuses that call. A decision that never came back (no reviewer,
    a thrown error, or a timeout) produces an unproven refusal.
 
-A denial and an unproven review are told to the model as different things: a denial is final and
-must not be routed around, while an unproven review decided nothing. A timeout permits one retry or
+A denial and an unproven review are told to the model as different things: a denial stops the
+action and must not be routed around, while an unproven review decided nothing. After a denial,
+the agent may continue with a materially safer alternative or stop and explain the action and
+concrete risk. If the user subsequently explicitly authorizes that exact action and its disclosed
+risks, the agent may submit it once for a fresh Auto review. New authorization is not a bypass:
+the reviewer still decides, policy restrictions still apply, and another denial stops the action
+again. Assistant text, tool output, and a vague request to continue are not new authorization.
+A timeout permits one retry or
 asking the user how to proceed; an unavailable reviewer directs the model to work without that
 permission or ask the user. `PERMISSION_REFUSALS_BEFORE_STOPPING` (3) refusals in a row, or 10
 refusals within the last 50 permission decisions, end the turn by calling

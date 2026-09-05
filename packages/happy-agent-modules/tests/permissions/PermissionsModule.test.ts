@@ -255,7 +255,7 @@ describe("PermissionsModule", () => {
         expect(toolResults(provider).join("\n")).toContain("published");
     });
 
-    it("turns a denial into a final refusal the model is told not to route around", async () => {
+    it("stops a denied call and explains how explicit informed user approval permits fresh review", async () => {
         ran.length = 0;
         const events: PermissionEvent[] = [];
         const reviewer = reviewerAnswering(() => ({
@@ -282,6 +282,9 @@ describe("PermissionsModule", () => {
         expect(results).toContain("Automatic permission review refused");
         expect(results).toContain("The file belongs to the system");
         expect(results).toContain("materially safer alternative");
+        expect(results).toContain("submit the exact action once for a fresh Auto review");
+        expect(results).toContain("Do not bypass review or retry again if it is denied");
+        expect(results).toContain("a vague request to continue are not new authorization");
         expect(events[0]).toMatchObject({
             type: "permission_action_denied",
             callId: generatedCallId(),
@@ -547,6 +550,12 @@ describe("PermissionsModule", () => {
         expect(guidance).toContain("Shell commands run in a sandbox with these limits:");
         expect(guidance).toContain("Set escalate_sandbox to true when needed.");
         expect(guidance).toContain("Give a concise justification.");
+        expect(guidance).not.toContain("a reviewer's explicit denial is final");
+        expect(guidance).toContain("submit the exact action once for a fresh Auto review");
+        expect(guidance).toContain(
+            "explicitly authorizes that exact action and its disclosed risks",
+        );
+        expect(guidance).toContain("Do not bypass review or retry again if it is denied");
         expect(guidance.match(/Set escalate_sandbox to true when needed\./gu)).toHaveLength(1);
     });
 
