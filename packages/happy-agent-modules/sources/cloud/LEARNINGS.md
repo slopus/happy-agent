@@ -116,9 +116,20 @@
   and delete through the same serialized refresh-token rotation and Happy Cloud verification as
   other account operations; project only bounded IDs and names and never release the access token.
 - Organization mutations are remote control-plane changes with no local durable mirror or event.
-  Do not retry an ambiguous create or delete. Preserve Happy Cloud's administrator check as a
-  display-safe `forbidden` result and map malformed or unavailable upstream responses without
-  reflecting their bodies.
+  Do not retry an ambiguous create, delete, or endpoint update. Preserve Happy Cloud's administrator
+  check as a display-safe `forbidden` result and map malformed or unavailable upstream responses
+  without reflecting their bodies.
+- Keep the published local organization API projected to bounded IDs and names. Agent-side Happy
+  team management has a separate internal projection that requires Happy Cloud's nullable endpoint,
+  validates it against the same normalized HTTP/HTTPS/Tailcat/WS/WSS contract, and never expands the
+  public Happy Agent API by accident. Team creation requires that endpoint up front, validates it
+  before creating anything, and uses one minted credential for the create and endpoint writes. The
+  writes are not atomic, so a partial failure must expose the created team ID and direct the caller
+  to update that team instead of creating a duplicate.
+- A caller that needs the current WorkOS deployment state must obtain it through the same serialized
+  refresh and Happy Cloud verification boundary as every other authenticated operation. Return the
+  verified user ID and the client ID selected by the actual connected Cloud environment, keep agent
+  authorization in the consuming module, and never expose Cloud tokens.
 - Team mode's organization is deployment-owned configuration, so its local API must reject every
   organization route before body parsing, Cloud credential refresh, or Happy Cloud access. Keep
   this deployment policy at the API seam rather than coupling CloudModule to TeamModule.

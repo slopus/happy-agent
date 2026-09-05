@@ -100,22 +100,16 @@ Configure it only in the user-wide `happy.toml`:
 enabled = true
 host = "0.0.0.0"
 port = 3000
+workos_client_id = "client_01KZD3XE9YAFAMT0P8TD4HP73E"
 workos_organization_id = "org_01EXAMPLE"
 owner_workos_user_id = "user_01EXAMPLE"
 ```
 
-`workos_client_id` defaults to Happy Cloud's production WorkOS client. Set it when the deployment
-uses another WorkOS project:
-
-```toml
-[feature.team]
-enabled = true
-host = "0.0.0.0"
-port = 3000
-workos_client_id = "client_01EXAMPLE"
-workos_organization_id = "org_01EXAMPLE"
-owner_workos_user_id = "user_01EXAMPLE"
-```
+On a standalone Happy Agent connected to the intended owner's Happy Cloud account, ask an active
+admin bot to call `get_happy_workos_state`. Copy its `workos_client_id` and `workos_user_id` into
+`workos_client_id` and `owner_workos_user_id` respectively. Although the client setting defaults to
+Happy Cloud production, configure the reported value explicitly so the deployment does not infer
+which WorkOS project authenticated the owner.
 
 | Setting                  | Default                               | Meaning                                                                                 |
 | ------------------------ | ------------------------------------- | --------------------------------------------------------------------------------------- |

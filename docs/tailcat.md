@@ -97,7 +97,7 @@ or the Node-compatible npm package instead resolves `tailcat` from `PATH`; devel
 In standalone mode, securely transfer these three values to the intended client:
 
 - the Tailcat `address`;
-- the live forwarded `port`;
+- the fixed forwarded `port`;
 - the local Happy Agent bearer token from `~/.happy/agent/token`.
 
 Never publish the token or store it in a shared shell history. A one-command health request through
@@ -160,6 +160,21 @@ enabled = true
 Happy Agent relays Tailcat traffic to the loopback listener without exposing the team server on a
 LAN interface. Tailcat supplies only the transport; every API request, including health, still
 passes through team mode's WorkOS authentication and onboarding rules.
+
+To advertise this connection through Happy Cloud, combine the stable connection address and fixed
+configured port into one discovery URL:
+
+```sh
+TAILCAT_ADDRESS="$(cat ~/.happy/agent/tailcat/address)"
+TAILCAT_PORT="$(cat ~/.happy/agent/tailcat/port)"
+printf 'tailcat://%s:%s\n' "$TAILCAT_ADDRESS" "$TAILCAT_PORT"
+```
+
+Pass that value as `endpoint` to `create_happy_team`, or use `update_happy_team` with an existing
+`team_id`. Both values survive restarts. If the default port conflicts during initial deployment,
+override `[feature.tailcat].port` before registering the team; changing it after registration
+requires publishing the new endpoint with `update_happy_team`. See [team-mode.md](team-mode.md) for
+the complete binary deployment and organization bootstrap sequence.
 
 ## Disable Tailcat
 

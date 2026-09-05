@@ -31,6 +31,13 @@ import {
     type CloudSocialSocketConnection,
 } from "./CloudSocialSocket.js";
 import {
+    happyTeamEndpointInputSchema,
+    happyTeamEndpointSchema,
+    happyTeamSchema,
+    normalizeHappyTeamEndpoint,
+    type HappyTeam,
+} from "./HappyTeam.js";
+import {
     cloudStorageInvalidResponseSchema,
     cloudStorageNotFoundResponseSchema,
     cloudStoragePreconditionFailedResponseSchema,
@@ -128,11 +135,35 @@ const cloudOrganizationsResponseSchema = Type.Object(
     },
     exact,
 );
+const remoteHappyTeamSchema = Type.Object(
+    {
+        endpoint: happyTeamSchema.properties.endpoint,
+        id: happyTeamSchema.properties.id,
+        name: happyTeamSchema.properties.name,
+    },
+    { additionalProperties: true },
+);
+const happyTeamsResponseSchema = Type.Object(
+    {
+        organizations: Type.Array(remoteHappyTeamSchema, {
+            maxItems: MAX_CLOUD_ORGANIZATIONS,
+        }),
+    },
+    exact,
+);
 const invalidOrganizationSchema = Type.Object(
     { error: Type.Literal("invalid_organization") },
     exact,
 );
 const organizationForbiddenSchema = Type.Object({ error: Type.Literal("forbidden") }, exact);
+const invalidOrganizationEndpointSchema = Type.Object(
+    { error: Type.Literal("invalid_endpoint") },
+    exact,
+);
+const organizationEndpointResponseSchema = Type.Object(
+    { endpoint: happyTeamEndpointSchema },
+    exact,
+);
 const organizationNotFoundSchema = Type.Object({ error: Type.Literal("not_found") }, exact);
 const organizationDeletedSchema = Type.Object({ status: Type.Literal("deleted") }, exact);
 
@@ -325,9 +356,16 @@ export class CloudOrganizationInvalidRequestError extends Error {
     }
 }
 
+export class CloudOrganizationInvalidEndpointError extends Error {
+    constructor() {
+        super("Happy Cloud rejected the organization endpoint.");
+        this.name = "CloudOrganizationInvalidEndpointError";
+    }
+}
+
 export class CloudOrganizationForbiddenError extends Error {
     constructor() {
-        super("Happy Cloud rejected the organization deletion.");
+        super("Happy Cloud rejected the organization operation.");
         this.name = "CloudOrganizationForbiddenError";
     }
 }
@@ -423,6 +461,7 @@ class PublicCloudWorkOSClient extends WorkOS {
 export class CloudWorkOS {
     readonly #cloudUrl: string;
     readonly #workos: Pick<PublicWorkOS, "userManagement">;
+    readonly workosClientId: string;
 
     constructor(environment: CloudEnvironment) {
         if (!Value.Check(cloudEnvironmentSchema, environment)) {
@@ -430,8 +469,9 @@ export class CloudWorkOS {
         }
         const deployment = deployments[environment];
         this.#cloudUrl = deployment.cloudUrl;
+        this.workosClientId = deployment.workosClientId;
         this.#workos = new PublicCloudWorkOSClient({
-            clientId: deployment.workosClientId,
+            clientId: this.workosClientId,
             fetchFn: boundedWorkOSFetch,
             maxRetries: 0,
             timeout: WORKOS_TIMEOUT_MS,
@@ -510,6 +550,24 @@ export class CloudWorkOS {
         return result.body.organizations.map(cloudOrganization);
     }
 
+    async listTeams(accessToken: string): Promise<HappyTeam[]> {
+        const result = await this.#request(
+            "/v0/organizations",
+            accessToken,
+            "GET",
+            undefined,
+            [],
+            MAX_CLOUD_ORGANIZATIONS_RESPONSE_BYTES,
+        );
+        if (!result.ok) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        if (!Value.Check(happyTeamsResponseSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-invalid", result.status);
+        }
+        return result.body.organizations.map(projectHappyTeam);
+    }
+
     async createOrganization(accessToken: string, name: string): Promise<CloudOrganization> {
         if (!Value.Check(createCloudOrganizationRequestSchema.properties.name, name)) {
             throw new CloudOrganizationInvalidRequestError();
@@ -528,6 +586,62 @@ export class CloudWorkOS {
             throw new CloudServiceUnavailableError("response-rejected", result.status);
         }
         return cloudOrganization(result.body);
+    }
+
+    async createTeam(accessToken: string, name: string): Promise<HappyTeam> {
+        if (!Value.Check(createCloudOrganizationRequestSchema.properties.name, name)) {
+            throw new CloudOrganizationInvalidRequestError();
+        }
+        const result = await this.#request(
+            "/v0/organizations",
+            accessToken,
+            "POST",
+            { name },
+            [400],
+        );
+        if (result.status === 400 && Value.Check(invalidOrganizationSchema, result.body)) {
+            throw new CloudOrganizationInvalidRequestError();
+        }
+        if (!result.ok || !Value.Check(remoteHappyTeamSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-rejected", result.status);
+        }
+        return projectHappyTeam(result.body);
+    }
+
+    async setTeamEndpoint(
+        accessToken: string,
+        organizationId: string,
+        endpoint: string,
+    ): Promise<string> {
+        const normalizedEndpoint = normalizeHappyTeamEndpoint(endpoint);
+        if (
+            !Value.Check(cloudOrganizationSchema.properties.id, organizationId) ||
+            !Value.Check(happyTeamEndpointInputSchema, endpoint) ||
+            normalizedEndpoint === undefined
+        ) {
+            throw new CloudOrganizationInvalidEndpointError();
+        }
+        const result = await this.#request(
+            `/v0/organizations/${encodeURIComponent(organizationId)}/endpoint`,
+            accessToken,
+            "PUT",
+            { endpoint: normalizedEndpoint },
+            [400, 403],
+        );
+        if (result.status === 400 && Value.Check(invalidOrganizationEndpointSchema, result.body)) {
+            throw new CloudOrganizationInvalidEndpointError();
+        }
+        if (result.status === 403 && Value.Check(organizationForbiddenSchema, result.body)) {
+            throw new CloudOrganizationForbiddenError();
+        }
+        if (!result.ok || !Value.Check(organizationEndpointResponseSchema, result.body)) {
+            throw new CloudServiceUnavailableError("response-invalid", result.status);
+        }
+        const returnedEndpoint = normalizeHappyTeamEndpoint(result.body.endpoint);
+        if (returnedEndpoint === undefined || returnedEndpoint !== normalizedEndpoint) {
+            throw new CloudServiceUnavailableError("response-invalid", result.status);
+        }
+        return returnedEndpoint;
     }
 
     async deleteOrganization(accessToken: string, organizationId: string): Promise<void> {
@@ -1124,6 +1238,14 @@ function cloudOrganization(value: unknown): CloudOrganization {
         throw new CloudServiceUnavailableError();
     }
     return { id: value.id, name: value.name };
+}
+
+function projectHappyTeam(value: Static<typeof remoteHappyTeamSchema>): HappyTeam {
+    const endpoint = value.endpoint === null ? null : normalizeHappyTeamEndpoint(value.endpoint);
+    if (endpoint === undefined || endpoint !== value.endpoint) {
+        throw new CloudServiceUnavailableError();
+    }
+    return { endpoint, id: value.id, name: value.name };
 }
 
 function cloudProfile(value: unknown): CloudProfile {

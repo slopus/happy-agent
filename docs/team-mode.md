@@ -4,40 +4,182 @@ Team mode runs one Happy Agent daemon for multiple members of one WorkOS organiz
 existing Happy Agent HTTP contract while changing the transport, authentication, and profile
 storage behind it.
 
-## Enable it
+## Before you begin
 
-Add the deployment settings to the machine-wide `happy.toml`:
+You need:
 
-```toml
-[feature.team]
-enabled = true
-host = "0.0.0.0"
-port = 3000
-workos_organization_id = "org_01EXAMPLE"
-owner_workos_user_id = "user_01EXAMPLE"
-```
+- a Linux or macOS machine that can make outbound Internet connections;
+- first-party Codex, Claude Code, Grok, or AWS credentials available to the service account for the
+  models the team should run;
+- a standalone Happy Agent connected to the intended owner's Happy Cloud account, with an active
+  admin bot available to report that account's WorkOS configuration.
 
-The configuration file is `~/Happy/Config/happy.toml` on macOS and
-`~/happy/config/happy.toml` on Linux unless the configuration directory was overridden. A
-repository's `happy.toml` cannot enable or configure team mode.
+The management agent and deployed server may be different machines. Team-management tools are
+available only on standalone installations because a team server's organization is fixed by its
+deployment configuration.
 
-The default WorkOS client is Happy Cloud's production client,
-`client_01KZD3XE9YAFAMT0P8TD4HP73E`. To use another WorkOS project, set it explicitly:
+The walkthrough below uses a dedicated Linux service account with `/var/lib/happy-agent` as its
+home. That puts machine configuration at `/var/lib/happy-agent/Happy/Config/happy.toml` and private
+daemon state at `/var/lib/happy-agent/.happy/agent`.
 
-```toml
-workos_client_id = "client_01EXAMPLE"
-```
+## 1. Install the release binary
 
-Start the service in the foreground under the deployment's process supervisor:
+Choose the released version and the matching `linux-x64` or `linux-arm64` target. Every release
+contains a self-contained Happy Agent binary with the matching Tailcat v0.4.0 server executable
+embedded in it.
 
 ```sh
-happy-agent run
+VERSION="0.0.0"
+TARGET="linux-x64"
+ARCHIVE="happy-agent-$VERSION-$TARGET.tar.gz"
+BASE_URL="https://github.com/slopus/happy-agent/releases/download/v$VERSION"
+
+curl -fLO "$BASE_URL/$ARCHIVE"
+curl -fLO "$BASE_URL/$ARCHIVE.sha256"
+sha256sum --check "$ARCHIVE.sha256"
+tar -xzf "$ARCHIVE"
+sudo install -m 0755 "happy-agent-$TARGET" /usr/local/bin/happy-agent
+happy-agent --version
 ```
 
-Team mode defaults to `0.0.0.0:3000`. The listener is plain HTTP; terminate TLS at a trusted
-reverse proxy or ingress before exposing it outside a trusted network.
+Replace `0.0.0` with an actual released version. macOS uses `darwin-arm64` or `darwin-x64` and can
+verify the checksum with `shasum -a 256 -c "$ARCHIVE.sha256"`.
 
-Alternatively, bind only to loopback and opt into the bundled Tailcat v0.4.0 transport:
+Create the service account and its configuration folder:
+
+```sh
+sudo useradd --system --create-home --home-dir /var/lib/happy-agent \
+  --shell /usr/sbin/nologin happy-agent
+sudo install -d -m 0750 -o happy-agent -g happy-agent \
+  /var/lib/happy-agent/Happy/Config
+```
+
+Install the desired first-party coding assistants and complete their normal sign-in flow as the
+`happy-agent` service user. Happy Agent reads that user's existing provider credentials; it has no
+separate provider login and should not share another operating-system user's credential files. The
+built-in providers are enabled by default when their credentials are present. See
+[configuration.md](configuration.md#providers) for custom provider instances and model filters.
+
+## 2. Bootstrap the Tailcat identity
+
+The WorkOS organization ID does not exist yet, so start the binary in standalone mode first. Put
+this initial configuration in `/var/lib/happy-agent/Happy/Config/happy.toml`:
+
+```toml
+[feature.tailcat]
+enabled = true
+port = 24779
+```
+
+Install `/etc/systemd/system/happy-agent.service`:
+
+```ini
+[Unit]
+Description=Happy Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=happy-agent
+Group=happy-agent
+WorkingDirectory=/var/lib/happy-agent
+Environment=HOME=/var/lib/happy-agent
+ExecStart=/usr/local/bin/happy-agent run
+Restart=on-failure
+RestartSec=2
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Start the binary and wait for Tailcat to report both parts of its live endpoint:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now happy-agent
+
+TAILCAT_DIR="/var/lib/happy-agent/.happy/agent/tailcat"
+for attempt in $(seq 1 90); do
+  if sudo test -s "$TAILCAT_DIR/address" && sudo test -s "$TAILCAT_DIR/port"; then
+    break
+  fi
+  if ! sudo systemctl is-active --quiet happy-agent; then
+    sudo journalctl -u happy-agent -n 100 --no-pager
+    exit 1
+  fi
+  if [ "$attempt" -eq 90 ]; then
+    echo "Happy Agent did not open Tailcat within 90 seconds" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+TAILCAT_ADDRESS="$(sudo cat "$TAILCAT_DIR/address")"
+TAILCAT_PORT="$(sudo cat "$TAILCAT_DIR/port")"
+TEAM_ENDPOINT="tailcat://$TAILCAT_ADDRESS:$TAILCAT_PORT"
+printf '%s\n' "$TEAM_ENDPOINT"
+```
+
+The `tailcat:` value is the endpoint stored by Happy Cloud. It contains the unguessable Tailcat
+connection address and the fixed configured port. Both remain stable across daemon restarts, so the
+team can be registered once after this initial deployment. Treat the endpoint as private discovery
+information.
+
+Tailcat defaults to the fixed, IANA-unassigned port `24779`. A conflict should be unusual. If the
+service nevertheless reports that the port is already in use, override `port` under
+`[feature.tailcat]` with another nonzero TCP port and restart while this deployment is still being
+bootstrapped. Settle on that port before registering the team; changing it later changes the
+published endpoint.
+
+## 3. Create the Happy team and register its endpoint
+
+On the standalone management Happy Agent connected to Happy Cloud, first ask an active admin bot to
+call `get_happy_workos_state`. It takes no arguments and returns:
+
+```json
+{
+    "workos_client_id": "client_01KZD3XE9YAFAMT0P8TD4HP73E",
+    "workos_user_id": "user_01EXAMPLE"
+}
+```
+
+Save both exact values for the team configuration. The state lookup is deliberately separate from
+team creation and is available only to an active admin bot.
+
+Then ask a human-owned root agent or admin bot to create the team with the exact `TEAM_ENDPOINT`
+printed by the deployed server. The tool input is:
+
+```json
+{
+    "name": "Acme Engineering",
+    "endpoint": "tailcat://tcEXAMPLE:24779"
+}
+```
+
+`create_happy_team` requires both fields. It creates the WorkOS organization, gives the connected
+WorkOS user its `admin` role, and registers the endpoint before returning. Save the returned
+`org_...` team ID.
+
+If organization creation succeeds but the endpoint write does not, the error includes the new team
+ID. Do not create another organization. Call `update_happy_team` with that ID and the endpoint to
+finish setup.
+
+The other management tools are:
+
+- `list_happy_teams`, which pages through the connected user's teams and their endpoints;
+- `update_happy_team`, which currently changes a team's endpoint and requires `team_id` plus
+  `endpoint`.
+
+A non-admin bot cannot use the team-management tools. A human-owned root agent may manage teams,
+but does not receive the WorkOS state lookup. Happy Cloud also checks the connected WorkOS identity
+and allows an endpoint update only for an active organization administrator.
+
+## 4. Enable team mode
+
+Replace the server's `happy.toml` with the final configuration. Use the organization ID returned by
+`create_happy_team` and both WorkOS identifiers returned by `get_happy_workos_state`:
 
 ```toml
 [feature.team]
@@ -46,16 +188,80 @@ host = "127.0.0.1"
 port = 3000
 workos_organization_id = "org_01EXAMPLE"
 owner_workos_user_id = "user_01EXAMPLE"
+workos_client_id = "client_01KZD3XE9YAFAMT0P8TD4HP73E"
 
 [feature.tailcat]
 enabled = true
 port = 24779
 ```
 
-Tailcat provides end-to-end WireGuard encryption, NAT traversal, and DERP fallback without an
-account. It does not replace WorkOS authentication. The stable connection address and
-fixed forwarded port are written under `~/.happy/agent/tailcat/` while the daemon is open. Port
-`24779` is the default and can be overridden in `[feature.tailcat]`.
+Set `owner_workos_user_id` and `workos_client_id` to the values returned by
+`get_happy_workos_state`. Do not infer the client from the environment or rely on the configuration
+default; the tool reports the exact Happy Cloud setup that authenticated the intended owner.
+
+Restart the service and wait for Tailcat again:
+
+```sh
+sudo systemctl restart happy-agent
+
+TAILCAT_DIR="/var/lib/happy-agent/.happy/agent/tailcat"
+for attempt in $(seq 1 90); do
+  if sudo test -s "$TAILCAT_DIR/address" && sudo test -s "$TAILCAT_DIR/port"; then
+    break
+  fi
+  if ! sudo systemctl is-active --quiet happy-agent || [ "$attempt" -eq 90 ]; then
+    sudo journalctl -u happy-agent -n 100 --no-pager
+    exit 1
+  fi
+  sleep 1
+done
+
+TAILCAT_ADDRESS="$(sudo cat "$TAILCAT_DIR/address")"
+TAILCAT_PORT="$(sudo cat "$TAILCAT_DIR/port")"
+TEAM_ENDPOINT="tailcat://$TAILCAT_ADDRESS:$TAILCAT_PORT"
+printf '%s\n' "$TEAM_ENDPOINT"
+```
+
+The Tailcat identity key and configured port both survive the move into team mode, so this endpoint
+must match the value registered during creation. If an operator intentionally changes the Tailcat
+port or replaces the identity key later, call `update_happy_team` from the standalone management
+agent to publish the replacement endpoint:
+
+```json
+{
+    "team_id": "org_01EXAMPLE",
+    "endpoint": "tailcat://tcEXAMPLE:24780"
+}
+```
+
+At this point the server is in team mode. It no longer creates or accepts the standalone Unix
+socket and local bearer token. Tailcat provides end-to-end WireGuard encryption, NAT traversal, and
+DERP fallback, but it does not replace WorkOS authentication.
+
+## 5. Verify a team connection
+
+Install Tailcat v0.4.0 on a client machine, obtain a WorkOS access token for the configured client
+and organization, then run:
+
+```sh
+TAILCAT_ADDRESS="tcEXAMPLE"
+TAILCAT_PORT="24779"
+HAPPY_ACCESS_TOKEN="eyJ..."
+
+tailcat socks "$TAILCAT_ADDRESS" curl \
+  -H "Authorization: Bearer $HAPPY_ACCESS_TOKEN" \
+  "http://server.tailcat:$TAILCAT_PORT/v0/health"
+```
+
+The registered `tailcat:` endpoint is discovery metadata; HTTP inside the encrypted connection goes
+to `server.tailcat` at its encoded port. Tailcat supplies transport only. Every request still has to
+pass WorkOS authentication and the team's onboarding rules.
+
+For a conventional deployment, register an absolute `https:`, `http:`, `wss:`, or `ws:` endpoint
+instead. The team listener is plain HTTP, so a directly Internet-accessible deployment should put it
+behind trusted TLS termination. When Tailcat is the only network path, keep `host = "127.0.0.1"` as
+shown above.
+
 See [tailcat.md](tailcat.md) for live Tailcat control through an admin bot, endpoint discovery, and
 remote client commands.
 

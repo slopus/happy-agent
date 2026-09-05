@@ -172,6 +172,7 @@ its public methods, and its storage and event contracts.
 | [User input](sources/userInput/README.md)        | Questions an agent asks a person, and a durable wait for the answer that survives a restart.            |
 | [Presence](sources/presence/README.md)           | Configured versus effective availability, custom and temporary states, schedules, and status events.    |
 | [Profile](sources/profile/README.md)             | The one person this installation belongs to, and the machine that may speak for them.                   |
+| [Happy teams](sources/happyTeams/README.md)      | Reviewed standalone tools for Cloud identity, team management, and publishing server endpoints.         |
 
 ### Places and things
 

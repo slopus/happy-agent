@@ -46,6 +46,7 @@ import { GeminiModule } from "../gemini/index.js";
 import { GitModule } from "../git/index.js";
 import { GoalModule } from "../goal/index.js";
 import { HappyModule } from "../happy/index.js";
+import { HappyTeamsModule } from "../happyTeams/index.js";
 import { HistoryModule } from "../history/index.js";
 import { ImageGenerationModule } from "../imageGeneration/index.js";
 import { MenuBarModule } from "../menuBar/index.js";
@@ -138,6 +139,7 @@ export interface HappyAgentRuntimeModules {
     readonly gemini: GeminiModule;
     readonly goal: GoalModule;
     readonly happy: HappyModule;
+    readonly happyTeams: HappyTeamsModule;
     readonly history: HistoryModule;
     readonly imageGeneration: ImageGenerationModule;
     readonly installation: InstallationModule;
@@ -446,6 +448,7 @@ export async function startHappyAgentRuntime(
 
         const installation = new InstallationModule(projects);
         const cloud = new CloudModule(durableFunctions, profile, config);
+        const happyTeams = new HappyTeamsModule(cloud, bots);
         const providerUsage = new ProviderUsageModule(config);
         registerShutdown("provider-usage", async () => await providerUsage.close());
         const happy = new HappyModule(
@@ -524,6 +527,7 @@ export async function startHappyAgentRuntime(
             gemini,
             goal,
             happy,
+            happyTeams,
             history,
             imageGeneration,
             installation,
@@ -583,6 +587,7 @@ export async function startHappyAgentRuntime(
             durableFunctions,
             bots,
             tailcat,
+            ...(team.enabled ? [] : [happyTeams]),
             projects,
             titles,
             workspaces,

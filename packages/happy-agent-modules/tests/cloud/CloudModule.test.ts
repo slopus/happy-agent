@@ -28,6 +28,7 @@ import { createCloudKeysDatabase } from "../../sources/cloud/CloudKeysDatabase.j
 import { CloudMurmurStore } from "../../sources/cloud/CloudMurmurStore.js";
 import {
     CloudOrganizationForbiddenError,
+    CloudOrganizationInvalidEndpointError,
     CloudUsernameUnavailableError,
     CloudVaultDeleteRejectedError,
     CloudWorkOS,
@@ -950,6 +951,22 @@ describe("CloudModule", () => {
         const remove = vi
             .spyOn(CloudWorkOS.prototype, "deleteOrganization")
             .mockResolvedValue(undefined);
+        const listTeams = vi.spyOn(CloudWorkOS.prototype, "listTeams").mockResolvedValue([
+            {
+                endpoint: "https://existing.example/agent",
+                id: "org_existing",
+                name: "Existing Team",
+            },
+        ]);
+        const createTeam = vi.spyOn(CloudWorkOS.prototype, "createTeam").mockResolvedValue({
+            endpoint: null,
+            id: "org_created",
+            name: "Analytical Engines",
+        });
+        const setTeamEndpoint = vi
+            .spyOn(CloudWorkOS.prototype, "setTeamEndpoint")
+            .mockResolvedValueOnce("tailcat://tcAnalytical:32123")
+            .mockResolvedValueOnce("https://created.example/agent");
 
         await expect(module.listOrganizations(database.context)).resolves.toEqual({
             organizations: [{ id: "org_existing", name: "Existing Team" }],
@@ -960,14 +977,73 @@ describe("CloudModule", () => {
         await expect(
             module.deleteOrganization(database.context, "org_created"),
         ).resolves.toBeUndefined();
+        await expect(module.listTeams(database.context)).resolves.toEqual([
+            {
+                endpoint: "https://existing.example/agent",
+                id: "org_existing",
+                name: "Existing Team",
+            },
+        ]);
+        await expect(
+            module.createTeam(
+                database.context,
+                "Analytical Engines",
+                "tailcat://tcAnalytical:32123",
+            ),
+        ).resolves.toEqual({
+            endpoint: "tailcat://tcAnalytical:32123",
+            id: "org_created",
+            name: "Analytical Engines",
+        });
+        await expect(
+            module.setTeamEndpoint(
+                database.context,
+                "org_created",
+                "https://created.example/agent",
+            ),
+        ).resolves.toBe("https://created.example/agent");
 
         expect(list).toHaveBeenCalledWith("organization-access-1");
         expect(create).toHaveBeenCalledWith("organization-access-2", "Analytical Engines");
         expect(remove).toHaveBeenCalledWith("organization-access-3", "org_created");
+        expect(listTeams).toHaveBeenCalledWith("organization-access-4");
+        expect(createTeam).toHaveBeenCalledWith("organization-access-5", "Analytical Engines");
+        expect(setTeamEndpoint).toHaveBeenNthCalledWith(
+            1,
+            "organization-access-5",
+            "org_created",
+            "tailcat://tcAnalytical:32123",
+        );
+        expect(setTeamEndpoint).toHaveBeenCalledWith(
+            "organization-access-6",
+            "org_created",
+            "https://created.example/agent",
+        );
         expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
-            "organization-refresh-3",
+            "organization-refresh-6",
         );
     });
+
+    it.each([
+        ["production", "client_01KZD3XE9YAFAMT0P8TD4HP73E"],
+        ["staging", "client_01KZD3XE4EW1AF1P6WTFHBPR4J"],
+    ] as const)(
+        "returns the reverified WorkOS state for the connected %s Cloud account",
+        async (environment, workosClientId) => {
+            const { database, module } = await fixture(`cloud-module-workos-state-${environment}`);
+            await connect(module, database, environment);
+            await waitForCloud(module, database, { enrollment: { status: "required" } });
+
+            await expect(module.getWorkOSState(database.context)).resolves.toEqual({
+                workosClientId,
+                workosUserId: user.id,
+            });
+            expect(workos.refresh).toHaveBeenCalledWith({ refreshToken: "refresh-a" });
+            expect(
+                (await createCloudDatabase().read(database.context))?.session?.refreshToken,
+            ).toBe("refresh-b");
+        },
+    );
 
     it("rejects invalid and unauthorized organization mutations with display-safe errors", async () => {
         const { database, module } = await fixture("cloud-module-organization-errors");
@@ -977,6 +1053,10 @@ describe("CloudModule", () => {
         const remove = vi
             .spyOn(CloudWorkOS.prototype, "deleteOrganization")
             .mockRejectedValue(new CloudOrganizationForbiddenError());
+        const setTeamEndpoint = vi
+            .spyOn(CloudWorkOS.prototype, "setTeamEndpoint")
+            .mockRejectedValueOnce(new CloudOrganizationInvalidEndpointError())
+            .mockRejectedValueOnce(new CloudOrganizationForbiddenError());
 
         await expect(module.createOrganization(database.context, "   ")).rejects.toMatchObject({
             code: "invalid_request",
@@ -990,6 +1070,57 @@ describe("CloudModule", () => {
             status: 403,
         } satisfies Partial<CloudOperationError>);
         expect(remove).toHaveBeenCalledTimes(1);
+        await expect(
+            module.setTeamEndpoint(database.context, "org_other", "https://invalid.example"),
+        ).rejects.toMatchObject({
+            code: "invalid_request",
+            status: 400,
+        } satisfies Partial<CloudOperationError>);
+        await expect(
+            module.setTeamEndpoint(database.context, "org_other", "https://forbidden.example"),
+        ).rejects.toMatchObject({
+            code: "forbidden",
+            status: 403,
+        } satisfies Partial<CloudOperationError>);
+        expect(setTeamEndpoint).toHaveBeenCalledTimes(2);
+    });
+
+    it("validates a creation endpoint before writing and reports a partially created team", async () => {
+        const { database, module } = await fixture("cloud-module-team-creation-errors");
+        await connect(module, database);
+        await waitForCloud(module, database, { enrollment: { status: "required" } });
+        const createTeam = vi.spyOn(CloudWorkOS.prototype, "createTeam").mockResolvedValue({
+            endpoint: null,
+            id: "org_partial",
+            name: "Partial Team",
+        });
+        const setTeamEndpoint = vi
+            .spyOn(CloudWorkOS.prototype, "setTeamEndpoint")
+            .mockRejectedValue(new Error("upstream write failed"));
+
+        await expect(
+            module.createTeam(database.context, "Invalid Team", "file:///tmp/agent.sock"),
+        ).rejects.toMatchObject({
+            code: "invalid_request",
+            status: 400,
+        } satisfies Partial<CloudOperationError>);
+        expect(createTeam).not.toHaveBeenCalled();
+
+        await expect(
+            module.createTeam(database.context, "Partial Team", "tailcat://tcPartial:32123"),
+        ).rejects.toMatchObject({
+            code: "cloud_unavailable",
+            message: expect.stringContaining(
+                "Happy team org_partial was created, but its endpoint could not be configured. Use update_happy_team",
+            ),
+            status: 503,
+        } satisfies Partial<CloudOperationError>);
+        expect(createTeam).toHaveBeenCalledTimes(1);
+        expect(setTeamEndpoint).toHaveBeenCalledWith(
+            expect.any(String),
+            "org_partial",
+            "tailcat://tcPartial:32123",
+        );
     });
 
     it("exposes authenticated Cloud storage reads and conditional writes", async () => {

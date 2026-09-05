@@ -33,6 +33,9 @@ export * from "./happy/index.js";
 
 // Cloud: daemon-owned WorkOS authentication and Happy Cloud access-token minting.
 export * from "./cloud/index.js";
+
+// Happy teams: admin-bot and root-user control of Happy Cloud organizations.
+export * from "./happyTeams/index.js";
 export * from "./api/index.js";
 export * from "./runtime/index.js";
 

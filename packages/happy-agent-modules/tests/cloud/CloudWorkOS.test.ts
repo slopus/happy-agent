@@ -4,6 +4,7 @@ import {
     boundedWorkOSFetch,
     CloudCredentialsRejectedError,
     CloudOrganizationForbiddenError,
+    CloudOrganizationInvalidEndpointError,
     CloudOrganizationInvalidRequestError,
     CloudProfileRejectedError,
     CloudServiceUnavailableError,
@@ -135,6 +136,92 @@ describe("CloudWorkOS", () => {
             CloudOrganizationInvalidRequestError,
         );
         expect(request).toHaveBeenCalledTimes(4);
+    });
+
+    it("lists and creates Happy teams and updates a normalized team endpoint", async () => {
+        const request = vi
+            .fn<typeof fetch>()
+            .mockResolvedValueOnce(
+                Response.json({
+                    organizations: [
+                        {
+                            endpoint: "https://team.example/agent",
+                            id: "org_existing",
+                            internal: "must-not-cross-the-agent-boundary",
+                            name: "Existing Team",
+                        },
+                    ],
+                }),
+            )
+            .mockResolvedValueOnce(
+                Response.json(
+                    { endpoint: null, id: "org_created", name: "Analytical Engines" },
+                    { status: 201 },
+                ),
+            )
+            .mockResolvedValueOnce(Response.json({ endpoint: "tailcat://tcAnalytical:32123" }));
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("production");
+
+        await expect(client.listTeams("access-token")).resolves.toEqual([
+            {
+                endpoint: "https://team.example/agent",
+                id: "org_existing",
+                name: "Existing Team",
+            },
+        ]);
+        await expect(client.createTeam("access-token", "Analytical Engines")).resolves.toEqual({
+            endpoint: null,
+            id: "org_created",
+            name: "Analytical Engines",
+        });
+        await expect(
+            client.setTeamEndpoint("access-token", "org/created", "tailcat://tcAnalytical:32123"),
+        ).resolves.toBe("tailcat://tcAnalytical:32123");
+
+        expect(
+            request.mock.calls.map(([input, init]) => ({
+                body: init?.body,
+                method: init?.method,
+                path: new URL(String(input)).pathname,
+            })),
+        ).toEqual([
+            { body: undefined, method: "GET", path: "/v0/organizations" },
+            {
+                body: JSON.stringify({ name: "Analytical Engines" }),
+                method: "POST",
+                path: "/v0/organizations",
+            },
+            {
+                body: JSON.stringify({ endpoint: "tailcat://tcAnalytical:32123" }),
+                method: "PUT",
+                path: "/v0/organizations/org%2Fcreated/endpoint",
+            },
+        ]);
+    });
+
+    it("rejects invalid, forbidden, and malformed Happy team endpoint updates", async () => {
+        const request = vi
+            .fn<typeof fetch>()
+            .mockResolvedValueOnce(Response.json({ error: "invalid_endpoint" }, { status: 400 }))
+            .mockResolvedValueOnce(Response.json({ error: "forbidden" }, { status: 403 }))
+            .mockResolvedValueOnce(Response.json({ endpoint: "ftp://invalid.example" }));
+        vi.stubGlobal("fetch", request);
+        const client = new CloudWorkOS("production");
+
+        await expect(
+            client.setTeamEndpoint("access", "org_team", "https://rejected.example"),
+        ).rejects.toBeInstanceOf(CloudOrganizationInvalidEndpointError);
+        await expect(
+            client.setTeamEndpoint("access", "org_team", "https://forbidden.example"),
+        ).rejects.toBeInstanceOf(CloudOrganizationForbiddenError);
+        await expect(
+            client.setTeamEndpoint("access", "org_team", "https://malformed.example"),
+        ).rejects.toBeInstanceOf(CloudServiceUnavailableError);
+        await expect(
+            client.setTeamEndpoint("access", "org_team", "ftp://invalid.example"),
+        ).rejects.toBeInstanceOf(CloudOrganizationInvalidEndpointError);
+        expect(request).toHaveBeenCalledTimes(3);
     });
 
     it("loads one version-consistent social snapshot and hydrates every public profile", async () => {

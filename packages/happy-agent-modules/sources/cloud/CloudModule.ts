@@ -156,6 +156,7 @@ import {
     CloudCredentialsRejectedError,
     CloudIdentityMismatchError,
     CloudOrganizationForbiddenError,
+    CloudOrganizationInvalidEndpointError,
     CloudOrganizationInvalidRequestError,
     CloudProfileRejectedError,
     CloudProfileRequiredError,
@@ -174,6 +175,11 @@ import {
     type CloudSocialMutation,
 } from "./CloudWorkOS.js";
 import { createCloudVersion } from "./createCloudVersion.js";
+import {
+    happyTeamEndpointInputSchema,
+    normalizeHappyTeamEndpoint,
+    type HappyTeam,
+} from "./HappyTeam.js";
 
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1_000;
 const AUTHORIZATION_EXPIRY_RETRY_MS = 5_000;
@@ -1014,6 +1020,160 @@ export class CloudModule implements AgentModule {
                     503,
                     "cloud_unavailable",
                     "Cloud organizations are temporarily unavailable.",
+                );
+            }
+        });
+    }
+
+    async listTeams(_ctx: Context): Promise<readonly HappyTeam[]> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                return await this.#client(minted.cloud.environment).listTeams(minted.accessToken);
+            } catch (error: unknown) {
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "happy-teams-list",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Happy teams are temporarily unavailable.",
+                );
+            }
+        });
+    }
+
+    /** Return the WorkOS identifiers behind the currently connected and reverified Cloud session. */
+    async getWorkOSState(_ctx: Context): Promise<{
+        readonly workosClientId: string;
+        readonly workosUserId: string;
+    }> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const minted = await this.#mintInLock(ctx, true);
+            return {
+                workosClientId: this.#client(minted.cloud.environment).workosClientId,
+                workosUserId: minted.authenticated.user.id,
+            };
+        });
+    }
+
+    async createTeam(_ctx: Context, name: string, endpoint: string): Promise<HappyTeam> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            if (!Value.Check(createCloudOrganizationRequestSchema.properties.name, name)) {
+                throw this.#error(400, "invalid_request", "The Happy team name is invalid.");
+            }
+            const normalizedEndpoint = normalizeHappyTeamEndpoint(endpoint);
+            if (
+                !Value.Check(happyTeamEndpointInputSchema, endpoint) ||
+                normalizedEndpoint === undefined
+            ) {
+                throw this.#error(400, "invalid_request", "The Happy team endpoint is invalid.");
+            }
+            const minted = await this.#mintInLock(ctx, true);
+            const client = this.#client(minted.cloud.environment);
+            let created: HappyTeam;
+            try {
+                created = await client.createTeam(minted.accessToken, name);
+            } catch (error: unknown) {
+                if (error instanceof CloudOrganizationInvalidRequestError) {
+                    throw this.#error(400, "invalid_request", "The Happy team name is invalid.");
+                }
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "happy-team-create",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Happy teams are temporarily unavailable.",
+                );
+            }
+            try {
+                const configuredEndpoint = await client.setTeamEndpoint(
+                    minted.accessToken,
+                    created.id,
+                    normalizedEndpoint,
+                );
+                return { ...created, endpoint: configuredEndpoint };
+            } catch (error: unknown) {
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "happy-team-create-endpoint-update",
+                    error,
+                );
+                const message = `Happy team ${created.id} was created, but its endpoint could not be configured. Use update_happy_team with this team ID to finish setup.`;
+                if (error instanceof CloudOrganizationForbiddenError) {
+                    throw this.#error(403, "forbidden", message);
+                }
+                throw this.#error(503, "cloud_unavailable", message);
+            }
+        });
+    }
+
+    async setTeamEndpoint(
+        _ctx: Context,
+        organizationId: string,
+        endpoint: string,
+    ): Promise<string> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const normalizedEndpoint = normalizeHappyTeamEndpoint(endpoint);
+            if (
+                !Value.Check(cloudOrganizationSchema.properties.id, organizationId) ||
+                !Value.Check(happyTeamEndpointInputSchema, endpoint) ||
+                normalizedEndpoint === undefined
+            ) {
+                throw this.#error(400, "invalid_request", "The Happy team endpoint is invalid.");
+            }
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                return await this.#client(minted.cloud.environment).setTeamEndpoint(
+                    minted.accessToken,
+                    organizationId,
+                    normalizedEndpoint,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudOrganizationInvalidEndpointError) {
+                    throw this.#error(
+                        400,
+                        "invalid_request",
+                        "The Happy team endpoint is invalid.",
+                    );
+                }
+                if (error instanceof CloudOrganizationForbiddenError) {
+                    throw this.#error(
+                        403,
+                        "forbidden",
+                        "The connected Cloud user is not an administrator of this Happy team.",
+                    );
+                }
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "happy-team-endpoint-update",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "Happy teams are temporarily unavailable.",
                 );
             }
         });

@@ -98,6 +98,17 @@ production Happy Cloud WorkOS access tokens for members of the configured organi
 also requires `workos_organization_id` and `owner_workos_user_id`; the matching owner receives the
 owner flag during profile onboarding.
 
+Before deploying a team server, a standalone Happy Agent connected to Happy Cloud can use
+`list_happy_teams`, `create_happy_team`, and `update_happy_team` to manage the current user's WorkOS
+organizations. Creation requires the stable server endpoint and registers it immediately; updates
+can change that endpoint. HTTP, HTTPS, Tailcat, WS, and WSS endpoints are accepted. Human-owned root
+agents and admin bots can perform these operations; non-admin bots are refused. An active admin bot
+also receives `get_happy_workos_state`, which returns the exact WorkOS user and client IDs needed by
+team-mode configuration without coupling them to organization creation. Happy Cloud independently
+requires the connected WorkOS user to be an active organization administrator before it writes an
+endpoint. These tools are omitted from a daemon already running in team mode. The binary-first
+Tailcat and systemd deployment walkthrough ships in `dist/docs/team-mode.md`.
+
 ## Tailcat exposure
 
 Enable the machine-only transport in the global `happy.toml`:

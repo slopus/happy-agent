@@ -89,6 +89,18 @@ operations: they are not persisted locally, emit no organization event, and are 
 after an ambiguous response. The API rejects this surface before authentication refresh or body
 parsing in team mode because that deployment's organization is externally owned configuration.
 
+The internal Happy-team projection additionally carries each organization's advertised Happy Agent
+endpoint. `HappyTeamsModule` uses that projection from standalone agent tools while the existing
+HTTP API deliberately keeps its published ID-and-name response unchanged. Team creation requires an
+endpoint and follows the successful organization write with its endpoint write under one minted
+credential. Endpoint values accept normalized HTTP, HTTPS, Tailcat, WS, or WSS URLs and rely on
+Happy Cloud to require the connected WorkOS user's active administrator role.
+
+The module can also return the WorkOS user ID and environment-specific client ID from a freshly
+refreshed and Happy Cloud-verified credential. It returns only those configuration identifiers,
+never the access or refresh token; `HappyTeamsModule` owns the agent-facing admin-bot policy for
+that lookup.
+
 Friends activate automatically after enrollment. The module retains one account-scoped social
 snapshot, opens Happy Cloud's authenticated updates WebSocket, and uses its announced version to
 drive Durable Function reconciliation of friends, requests, blocked users, and public profiles.
