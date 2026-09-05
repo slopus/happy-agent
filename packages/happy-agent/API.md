@@ -4438,6 +4438,8 @@ A bot's identity is:
 - `isAdmin` — whether this bot may create other bots through `create_bot`. New and migrated bots
   are non-admin by default; an authenticated client may opt a bot into administration when
   creating it.
+- `systemKey` — the stable kind key of a daemon-provided system bot, or `null` for an ordinary
+  bot. The current built-in Chief of Staff uses `"chief_of_staff"`.
 - an optional avatar, exactly like a project's picture.
 
 **Mapping to workspaces and agents.** A bot is one dedicated workspace plus one agent in it,
@@ -4479,6 +4481,7 @@ exactly as agents embedded in projects and workspaces do; clients merge it by it
     "name": "Research Assistant",
     "username": "research_assistant",
     "isAdmin": true,
+    "systemKey": null,
     "workspaceId": "w9x8y7z6",
     "compute": { "type": "host", "path": "/Users/steve/Happy/Bots/research_assistant" },
     "status": "active",
@@ -4505,6 +4508,11 @@ Fields:
   the installation's admin bots when any exist. Human-owned agents are unrestricted. A daemon
   implementing this field always returns a boolean. The field is additive and may be absent when
   talking to an older protocol-22-compatible daemon.
+- `systemKey` — the stable snake_case kind key stored for a daemon-provided system bot, or `null`
+  for an ordinary bot. `"chief_of_staff"` identifies the current built-in Chief of Staff. Clients
+  may alter their presentation for keys they recognize and must preserve normal bot behavior for
+  unknown keys. A daemon implementing this field always returns a string or `null`; the field is
+  additive and may be absent when talking to an older protocol-22-compatible daemon.
 - `workspaceId` — the bot's dedicated workspace, its own distinct ID. The workspace object is
   fetched from `GET /v0/workspaces/:workspaceId` like any other; it is simply not listed.
 - `compute` — where the bot's folder lives, same shape as on projects and workspaces. Currently

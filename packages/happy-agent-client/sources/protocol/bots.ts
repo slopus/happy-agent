@@ -36,6 +36,16 @@ export const botUsernameSchema = Type.String({
 });
 export type BotUsername = Static<typeof botUsernameSchema>;
 
+export const CHIEF_OF_STAFF_SYSTEM_KEY = "chief_of_staff";
+
+/** A stable daemon-provided bot kind. Clients must tolerate keys added by newer daemons. */
+export const botSystemKeySchema = Type.String({
+    maxLength: 64,
+    minLength: 1,
+    pattern: "^[a-z][a-z0-9_]{0,63}$",
+});
+export type BotSystemKey = Static<typeof botSystemKeySchema>;
+
 /** A bot and its one independently versioned agent. */
 export const botSchema = Type.Object({
     /** The bot's one agent, embedded in full for list rendering. */
@@ -52,6 +62,8 @@ export const botSchema = Type.Object({
     /** An opaque catalog sort key. */
     orderKey: Type.String(),
     status: Type.Union([Type.Literal("active"), Type.Literal("archived")]),
+    /** Built-in bot kind, or null for an ordinary bot. Older compatible daemons omit it. */
+    systemKey: Type.Optional(Nullable(botSystemKeySchema)),
     updatedAt: timestampSchema,
     /** Immutable local snake_case name and folder name. */
     username: botUsernameSchema,

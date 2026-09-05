@@ -2,6 +2,7 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
+    CHIEF_OF_STAFF_SYSTEM_KEY,
     type Bot,
     botListResponseSchema,
     botResponseSchema,
@@ -58,6 +59,7 @@ const bot: Bot = {
     name: "Research Assistant",
     orderKey: "00000000000000000001",
     status: "active",
+    systemKey: null,
     updatedAt,
     username: "research_assistant",
     version,
@@ -74,8 +76,16 @@ describe("bots protocol", () => {
         expect(Value.Check(botSchema, { ...bot, username: "Research-Assistant" })).toBe(false);
         expect(Value.Check(botSchema, { ...bot, name: "   " })).toBe(false);
         expect(Value.Check(botSchema, { ...bot, isAdmin: "yes" })).toBe(false);
+        expect(
+            Value.Check(botSchema, {
+                ...bot,
+                systemKey: CHIEF_OF_STAFF_SYSTEM_KEY,
+            }),
+        ).toBe(true);
+        expect(Value.Check(botSchema, { ...bot, systemKey: "future_system_bot" })).toBe(true);
+        expect(Value.Check(botSchema, { ...bot, systemKey: "Future System Bot" })).toBe(false);
 
-        const { isAdmin: _isAdmin, ...legacyBot } = bot;
+        const { isAdmin: _isAdmin, systemKey: _systemKey, ...legacyBot } = bot;
         expect(Value.Check(botSchema, legacyBot)).toBe(true);
     });
 
