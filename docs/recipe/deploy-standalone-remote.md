@@ -63,8 +63,8 @@ that token or treat it as a Happy Agent credential.
 When SSH is available, avoid exe.dev first-boot scripts. They run once as `exedev`, not as the
 `happy-agent` service user, and quoting newlines inside an HTTPS payload is easy to get wrong.
 Use inspected, repeatable SSH steps instead. For the standard x86-64 exe.dev VM use the
-`linux-x64` archive, still checking `uname -m` first. Pin the actual config directory explicitly in
-the systemd environment, as below, instead of relying on a path copied from an older deployment.
+`linux-x64` archive, still checking `uname -m` first. Use the service user's actual Linux
+`happy/config` directory below, not a path copied from an older deployment.
 
 ## 2. Install the binary and prepare one service account
 
@@ -376,7 +376,6 @@ User=happy-agent
 Group=happy-agent
 WorkingDirectory=/var/lib/happy-agent
 Environment=HOME=/var/lib/happy-agent
-Environment=HAPPY_TERMINAL_CONFIGURATION_DIRECTORY=/var/lib/happy-agent/happy/config
 EnvironmentFile=-/var/lib/happy-agent/.config/happy-agent/service.env
 ExecStart=/usr/local/bin/happy-agent run
 Restart=on-failure

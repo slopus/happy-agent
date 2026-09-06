@@ -7,7 +7,6 @@ describe("standalone profile configuration bootstrap", () => {
             mode: "docker",
             environment: {
                 HAPPY_HOME_DIR: "/tmp/happy",
-                HAPPY_TERMINAL_CONFIGURATION_DIRECTORY: "/workspace/config",
             },
             entrypoint: ["bash", "/workspace/bootstrap.sh"],
             files: {
@@ -33,9 +32,11 @@ describe("standalone profile configuration bootstrap", () => {
 const bootstrapScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 agent() { node /app/happy-agent/dist/cli.js "$@"; }
+install -d -m 0700 /tmp/happy/config
+install -m 0600 /workspace/config/happy.toml /tmp/happy/config/happy.toml
 agent start
 node /workspace/check-profile.mjs first
-agent restart
+agent reload
 node /workspace/check-profile.mjs restarted
 agent stop
 echo PROFILE_BOOTSTRAP_COMPLETE

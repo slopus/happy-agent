@@ -7,7 +7,6 @@ describe("token-free local daemon draining", () => {
             mode: "docker",
             environment: {
                 HAPPY_HOME_DIR: "/tmp/happy",
-                HAPPY_TERMINAL_CONFIGURATION_DIRECTORY: "/workspace/team-config",
             },
             entrypoint: ["bash", "/workspace/team-drain.sh"],
             files: {
@@ -37,7 +36,12 @@ describe("token-free local daemon draining", () => {
             mode: "docker",
             environment: { HAPPY_HOME_DIR: "/tmp/happy" },
             entrypoint: ["bash", "/workspace/drain.sh"],
-            files: { "drain.sh": drainScript, "check-drained.mjs": checkDrained },
+            files: {
+                "drain.sh": drainScript,
+                "check-drained.mjs": checkDrained,
+                "daemon-config.toml":
+                    '[providers]\ndefault_enable = false\n[providers.gym]\ntype = "codex"\nenabled = true\n',
+            },
             startupText: "SIGNAL_DRAIN_READY",
             timeoutMs: 60_000,
             inference: async () => {
@@ -50,7 +54,13 @@ describe("token-free local daemon draining", () => {
         });
         try {
             gym.terminal.press("enter");
-            await vi.waitFor(() => expect(inferenceStarted).toBe(true), { timeout: 30_000 });
+            try {
+                await vi.waitFor(() => expect(inferenceStarted).toBe(true), { timeout: 30_000 });
+            } catch (error) {
+                throw new Error(`Inference did not start: ${await gym.readFile("inference.log")}`, {
+                    cause: error,
+                });
+            }
             await gym.terminal.waitForText("INFERENCE_CLIENT_STARTED");
             gym.terminal.press("enter");
             await gym.terminal.waitForText("Draining: 1 agent", 30_000);
@@ -70,6 +80,8 @@ describe("token-free local daemon draining", () => {
 
 const teamDrainScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
+install -d -m 0700 /tmp/happy/config
+install -m 0600 /workspace/team-config/happy.toml /tmp/happy/config/happy.toml
 node /app/happy-agent/dist/cli.js run >/workspace/team-daemon.log 2>&1 &
 team_pid="$!"
 node /workspace/signal-when-ready.mjs "$team_pid"
@@ -104,10 +116,12 @@ process.kill(pid, 'SIGUSR2');
 const drainScript = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 agent() { node /app/happy-agent/dist/cli.js "$@"; }
+install -d -m 0700 /tmp/happy/config
+install -m 0600 /workspace/daemon-config.toml /tmp/happy/config/happy.toml
 agent start
 echo SIGNAL_DRAIN_READY
 read -r
-happy-terminal exec --json 'Finish this inference before maintenance.' >/workspace/inference.log 2>&1 &
+node /app/packages/happy-terminal/dist/main.js exec --json 'Finish this inference before maintenance.' >/workspace/inference.log 2>&1 &
 echo INFERENCE_CLIENT_STARTED
 read -r
 mv /tmp/happy/agent/token /tmp/happy/agent/token.saved

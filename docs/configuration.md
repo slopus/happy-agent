@@ -4,8 +4,9 @@ Happy Agent reads user-wide settings from `~/Happy/Config/happy.toml` on macOS a
 `~/happy/config/happy.toml` on Linux. The user's global `AGENTS.md` lives beside
 it. On startup, Happy Agent creates the platform-specific folder, a comprehensive
 commented `happy.toml` template, and an empty `AGENTS.md` whenever they are
-missing. Existing files are never replaced. Set `HAPPY_TERMINAL_CONFIGURATION_DIRECTORY`
-to an absolute path to choose a different user configuration folder.
+missing. Existing files are never replaced. The daemon derives this public configuration folder
+beside its private Happy root. `HAPPY_HOME_DIR` relocates that root and the adjacent public folder;
+`HAPPY_TERMINAL_CONFIGURATION_DIRECTORY` is a terminal setting, not a daemon config-path override.
 
 If an older Linux build created `~/Happy/Config`, copy its configuration files to
 `~/happy/config` before upgrading and restarting. The uppercase directory is no longer read;
