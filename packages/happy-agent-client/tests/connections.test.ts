@@ -3,8 +3,74 @@ import { describe, expect, it } from "vitest";
 
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import { connectionListResponseSchema } from "../sources/protocol/connections.js";
+import {
+    connectionsUpdatedPayloadSchema,
+    type HappyAgentEvent,
+} from "../sources/protocol/events.js";
 
 describe("remote connections", () => {
+    it("delivers a resumable complete roster with the same version as the list response", async () => {
+        const before = "01900000-0000-7000-8000-000000000000";
+        const cursor = "01900000-0000-7000-8000-000000000001";
+        const roster = {
+            version: cursor,
+            connections: [
+                {
+                    id: "team",
+                    name: "Team",
+                    authentication: "workos" as const,
+                    organizationId: "org_1",
+                },
+            ],
+        };
+        const event: HappyAgentEvent = {
+            cursor,
+            type: "connections.updated",
+            occurredAt: 1,
+            payload: roster,
+        };
+        expect(Value.Check(connectionsUpdatedPayloadSchema, event.payload)).toBe(true);
+        expect(Value.Check(connectionsUpdatedPayloadSchema, { token: "private" })).toBe(false);
+        const controller = new AbortController();
+        const client = new HappyAgentClient({
+            endpoint: "http://main",
+            token: "main-token",
+            fetch: async (input) => {
+                if (input.toString().endsWith("/v0/connections")) return Response.json(roster);
+                expect(input.toString()).toBe(`http://main/v0/events/stream?after=${before}`);
+                return new Response(
+                    `event: hello\ndata: ${JSON.stringify({ cursor, gap: false, resumed: true, connectedAt: 1 })}\n\n` +
+                        `id: ${cursor}\nevent: connections.updated\ndata: ${JSON.stringify(event)}\n\n`,
+                    { headers: { "content-type": "text/event-stream" } },
+                );
+            },
+        });
+        const updates = client.updates({ after: before, signal: controller.signal });
+        try {
+            await expect(updates.next()).resolves.toMatchObject({
+                value: { kind: "connected", cursor: before },
+            });
+            await expect(updates.next()).resolves.toMatchObject({
+                value: { kind: "event", event },
+            });
+            await expect(client.listConnections()).resolves.toEqual(roster);
+        } finally {
+            controller.abort();
+            await updates.return(undefined);
+        }
+    });
+
+    it("accepts complete empty-roster updates but requires their version", () => {
+        expect(
+            Value.Check(connectionsUpdatedPayloadSchema, {
+                connections: [],
+                version: "01900000-0000-7000-8000-000000000001",
+            }),
+        ).toBe(true);
+        expect(Value.Check(connectionsUpdatedPayloadSchema, { connections: [] })).toBe(false);
+        expect(Value.Check(connectionListResponseSchema, { connections: [] })).toBe(true);
+    });
+
     it("reads the roster with only public connection metadata", async () => {
         const roster = {
             connections: [

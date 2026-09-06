@@ -200,6 +200,7 @@ read remains available when a remote is unreachable or Cloud is disconnected. Re
 
 ```json
 {
+    "version": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f",
     "connections": [
         { "id": "build-mac", "name": "Build Mac", "authentication": "bearer" },
         {
@@ -212,10 +213,25 @@ read remains available when a remote is unreachable or Cloud is disconnected. Re
 }
 ```
 
-Tokens, raw configuration, and transport addresses are never returned. This is a polled
-configuration projection, not a versioned resource: it is not in bootstrap and emits no journal
-events. Older protocol-22-or-later daemons may return `404`; clients treat that as an unavailable
-feature, not an incompatible daemon.
+Tokens, raw configuration, and transport addresses are never returned. `version` is an additive,
+optional UUIDv7 for compatibility with older daemons; current daemons always include it. It names
+the complete public roster, advances monotonically only when that roster changes, and persists
+across restarts. Credential or transport changes that leave the public roster identical do not
+advance its version or emit a roster update. The roster is not included in bootstrap.
+`connections.updated` carries the complete versioned roster, not an invalidation or diff.
+Older protocol-22-or-later daemons may return `404`; clients treat that as an unavailable feature,
+not an incompatible daemon. Older daemons that serve the unversioned endpoint but do not emit the
+additive event may still be polled.
+
+To close the initial snapshot/stream race, clients first obtain an event cursor (for example,
+desktop bootstrap's cursor), then fetch the roster, then follow events after that cursor. On
+`connections.updated`, they replace the entire roster if its version is greater than their stored
+version. Equal or older versions are ignored, including a delayed list response that arrives
+after a newer event. On a cursor gap or daemon replacement, clients refetch the roster and resume
+the stream using the normal snapshot/cursor rules. A restart with unchanged configuration keeps
+the same roster version; startup reconciliation incorporates offline machine-configuration edits
+before serving the roster. The event carries no health status and does not change the existing authentication
+discriminator: `workos` identifies a team remote, while `bearer` identifies a standalone remote.
 
 #### `/v0/connections/:id/api/*`
 
@@ -5023,6 +5039,16 @@ event is idempotent by attachment ID.
 - `config.updated` — payload `{}`, deliberately empty. Something about the daemon's
   configuration changed — the effective config, the instructions document, or the security
   policy. It is a nudge to refetch the config endpoints whenever convenient.
+- `connections.updated` — payload `{ "connections": [...], "version": "<UUIDv7>" }`, a
+  complete replacement of the public remote roster, in the same shape as `GET /v0/connections`
+  with `version` always present. An empty array clears the roster. A changed public roster is
+  persisted before notification; additions, removals, renames, and authentication-kind or
+  organization changes advance its version. Unchanged public rosters emit nothing. Startup
+  reconciliation covers offline configuration edits and interrupted writes. Notifications may
+  coalesce intermediate configurations, but always carry the complete committed snapshot and its
+  matching version. Clients keep the greater version across reads and events. The event is
+  available through journal pull, SSE, and `HappyAgentClient.updates()`. Credentials, transport
+  addresses, and health status are absent; remote agents' own events stay in the remote journal.
 - `profile.updated` — a profile changed. Standalone mode includes `profile` (the full profile
   object). Team mode instead includes only `userId`; it is a server-wide invalidation delivered to
   every connected organization member so clients can invalidate state for exactly that identity.

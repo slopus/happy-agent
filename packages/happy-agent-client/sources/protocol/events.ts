@@ -39,6 +39,7 @@ import type { Terminal } from "./terminals.js";
 import type { AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
 import type { SlashCommand } from "./slashCommands.js";
+import { connectionListResponseSchema } from "./connections.js";
 
 /**
  * What every `*.updated` payload carries beside the resource's own ID.
@@ -263,6 +264,10 @@ export interface MessageDeletedPayload {
 /** Deliberately empty: a nudge to refetch the config endpoints when convenient. */
 export type ConfigUpdatedPayload = Record<string, never>;
 
+/** Complete public roster replacement; keep the greater version across snapshots and events. */
+export const connectionsUpdatedPayloadSchema = Type.Required(connectionListResponseSchema);
+export type ConnectionsUpdatedPayload = Static<typeof connectionsUpdatedPayloadSchema>;
+
 /** A standalone full-profile replacement or a team-wide identity-only invalidation. */
 export type ProfileUpdatedPayload = MutationEcho &
     ({ profile: Profile; userId?: never } | { profile?: never; userId: Cuid2 });
@@ -357,6 +362,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"message.delta", MessageDeltaPayload>
     | EventEnvelope<"message.deleted", MessageDeletedPayload>
     | EventEnvelope<"config.updated", ConfigUpdatedPayload>
+    | EventEnvelope<"connections.updated", ConnectionsUpdatedPayload>
     | EventEnvelope<"profile.updated", ProfileUpdatedPayload>
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"cloud.profile.updated", CloudProfileUpdatedPayload>

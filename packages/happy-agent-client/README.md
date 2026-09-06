@@ -14,6 +14,16 @@ the first process and again only after reconnecting to a replacement. A state-lo
 the fresh cursor from which authoritative snapshots can be reloaded. Resource caching, version
 reconciliation, and optimistic mutations remain decisions for the live view built on top.
 
+Remote connection rosters are read with `listConnections()`. The typed `connections.updated`
+event carries the complete `{ connections, version }` snapshot: keep the greater UUIDv7 version
+across list responses and events, ignoring duplicate or older snapshots. An empty array clears
+the roster. Capture a cursor before the initial roster read and follow updates after it to avoid
+missing a concurrent change. Refetch on state loss or daemon replacement. The list's `version`
+is optional for older daemons. `authentication: "workos"` identifies team remotes
+and includes `organizationId`; `"bearer"` identifies standalone remotes. Older daemons may support
+roster reads without emitting this additive event. `connection(id)` creates a separate client
+for the selected remote, without merging its events or state into the parent.
+
 `HappyReducer` is the stateful layer over that feed. Construct it with a client, register update
 listeners, and start it when the application wants live synchronization. `getState()` and
 `subscribe()` expose a read-only Zustand-style external store suitable for `useSyncExternalStore`:
