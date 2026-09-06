@@ -30,7 +30,7 @@ describe("Bedrock OpenAI response semantics", () => {
                 NO_PROXY: "host.docker.internal",
             },
             homeFiles: {
-                "Happy/Config/happy.toml": bedrockConfig(),
+                "happy/config/happy.toml": bedrockConfig(),
             },
             httpProxy: {
                 handler(request) {
@@ -76,7 +76,7 @@ describe("Bedrock OpenAI response semantics", () => {
                 NO_PROXY: "host.docker.internal",
             },
             homeFiles: {
-                "Happy/Config/happy.toml": bedrockConfig(),
+                "happy/config/happy.toml": bedrockConfig(),
             },
             httpProxy: {
                 handler(request) {

@@ -7,7 +7,7 @@ describe("whitespace-only assistant segments", () => {
         const gym = await createGym({
             cols: 76,
             homeFiles: {
-                "Happy/Config/happy.toml": "[settings]\nshow_reasoning = true\n",
+                "happy/config/happy.toml": "[settings]\nshow_reasoning = true\n",
             },
             inference: [
                 {

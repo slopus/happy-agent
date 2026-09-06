@@ -12,7 +12,7 @@ afterEach(async () => {
 describe("completed turn usage summary", () => {
     it("keeps each completed turn showing the totals it finished with", async () => {
         const gym = await createGym({
-            homeFiles: { "Happy/Config/happy.toml": "[settings]\nshow_usage = true\n" },
+            homeFiles: { "happy/config/happy.toml": "[settings]\nshow_usage = true\n" },
             inference: [
                 {
                     content: [{ text: "FIRST_TURN_DONE", type: "text" }],

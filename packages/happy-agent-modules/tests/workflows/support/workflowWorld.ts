@@ -125,7 +125,7 @@ interface WorkflowWorldOptions {
 async function configWithWorkflows(enabled: boolean): Promise<ConfigModule> {
     if (enabled) return testConfig;
     const root = await mkdtemp(join(tmpdir(), "happy-workflows-"));
-    const configHome = join(root, "Happy", "Config");
+    const configHome = join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config");
     await mkdir(configHome, { recursive: true });
     await writeFile(join(configHome, "happy.toml"), "[features]\nworkflows = false\n", "utf8");
     return await ConfigModule.load(join(root, ".happy"));

@@ -361,7 +361,7 @@ function configureGymProviders(
     providerOverrides: GymOptions["providerOverrides"],
 ): Readonly<Record<string, GymFixture>> {
     const files = homeFiles ?? {};
-    if (providerOverrides === undefined || files["Happy/Config/happy.toml"] !== undefined) {
+    if (providerOverrides === undefined || files["happy/config/happy.toml"] !== undefined) {
         return files;
     }
     const source = [
@@ -377,7 +377,7 @@ function configureGymProviders(
             "enabled = true",
         ]),
     ].join("\n");
-    return { ...files, "Happy/Config/happy.toml": `${source}\n` };
+    return { ...files, "happy/config/happy.toml": `${source}\n` };
 }
 
 function localEnvironmentValues(

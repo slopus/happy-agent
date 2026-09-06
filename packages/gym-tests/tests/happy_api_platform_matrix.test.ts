@@ -428,10 +428,30 @@ describe("Happy Agent platform API matrix", () => {
             await gym.client.putSecurityPolicy("private policy");
 
             expect(
-                permissions((await stat(join(gym.publicHomePath, "Config", "AGENTS.md"))).mode),
+                permissions(
+                    (
+                        await stat(
+                            join(
+                                gym.publicHomePath,
+                                process.platform === "darwin" ? "Config" : "config",
+                                "AGENTS.md",
+                            ),
+                        )
+                    ).mode,
+                ),
             ).toBe(0o600);
             expect(
-                permissions((await stat(join(gym.publicHomePath, "Config", "SECURITY.md"))).mode),
+                permissions(
+                    (
+                        await stat(
+                            join(
+                                gym.publicHomePath,
+                                process.platform === "darwin" ? "Config" : "config",
+                                "SECURITY.md",
+                            ),
+                        )
+                    ).mode,
+                ),
             ).toBe(0o600);
         },
         TEST_TIMEOUT_MS,

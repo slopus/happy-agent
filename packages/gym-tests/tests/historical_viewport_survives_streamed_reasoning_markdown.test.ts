@@ -52,7 +52,7 @@ describe("visible streamed reasoning while reading terminal history", () => {
         const gym = await createGym({
             cols: 58,
             homeFiles: {
-                "Happy/Config/happy.toml": "[settings]\nshow_reasoning = true\n",
+                "happy/config/happy.toml": "[settings]\nshow_reasoning = true\n",
             },
             inference: [
                 { content: [{ text: history, type: "text" }] },

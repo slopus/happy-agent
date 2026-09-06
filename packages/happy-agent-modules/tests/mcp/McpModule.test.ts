@@ -122,8 +122,16 @@ describe("McpModule production discovery", () => {
 
     it("ignores MCP entries in happy.toml and reads only mcp.toml", async () => {
         const root = await temporaryRoot();
-        await write(root, "Happy/Config/happy.toml", providerMcp("ignored", "ignored"));
-        await write(root, "Happy/Config/mcp.toml", providerMcp("owned", "owned"));
+        await write(
+            root,
+            join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
+            providerMcp("ignored", "ignored"),
+        );
+        await write(
+            root,
+            join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
+            providerMcp("owned", "owned"),
+        );
         const config = await ConfigModule.load(join(root, ".happy"));
         expect(Object.keys(config.configuration.values.mcpServers)).toEqual(["owned"]);
         expect(Object.keys(await config.readMcpServers())).toEqual(["owned"]);
@@ -178,7 +186,7 @@ describe("McpModule production discovery", () => {
 
             await write(
                 root,
-                "Happy/Config/mcp.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
                 `${providerMcp("global", "global")}\n${providerMcp("shared", "global-shared")}`,
             );
             await reload.execute(ctx, { global: true }, undefined as never);
@@ -189,7 +197,11 @@ describe("McpModule production discovery", () => {
                 "global-shared:override",
             );
 
-            await write(root, "Happy/Config/mcp.toml", providerMcp("global", "global"));
+            await write(
+                root,
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
+                providerMcp("global", "global"),
+            );
             await reload.execute(ctx, { global: true }, undefined as never);
             await expect(echo(module, "agent-b", "shared", "workspace")).resolves.toBe(
                 "shared:workspace",
@@ -307,7 +319,11 @@ describe("McpModule production discovery", () => {
         const { module, root } = await configuredModule({ initial: stdio("initial") });
         const gate = gatedStdio(root, "close-race", "replacement");
         await resolveModuleHooks(ctx, module);
-        await write(root, "Happy/Config/mcp.toml", serverToml("replacement", gate.server));
+        await write(
+            root,
+            join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
+            serverToml("replacement", gate.server),
+        );
 
         const reload = module.reload(ctx);
         await waitForFile(gate.marker);
@@ -326,7 +342,7 @@ async function configuredModule(servers: Record<string, ReturnType<typeof stdio>
     const root = await temporaryRoot();
     await write(
         root,
-        "Happy/Config/mcp.toml",
+        join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
         Object.entries(servers)
             .map(([name, server]) => serverToml(name, server))
             .join("\n"),

@@ -49,7 +49,7 @@ describe("available model guidance", () => {
     it("keeps providers disabled by the provider default out of the picker and prompt", async () => {
         const gym = await createGym({
             homeFiles: {
-                "Happy/Config/happy.toml": [
+                "happy/config/happy.toml": [
                     "[providers]",
                     "default_enable = false",
                     "",
@@ -97,7 +97,7 @@ describe("available model guidance", () => {
                 AWS_BEARER_TOKEN_BEDROCK: "bedrock-test-token",
             },
             homeFiles: {
-                "Happy/Config/happy.toml": [
+                "happy/config/happy.toml": [
                     "[providers]",
                     "default_enable = false",
                     "",

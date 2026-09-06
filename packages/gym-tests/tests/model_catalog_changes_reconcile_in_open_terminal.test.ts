@@ -16,7 +16,7 @@ describe("live model catalog", () => {
     it("reconciles provider enablement changes in an already-open terminal", async () => {
         const gym = await createGym({
             homeFiles: {
-                "Happy/Config/happy.toml": "[providers.claude]\nenabled = true\n",
+                "happy/config/happy.toml": "[providers.claude]\nenabled = true\n",
             },
             inference: [
                 { content: [{ text: "DISABLED_CATALOG_BARRIER", type: "text" }] },

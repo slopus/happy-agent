@@ -19,7 +19,7 @@ describe("blocked MCP servers render as stable child rows", () => {
             mode: "docker",
             cols: 120,
             homeFiles: {
-                "Happy/Config/mcp.toml": [
+                "happy/config/mcp.toml": [
                     "[mcp_servers.openai_developer_docs]",
                     'command = "must-not-start"',
                     "",

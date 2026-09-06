@@ -29,7 +29,7 @@ describe("session token and cache status", () => {
 
     it("counts growing session context once while weighting cache hits across requests", async () => {
         const gym = await createGym({
-            homeFiles: { "Happy/Config/happy.toml": "[settings]\nshow_usage = true\n" },
+            homeFiles: { "happy/config/happy.toml": "[settings]\nshow_usage = true\n" },
             inference: [
                 {
                     content: [{ text: "FIRST_USAGE_RECORDED", type: "text" }],
@@ -67,7 +67,7 @@ describe("session token and cache status", () => {
     it("replaces the footer with the attributed root and subagent subtree total", async () => {
         let parentSessionId: string | undefined;
         const gym = await createGym({
-            homeFiles: { "Happy/Config/happy.toml": "[settings]\nshow_usage = true\n" },
+            homeFiles: { "happy/config/happy.toml": "[settings]\nshow_usage = true\n" },
             inference(request, callIndex) {
                 parentSessionId ??= request.options.sessionId;
                 if (

@@ -48,7 +48,11 @@ function expectParseError(source: string, message?: string): void {
 
 async function expectGlobalLoadError(source: string, message?: string): Promise<void> {
     const root = await temporaryRoot("happy-agent-config-invalid-layer-");
-    await writeLayer(root, "Happy/Config/happy.toml", source);
+    await writeLayer(
+        root,
+        join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
+        source,
+    );
     const assertion = expect(ConfigModule.load(join(root, ".happy"))).rejects;
     if (message === undefined) {
         await assertion.toThrow();
@@ -152,22 +156,45 @@ describe("ConfigModule edge coverage", () => {
                 agentLockPath: join(root, ".happy", "agent", "agent.lock"),
                 autoAgentLockPath: join(root, ".happy", "agent", "auto-agent.lock"),
                 autoDatabasePath: join(root, ".happy", "agent", "auto-agent.sqlite"),
-                configHome: join(root, "Happy", "Config"),
+                configHome: join(
+                    root,
+                    process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                ),
                 databasePath: join(root, ".happy", "agent", "agent.sqlite"),
                 docsHome: join(root, ".happy", "docs"),
-                generatedPath: join(root, "Happy", "Generated"),
-                globalConfigPath: join(root, "Happy", "Config", "happy.toml"),
+                generatedPath: join(
+                    root,
+                    process.platform === "darwin" ? "Happy" : "happy",
+                    "Generated",
+                ),
+                globalConfigPath: join(
+                    root,
+                    process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                    "happy.toml",
+                ),
                 happyHome: join(root, ".happy"),
                 historyDumpHome: join(root, ".happy", "agent", "observation", "history"),
-                instructionsPath: join(root, "Happy", "Config", "AGENTS.md"),
+                instructionsPath: join(
+                    root,
+                    process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                    "AGENTS.md",
+                ),
                 localConfigPath: resolve(process.cwd(), "happy.toml"),
                 logPath: join(root, ".happy", "agent", "observation", "agent.log"),
-                mcpConfigPath: join(root, "Happy", "Config", "mcp.toml"),
+                mcpConfigPath: join(
+                    root,
+                    process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                    "mcp.toml",
+                ),
                 observationHome: join(root, ".happy", "agent", "observation"),
                 pidPath: join(root, ".happy", "agent", "daemon.pid"),
-                publicHome: join(root, "Happy"),
+                publicHome: join(root, process.platform === "darwin" ? "Happy" : "happy"),
                 runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),
-                securityPath: join(root, "Happy", "Config", "SECURITY.md"),
+                securityPath: join(
+                    root,
+                    process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                    "SECURITY.md",
+                ),
                 socketPath: join(root, ".happy", "agent", "server.sock"),
                 tailcatAddressPath: join(root, ".happy", "agent", "tailcat", "address"),
                 tailcatHome: join(root, ".happy", "agent", "tailcat"),
@@ -191,7 +218,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 '[defaults]\ninstructions = "Be concise."\n',
             );
             const module = await ConfigModule.load(join(root, ".happy"));
@@ -335,7 +362,11 @@ describe("ConfigModule edge coverage", () => {
                 { length: 300 },
                 (_, index) => `unknown_setting_${index} = true`,
             ).join("\n");
-            await writeLayer(root, "Happy/Config/happy.toml", unknown);
+            await writeLayer(
+                root,
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
+                unknown,
+            );
             const source = (await ConfigModule.load(join(root, ".happy"))).configuration.sources
                 .global;
             expect(source.unknownSettings).toHaveLength(256);
@@ -349,7 +380,7 @@ describe("ConfigModule edge coverage", () => {
             const happyHome = join(root, ".happy");
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[permissions]",
                     'protected_paths = [".env", "secrets"]',
@@ -397,7 +428,7 @@ describe("ConfigModule edge coverage", () => {
             );
             await writeLayer(
                 root,
-                "Happy/Config/mcp.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
                 [
                     "[mcp_servers.docs]",
                     'command = "docs-server"',
@@ -450,7 +481,7 @@ describe("ConfigModule edge coverage", () => {
             const previousCwd = process.cwd();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[defaults]",
                     'effort = "high"',
@@ -569,7 +600,7 @@ describe("ConfigModule edge coverage", () => {
             );
             await writeLayer(
                 root,
-                "Happy/Config/mcp.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
                 [
                     "[mcp_servers.stdio]",
                     'command = "docs-server"',
@@ -722,7 +753,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[providers]",
                     "default_enable = false",
@@ -746,7 +777,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 '[defaults]\nservice_tier = "fast"\n',
             );
             await writeLayer(
@@ -763,7 +794,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[defaults]",
                     'model = "global-model"',
@@ -808,7 +839,7 @@ describe("ConfigModule edge coverage", () => {
             );
             await writeLayer(
                 root,
-                "Happy/Config/mcp.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
                 '[mcp_servers.docs]\ncommand = "docs"\n',
             );
             const configuration = (await ConfigModule.load(join(root, ".happy"))).configuration;
@@ -837,7 +868,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 "[providers.codex]\nenabled = true\n",
             );
             await writeLayer(
@@ -856,7 +887,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 "[p2p]\nrole = 'secondary'\nprimary_id = 'primary1'\n",
             );
             await writeLayer(root, ".happy/agent/runtime.toml", "[p2p]\nrole = 'primary'\n");
@@ -986,7 +1017,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 `[providers.codex]\nauth_file = "${"x".repeat(4_096)}"\n`,
             );
             const values = (await ConfigModule.load(join(root, ".happy"))).configuration.values;
@@ -1074,29 +1105,46 @@ describe("ConfigModule edge coverage", () => {
 
         it("wraps malformed, directory, and oversized files with the source path", async () => {
             const malformedRoot = await temporaryRoot();
-            await writeLayer(malformedRoot, "Happy/Config/happy.toml", "[settings\n");
+            await writeLayer(
+                malformedRoot,
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
+                "[settings\n",
+            );
             await expect(ConfigModule.load(join(malformedRoot, ".happy"))).rejects.toThrow(
                 `Could not read Happy Agent configuration '${join(
                     malformedRoot,
-                    "Happy/Config/happy.toml",
+                    join(
+                        process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                        "happy.toml",
+                    ),
                 )}'`,
             );
 
             const directoryRoot = await temporaryRoot();
-            await mkdir(join(directoryRoot, "Happy", "Config", "happy.toml"), {
-                recursive: true,
-            });
+            await mkdir(
+                join(
+                    directoryRoot,
+                    process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                    "happy.toml",
+                ),
+                {
+                    recursive: true,
+                },
+            );
             await expect(ConfigModule.load(join(directoryRoot, ".happy"))).rejects.toThrow(
                 `Could not read Happy Agent configuration '${join(
                     directoryRoot,
-                    "Happy/Config/happy.toml",
+                    join(
+                        process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                        "happy.toml",
+                    ),
                 )}'`,
             );
 
             const oversizedRoot = await temporaryRoot();
             await writeLayer(
                 oversizedRoot,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 `unknown = "${"x".repeat(1_048_576)}"`,
             );
             await expect(ConfigModule.load(join(oversizedRoot, ".happy"))).rejects.toThrow(
@@ -1220,7 +1268,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot("happy-agent-config-smart-provider-");
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[providers.work]",
                     'type = "codex"',
@@ -1281,7 +1329,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot("happy-agent-config-smart-bedrock-");
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[providers.east-a]",
                     'type = "bedrock"',
@@ -1398,7 +1446,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[presence.states.milliseconds]",
                     'answer_wait = "2 milliseconds"',
@@ -1440,7 +1488,7 @@ describe("ConfigModule edge coverage", () => {
             const root = await temporaryRoot();
             await writeLayer(
                 root,
-                "Happy/Config/happy.toml",
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
                 [
                     "[presence]",
                     'fallback = "away"',

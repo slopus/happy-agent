@@ -38,7 +38,7 @@ describe("settled session metadata", () => {
                 ].join("; "),
             ],
             homeFiles: {
-                "Happy/Config/happy.toml": "[settings]\ncompletion_chime = true\n",
+                "happy/config/happy.toml": "[settings]\ncompletion_chime = true\n",
             },
             inference(request, callIndex) {
                 if (request.options.sessionId?.endsWith(":title")) {

@@ -66,7 +66,7 @@ describe("parallel MCP reverse completion", () => {
                 "parallel-mcp.mjs": MCP_SERVER,
             },
             homeFiles: {
-                "Happy/Config/mcp.toml": `[mcp_servers."Slow Service"]\ncommand = "node"\nargs = ["parallel-mcp.mjs", "slow"]\nstartup_timeout_sec = 10\ntool_timeout_sec = 30\n\n[mcp_servers."Fast Service"]\ncommand = "node"\nargs = ["parallel-mcp.mjs", "fast"]\nstartup_timeout_sec = 10\ntool_timeout_sec = 30\n`,
+                "happy/config/mcp.toml": `[mcp_servers."Slow Service"]\ncommand = "node"\nargs = ["parallel-mcp.mjs", "slow"]\nstartup_timeout_sec = 10\ntool_timeout_sec = 30\n\n[mcp_servers."Fast Service"]\ncommand = "node"\nargs = ["parallel-mcp.mjs", "fast"]\nstartup_timeout_sec = 10\ntool_timeout_sec = 30\n`,
             },
             inference(request, callIndex) {
                 if (callIndex === 0) {

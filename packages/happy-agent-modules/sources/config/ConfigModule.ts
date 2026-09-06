@@ -2385,9 +2385,9 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         throw new Error("The Happy root path must be a non-empty path.");
     }
     const happyHome = resolveHappyHome(input);
-    const publicHome = join(dirname(happyHome), "Happy");
+    const publicHome = join(dirname(happyHome), process.platform === "darwin" ? "Happy" : "happy");
     const agentHome = join(happyHome, "agent");
-    const configHome = join(publicHome, "Config");
+    const configHome = join(publicHome, process.platform === "darwin" ? "Config" : "config");
     // What the agent records about itself stays in the private root beside its database, because
     // logs and a verbatim history dump say everything the conversation said.
     const observationHome = join(agentHome, "observation");

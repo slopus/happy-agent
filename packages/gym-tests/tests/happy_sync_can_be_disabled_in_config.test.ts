@@ -18,7 +18,7 @@ describe("Happy configuration", () => {
                     secret: Buffer.alloc(32, 7).toString("base64"),
                     token: "happy-gym-token",
                 }),
-                "Happy/Config/happy.toml": "[settings]\nhappy_integration = false\n",
+                "happy/config/happy.toml": "[settings]\nhappy_integration = false\n",
             },
             inference: [
                 {

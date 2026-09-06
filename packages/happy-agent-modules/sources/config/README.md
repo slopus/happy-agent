@@ -20,6 +20,9 @@ and exposes one deeply frozen snapshot.
         └── SECURITY.md
 ```
 
+The tree above shows macOS. On Linux, the public configuration directory is `happy/config`
+instead of `Happy/Config`; private `.happy/agent` paths are unchanged.
+
 The project layer is `happy.toml` in the current working directory. Project
 machine settings (credentials, provider
 selection, daemon settings, permission mode, and observation) are filtered

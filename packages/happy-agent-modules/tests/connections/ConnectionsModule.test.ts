@@ -31,9 +31,11 @@ afterEach(async () => {
 async function fixture() {
     const root = await mkdtemp(join(tmpdir(), "remote-config-"));
     roots.push(root);
-    await mkdir(join(root, "Happy", "Config"), { recursive: true });
+    await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+        recursive: true,
+    });
     await writeFile(
-        join(root, "Happy", "Config", "happy.toml"),
+        join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
         `[connections.mac]\nname = "Build Mac"\naddress = "tcCaseSensitive"\ntoken = "${token}"\n`,
     );
     const home = join(root, ".happy");

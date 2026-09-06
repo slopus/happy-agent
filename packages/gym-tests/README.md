@@ -98,6 +98,10 @@ Running the default local gym requires:
 
 Docker is required only for `mode: "docker"` scenarios and the Docker lane. No Codex, Claude, OpenAI, or Anthropic credentials are required.
 
+The Docker image uses Node 24 on Debian Trixie in both stages. Monty's Linux ARM64 addon
+requires glibc 2.39 or newer, so Bookworm cannot load the daemon. The final image imports the
+deployed daemon during its build to catch incompatible native libraries and missing runtime assets.
+
 ## Running tests
 
 ### Local suite
@@ -186,7 +190,12 @@ HAPPY_TERMINAL_GYM_IMAGE=happy-terminal-gym:my-workspace HAPPY_TERMINAL_GYM_SKIP
   pnpm test:gym:docker
 ```
 
-Normal source and test changes do not rebuild the image. The dependency lockfile, Dockerfile, TypeScript/workspace configuration, production Gym dependencies, and Happy Terminal build metadata produce a new runtime tag. Test scripts and other non-runtime manifest fields do not invalidate it. The Dockerfile uses a persistent BuildKit pnpm-store cache when an install layer really is invalidated. Set `HAPPY_TERMINAL_GYM_REBUILD=1` only to force replacement of an existing runtime tag.
+Terminal source and test changes do not rebuild the image. Happy Agent and its modules are baked
+into the image, so after changing their sources run `HAPPY_TERMINAL_GYM_REBUILD=1 pnpm build:gym`
+before testing. The dependency lockfile, Dockerfile, TypeScript/workspace configuration, production
+Gym dependencies, and Happy Terminal build metadata produce a new runtime tag. Test scripts and
+other non-runtime manifest fields do not invalidate it. The Dockerfile uses a persistent BuildKit
+pnpm-store cache when an install layer really is invalidated.
 
 The Docker lane runs ordinary and long-clock files concurrently, then runs the small timing-sensitive group serially. All ordinary Gyms with the same capability boundary share one container; tests that request the Docker socket use a separate shared runner.
 
@@ -305,9 +314,9 @@ truncates the default placeholder.
 
 Use explicit `cols` and `rows` when layout, wrapping, resize behavior, or cursor placement matters. Otherwise prefer the defaults.
 
-When `providerOverrides` is present, Gym generates an isolated `Happy/Config/happy.toml` that
+When `providerOverrides` is present, Gym generates an isolated `happy/config/happy.toml` that
 disables production accounts and explicitly enables the scripted Gym account plus each requested
-provider. A scenario-supplied `Happy/Config/happy.toml` is preserved unchanged, so that fixture
+provider. A scenario-supplied `happy/config/happy.toml` is preserved unchanged, so that fixture
 must explicitly enable every provider it needs.
 
 ## Fixture filesystem
@@ -764,7 +773,7 @@ When fixing a user-visible integration bug:
 3. Run only the new test and confirm it fails for the expected reason.
 4. Record enough evidence to distinguish the real reproduction from a broken test setup.
 5. Implement the production fix without weakening the test or changing the interaction to a different path.
-6. Keep the same runtime image for source-only changes.
+6. Keep the same runtime image for terminal-only changes; rebuild it for daemon or module changes.
 7. Run the same test unchanged and confirm it passes.
 8. Add focused unit coverage when the root cause has a useful isolated contract.
 9. Run the complete gym suite and the repository's normal checks.
@@ -810,7 +819,10 @@ Use `gym.readFile` for expected outputs. During local diagnosis, `gym.workspaceP
 
 ### Check the mounted source and image
 
-Happy Terminal source is mounted into the warm runner and executes through Node's native TypeScript support, so source changes do not require a rebuild. Run `pnpm build:gym` after package-manifest, lockfile, or Dockerfile changes. Use `HAPPY_TERMINAL_GYM_REBUILD=1 pnpm build:gym` only when deliberately replacing an existing runtime image.
+Happy Terminal source is mounted into the warm runner and executes through Node's native TypeScript
+support, so terminal changes do not require a rebuild. Happy Agent and its modules are deployed
+inside the image: run `HAPPY_TERMINAL_GYM_REBUILD=1 pnpm build:gym` after changing them. Run
+`pnpm build:gym` after package-manifest, lockfile, or Dockerfile changes.
 
 ### Check for leaked containers
 

@@ -19,7 +19,7 @@ available only on standalone installations because a team server's organization 
 deployment configuration.
 
 The walkthrough below uses a dedicated Linux service account with `/var/lib/happy-agent` as its
-home. That puts machine configuration at `/var/lib/happy-agent/Happy/Config/happy.toml` and private
+home. That puts machine configuration at `/var/lib/happy-agent/happy/config/happy.toml` and private
 daemon state at `/var/lib/happy-agent/.happy/agent`.
 
 ## 1. Install the release binary
@@ -51,7 +51,7 @@ Create the service account and its configuration folder:
 sudo useradd --system --create-home --home-dir /var/lib/happy-agent \
   --shell /usr/sbin/nologin happy-agent
 sudo install -d -m 0750 -o happy-agent -g happy-agent \
-  /var/lib/happy-agent/Happy/Config
+  /var/lib/happy-agent/happy/config
 ```
 
 Install the desired first-party coding assistants and complete their normal sign-in flow as the
@@ -63,7 +63,7 @@ built-in providers are enabled by default when their credentials are present. Se
 ## 2. Bootstrap the Tailcat identity
 
 The WorkOS organization ID does not exist yet, so start the binary in standalone mode first. Put
-this initial configuration in `/var/lib/happy-agent/Happy/Config/happy.toml`:
+this initial configuration in `/var/lib/happy-agent/happy/config/happy.toml`:
 
 ```toml
 [feature.tailcat]

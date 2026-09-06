@@ -31,7 +31,11 @@ describe("team mode daemon", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-team-daemon-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        const configPath = join(root, "Happy", "Config", "happy.toml");
+        const configPath = join(
+            root,
+            process.platform === "darwin" ? "Happy/Config" : "happy/config",
+            "happy.toml",
+        );
         const tokenPath = join(happyHome, "agent", "token");
         const socketPath = join(happyHome, "agent", "server.sock");
         await Promise.all([
@@ -96,7 +100,11 @@ describe("team mode daemon", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-team-profile-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        const configPath = join(root, "Happy", "Config", "happy.toml");
+        const configPath = join(
+            root,
+            process.platform === "darwin" ? "Happy/Config" : "happy/config",
+            "happy.toml",
+        );
         await mkdir(dirname(configPath), { recursive: true });
         await writeFile(
             configPath,

@@ -17,7 +17,7 @@ describe("Code Mode state persistence", () => {
         const gym = await createGym({
             environment: { HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON: "0" },
             homeFiles: {
-                "Happy/Config/happy.toml": "[feature.codemode]\nenabled = true\n",
+                "happy/config/happy.toml": "[feature.codemode]\nenabled = true\n",
             },
             async inference(request, callIndex) {
                 const requestAgentId = request.options.sessionId;

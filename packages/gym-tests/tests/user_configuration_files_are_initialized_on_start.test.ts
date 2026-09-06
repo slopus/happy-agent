@@ -33,7 +33,7 @@ describe("user configuration initialization", () => {
     it("preserves an existing happy.toml while creating global markdown files", async () => {
         const gym = await createGym({
             homeFiles: {
-                "Happy/Config/happy.toml": "[settings]\nshow_usage = false\n",
+                "happy/config/happy.toml": "[settings]\nshow_usage = false\n",
             },
             inference: [{ content: [{ text: "Existing configuration verified.", type: "text" }] }],
         });

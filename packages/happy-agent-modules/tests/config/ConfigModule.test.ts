@@ -32,8 +32,12 @@ describe("ConfigModule", () => {
         expect(configuration.paths).toMatchObject({
             agentHome: join(root, ".happy", "agent"),
             docsHome: join(root, ".happy", "docs"),
-            globalConfigPath: join(root, "Happy", "Config", "happy.toml"),
-            publicHome: join(root, "Happy"),
+            globalConfigPath: join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
+            publicHome: join(root, process.platform === "darwin" ? "Happy" : "happy"),
             runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),
         });
         expect(configuration.sources.global.exists).toBe(false);
@@ -59,9 +63,15 @@ describe("ConfigModule", () => {
     it("loads Ethan mode from its nested machine setting", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-ethan-"));
         temporaryDirectories.push(root);
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             ["[settings.ethan]", "enabled = true"].join("\n"),
         );
 
@@ -75,9 +85,15 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-codemode-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             ["[feature.codemode]", "enabled = true", 'engine = "bun"', "unknown = true"].join("\n"),
         );
 
@@ -94,9 +110,15 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-team-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             [
                 "[feature.team]",
                 "enabled = true",
@@ -132,9 +154,15 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-tailcat-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             ["[feature.tailcat]", "enabled = true", "port = 24781", "unknown = true"].join("\n"),
         );
 
@@ -149,8 +177,14 @@ describe("ConfigModule", () => {
     it("rejects zero and out-of-range Tailcat ports instead of enabling random allocation", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-tailcat-port-"));
         temporaryDirectories.push(root);
-        const globalConfig = join(root, "Happy", "Config", "happy.toml");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        const globalConfig = join(
+            root,
+            process.platform === "darwin" ? "Happy/Config" : "happy/config",
+            "happy.toml",
+        );
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
 
         for (const port of [0, 65_536]) {
             await writeFile(globalConfig, `[feature.tailcat]\nport = ${String(port)}\n`);
@@ -163,9 +197,15 @@ describe("ConfigModule", () => {
     it("requires organization and owner identities when team mode is enabled", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-team-identities-"));
         temporaryDirectories.push(root);
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             ["[feature.team]", "enabled = true"].join("\n"),
         );
 
@@ -252,10 +292,16 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-layers-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await mkdir(join(happyHome, "agent"), { recursive: true });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             [
                 "[defaults]",
                 'model = "global-model"',
@@ -336,9 +382,15 @@ describe("ConfigModule", () => {
     it("offers Fable 5.1 through Claude with its full context and effort ladder", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-fable-5-1-catalog-"));
         temporaryDirectories.push(root);
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             "[providers.claude]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
         );
 
@@ -365,9 +417,15 @@ describe("ConfigModule", () => {
     it("offers GPT-6 Astra only through Codex with Happy's operating profile", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-astra-catalog-"));
         temporaryDirectories.push(root);
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             "[providers.codex]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
         );
 
@@ -422,9 +480,15 @@ describe("ConfigModule", () => {
 
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-invalid-"));
         temporaryDirectories.push(root);
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             '[settings]\nshow_usage = "yes"\n',
         );
         await expect(ConfigModule.load(join(root, ".happy"))).rejects.toThrow(
@@ -499,9 +563,15 @@ describe("ConfigModule", () => {
     it("prefers the configured Gemini key over the environment", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-gemini-"));
         temporaryDirectories.push(root);
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             ["[gemini]", 'api_key = "configured-gemini-key"'].join("\n"),
         );
 
@@ -608,10 +678,16 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-providers-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await mkdir(join(happyHome, "agent"), { recursive: true });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             [
                 "[providers]",
                 "default_enable = false",
@@ -667,9 +743,15 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-runtime-tailcat-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             "[feature.tailcat]\nenabled = true\n",
         );
         const config = await ConfigModule.load(happyHome);
@@ -740,10 +822,16 @@ describe("ConfigModule", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-observation-layers-"));
         temporaryDirectories.push(root);
         const happyHome = join(root, ".happy");
-        await mkdir(join(root, "Happy", "Config"), { recursive: true });
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
         await mkdir(join(happyHome, "agent"), { recursive: true });
         await writeFile(
-            join(root, "Happy", "Config", "happy.toml"),
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
             [
                 "[observation]",
                 "history_dump = true",

@@ -15,7 +15,7 @@ describe("subagent provider inheritance", () => {
         let parentCreatedCollaborator = false;
         const gym = await createGym({
             homeFiles: {
-                "Happy/Config/happy.toml": [
+                "happy/config/happy.toml": [
                     "[providers]",
                     "default_enable = false",
                     "",

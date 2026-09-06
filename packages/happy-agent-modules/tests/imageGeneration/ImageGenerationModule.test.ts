@@ -72,7 +72,11 @@ function scope(model: string): AgentModuleScope {
 
 beforeEach(async () => {
     happyRoot = await mkdtemp(join(tmpdir(), "rig-imagegen-"));
-    outputDirectory = join(happyRoot, "Happy", "Generated");
+    outputDirectory = join(
+        happyRoot,
+        process.platform === "darwin" ? "Happy" : "happy",
+        "Generated",
+    );
     responses = [];
     requests = [];
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {

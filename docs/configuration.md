@@ -7,8 +7,13 @@ commented `happy.toml` template, and an empty `AGENTS.md` whenever they are
 missing. Existing files are never replaced. Set `HAPPY_TERMINAL_CONFIGURATION_DIRECTORY`
 to an absolute path to choose a different user configuration folder.
 
+If an older Linux build created `~/Happy/Config`, copy its configuration files to
+`~/happy/config` before upgrading and restarting. The uppercase directory is no longer read;
+private `.happy/agent` state does not move.
+
 Repository settings come only from `happy.toml`. Repository values win where
-both are allowed. MCP is separate: user-wide servers live in `~/Happy/Config/mcp.toml`, and a
+both are allowed. MCP is separate: user-wide servers live in `~/Happy/Config/mcp.toml` on macOS
+or `~/happy/config/mcp.toml` on Linux, and a
 workspace can add servers in its root `mcp.toml`. Provider configuration files are not imported.
 
 Happy Agent keeps daemon state in `~/.happy/agent`, including its databases, logs, and runtime

@@ -14,7 +14,7 @@ describe("Code Mode workspace filesystem", () => {
         const gym = await createGym({
             files: { "input.txt": "hello from the workspace\n" },
             homeFiles: {
-                "Happy/Config/happy.toml": "[feature.codemode]\nenabled = true\n",
+                "happy/config/happy.toml": "[feature.codemode]\nenabled = true\n",
             },
             inference(request, callIndex) {
                 const transcript = JSON.stringify(request.context.messages);

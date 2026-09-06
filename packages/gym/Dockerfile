@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24-bookworm-slim AS build
+# Monty's Linux ARM64 addon requires glibc 2.39 or newer. Keep build and runtime
+# on Trixie (glibc 2.41) so the deployed daemon can load its native dependencies.
+FROM node:24-trixie-slim AS build
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -47,7 +49,7 @@ RUN find /prod/happy-terminal/node_modules /prod/happy-agent/node_modules \
     -exec node --input-type=module --eval "import { readFileSync, writeFileSync } from 'node:fs'; const path = process.argv[1]; const manifest = JSON.parse(readFileSync(path, 'utf8')); manifest.exports['.'] = { types: './dist/index.d.ts', default: './dist/index.js' }; writeFileSync(path, JSON.stringify(manifest, null, 2) + '\\n')" {} \;
 RUN pnpm --filter @slopus/happy-terminal-gym-tests deploy --prod --legacy /prod/gym
 
-FROM node:24-bookworm-slim
+FROM node:24-trixie-slim
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
@@ -65,6 +67,10 @@ WORKDIR /app
 COPY --from=build /prod/happy-terminal packages/happy-terminal
 COPY --from=build /prod/happy-agent happy-agent
 COPY --from=build /prod/gym gym
+
+# Import the deployed daemon in the final image, not just in the build stage.
+# This catches missing assets and incompatible native libraries before any Gym starts.
+RUN node --input-type=module --eval "await import('./happy-agent/dist/index.js')"
 
 ENV HOME=/home/happy-terminal
 ENV HAPPY_TERMINAL_GYM_HAPPY_AGENT_COMMAND="[\"node\",\"/app/happy-agent/dist/cli.js\"]"

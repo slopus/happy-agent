@@ -19,7 +19,10 @@ describe("Claude executable configuration", () => {
     it("passes the platform executable to the Claude Agent SDK by default", async () => {
         const root = await mkdtemp(join(tmpdir(), "rig-claude-executable-"));
         temporaryDirectories.push(root);
-        const configHome = join(root, "Happy", "Config");
+        const configHome = join(
+            root,
+            process.platform === "darwin" ? "Happy/Config" : "happy/config",
+        );
         await mkdir(configHome, { recursive: true });
         await writeFile(
             join(configHome, "happy.toml"),

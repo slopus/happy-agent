@@ -14,7 +14,11 @@ import { ConfigModule } from "../../sources/config/index.js";
 export async function presenceConfig(toml: string): Promise<ConfigModule> {
     const home = await mkdtemp(join(tmpdir(), "happy-presence-"));
     const happyHome = join(home, ".happy");
-    const globalConfigPath = join(home, "Happy", "Config", "happy.toml");
+    const globalConfigPath = join(
+        home,
+        process.platform === "darwin" ? "Happy/Config" : "happy/config",
+        "happy.toml",
+    );
     await mkdir(dirname(globalConfigPath), { recursive: true });
     await writeFile(globalConfigPath, toml, "utf8");
     return await ConfigModule.load(happyHome);

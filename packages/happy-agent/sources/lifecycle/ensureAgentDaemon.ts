@@ -137,7 +137,10 @@ async function startAgentDaemonProcess(
             hint: "Run 'happy-agent run' under the team deployment's process supervisor.",
         });
     }
-    const token = await readOrCreateDaemonToken(paths.tokenPath);
+    // Readiness is authenticated too. The daemon replaces any old token with the configured
+    // value before serving health, so use that value from the very first readiness request.
+    const token =
+        configuration.values.api?.token ?? (await readOrCreateDaemonToken(paths.tokenPath));
     let child: ChildProcess | undefined;
     if (options.runInProcess === true) {
         // The runtime import is deferred so lifecycle management never loads the whole agent.

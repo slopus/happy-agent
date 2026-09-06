@@ -23,7 +23,10 @@ describe("Bedrock credential_process configuration", () => {
         const configFile = join(awsHome, "config");
         const credentialsFile = join(awsHome, "credentials");
         const credentialProcess = join(awsHome, "credentials.mjs");
-        const happyConfigHome = join(root, "Happy", "Config");
+        const happyConfigHome = join(
+            root,
+            process.platform === "darwin" ? "Happy/Config" : "happy/config",
+        );
         await mkdir(awsHome, { recursive: true });
         await mkdir(happyConfigHome, { recursive: true });
         await writeFile(

@@ -24,7 +24,7 @@ describe("Codex retry configuration", () => {
         const gym = await createGym({
             homeFiles: {
                 ".codex/auth.json": codexAuth(),
-                "Happy/Config/happy.toml": [
+                "happy/config/happy.toml": [
                     "[settings]",
                     "inference_max_retries = 0",
                     "",

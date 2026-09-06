@@ -52,7 +52,8 @@ export async function createGymHome(options: GymHomeOptions = {}): Promise<GymHo
     const runRoot = await mkdtemp(join(scratch, "r"));
     const root = await mkdtemp(join(runRoot, "i"));
     const happyHome = join(root, ".happy");
-    const publicHome = join(root, "Happy");
+    const publicHome = join(root, process.platform === "darwin" ? "Happy" : "happy");
+    const configHome = join(publicHome, process.platform === "darwin" ? "Config" : "config");
     const workspacePath = join(root, "workspace");
     const socketPath = join(happyHome, "agent", "server.sock");
     if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH) {
@@ -67,7 +68,7 @@ export async function createGymHome(options: GymHomeOptions = {}): Promise<GymHo
     }
 
     await mkdir(workspacePath, { recursive: true });
-    await mkdir(join(publicHome, "Config"), { recursive: true });
+    await mkdir(configHome, { recursive: true });
     const config = [
         ...(options.permissionMode === undefined
             ? []
@@ -75,7 +76,7 @@ export async function createGymHome(options: GymHomeOptions = {}): Promise<GymHo
         ...(options.config === undefined ? [] : [options.config, ""]),
     ].join("\n");
     if (config.trim().length > 0) {
-        await writeFile(join(publicHome, "Config", "happy.toml"), config, "utf8");
+        await writeFile(join(configHome, "happy.toml"), config, "utf8");
     }
 
     for (const [path, fixture] of Object.entries(options.files ?? {})) {

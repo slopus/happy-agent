@@ -1,5 +1,14 @@
 # Config module learnings
 
+## Configuration paths follow the platform's casing
+
+The runtime rewrite hardcoded `Happy/Config` everywhere, silently ignoring the documented
+`happy/config` directory on case-sensitive Linux filesystems. Configuration now uses `Happy/Config`
+on macOS and `happy/config` elsewhere, beside the private `.happy` root. Loading and startup file
+creation share these paths for settings, MCP, global instructions, and security. Tests must seed
+the target platform's directory; private `.happy/agent` state remains unchanged. Existing uppercase
+Linux configuration is not automatically moved or used as a fallback.
+
 ## Reseller catalogs are explicit subsets
 
 Adding a model to its native provider must not automatically advertise it through a reseller.
@@ -40,6 +49,10 @@ runtime connection replaces its whole global entry, so switching authentication 
 retain an old token. A disabled runtime entry suppresses its global entry without changing remote
 data. Standalone deployments may pin their socket bearer token; team deployments continue to use
 WorkOS and reject a standalone token setting.
+
+Launcher readiness requests must use the configured standalone token immediately. Creating a
+random token first and rereading the file only after readiness deadlocked startup: the daemon
+installed the fixed token, rejected the launcher's health requests, and was killed as unready.
 
 ## Cross-workspace work is available by default
 
