@@ -239,13 +239,29 @@ describe("Claude provider golden", () => {
 
         expect(exchangeIndex).toBe(golden.exchanges.length);
         expect(requests).toEqual(
-            golden.exchanges.map((exchange: GoldenExchange) =>
+            golden.exchanges.map((exchange: GoldenExchange, index: number) => {
+                const expectedBody = structuredClone(exchange.request.body);
+                // The original capture predates SDK 0.3.251, which now retains the
+                // first assistant's signed thinking when replaying the model switch
+                // and compaction turns. Keep the capture unchanged and require this
+                // exact additional block; all other request fields still match it.
+                if (index === 3 || index === 4) {
+                    expect(expectedBody.messages[1]).toMatchObject({
+                        role: "assistant",
+                        content: [{ type: "tool_use" }],
+                    });
+                    expectedBody.messages[1].content.unshift({
+                        type: "thinking",
+                        thinking: "",
+                        signature: "<SIGNATURE>",
+                    });
+                }
                 // Claude Code ignores its date override for the generated current-date
                 // reminder. Its recovery pass can also attach post-tool assistant text
                 // either side of the tool-result message; normalize that equivalent
                 // transcript shape explicitly.
-                withOneHourCacheTtl(normalize(exchange.request.body, cwd)),
-            ),
+                return withOneHourCacheTtl(normalize(expectedBody, cwd));
+            }),
         );
         expect(golden.source).toEqual({
             capture: "forwarded-live-inference",

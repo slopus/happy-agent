@@ -22,7 +22,7 @@ import { ClaudeSession } from "@/vendors/claude/ClaudeSession.js";
  * session sends for the same turn: equal prefixes hit, and any dropped block shows up as a diff.
  */
 describe("Claude session recreation cache", () => {
-    it("preserves the replayable cache prefix and lets the SDK project reasoning", async () => {
+    it("preserves the complete cache prefix including signed reasoning after recreation", async () => {
         await withServer(async (harness) => {
             const liveSession = harness.session();
             const first = await harness.run(liveSession, [user("Refactor the parser.")]);
@@ -41,10 +41,8 @@ describe("Claude session recreation cache", () => {
             ]);
 
             expect(reasoningBlocks(continued.request)).toHaveLength(1);
-            expect(reasoningBlocks(recreated.request)).toHaveLength(0);
-            expect(cachePrefixWithoutReasoning(recreated.request)).toEqual(
-                cachePrefixWithoutReasoning(continued.request),
-            );
+            expect(reasoningBlocks(recreated.request)).toEqual(reasoningBlocks(continued.request));
+            expect(cachePrefix(recreated.request)).toEqual(cachePrefix(continued.request));
             expect(replayed).toEqual(originalHistory);
         });
     }, 15_000);
@@ -67,16 +65,11 @@ interface CapturedRequest {
     tools: unknown;
 }
 
-function cachePrefixWithoutReasoning(request: CapturedRequest) {
+function cachePrefix(request: CapturedRequest) {
     return {
         system: request.system,
         tools: request.tools,
-        messages: request.messages.map((message) => ({
-            ...message,
-            content: Array.isArray(message.content)
-                ? message.content.filter((block) => !isReasoningBlock(block))
-                : message.content,
-        })),
+        messages: request.messages,
     };
 }
 

@@ -147,6 +147,14 @@ native compaction summary as the explicit result of `compact()`. Claude's SDK ma
 completed-turn thinking out of the outgoing API request when required by the active model or
 trajectory. That request-time projection does not change Rig's supplied session context.
 
+The bundled SDK and platform binaries are pinned together at `0.3.251` (Claude Code
+`2.1.251`), the minimum version required by Fable 5.1. Unlike the older SDK used for the
+original provider capture, this version retains signed thinking when reconstructing a session,
+including model switches and compaction requests. The recreation test compares the complete
+cache prefix, reasoning included. The original golden capture remains unchanged; its test
+explicitly expects the retained thinking block on the two reconstructed requests and still
+compares every other field exactly.
+
 A run-level model overrides the active model and is retained for later turns and
 compaction. Replay serializes historical assistant entries with the currently selected
 model because the SDK entry type requires a model; the actual next request uses the
