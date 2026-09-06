@@ -80,6 +80,13 @@ describe("remote roster through the public Happy Agent API", () => {
                 name: "set_remote_connection",
                 arguments: { id: "remote", connection: { ...standalone, token: "s".repeat(43) } },
             },
+            {
+                name: "set_remote_connection",
+                arguments: {
+                    id: "remote",
+                    connection: { ...standalone, token: "s".repeat(43), name: "Renamed Mac" },
+                },
+            },
             { name: "set_remote_connection", arguments: { id: "remote", connection: team } },
             { name: "remove_remote_connection", arguments: { id: "remote" } },
         ];
@@ -125,6 +132,17 @@ describe("remote roster through the public Happy Agent API", () => {
             await gym.send("Apply the same settings.", sendOptions);
             await gym.send("Rotate only its private token.", sendOptions);
             expect(await gym.client.listConnections()).toEqual(first);
+            await gym.send(
+                "Rename the remote without changing its connection settings.",
+                sendOptions,
+            );
+            const renamed = await nextSnapshot();
+            expect(renamed).toEqual({
+                connections: [{ id: "remote", name: "Renamed Mac", authentication: "bearer" }],
+                version: expect.any(String),
+            });
+            expect(renamed.version > first.version).toBe(true);
+            expect(await gym.client.listConnections()).toEqual(renamed);
             await gym.send("Switch to the team remote.", sendOptions);
             const second = await nextSnapshot();
             expect(second).toEqual({
@@ -138,7 +156,7 @@ describe("remote roster through the public Happy Agent API", () => {
                 ],
                 version: expect.any(String),
             });
-            expect(second.version > first.version).toBe(true);
+            expect(second.version > renamed.version).toBe(true);
             await gym.send("Remove the remote.", sendOptions);
             const removed = await nextSnapshot();
             expect(removed).toEqual({ connections: [], version: expect.any(String) });
@@ -146,7 +164,7 @@ describe("remote roster through the public Happy Agent API", () => {
             const pulled = (
                 await gym.client.getEvents({ after: cursor, limit: 1000 })
             ).events.filter((event) => event.type === "connections.updated");
-            expect(pulled.map((event) => event.payload)).toEqual([first, second, removed]);
+            expect(pulled.map((event) => event.payload)).toEqual([first, renamed, second, removed]);
             expect(JSON.stringify(pulled)).not.toContain("tcPrivate");
             expect(JSON.stringify(pulled)).not.toContain(standalone.token);
             abort.abort();

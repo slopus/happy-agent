@@ -172,8 +172,7 @@ export class ConnectionsModule implements AgentModule {
             )
                 return;
             await this.#config.updateRuntimeConnection(ctx, id, entry);
-            await this.#pools.get(id)?.pool.close();
-            this.#pools.delete(id);
+            await this.#reconcilePool(id, entry);
             await this.#durable.invoke(ctx, {
                 function: "connections-reconcile",
                 arguments: {},
@@ -293,15 +292,27 @@ export class ConnectionsModule implements AgentModule {
     async #reconcile(ctx: Context): Promise<void> {
         await this.#lock.runInLock(this.#ctx ?? ctx, async () => {
             const configured = this.#config.connections;
-            for (const [id, record] of this.#pools) {
-                if (JSON.stringify(configured[id]) !== JSON.stringify(record.config)) {
-                    await record.pool.close();
-                    this.#pools.delete(id);
-                }
-            }
+            for (const id of this.#pools.keys()) await this.#reconcilePool(id, configured[id]);
             await this.getSnapshot(ctx);
         });
     }
+
+    /** Display metadata never owns the lifetime of a remote's requests or carrier. */
+    async #reconcilePool(id: string, entry: RemoteConnectionEntry | undefined): Promise<void> {
+        const current = this.#pools.get(id);
+        if (current === undefined) return;
+        if (entry !== undefined && entry.enabled !== false) {
+            const { name: _previousName, ...previousSettings } = current.config;
+            const { name: _nextName, ...nextSettings } = entry;
+            if (isDeepStrictEqual(previousSettings, nextSettings)) {
+                current.config = entry;
+                return;
+            }
+        }
+        await current.pool.close();
+        this.#pools.delete(id);
+    }
+
     async #isAdmin(ctx: Context, id: string): Promise<boolean> {
         const bot = await this.#bots.forAgent(ctx, id);
         return bot?.isAdmin === true && bot.status === "active";

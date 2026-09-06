@@ -11,9 +11,10 @@ bot after deploying the remote. Supply `name`, `address`, optional `port`, and e
 or `workos_organization_id`. Configure a standalone remote's matching fixed token under `[api]` and
 enable `[feature.tailcat]` on that remote. Team remotes use their existing WorkOS deployment settings.
 
-HTTP pools open Tailcat carriers on demand and retain them for reuse. Each connection allows 32
-active requests and four idle sockets. Removal/replacement closes active work without deleting any
-remote data. Durable Functions reconcile persisted configuration after restart; no request or
+HTTP pools open one Tailcat carrier per configured remote on demand and retain it for reuse. Each
+connection allows 32 active requests and four idle sockets. Display-name changes preserve the pool,
+carrier, and active requests. Endpoint or authentication changes and removal close active work
+without deleting any remote data. Durable Functions reconcile persisted configuration after restart; no request or
 mutation is replayed by the proxy. SSE, upgrades, and CONNECT remain remote-owned streams.
 
 The public roster is also a single bounded persisted snapshot. `getSnapshot(ctx)` reconciles it

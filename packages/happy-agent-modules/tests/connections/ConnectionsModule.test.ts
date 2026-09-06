@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfigModule, parseHappyAgentConfigToml } from "../../sources/config/index.js";
+import {
+    ConfigModule,
+    parseHappyAgentConfigToml,
+    type RemoteConnectionEntry,
+} from "../../sources/config/index.js";
 import { ConnectionsModule } from "../../sources/connections/index.js";
 import type { BotsModule } from "../../sources/bots/index.js";
 import type { CloudModule } from "../../sources/cloud/index.js";
@@ -17,6 +21,7 @@ import {
 import { Value } from "@sinclair/typebox/value";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 import { queryConnectionSnapshot } from "../../sources/connections/persistence/connectionSnapshot.js";
+import { RemoteProxyConnection } from "../../sources/connections/impl/RemoteProxyConnection.js";
 
 const roots: string[] = [];
 const databases: ModuleDatabase[] = [];
@@ -46,11 +51,13 @@ async function fixture() {
             id === "admin" ? { isAdmin: true, status: active ? "active" : "archived" } : undefined,
     } as unknown as BotsModule;
     const durable = { register: vi.fn(), invoke: vi.fn() };
+    const closeTransport = vi.fn(async () => undefined);
+    const tailcat = { openRemote: vi.fn(() => ({ close: closeTransport })) };
     const module = new ConnectionsModule(
         config,
         bots,
         {} as CloudModule,
-        {} as TailcatModule,
+        tailcat as unknown as TailcatModule,
         durable as unknown as DurableFunctionsModule,
     );
     const hooks = module.beforeStart(ctx);
@@ -61,6 +68,8 @@ async function fixture() {
         module,
         hooks,
         durable,
+        tailcat,
+        closeTransport,
         revoke: () => {
             active = false;
         },
@@ -68,6 +77,104 @@ async function fixture() {
 }
 
 describe("configured remote roster", () => {
+    it.each(["set", "reconcile"] as const)(
+        "preserves the pool and carrier when %s changes only the display name",
+        async (mode) => {
+            const f = await fixture();
+            const database = moduleDatabase(f.module.migrations, "connection-rename");
+            ensureAgentDatabaseConnection(database.database);
+            databases.push(database);
+            await database.ready;
+            const health = vi.spyOn(RemoteProxyConnection.prototype, "health").mockResolvedValue({
+                reachable: true,
+                authenticated: true,
+                ready: true,
+            });
+            const reconcile = f.durable.register.mock.calls[0]![0].executor;
+            const initial = await f.module.getSnapshot(database.context);
+            const events: ConnectionsUpdatedPayload[] = [];
+            f.module.onUpdated((_ctx, snapshot) => events.push(snapshot));
+            try {
+                await f.module.checkHealth(ctx, "admin", "mac");
+                const renamed = { name: "Renamed Mac", address: "tcCaseSensitive", token };
+                if (mode === "set") await f.module.set(ctx, "admin", "mac", renamed);
+                else await f.config.updateRuntimeConnection(ctx, "mac", renamed);
+                await reconcile(database.context);
+
+                expect(f.closeTransport).not.toHaveBeenCalled();
+                await f.module.checkHealth(ctx, "admin", "mac");
+                expect(f.tailcat.openRemote).toHaveBeenCalledTimes(1);
+                expect(health.mock.contexts[1]).toBe(health.mock.contexts[0]);
+                const snapshot = await f.module.getSnapshot(database.context);
+                expect(snapshot.connections).toEqual([
+                    { id: "mac", name: "Renamed Mac", authentication: "bearer" },
+                ]);
+                expect(snapshot.version > initial.version).toBe(true);
+                expect(events).toEqual([snapshot]);
+                expect((await ConfigModule.load(f.home)).connections.mac).toEqual(renamed);
+                await reconcile(database.context);
+                expect(events).toEqual([snapshot]);
+                expect(f.closeTransport).not.toHaveBeenCalled();
+            } finally {
+                await f.module.close(ctx);
+            }
+            expect(f.closeTransport).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    describe.each(["set", "reconcile"] as const)("%s transport replacement", (mode) => {
+        it.each<{ change: string; entry: RemoteConnectionEntry }>([
+            { change: "address", entry: { name: "Build Mac", address: "tcOther", token } },
+            {
+                change: "port",
+                entry: { name: "Build Mac", address: "tcCaseSensitive", port: 24780, token },
+            },
+            {
+                change: "token",
+                entry: { name: "Build Mac", address: "tcCaseSensitive", token: "s".repeat(43) },
+            },
+            {
+                change: "authentication mode",
+                entry: {
+                    name: "Build Mac",
+                    address: "tcCaseSensitive",
+                    workos_organization_id: "org_test",
+                },
+            },
+            { change: "removal", entry: { enabled: false } },
+        ])("closes the old pool and carrier on $change", async ({ entry }) => {
+            const f = await fixture();
+            vi.spyOn(RemoteProxyConnection.prototype, "health").mockResolvedValue({
+                reachable: true,
+                authenticated: true,
+                ready: true,
+            });
+            vi.spyOn(f.module, "getSnapshot").mockResolvedValue({
+                connections: [],
+                version: "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f",
+            });
+            const reconcile = f.durable.register.mock.calls[0]![0].executor;
+            try {
+                await f.module.checkHealth(ctx, "admin", "mac");
+                if (mode === "set") await f.module.set(ctx, "admin", "mac", entry);
+                else await f.config.updateRuntimeConnection(ctx, "mac", entry);
+                await reconcile(ctx);
+                expect(f.closeTransport).toHaveBeenCalledTimes(1);
+                if (entry.enabled === false) {
+                    await expect(f.module.checkHealth(ctx, "admin", "mac")).rejects.toMatchObject({
+                        status: 404,
+                    });
+                } else {
+                    await f.module.checkHealth(ctx, "admin", "mac");
+                    expect(f.tailcat.openRemote).toHaveBeenCalledTimes(2);
+                    expect(f.tailcat.openRemote).toHaveBeenLastCalledWith(entry.address);
+                }
+            } finally {
+                await f.module.close(ctx);
+            }
+        });
+    });
+
     it("commits the complete snapshot before notifying and rolls both back with the caller", async () => {
         const f = await fixture();
         const database = moduleDatabase(f.module.migrations, "connection-snapshot");

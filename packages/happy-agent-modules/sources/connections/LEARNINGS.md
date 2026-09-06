@@ -1,5 +1,14 @@
 # Remote connection learnings
 
+## Display names do not own transport lifetimes
+
+Renaming a remote used to close its HTTP pool, active requests, and outbound Tailcat process.
+Both live settings updates and durable reconciliation now exclude only the display name when
+comparing connection settings. Renames persist and publish the versioned public roster while
+keeping the existing pool and carrier alive. Endpoint or authentication changes and removal still
+close the old connection. Each configured remote retains its own on-demand Tailcat process; this
+does not introduce a shared multi-destination carrier or restart carriers after request failures.
+
 ## Managed nodes use Tailcat and application tokens
 
 The former invitation and emoji-verification design is not the managed-secondary workflow.
