@@ -9,12 +9,22 @@ import type { BotsModule } from "../../sources/bots/index.js";
 import type { CloudModule } from "../../sources/cloud/index.js";
 import type { TailcatModule } from "../../sources/tailcat/index.js";
 import type { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
-import type { AgentModuleScope } from "@slopus/happy-agent-base";
+import { ensureAgentDatabaseConnection, type AgentModuleScope } from "@slopus/happy-agent-base";
+import {
+    connectionsUpdatedPayloadSchema,
+    type ConnectionsUpdatedPayload,
+} from "@slopus/happy-agent-client";
+import { Value } from "@sinclair/typebox/value";
+import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
+import { queryConnectionSnapshot } from "../../sources/connections/persistence/connectionSnapshot.js";
 
 const roots: string[] = [];
+const databases: ModuleDatabase[] = [];
 const ctx = createRootContext();
 const token = "r".repeat(43);
 afterEach(async () => {
+    vi.restoreAllMocks();
+    for (const database of databases.splice(0)) database.close();
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -56,6 +66,100 @@ async function fixture() {
 }
 
 describe("configured remote roster", () => {
+    it("commits the complete snapshot before notifying and rolls both back with the caller", async () => {
+        const f = await fixture();
+        const database = moduleDatabase(f.module.migrations, "connection-snapshot");
+        ensureAgentDatabaseConnection(database.database);
+        databases.push(database);
+        await database.ready;
+        const events: ConnectionsUpdatedPayload[] = [];
+        f.module.onUpdated((_ctx, snapshot) => events.push(snapshot));
+        const initial = await f.module.getSnapshot(database.context);
+        expect(Value.Check(connectionsUpdatedPayloadSchema, initial)).toBe(true);
+        events.length = 0;
+        await f.config.updateRuntimeConnection(ctx, "mac", {
+            name: "Renamed",
+            address: "tcPrivate",
+            token,
+        });
+        await expect(
+            database.context.inTx(async (txCtx) => {
+                const changed = await f.module.getSnapshot(txCtx);
+                expect(changed.version > initial.version).toBe(true);
+                expect(await f.module.getSnapshot(txCtx)).toEqual(changed);
+                expect(events).toEqual([]);
+                throw new Error("rollback");
+            }),
+        ).rejects.toThrow("rollback");
+        expect(await queryConnectionSnapshot(database.context)).toEqual(initial);
+        expect(events).toEqual([]);
+        const changed = await database.context.inTx(
+            async (txCtx) => await f.module.getSnapshot(txCtx),
+        );
+        expect(events).toEqual([changed]);
+        expect(await queryConnectionSnapshot(database.context)).toEqual(changed);
+        events.length = 0;
+        vi.spyOn(Date, "now").mockReturnValue(0);
+        await f.config.updateRuntimeConnection(ctx, "mac", { enabled: false });
+        const simultaneous = await Promise.all(
+            Array.from({ length: 8 }, () => f.module.getSnapshot(database.context)),
+        );
+        expect(
+            simultaneous.every((snapshot) => snapshot.version === simultaneous[0]!.version),
+        ).toBe(true);
+        expect(simultaneous[0]!.version > changed.version).toBe(true);
+        expect(events).toEqual([simultaneous[0]]);
+        expect(events[0]!.connections).toEqual([]);
+    });
+
+    it("retains the version across restart and private changes but reconciles offline public edits", async () => {
+        const f = await fixture();
+        const database = moduleDatabase(f.module.migrations, "connection-restart");
+        ensureAgentDatabaseConnection(database.database);
+        databases.push(database);
+        await database.ready;
+        const initial = await f.module.getSnapshot(database.context);
+        await f.config.updateRuntimeConnection(ctx, "mac", {
+            name: "Build Mac",
+            address: "tcRotated",
+            token: "s".repeat(43),
+        });
+        const restarted = new ConnectionsModule(
+            await ConfigModule.load(f.home),
+            {} as BotsModule,
+            {} as CloudModule,
+            {} as TailcatModule,
+            f.durable as unknown as DurableFunctionsModule,
+        );
+        const events: ConnectionsUpdatedPayload[] = [];
+        const unsubscribe = restarted.onUpdated((_ctx, snapshot) => events.push(snapshot));
+        await restarted.beforeStart(database.context).afterStart!(database.context, {} as never);
+        expect(await restarted.getSnapshot(database.context)).toEqual(initial);
+        expect(events).toEqual([]);
+        unsubscribe();
+        await f.config.updateRuntimeConnection(ctx, "mac", {
+            name: "Team",
+            address: "tcTeam",
+            workos_organization_id: "org_test",
+        });
+        const edited = new ConnectionsModule(
+            await ConfigModule.load(f.home),
+            {} as BotsModule,
+            {} as CloudModule,
+            {} as TailcatModule,
+            f.durable as unknown as DurableFunctionsModule,
+        );
+        edited.onUpdated((_ctx, snapshot) => events.push(snapshot));
+        await edited.beforeStart(database.context).afterStart!(database.context, {} as never);
+        const current = await edited.getSnapshot(database.context);
+        expect(current.version > initial.version).toBe(true);
+        expect(current.connections).toEqual([
+            { id: "mac", name: "Team", authentication: "workos", organizationId: "org_test" },
+        ]);
+        expect(events).toEqual([current]);
+        expect(JSON.stringify(current)).not.toContain("tcTeam");
+    });
+
     it("ignores repository attempts to change tokens or register a remote", async () => {
         const f = await fixture();
         await writeFile(

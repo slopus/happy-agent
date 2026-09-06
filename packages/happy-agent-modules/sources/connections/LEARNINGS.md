@@ -20,3 +20,12 @@ Endpoint health inspection belongs to the same active-admin-bot tool surface as 
 administration. It must check authority again when executed, use the configured transport and
 authentication, bound the check, and return only readiness and safe diagnostics—not credentials or
 raw remote response bodies.
+
+## Roster updates carry the complete public snapshot
+
+An empty invalidation would force every client to fetch a list that is already bounded to 100
+entries. Connection updates instead carry the complete public roster and its persisted UUIDv7
+version. Reads expose that same version so delayed snapshots and duplicate events cannot replace
+newer client state. Only public changes advance the version; rotating private credentials or
+transport addresses does not. Reconciliation restores the projection from machine configuration
+after interruption or offline edits, and notifications are published only after the snapshot commits.

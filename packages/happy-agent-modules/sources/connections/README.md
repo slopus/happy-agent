@@ -16,6 +16,12 @@ active requests and four idle sockets. Removal/replacement closes active work wi
 remote data. Durable Functions reconcile persisted configuration after restart; no request or
 mutation is replayed by the proxy. SSE, upgrades, and CONNECT remain remote-owned streams.
 
+The public roster is also a single bounded persisted snapshot. `getSnapshot(ctx)` reconciles it
+with configuration in the caller's transaction, retains its version for unchanged public data,
+and publishes `onUpdated` after commit. The API forwards that exact `{ connections, version }`
+snapshot as `connections.updated`; clients keep the greater version across list reads and events.
+Startup and durable reconciliation recover offline edits without exposing private configuration.
+
 `check_remote_connection_health` is also restricted to active admin bots, including an execution-time
 check. It checks the configured endpoint through the same pool with a 30-second deadline and a
 64 KiB response bound. Team health checks require a connected Cloud user with access to the target

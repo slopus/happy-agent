@@ -2,9 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import type { AgentModule, AgentModuleHooks, AgentModuleScope } from "@slopus/happy-agent-base";
-import type { Connection } from "@slopus/happy-agent-client";
+import type { Connection, ConnectionsUpdatedPayload } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
-import { asyncLock, detach, withLifetime, type Context } from "@steve.kite/stdlib";
+import { afterCommit, asyncLock, detach, withLifetime, type Context } from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
 import { CloudModule } from "../cloud/index.js";
@@ -24,10 +24,18 @@ import {
 } from "./tools/connectionTools.js";
 import { checkConnectionHealthTool } from "./tools/check_remote_connection_health.js";
 import type { ConnectionHealth } from "./ConnectionHealth.js";
+import { createConnectionVersion } from "./createConnectionVersion.js";
+import {
+    connectionsMigrations,
+    queryConnectionSnapshot,
+    saveConnectionSnapshot,
+} from "./persistence/connectionSnapshot.js";
 
 /** Machine-owned remote roster, admin tools, and authenticated per-remote HTTP pools. */
 export class ConnectionsModule implements AgentModule {
     readonly name = "connections";
+    readonly migrations = connectionsMigrations;
+    readonly #listeners = new Set<(ctx: Context, snapshot: ConnectionsUpdatedPayload) => void>();
     readonly #config: ConfigModule;
     readonly #bots: BotsModule;
     readonly #cloud: CloudModule;
@@ -68,6 +76,7 @@ export class ConnectionsModule implements AgentModule {
         const root = detach(ctx).named("remote-connections");
         this.#ctx = ctx.lifetime === undefined ? root : withLifetime(root, ctx.lifetime);
         return {
+            afterStart: this.afterStart,
             tools: async (toolCtx: Context, scope: AgentModuleScope) => {
                 if (!(await this.#isAdmin(toolCtx, scope.agent.id))) return [];
                 return [
@@ -81,6 +90,7 @@ export class ConnectionsModule implements AgentModule {
     };
 
     readonly afterStart = async (ctx: Context): Promise<void> => {
+        await this.getSnapshot(ctx);
         await this.#durable.invoke(ctx, {
             function: "connections-reconcile",
             arguments: {},
@@ -90,6 +100,30 @@ export class ConnectionsModule implements AgentModule {
 
     get entrySchema() {
         return this.#config.remoteConnectionEntrySchema;
+    }
+
+    onUpdated(listener: (ctx: Context, snapshot: ConnectionsUpdatedPayload) => void): () => void {
+        this.#listeners.add(listener);
+        return () => {
+            this.#listeners.delete(listener);
+        };
+    }
+
+    /** Reconcile the public projection atomically, participating in the caller's transaction. */
+    async getSnapshot(ctx: Context): Promise<ConnectionsUpdatedPayload> {
+        return await ctx.inTx(async (txCtx) => {
+            const previous = await queryConnectionSnapshot(txCtx);
+            const connections = this.list();
+            if (previous !== undefined && isDeepStrictEqual(previous.connections, connections))
+                return previous;
+            const snapshot = { connections, version: createConnectionVersion(previous?.version) };
+            await saveConnectionSnapshot(txCtx, snapshot);
+            afterCommit(txCtx, (committedCtx) => {
+                for (const listener of this.#listeners)
+                    listener(committedCtx, structuredClone(snapshot));
+            });
+            return snapshot;
+        });
     }
 
     list(): Connection[] {
@@ -265,6 +299,7 @@ export class ConnectionsModule implements AgentModule {
                     this.#pools.delete(id);
                 }
             }
+            await this.getSnapshot(ctx);
         });
     }
     async #isAdmin(ctx: Context, id: string): Promise<boolean> {

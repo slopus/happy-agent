@@ -558,7 +558,7 @@ export class ApiModule implements AgentModule {
                 finishMutation = this.#admitMutation(request, url);
             }
             if (request.method === "GET" && url.pathname === "/v0/connections") {
-                sendJson(response, 200, { connections: this.#connections.list() });
+                sendJson(response, 200, await this.#connections.getSnapshot(ctx));
                 return;
             }
             const remote = remoteRoute(request.url);
@@ -1321,6 +1321,9 @@ export class ApiModule implements AgentModule {
     #subscribeToModules(ctx: Context): void {
         if (this.#unsubscribe.length > 0) return;
         this.#unsubscribe.push(
+            this.#connections.onUpdated((_eventCtx, snapshot) => {
+                this.#journal.appendOutsideMutation("connections.updated", snapshot);
+            }),
             this.#events.subscribe((event) => this.#enqueueAgentEvent(ctx, event)),
             this.#projects.onEvent(async (_eventCtx, event) => {
                 await this.#convertProjectEvent(ctx, event);
