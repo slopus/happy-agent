@@ -20,6 +20,7 @@ import {
     unarchiveBotRequestSchema,
     configPatchSchema,
     providerVerificationRequestSchema,
+    type DrainWaitingFor,
     type MessageMode,
 } from "@slopus/happy-agent-client";
 import {
@@ -482,6 +483,18 @@ export class ApiModule implements AgentModule {
         return () => {
             if (this.#drainSources.get(name) === source) this.#drainSources.delete(name);
         };
+    }
+
+    /** Enter the same read-only drain boundary for local OS control and HTTP callers. */
+    beginDrain(ctx: Context): void {
+        if (this.#closed || !this.#ready) throw new Error("The daemon is not ready to drain.");
+        if (this.#drainSources.size === 0) throw new Error("Daemon draining is not enabled.");
+        this.#beginDrain(ctx);
+    }
+
+    /** The same bounded completion barrier exposed by authenticated health. */
+    drainProgress(ctx: Context): readonly DrainWaitingFor[] {
+        return this.#drainWaitingFor(ctx);
     }
 
     async markReady(): Promise<void> {
@@ -1138,7 +1151,7 @@ export class ApiModule implements AgentModule {
                     sendJson(response, 403, { error: "Daemon draining is not enabled." });
                     return;
                 }
-                this.#beginDrain(ctx);
+                this.beginDrain(ctx);
                 sendJson(response, 202, { draining: true, pid: process.pid });
                 return;
             }
@@ -5082,9 +5095,9 @@ export class ApiModule implements AgentModule {
     }
 
     /** Build bounded, stable progress without allowing optional reporting to break health. */
-    #drainWaitingFor(ctx?: Context): Record<string, unknown>[] {
+    #drainWaitingFor(ctx?: Context): DrainWaitingFor[] {
         if (!this.#draining) return [];
-        const waiting: Record<string, unknown>[] = [];
+        const waiting: DrainWaitingFor[] = [];
         if (this.#apiMutations.size > 0) {
             waiting.push({ name: "api-mutations", count: this.#apiMutations.size });
             this.#reportDrainMutations(ctx);

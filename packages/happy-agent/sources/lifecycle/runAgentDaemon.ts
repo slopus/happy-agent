@@ -4,6 +4,7 @@ import { removeDaemonPidSync } from "./daemonPid.js";
 import { createGymInferenceFromEnvironment } from "./gymInference.js";
 import { getDaemonIdentity } from "./getDaemonIdentity.js";
 import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
+import { installDaemonDrainSignal } from "./installDaemonDrainSignal.js";
 
 export interface RunAgentDaemonOptions {
     /** False only when a test embeds the daemon inside a process it must not kill. */
@@ -35,17 +36,6 @@ export async function runAgentDaemon(
         version: identity.version,
         ...(gymInference === undefined ? {} : { inference: gymInference }),
     });
-    if (hardExit) {
-        void daemon.closed.then(
-            () => process.exit(0),
-            (error: unknown) => {
-                process.stderr.write(
-                    `Daemon shutdown failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
-                );
-                process.exit(1);
-            },
-        );
-    }
     const stop = (signal: "SIGINT" | "SIGTERM") => {
         const reason = signal === "SIGINT" ? "sigint" : "sigterm";
         void daemon.close(reason).catch((error: unknown) => {
@@ -56,7 +46,42 @@ export async function runAgentDaemon(
             process.exitCode = 1;
         });
     };
-    process.once("SIGINT", () => stop("SIGINT"));
-    process.once("SIGTERM", () => stop("SIGTERM"));
+    const onInterrupt = () => stop("SIGINT");
+    const onTerminate = () => stop("SIGTERM");
+    const removeStopSignals = () => {
+        process.removeListener("SIGINT", onInterrupt);
+        process.removeListener("SIGTERM", onTerminate);
+    };
+    // A published drain record must also mean a subsequent SIGTERM can shut down gracefully.
+    process.once("SIGINT", onInterrupt);
+    process.once("SIGTERM", onTerminate);
+    let disposeDrain: (() => Promise<void>) | undefined;
+    try {
+        if (persistPid) disposeDrain = await installDaemonDrainSignal(daemon, paths.directory);
+    } catch (error) {
+        removeStopSignals();
+        await daemon.close();
+        throw error;
+    }
+    const cleaned = daemon.closed.finally(async () => {
+        try {
+            await disposeDrain?.();
+        } finally {
+            removeStopSignals();
+        }
+    });
+    if (hardExit) {
+        void cleaned.then(
+            () => process.exit(0),
+            (error: unknown) => {
+                process.stderr.write(
+                    `Daemon shutdown failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+                );
+                process.exit(1);
+            },
+        );
+    } else {
+        void cleaned.catch(() => undefined);
+    }
     return daemon;
 }

@@ -46,6 +46,19 @@ people in touch with their coding agents:
 When you are driven through either of them rather than a terminal,
 [happy.md](happy.md) explains what changes for you.
 
+## Recipes
+
+Operational recipes live in [`recipe/`](recipe/). Before starting a task, the Chief of Staff checks
+this directory and reads any relevant recipe in full.
+
+Recipes are executed automatically by default within the user's authorized task, reusing known
+settings and asking only for missing material choices, access, or interactive login.
+
+| Recipe                                                                 | When to use it                                                 | What it covers                                                                                                                                                            |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Deploy a standalone remote agent](recipe/deploy-standalone-remote.md) | Set up a new personal, non-team remote.                        | Automatic setup, config-based profile bootstrap, provider credentials and Claude Keychain extraction, connectivity, optional GitHub auth, Git identity, and verification. |
+| [Upgrade Happy Agent](recipe/upgrade-happy-agent.md)                   | Upgrade an existing installation without repeating onboarding. | Release checks, token-free signal drain, graceful shutdown, private backups, binary replacement, preserved configuration and identity, verification, and recovery.        |
+
 ## The map
 
 Read these in whatever order your task demands; each page stands alone.

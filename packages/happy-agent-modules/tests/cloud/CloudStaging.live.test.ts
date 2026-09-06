@@ -34,7 +34,7 @@ import { createCloudKeyTree, type CloudKeyTree } from "../../sources/cloud/Cloud
 import { CloudMurmurStore } from "../../sources/cloud/CloudMurmurStore.js";
 import { CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
-import { ProfileModule } from "../../sources/profile/index.js";
+import { testProfileModule } from "../support/testProfileModule.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -183,8 +183,7 @@ async function openCloudInstance(
     enrollment: "existing" | "new",
 ): Promise<LiveCloudInstance> {
     const durableFunctions = new DurableFunctionsModule();
-    const profile = new ProfileModule();
-    profile.open(`staging-${crypto.randomUUID()}`);
+    const profile = testProfileModule();
     const cloud = new CloudModule(durableFunctions, profile);
     const database = moduleDatabase(
         [...cloud.migrations, ...profile.migrations, ...durableFunctions.migrations],
@@ -192,6 +191,7 @@ async function openCloudInstance(
     );
     ensureAgentDatabaseConnection(database.database);
     await database.ready;
+    await profile.open(database.context, `staging-${crypto.randomUUID()}`);
     const logs: string[] = [];
     const ctx = withLogger(database.context, recordingLogger(logs));
     const localProfile = await profile.ensure(ctx);

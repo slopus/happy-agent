@@ -23,6 +23,57 @@ afterEach(async () => {
 });
 
 describe("ConfigModule", () => {
+    it("loads standalone profile bootstrap records from machine configuration", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-profile-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
+        await writeFile(
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
+            '[profile]\nname = "Ada Lovelace"\nemail = "ada@example.test"\n',
+        );
+        const configuration = await loadHappyAgentConfiguration(join(root, ".happy"));
+        expect(configuration.values.profile).toEqual({
+            name: "Ada Lovelace",
+            email: "ada@example.test",
+        });
+        expect(configuration.sources.global.values.profile).toEqual(configuration.values.profile);
+        expect(configuration.provenance["profile.name"]).toBe("global");
+    });
+
+    it.each([
+        '[profile]\nname = "Ada"',
+        '[profile]\nname = ""\nemail = "ada@example.test"',
+        '[profile]\nname = "Ada"\nemail = "invalid"',
+        '[profile]\nname = "Ada"\nemail = "ada@example.test"\nskip = true',
+    ])("rejects incomplete or invalid profile bootstrap: %s", (source) => {
+        expect(() => parseHappyAgentConfigToml(source)).toThrow("invalid value");
+    });
+
+    it("rejects a shared standalone profile in team configuration", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-config-team-profile-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
+        await writeFile(
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
+            '[profile]\nname = "Ada"\nemail = "ada@example.test"\n[feature.team]\nenabled = true\nworkos_organization_id = "org_test"\nowner_workos_user_id = "user_test"\n',
+        );
+        await expect(loadHappyAgentConfiguration(join(root, ".happy"))).rejects.toThrow(
+            "shared standalone profile",
+        );
+    });
+
     it("loads defaults when both configuration files are missing", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-"));
         temporaryDirectories.push(root);
@@ -530,6 +581,9 @@ describe("ConfigModule", () => {
                 "",
                 "[workspace]",
                 'setup_commands = ["pnpm install"]',
+                "[profile]",
+                'name = "Repository impersonation"',
+                'email = "repository@example.test"',
             ].join("\n"),
         );
 
@@ -554,6 +608,7 @@ describe("ConfigModule", () => {
                 showUsage: true,
             });
             expect(configuration.values.workspace.setupCommands).toEqual(["pnpm install"]);
+            expect(configuration.values.profile).toBeUndefined();
             expect(configuration.provenance["defaults.modelId"]).toBe("local");
         } finally {
             process.chdir(previousCwd);

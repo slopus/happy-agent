@@ -21,6 +21,7 @@ The agent is its own daemon. Products invoke these commands instead of managing 
 
 ```sh
 happy-agent start    # start the daemon when none is running, replacing one that does not match
+happy-agent drain    # signal the local daemon, report progress, and wait without tokens or shutdown
 happy-agent stop     # ask the running daemon to shut down
 happy-agent kill     # immediately kill the daemon recorded in daemon.pid
 happy-agent status   # report whether the daemon is running
@@ -38,6 +39,20 @@ under the Happy home (`~/.happy` or `HAPPY_HOME_DIR`), in its `agent/` directory
 `observation/agent.log`. The socket and token exist only in standalone mode. Shutdown records name
 every cleanup step and report its duration; a step still running after one second emits a slow-step
 warning.
+
+`happy-agent drain` is a local macOS/Linux control command for both standalone and team daemons.
+Run it as the service account (or an authorized administrator with the same `HAPPY_HOME_DIR`). It
+uses the PID, an owner-only ephemeral `agent/drain.json` status record, and `SIGUSR2`; it never reads
+the API token or connects to HTTP. The process identity is checked against the record before a
+signal is sent, so a stale PID or an older daemon without advertised support is rejected. Progress
+comes from the same API drain barrier, including admitted HTTP mutations and agent/reviewer work.
+Successful completion leaves the daemon alive and draining; repeating the command is safe.
+
+For maintenance, drain first, then stop through the existing supervisor. `SIGTERM` and `SIGINT`
+request graceful shutdown and named cleanup, but do not first drain active work. Draining does not
+wait for terminal/background jobs to finish. Never send `SIGUSR2` to an unsupported older daemon
+or signal the entire service process group. See the shipped
+[upgrade recipe](../../docs/recipe/upgrade-happy-agent.md) for the complete sequence.
 
 ## Standalone binaries
 

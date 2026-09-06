@@ -428,7 +428,7 @@ export async function startHappyAgentRuntime(
         const files = new ProjectFilesModule(projects, workspaces, git, bots);
         registerShutdown("files", async () => await files.close());
 
-        const profile = new ProfileModule<LibSQLDatabase>();
+        const profile = new ProfileModule<LibSQLDatabase>(config, bots);
         const team = new TeamModule<LibSQLDatabase>(config, profile);
         const collaboration = new CollaborationModule(config, abort);
         const scheduling = new SchedulingModule();
@@ -697,7 +697,7 @@ export async function startHappyAgentRuntime(
             await workspaces.open(withDatabase(ctx));
         }
 
-        if (!team.enabled) profile.open(installation.epoch);
+        if (!team.enabled) await profile.open(withDatabase(ctx), installation.epoch);
 
         await apiModule.markReady();
 

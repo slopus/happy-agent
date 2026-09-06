@@ -4,11 +4,12 @@ import { AgentDaemonError } from "./AgentDaemonError.js";
 import { createUnixSocketFetch } from "./createUnixSocketFetch.js";
 import { isDaemonProcessRunning, killDaemonFromPidFile, readDaemonPid } from "./daemonPid.js";
 import { readDaemonTokenIfPresent } from "./daemonToken.js";
+import { drainDaemonFromSignal } from "./drainDaemonFromSignal.js";
 import { ensureAgentDaemon } from "./ensureAgentDaemon.js";
 import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
 import { formatDrainProgress, stopLocalProtocolServer } from "./stopLocalProtocolServer.js";
 
-export type AgentDaemonCommand = "kill" | "reload" | "start" | "stop" | "status";
+export type AgentDaemonCommand = "drain" | "kill" | "reload" | "start" | "stop" | "status";
 
 export function isAgentDaemonCommand(value: string | undefined): value is AgentDaemonCommand {
     return (
@@ -16,6 +17,7 @@ export function isAgentDaemonCommand(value: string | undefined): value is AgentD
         value === "stop" ||
         value === "status" ||
         value === "reload" ||
+        value === "drain" ||
         value === "kill"
     );
 }
@@ -35,6 +37,10 @@ export async function runAgentDaemonCommand(
 ): Promise<void> {
     const log = options.log ?? ((line: string) => console.log(line));
     const paths = getHappyDaemonPaths();
+    if (command === "drain") {
+        await drainDaemonFromSignal(paths, log);
+        return;
+    }
     const ensureOptions = {
         ...(options.entrypoint === undefined ? {} : { entrypoint: options.entrypoint }),
         ...(options.runInProcess === undefined ? {} : { runInProcess: options.runInProcess }),

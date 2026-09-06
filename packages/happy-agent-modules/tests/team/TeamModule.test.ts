@@ -18,7 +18,7 @@ import {
     teamUser,
     WorkOSAccessTokenVerifier,
 } from "../../sources/team/index.js";
-import { ProfileModule } from "../../sources/profile/index.js";
+import { testProfileModule } from "../support/testProfileModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
 const CLIENT_ID = "client_test123";
@@ -220,7 +220,7 @@ function createTeam(): TeamModule {
                 },
             },
         } as never,
-        new ProfileModule(),
+        testProfileModule(),
     );
 }
 

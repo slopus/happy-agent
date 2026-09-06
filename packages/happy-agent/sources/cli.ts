@@ -16,6 +16,7 @@ Options:
 
 Commands:
   start    Start the daemon when none is running, replacing one that does not match.
+  drain    Signal the local daemon and wait for draining, without tokens or shutdown.
   stop     Ask the running daemon to shut down.
   kill     Immediately kill the daemon process recorded in its PID file.
   status   Report whether the daemon is running.

@@ -29,6 +29,23 @@ beforeEach(() => {
 });
 
 describe("startHappyAgentDaemon", () => {
+    it("uses the API drain barrier without shutting down either transport", async () => {
+        const runtime = arrangeRuntime(true);
+        const closeHttp = vi.fn();
+        mocks.bindAgentHttpServer.mockResolvedValue({
+            close: closeHttp,
+            host: "127.0.0.1",
+            port: 3000,
+            url: "http://127.0.0.1:3000",
+        });
+        const daemon = await startHappyAgentDaemon();
+        daemon.drain();
+        expect(runtime.beginDrain).toHaveBeenCalledOnce();
+        expect(daemon.drainProgress()).toEqual([{ name: "agent-system", count: 1 }]);
+        expect(runtime.shutdown).not.toHaveBeenCalled();
+        expect(closeHttp).not.toHaveBeenCalled();
+        await daemon.close();
+    });
     it("binds TCP HTTP instead of the local socket in team mode", async () => {
         const runtime = arrangeRuntime(true);
         const closeHttp = vi.fn();
@@ -103,6 +120,7 @@ function arrangeRuntime(
     tailcatEnabled = false,
 ): {
     readonly attachTransport: ReturnType<typeof vi.fn>;
+    readonly beginDrain: ReturnType<typeof vi.fn>;
     readonly close: ReturnType<typeof vi.fn>;
     readonly shutdown: ReturnType<typeof vi.fn>;
 } {
@@ -139,7 +157,11 @@ function arrangeRuntime(
         : { enabled: false, state: "disabled" };
     const attachTransport = vi.fn(async () => status);
     const runtime = {
-        api: { onShutdown: vi.fn(() => vi.fn()) },
+        api: {
+            onShutdown: vi.fn(() => vi.fn()),
+            beginDrain: vi.fn(),
+            drainProgress: vi.fn(() => [{ name: "agent-system", count: 1 }]),
+        },
         modules: {
             tailcat: {
                 attachTransport,
@@ -167,5 +189,10 @@ function arrangeRuntime(
             return runtime;
         },
     );
-    return { attachTransport, close: runtime.close, shutdown: runtime.shutdown };
+    return {
+        attachTransport,
+        beginDrain: runtime.api.beginDrain,
+        close: runtime.close,
+        shutdown: runtime.shutdown,
+    };
 }

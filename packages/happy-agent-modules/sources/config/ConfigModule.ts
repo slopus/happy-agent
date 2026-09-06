@@ -129,6 +129,22 @@ const defaultsInputSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+const profileBootstrapSchema = Type.Object(
+    {
+        name: Type.String({
+            minLength: 1,
+            maxLength: 128,
+            pattern:
+                "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u206f]+$",
+        }),
+        email: Type.String({
+            minLength: 3,
+            maxLength: 254,
+            pattern: "^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]+$",
+        }),
+    },
+    { additionalProperties: false },
+);
 const settingsInputSchema = Type.Object(
     {
         compact_completed_turns: Type.Optional(Type.Boolean()),
@@ -344,6 +360,7 @@ const mcpInputSchema = Type.Record(
 );
 const partialValuesSchema = Type.Object(
     {
+        profile: Type.Optional(profileBootstrapSchema),
         api: Type.Optional(apiConfigSchema),
         connections: Type.Optional(remoteConnectionsConfigSchema),
         docker: Type.Optional(dockerInputSchema),
@@ -672,6 +689,7 @@ const providerSchema = Type.Union([
 
 const resolvedValuesSchema = Type.Object(
     {
+        profile: Type.Optional(profileBootstrapSchema),
         api: Type.Optional(apiConfigSchema),
         connections: Type.Optional(remoteConnectionsConfigSchema),
         docker: Type.Optional(
@@ -2219,6 +2237,7 @@ export function parseHappyAgentConfigToml(source: string): {
         "p2p",
         "permissions",
         "presence",
+        "profile",
         "providers",
         "settings",
         "theme",
@@ -2247,6 +2266,7 @@ export function parseHappyAgentConfigToml(source: string): {
             ? readBoolean(table.providers, "default_enable", "providers.default_enable")
             : undefined;
     const values = {
+        ...(table.profile === undefined ? {} : { profile: table.profile }),
         ...(table.api === undefined ? {} : { api: table.api }),
         ...(table.connections === undefined ? {} : { connections: table.connections }),
         ...(defaults === undefined ? {} : { defaults }),
@@ -2309,6 +2329,7 @@ function sourceSnapshot(source: ReadSource): HappyAgentConfigSource {
 
 function normalizeSourceValues(values: PartialValues): Record<string, unknown> {
     return {
+        ...(values.profile === undefined ? {} : { profile: values.profile }),
         ...(values.docker === undefined ? {} : { docker: normalizeDocker(values.docker) }),
         ...(values.defaults === undefined ? {} : { defaults: normalizeDefaults(values.defaults) }),
         ...(values.features === undefined ? {} : { features: normalizeFeatures(values.features) }),
@@ -2439,6 +2460,7 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
     const merged = structuredClone(DEFAULT_VALUES) as MutableResolvedValues;
     const explicitProviderEnabled = new Set<string>();
     for (const partial of partials) {
+        if (partial.profile !== undefined) merged.profile = { ...partial.profile };
         if (partial.api !== undefined) merged.api = { ...merged.api, ...partial.api };
         if (partial.connections !== undefined)
             merged.connections = { ...merged.connections, ...partial.connections };
@@ -2512,6 +2534,9 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
     }
     if (merged.feature.team.enabled && merged.api?.token !== undefined) {
         throw new Error("Team deployments cannot configure a standalone API token.");
+    }
+    if (merged.feature.team.enabled && merged.profile !== undefined) {
+        throw new Error("Team deployments cannot configure a shared standalone profile.");
     }
     if (!Value.Check(happyAgentConfigValuesSchema, merged)) {
         throw new Error("The merged Happy Agent configuration is invalid.");
@@ -3002,6 +3027,7 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         // this machine's traces wherever the repository asked.
         observation: _observation,
         p2p: _p2p,
+        profile: _profile,
         provider_default_enable: _providerDefaultEnable,
         providers: _providers,
         defaults,
@@ -3142,6 +3168,7 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                 section === "settings" ||
                 section === "features" ||
                 section === "observation" ||
+                section === "profile" ||
                 section === "workspace"
             ) {
                 for (const key of Object.keys(source[section] ?? {})) {

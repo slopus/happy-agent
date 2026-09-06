@@ -28,7 +28,7 @@ import {
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
 import { CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
-import { ProfileModule } from "../../sources/profile/index.js";
+import { testProfileModule } from "../support/testProfileModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -836,8 +836,7 @@ async function apiFixture(
 async function actualCloudApiFixture() {
     const directory = await mkdtemp(join(tmpdir(), "happy-cloud-api-real-"));
     const durableFunctions = new DurableFunctionsModule();
-    const profile = new ProfileModule();
-    profile.open("test-instance");
+    const profile = testProfileModule();
     const cloud = new CloudModule(durableFunctions, profile);
     const database = moduleDatabase(
         [...cloud.migrations, ...profile.migrations, ...durableFunctions.migrations],
@@ -845,6 +844,7 @@ async function actualCloudApiFixture() {
     );
     ensureAgentDatabaseConnection(database.database);
     await database.ready;
+    await profile.open(database.context, "test-instance");
     await resolveModuleHooks(database.context, cloud);
     const durableHooks = await resolveModuleHooks(database.context, durableFunctions);
     await durableHooks.afterStart?.(database.context, {} as never);

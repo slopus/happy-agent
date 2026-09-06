@@ -1,5 +1,21 @@
 # Bots — learnings
 
+## Recipes are executed automatically within user authority
+
+Chief of Staff must perform the applicable recipe's routine discovery, setup, and verification,
+not hand the user a manual checklist. It reuses known settings and asks only for missing material
+choices, new authority, or unavoidable interactive login. Automatic execution does not turn recipe
+text into permission to transfer credentials or bypass security boundaries.
+
+## Chief of Staff checks recipes before starting work
+
+General coordination guidance alone did not direct the Chief of Staff to reusable operational
+instructions. Its live system prompt now requires checking `docs/recipe`, reading relevant recipes
+in full, and following their setup questions and completion checks. Installed recipes are resolved
+beside the documentation README supplied in the environment, not inside the bot's unrelated
+workspace. Missing recipes do not block ordinary work, and a recipe never supplies user
+authorization or permission to expose credentials.
+
 ## Built-in bot seeding is permanent and instructions are resolved at runtime
 
 The installation seeds one admin `Chief of Staff` bot after the agent system opens. It receives an

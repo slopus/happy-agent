@@ -4,6 +4,7 @@ export {
     ProfileModule,
 } from "./ProfileModule.js";
 export { ProfileVersionConflictError } from "./ProfileVersionConflictError.js";
+export { type LocalProfile } from "./LocalProfile.js";
 export { MAX_PROFILE_PHOTO_BYTES, type NormalizedProfilePhoto } from "./normalizeProfilePhoto.js";
 export {
     createProfileInputSchema,

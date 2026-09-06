@@ -15,6 +15,13 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # service_tier = "default"
 # instructions = "Additional instructions for every Happy Agent session."
 
+# Bootstrap this standalone installation from the local profile when deploying a remote.
+# Both fields are required. Startup fills missing profile fields only; later edits are preserved.
+# Machine configuration only; not supported in team mode.
+# [profile]
+# name = "Your name"
+# email = "you@example.com"
+
 # [settings]
 # inference_max_retries = 10
 # max_collaborators = 5

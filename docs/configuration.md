@@ -44,6 +44,28 @@ brand = "ansi:202"
 accent = "cyan"
 ```
 
+## Standalone profile bootstrap
+
+For an unattended personal deployment, put the existing local name and email in the **remote
+machine's global** `happy.toml` before starting it:
+
+```toml
+[profile]
+name = "Ada Lovelace"
+email = "ada@example.com"
+```
+
+Both valid, nonempty fields are required when this section is present. Startup fills only missing
+profile fields, creates a fresh installation-owned identity when needed, and preserves later
+profile edits on restart. This satisfies the profile requirement without manual profile creation;
+it is not a blanket onboarding bypass. Provider credentials and project setup still matter.
+
+An active root admin bot can use `get_local_profile` to read the local name and email directly
+from storage, with `null` for missing values. Deployment copies those values into config records,
+not through a profile API call. The tool does not expose private profile identity or photo data.
+Repository configuration cannot supply this section, and team deployments reject it because their
+profiles belong to individual authenticated users. See the [deployment recipe](recipe/deploy-standalone-remote.md).
+
 ## Ethan mode
 
 Ethan mode is token-max mode. Enable it when you are token rich, expect the agent to keep consuming

@@ -9,6 +9,14 @@ creation share these paths for settings, MCP, global instructions, and security.
 the target platform's directory; private `.happy/agent` state remains unchanged. Existing uppercase
 Linux configuration is not automatically moved or used as a fallback.
 
+## Standalone profile bootstrap is machine configuration
+
+Remote onboarding should reuse the local person's name and email through `[profile]` records in
+global `happy.toml`, not an HTTP profile mutation or a skip-onboarding flag. Both fields must be
+valid when configured. Project configuration cannot choose an installation's identity, and team
+mode rejects a shared standalone profile. The profile module consumes these records on startup
+to fill missing fields without overwriting later edits.
+
 ## Reseller catalogs are explicit subsets
 
 Adding a model to its native provider must not automatically advertise it through a reseller.

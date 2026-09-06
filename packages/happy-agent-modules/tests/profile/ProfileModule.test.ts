@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     PROFILE_MIGRATION_KEY,
     PROFILE_PHOTO_MIGRATION_KEY,
-    ProfileModule,
 } from "../../sources/profile/ProfileModule.js";
 import {
     profileChangedEventSchema,
@@ -19,6 +18,7 @@ import {
 import { ProfileVersionConflictError } from "../../sources/profile/ProfileVersionConflictError.js";
 import { MAX_PROFILE_PHOTO_BYTES } from "../../sources/profile/normalizeProfilePhoto.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { testProfileModule } from "../support/testProfileModule.js";
 
 const LOCAL_INSTANCE_ID = "alocalinstance000000001";
 const OTHER_INSTANCE_ID = "anotherinstance00000001";
@@ -27,13 +27,13 @@ async function createFixture(name: string) {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const events: ProfileChangedEvent[] = [];
-    const profiles = new ProfileModule();
+    const profiles = testProfileModule();
     const unsubscribe = profiles.onEvent((_ctx, event) => {
         events.push(event);
     });
     const test = moduleDatabase(profiles.migrations, name);
     await test.ready;
-    profiles.open(LOCAL_INSTANCE_ID);
+    await profiles.open(test.context, LOCAL_INSTANCE_ID);
     return { events, profiles, test, unsubscribe };
 }
 
@@ -202,8 +202,8 @@ describe("ProfileModule", () => {
                 fixture.profiles.update(ctx, profile.id, { email: "not-an-email" }),
             ).rejects.toThrow("The profile update is not valid.");
 
-            const elsewhere = new ProfileModule();
-            elsewhere.open(OTHER_INSTANCE_ID);
+            const elsewhere = testProfileModule();
+            await elsewhere.open(ctx, OTHER_INSTANCE_ID);
             await expect(elsewhere.isLocal(ctx, profile.id)).resolves.toBe(false);
             await expect(elsewhere.update(ctx, profile.id, { name: "Stolen" })).rejects.toThrow(
                 "Only this profile's own installation may change it.",
@@ -309,8 +309,8 @@ describe("ProfileModule", () => {
             );
             const asset = await fixture.profiles.getPhoto(ctx);
 
-            const restarted = new ProfileModule();
-            restarted.open(LOCAL_INSTANCE_ID);
+            const restarted = testProfileModule();
+            await restarted.open(ctx, LOCAL_INSTANCE_ID);
             vi.setSystemTime(500);
             await expect(restarted.get(ctx)).resolves.toEqual(withPhoto);
             await expect(restarted.getPhoto(ctx)).resolves.toEqual(asset);

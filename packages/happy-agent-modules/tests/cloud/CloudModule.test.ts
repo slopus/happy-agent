@@ -34,7 +34,8 @@ import {
     CloudWorkOS,
 } from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
-import { ProfileModule } from "../../sources/profile/index.js";
+import type { ProfileModule } from "../../sources/profile/index.js";
+import { testProfileModule } from "../support/testProfileModule.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -141,8 +142,7 @@ afterEach(async () => {
 
 async function fixture(name: string, logs?: CloudLogRecord[]) {
     const durableFunctions = new DurableFunctionsModule();
-    const profile = new ProfileModule();
-    profile.open("test-instance");
+    const profile = testProfileModule();
     const module = new CloudModule(durableFunctions, profile);
     modules.push({ cloud: module, durableFunctions, profile });
     const database = moduleDatabase(
@@ -152,6 +152,7 @@ async function fixture(name: string, logs?: CloudLogRecord[]) {
     ensureAgentDatabaseConnection(database.database);
     databases.push(database);
     await database.ready;
+    await profile.open(database.context, "test-instance");
     const ctx =
         logs === undefined ? database.context : withLogger(database.context, recordingLogger(logs));
     const cloudHooks = await resolveModuleHooks(ctx, module);
@@ -2319,8 +2320,8 @@ describe("CloudModule", () => {
         durableFunctions.stop();
 
         const restartedDurableFunctions = new DurableFunctionsModule();
-        const profile = new ProfileModule();
-        profile.open("test-instance");
+        const profile = testProfileModule();
+        await profile.open(database.context, "test-instance");
         const restarted = new CloudModule(restartedDurableFunctions, profile);
         modules.push({ cloud: restarted, durableFunctions: restartedDurableFunctions, profile });
         await resolveModuleHooks(database.context, restarted);

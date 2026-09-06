@@ -7,11 +7,19 @@ import {
     type AgentDatabase,
     type AgentModule,
     type AgentModuleMigration,
+    type AgentModuleHooks,
+    type AgentSystemRef,
+    type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
-import type { Context } from "@steve.kite/stdlib";
+import { afterCommit, type Context } from "@steve.kite/stdlib";
+
+import { BotsModule } from "../bots/index.js";
+import { ConfigModule } from "../config/index.js";
+import type { LocalProfile } from "./LocalProfile.js";
+import { getLocalProfileTool } from "./tools/get_local_profile.js";
 
 import { createProfileVersion } from "./createProfileVersion.js";
 import {
@@ -64,11 +72,10 @@ const storedPhotoRowSchema = Type.Object(
  * The one person this installation belongs to, including their one bounded profile photo.
  *
  * The singleton owns a stable private identity for P2P while allowing every user-facing field
- * to remain empty. Media stays in the module's database because this module takes no config or
- * host object and must keep its own storage boundary.
+ * to remain empty. Configuration supplies optional bootstrap values; bots own tool authorization.
  */
 export class ProfileModule<Database extends AgentDatabase = AgentDatabase> implements AgentModule<
-    never,
+    AnyAgentTool,
     Database
 > {
     readonly name = "profile";
@@ -105,6 +112,43 @@ export class ProfileModule<Database extends AgentDatabase = AgentDatabase> imple
     ] as readonly AgentModuleMigration<Database>[];
     readonly #listeners = new Set<ProfileEventListener>();
     #localInstanceId: string | undefined;
+    readonly #config: ConfigModule;
+    readonly #bots: BotsModule;
+    #agents: AgentSystemRef | undefined;
+
+    constructor(config: ConfigModule, bots: BotsModule) {
+        this.#config = config;
+        this.#bots = bots;
+    }
+
+    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+        this.#agents = agents;
+        return {
+            tools: async (ctx, scope) =>
+                (await this.#isActiveAdmin(ctx, scope.agent.id))
+                    ? [getLocalProfileTool(this, scope.agent.id)]
+                    : [],
+        };
+    };
+
+    /** Read without materializing an empty profile or exposing its installation identity. */
+    async getLocalProfileForAdmin(ctx: Context, actingAgentId: string): Promise<LocalProfile> {
+        return await ctx.inTx(async (txCtx) => {
+            if (!(await this.#isActiveAdmin(txCtx, actingAgentId))) {
+                throw new Error("Only an active admin bot can read the local profile.");
+            }
+            const profile = await this.get(txCtx);
+            return { name: profile?.name ?? null, email: profile?.email ?? null };
+        });
+    }
+
+    async #isActiveAdmin(ctx: Context, agentId: string): Promise<boolean> {
+        if (this.#config.configuration.values.feature.team.enabled || this.#agents === undefined)
+            return false;
+        if ((await this.#agents.parentOf(ctx, agentId)) !== null) return false;
+        const bot = await this.#bots.forAgent(ctx, agentId);
+        return bot?.isAdmin === true && bot.status === "active";
+    }
 
     /** Watch every saved mutation; call the returned function to stop watching. */
     onEvent(listener: ProfileEventListener): ProfileUnsubscribe {
@@ -118,11 +162,31 @@ export class ProfileModule<Database extends AgentDatabase = AgentDatabase> imple
     }
 
     /** Name the installation that permanently owns this profile identity. */
-    open(localInstanceId: string): void {
+    async open(ctx: Context, localInstanceId: string): Promise<void> {
         if (!Value.Check(instanceIdSchema, localInstanceId)) {
             throw new Error("The installation identity is not valid.");
         }
         this.#localInstanceId = localInstanceId;
+        const configured = this.#config.configuration.values.profile;
+        if (configured === undefined || this.#config.configuration.values.feature.team.enabled)
+            return;
+        await ctx.inTx(async (txCtx) => {
+            const current = await this.#ensureInTransaction(txCtx, localInstanceId);
+            this.#assertOwned(current, localInstanceId);
+            if (current.name !== null && current.email !== null) return;
+            const updated: Profile = {
+                ...current,
+                name: current.name ?? configured.name,
+                email: current.email ?? configured.email,
+                updatedAt: Date.now(),
+                version: createProfileVersion(current.version),
+            };
+            await this.#write(txCtx, updated);
+            afterCommit(
+                txCtx,
+                async (eventCtx) => await this.#publishChanged(eventCtx, updated, current.version),
+            );
+        });
     }
 
     /** Read the singleton when it has already been materialized. */

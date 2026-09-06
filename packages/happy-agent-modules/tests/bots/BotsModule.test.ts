@@ -155,6 +155,18 @@ describe("BotsModule", () => {
             await expect(fixture.instructions(chief.agentId)).resolves.toContain(
                 "# Chief of Staff\n\nYou are the user's persistent chief of staff.",
             );
+            await expect(fixture.instructions(chief.agentId)).resolves.toContain(
+                "Before planning or carrying out a task, check the recipe documents in docs/recipe for relevant guidance.",
+            );
+            await expect(fixture.instructions(chief.agentId)).resolves.toContain(
+                "Resolve recipe/ beside the Happy Agent documentation README path supplied in your environment, not relative to your bot workspace",
+            );
+            await expect(fixture.instructions(chief.agentId)).resolves.toContain(
+                "Read every relevant recipe in full",
+            );
+            await expect(fixture.instructions(chief.agentId)).resolves.toContain(
+                "Execute relevant recipes automatically by default within the user's authorized task.",
+            );
 
             const archived = await fixture.bots.archive(
                 fixture.database.context,

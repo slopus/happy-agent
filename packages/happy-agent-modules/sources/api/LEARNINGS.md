@@ -1,5 +1,14 @@
 # API module learnings
 
+## Local signals and HTTP share one drain boundary
+
+Draining only the agent runtime leaves API mutations admitted and can falsely report that an
+installation is safe to maintain. Local OS control now calls the API module's public `beginDrain`
+and reads its bounded `drainProgress`, the same operations used by authenticated HTTP. This keeps
+the read-only transition, event identity, admitted-mutation count, and agent/reviewer completion
+barrier identical without creating an unauthenticated HTTP route. Draining remains separate from
+shutdown and does not claim that terminals or background processes have exited.
+
 ## Composer mode
 
 - A null `mode.serviceTier` must reach Agent Base as an explicit `null`, never as an omission and

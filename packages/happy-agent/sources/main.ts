@@ -4,6 +4,7 @@ import {
     type StartHappyAgentRuntimeOptions,
 } from "@slopus/happy-agent-modules";
 import { withLogContext, type Context } from "@steve.kite/stdlib";
+import type { DrainWaitingFor } from "@slopus/happy-agent-client";
 
 import { removeDaemonPid, writeDaemonPid } from "./lifecycle/daemonPid.js";
 import {
@@ -34,6 +35,9 @@ export interface HappyAgentDaemon {
     /** Present while the configured Tailcat transport is open. */
     readonly tailcat?: { readonly address: string; readonly port: number } | undefined;
     readonly tokenPath: string;
+    /** Begin draining without closing transports or stopping background processes. */
+    drain(): void;
+    drainProgress(): readonly DrainWaitingFor[];
     close(reason?: HappyAgentShutdownReason): Promise<void>;
 }
 
@@ -130,9 +134,12 @@ export async function startHappyAgentDaemon(
     if (shutdownRequested) void closeDaemon("api");
 
     const startedRuntime = runtime;
+    const drainContext = runtime.ctx.named("daemon-local-drain");
     return {
         close: closeDaemon,
         closed,
+        drain: () => startedRuntime.api.beginDrain(drainContext),
+        drainProgress: () => startedRuntime.api.drainProgress(drainContext),
         ...(runtime.configuration.values.feature.team.enabled && "url" in bound
             ? { httpUrl: bound.url }
             : {}),
