@@ -87,7 +87,7 @@ describe("ConfigModule security documents", () => {
         await expect(config.readGlobalSecurity(ctx, MAX_BYTES)).resolves.toBeUndefined();
         await expect(config.readProjectSecurity(ctx, MAX_BYTES)).resolves.toBeUndefined();
 
-        await mkdir(join(publicHome, "Config"), { recursive: true });
+        await mkdir(config.configuration.paths.configHome, { recursive: true });
         await writeFile(securityPath, "GLOBAL_SECURITY_RULE");
         await writeFile(join(publicHome, "AGENTS_SECURITY.md"), "PROJECT_SECURITY_RULE");
 
@@ -103,7 +103,7 @@ describe("ConfigModule security documents", () => {
         const root = await createTestDirectory();
         const config = await ConfigModule.load(join(root, ".happy"));
         const { securityPath } = config.configuration.paths;
-        await mkdir(join(config.configuration.paths.publicHome, "Config"), { recursive: true });
+        await mkdir(config.configuration.paths.configHome, { recursive: true });
 
         await writeFile(securityPath, "FIRST_RULE");
         await expect(config.readGlobalSecurity(ctx, MAX_BYTES)).resolves.toBe("FIRST_RULE");
