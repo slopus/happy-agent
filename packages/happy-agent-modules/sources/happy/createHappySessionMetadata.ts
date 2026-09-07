@@ -80,7 +80,8 @@ export interface HappySessionMetadata {
      * Every workspace of one project carries the same `project.id`, so their sessions gather in a
      * single card, and `workspace` names the checkout within it.
      */
-    project: { id: string; kind: "home" | "regular"; name: string };
+    project?: { id: string; kind: "home" | "regular"; name: string };
+    bot?: HappySessionSnapshot["bot"];
     provider: HappyProviderDescriptor;
     providers: readonly HappyProviderDescriptor[];
     reasoning: { current: string | null; levels: readonly string[] };
@@ -126,6 +127,7 @@ export function createHappySessionMetadata(options: {
     );
     const provider = describeHappyProvider(session.providerId);
     const efforts = selected?.effortLevels ?? [];
+    const title = session.bot?.name ?? session.title;
     return {
         capabilities: {
             abort: true,
@@ -165,7 +167,7 @@ export function createHappySessionMetadata(options: {
         ...(configuration.machineId === undefined ? {} : { machineId: configuration.machineId }),
         model: { id: session.modelId, providerId: session.providerId },
         models: models.map(publishModel),
-        ...(session.title === undefined ? {} : { name: session.title }),
+        ...(title === undefined ? {} : { name: title }),
         operatingModes: HAPPY_PERMISSION_MODES.map((mode) => ({ ...mode })),
         os: `${platform()} ${release()}`,
         path: session.cwd,
@@ -173,14 +175,23 @@ export function createHappySessionMetadata(options: {
         // Falls back to the session's own identity only when this daemon keeps no project for it.
         // A per-session id groups nothing, which is the right answer for a session that belongs
         // to nothing, and the wrong one for every session that does.
-        project:
-            session.project === undefined
-                ? { id: `rig:${session.sessionId}`, kind: "regular", name: session.projectName }
-                : {
-                      id: session.project.id,
-                      kind: session.project.kind,
-                      name: session.project.name,
-                  },
+        ...(session.bot === undefined
+            ? {
+                  project:
+                      session.project === undefined
+                          ? {
+                                id: `rig:${session.sessionId}`,
+                                kind: "regular",
+                                name: session.projectName,
+                            }
+                          : {
+                                id: session.project.id,
+                                kind: session.project.kind,
+                                name: session.project.name,
+                            },
+              }
+            : {}),
+        ...(session.bot === undefined ? {} : { bot: { ...session.bot } }),
         provider,
         providers,
         reasoning: { current: session.effort ?? null, levels: [...efforts] },
@@ -193,13 +204,13 @@ export function createHappySessionMetadata(options: {
         },
         startedBy: "daemon",
         startedFromDaemon: true,
-        ...(session.title === undefined
+        ...(title === undefined
             ? {}
-            : { summary: { text: session.title, updatedAt: options.summaryUpdatedAt } }),
+            : { summary: { text: title, updatedAt: options.summaryUpdatedAt } }),
         thoughtLevels: efforts.map((level) => ({ code: level, value: level })),
         tools: [...session.tools],
         ...(session.gitBranch === undefined ? {} : { gitBranch: session.gitBranch }),
-        ...(session.workspace === undefined
+        ...(session.workspace === undefined || session.bot !== undefined
             ? {}
             : {
                   workspace: {

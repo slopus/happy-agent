@@ -36,6 +36,17 @@
 
 ## Session state
 
+- Bots are discovered through `BotsModule`, not project/workspace membership. Each bot projects
+  its existing agent into one Happy session, with optional encrypted `bot` identity and no synthetic
+  project or worktree. Startup includes idle bots; catalog events attach new bots and refresh names.
+- Bot lifecycle stays in the bot catalog. Phone archival calls `BotsModule.archive`; late messages
+  to archived bots and attempts to create a second conversation in their exact folder are refused
+  (subdirectories remain ordinary session locations). Resolve and archive the bot in one transaction
+  so concurrent renames cannot invalidate the version between those operations. Restoration awaits
+  the explicit post-commit archive completion, reuses the same remote identity, and replaces stale
+  archive/project metadata. Never infer completion from a map entry not yet installed by `afterCommit`.
+  Mobile needs no separate bot resource on the relay.
+
 - The phone composer has no tier selector and stamps `serviceTier: null` on every message's mode,
   so its sends must carry an explicit `null` service tier option. Omitting the option tells Agent
   Base to keep the previously persisted tier, which contradicts the stamped mode and leaves a stale

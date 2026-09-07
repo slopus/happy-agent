@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import type { AgentConfig, AgentPermissionMode } from "@slopus/happy-agent-base";
+import type { Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -14,6 +15,7 @@ import {
 } from "../../sources/happy/index.js";
 import { happyIntegrationMigrations } from "../../sources/happy/HappyIntegrationDatabase.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import type { BotRecord } from "../../sources/bots/index.js";
 
 const happyConnection = vi.hoisted(() => ({
     configuration: {
@@ -86,6 +88,10 @@ async function fixture() {
     await database.ready;
 
     const configs = new Map<string, AgentConfig>();
+    const bots = new Map<string, BotRecord>();
+    const archivedBots: string[] = [];
+    let botReadContext: Context | undefined;
+    const botArchiveScopes: { read: Context | undefined; write: Context }[] = [];
     const aborted: string[] = [];
     const archivedCompute: string[] = [];
     const activity: { questionAt?: number; textMessageAt?: number; working?: boolean } = {};
@@ -252,6 +258,21 @@ async function fixture() {
             latestQuestionAt: async () => activity.questionAt,
         } as never,
         workspaceModule as never,
+        {
+            list: async () => [...bots.values()],
+            forWorkspace: async (_ctx: unknown, workspaceId: string) =>
+                [...bots.values()].find((bot) => bot.workspaceId === workspaceId),
+            forAgent: async (ctx: Context, agentId: string) => {
+                botReadContext = ctx;
+                return [...bots.values()].find((bot) => bot.agentId === agentId);
+            },
+            archive: async (ctx: Context, botId: string, version: number) => {
+                botArchiveScopes.push({ read: botReadContext, write: ctx });
+                const bot = bots.get(botId)!;
+                expect(version).toBe(bot.version);
+                archivedBots.push(botId);
+            },
+        } as never,
     );
     modules.push(module);
     module.beforeStart(database.context, agents as never);
@@ -261,6 +282,9 @@ async function fixture() {
         aborted,
         agents,
         archivedCompute,
+        archivedBots,
+        botArchiveScopes,
+        bots,
         configs,
         createdWorkspaces,
         gitState,
@@ -489,6 +513,67 @@ describe("Happy session activity metadata", () => {
 });
 
 describe("archiving a Happy session", () => {
+    it("does not spawn a second conversation in a bot's workspace or folder", async () => {
+        const test = await fixture();
+        test.bots.set("bot-1", {
+            id: "bot-1",
+            agentId: "bot-agent",
+            workspaceId: "bot-workspace",
+            path: "/bots/assistant",
+        } as BotRecord);
+        for (const request of [
+            targetRequest({ kind: "workspace", id: "bot-workspace" }),
+            targetRequest({ kind: "projectFolder", projectPath: "/bots/assistant" }),
+            { ...SELECTION, sessionId: "another-agent", cwd: "/bots/assistant" },
+        ]) {
+            await expect(
+                test.module.spawnSession(databases.at(-1)!.context, request),
+            ).rejects.toThrow("one continuous conversation");
+        }
+        expect(test.configs.size).toBe(0);
+        expect(test.createdWorkspaces).toEqual([]);
+    });
+
+    it("archives a bot through its catalog, never by independently archiving its agent", async () => {
+        const test = await fixture();
+        test.bots.set("bot-1", {
+            id: "bot-1",
+            agentId: "agent-1",
+            version: 7,
+            status: "active",
+        } as BotRecord);
+        test.configs.set("agent-1", { metadata: { version: 4 } });
+        await test.module.archiveSession(databases.at(-1)!.context, "agent-1");
+        expect(test.archivedBots).toEqual(["bot-1"]);
+        expect(test.archivedCompute).toEqual([]);
+        expect(test.configs.get("agent-1")?.metadata).toEqual({ version: 4 });
+        const scope = test.botArchiveScopes[0]!;
+        expect(scope.read).toBe(scope.write);
+        // A real transaction facade expires after commit; the root context does not.
+        expect(() => scope.write.db).toThrow("transaction carried by this context has ended");
+    });
+
+    it("refuses a late phone message to an archived bot", async () => {
+        const test = await fixture();
+        test.bots.set("bot-1", {
+            id: "bot-1",
+            agentId: "agent-1",
+            version: 7,
+            status: "archived",
+        } as BotRecord);
+        test.configs.set("agent-1", { metadata: { version: 4 } });
+        await expect(
+            test.module.submit(databases.at(-1)!.context, "agent-1", {
+                text: "Do not resurrect this bot",
+                images: [],
+                remoteMessageId: "late-message",
+                selection: {},
+            }),
+        ).rejects.toThrow("archived");
+        expect(test.steered).toEqual([]);
+        expect(test.pendingMessages).toEqual([]);
+    });
+
     it("archives the durable local agent instead of only stopping and detaching it", async () => {
         const test = await fixture();
         test.configs.set("agent-1", {
@@ -659,6 +744,11 @@ describe("archiving a Happy session", () => {
                 onEvent: () => () => undefined,
             } as never,
             workspaces as never,
+            {
+                forAgent: async () => undefined,
+                list: async () => [],
+                onEvent: () => () => undefined,
+            } as never,
         );
         modules.push(module);
         const hooks = module.beforeStart(database.context, agents as never);
