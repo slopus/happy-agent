@@ -680,14 +680,7 @@ export class HappySessionClient {
         // `activity` is dropped rather than merged forward: an older Happy Agent wrote a shape the
         // phone reserves for its own counters, and one key of the wrong shape fails the phone's
         // whole metadata parse.
-        const base = { ...this.#metadataBase };
-        delete base.activity;
-        delete base.lastUserOrAgentTextMessageAt;
-        let metadata: Record<string, unknown> = { ...base, ...rigMetadata };
-        if (rigMetadata.git === undefined) delete metadata.git;
-        if (rigMetadata.lastMeaningfulMessageAt === undefined) {
-            delete metadata.lastMeaningfulMessageAt;
-        }
+        let metadata = composeSessionMetadata(this.#metadataBase, rigMetadata);
         let serialized = JSON.stringify(metadata);
         if (serialized === this.#lastMetadata) return;
         for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -826,14 +819,16 @@ export class HappySessionClient {
                 summaryUpdatedAt: this.#summaryUpdatedAt,
                 version: this.#options.version,
             }),
-            ...(this.#archiving
+            ...(this.#archiving || session.archived
                 ? {
                       archiveReason: "The session was ended in Happy Agent.",
                       archivedBy: "rig",
                       lifecycleState: "archived",
                       lifecycleStateSince: Date.now(),
                   }
-                : {}),
+                : session.bot === undefined
+                  ? {}
+                  : { lifecycleState: "active" }),
         } as Record<string, unknown>;
     }
 
@@ -946,6 +941,17 @@ function composeSessionMetadata(
     delete kept.activity;
     delete kept.lastUserOrAgentTextMessageAt;
     const composed = { ...kept, ...rigMetadata };
+    if (rigMetadata.bot !== undefined) {
+        delete composed.project;
+        delete composed.workspace;
+        delete composed.git;
+        delete composed.gitBranch;
+        if (rigMetadata.lifecycleState === "active") {
+            delete composed.archivedBy;
+            delete composed.archiveReason;
+            delete composed.lifecycleStateSince;
+        }
+    }
     if (rigMetadata.git === undefined) delete composed.git;
     if (rigMetadata.lastMeaningfulMessageAt === undefined) {
         delete composed.lastMeaningfulMessageAt;

@@ -563,6 +563,55 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
+    it("clears stale archive and project metadata when restoring the same bot session", async () => {
+        const socket = new FakeSocket();
+        socket.acknowledgements = [
+            {
+                metadata: encode({
+                    lifecycleState: "archived",
+                    archivedBy: "rig",
+                    archiveReason: "old",
+                    lifecycleStateSince: 1,
+                    project: { id: "synthetic", name: "old", kind: "regular" },
+                    workspace: { id: "bot-workspace", name: "old", kind: "worktree" },
+                    theirs: "kept",
+                }),
+                result: "version-mismatch",
+                version: 9,
+            },
+        ];
+        const { operations, snapshot } = fakeOperations();
+        const bot = {
+            id: "bot-1",
+            name: "Assistant",
+            username: "assistant",
+            workspaceId: "bot-workspace",
+            orderKey: "1",
+        };
+        const session = client({
+            operations: { ...operations, session: async () => ({ ...snapshot, bot }) },
+            server: fakeServer(),
+            socket,
+        });
+        try {
+            await session.settle();
+            const attempts = socket.emittedValues("update-metadata") as { metadata: string }[];
+            const restored = decode(attempts.at(-1)!.metadata);
+            expect(restored).toMatchObject({ bot, lifecycleState: "active", theirs: "kept" });
+            for (const field of [
+                "archivedBy",
+                "archiveReason",
+                "lifecycleStateSince",
+                "project",
+                "workspace",
+            ]) {
+                expect(restored).not.toHaveProperty(field);
+            }
+        } finally {
+            await session.close();
+        }
+    });
+
     it("publishes a question the session is waiting on", async () => {
         const socket = new FakeSocket();
         const { operations, pending } = fakeOperations();
