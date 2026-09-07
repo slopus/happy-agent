@@ -88,8 +88,9 @@ export const createBotRequestSchema = Type.Object({
     /** Grants the new bot the `admin_bot` tool role. Omitted means non-admin. */
     isAdmin: Type.Optional(Type.Boolean()),
     mutationId: Type.Optional(mutationIdSchema),
-    name: botNameSchema,
-    /** Omitted, the daemon derives a unique username from `name`. */
+    /** Omitted, the bot takes its display name from the first user message. */
+    name: Type.Optional(botNameSchema),
+    /** Omitted, the daemon derives a unique username from `name`, or from `bot` without a name. */
     username: Type.Optional(botUsernameSchema),
 });
 export type CreateBotRequest = Static<typeof createBotRequestSchema>;

@@ -579,6 +579,22 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.headers.get("if-match")).toBe("v1");
     });
 
+    it("creates an unnamed bot without inventing a placeholder or naming flag", async () => {
+        const bot = { id: "bot1", name: "New Bot" };
+        const { fetch, requests } = stubFetch(() => json({ bot }, 201));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.createBot({})).resolves.toEqual({ bot });
+        await expect(client.createBot({ id: "bot1", mutationId: "create-1" })).resolves.toEqual({
+            bot,
+        });
+
+        expect(requests[0]?.method).toBe("POST");
+        expect(requests[0]?.url).toBe("http://agent.local/v0/bots");
+        expect(requests[0]?.body).toBe("{}");
+        expect(requests[1]?.body).toBe(JSON.stringify({ id: "bot1", mutationId: "create-1" }));
+    });
+
     it("manages bots through their complete version-guarded catalog surface", async () => {
         const bot = { id: "bot1", name: "Research Assistant" };
         const { fetch, requests } = stubFetch((request) => {

@@ -107,4 +107,14 @@ export const botMigrations = [
             );
         },
     ],
+    [
+        "005-bot-name-configuration",
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(BOTS_TABLE)}
+                    ADD COLUMN name_configured INTEGER NOT NULL DEFAULT 1`,
+            );
+        },
+    ],
 ] as const;

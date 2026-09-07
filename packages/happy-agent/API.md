@@ -4532,7 +4532,8 @@ semantics. It is discovered only through its bot and addressed by its own worksp
 
 A bot's identity is:
 
-- `name` — a normal human display name, chosen by the person ("Research Assistant").
+- `name` — a normal human display name, chosen by the person ("Research Assistant") or generated
+  from the first user message when creation omits the name.
 - `username` — a local snake_case machine name; it is the folder name on disk. Lowercase ASCII
   letters, digits, and underscores, starting with a letter, 1–64 characters. Usernames are
   unique across all bots on the installation, archived ones included, because the folder path
@@ -4653,10 +4654,13 @@ Request:
 }
 ```
 
-- `name` — required.
+- `name` — optional. Supplied names are deliberate and are never automatically replaced. Omitted,
+  the daemon creates an immediately usable bot with the temporary display name `New Bot`; the
+  client need not supply a placeholder or naming flag. A supplied blank or invalid name is `400`.
 - `username` — optional. Omitted, the daemon derives one from the name (lowercased,
   non-alphanumeric runs collapsed to underscores) and resolves a collision by appending a
-  numeric suffix. A supplied username that is malformed is `400`; one already taken by any bot,
+  numeric suffix. When both name and username are omitted, the username starts from `bot` with
+  the same collision handling. A supplied username that is malformed is `400`; one already taken by any bot,
   archived included, is `409` with code `conflict`.
 - `isAdmin` — optional. `true` allows the bot to create other bots through `create_bot`. Omitted
   or `false`, the bot is non-admin. The bot-facing `create_bot` tool does not expose this field,
@@ -4670,6 +4674,18 @@ is ready for its first message through `POST /v0/agents/:agentId/send`. Creation
 `bot.created`; the workspace and agent also emit their own `workspace.created` and
 `agent.created`.
 
+For an unnamed bot, the first accepted text-bearing user-role message starts one asynchronous
+naming request, using that message alone and the same cheap, bounded inference mechanism as
+workspace naming. The bot-specific prompt asks for a short entity, person, or role-like identity
+based on its likely ongoing function, not a task title. Generated names are bounded to three words
+and 40 characters. Message acceptance and the bot's real turn never wait for naming. Failure or
+timeout keeps the placeholder and does not fail the message; later messages do not retry naming.
+
+The generated name updates the bot and its conversation title together and publishes their usual
+independently versioned updates. Its IDs, username, folder, and dedicated workspace remain
+unchanged. An explicit rename always wins, including one committed while naming is running.
+Existing named bots and built-in bots are not eligible for automatic naming.
+
 ### `GET /v0/bots/:botId`
 
 Returns one bot.
@@ -4681,6 +4697,10 @@ Response — `200`: `{ "bot": { ... } }`; `404` when no such bot exists.
 Renames the bot's display name. Requires `If-Match`.
 
 Request: `{ "name": "Research Buddy", "mutationId": "..." }`
+
+Renaming also updates the bot's conversation title and permanently cancels eligibility for
+automatic naming, even when the submitted name equals the current display name. This decision
+and both names are persisted together, so a delayed naming result cannot overwrite the rename.
 
 The `username` is immutable: it is the folder on disk, chosen at creation and never changed.
 A request carrying `username` is `400` with code `invalid_request`.

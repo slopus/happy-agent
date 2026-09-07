@@ -18,6 +18,7 @@ interface BotRow {
     readonly is_admin: number | string;
     readonly system_key: string | null;
     readonly name: string;
+    readonly name_configured: number | string;
     readonly username: string;
     readonly workspace_id: string;
     readonly workspace_version: number | string;
@@ -88,12 +89,13 @@ export async function insertBot(ctx: Context, bot: BotRecord): Promise<void> {
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(BOTS_TABLE)} (
-            id, is_admin, system_key, name, username,
+            id, is_admin, system_key, name, name_configured, username,
             workspace_id, workspace_version, workspace_updated_at,
             agent_id, path, status, avatar_source,
             avatar_thumbhash, order_key, version, created_at, updated_at, archived_at
         ) VALUES (
             ${bot.id}, ${bot.isAdmin ? 1 : 0}, ${bot.systemKey ?? null}, ${bot.name},
+            ${bot.nameConfigured ? 1 : 0},
             ${bot.username}, ${bot.workspaceId},
             ${bot.workspaceVersion}, ${bot.workspaceUpdatedAt}, ${bot.agentId},
             ${bot.path}, ${bot.status}, ${bot.avatar?.source ?? null},
@@ -112,7 +114,8 @@ export async function updateBot(
     const changed = await agentDatabaseRows<{ readonly id: string }>(
         ctx.db,
         sql`UPDATE ${sql.raw(BOTS_TABLE)} SET
-            is_admin = ${bot.isAdmin ? 1 : 0}, name = ${bot.name}, status = ${bot.status},
+            is_admin = ${bot.isAdmin ? 1 : 0}, name = ${bot.name},
+            name_configured = ${bot.nameConfigured ? 1 : 0}, status = ${bot.status},
             workspace_version = ${bot.workspaceVersion},
             workspace_updated_at = ${bot.workspaceUpdatedAt},
             avatar_source = ${bot.avatar?.source ?? null},
@@ -198,6 +201,7 @@ function botFromRow(row: BotRow): BotRecord {
             ? {}
             : { systemKey: row.system_key as NonNullable<BotRecord["systemKey"]> }),
         name: row.name,
+        nameConfigured: Number(row.name_configured) === 1,
         username: row.username,
         workspaceId: row.workspace_id,
         workspaceVersion: Number(row.workspace_version),

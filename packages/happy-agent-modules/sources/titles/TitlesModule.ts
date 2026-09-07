@@ -26,6 +26,7 @@ import { ConfigModule } from "../config/index.js";
 import { HistoryModule } from "../history/index.js";
 import { WorkspacesModule, type Workspace } from "../workspaces/index.js";
 import {
+    createBotNamingRequest,
     createNamingRequest,
     createRefinementRequest,
     wantedNames,
@@ -399,6 +400,28 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
         return parseSuggestedNames(answer, request.wanted);
+    }
+
+    /** Suggest a short, role-like identity for a bot from its first user message. */
+    async suggestBotName(
+        ctx: Context,
+        firstMessage: string,
+        providerId?: string,
+        options: { readonly signal?: AbortSignal } = {},
+    ): Promise<string | undefined> {
+        if (firstMessage.trim().length === 0) return undefined;
+        const route = this.#route(providerId);
+        if (route === undefined) return undefined;
+        const text = createBotNamingRequest(firstMessage);
+        const answer = await runNamingInference(ctx, {
+            instructions: text.instructions,
+            prompt: text.prompt,
+            providers: this.#config.providers,
+            route,
+            timeoutMs: NAMING_TIMEOUT_MS,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+        return parseSuggestedNames(answer, { title: true }).title;
     }
 
     /**

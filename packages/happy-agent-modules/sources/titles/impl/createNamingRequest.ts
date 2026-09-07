@@ -68,6 +68,27 @@ export function createNamingRequest(
     };
 }
 
+/** The shorter, role-shaped identity an unnamed bot takes from its first request. */
+export function createBotNamingRequest(firstMessage: string): NamingRequestText {
+    return {
+        instructions: [
+            "Name a persistent assistant from the function its first user message suggests it will perform.",
+            "Write a compact entity-like identity: one to three words that sound like a person, role, or",
+            "character rather than a task title. Prefer names such as Scout, Release Steward, Bug Hunter,",
+            "or Archivist. Name the likely ongoing function, not the particular first task.",
+            "",
+            "Reply with exactly this tag and nothing else:",
+            "",
+            "<title>The name</title>",
+            "",
+            "No quotes, punctuation, markdown, generic words such as Bot or Assistant, or more than three words.",
+            "",
+            CLOSING,
+        ].join("\n"),
+        prompt: ["The bot's first user message:", boundMessage(firstMessage)].join("\n"),
+    };
+}
+
 /**
  * The instructions and prompt a second look at a chat's title is asked for with.
  *

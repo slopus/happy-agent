@@ -26,6 +26,7 @@ import {
 } from "../../sources/bots/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
+import { type TitlesModule } from "../../sources/titles/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
@@ -503,7 +504,10 @@ async function started(name: string, workspacesEnabled: boolean) {
     const abort = new AbortModule(compute);
     const agents = new BotAgents();
     abort.beforeStart(database.context, agents.asRef());
-    const bots = new BotsModule(config, abort);
+    const titles = {
+        suggestBotName: async (): Promise<string | undefined> => undefined,
+    } as TitlesModule;
+    const bots = new BotsModule(config, abort, titles);
     const hooks = bots.beforeStart(database.context, agents.asRef());
     const events: BotEvent[] = [];
     bots.onEvent((_ctx, event) => {
@@ -546,6 +550,7 @@ async function started(name: string, workspacesEnabled: boolean) {
             return (await hooks.instructions?.(database.context, scope)) ?? "";
         },
         close: async () => {
+            await bots.close();
             database.close();
             await rm(dirname(config.configuration.paths.publicHome), {
                 force: true,
