@@ -162,6 +162,8 @@ session, and terminal assertions, but the backend contracts should have a lower-
 - macOS Seatbelt blocks first-time creation of a protected project path without a host watcher.
 - Fifty consecutive macOS restricted commands complete without a policy descriptor.
 - `deniedReadPaths` masks real content, including when the path is also granted.
+- Overlapping directory and child-file read denials work in either order through the
+  published supervisor, while the private file remains inaccessible.
 - Withheld egress blocks real `curl`.
 - Withheld local binding blocks a real Node listener in a restricted mode.
 - Granted unbounded egress reaches a real HTTPS destination.
