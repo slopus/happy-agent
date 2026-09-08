@@ -1,6 +1,7 @@
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
 import {
     AnthropicProvider,
+    type AnthropicBedrockTransport,
     BedrockAwsCredential,
     BedrockBearerTokenCredential,
     ClaudeApiKeyCredential,
@@ -568,9 +569,7 @@ async function createProvider(
     // decides which client speaks to it.
     const override =
         selectedModel === undefined ? undefined : provider.modelOverrides?.[selectedModel];
-    const transport =
-        override?.transport ??
-        (selectedModel === "anthropic/fable-5-1" ? ("runtime" as const) : undefined);
+    const transport = resolveAnthropicBedrockTransport(provider, selectedModel);
     const shared = {
         credential,
         ...(override?.endpoint === undefined ? {} : { endpoint: override.endpoint }),
@@ -586,6 +585,45 @@ async function createProvider(
               ...(transport === undefined ? {} : { transport }),
           })
         : new CodexProvider(shared);
+}
+
+function resolveAnthropicBedrockTransport(
+    provider: Extract<ConcreteConfiguredProvider, { readonly type: "bedrock" }>,
+    model: string | undefined,
+): AnthropicBedrockTransport | undefined {
+    if (model?.startsWith("anthropic/") !== true) return undefined;
+    return (
+        provider.modelOverrides?.[model]?.transport ??
+        (model === "anthropic/fable-5-1" ? "runtime" : "mantle")
+    );
+}
+
+/** The one Anthropic transport shared by every concrete route behind this selection. */
+export function configuredAnthropicBedrockTransport(
+    configuration: HappyAgentConfiguration,
+    providerId: string,
+    model: string | undefined,
+): AnthropicBedrockTransport | undefined {
+    if (model?.startsWith("anthropic/") !== true) return undefined;
+    const provider = configuration.values.providers[providerId];
+    if (provider === undefined) return undefined;
+    if (provider.type === "bedrock") return resolveAnthropicBedrockTransport(provider, model);
+    if (provider.type !== "smart") return undefined;
+
+    const route = smartProviderRoute(configuration, providerId)?.models.find(
+        (candidate) => candidate.model.id === model,
+    );
+    if (route === undefined || route.candidates.length === 0) return undefined;
+    const transports = route.candidates.map((candidateId) => {
+        const candidate = configuration.values.providers[candidateId];
+        return candidate?.type === "bedrock"
+            ? resolveAnthropicBedrockTransport(candidate, model)
+            : undefined;
+    });
+    const first = transports[0];
+    return first !== undefined && transports.every((transport) => transport === first)
+        ? first
+        : undefined;
 }
 
 function required<T>(credential: T | null, vendor: string, id: string): T {

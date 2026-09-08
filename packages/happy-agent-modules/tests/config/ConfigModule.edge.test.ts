@@ -1357,6 +1357,55 @@ describe("ConfigModule edge coverage", () => {
             ).toBe(true);
         });
 
+        it("resolves Bedrock transports only when every Smart route candidate agrees", async () => {
+            const root = await temporaryRoot("happy-agent-config-smart-bedrock-transport-");
+            await writeLayer(
+                root,
+                join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "happy.toml"),
+                [
+                    "[providers.runtime-a]",
+                    'type = "bedrock"',
+                    'region = "us-west-2"',
+                    '[providers.runtime-a.model_overrides."anthropic/sonnet-5"]',
+                    'transport = "runtime"',
+                    "",
+                    "[providers.runtime-b]",
+                    'type = "bedrock"',
+                    'region = "us-west-2"',
+                    '[providers.runtime-b.model_overrides."anthropic/sonnet-5"]',
+                    'transport = "runtime"',
+                    "",
+                    "[providers.mantle]",
+                    'type = "bedrock"',
+                    'region = "us-west-2"',
+                    "",
+                    "[providers.runtime-router]",
+                    'type = "smart"',
+                    'providers = ["runtime-a", "runtime-b"]',
+                    "",
+                    "[providers.mixed-router]",
+                    'type = "smart"',
+                    'providers = ["runtime-a", "mantle"]',
+                ].join("\n"),
+            );
+
+            const config = await ConfigModule.load(join(root, ".happy"));
+
+            expect(config.anthropicBedrockTransport("runtime-a", "anthropic/sonnet-5")).toBe(
+                "runtime",
+            );
+            expect(config.anthropicBedrockTransport("mantle", "anthropic/sonnet-5")).toBe("mantle");
+            expect(config.anthropicBedrockTransport("mantle", "anthropic/fable-5-1")).toBe(
+                "runtime",
+            );
+            expect(config.anthropicBedrockTransport("runtime-router", "anthropic/sonnet-5")).toBe(
+                "runtime",
+            );
+            expect(
+                config.anthropicBedrockTransport("mixed-router", "anthropic/sonnet-5"),
+            ).toBeUndefined();
+        });
+
         it("validates the provider default-enable switch independently of provider records", () => {
             expectParseError("[providers]\ndefault_enable = 'yes'", "boolean");
             expectParseError("[providers.codex]\nenabled = 'yes'");

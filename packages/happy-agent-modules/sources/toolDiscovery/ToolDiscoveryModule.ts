@@ -5,9 +5,13 @@ import {
     type AgentModuleScope,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
-import type { ProviderModelCompatibilityType } from "@slopus/happy-providers";
+import type {
+    AnthropicBedrockTransport,
+    ProviderModelCompatibilityType,
+} from "@slopus/happy-providers";
 import { Type } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
+import type { ConfigModule } from "../config/index.js";
 
 const exact = { additionalProperties: false } as const;
 const emptyResultSchema = Type.Object({}, exact);
@@ -49,6 +53,7 @@ const CODEX_TOOL_SEARCH_MODELS = [
 export interface ToolDiscoverySelection {
     readonly providerKind: ProviderModelCompatibilityType | undefined;
     readonly model: string | undefined;
+    readonly bedrockTransport?: AnthropicBedrockTransport;
 }
 
 const claudeToolSearch = defineAgentTool({
@@ -59,6 +64,20 @@ const claudeToolSearch = defineAgentTool({
     returnType: emptyResultSchema,
     shouldReviewInAutoMode: () => false,
     execute: () => Promise.reject(new Error("Claude owns ToolSearch execution.")),
+    toLLM: () => [],
+});
+
+const bedrockToolSearch = defineAgentTool({
+    name: "ToolSearch",
+    server: {
+        type: "tool_search_tool_regex",
+        name: "tool_search_tool_regex",
+    },
+    persistInHistory: false,
+    visibleToUser: false,
+    returnType: emptyResultSchema,
+    shouldReviewInAutoMode: () => false,
+    execute: () => Promise.reject(new Error("Anthropic Bedrock owns ToolSearch execution.")),
     toLLM: () => [],
 });
 
@@ -93,6 +112,13 @@ export function toolDiscoveryTools(selection: ToolDiscoverySelection): readonly 
     ) {
         return [claudeToolSearch];
     }
+    if (
+        selection.providerKind === "bedrock" &&
+        selection.bedrockTransport === "runtime" &&
+        includes(CLAUDE_TOOL_SEARCH_MODELS, selection.model)
+    ) {
+        return [bedrockToolSearch];
+    }
     if (selection.providerKind === "codex" && includes(CODEX_TOOL_SEARCH_MODELS, selection.model)) {
         return [codexToolSearch];
     }
@@ -103,12 +129,20 @@ export function toolDiscoveryTools(selection: ToolDiscoverySelection): readonly 
 export class ToolDiscoveryModule implements AgentModule {
     readonly name = "toolDiscovery";
 
+    constructor(private readonly config: ConfigModule) {}
+
     readonly #hooks: AgentModuleHooks = {
-        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] =>
-            toolDiscoveryTools({
+        tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => {
+            const bedrockTransport = this.config.anthropicBedrockTransport(
+                scope.agent.provider,
+                scope.agent.model,
+            );
+            return toolDiscoveryTools({
                 providerKind: scope.agent.providerKind,
                 model: scope.agent.model,
-            }),
+                ...(bedrockTransport === undefined ? {} : { bedrockTransport }),
+            });
+        },
     };
 
     readonly beforeStart = (): AgentModuleHooks => this.#hooks;

@@ -477,7 +477,7 @@ export async function startHappyAgentRuntime(
         const menuBar = new MenuBarModule(config);
         registerShutdown("menu-bar", async () => await menuBar.close());
         const modelSwitch = new ModelSwitchModule(history);
-        const toolDiscovery = new ToolDiscoveryModule();
+        const toolDiscovery = new ToolDiscoveryModule(config);
         const search = new SearchModule(config);
         const tasks = new TasksModule();
         const usage = new UsageModule(events);

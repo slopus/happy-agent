@@ -16,6 +16,8 @@ Select a discovery descriptor only for an exact provider/model route known to su
 models and providers receive no discovery tool, causing Happy Providers to expose deferred tools
 eagerly instead of hiding capabilities behind an unproven search surface.
 
-Bedrock stays on this eager fallback until its Anthropic adapter includes `searchKeywords` in the
-hosted search document. Enabling native deferral before then would make those owner-written terms
-dead metadata and could hide a tool whose distinguishing synonym exists only there.
+Bedrock Runtime uses AWS's documented hosted regex descriptor because its SDK route speaks the
+InvokeModel API that supports server-side tool search. Do not substitute Anthropic's BM25
+descriptor without Bedrock-specific evidence. The Anthropic adapter appends `searchKeywords` to
+every deferred tool's hosted search description, so owner-written synonyms remain searchable.
+Bedrock Mantle stays eager because hosted search support is not established for that transport.

@@ -27,11 +27,22 @@ export function toAnthropicTools(tools: readonly SessionTool[]): BetaToolUnion[]
         };
         return {
             name: toAnthropicToolName(tool),
-            description: tool.description ?? "",
+            description: toolDescription(tool, hasToolSearch),
             input_schema: { ...schema, type: "object" as const },
             ...(hasToolSearch && tool.defer === true ? { defer_loading: true } : {}),
         };
     });
+}
+
+function toolDescription(tool: SessionTool, hasToolSearch: boolean): string {
+    const description = tool.description ?? "";
+    if (!hasToolSearch || tool.defer !== true) return description;
+    const keywords = [...new Set((tool.searchKeywords ?? []).map((value) => value.trim()))].filter(
+        (value) => value.length > 0,
+    );
+    if (keywords.length === 0) return description;
+    const suffix = `Search keywords: ${keywords.join(", ")}.`;
+    return description.length === 0 ? suffix : `${description}\n\n${suffix}`;
 }
 
 export function isAnthropicToolSearchTool(tool: SessionTool): boolean {

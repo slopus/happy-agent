@@ -44,6 +44,7 @@ describe("provider-owned tool search", () => {
         expect(request.tools?.[0]).toEqual(server);
         expect(request.tools?.[1]).toMatchObject({
             name: "rare_tool",
+            description: "Perform a rare operation.\n\nSearch keywords: uncommon, specialized.",
             defer_loading: true,
         });
     });

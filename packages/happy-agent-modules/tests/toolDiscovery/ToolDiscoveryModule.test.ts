@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { ToolDiscoveryModule, toolDiscoveryTools } from "../../sources/toolDiscovery/index.js";
+import type { AnthropicBedrockTransport } from "@slopus/happy-providers";
+
+import {
+    ToolDiscoveryModule,
+    toolDiscoveryTools,
+    type ToolDiscoverySelection,
+} from "../../sources/toolDiscovery/index.js";
+import { testConfig } from "../support/computeModule.js";
 
 const CLAUDE_MODELS = [
     "anthropic/opus-5",
@@ -55,11 +62,39 @@ describe("ToolDiscoveryModule", () => {
         expect(tools[0]?.defer).toBeUndefined();
     });
 
+    it.each(CLAUDE_MODELS)("selects hosted regex search for Bedrock Runtime %s", (model) => {
+        const selection = {
+            providerKind: "bedrock",
+            model,
+            bedrockTransport: "runtime",
+        } satisfies ToolDiscoverySelection & {
+            readonly bedrockTransport: AnthropicBedrockTransport;
+        };
+
+        const tools = toolDiscoveryTools(selection);
+
+        expect(tools).toHaveLength(1);
+        expect(tools[0]).toMatchObject({
+            name: "ToolSearch",
+            server: {
+                type: "tool_search_tool_regex",
+                name: "tool_search_tool_regex",
+            },
+            persistInHistory: false,
+            visibleToUser: false,
+        });
+        expect(tools[0]?.defer).toBeUndefined();
+    });
+
     it.each([
         { providerKind: "grok" as const, model: "xai/grok-4.6" },
         { providerKind: "gym" as const, model: "openai/gpt-5.6-sol" },
         { providerKind: "bedrock" as const, model: "openai/gpt-5.6-sol" },
-        ...CLAUDE_MODELS.map((model) => ({ providerKind: "bedrock" as const, model })),
+        ...CLAUDE_MODELS.map((model) => ({
+            providerKind: "bedrock" as const,
+            model,
+            bedrockTransport: "mantle" as const,
+        })),
         { providerKind: "codex" as const, model: "openai/future-model" },
         { providerKind: "claude" as const, model: undefined },
         { providerKind: undefined, model: "openai/gpt-5.6-sol" },
@@ -68,7 +103,7 @@ describe("ToolDiscoveryModule", () => {
     });
 
     it("exposes its selection through the ordinary module tool hook", async () => {
-        const hooks = await new ToolDiscoveryModule().beforeStart();
+        const hooks = await new ToolDiscoveryModule(testConfig).beforeStart();
         const tools = await hooks.tools?.(
             {} as never,
             {

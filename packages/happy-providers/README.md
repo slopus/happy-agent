@@ -287,7 +287,8 @@ Deferred loading follows the same ownership rule. Set `defer: true` on tools tha
 discovered, and select the provider/model's native server tool-search descriptor alongside them.
 That provider owns the complete search call and result. A provider/model tool array with no native
 search descriptor sends every deferred tool eagerly. `searchKeywords` adds caller-selected terms
-to provider-owned local search indexes (and to Claude's searchable MCP description).
+to provider-owned local search indexes, Claude's searchable MCP description, and Anthropic hosted
+search descriptions.
 
 ## Compaction
 

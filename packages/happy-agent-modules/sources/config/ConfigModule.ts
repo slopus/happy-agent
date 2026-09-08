@@ -10,7 +10,7 @@ import type {
     AgentProviders,
 } from "@slopus/happy-agent-base";
 import { cuid2Schema } from "@slopus/happy-agent-base";
-import type { ProviderUsage } from "@slopus/happy-providers";
+import type { AnthropicBedrockTransport, ProviderUsage } from "@slopus/happy-providers";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
@@ -23,6 +23,7 @@ import {
     agentModelContext,
     agentModels,
     agentProviders,
+    configuredAnthropicBedrockTransport,
     smartProviderRoute,
     type AgentModelContext,
     type ConfiguredAgentModel,
@@ -1357,6 +1358,14 @@ export class ConfigModule implements AgentModule {
             (model) => model.providerId === providerId && model.id === modelId,
         );
         return enabled ? agentModelContext(modelId) : undefined;
+    }
+
+    /** The concrete Anthropic Bedrock transport used by every route behind this selection. */
+    anthropicBedrockTransport(
+        providerId: string,
+        modelId: string | undefined,
+    ): AnthropicBedrockTransport | undefined {
+        return configuredAnthropicBedrockTransport(this.configuration, providerId, modelId);
     }
 
     /**

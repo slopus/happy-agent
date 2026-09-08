@@ -8,10 +8,11 @@ The provider/model selection is deliberately closed:
 
 - Claude models use Claude Code's built-in `ToolSearch`.
 - Codex GPT-5.6 models and GPT-6 Astra use provider-owned client BM25 through `tool_search`.
-- Bedrock, Grok, Gym, unknown models, and future unverified routes receive no search descriptor.
-  Providers therefore expose every deferred client tool eagerly on those routes. Bedrock's hosted
-  search remains disabled because the released Anthropic adapter does not include caller-supplied
-  BM25 keywords in its search documents.
+- Anthropic models on Bedrock Runtime use Bedrock's hosted regex tool search. Runtime speaks the
+  InvokeModel API required by that feature, and the Anthropic adapter adds each tool's owner-written
+  search keywords to its hosted search description.
+- Bedrock Mantle, Grok, Gym, unknown models, and future unverified routes receive no search
+  descriptor. Providers therefore expose every deferred client tool eagerly on those routes.
 
 The discovery call is retained only in Agent Base's private provider context. It is absent from
 ordinary history and live user-facing events. The actual tool it discovers remains an ordinary

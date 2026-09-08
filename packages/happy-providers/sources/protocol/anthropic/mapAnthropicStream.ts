@@ -1,5 +1,6 @@
 import type {
     BetaRawMessageStreamEvent,
+    BetaRefusalStopDetails,
     BetaStopReason,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { APIConnectionError } from "@anthropic-ai/sdk/error";
@@ -50,6 +51,7 @@ export async function* mapAnthropicStream(
     };
     let outputTokensReported = false;
     let stopReason: BetaStopReason | null = null;
+    let refusalDetails: BetaRefusalStopDetails | null = null;
     let sawCompaction = false;
     let sawClientTool = false;
     let started = false;
@@ -61,6 +63,9 @@ export async function* mapAnthropicStream(
         if (event.type === "message_start") {
             usage = toUsage(event.message.usage);
             outputTokensReported = typeof event.message.usage.output_tokens === "number";
+            if (event.message.stop_details !== null && event.message.stop_details !== undefined) {
+                refusalDetails = event.message.stop_details;
+            }
             continue;
         }
         if (event.type === "content_block_start") {
@@ -251,11 +256,20 @@ export async function* mapAnthropicStream(
             usage = mergeUsage(usage, event.usage);
             if (typeof event.usage.output_tokens === "number") outputTokensReported = true;
             stopReason = event.delta.stop_reason;
+            if (event.delta.stop_details !== null && event.delta.stop_details !== undefined) {
+                refusalDetails = event.delta.stop_details;
+            }
             if (stopReason === "compaction") options.onOutputStarted?.();
             continue;
         }
         if (event.type === "message_stop") {
-            const terminal = toDoneEvent(stopReason, sawClientTool, sawCompaction, usage);
+            const terminal = toDoneEvent(
+                stopReason,
+                sawClientTool,
+                sawCompaction,
+                usage,
+                refusalDetails,
+            );
             if (
                 terminal.state !== "error" &&
                 terminal.state !== "cancelled" &&
@@ -274,7 +288,7 @@ export async function* mapAnthropicStream(
     if (sawCompaction || stopReason === "compaction") {
         yield { type: "token_usage", usage };
         yield { type: "block_stop" };
-        yield toDoneEvent(stopReason, sawClientTool, sawCompaction, usage);
+        yield toDoneEvent(stopReason, sawClientTool, sawCompaction, usage, refusalDetails);
         return;
     }
     throw new APIConnectionError({
@@ -366,6 +380,7 @@ function toDoneEvent(
     sawTool: boolean,
     sawCompaction: boolean,
     usage: SessionUsage,
+    refusalDetails: BetaRefusalStopDetails | null,
 ): Extract<SessionEvent, { type: "done" }> {
     if (sawCompaction || stopReason === "compaction") {
         return {
@@ -388,7 +403,7 @@ function toDoneEvent(
             type: "done",
             state: "error",
             kind: "unknown",
-            message: "The model refused to complete the request.",
+            message: refusalMessage(refusalDetails),
             providerError: { type: "unclassified" },
         };
     }
@@ -404,4 +419,25 @@ function toDoneEvent(
         state: "normal",
         tokens: { input: usage.input, output: usage.output },
     };
+}
+
+function refusalMessage(details: BetaRefusalStopDetails | null): string {
+    const base = "The model refused to complete the request";
+    const explanation = details?.explanation?.trim();
+    const category = details?.category === null ? undefined : details?.category;
+    const categoryLabel =
+        category === undefined
+            ? undefined
+            : {
+                  bio: "biological safety",
+                  cyber: "cybersecurity safety",
+                  frontier_llm: "frontier-model safety",
+                  reasoning_extraction: "reasoning-extraction safety",
+              }[category];
+    if (categoryLabel !== undefined && explanation !== undefined && explanation.length > 0) {
+        return `${base} under its ${categoryLabel} policy: ${explanation}`;
+    }
+    if (categoryLabel !== undefined) return `${base} under its ${categoryLabel} policy.`;
+    if (explanation !== undefined && explanation.length > 0) return `${base}: ${explanation}`;
+    return `${base}.`;
 }

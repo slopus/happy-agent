@@ -46,6 +46,23 @@ describe("Anthropic protocol stop reasons", () => {
     });
 
     it.each(["start", "delta"] as const)(
+        "surfaces structured refusal details from message_%s",
+        async (eventType) => {
+            const events: SessionEvent[] = [];
+            for await (const event of mapAnthropicStream(refusalDetailStream(eventType))) {
+                events.push(event);
+            }
+
+            expect(events.at(-1)).toMatchObject({
+                type: "done",
+                state: "error",
+                message:
+                    "The model refused to complete the request under its cybersecurity safety policy: The request combined broad shell access with credential operations.",
+            });
+        },
+    );
+
+    it.each(["start", "delta"] as const)(
         "fails a paused compaction from a %s event instead of completing an empty response",
         async (eventType) => {
             const events: SessionEvent[] = [];
@@ -118,6 +135,33 @@ async function* pausedCompactionStream(
         type: "message_delta",
         delta: { stop_reason: "pause_turn", stop_sequence: null },
         usage: { output_tokens: 0 },
+    } as BetaRawMessageStreamEvent;
+    yield { type: "message_stop" } as BetaRawMessageStreamEvent;
+}
+
+async function* refusalDetailStream(
+    eventType: "start" | "delta",
+): AsyncGenerator<BetaRawMessageStreamEvent> {
+    const stopDetails = {
+        category: "cyber",
+        explanation: "The request combined broad shell access with credential operations.",
+        fallback_credit_token: null,
+    };
+    yield {
+        type: "message_start",
+        message: {
+            stop_details: eventType === "start" ? stopDetails : null,
+            usage: { input_tokens: 1, output_tokens: 0 },
+        },
+    } as BetaRawMessageStreamEvent;
+    yield {
+        type: "message_delta",
+        delta: {
+            stop_details: eventType === "delta" ? stopDetails : null,
+            stop_reason: "refusal",
+            stop_sequence: null,
+        },
+        usage: { output_tokens: 1 },
     } as BetaRawMessageStreamEvent;
     yield { type: "message_stop" } as BetaRawMessageStreamEvent;
 }
