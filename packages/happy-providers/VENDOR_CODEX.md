@@ -72,6 +72,7 @@ retry behavior, or compaction.
 | Absence of provider-owned automatic compaction in Rig             | Provider tests                   |
 | Rig hard-window safety fitting                                    | Unit tests                       |
 | Bedrock/Mantle initial request                                    | Real request-only capture        |
+| Bedrock Runtime endpoint, routed model ID, and header selection   | Vanilla source and mocked tests  |
 | Successful Bedrock inference and local compaction                 | Not live-verified                |
 | ChatGPT credential rotation after session creation                | Deterministic auth-recovery test |
 | Image input and image-bearing tool output                         | Request serialization tests      |
@@ -93,8 +94,10 @@ The reviewed model contracts are:
 - `gpt-5.6-sol`: Responses Lite shape, compaction hash `3000`, default low effort;
 - `gpt-5.6-terra`: Responses Lite shape, compaction hash `3000`, default medium effort;
 - `gpt-5.6-luna`: Responses Lite shape, compaction hash `3000`, default medium effort;
-- Bedrock model names use the `openai.` prefix and currently inherit the 5.5-style request and
-  compaction contract.
+- Bedrock Mantle model names use the `openai.` prefix. GPT-6 Astra is not currently served by
+  Mantle, so Rig routes it through the regional Bedrock Runtime OpenAI endpoint as
+  `global.openai.gpt-6-astra`. Both Bedrock routes inherit the 5.5-style request and compaction
+  contract.
 
 Astra's active Codex context is 272,000 tokens and its automatic compaction threshold is 244,800.
 Codex metadata also advertises an opt-in 872,000-token ceiling; Rig does not currently expose that

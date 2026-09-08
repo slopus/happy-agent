@@ -133,7 +133,11 @@ export {
 } from "@/vendors/grok/fetchGrokProviderUsage.js";
 export { GrokSession, type GrokSessionOptions } from "@/vendors/grok/GrokSession.js";
 export type { GrokToolVendor } from "@/vendors/grok/GrokToolVendor.js";
-export { CodexProvider, type CodexProviderOptions } from "@/vendors/codex/CodexProvider.js";
+export {
+    CodexProvider,
+    type CodexBedrockTransport,
+    type CodexProviderOptions,
+} from "@/vendors/codex/CodexProvider.js";
 export {
     CodexImageGenerationError,
     generateCodexImage,

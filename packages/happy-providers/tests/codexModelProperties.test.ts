@@ -58,4 +58,15 @@ describe("Codex model properties", () => {
         });
         expect(standardRequest.reasoning).not.toHaveProperty("context");
     });
+
+    it("uses Bedrock's standard Responses contract for GPT-6 Astra", () => {
+        for (const model of ["openai.gpt-6-astra", "global.openai.gpt-6-astra"]) {
+            expect(getCodexModelProperties(model)).toEqual({
+                compactionHash: "2911",
+                contextWindow: 272_000,
+                defaultEffort: "low",
+                responsesLite: false,
+            });
+        }
+    });
 });

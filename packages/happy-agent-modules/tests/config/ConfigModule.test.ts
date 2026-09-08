@@ -471,7 +471,7 @@ describe("ConfigModule", () => {
         });
     });
 
-    it("offers GPT-6 Astra only through Codex with Happy's operating profile", async () => {
+    it("offers GPT-6 Astra through Codex and Bedrock with Happy's operating profile", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-astra-catalog-"));
         temporaryDirectories.push(root);
         await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
@@ -505,10 +505,20 @@ describe("ConfigModule", () => {
             autoCompactWindow: 244_800,
         });
         expect(
-            module.catalog.some(
+            module.catalog.find(
                 (model) => model.providerId === "bedrock" && model.id === "openai/gpt-6-astra",
             ),
-        ).toBe(false);
+        ).toMatchObject({
+            contextWindow: 272_000,
+            defaultEffort: "high",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "GPT-6 Astra",
+        });
+        expect(module.modelContext("bedrock", "openai/gpt-6-astra")).toEqual({
+            contextWindow: 272_000,
+            autoCompactWindow: 244_800,
+        });
     });
 
     it("ignores unknown TOML fields while retaining their source locations", () => {

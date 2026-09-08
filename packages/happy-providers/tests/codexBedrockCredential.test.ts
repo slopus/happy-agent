@@ -5,12 +5,14 @@ import { createServer } from "node:http";
 
 import { describe, expect, it } from "vitest";
 
+import { BedrockAwsCredential } from "@/vendors/bedrock/BedrockAwsCredential.js";
 import { BedrockBearerTokenCredential } from "@/vendors/bedrock/BedrockBearerTokenCredential.js";
 import { CodexApiKeyCredential } from "@/vendors/codex/CodexApiKeyCredential.js";
 import { CodexProvider } from "@/vendors/codex/CodexProvider.js";
 import { CodexSession } from "@/vendors/codex/CodexSession.js";
 import { CODEX_API_ENDPOINT, CODEX_CHATGPT_ENDPOINT } from "@/vendors/codex/impl/codexConstants.js";
 import { getCodexModelProperties } from "@/vendors/codex/impl/getCodexModelProperties.js";
+import { createCodexClient } from "@/vendors/codex/impl/createCodexClient.js";
 import { codex_coding_agent_instructions } from "@/vendors/codex/prompts/codex_coding_agent_instructions.js";
 import {
     context_checkpoint_compaction_instructions,
@@ -62,8 +64,11 @@ describe("CodexProvider credential behavior", () => {
     });
 
     it("selects regional Bedrock Mantle and SSE from a Bedrock credential", async () => {
-        const credential = await BedrockBearerTokenCredential.tryLoad({
-            bearerToken: "bedrock-test-token",
+        const credential = await BedrockAwsCredential.tryLoad({
+            credentialProvider: async () => ({
+                accessKeyId: "AKIATEST",
+                secretAccessKey: "test-secret-key",
+            }),
         });
         expect(credential).not.toBeNull();
 
@@ -85,6 +90,80 @@ describe("CodexProvider credential behavior", () => {
                 compactionHash: "2911",
                 responsesLite: false,
             });
+        }
+    });
+
+    it("routes GPT-6 Astra through regional Bedrock Runtime", async () => {
+        const credential = await BedrockAwsCredential.tryLoad({
+            credentialProvider: async () => ({
+                accessKeyId: "AKIATEST",
+                secretAccessKey: "test-secret-key",
+            }),
+        });
+        expect(credential).not.toBeNull();
+
+        const provider = new CodexProvider({
+            credential: credential!,
+            model: "openai/gpt-6-astra",
+            region: "us-east-2",
+        });
+
+        expect(provider.bedrockTransport).toBe("runtime");
+        expect(provider.endpoint).toBe("https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1");
+        expect(provider.model).toBe("global.openai.gpt-6-astra");
+        expect(provider.transport).toBe("sse");
+    });
+
+    it("omits the Mantle client header from Bedrock Runtime requests", async () => {
+        let headers: Record<string, string | string[] | undefined> | undefined;
+        const server = createServer(async (request, response) => {
+            for await (const _chunk of request) {
+                // Drain the request before answering.
+            }
+            headers = request.headers;
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(
+                JSON.stringify({
+                    id: "runtime-response",
+                    object: "response",
+                    output: [],
+                    status: "completed",
+                }),
+            );
+        });
+        await new Promise<void>((resolve, reject) => {
+            server.listen(0, "127.0.0.1", resolve);
+            server.once("error", reject);
+        });
+        const address = server.address();
+        if (typeof address !== "object" || address === null) expect.fail("Missing server port.");
+        const credential = await BedrockAwsCredential.tryLoad({
+            credentialProvider: async () => ({
+                accessKeyId: "AKIATEST",
+                secretAccessKey: "test-secret-key",
+            }),
+        });
+
+        try {
+            const client = createCodexClient({
+                bedrockTransport: "runtime",
+                credential: credential!,
+                endpoint: `http://127.0.0.1:${address.port}/openai/v1`,
+                installationId: "test-installation",
+                region: "us-east-2",
+                sessionId: "test-session",
+                userAgent: "rig-test",
+                windowId: "test-window",
+            });
+            await client.responses.create({
+                input: [],
+                model: "global.openai.gpt-6-astra",
+            });
+
+            expect(headers?.["x-amzn-mantle-client-agent"]).toBeUndefined();
+            expect(headers?.authorization).toContain("/us-east-2/bedrock/aws4_request");
+        } finally {
+            server.close();
         }
     });
 

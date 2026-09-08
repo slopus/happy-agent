@@ -135,9 +135,7 @@ const CATALOG: readonly CatalogAgentModel[] = [
 
 /** Bedrock resells a documented subset of the native catalogs and adds one model of its own. */
 const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
-    ...CATALOG.filter(
-        (candidate) => candidate.providerId !== "grok" && candidate.id !== "openai/gpt-6-astra",
-    ).map((candidate) => {
+    ...CATALOG.filter((candidate) => candidate.providerId !== "grok").map((candidate) => {
         const { serviceTiers: _unsupported, ...rest } = candidate;
         return { ...rest, providerId: "bedrock" };
     }),
@@ -584,7 +582,12 @@ async function createProvider(
               ...shared,
               ...(transport === undefined ? {} : { transport }),
           })
-        : new CodexProvider(shared);
+        : new CodexProvider({
+              ...shared,
+              ...(override?.transport === undefined
+                  ? {}
+                  : { bedrockTransport: override.transport }),
+          });
 }
 
 function resolveAnthropicBedrockTransport(

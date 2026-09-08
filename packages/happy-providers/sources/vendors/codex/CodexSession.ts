@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type OpenAI from "openai";
+import type { CodexBedrockTransport } from "@/vendors/codex/CodexProvider.js";
 
 import { BaseSession } from "@/core/BaseSession.js";
 import {
@@ -79,6 +80,7 @@ const CODEX_COMPACTION_MAX_RETRIES = 2;
 const CODEX_TOOL_SEARCH_MAX_ROUNDS = 4;
 
 export interface CodexSessionOptions extends InferenceRetryOptions {
+    bedrockTransport?: CodexBedrockTransport;
     instructions: string;
     credential: CodexProviderCredential;
     endpoint: string;
@@ -94,6 +96,7 @@ export interface CodexSessionOptions extends InferenceRetryOptions {
 }
 
 export class CodexSession extends BaseSession {
+    readonly bedrockTransport: CodexBedrockTransport | undefined;
     credential: CodexProviderCredential;
     readonly endpoint: string;
     readonly model: string | undefined;
@@ -124,6 +127,7 @@ export class CodexSession extends BaseSession {
     constructor(id: string, options: CodexSessionOptions) {
         super(id);
         this.credential = options.credential;
+        this.bedrockTransport = options.bedrockTransport;
         this.endpoint = options.endpoint;
         this.installationId = options.installationId;
         this.model = options.model;
@@ -145,7 +149,11 @@ export class CodexSession extends BaseSession {
         });
         for (const [model, configuration] of Object.entries(options.modelConfigurations ?? {})) {
             this.modelConfigurations.set(
-                resolveCodexSessionModelId(model, isBedrockCredential(this.credential)),
+                resolveCodexSessionModelId(
+                    model,
+                    isBedrockCredential(this.credential),
+                    this.bedrockTransport,
+                ),
                 cloneConfiguration(configuration),
             );
         }
@@ -189,7 +197,11 @@ export class CodexSession extends BaseSession {
         const model =
             requestedModel === undefined
                 ? undefined
-                : resolveCodexSessionModelId(requestedModel, isBedrockCredential(this.credential));
+                : resolveCodexSessionModelId(
+                      requestedModel,
+                      isBedrockCredential(this.credential),
+                      this.bedrockTransport,
+                  );
         if (model === undefined) throw new Error("A model is required for Codex compaction.");
         this.activeModel = model;
         const effort = resolveCodexReasoningEffort(model, this.activeEffort);
@@ -490,7 +502,11 @@ export class CodexSession extends BaseSession {
         const model =
             requestedModel === undefined
                 ? undefined
-                : resolveCodexSessionModelId(requestedModel, isBedrockCredential(this.credential));
+                : resolveCodexSessionModelId(
+                      requestedModel,
+                      isBedrockCredential(this.credential),
+                      this.bedrockTransport,
+                  );
         if (model === undefined) throw new Error("A model is required for Codex inference.");
         const configuration = this.resolveConfiguration(model);
         const effort = resolveCodexReasoningEffort(model, request.effort);
@@ -870,6 +886,9 @@ export class CodexSession extends BaseSession {
 
     private resolveClient(): OpenAI {
         return (this.client ??= createCodexClient({
+            ...(this.bedrockTransport === undefined
+                ? {}
+                : { bedrockTransport: this.bedrockTransport }),
             credential: this.credential,
             endpoint: this.endpoint,
             installationId: this.installationId,

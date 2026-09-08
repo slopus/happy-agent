@@ -20,6 +20,7 @@ describe("Rig model IDs", () => {
         [resolveGrokModelId, "xai/grok-4.6", "grok-4.6"],
         [resolveGrokModelId, "xai/grok-4.5", "grok-4.5"],
         [resolveBedrockModelId, "anthropic/sonnet-5", "anthropic.claude-sonnet-5"],
+        [resolveBedrockModelId, "openai/gpt-6-astra", "openai.gpt-6-astra"],
         [resolveBedrockModelId, "openai/gpt-5.6-sol", "openai.gpt-5.6-sol"],
     ])("resolves %s", (resolve, modelId, expected) => {
         expect(resolve(modelId)).toBe(expected);
@@ -34,5 +35,8 @@ describe("Rig model IDs", () => {
         // Codex uses the bare v2 name.
         expect(resolveCodexSessionModelId("openai/gpt-5.6-sol", true)).toBe("openai.gpt-5.6-sol");
         expect(resolveCodexSessionModelId("openai/gpt-5.6-sol", false)).toBe("gpt-5.6-sol");
+        expect(resolveCodexSessionModelId("openai/gpt-6-astra", true, "runtime")).toBe(
+            "global.openai.gpt-6-astra",
+        );
     });
 });

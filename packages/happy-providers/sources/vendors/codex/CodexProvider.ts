@@ -10,6 +10,7 @@ import { isBedrockCredential, type CodexProviderCredential } from "@/vendors/Ven
 import {
     BEDROCK_DEFAULT_REGION,
     bedrockMantleEndpoint,
+    bedrockRuntimeOpenAIEndpoint,
 } from "@/vendors/bedrock/impl/bedrockConstants.js";
 import { CodexSession } from "@/vendors/codex/CodexSession.js";
 import { assertCodexCredential } from "@/vendors/codex/impl/assertCodexCredential.js";
@@ -29,6 +30,7 @@ import {
 } from "@/vendors/codex/generateCodexImage.js";
 
 export interface CodexProviderOptions extends InferenceRetryOptions {
+    bedrockTransport?: CodexBedrockTransport;
     credential: CodexProviderCredential;
     endpoint?: string;
     model?: string;
@@ -42,12 +44,15 @@ export interface CodexProviderOptions extends InferenceRetryOptions {
     userAgent?: string;
 }
 
+export type CodexBedrockTransport = "mantle" | "runtime";
+
 export class CodexProvider extends ResponsesProvider {
     static override readonly name = "codex";
     static override readonly inputTypes: readonly ProviderModality[] = ["text", "image"];
     static override readonly outputTypes: readonly ProviderModality[] = ["text"];
 
     readonly credential: CodexProviderCredential;
+    readonly bedrockTransport: CodexBedrockTransport | undefined;
     readonly endpoint: string;
     readonly model: string | undefined;
     readonly parallelToolCalls: boolean | undefined;
@@ -69,17 +74,22 @@ export class CodexProvider extends ResponsesProvider {
             process.env.AWS_DEFAULT_REGION?.trim() ||
             BEDROCK_DEFAULT_REGION;
         this.region = region;
+        this.bedrockTransport = isBedrock
+            ? (options.bedrockTransport ?? defaultBedrockTransport(options.model))
+            : undefined;
         this.endpoint =
             options.endpoint ??
             (isBedrock
-                ? bedrockMantleEndpoint(region)
+                ? this.bedrockTransport === "runtime"
+                    ? bedrockRuntimeOpenAIEndpoint(region)
+                    : bedrockMantleEndpoint(region)
                 : options.credential.name === "codex-session"
                   ? CODEX_CHATGPT_ENDPOINT
                   : CODEX_API_ENDPOINT);
         this.model =
             options.model === undefined
                 ? undefined
-                : resolveCodexSessionModelId(options.model, isBedrock);
+                : resolveCodexSessionModelId(options.model, isBedrock, this.bedrockTransport);
         this.parallelToolCalls = options.parallelToolCalls;
         this.#resolveInferenceMaxRetries = createInferenceMaxRetriesResolver(options);
         this.#waitForInferenceRetry = options.waitForInferenceRetry;
@@ -110,6 +120,9 @@ export class CodexProvider extends ResponsesProvider {
         const userAgent = this.userAgent ?? (await resolveCodexUserAgent());
         return new CodexSession(id, {
             ...options,
+            ...(this.bedrockTransport === undefined
+                ? {}
+                : { bedrockTransport: this.bedrockTransport }),
             credential: this.credential,
             endpoint: this.endpoint,
             installationId,
@@ -130,4 +143,12 @@ export class CodexProvider extends ResponsesProvider {
             userAgent,
         });
     }
+}
+
+function defaultBedrockTransport(model: string | undefined): CodexBedrockTransport {
+    return model === "openai/gpt-6-astra" ||
+        model === "openai.gpt-6-astra" ||
+        /^(?:global|us)\.openai\.gpt-6-astra$/u.test(model ?? "")
+        ? "runtime"
+        : "mantle";
 }

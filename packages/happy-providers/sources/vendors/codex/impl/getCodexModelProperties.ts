@@ -53,8 +53,8 @@ const MODEL_PROPERTIES: Readonly<Record<string, CodexModelProperties>> = {
 };
 
 export function getCodexModelProperties(model: string): CodexModelProperties | undefined {
-    const bedrock = model.startsWith("openai.");
-    const properties = MODEL_PROPERTIES[model.replace(/^openai\./u, "")];
+    const bedrock = /^(?:(?:global|us)\.)?openai\./u.test(model);
+    const properties = MODEL_PROPERTIES[model.replace(/^(?:(?:global|us)\.)?openai\./u, "")];
     if (!bedrock || properties === undefined) return properties;
     return {
         ...properties,

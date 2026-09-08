@@ -11,3 +11,7 @@ export function anthropicBedrockMantleEndpoint(region: string): string {
 export function bedrockRuntimeEndpoint(region: string): string {
     return `https://bedrock-runtime.${region}.amazonaws.com`;
 }
+
+export function bedrockRuntimeOpenAIEndpoint(region: string): string {
+    return `${bedrockRuntimeEndpoint(region)}/openai/v1`;
+}
