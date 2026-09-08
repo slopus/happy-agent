@@ -135,10 +135,7 @@ const CATALOG: readonly CatalogAgentModel[] = [
 /** Bedrock resells a documented subset of the native catalogs and adds one model of its own. */
 const BEDROCK_CATALOG: readonly CatalogAgentModel[] = [
     ...CATALOG.filter(
-        (candidate) =>
-            candidate.providerId !== "grok" &&
-            candidate.id !== "anthropic/fable-5-1" &&
-            candidate.id !== "openai/gpt-6-astra",
+        (candidate) => candidate.providerId !== "grok" && candidate.id !== "openai/gpt-6-astra",
     ).map((candidate) => {
         const { serviceTiers: _unsupported, ...rest } = candidate;
         return { ...rest, providerId: "bedrock" };
@@ -571,6 +568,9 @@ async function createProvider(
     // decides which client speaks to it.
     const override =
         selectedModel === undefined ? undefined : provider.modelOverrides?.[selectedModel];
+    const transport =
+        override?.transport ??
+        (selectedModel === "anthropic/fable-5-1" ? ("runtime" as const) : undefined);
     const shared = {
         credential,
         ...(override?.endpoint === undefined ? {} : { endpoint: override.endpoint }),
@@ -583,7 +583,7 @@ async function createProvider(
     return selectedModel?.startsWith("anthropic/") === true
         ? new AnthropicProvider({
               ...shared,
-              ...(override?.transport === undefined ? {} : { transport: override.transport }),
+              ...(transport === undefined ? {} : { transport }),
           })
         : new CodexProvider(shared);
 }

@@ -430,7 +430,7 @@ describe("ConfigModule", () => {
         ).toEqual(["gym/model", "gym/model-2"]);
     });
 
-    it("offers Fable 5.1 through Claude with its full context and effort ladder", async () => {
+    it("offers Fable 5.1 through Claude and Bedrock", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-fable-5-1-catalog-"));
         temporaryDirectories.push(root);
         await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
@@ -459,10 +459,16 @@ describe("ConfigModule", () => {
             name: "Fable 5.1",
         });
         expect(
-            module.catalog.some(
+            module.catalog.find(
                 (model) => model.providerId === "bedrock" && model.id === "anthropic/fable-5-1",
             ),
-        ).toBe(false);
+        ).toMatchObject({
+            contextWindow: 1_000_000,
+            defaultEffort: "medium",
+            effortLevels: ["off", "low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "Fable 5.1",
+        });
     });
 
     it("offers GPT-6 Astra only through Codex with Happy's operating profile", async () => {

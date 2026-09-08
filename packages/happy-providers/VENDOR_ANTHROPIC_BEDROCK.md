@@ -38,16 +38,19 @@ inference-profile ID directly when intentionally using an unlisted model.
 Rig's Bedrock executor owns an ordered model/transport/region table. The first matching transport
 wins:
 
-| Model           | Preferred Mantle regions                                                  | Runtime fallback           |
-| --------------- | ------------------------------------------------------------------------- | -------------------------- |
-| Claude Sonnet 5 | `eu-north-1`, `eu-west-1`, `us-east-1`                                    | Commercial Bedrock regions |
-| Claude Fable 5  | `us-east-1`                                                               | Commercial Bedrock regions |
-| Claude Opus 4.8 | `ap-northeast-1`, `eu-north-1`, `eu-west-1`, `us-east-1`, `us-gov-west-1` | Commercial Bedrock regions |
+| Model            | Preferred Mantle regions                                                  | Runtime fallback           |
+| ---------------- | ------------------------------------------------------------------------- | -------------------------- |
+| Claude Fable 5.1 | None documented; Runtime is the default                                   | Commercial Bedrock regions |
+| Claude Sonnet 5  | `eu-north-1`, `eu-west-1`, `us-east-1`                                    | Commercial Bedrock regions |
+| Claude Fable 5   | `us-east-1`                                                               | Commercial Bedrock regions |
+| Claude Opus 4.8  | `ap-northeast-1`, `eu-north-1`, `eu-west-1`, `us-east-1`, `us-gov-west-1` | Commercial Bedrock regions |
 
 These Mantle lists are the intersection of the AWS Mantle endpoint regions and each model's
 documented in-region availability. Runtime remains the fallback because it supports geographic
 and global inference profiles. A per-model `transport = "mantle"` or `transport = "runtime"`
 override can force one supported surface; pairing it with `endpoint` supports a custom gateway.
+Fable 5.1 defaults to Runtime because AWS documents US and global inference profiles but no
+in-region Mantle route.
 
 ## Runtime ownership
 

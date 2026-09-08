@@ -13,6 +13,7 @@ describe("Rig model IDs", () => {
         [resolveClaudeModelId, "anthropic/fable-5", "claude-fable-5[1m]"],
         [resolveClaudeModelId, "anthropic/opus-5", "claude-opus-5[1m]"],
         [resolveClaudeModelId, "anthropic/opus-4-8", "claude-opus-4-8[1m]"],
+        [resolveBedrockModelId, "anthropic/fable-5-1", "anthropic.claude-fable-5-1"],
         [resolveBedrockModelId, "anthropic/opus-5", "anthropic.claude-opus-5"],
         [resolveCodexModelId, "openai/gpt-6-astra", "gpt-6-astra"],
         [resolveCodexModelId, "openai/gpt-5.6-sol", "gpt-5.6-sol"],

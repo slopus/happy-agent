@@ -153,6 +153,15 @@ describe("AnthropicBedrockProvider", () => {
     });
 
     it("uses the same regional inference profiles as Rig's Bedrock catalog", () => {
+        expect(resolveAnthropicBedrockModelId("anthropic/fable-5-1", "us-east-1")).toBe(
+            "us.anthropic.claude-fable-5-1",
+        );
+        expect(resolveAnthropicBedrockModelId("anthropic/fable-5-1", "eu-west-1")).toBe(
+            "global.anthropic.claude-fable-5-1",
+        );
+        expect(resolveAnthropicBedrockModelId("anthropic/fable-5-1", "us-east-1", "mantle")).toBe(
+            "anthropic.claude-fable-5-1",
+        );
         expect(resolveAnthropicBedrockModelId("anthropic/opus-4-8", "us-east-1")).toBe(
             "us.anthropic.claude-opus-4-8",
         );
