@@ -156,9 +156,13 @@ jobs:
                   package-manager-cache: false
 
             - name: Install an npm that speaks trusted publishing
-              # OIDC publishing landed in npm 11.5.1. The Node release line ships an older npm, and
-              # pnpm cannot publish over OIDC at all, which is why this one step is npm's.
-              run: npm install --global npm@latest
+              # Match the client and compute publishers: install a pinned OIDC-capable CLI with
+              # pnpm, then invoke it directly so Node's bundled npm cannot shadow it.
+              run: |
+                  pnpm add --global npm@11.18.0
+                  npm_cli="$(pnpm root --global)/npm/bin/npm-cli.js"
+                  test "$(node "${npm_cli}" --version)" = "11.18.0"
+                  echo "NPM_CLI=${npm_cli}" >> "${GITHUB_ENV}"
 
             - name: Verify the tag matches the package version
               env:
@@ -209,7 +213,7 @@ jobs:
                   set -euo pipefail
                   for tarball in *-darwin-*.tgz *-linux-*.tgz; do
                       echo "Publishing ${tarball}..."
-                      npm publish "${tarball}" --access public --tag platform
+                      node "${NPM_CLI}" publish "${tarball}" --access public --tag platform --provenance
                   done
 
             - name: Publish the package
@@ -225,4 +229,4 @@ jobs:
                       *-beta.*) distribution_tag=beta ;;
                   esac
                   echo "Publishing ${tarball} as ${distribution_tag}..."
-                  npm publish "${tarball}" --access public --tag "${distribution_tag}"
+                  node "${NPM_CLI}" publish "${tarball}" --access public --tag "${distribution_tag}" --provenance

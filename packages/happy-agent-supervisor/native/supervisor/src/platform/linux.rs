@@ -1,7 +1,7 @@
 use crate::exec::exec_target;
 use crate::platform::child::{
-    STATUS_EXIT, WorkloadStatus, install_signal_forwarders, reproduce_status, reset_signal_handlers,
-    set_forward_target, wait_for_pid, wait_status_to_workload_status,
+    STATUS_EXIT, WorkloadStatus, install_signal_forwarders, reproduce_status,
+    reset_signal_handlers, set_forward_target, wait_for_pid, wait_status_to_workload_status,
 };
 use crate::policy::{PermissionMode, SupervisorPolicy};
 use crate::proxy::{OutgoingProxy, egress};
@@ -336,14 +336,26 @@ fn canonical_existing_paths(
 }
 
 fn canonical_optional_paths(paths: &[PathBuf]) -> SupervisorResult<Vec<PathBuf>> {
-    let mut result = Vec::new();
+    let mut resolved = Vec::new();
     for path in paths {
         let canonical = match path.canonicalize() {
             Ok(canonical) => canonical,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error.into()),
         };
-        if !result.iter().any(|existing| existing == &canonical) {
+        resolved.push(canonical);
+    }
+    // A directory mask already denies its entire subtree. Mounting a second mask on a child
+    // afterwards fails because the parent mask has hidden its target. Path ordering places each
+    // parent before all its descendants, so retain only disjoint canonical roots. `starts_with`
+    // compares path components, preserving siblings such as `private` and `private-backup`.
+    resolved.sort();
+    let mut result: Vec<PathBuf> = Vec::new();
+    for canonical in resolved {
+        if result
+            .last()
+            .is_none_or(|ancestor| !canonical.starts_with(ancestor))
+        {
             result.push(canonical);
         }
     }
@@ -802,6 +814,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn read_denials_coalesce_canonical_subtrees_without_hiding_siblings() {
+        let root = tempfile::tempdir().unwrap_or_else(|error| panic!("temporary root: {error}"));
+        let private = root.path().join("private");
+        let nested = private.join("nested");
+        let sibling = root.path().join("private-backup");
+        fs::create_dir_all(&nested).unwrap_or_else(|error| panic!("nested directory: {error}"));
+        fs::create_dir(&sibling).unwrap_or_else(|error| panic!("sibling directory: {error}"));
+        let secret = nested.join("secret.txt");
+        fs::write(&secret, "private fixture").unwrap_or_else(|error| panic!("secret: {error}"));
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&private, &alias)
+            .unwrap_or_else(|error| panic!("private alias: {error}"));
+        let absent = root.path().join("absent");
+        let input = vec![
+            secret,
+            sibling.clone(),
+            alias.join("nested"),
+            private.clone(),
+            absent.clone(),
+            private.clone(),
+        ];
+        let result = canonical_optional_paths(&input)
+            .unwrap_or_else(|error| panic!("canonical read denials: {error}"));
+        assert_eq!(result, vec![private, sibling]);
+        assert!(!absent.exists());
+    }
+
+    #[test]
     fn legacy_remount_preserves_existing_mount_restrictions() {
         let flags = mount_option_flags(
             "rw,nosuid,nodev,noexec,sync,mand,dirsync,nosymfollow,noatime,nodiratime,iversion,lazytime",
@@ -820,5 +860,4 @@ mod tests {
 
         assert_eq!(flags, expected);
     }
-
 }

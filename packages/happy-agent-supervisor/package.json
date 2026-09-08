@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-supervisor",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "description": "Trusted native sandbox boundary for Happy agent workloads.",
     "keywords": [
         "sandbox",
