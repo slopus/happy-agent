@@ -67,6 +67,15 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
+            - name: Enable Linux user namespaces
+              # Git scans and host tools use the native supervisor, just as the release tests do.
+              # The tests remain unprivileged; Ubuntu's outer AppArmor policy must allow the
+              # supervisor to create the user namespace in which it installs its own sandbox.
+              run: |
+                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+                  fi
+
             - name: Build the API libraries
               run: |
                   pnpm --filter @slopus/happy-agent-client build

@@ -7,7 +7,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import {
     HappyAgentClient,
-    HAPPY_AGENT_PROTOCOL_VERSION,
+    HAPPY_AGENT_MIN_PROTOCOL_VERSION,
     type HealthResponse,
 } from "@slopus/happy-agent-client";
 
@@ -244,10 +244,10 @@ async function connectWhenReady(
 }
 
 function assertCompatibleProtocol(health: HealthResponse): void {
-    if (health.version.protocol === HAPPY_AGENT_PROTOCOL_VERSION) return;
+    if (health.version.protocol >= HAPPY_AGENT_MIN_PROTOCOL_VERSION) return;
     throw new HappyTerminalUserError(
-        `The running Happy Agent uses protocol ${String(health.version.protocol)}, but this Happy Terminal expects protocol ${String(HAPPY_AGENT_PROTOCOL_VERSION)}.`,
-        { hint: "Stop the daemon and upgrade Happy Terminal before trying again." },
+        `This Happy Terminal supports protocol ${String(HAPPY_AGENT_MIN_PROTOCOL_VERSION)} and newer, but the running Happy Agent uses protocol ${String(health.version.protocol)}.`,
+        { hint: "Upgrade Happy Agent before trying again." },
     );
 }
 

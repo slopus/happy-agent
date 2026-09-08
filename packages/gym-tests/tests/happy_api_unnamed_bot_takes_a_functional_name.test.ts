@@ -27,6 +27,9 @@ it("creates without a name, names from the first user message, and preserves man
     });
     running.add(gym);
 
+    await expect(gym.client.getHealth()).resolves.toMatchObject({
+        version: { protocol: 24 },
+    });
     const created = (await gym.client.createBot({})).bot;
     expect(created).toMatchObject({
         name: "New Bot",

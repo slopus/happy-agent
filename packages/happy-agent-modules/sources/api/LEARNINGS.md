@@ -1,5 +1,15 @@
 # API module learnings
 
+## Protocol revisions identify new capabilities without removing older requests
+
+Unnamed bot creation was added without a distinct advertised revision, leaving clients
+unable to know whether omitting a name was supported. The daemon now advertises protocol
+24 for that capability. Older name-bearing requests remain valid; clients that omit the
+name require protocol 24 or newer. Protocol 22 onward remains additive, so a client must
+not reject an otherwise compatible daemon merely because its revision differs. A product
+that requires a newer capability may require that capability's protocol and explain the
+needed upgrade. The daemon's product version remains display and diagnostic information.
+
 ## Local signals and HTTP share one drain boundary
 
 Draining only the agent runtime leaves API mutations admitted and can falsely report that an
