@@ -100,6 +100,17 @@ describe("bots protocol", () => {
             }),
         ).toBe(true);
         expect(Value.Check(createBotRequestSchema, { name: "Research Assistant" })).toBe(true);
+        expect(Value.Check(createBotRequestSchema, {})).toBe(true);
+        expect(Value.Check(createBotRequestSchema, { id: "bot1", mutationId: "create-1" })).toBe(
+            true,
+        );
+        expect(Value.Check(createBotRequestSchema, { username: "research_scout" })).toBe(true);
+        expect(Value.Check(createBotRequestSchema, { name: "" })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { name: "   " })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { name: null })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { name: 42 })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { name: "A\nB" })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { name: "a".repeat(257) })).toBe(false);
         expect(
             Value.Check(createBotRequestSchema, {
                 isAdmin: "yes",
@@ -114,6 +125,7 @@ describe("bots protocol", () => {
         ).toBe(false);
 
         expect(Value.Check(renameBotRequestSchema, { name: "Research Buddy" })).toBe(true);
+        expect(Value.Check(renameBotRequestSchema, {})).toBe(false);
         expect(
             Value.Check(renameBotRequestSchema, {
                 name: "Research Buddy",
