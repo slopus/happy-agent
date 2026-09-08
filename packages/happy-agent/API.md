@@ -56,9 +56,18 @@ health included.
 
 All routes are prefixed with `/v0`. Independently of the path version, every daemon advertises
 its identity through the health endpoint as a single `version` object: a numeric `protocol`
-(integer, currently 23) and the `daemon` product version string. Clients compare `protocol`
-against the number they were built for and refuse to talk to an incompatible daemon; `daemon` is
-for display and diagnostics only.
+(integer, currently 24) and the `daemon` product version string. Protocol versions from 22 onward
+are backward-compatible and additive. Clients support that compatibility range for existing
+capabilities instead of requiring equality with their own protocol number. A client may require
+a newer protocol for a capability it needs and must explain that an upgrade is required when the
+daemon is too old. The `daemon` product version is for display and diagnostics only.
+
+Protocol 24 guarantees bot creation without a supplied name and the automatic naming behavior
+described below. A client that depends on unnamed bot creation requires protocol 24 or newer;
+with an older compatible daemon it must supply a deliberate name or leave that feature unavailable.
+Named bot-creation requests remain valid, including requests sent by older clients. Applications
+that require this feature throughout their interface may set their minimum protocol to 24 without
+changing the daemon's support for older clients' existing requests.
 
 ### Requests and responses
 
@@ -4657,6 +4666,8 @@ Request:
 - `name` — optional. Supplied names are deliberate and are never automatically replaced. Omitted,
   the daemon creates an immediately usable bot with the temporary display name `New Bot`; the
   client need not supply a placeholder or naming flag. A supplied blank or invalid name is `400`.
+  Omission and automatic naming require protocol 24 or newer; older compatible daemons may
+  require a supplied name.
 - `username` — optional. Omitted, the daemon derives one from the name (lowercased,
   non-alphanumeric runs collapsed to underscores) and resolves a collision by appending a
   numeric suffix. When both name and username are omitted, the username starts from `bot` with
