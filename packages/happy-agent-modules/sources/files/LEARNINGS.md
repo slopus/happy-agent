@@ -1,5 +1,14 @@
 # Project files — learnings
 
+## Asset names remain searchable outside Git repositories
+
+The older native finder skipped known binary extensions when a folder had no Git repository,
+so images and binary assets disappeared from file-name search in otherwise valid projects.
+The module now uses the published finder that includes those paths in both Git and plain
+folders. Content indexing stays disabled, and dependency-directory exclusions remain intact.
+Regression fixtures must live outside the repository when testing a plain folder: an ancestor
+checkout otherwise silently selects the Git walker and hides this failure.
+
 ## Native search starts only when it is needed
 
 Loading the FFF native binding while composing the daemon put optional file indexing on the

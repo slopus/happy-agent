@@ -36,7 +36,7 @@
         "test:live:workos-staging": "vitest run --config vitest.live.config.ts tests/cloud/CloudStaging.live.test.ts"
     },
     "dependencies": {
-        "@ff-labs/fff-node": "^0.9.6",
+        "@ff-labs/fff-node": "^0.10.6",
         "@libsql/client": "^0.17.4",
         "@lydell/node-pty": "1.2.0-beta.15",
         "@modelcontextprotocol/sdk": "^1.29.0",

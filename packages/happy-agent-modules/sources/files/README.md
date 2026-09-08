@@ -12,7 +12,8 @@ workspace root ──┬──> one-level physical tree pages
 
 Indexes are created lazily and kept in least-recently-used order. The module retains at most eight
 indexes; eviction and shutdown destroy the native finder so its watcher and memory are released.
-File contents are not indexed. A search spends at most a small first-result budget waiting for an
+File names include image and binary assets in both Git repositories and plain folders;
+file contents are not indexed. A search spends at most a small first-result budget waiting for an
 active scan, then queries FFF's live index instead of blocking on the entire workspace. Searches
 also start a rescan when the current index is more than two seconds old, covering external changes
 that a native watcher missed while preserving the same bounded response budget.

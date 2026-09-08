@@ -40,6 +40,7 @@ async function main() {
     const workspacePath = `${root}/workspace`;
     await mkdir(workspacePath, { recursive: true });
     await writeFile(`${workspacePath}/binary-compatibility.txt`, "standalone binary\n", "utf8");
+    await writeFile(`${workspacePath}/binary-compatibility.png`, TEST_PNG);
 
     const inferenceToken = randomBytes(24).toString("hex");
     let inferenceStep = 0;
@@ -215,7 +216,9 @@ async function main() {
                 limit: 10,
                 query: "binary-compatibility",
             });
-            return files.files.some((file) => file.path === "binary-compatibility.txt")
+            return ["binary-compatibility.txt", "binary-compatibility.png"].every((path) =>
+                files.files.some((file) => file.path === path),
+            )
                 ? true
                 : undefined;
         }, daemon);

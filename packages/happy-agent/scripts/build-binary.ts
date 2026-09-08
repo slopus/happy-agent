@@ -516,13 +516,17 @@ export function findMontyBinary(explicit) {
             return `const nativeBinding = require(${JSON.stringify(VIRTUAL_ASSETS_MODULE)}).loadFfiRsNative();\n${source.slice(markerIndex)}`;
         },
     });
-    addAdapter(adapters, join(fffRoot, "dist", "src", "binary.js"), {
+    addAdapter(adapters, join(fffRoot, "dist", "index.js"), {
         name: "fff native library resolver",
         required: true,
-        adapt: () => `import { getFffLibraryPath } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};
-export function binaryExists() { return true; }
-export function findBinary() { return getFffLibraryPath(); }
-`,
+        adapt: (source) => {
+            // FFF publishes one bundled entrypoint. Replace only its native-path resolver;
+            // the finder and FFI exports in the same module must remain intact.
+            const start = source.indexOf("function findBinary() {\n");
+            const end = source.indexOf("\n}\n", start);
+            if (start < 0 || end < 0) throw new Error("The fff native library resolver changed.");
+            return `import { getFffLibraryPath } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n${source.slice(0, start)}function findBinary() { return getFffLibraryPath(); }\n${source.slice(end + 3)}`;
+        },
     });
     addAdapter(adapters, join(supervisorRoot, "dist", "impl", "resolveBinaryForTarget.js"), {
         name: "supervisor binary resolver",
