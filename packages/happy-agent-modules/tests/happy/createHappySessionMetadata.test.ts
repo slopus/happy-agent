@@ -69,6 +69,21 @@ function metadata(session: HappySessionSnapshot = snapshot()) {
 }
 
 describe("describing a Happy Agent session in Happy's own terms", () => {
+    it("publishes a bot identity without inventing a project or worktree", () => {
+        const bot = {
+            id: "bot-1",
+            name: "Research Assistant",
+            username: "research_assistant",
+            workspaceId: "bot-workspace-1",
+            orderKey: "0001",
+        };
+        const published = metadata({ ...snapshot(), bot });
+        expect(published).toMatchObject({ bot, name: bot.name });
+        expect(published.summary?.text).toBe(bot.name);
+        expect(published).not.toHaveProperty("project");
+        expect(published).not.toHaveProperty("workspace");
+    });
+
     it("says what the session is running on", () => {
         const published = metadata();
         expect(published.currentModelCode).toBe("gpt-5.6-sol");

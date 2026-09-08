@@ -1,8 +1,11 @@
+import { AsyncResource } from "node:async_hooks";
 import { mkdir, stat } from "node:fs/promises";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
     currentAgentEnvironment,
+    withAgentDatabase,
+    type AgentBaseAcceptedMessage,
     type AgentConfig,
     type AgentModule,
     type AgentModuleHooks,
@@ -11,11 +14,12 @@ import {
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
-import { afterCommit, type Context } from "@steve.kite/stdlib";
+import { afterCommit, detach, type Context, type RootContext } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
+import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
 
 import {
     botRecordSchema,
@@ -56,19 +60,27 @@ import { listBotsTool } from "./tools/list_bots.js";
 import { sendBotMessageTool } from "./tools/send_bot_message.js";
 import { setBotAvatarTool } from "./tools/set_bot_avatar.js";
 
+const BOT_NAME_ATTEMPTED_KEY = "bot-name-attempted";
+
 /** Persistent single-conversation assistants and the dedicated folders they own. */
 export class BotsModule implements AgentModule {
     readonly name = "bots";
     readonly migrations = botMigrations;
 
     readonly #abort: AbortModule;
+    readonly #backgroundScope = new AsyncResource("happy-agent-bot-naming");
     readonly #config: ConfigModule;
     readonly #listeners = new Set<BotEventListener>();
+    readonly #namingTasks = new Map<string, Promise<void>>();
+    readonly #titles: TitlesModule;
     #agents: AgentSystemRef | undefined;
+    #closed = false;
+    #lifetime: RootContext | undefined;
 
-    constructor(config: ConfigModule, abort: AbortModule) {
+    constructor(config: ConfigModule, abort: AbortModule, titles: TitlesModule) {
         this.#config = config;
         this.#abort = abort;
+        this.#titles = titles;
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -97,12 +109,36 @@ export class BotsModule implements AgentModule {
             if ((await this.#requireAgents().parentOf(ctx, scope.agent.id)) !== null) return [];
             return roster;
         },
+        messageAcceptedTransact: async (hookCtx, scope, accepted) => {
+            if (accepted.message.role !== "user") return;
+            const message = acceptedMessageText(accepted);
+            if (message.length === 0) return;
+            const bot = await readBotByAgent(hookCtx, scope.agent.id);
+            if (bot === undefined || bot.nameConfigured) return;
+            if ((await scope.kv.read(hookCtx, BOT_NAME_ATTEMPTED_KEY)) !== undefined) return;
+            await scope.kv.write(hookCtx, BOT_NAME_ATTEMPTED_KEY, { at: Date.now() });
+            afterCommit(hookCtx, () => {
+                this.#startNaming(bot.id, scope.agent.provider, message);
+            });
+        },
     };
 
-    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+    readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
+        this.#lifetime = withAgentDatabase(detach(ctx), ctx.db) as RootContext;
         return this.#hooks;
     };
+
+    /** Stop accepting automatic names and drain the bounded requests already running. */
+    async close(): Promise<void> {
+        if (this.#closed) return;
+        this.#closed = true;
+        this.#lifetime = undefined;
+        await Promise.allSettled(this.#namingTasks.values());
+        this.#namingTasks.clear();
+        this.#backgroundScope.emitDestroy();
+        this.#agents = undefined;
+    }
 
     onEvent(listener: BotEventListener): BotUnsubscribe {
         this.#listeners.add(listener);
@@ -159,7 +195,8 @@ export class BotsModule implements AgentModule {
             ) {
                 throw new BotConflictError("The requested bot ID is already in use.");
             }
-            const username = await this.#chooseUsername(txCtx, input.name, input.username);
+            const name = input.name ?? "New Bot";
+            const username = await this.#chooseUsername(txCtx, input.name ?? "bot", input.username);
             const path = this.#config.botPath(username);
             const workspaceId = await this.#unusedIdentity(txCtx, new Set([botId]));
             const agentId = await this.#unusedIdentity(txCtx, new Set([botId, workspaceId]));
@@ -173,7 +210,7 @@ export class BotsModule implements AgentModule {
                 // A bot's conversation is the bot. It is called what the bot is called
                 // from birth, which also settles the title and keeps automatic naming
                 // from writing one over it.
-                metadata: { title: input.name, updatedAt: now, version: 1 },
+                metadata: { title: name, updatedAt: now, version: 1 },
                 modules: {
                     compute: {
                         cwd: path,
@@ -187,7 +224,8 @@ export class BotsModule implements AgentModule {
                 id: botId,
                 isAdmin: input.isAdmin ?? false,
                 ...(systemKey === undefined ? {} : { systemKey }),
-                name: input.name,
+                name,
+                nameConfigured: input.name !== undefined,
                 username,
                 workspaceId,
                 workspaceVersion: 1,
@@ -311,10 +349,67 @@ export class BotsModule implements AgentModule {
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
-            if (current.name === name) return current;
+            if (current.name === name && current.nameConfigured) return current;
             await this.#setAgentTitle(txCtx, current.agentId, name);
-            return await this.#change(txCtx, current, (bot) => ({ ...bot, name }));
+            return await this.#change(txCtx, current, (bot) => ({
+                ...bot,
+                name,
+                nameConfigured: true,
+            }));
         });
+    }
+
+    /** Give an untouched placeholder bot the role-like name inferred from its first message. */
+    async #nameFromFirstMessage(
+        ctx: Context,
+        botId: string,
+        providerId: string,
+        message: string,
+    ): Promise<void> {
+        try {
+            const initial = await this.get(ctx, botId);
+            if (initial === undefined || initial.nameConfigured || initial.status !== "active")
+                return;
+            const name = await this.#titles.suggestBotName(ctx, message, providerId);
+            if (this.#closed || name === undefined) return;
+            await ctx.inTx(async (txCtx) => {
+                const current = await this.#required(txCtx, botId);
+                if (current.nameConfigured || current.status !== "active") return;
+                await this.#setAgentTitle(txCtx, current.agentId, name);
+                await this.#change(txCtx, current, (bot) => ({
+                    ...bot,
+                    name,
+                    nameConfigured: true,
+                }));
+            });
+        } catch (error) {
+            ctx.log.debug(
+                "Naming a bot from its first user message did not happen.",
+                { botId },
+                error,
+            );
+        }
+    }
+
+    /** Start one detached naming request without delaying message acceptance or the real turn. */
+    #startNaming(botId: string, providerId: string, message: string): void {
+        const lifetime = this.#lifetime;
+        if (this.#closed || lifetime === undefined || this.#namingTasks.has(botId)) return;
+        let task!: Promise<void>;
+        task = this.#backgroundScope
+            .runInAsyncScope(
+                async () =>
+                    await this.#nameFromFirstMessage(
+                        lifetime.named("bot-initial-naming"),
+                        botId,
+                        providerId,
+                        message,
+                    ),
+            )
+            .finally(() => {
+                if (this.#namingTasks.get(botId) === task) this.#namingTasks.delete(botId);
+            });
+        this.#namingTasks.set(botId, task);
     }
 
     async reorder(
@@ -568,6 +663,15 @@ export class BotsModule implements AgentModule {
 interface BotInitialAvatar {
     readonly asset: BotAvatarAsset;
     readonly source: "generated" | "user";
+}
+
+/** Plain text from the first accepted user message, excluding media and model-only blocks. */
+function acceptedMessageText(accepted: AgentBaseAcceptedMessage): string {
+    return accepted.message.content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n")
+        .trim()
+        .slice(-MAX_NAMING_MESSAGE_CHARS);
 }
 
 function deepFreeze<Value>(value: Value): Value {

@@ -1,4 +1,5 @@
 import type { AgentPermissionMode } from "@slopus/happy-agent-base";
+import type { BotRecord } from "../bots/index.js";
 
 /**
  * The vocabulary Happy describes a session in.
@@ -29,6 +30,7 @@ export interface HappyGitSummary {
 
 /** One session, in the terms Happy publishes it. */
 export interface HappySessionSnapshot {
+    readonly bot?: Pick<BotRecord, "id" | "name" | "username" | "workspaceId" | "orderKey">;
     readonly agentId: string;
     readonly archived: boolean;
     readonly cwd: string;

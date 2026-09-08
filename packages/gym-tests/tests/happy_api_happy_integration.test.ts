@@ -39,6 +39,225 @@ afterEach(async () => {
 });
 
 describe("Happy integration API", () => {
+    it.each(["immediate", "in-flight"] as const)(
+        "restores a bot during %s relay archival",
+        async (timing) => {
+            const archiveRequested = new Set<string>();
+            let releaseArchive!: () => void;
+            const archiveReleased = new Promise<void>((resolve) => {
+                releaseArchive = resolve;
+            });
+            const happy = await startProtocolHappyServer({
+                authorizePairing: true,
+                beforeArchive: async (sessionId) => {
+                    archiveRequested.add(sessionId);
+                    await archiveReleased;
+                },
+            });
+            const gym = await createAgentGym({
+                environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+                inference: [{ content: [{ type: "text", text: "Restored bot reply." }] }],
+                timeoutMs: 20_000,
+            });
+            gyms.add(gym);
+            let bot = (await gym.client.createBot({ name: "Race Bot" })).bot;
+            await gym.client.startHappyIntegration();
+            await waitForIntegration(gym, "connected");
+            const published = await gym.waitUntil(
+                () => happy.sessions.find((session) => session.metadata.bot?.id === bot.id),
+                "the bot session",
+            );
+            try {
+                bot = (await gym.client.archiveBot(bot.id, { ifMatch: bot.version })).bot;
+                if (timing === "in-flight") {
+                    await gym.waitUntil(
+                        () => (archiveRequested.has(published.id) ? true : undefined),
+                        "the held relay archive request",
+                    );
+                }
+                bot = (await gym.client.unarchiveBot(bot.id, { ifMatch: bot.version })).bot;
+                expect(
+                    happy.sessions.filter((session) => session.tag === published.tag),
+                ).toHaveLength(1);
+            } finally {
+                releaseArchive();
+            }
+            // A later name update is an observable barrier even if the immediate archive was
+            // coalesced away before reaching the relay. Checking just 'active' could pass too soon.
+            bot = (
+                await gym.client.renameBot(
+                    bot.id,
+                    { name: "Restored Race Bot" },
+                    { ifMatch: bot.version },
+                )
+            ).bot;
+            await gym.waitUntil(
+                () =>
+                    happy.metadata.get(published.id)?.name === bot.name &&
+                    happy.metadata.get(published.id)?.lifecycleState === "active"
+                        ? true
+                        : undefined,
+                "the restored bot projection",
+            );
+            expect(happy.metadata.get(published.id)).not.toHaveProperty("archivedBy");
+            expect(
+                new Set(
+                    happy.sessions
+                        .filter((session) => session.tag === published.tag)
+                        .map((session) => session.id),
+                ),
+            ).toEqual(new Set([published.id]));
+            happy.deliver(published.id, {
+                role: "user",
+                content: { type: "text", text: "Are you still there?" },
+                meta: {
+                    model: gym.selection.modelId,
+                    modelProviderId: gym.selection.providerId,
+                    effort: gym.selection.effort,
+                },
+            });
+            await gym.waitUntil(
+                () =>
+                    JSON.stringify(happy.outgoing.get(published.id) ?? []).includes(
+                        "Restored bot reply.",
+                    )
+                        ? true
+                        : undefined,
+                "a phone reply after racing archive and restore",
+            );
+        },
+        60_000,
+    );
+
+    it("reserves startup sync slots for bots before filling the 64-session cap with project chats", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        for (let index = 0; index < 64; index += 1) await gym.createSession();
+        const bot = (await gym.client.createBot({ name: "Priority Bot" })).bot;
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        await gym.waitUntil(
+            () => (happy.sessions.length === 64 ? true : undefined),
+            "the full connection budget",
+        );
+        expect(happy.sessions.some((session) => session.metadata.bot?.id === bot.id)).toBe(true);
+        expect(new Set(happy.sessions.map((session) => session.tag)).size).toBe(64);
+    }, 60_000);
+
+    it("keeps bot identity and conversation through relay messages, rename, archive and restore", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            inference: [{ content: [{ type: "text", text: "Mobile bot answer." }] }],
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        let bot = (await gym.client.createBot({ name: "Mobile Lifecycle Bot" })).bot;
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const published = await gym.waitUntil(
+            () => happy.sessions.find((session) => session.metadata.bot?.id === bot.id),
+            "the bot session",
+        );
+        happy.deliver(published.id, {
+            role: "user",
+            content: { type: "text", text: "Answer from mobile." },
+            meta: {
+                model: gym.selection.modelId,
+                modelProviderId: gym.selection.providerId,
+                effort: gym.selection.effort,
+            },
+        });
+        await gym.waitUntil(
+            () =>
+                JSON.stringify(happy.outgoing.get(published.id) ?? []).includes(
+                    "Mobile bot answer.",
+                )
+                    ? true
+                    : undefined,
+            "the bot's reply to reach the phone",
+        );
+        expect(JSON.stringify(await gym.history(bot.agent.id))).toContain("Answer from mobile.");
+        bot = (
+            await gym.client.renameBot(
+                bot.id,
+                { name: "Renamed Mobile Bot" },
+                { ifMatch: bot.version },
+            )
+        ).bot;
+        await gym.waitUntil(
+            () => (happy.metadata.get(published.id)?.name === bot.name ? true : undefined),
+            "the bot name to update on mobile",
+        );
+        bot = (await gym.client.archiveBot(bot.id, { ifMatch: bot.version })).bot;
+        await gym.waitUntil(
+            () =>
+                happy.metadata.get(published.id)?.lifecycleState === "archived" ? true : undefined,
+            "the bot to be archived on mobile",
+        );
+        bot = (await gym.client.unarchiveBot(bot.id, { ifMatch: bot.version })).bot;
+        await gym.waitUntil(
+            () =>
+                happy.metadata.get(published.id)?.lifecycleState === "active" ? true : undefined,
+            "the same conversation to be restored on mobile",
+        );
+        expect(happy.metadata.get(published.id)).not.toHaveProperty("archivedBy");
+        expect(
+            new Set(
+                happy.sessions
+                    .filter((session) => session.metadata.bot?.id === bot.id)
+                    .map((session) => session.id),
+            ),
+        ).toEqual(new Set([published.id]));
+        expect(JSON.stringify(await gym.history(bot.agent.id))).toContain("Answer from mobile.");
+    }, 60_000);
+
+    it("syncs idle and newly created bots without projects and reuses their sessions after restart", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        const bot = (await gym.client.createBot({ name: "Mobile Assistant" })).bot;
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const published = await gym.waitUntil(
+            () => happy.sessions.find((session) => session.metadata.bot?.id === bot.id),
+            "the idle bot to appear on mobile",
+        );
+        expect(published.metadata).toMatchObject({
+            bot: { id: bot.id, name: bot.name, workspaceId: bot.workspaceId },
+        });
+        expect(published.metadata).not.toHaveProperty("project");
+        expect(published.metadata).not.toHaveProperty("workspace");
+        const next = (await gym.client.createBot({ name: "New Mobile Bot" })).bot;
+        await gym.waitUntil(
+            () => happy.sessions.find((session) => session.metadata.bot?.id === next.id),
+            "the new bot to appear without sending it a message",
+        );
+        await gym.restart();
+        await waitForIntegration(gym, "connected");
+        await gym.waitUntil(
+            () =>
+                happy.sessions.filter((session) => session.metadata.bot?.id === bot.id).length >= 2
+                    ? true
+                    : undefined,
+            "the same bot to reconnect",
+        );
+        expect(
+            new Set(
+                happy.sessions
+                    .filter((session) => session.metadata.bot?.id === bot.id)
+                    .map((session) => session.tag),
+            ),
+        ).toEqual(new Set([published.tag]));
+    }, 60_000);
+
     it("returns pairing data and streams complete pairing and failure snapshots", async () => {
         let requests = 0;
         const serverUrl = await startHappyServer((_request, response) => {
@@ -381,6 +600,14 @@ function sendJson(response: ServerResponse, body: unknown, status = 200): void {
 }
 
 interface ProtocolHappyServer {
+    readonly metadata: ReadonlyMap<string, Record<string, unknown>>;
+    readonly outgoing: ReadonlyMap<string, readonly unknown[]>;
+    deliver(sessionId: string, message: unknown): void;
+    readonly sessions: readonly {
+        id: string;
+        tag: string;
+        metadata: { bot?: { id: string }; [key: string]: unknown };
+    }[];
     readonly url: string;
     readonly authorizationRequests: number;
     readonly machineRegistrations: number;
@@ -390,6 +617,7 @@ interface ProtocolHappyServer {
 
 async function startProtocolHappyServer(options: {
     authorizePairing: boolean;
+    beforeArchive?: (sessionId: string) => Promise<void>;
     registrationStatus?: (token: string, attempt: number) => number;
     socketMode?: "connect" | "reject";
 }): Promise<ProtocolHappyServer> {
@@ -397,7 +625,41 @@ async function startProtocolHappyServer(options: {
     let machineRegistrations = 0;
     let sessionCreations = 0;
     let socketConnections = 0;
+    const sessions: {
+        id: string;
+        tag: string;
+        metadata: { bot?: { id: string }; [key: string]: unknown };
+    }[] = [];
+    const sessionIds = new Map<string, string>();
+    const metadata = new Map<string, Record<string, unknown>>();
+    const outgoing = new Map<string, unknown[]>();
+    const incoming = new Map<
+        string,
+        {
+            seq: number;
+            id: string;
+            createdAt: number;
+            updatedAt: number;
+            localId: null;
+            content: { t: string; c: string };
+        }[]
+    >();
     const secret = new Uint8Array(32).fill(7);
+    const encode = (value: unknown): string => {
+        const nonce = nacl.randomBytes(24);
+        return Buffer.concat([
+            Buffer.from(nonce),
+            Buffer.from(nacl.secretbox(Buffer.from(JSON.stringify(value)), nonce, secret)),
+        ]).toString("base64");
+    };
+    const decode = (value: string): Record<string, unknown> | undefined => {
+        const bytes = Buffer.from(value, "base64");
+        const plaintext = nacl.secretbox.open(bytes.subarray(24), bytes.subarray(0, 24), secret);
+        // Credential-adoption scenarios deliberately use another account key. Those payloads
+        // stay opaque to this fixture, just as they do to the real relay.
+        if (!plaintext) return undefined;
+        return JSON.parse(Buffer.from(plaintext).toString("utf8"));
+    };
     const server = createServer((request, response) => {
         const url = new URL(request.url ?? "/", "http://happy.test");
         void readRequestBody(request).then(
@@ -431,30 +693,61 @@ async function startProtocolHappyServer(options: {
                 }
                 if (request.method === "POST" && url.pathname === "/v1/sessions") {
                     sessionCreations += 1;
-                    const parsed = JSON.parse(body) as { metadata?: string };
+                    const parsed = JSON.parse(body) as { metadata?: string; tag: string };
+                    const id = sessionIds.get(parsed.tag) ?? `happy-session-${sessionIds.size + 1}`;
+                    sessionIds.set(parsed.tag, id);
+                    if (parsed.metadata !== undefined) {
+                        const decoded = decode(parsed.metadata);
+                        if (decoded !== undefined) {
+                            sessions.push({ id, tag: parsed.tag, metadata: decoded });
+                            if (!metadata.has(id)) metadata.set(id, decoded);
+                        }
+                    }
                     sendJson(response, {
                         session: {
                             agentState: null,
                             agentStateVersion: 0,
-                            id: "happy-session-1",
-                            metadata: parsed.metadata,
+                            id,
+                            metadata: metadata.has(id) ? encode(metadata.get(id)) : parsed.metadata,
                             metadataVersion: 0,
                         },
                     });
                     return;
                 }
-                if (
-                    request.method === "GET" &&
-                    url.pathname === "/v3/sessions/happy-session-1/messages"
-                ) {
-                    sendJson(response, { hasMore: false, messages: [] });
+                const messagesMatch = /^\/v3\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
+                if (request.method === "GET" && messagesMatch) {
+                    sendJson(response, {
+                        hasMore: false,
+                        messages: (incoming.get(messagesMatch[1]!) ?? []).filter(
+                            (message) =>
+                                message.seq > Number(url.searchParams.get("after_seq") ?? 0),
+                        ),
+                    });
+                    return;
+                }
+                if (request.method === "POST" && messagesMatch) {
+                    const parsed = JSON.parse(body) as { messages: { content: string }[] };
+                    outgoing.set(messagesMatch[1]!, [
+                        ...(outgoing.get(messagesMatch[1]!) ?? []),
+                        ...parsed.messages.map((message) => decode(message.content)),
+                    ]);
+                    sendJson(response, { success: true });
                     return;
                 }
                 if (
                     request.method === "POST" &&
-                    url.pathname === "/v3/sessions/happy-session-1/messages"
+                    /^\/v1\/sessions\/[^/]+\/archive$/.test(url.pathname)
                 ) {
-                    sendJson(response, { success: true });
+                    const finish = () => sendJson(response, { success: true });
+                    if (options.beforeArchive) {
+                        void options
+                            .beforeArchive(url.pathname.split("/")[3]!)
+                            .then(finish, () =>
+                                sendJson(response, { error: "archive failed" }, 500),
+                            );
+                    } else {
+                        finish();
+                    }
                     return;
                 }
                 sendJson(response, { error: "not found" }, 404);
@@ -488,6 +781,22 @@ async function startProtocolHappyServer(options: {
         );
         socket.on("message", (value) => {
             const packet = value.toString();
+            const eventMatch = /^42(\d*)(\[.*)$/s.exec(packet);
+            if (eventMatch) {
+                const [event, payload] = JSON.parse(eventMatch[2]!) as [
+                    string,
+                    { sid?: string; metadata?: string; expectedVersion?: number },
+                ];
+                if (event === "update-metadata" && payload.sid && payload.metadata) {
+                    const decoded = decode(payload.metadata);
+                    if (decoded !== undefined) metadata.set(payload.sid, decoded);
+                }
+                if (eventMatch[1])
+                    socket.send(
+                        `43${eventMatch[1]}${JSON.stringify([{ result: "success", version: (payload.expectedVersion ?? 0) + 1 }])}`,
+                    );
+                return;
+            }
             if (!packet.startsWith("40")) return;
             if (options.socketMode === "reject") {
                 socket.send(`44${JSON.stringify({ message: "Unauthorized" })}`);
@@ -500,6 +809,23 @@ async function startProtocolHappyServer(options: {
     await once(server, "listening");
     const address = server.address() as AddressInfo;
     return {
+        metadata,
+        outgoing,
+        deliver: (sessionId, message) => {
+            const messages = incoming.get(sessionId) ?? [];
+            const seq = messages.length + 1;
+            messages.push({
+                seq,
+                id: `phone-${seq}`,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                localId: null,
+                content: { t: "encrypted", c: encode(message) },
+            });
+            incoming.set(sessionId, messages);
+            for (const socket of webSockets.clients) socket.send('42["update",{}]');
+        },
+        sessions,
         get authorizationRequests() {
             return authorizationRequests;
         },

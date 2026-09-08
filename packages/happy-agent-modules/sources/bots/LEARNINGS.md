@@ -106,6 +106,18 @@ Only the title moves on rename. The username, folder, and dedicated workspace ar
 rename still leaves `workspaceVersion` alone; the agent's metadata version advances on its own and
 reaches clients as `agent.updated`, never as part of the bot's version.
 
+## Placeholder bots take a role-like identity from their first message
+
+Creation accepts an optional name, never a client-supplied placeholder or naming flag. A supplied
+name is deliberate; an omitted name makes the daemon supply `New Bot` and record eligibility
+internally. Saving a manual name, even the same name, permanently settles it. A placeholder bot is
+fully usable immediately, and only its first accepted text-bearing user message launches detached
+naming. The bots module asks the titles module to run the same cheap, bounded inference mechanism
+with a bot-specific prompt for a one-to-three-word person, role, or character identity based on the
+likely ongoing function. Applying the result rechecks the durable flag in the rename transaction,
+so an explicit rename racing inference always wins. The immutable username, folder, and workspace
+do not move.
+
 ## Bot agents receive their live bot identity
 
 The generic agent prompt still identifies the underlying runtime as Happy Agent. The bots module

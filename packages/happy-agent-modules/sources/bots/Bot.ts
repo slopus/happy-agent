@@ -21,6 +21,7 @@ export const botRecordSchema = Type.Object(
         isAdmin: Type.Boolean(),
         systemKey: Type.Optional(botSystemKeySchema),
         name: botNameSchema,
+        nameConfigured: Type.Boolean(),
         username: botUsernameSchema,
         workspaceId: cuid2Schema,
         workspaceVersion: botVersionSchema,
@@ -42,7 +43,7 @@ export const createBotInputSchema = Type.Object(
     {
         id: Type.Optional(cuid2Schema),
         isAdmin: Type.Optional(Type.Boolean()),
-        name: botNameSchema,
+        name: Type.Optional(botNameSchema),
         username: Type.Optional(botUsernameSchema),
     },
     { additionalProperties: false },

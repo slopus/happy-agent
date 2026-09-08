@@ -419,10 +419,10 @@ export async function startHappyAgentRuntime(
         const durableFunctions = new DurableFunctionsModule();
         const projects = new ProjectsModule(config, git, abort, durableFunctions);
         const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
-        const bots = new BotsModule(config, abort);
+        const titles = new TitlesModule(config, history, workspaces);
+        const bots = new BotsModule(config, abort, titles);
         const tailcat = new TailcatModule(config, bots, durableFunctions);
         registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
-        const titles = new TitlesModule(config, history, workspaces);
         const terminals = new TerminalsModule(projects, workspaces, bots);
         registerShutdown("terminals", async () => await terminals.close());
         const files = new ProjectFilesModule(projects, workspaces, git, bots);
@@ -469,6 +469,7 @@ export async function startHappyAgentRuntime(
             scheduling,
             userInput,
             workspaces,
+            bots,
         );
         const goal = new GoalModule();
         const gemini = new GeminiModule(config, compute.computeModule);
@@ -669,6 +670,7 @@ export async function startHappyAgentRuntime(
             progress: () => autoModule.drainProgress(),
         });
         registerShutdown("titles", async () => await titles.close());
+        registerShutdown("bots", async () => await bots.close());
         registerShutdown("cloud", async () => await cloud.stop());
         registerShutdown("happy", async () => await happy.stop());
 

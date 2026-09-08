@@ -4,7 +4,9 @@ import { dirname } from "node:path";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
+    type AgentBaseAcceptedMessage,
     type AgentConfig,
+    type AgentKV,
     type AgentModuleScope,
     type AgentSystemRef,
     type AnyAgentTool,
@@ -12,7 +14,7 @@ import {
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 import sharp from "sharp";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AbortModule } from "../../sources/abort/index.js";
 import {
@@ -25,9 +27,17 @@ import {
     type BotRecord,
 } from "../../sources/bots/index.js";
 import { ComputeModule } from "../../sources/compute/index.js";
+import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
+import { GitModule } from "../../sources/git/index.js";
+import { HistoryModule } from "../../sources/history/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
+import { TitlesModule } from "../../sources/titles/index.js";
+import { WorkspacesModule } from "../../sources/workspaces/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
+import { providersOf, sharedKV, textTurn } from "../support/fixtures.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { projectsModuleFor } from "../support/projectsModule.js";
+import { ScriptedProvider, type ScriptedTurn } from "../support/ScriptedProvider.js";
 
 class BotAgents {
     readonly configs = new Map<string, AgentConfig>();
@@ -77,6 +87,105 @@ class BotAgents {
 }
 
 describe("BotsModule", () => {
+    it.each(["Release Steward", "New Bot"])(
+        "keeps a manual rename to %s when inference finishes later",
+        async (name) => {
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => {
+                release = resolve;
+            });
+            const fixture = await started("bots-rename-race", false, [
+                async function* () {
+                    await gate;
+                    yield* textTurn("<title>Scout</title>");
+                },
+            ]);
+            try {
+                const bot = await fixture.bots.create(fixture.database.context, {});
+                await fixture.accept(bot.agentId, "user", "Find useful research papers.");
+                // Acceptance returns while the independent naming request is still waiting.
+                await vi.waitFor(() =>
+                    expect(fixture.provider.sessions[0]?.requests).toHaveLength(1),
+                );
+                await fixture.bots.rename(fixture.database.context, bot.id, name, bot.version);
+                release();
+                await fixture.namingFinished();
+                expect(await fixture.bots.get(fixture.database.context, bot.id)).toMatchObject({
+                    name,
+                    nameConfigured: true,
+                    version: 2,
+                });
+                expect(fixture.agents.configs.get(bot.agentId)?.metadata?.title).toBe(name);
+            } finally {
+                release();
+                await fixture.close();
+            }
+        },
+    );
+
+    it("names an unnamed bot from only its first text-bearing user message", async () => {
+        const fixture = await started("bots-first-message", false, [
+            textTurn("<title>Scout</title>"),
+        ]);
+        try {
+            const bot = await fixture.bots.create(fixture.database.context, {});
+            expect(bot).toMatchObject({ name: "New Bot", username: "bot", nameConfigured: false });
+            expect((await stat(bot.path)).isDirectory()).toBe(true);
+            expect(fixture.agents.configs.get(bot.agentId)?.metadata?.title).toBe("New Bot");
+            await fixture.accept(bot.agentId, "system", "Internal wake-up");
+            await fixture.accept(bot.agentId, "agent", "Peer request");
+            await fixture.accept(bot.agentId, "user", "   ");
+            expect(fixture.provider.sessions).toHaveLength(0);
+            await fixture.accept(bot.agentId, "user", "Find useful research papers for me.");
+            await fixture.accept(bot.agentId, "user", "Now inspect releases instead.");
+            await fixture.namingFinished();
+            expect(await fixture.bots.get(fixture.database.context, bot.id)).toMatchObject({
+                name: "Scout",
+                nameConfigured: true,
+                version: 2,
+                id: bot.id,
+                agentId: bot.agentId,
+                workspaceId: bot.workspaceId,
+                username: bot.username,
+                path: bot.path,
+            });
+            expect(fixture.provider.sessions).toHaveLength(1);
+            expect(JSON.stringify(fixture.provider.sessions[0]?.requests)).toContain(
+                "research papers",
+            );
+            expect(JSON.stringify(fixture.provider.sessions[0]?.requests)).not.toContain(
+                "inspect releases",
+            );
+            expect(fixture.agents.configs.get(bot.agentId)?.metadata?.title).toBe("Scout");
+            expect(fixture.events).toContainEqual(
+                expect.objectContaining({
+                    type: "bot_updated",
+                    bot: expect.objectContaining({ name: "Scout" }),
+                }),
+            );
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("keeps the placeholder without retrying after an empty inference result", async () => {
+        const fixture = await started("bots-empty-name", false, [textTurn("")]);
+        try {
+            const bot = await fixture.bots.create(fixture.database.context, {});
+            await fixture.accept(bot.agentId, "user", "Find papers.");
+            await fixture.namingFinished();
+            await fixture.accept(bot.agentId, "user", "Try naming again.");
+            expect(fixture.provider.sessions).toHaveLength(1);
+            expect(await fixture.bots.get(fixture.database.context, bot.id)).toMatchObject({
+                name: "New Bot",
+                nameConfigured: false,
+                version: 1,
+            });
+        } finally {
+            await fixture.close();
+        }
+    });
+
     it("migrates every existing bot to non-admin and non-system", async () => {
         const database = moduleDatabase(botMigrations.slice(0, 2), "bots-admin-migration");
         try {
@@ -101,17 +210,21 @@ describe("BotsModule", () => {
             if (systemMigration === undefined)
                 throw new Error("The system bot migration is missing.");
             await systemMigration(database.context, database.database);
+            const namingMigration = botMigrations[4]?.[1];
+            if (namingMigration === undefined) throw new Error("The naming migration is missing.");
+            await namingMigration(database.context, database.database);
 
             await expect(
                 agentDatabaseRows<{
                     readonly is_admin: number;
                     readonly system_key: string | null;
+                    readonly name_configured: number;
                 }>(
                     database.database,
-                    sql`SELECT is_admin, system_key FROM ${sql.raw(BOTS_TABLE)}
+                    sql`SELECT is_admin, system_key, name_configured FROM ${sql.raw(BOTS_TABLE)}
                         WHERE id = 'legacybot'`,
                 ),
-            ).resolves.toEqual([{ is_admin: 0, system_key: null }]);
+            ).resolves.toEqual([{ is_admin: 0, system_key: null, name_configured: 1 }]);
         } finally {
             database.close();
         }
@@ -493,9 +606,24 @@ describe("BotsModule", () => {
     });
 });
 
-async function started(name: string, workspacesEnabled: boolean) {
+async function started(name: string, workspacesEnabled: boolean, script: ScriptedTurn[] = []) {
+    const provider = new ScriptedProvider(script);
     const config = await temporaryTestConfig(
         `[features]\nworkspaces = ${workspacesEnabled ? "true" : "false"}\n`,
+        {
+            inference: {
+                providers: providersOf(provider),
+                models: [
+                    {
+                        providerId: "scripted",
+                        id: "anthropic/sonnet-5",
+                        name: "Sonnet",
+                        effortLevels: ["off"],
+                        defaultEffort: "off",
+                    },
+                ],
+            },
+        },
     );
     const database = moduleDatabase(botMigrations, name);
     await database.ready;
@@ -503,9 +631,23 @@ async function started(name: string, workspacesEnabled: boolean) {
     const abort = new AbortModule(compute);
     const agents = new BotAgents();
     abort.beforeStart(database.context, agents.asRef());
-    const bots = new BotsModule(config, abort);
+    const git = new GitModule();
+    const titles = new TitlesModule(
+        config,
+        new HistoryModule(),
+        new WorkspacesModule(
+            config,
+            projectsModuleFor(config, git),
+            git,
+            abort,
+            new DurableFunctionsModule(),
+        ),
+    );
+    const naming = vi.spyOn(titles, "suggestBotName");
+    const bots = new BotsModule(config, abort, titles);
     const hooks = bots.beforeStart(database.context, agents.asRef());
     const events: BotEvent[] = [];
+    const agentKVs = new Map<string, AgentKV>();
     bots.onEvent((_ctx, event) => {
         events.push(event);
     });
@@ -518,6 +660,42 @@ async function started(name: string, workspacesEnabled: boolean) {
         bots,
         database,
         events,
+        provider,
+        accept: async (
+            agentId: string,
+            role: AgentBaseAcceptedMessage["message"]["role"],
+            text: string,
+        ): Promise<void> => {
+            const kv = agentKVs.get(agentId) ?? sharedKV();
+            agentKVs.set(agentId, kv);
+            const scope = { agent: { id: agentId, provider: "scripted" }, kv } as AgentModuleScope;
+            await database.context.inTx(async (ctx) => {
+                await hooks.messageAcceptedTransact?.(ctx, scope, {
+                    id: `message-${text}`,
+                    kind: "send",
+                    profile: null,
+                    message:
+                        role === "agent"
+                            ? {
+                                  role,
+                                  author: { id: "peeragent", description: "A peer bot" },
+                                  content: [{ type: "text", text }],
+                              }
+                            : { role, content: [{ type: "text", text }] },
+                });
+            });
+        },
+        namingFinished: async (): Promise<void> => {
+            await vi.waitFor(() => expect(naming).toHaveBeenCalled());
+            await Promise.allSettled(
+                naming.mock.results.flatMap((result) =>
+                    result.type === "return" ? [result.value] : [],
+                ),
+            );
+            // The database fixture resolves queries on the microtask queue. Drain
+            // that queue after inference so assertions observe the final transaction.
+            await new Promise<void>((resolve) => setImmediate(resolve));
+        },
         start: async (): Promise<void> => {
             await hooks.afterStart?.(database.context, agents.asRef());
         },
@@ -546,6 +724,8 @@ async function started(name: string, workspacesEnabled: boolean) {
             return (await hooks.instructions?.(database.context, scope)) ?? "";
         },
         close: async () => {
+            await bots.close();
+            await titles.close();
             database.close();
             await rm(dirname(config.configuration.paths.publicHome), {
                 force: true,

@@ -28,6 +28,13 @@ whatever the bot is called rather than waiting for a generated title. A titled a
 renamed by automatic naming, so bots keep that name. The title change advances the agent's own
 version and arrives as an `agent.updated` event, separately from the bot's version.
 
+A client may create a bot without supplying a name. The daemon supplies `New Bot` internally;
+there is no public naming flag. That bot is usable immediately; its first
+accepted user message starts detached naming work while its real turn continues. The naming prompt
+asks for a one-to-three-word person, role, or character identity based on the likely ongoing
+function, rather than a task title. The result renames both the bot and its conversation. Explicitly
+named bots, built-ins, and bots renamed while inference is running are never overwritten.
+
 On every inference, the module adds the owning bot's current display name, immutable username,
 and stable bot ID to that bot agent's system instructions. It contributes nothing to ordinary
 agents, and a rename reaches the bot on its next turn without changing its agent identity.
