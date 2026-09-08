@@ -125,6 +125,33 @@ describeLive("live host operating-system sandbox boundary", () => {
         expect(existsSync(deniedTarget)).toBe(false);
     });
 
+    it.each([true, false])(
+        "runs with overlapping private paths without exposing them (parent first: %s)",
+        async (parentFirst) => {
+            const root = await makeTemporaryDirectory();
+            const cwd = join(root, "workspace");
+            const privateDirectory = join(root, "private");
+            const privateFile = join(privateDirectory, "secret.txt");
+            await mkdir(cwd);
+            await mkdir(privateDirectory);
+            await writeFile(privateFile, "private fixture");
+            const compute = track(createHostCompute({ ctx, cwd }));
+            const deniedReadPaths = parentFirst
+                ? [privateDirectory, privateFile]
+                : [privateFile, privateDirectory];
+
+            const result = await compute.shell.run({
+                command: `if cat ${shellQuote(privateFile)} >/dev/null 2>&1; then exit 91; fi; printf private-file-unavailable`,
+                permissions: computePermissions("workspace_write", { deniedReadPaths }),
+            });
+            expect(result).toMatchObject({
+                exitCode: 0,
+                timedOut: false,
+                stdout: "private-file-unavailable",
+            });
+        },
+    );
+
     it.runIf(process.platform === "darwin")(
         "blocks first-time protected-path creation through Seatbelt alone",
         async () => {

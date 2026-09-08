@@ -5,6 +5,11 @@ private procfs. macOS builds and installs one Seatbelt profile in-process.
 `child.rs` holds the fork, wait, and status reproduction both platforms need
 once something has to outlive the workload's `execve`.
 
+Linux read denials are canonicalized and reduced to disjoint subtree roots before
+mounting. A parent mask already hides every child; trying to mask that child again
+would fail after its mount target disappears. Symlink aliases and duplicates converge
+to the same root, while component-wise comparisons preserve similarly named siblings.
+
 Both platforms fork the egress process before their boundary exists: on Linux
 before `unshare(CLONE_NEWNET)`, on macOS before `sandbox_init`. Ending it differs
 for the same reason. The Linux supervisor stays outside the namespace it created

@@ -163,6 +163,56 @@ fn writes_are_limited_to_the_workspace() {
     println!("inside-write=inside outside-write=refused");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn overlapping_read_denials_preserve_the_boundary_in_either_order() {
+    for mode in ["read_only", "workspace_write", "auto"] {
+        for parent_first in [true, false] {
+            let boundary = TestBoundary::new(false, false);
+            let private = boundary.outside.join("private");
+            fs::create_dir(&private).unwrap_or_else(|error| panic!("private directory: {error}"));
+            let secret = private.join("secret.txt");
+            fs::write(&secret, "private fixture")
+                .unwrap_or_else(|error| panic!("private fixture: {error}"));
+            let public = boundary.outside.join("private-sibling.txt");
+            fs::write(&public, "public fixture")
+                .unwrap_or_else(|error| panic!("public fixture: {error}"));
+            let denied = if parent_first {
+                vec![&private, &secret]
+            } else {
+                vec![&secret, &private]
+            };
+            let policy = json!({
+                "mode": mode,
+                "deniedReadPaths": denied,
+                "network": { "egress": false, "localBinding": false }
+            })
+            .to_string();
+            let output = Command::new(SUPERVISOR)
+                .current_dir(&boundary.workspace)
+                .args(["--policy", &policy, "--", "/bin/sh", "-c"])
+                .arg("if cat \"$PRIVATE_FILE\" >/dev/null 2>&1; then exit 91; fi; cat \"$PUBLIC_FILE\"")
+                .env("PRIVATE_FILE", &secret)
+                .env("PUBLIC_FILE", &public)
+                .output()
+                .unwrap_or_else(|error| panic!("run overlapping-denial test: {error}"));
+
+            assert!(
+                output.status.success(),
+                "mode={mode} parent-first={parent_first} status={:?} stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&output.stdout), "public fixture");
+            assert_eq!(
+                fs::read_to_string(&secret)
+                    .unwrap_or_else(|error| panic!("read retained private fixture: {error}")),
+                "private fixture"
+            );
+        }
+    }
+}
+
 #[test]
 fn local_binding_is_denied_while_egress_remains_available() {
     use std::net::TcpListener;

@@ -9,6 +9,13 @@ over the working directory leaves an already-standing process pointing at the
 shadowed directory underneath, so `/workspace/file` can succeed while `./file`
 is refused — and relative is how commands actually write.
 
+`overlapping_read_denials_preserve_the_boundary_in_either_order` proves that a private
+directory and its child can both be denied, in either order, without preventing the
+workload from starting. It covers Read only, Workspace write, and Auto, verifies the
+private file is inaccessible, and keeps a similarly named sibling readable. Linux
+coalesces canonical covered subtrees before mounting masks, so an earlier parent mask
+never removes a later child's mount target.
+
 Two cases cover process hardening from the outside, which is the only place its
 effects are visible. `the_workload_cannot_read_the_supervisor_it_runs_under`
 opens `/proc/1/mem` from inside the sandbox: PID 1 there is the supervisor's own
