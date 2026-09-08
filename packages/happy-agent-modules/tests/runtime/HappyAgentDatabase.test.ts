@@ -88,7 +88,7 @@ describe("openHappyAgentDatabase", () => {
         const databasePath = join(directory, "agent.sqlite");
 
         await expect(runDeadlockProbe(databasePath)).resolves.toBeUndefined();
-    });
+    }, 20_000);
 });
 
 async function createTestDirectory(): Promise<string> {
@@ -135,10 +135,12 @@ async function runDeadlockProbe(databasePath: string): Promise<void> {
                 if (error === undefined) resolveProbe();
                 else rejectProbe(error);
             };
+            // Cold TypeScript imports compete with other CI workers before the probe is
+            // ready. This startup budget is separate from the one-second deadlock check.
             watchdog = setTimeout(() => {
                 child.kill("SIGKILL");
                 finish(new Error("The database deadlock probe did not reach its gated batch."));
-            }, 4_000);
+            }, 15_000);
             child.stdout!.setEncoding("utf8");
             child.stderr!.setEncoding("utf8");
             child.stdout!.on("data", (chunk: string) => {

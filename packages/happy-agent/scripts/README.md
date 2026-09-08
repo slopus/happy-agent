@@ -45,8 +45,7 @@ implementations. Binary compilation replaces those runtime selectors, so their n
 are not embedded in the executable.
 
 Every release target runs `smoke-binary-transports.mjs` against the compiled executable. The
-smoke proves Bun image normalization and ThumbHash, embedded file indexing for text and binary
-assets in a plain folder, a Bun PTY command,
+smoke proves Bun image normalization and ThumbHash, embedded file indexing, a Bun PTY command,
 a Monty workflow, live terminal input/output over the binary protocol, and HTTP through a real
 workspace `CONNECT` tunnel. These boundaries must be tested in the executable itself because the
 normal API gym runs the same source under Node rather than Bun.

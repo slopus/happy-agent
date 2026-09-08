@@ -1,13 +1,14 @@
 # Project files — learnings
 
-## Asset names remain searchable outside Git repositories
+## Preserve parent ignore rules when upgrading the native finder
 
-The older native finder skipped known binary extensions when a folder had no Git repository,
-so images and binary assets disappeared from file-name search in otherwise valid projects.
-The module now uses the published finder that includes those paths in both Git and plain
-folders. Content indexing stays disabled, and dependency-directory exclusions remain intact.
-Regression fixtures must live outside the repository when testing a plain folder: an ancestor
-checkout otherwise silently selects the Git walker and hides this failure.
+FFF 0.10.6 includes image and binary filenames in plain folders, but its walker loses parent
+Git ignore rules when indexing a subfolder. This made dependency trees such as `node_modules`
+appear in autocomplete. The upgrade was reverted by user direction; the module remains on
+0.9.6, with its known limitation that binary filenames are omitted outside Git repositories.
+A future upgrade must prove both behaviors together, including a child folder whose ignore
+rules live in its ancestor. Plain-folder fixtures must live outside any checkout so an ancestor
+Git repository cannot silently hide the binary-filename limitation.
 
 ## Native search starts only when it is needed
 
