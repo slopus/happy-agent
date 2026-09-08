@@ -57,6 +57,7 @@
     "packageManager": "pnpm@10.28.1",
     "pnpm": {
         "overrides": {
+            "@slopus/happy-agent-client": "link:/Users/kirilldubovitskiy/Happy/Workspaces/happy-agent/bot-identity-naming/packages/happy-agent-client",
             "@steve.kite/stdlib": "0.0.12"
         },
         "supportedArchitectures": {

@@ -421,7 +421,8 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             timeoutMs: NAMING_TIMEOUT_MS,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
-        return parseSuggestedNames(answer, { title: true }).title;
+        const title = parseSuggestedNames(answer, { title: true }).title;
+        return title?.split(/\s+/u).slice(0, 3).join(" ").slice(0, 40).trimEnd();
     }
 
     /**

@@ -81,7 +81,7 @@ export function createBotNamingRequest(firstMessage: string): NamingRequestText 
             "",
             "<title>The name</title>",
             "",
-            "No quotes, punctuation, markdown, generic words such as Bot or Assistant, or more than three words.",
+            "At most three words and 40 characters. No quotes, punctuation, markdown, or generic words such as Bot or Assistant.",
             "",
             CLOSING,
         ].join("\n"),

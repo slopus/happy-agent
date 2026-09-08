@@ -19,7 +19,7 @@ import { afterCommit, detach, type Context, type RootContext } from "@steve.kite
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
-import { TitlesModule } from "../titles/index.js";
+import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
 
 import {
     botRecordSchema,
@@ -195,7 +195,8 @@ export class BotsModule implements AgentModule {
             ) {
                 throw new BotConflictError("The requested bot ID is already in use.");
             }
-            const username = await this.#chooseUsername(txCtx, input.name, input.username);
+            const name = input.name ?? "New Bot";
+            const username = await this.#chooseUsername(txCtx, input.name ?? "bot", input.username);
             const path = this.#config.botPath(username);
             const workspaceId = await this.#unusedIdentity(txCtx, new Set([botId]));
             const agentId = await this.#unusedIdentity(txCtx, new Set([botId, workspaceId]));
@@ -209,7 +210,7 @@ export class BotsModule implements AgentModule {
                 // A bot's conversation is the bot. It is called what the bot is called
                 // from birth, which also settles the title and keeps automatic naming
                 // from writing one over it.
-                metadata: { title: input.name, updatedAt: now, version: 1 },
+                metadata: { title: name, updatedAt: now, version: 1 },
                 modules: {
                     compute: {
                         cwd: path,
@@ -223,8 +224,8 @@ export class BotsModule implements AgentModule {
                 id: botId,
                 isAdmin: input.isAdmin ?? false,
                 ...(systemKey === undefined ? {} : { systemKey }),
-                name: input.name,
-                nameConfigured: input.nameConfigured ?? true,
+                name,
+                nameConfigured: input.name !== undefined,
                 username,
                 workspaceId,
                 workspaceVersion: 1,
@@ -348,7 +349,7 @@ export class BotsModule implements AgentModule {
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, botId);
             this.#assertVersion(current, expectedVersion);
-            if (current.name === name) return current;
+            if (current.name === name && current.nameConfigured) return current;
             await this.#setAgentTitle(txCtx, current.agentId, name);
             return await this.#change(txCtx, current, (bot) => ({
                 ...bot,
@@ -366,6 +367,9 @@ export class BotsModule implements AgentModule {
         message: string,
     ): Promise<void> {
         try {
+            const initial = await this.get(ctx, botId);
+            if (initial === undefined || initial.nameConfigured || initial.status !== "active")
+                return;
             const name = await this.#titles.suggestBotName(ctx, message, providerId);
             if (this.#closed || name === undefined) return;
             await ctx.inTx(async (txCtx) => {
@@ -666,7 +670,8 @@ function acceptedMessageText(accepted: AgentBaseAcceptedMessage): string {
     return accepted.message.content
         .flatMap((block) => (block.type === "text" ? [block.text] : []))
         .join("\n")
-        .trim();
+        .trim()
+        .slice(-MAX_NAMING_MESSAGE_CHARS);
 }
 
 function deepFreeze<Value>(value: Value): Value {

@@ -8,7 +8,7 @@ import type { BotsModule } from "../BotsModule.js";
 
 const createBotToolInputSchema = Type.Object(
     {
-        name: botNameSchema,
+        name: Type.Optional(botNameSchema),
         username: Type.Optional(botUsernameSchema),
     },
     { additionalProperties: false },
@@ -23,7 +23,7 @@ export function createBotTool(bots: BotsModule, actingAgentId: string) {
         capabilities: ["List, create, and message persistent bots."],
         searchKeywords: ["new bot", "persistent assistant", "continuous chat"],
         description:
-            'Create one persistent bot: a standing assistant with its own identity, folder, and one continuous conversation. Give it a human display name such as "Research Assistant". The snake_case username names the bot\'s folder on disk and cannot be changed later; leave it out to have one derived from the name. The bot answers ready for its first message through send_bot_message.',
+            'Create one persistent bot with its own identity, folder, and one continuous conversation. Optionally provide a short display name such as "Scout"; otherwise the bot is ready immediately and takes its name from its first user message. The optional snake_case username names the folder and cannot change later. Send messages through send_bot_message.',
         parameters: createBotToolInputSchema,
         returnType: botRecordSchema,
         durable: true,

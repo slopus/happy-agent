@@ -108,7 +108,9 @@ reaches clients as `agent.updated`, never as part of the bot's version.
 
 ## Placeholder bots take a role-like identity from their first message
 
-Creation explicitly records whether the supplied display name is deliberate. A placeholder bot is
+Creation accepts an optional name, never a client-supplied placeholder or naming flag. A supplied
+name is deliberate; an omitted name makes the daemon supply `New Bot` and record eligibility
+internally. Saving a manual name, even the same name, permanently settles it. A placeholder bot is
 fully usable immediately, and only its first accepted text-bearing user message launches detached
 naming. The bots module asks the titles module to run the same cheap, bounded inference mechanism
 with a bot-specific prompt for a one-to-three-word person, role, or character identity based on the

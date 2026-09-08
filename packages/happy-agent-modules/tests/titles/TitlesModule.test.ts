@@ -107,6 +107,29 @@ async function nameChat(
 }
 
 describe("TitlesModule naming", () => {
+    it("asks for a short functional bot identity using the cheapest account model", async () => {
+        const test = await titles([textTurn("<title>Release Steward</title>")]);
+        await expect(
+            test.module.suggestBotName(ctx, "Watch our releases.", "scripted"),
+        ).resolves.toBe("Release Steward");
+        const session = test.provider.sessions[0]!;
+        expect(session.options.tools).toEqual([]);
+        expect(session.options.inferenceMaxRetries).toBe(0);
+        expect(session.requests[0]?.model).toBe("anthropic/sonnet-5");
+        const request = JSON.stringify(session.requests[0]);
+        expect(request).toContain("persistent assistant");
+        expect(request).toContain("rather than a task title");
+        expect(request).toContain("Watch our releases.");
+    });
+
+    it.each([
+        ["one two three four five", "one two three"],
+        ["a".repeat(60), "a".repeat(40)],
+    ])("bounds bot names more tightly than chat titles: %s", async (answer, expected) => {
+        const test = await titles([textTurn(`<title>${answer}</title>`)]);
+        await expect(test.module.suggestBotName(ctx, "Track releases.")).resolves.toBe(expected);
+    });
+
     it("names a chat on the cheapest model of its own account, outside the chat's own session", async () => {
         const test = await titles([textTurn("<title>Retry policy rewrite</title>")]);
 

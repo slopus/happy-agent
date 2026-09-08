@@ -28,7 +28,8 @@ whatever the bot is called rather than waiting for a generated title. A titled a
 renamed by automatic naming, so bots keep that name. The title change advances the agent's own
 version and arrives as an `agent.updated` event, separately from the bot's version.
 
-A client may create a bot with a temporary display name. That bot is usable immediately; its first
+A client may create a bot without supplying a name. The daemon supplies `New Bot` internally;
+there is no public naming flag. That bot is usable immediately; its first
 accepted user message starts detached naming work while its real turn continues. The naming prompt
 asks for a one-to-three-word person, role, or character identity based on the likely ongoing
 function, rather than a task title. The result renames both the bot and its conversation. Explicitly

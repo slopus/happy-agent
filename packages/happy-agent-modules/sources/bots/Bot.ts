@@ -43,8 +43,7 @@ export const createBotInputSchema = Type.Object(
     {
         id: Type.Optional(cuid2Schema),
         isAdmin: Type.Optional(Type.Boolean()),
-        name: botNameSchema,
-        nameConfigured: Type.Optional(Type.Boolean()),
+        name: Type.Optional(botNameSchema),
         username: Type.Optional(botUsernameSchema),
     },
     { additionalProperties: false },
