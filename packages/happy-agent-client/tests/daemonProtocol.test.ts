@@ -16,6 +16,15 @@ const readyHealth = {
 } as const;
 
 describe("healthResponseSchema", () => {
+    it.each([22, 23, 24, 25])("accepts additive protocol %i health responses", (protocol) => {
+        expect(
+            Value.Check(healthResponseSchema, {
+                ...readyHealth,
+                version: { ...readyHealth.version, protocol },
+            }),
+        ).toBe(true);
+    });
+
     it("accepts protocol-23 health responses without shutdown progress", () => {
         expect(Value.Check(healthResponseSchema, readyHealth)).toBe(true);
     });
