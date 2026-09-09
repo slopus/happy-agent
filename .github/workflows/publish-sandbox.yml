@@ -59,16 +59,6 @@ jobs:
                   rustup show active-toolchain || rustup toolchain install
                   rustup target add "${{ matrix.target }}"
 
-            - name: Allow unprivileged user namespaces
-              if: runner.os == 'Linux'
-              # Ubuntu confines unprivileged user namespaces through AppArmor by default. The
-              # supervisor creates one as its very first act, so without this every Linux case
-              # fails identically at setup and proves nothing about the code.
-              run: |
-                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-                  fi
-
             - name: Report what the kernel actually offers
               # The fallback paths are chosen at runtime, so the kernel version is the difference
               # between a run that exercised `mount_setattr` and one that exercised the pre-5.12
@@ -77,6 +67,24 @@ jobs:
 
             - name: Build the release binary
               run: cargo build --locked --release --target "${{ matrix.target }}" --bin happy-agent-supervisor
+
+            - name: Verify an enforced AppArmor denial before allowing the test binary
+              if: runner.os == 'Linux'
+              run: bash ../scripts/test-apparmor.sh "$PWD/target/${{ matrix.target }}/release/happy-agent-supervisor"
+
+            - name: Allow namespaces only for the supervisor test binaries
+              if: runner.os == 'Linux'
+              # Match the standalone verification gate: keep the global restriction enabled.
+              run: |
+                  test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+                  sudo tee /etc/apparmor.d/happy-supervisor-tests >/dev/null <<EOF
+                  abi <abi/4.0>,
+                  include <tunables/global>
+                  profile happy-supervisor-tests "$PWD/target/${{ matrix.target }}/{debug,release}/happy-agent-supervisor" flags=(unconfined) {
+                      userns,
+                  }
+                  EOF
+                  sudo apparmor_parser --replace /etc/apparmor.d/happy-supervisor-tests
 
             - name: Run the native test suite
               # The tests run against the binary that is about to be published, not against the host
