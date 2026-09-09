@@ -497,6 +497,7 @@ export class HappySessionClient {
                         : { providerId: incoming.selection.providerId }),
                 },
                 text: incoming.text,
+                ...(incoming.content === undefined ? {} : { content: incoming.content }),
             });
         } catch (error) {
             if (!(error instanceof HappyMessageRefused)) throw error;

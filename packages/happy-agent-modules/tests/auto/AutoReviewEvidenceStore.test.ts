@@ -4,6 +4,11 @@ import { sql } from "drizzle-orm";
 
 import type { AutoEvidenceEntry } from "../../sources/auto/AutoReviewTranscript.js";
 import type { AutoTranscriptMessage } from "../../sources/auto/impl/createAutoPermissionTranscript.js";
+import { createAutoPermissionTranscript } from "../../sources/auto/impl/createAutoPermissionTranscript.js";
+import {
+    userMessageEvidence,
+    toolResultEvidence,
+} from "../../sources/auto/impl/evidenceEntries.js";
 import {
     AutoEvidenceOverflowError,
     AutoReviewEvidenceStore,
@@ -59,6 +64,35 @@ describe("AutoReviewEvidenceStore", () => {
             { type: "text", text: "first" },
             { type: "text", text: "second" },
         ]);
+    });
+
+    it("restores exact human tool requests and retains them ahead of large tool output", async () => {
+        const request = {
+            type: "tool_call_request" as const,
+            name: "exec_command",
+            arguments: { cmd: "git push origin HEAD:main" },
+        };
+        await store.appendEntry(
+            db.database,
+            AGENT,
+            userMessageEvidence({ role: "user", content: [request] }, { messageOrigin: "user" })!,
+        );
+        await store.appendEntry(
+            db.database,
+            AGENT,
+            toolResultEvidence({
+                toolName: "read_file",
+                isError: false,
+                content: [{ type: "text", text: "Untrusted output ".repeat(20_000) }],
+            }),
+        );
+        const restored = new AutoReviewEvidenceStore();
+        const entries = await restored.readEntries(db.database, AGENT, 0);
+        expect(entries[0]?.blocks).toEqual([request]);
+        const transcript = createAutoPermissionTranscript(entries);
+        expect(transcript.text).toContain("User:\nRequested tool (exec_command)");
+        expect(transcript.text).toContain("git push origin HEAD:main");
+        expect(transcript.userEvidenceOmitted).toBe(false);
     });
 
     it("marks the archive unhealthy so a later review fails closed", async () => {

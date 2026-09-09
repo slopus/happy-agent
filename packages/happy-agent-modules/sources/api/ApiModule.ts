@@ -2073,6 +2073,30 @@ export class ApiModule implements AgentModule {
         if (agentId === undefined || underlyingRunId === undefined || type === undefined) {
             return;
         }
+        // Requested calls have their own durable assistant message under the call ID, not an
+        // inference ID. Base emits ordinary tool events but no provider block_start for them.
+        // Publish that exact row rather than inventing a streaming inference identity.
+        const callId =
+            event.type === "tool.completed"
+                ? stringValue(payload?.["callId"])
+                : stringValue(recordValue(payload?.["event"])?.["callId"]);
+        const requestedMessage =
+            callId === undefined ? undefined : await this.#history.message(ctx, agentId, callId);
+        if (requestedMessage?.role === "assistant") {
+            await this.#flushAcceptedMessages(ctx, agentId);
+            if (type === "toolcall_start" || event.type === "tool.completed") {
+                this.#journal.append(
+                    type === "toolcall_start" ? "message.created" : "message.updated",
+                    {
+                        agentId,
+                        runId: requestedMessage.runId ?? underlyingRunId,
+                        message: messageResource(requestedMessage),
+                    },
+                    event.occurredAt,
+                );
+            }
+            return;
+        }
         const streaming = this.#streamingAssistantBlocks.get(agentId);
         const { messageId, runId } = apiAssistantIdentityForProviderEvent(
             type,
@@ -3094,15 +3118,7 @@ export class ApiModule implements AgentModule {
                 status: "pending",
                 delivery,
                 createdAt,
-                blocks: content.map((block) =>
-                    block.type === "text"
-                        ? { type: "text" as const, text: block.text }
-                        : {
-                              type: "image" as const,
-                              mediaType: block.mimeType,
-                              data: block.data,
-                          },
-                ),
+                blocks: this.#history.inputBlocks(content),
                 mode: body.mode,
                 profile,
                 ...(body.clientMetadata === undefined

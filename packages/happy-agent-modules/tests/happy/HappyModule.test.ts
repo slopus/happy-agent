@@ -16,6 +16,7 @@ import {
 import { happyIntegrationMigrations } from "../../sources/happy/HappyIntegrationDatabase.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import type { BotRecord } from "../../sources/bots/index.js";
+import { HistoryModule } from "../../sources/history/index.js";
 
 const happyConnection = vi.hoisted(() => ({
     configuration: {
@@ -247,6 +248,7 @@ async function fixture() {
         } as never,
         {
             latestUserOrFinalAssistantTextMessageAt: async () => activity.textMessageAt,
+            inputBlocks: new HistoryModule().inputBlocks,
             queuePending: async (_ctx: unknown, message: Record<string, unknown>) => {
                 pendingMessages.push(message);
             },
@@ -299,6 +301,21 @@ async function fixture() {
 }
 
 describe("Happy mobile messages", () => {
+    it("queues the exact rich request without also injecting its display fallback", async () => {
+        const test = await fixture();
+        test.configs.set("agent-rich", { metadata: { happy: SELECTION } });
+        const content = [{ type: "tool_call_request" as const, name: "list_skills" }];
+        await test.module.submit(databases.at(-1)!.context, "agent-rich", {
+            content,
+            images: [],
+            remoteMessageId: "happy:rich-1",
+            selection: {},
+            text: "Requested tool: list_skills",
+        });
+        expect(test.pendingMessages[0]).toMatchObject({ blocks: content });
+        expect(test.steered[0]).toMatchObject({ message: { role: "user", content } });
+    });
+
     it("publishes a pending steering message before delivering it to Agent Base", async () => {
         const test = await fixture();
         test.configs.set("agent-active", {

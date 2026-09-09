@@ -1,7 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import { HAPPY_SENT_FROM_RIG, type HappyRemoteInput } from "./HappyProtocol.js";
+import {
+    HAPPY_SENT_FROM_RIG,
+    happyInputContentSchema,
+    type HappyRemoteInput,
+} from "./HappyProtocol.js";
 
 const recordSchema = Type.Record(Type.String(), Type.Unknown());
 
@@ -22,7 +26,11 @@ const metaSchema = Type.Object(
 const plainTextSchema = Type.Object(
     {
         content: Type.Object(
-            { text: Type.String(), type: Type.Literal("text") },
+            {
+                text: Type.String(),
+                type: Type.Literal("text"),
+                content: Type.Optional(happyInputContentSchema),
+            },
             { additionalProperties: true },
         ),
         meta: Type.Optional(metaSchema),
@@ -52,7 +60,11 @@ const attachmentEventSchema = Type.Object(
 );
 
 const textEventSchema = Type.Object(
-    { t: Type.Literal("text"), text: Type.String() },
+    {
+        t: Type.Literal("text"),
+        text: Type.String(),
+        content: Type.Optional(happyInputContentSchema),
+    },
     { additionalProperties: true },
 );
 
@@ -83,7 +95,14 @@ export function readHappyRemoteInput(value: unknown): HappyRemoteInput | undefin
     if (outerMeta?.sentFrom === HAPPY_SENT_FROM_RIG) return { kind: "echo" };
 
     if (Value.Check(plainTextSchema, value)) {
-        return { kind: "text", selection: readSelection(outerMeta), text: value.content.text };
+        return {
+            kind: "text",
+            selection: readSelection(outerMeta),
+            text: value.content.text,
+            ...(value.content.content === undefined
+                ? {}
+                : { content: structuredClone(value.content.content) }),
+        };
     }
     if (!Value.Check(wrappedSchema, value) || value.role !== "session") return undefined;
     const nested = (value.content as { data?: unknown }).data;
@@ -103,6 +122,9 @@ export function readHappyRemoteInput(value: unknown): HappyRemoteInput | undefin
             kind: "text",
             selection: readSelection(envelope.meta ?? outerMeta),
             text: envelope.ev.text,
+            ...(envelope.ev.content === undefined
+                ? {}
+                : { content: structuredClone(envelope.ev.content) }),
         };
     }
     return undefined;

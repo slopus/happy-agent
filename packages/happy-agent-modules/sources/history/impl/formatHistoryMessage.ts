@@ -38,6 +38,8 @@ export function formatHistoryMessage(
                     ? "Thinking: [redacted]"
                     : `Thinking: ${truncate(block.thinking, textLimit)}`,
             );
+        } else if (block.type === "tool_call_request") {
+            lines.push(`Requested tool: ${block.name} ${truncateJson(block.arguments ?? {})}`);
         } else if (block.type === "tool_call") {
             if (!includeTools) continue;
             lines.push(`Tool call: ${block.name} ${truncateJson(block.arguments ?? null)}`);

@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
-import { clientMetadataSchema } from "@slopus/happy-agent-client";
+import { clientMetadataSchema, toolCallRequestBlockSchema } from "@slopus/happy-agent-client";
 
 export {
     cloudMutationRequestSchema,
@@ -167,6 +167,7 @@ export const messageSendBodySchema = Type.Object(
         content: Type.Optional(
             Type.Array(
                 Type.Union([
+                    toolCallRequestBlockSchema,
                     Type.Object(
                         { text: Type.String(), type: Type.Literal("text") },
                         { additionalProperties: false },
@@ -180,7 +181,12 @@ export const messageSendBodySchema = Type.Object(
                         { additionalProperties: false },
                     ),
                 ]),
-                { maxItems: 64 },
+                {
+                    maxItems: 64,
+                    contains: toolCallRequestBlockSchema,
+                    minContains: 0,
+                    maxContains: 1,
+                },
             ),
         ),
         delivery: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),

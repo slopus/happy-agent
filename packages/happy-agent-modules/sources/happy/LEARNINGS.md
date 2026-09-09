@@ -1,5 +1,21 @@
 # Happy module learnings
 
+## Rich user input remains one message
+
+Text envelopes carrying an explicit tool request retain their ordered input blocks in optional
+`content`, alongside the existing text fallback for older phones. Live acceptance and historical
+backfill use the same representation. Incoming rich content is validated as text, images, and at
+most one request, then queued intact; its display fallback must not become duplicate model prose.
+Malformed rich content is refused rather than silently downgraded to a text-only message.
+Tool execution may begin before inference. Its start opens the Happy turn when no turn is open,
+so requested tools and their eventual settlement share the normal turn lifecycle.
+
+Rich input can exceed the relay outbox's single-message limit, particularly with inline images.
+Both live and historical projection replace an oversized envelope with a bounded, visible sync
+failure notice under the same identity. The full content remains in local History; subsequent
+events keep syncing. An optional relay projection must not permanently stall a session behind
+one message it cannot carry.
+
 ## Mobile tool wire normalization
 
 - Normalize tool calls at the Happy sync boundary only when the mobile app already owns the same

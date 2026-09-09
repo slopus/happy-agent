@@ -442,11 +442,15 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             scope: AgentModuleScope,
             event: SessionEvent,
         ): Promise<void> => {
+            const journalEvent =
+                event.type === "toolcall_end"
+                    ? { ...event, arguments: journalToolArguments(event.arguments) }
+                    : event;
             await ctx.inTx(async (txCtx) => {
                 const current = this.#runs.get(scope.agent.id) ?? emptyRun(this.#createId());
                 const projected = projectProviderEvent(
                     { ...current, hasProviderEvent: true },
-                    event,
+                    journalEvent,
                     Date.now(),
                 );
                 await saveActiveRun(txCtx.db, scope.agent.id, projected.run);
@@ -457,7 +461,7 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
                 await this.recordInDatabase(txCtx, txCtx.db, {
                     agentId: scope.agent.id,
                     payload: {
-                        event,
+                        event: journalEvent,
                         rigEvent: projected.rigEvent,
                         runId: projected.run.runId,
                         provider: scope.agent.provider,
@@ -902,12 +906,21 @@ function projectProviderEvent(
 
 function presentedToolCall(call: SessionToolCallBlock): UnknownRecord {
     return {
-        arguments: parseToolArguments(call.arguments),
+        arguments: parseToolArguments(journalToolArguments(call.arguments)),
         id: call.callId,
         name: call.name,
         ...(call.namespace === undefined ? {} : { namespace: call.namespace }),
         type: "toolCall",
     };
+}
+
+/** History owns exact input; the replay journal must leave room for its repeated projections. */
+function journalToolArguments(argumentsJson: string): string {
+    return Buffer.byteLength(argumentsJson, "utf8") <= 1_024 * 1_024
+        ? argumentsJson
+        : JSON.stringify(
+              "Tool arguments are too large for the event journal; see the original message in history.",
+          );
 }
 
 function toolNameForCall(run: ActiveRun | undefined, callId: string): string {

@@ -7,9 +7,11 @@ import type {
     HappySessionEvent,
     HappySessionProtocolMessage,
     HappyUsage,
+    HappyInputContent,
 } from "./HappyProtocol.js";
 import { happyServerMessageId } from "./HappyProtocol.js";
 import { happyToolCallPresentation, normalizeHappyToolCall } from "./normalizeHappyToolCall.js";
+import { MAX_HAPPY_OUTBOX_MESSAGE_CHARACTERS } from "./HappySync.js";
 
 /** How many event ids are remembered so a replayed event is not shown twice. */
 const MAX_REMEMBERED_EVENTS = 16_384;
@@ -209,14 +211,19 @@ export class HappyMessageMapper {
             .flatMap((block) => (block.type === "text" ? [block.text] : []))
             .join("\n")
             .trim();
-        if (text.length === 0) return [];
+        const content = richUserInput(message);
+        if (text.length === 0 && content === undefined) return [];
         // A message arriving mid-turn is the person interrupting; the turn ends here.
         const interrupted = this.#closeTurn(event, accepted.runId, "completed", "steering");
         if (message.role === "user") {
             return [
                 ...interrupted,
                 this.#createMessage({
-                    ev: { t: "text", text },
+                    ev: {
+                        t: "text",
+                        text: text || requestedToolText(content),
+                        ...(content === undefined ? {} : { content }),
+                    },
                     id: accepted.id,
                     role: "user",
                     time: event.occurredAt,
@@ -234,6 +241,21 @@ export class HappyMessageMapper {
     ): HappySessionProtocolMessage[] {
         const output: HappySessionProtocolMessage[] = [];
         const turn = `history:${message.runId ?? message.recordId}`;
+        const content = richUserInput(message);
+        if (content !== undefined) {
+            const text = content
+                .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                .join("\n")
+                .trim();
+            return [
+                this.#createMessage({
+                    ev: { t: "text", text: text || requestedToolText(content), content },
+                    id: idPrefix,
+                    role: "user",
+                    time,
+                }),
+            ];
+        }
         for (const block of message.blocks) {
             const id = output.length === 0 ? idPrefix : `${idPrefix}:${String(output.length)}`;
             if (block.type === "text") {
@@ -334,6 +356,9 @@ export class HappyMessageMapper {
         if (Value.Check(toolStartSchema, event.payload)) {
             const call = event.payload.rigEvent.toolCall;
             return [
+                ...(event.payload.runId === undefined
+                    ? []
+                    : this.#openTurn(event, event.payload.runId)),
                 this.#agentMessage(
                     event,
                     `tool-call:${call.id}`,
@@ -485,11 +510,25 @@ export class HappyMessageMapper {
     }
 
     #createMessage(content: HappySessionEnvelope): HappySessionProtocolMessage {
-        return {
+        const message: HappySessionProtocolMessage = {
             content,
             localId: `rig:${content.id}`,
             meta: { sentFrom: "rig" },
             role: "session",
+        };
+        if (JSON.stringify(message).length <= MAX_HAPPY_OUTBOX_MESSAGE_CHARACTERS) return message;
+        // This optional projection cannot strand every later event behind one large payload.
+        // Preserve the complete message in local history and report this sync failure explicitly.
+        return {
+            ...message,
+            content: {
+                ...content,
+                role: "agent",
+                ev: {
+                    t: "service",
+                    text: "This message is too large to sync to Happy. Its complete content remains available in Happy Agent history.",
+                },
+            },
         };
     }
 
@@ -516,4 +555,24 @@ function toRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value)
         ? (value as Record<string, unknown>)
         : { value };
+}
+
+function richUserInput(message: HistoryMessage): HappyInputContent | undefined {
+    if (
+        message.role !== "user" ||
+        !message.blocks.some((block) => block.type === "tool_call_request")
+    )
+        return undefined;
+    return message.blocks.flatMap((block): HappyInputContent => {
+        if (block.type === "text" || block.type === "tool_call_request")
+            return [structuredClone(block)];
+        if (block.type === "image")
+            return [{ type: "image", mimeType: block.mediaType, data: block.data ?? "" }];
+        return [];
+    });
+}
+
+function requestedToolText(content: HappyInputContent | undefined): string {
+    const request = content?.find((block) => block.type === "tool_call_request");
+    return request === undefined ? "" : `Requested tool: ${request.name}`;
 }

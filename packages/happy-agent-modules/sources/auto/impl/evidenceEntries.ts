@@ -122,11 +122,12 @@ function untrustedAgentEntry(
 }
 
 function inputBlocks(content: SessionUserMessage["content"]): AutoTranscriptMessage["blocks"] {
-    return content.map((block) =>
-        block.type === "text"
+    return content.map((block) => {
+        if (block.type === "tool_call_request") return structuredClone(block);
+        return block.type === "text"
             ? { type: "text" as const, text: block.text }
-            : { type: "image" as const },
-    );
+            : { type: "image" as const };
+    });
 }
 
 function outputBlocks(

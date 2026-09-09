@@ -977,15 +977,7 @@ export class HappyModule
         const id = createId();
         const pending: HistoryPendingMessage = {
             agentId,
-            blocks: content.content.map((block) =>
-                block.type === "text"
-                    ? { text: block.text, type: "text" as const }
-                    : {
-                          data: block.data,
-                          mediaType: block.mimeType,
-                          type: "image" as const,
-                      },
-            ),
+            blocks: this.#history.inputBlocks(content.content),
             createdAt: Date.now(),
             delivery: "steer",
             id,
@@ -1975,8 +1967,8 @@ function isUnlinkedIntegration(integration: HappyIntegration): boolean {
 }
 
 function messageFrom(message: HappyInboundMessage): SessionUserMessage {
-    const content: SessionInputBlock[] = [];
-    if (message.text.length > 0 || message.images.length === 0) {
+    const content: SessionInputBlock[] = structuredClone(message.content ?? []);
+    if (message.content === undefined && (message.text.length > 0 || message.images.length === 0)) {
         content.push({ text: message.text, type: "text" });
     }
     for (const image of message.images) {

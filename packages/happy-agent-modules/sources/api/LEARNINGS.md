@@ -1,5 +1,16 @@
 # API module learnings
 
+## Input requests and generated calls retain distinct identities
+
+Send accepts the published tool-request block schema, with at most one request among the text
+and image blocks. Pending responses, bootstrap, acceptance, and history retain that block exactly.
+Acceptance is still carried by the run event, not an extra user-message update.
+
+A requested call has no inference-start event. Publish its completed acceptance-time assistant
+row on tool start and its updated row on completion, using History's call-owned message identity.
+Never project it under a synthetic run-level assistant ID: that makes live clients disagree with
+reload and leaves the real call without a creation event.
+
 ## Protocol revisions identify new capabilities without removing older requests
 
 Unnamed bot creation was added without a distinct advertised revision, leaving clients

@@ -1,7 +1,12 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
-import { clientMetadataSchema, type ClientMetadata } from "@slopus/happy-agent-client";
+import {
+    clientMetadataSchema,
+    clientMetadataValueSchema,
+    toolCallRequestBlockSchema,
+    type ClientMetadata,
+} from "@slopus/happy-agent-client";
 
 import { toolPermissionReviewSchema } from "../permissions/ToolPermissionReview.js";
 
@@ -191,20 +196,36 @@ export const historyImageBlockSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** A tool the model asked for, with the arguments it asked with. */
-export const historyToolCallBlockSchema = Type.Object(
-    {
-        type: Type.Literal("tool_call"),
-        callId: cuid2Schema,
-        name: boundedIdentifier(MAX_HISTORY_TOOL_NAME_LENGTH),
-        arguments: Type.Optional(historyToolArgumentsSchema),
-        /** Present exactly when this invocation crossed the automatic-review boundary. */
-        elevated: Type.Optional(Type.Boolean()),
-        /** The bounded review outcome shown to public clients. */
-        review: Type.Optional(toolPermissionReviewSchema),
-    },
-    { additionalProperties: false },
-);
+const historyToolCallFields = {
+    type: Type.Literal("tool_call"),
+    callId: cuid2Schema,
+    name: boundedIdentifier(MAX_HISTORY_TOOL_NAME_LENGTH),
+    /** Present exactly when this invocation crossed the automatic-review boundary. */
+    elevated: Type.Optional(Type.Boolean()),
+    /** The bounded review outcome shown to public clients. */
+    review: Type.Optional(toolPermissionReviewSchema),
+};
+
+/** Requested calls retain their exact input even when it is too large to execute. */
+export const historyToolCallBlockSchema = Type.Union([
+    Type.Object(
+        {
+            ...historyToolCallFields,
+            requested: Type.Optional(Type.Literal(false)),
+            arguments: Type.Optional(historyToolArgumentsSchema),
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            ...historyToolCallFields,
+            name: toolCallRequestBlockSchema.properties.name,
+            requested: Type.Literal(true),
+            arguments: Type.Optional(clientMetadataValueSchema),
+        },
+        { additionalProperties: false },
+    ),
+]);
 
 const historyFileDiffCountSchema = Type.Integer({
     minimum: 0,
@@ -335,6 +356,7 @@ export const historyCompactionBlockSchema = Type.Union([
 
 /** One piece of a recorded message. */
 export const historyBlockSchema = Type.Union([
+    toolCallRequestBlockSchema,
     historyTextBlockSchema,
     historyThinkingBlockSchema,
     historyImageBlockSchema,
@@ -427,7 +449,8 @@ export function historyMessageWithinPersistenceBounds(message: unknown): boolean
         candidate.blocks.some(
             (block) =>
                 block.type === "tool_call" &&
-                ((block.arguments !== undefined &&
+                ((block.requested !== true &&
+                    block.arguments !== undefined &&
                     !historyToolArgumentsWithinByteLimit(block.arguments)) ||
                     (block.elevated === undefined) !== (block.review === undefined)),
         )

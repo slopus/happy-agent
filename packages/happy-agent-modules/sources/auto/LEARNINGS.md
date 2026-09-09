@@ -1,5 +1,11 @@
 # Auto module — learnings
 
+- A user's explicit tool request is structured authorization evidence, not an image placeholder
+  and not assistant-generated tool prose. Preserve its exact name and arguments in the durable
+  evidence archive and render them under the message's existing provenance. Only positively
+  stamped human input is trusted; the generated assistant call remains untrusted. The usual
+  preferential retention and incomplete-user-evidence checks apply to requests too.
+
 - The reviewer already accounts for explicit informed user approval after a denial, but the
   agent-facing refusal used to forbid all retries without explaining that path. Agents therefore
   treated a prior denial as permanent even after the user authorized the exact action and its

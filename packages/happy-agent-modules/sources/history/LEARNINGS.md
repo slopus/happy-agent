@@ -1,5 +1,31 @@
 # History learnings
 
+## Requested tools are user content followed by a separate assistant call
+
+User input is no longer just text or images. Preserve `tool_call_request` unchanged in pending
+and accepted history, search, and readable excerpts. It records what the person asked for; the
+generated assistant call and its result record what actually happened.
+
+Requested calls arrive transactionally before any inference identity exists. History commits an
+assistant row under the generated call ID in that same acceptance transaction and indexes it for
+ordinary permission and result updates. Waiting for an inference-completion hook loses that call
+or joins it to the later model response. The call row and the later inference stay separate.
+
+An unexecutable request must fail its tool, not the transaction accepting the user's message.
+Requested call rows carry an internal marker and preserve exact JSON arguments within the overall
+message limit, even when ordinary tool argument limits reject their size or complexity. Enforce
+those execution limits in the nontransactional `beforeToolCall` hook, where Agent Base records a
+normal failed result and continues. Rejecting inside acceptance or transactional dispatch leaves
+the same queued message permanently blocking later work. Invalid requested names also remain
+intact on the request and call; the failed result uses a safe display label.
+
+The parsed-argument execution check applies only to a call whose durable row explicitly marks it
+as requested. Ordinary model calls keep the existing raw-JSON fallback for arguments deeper or
+wider than History's structured representation allows. Applying that storage schema to every
+tool's parsed arguments incorrectly rejected valid MCP and task calls with more permissive tool
+schemas. Determine provenance per call from durable History, so restart preserves the distinction
+and a request cannot change validation for later model-generated calls.
+
 ## Request profiles are disposable compatibility markers
 
 History stores request profiles using the stable `string | null` transport shape, but every read

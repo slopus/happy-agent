@@ -167,6 +167,7 @@ function historyBlocks(
     return blocks
         .filter((block) => block.type !== "tool_result")
         .map((block): Record<string, unknown> => {
+            if (block.type === "tool_call_request") return structuredClone(block);
             if (block.type === "text") return { type: "text", text: block.text };
             if (block.type === "thinking") {
                 return { type: "reasoning", text: block.thinking };

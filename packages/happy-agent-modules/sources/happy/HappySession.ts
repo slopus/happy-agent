@@ -1,4 +1,5 @@
 import type { AgentPermissionMode } from "@slopus/happy-agent-base";
+import type { HappyInputContent } from "./HappyProtocol.js";
 import type { BotRecord } from "../bots/index.js";
 
 /**
@@ -96,6 +97,7 @@ export interface HappyInboundImage {
 
 /** What arrived from the phone, ready for the conversation. */
 export interface HappyInboundMessage {
+    readonly content?: HappyInputContent;
     readonly images: readonly HappyInboundImage[];
     /** Namespaced identity of the remote message, so its echo can be recognized. */
     readonly remoteMessageId: string;

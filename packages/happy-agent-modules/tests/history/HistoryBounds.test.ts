@@ -24,6 +24,29 @@ function validMessage() {
 }
 
 describe("history runtime bounds and contracts", () => {
+    it("retains exact requested arguments that must fail execution instead of acceptance", () => {
+        const argumentsValue = {
+            body: "x".repeat(1_010_000),
+            values: Array.from({ length: 300 }, () => null),
+        };
+        const block = {
+            type: "tool_call",
+            callId: "requestedcall1",
+            name: "exec_command",
+            arguments: argumentsValue,
+        };
+        expect(historyToolArgumentsWithinByteLimit(argumentsValue)).toBe(false);
+        expect(historyMessageWithinPersistenceBounds({ ...validMessage(), blocks: [block] })).toBe(
+            false,
+        );
+        expect(
+            historyMessageWithinPersistenceBounds({
+                ...validMessage(),
+                blocks: [{ ...block, requested: true }],
+            }),
+        ).toBe(true);
+    });
+
     it("accepts a minimal message and rejects malformed identities, timestamps, and blocks", () => {
         expect(Value.Check(historyMessageSchema, validMessage())).toBe(true);
         expect(

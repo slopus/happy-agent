@@ -661,6 +661,68 @@ describe("EventsModule", () => {
         }
     });
 
+    it("bounds oversized tool arguments without changing their execution input or replay identities", async () => {
+        const events = new EventsModule();
+        const database = moduleDatabase(events.migrations ?? [], "events-oversized-tool-test");
+        await database.ready;
+        try {
+            const hooks = await resolveModuleHooks(database.context, events);
+            const scope = scopeFor("agent-oversized-tool");
+            const call = {
+                type: "tool_call" as const,
+                callId: "call-oversized-tool",
+                name: "exec_command",
+                arguments: JSON.stringify({ cmd: "x".repeat(6_000_000) }),
+            };
+            await hooks.messageAcceptedTransact?.(database.context, scope, {
+                id: "message-oversized-tool",
+                kind: "send",
+                message: { role: "user", content: [{ type: "text", text: "Run it." }] },
+                profile: null,
+            });
+            await hooks.onEvent?.(database.context, scope, {
+                type: "toolcall_start",
+                callId: call.callId,
+                name: call.name,
+            });
+            await hooks.onEvent?.(database.context, scope, {
+                type: "toolcall_end",
+                callId: call.callId,
+                arguments: call.arguments,
+            });
+            await hooks.beforeToolCallTransact?.(database.context, scope, call);
+            await hooks.afterToolCallTransact?.(database.context, scope, {
+                callId: call.callId,
+                role: "tool",
+                content: [{ type: "text", text: "Tool arguments exceed the supported limits." }],
+                isError: true,
+            });
+
+            const recorded = events.replay(events.originCursor())!.events;
+            expect(recorded.find((event) => event.type === "tool.started")?.payload).toMatchObject({
+                runId: "message-oversized-tool",
+                rigEvent: {
+                    toolCall: {
+                        id: call.callId,
+                        arguments: {
+                            value: expect.stringContaining("original message in history"),
+                        },
+                    },
+                },
+            });
+            expect(
+                recorded.find((event) => event.type === "tool.completed")?.payload,
+            ).toMatchObject({
+                callId: call.callId,
+                isError: true,
+            });
+            expect(JSON.stringify(recorded).length).toBeLessThan(10_000);
+            expect(JSON.parse(call.arguments).cmd).toHaveLength(6_000_000);
+        } finally {
+            database.close();
+        }
+    });
+
     it("persists a completed local tool in the active assistant message", async () => {
         const events = new EventsModule();
         const database = moduleDatabase(events.migrations ?? [], "events-tool-result-test");

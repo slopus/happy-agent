@@ -1,4 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
+import { toolCallRequestBlockSchema } from "@slopus/happy-agent-client";
 
 /**
  * Turns the conversation into the budgeted transcript the guardian reviews, ported behavior-for-
@@ -72,6 +73,7 @@ const autoTranscriptToolResultBlockSchema = Type.Object(
 );
 
 const autoTranscriptAgentBlockSchema = Type.Union([
+    toolCallRequestBlockSchema,
     autoTranscriptTextBlockSchema,
     autoTranscriptImageBlockSchema,
     autoTranscriptThinkingBlockSchema,
@@ -249,7 +251,7 @@ function collectEntries(messages: readonly AutoTranscriptMessage[]): TranscriptE
                 });
                 continue;
             }
-            if (block.type === "tool_call") {
+            if (block.type === "tool_call" || block.type === "tool_call_request") {
                 entries.push({
                     category: "message",
                     ordinal: entries.length,
@@ -318,7 +320,12 @@ function renderContent(
     imagePlaceholder: string,
 ): string {
     return blocks
-        .map((block) => (block.type === "text" ? block.text : imagePlaceholder))
+        .map((block) => {
+            if (block.type === "tool_call_request") {
+                return `Requested tool (${block.name}):\n${safeJson(block.arguments ?? {})}`;
+            }
+            return block.type === "text" ? block.text : imagePlaceholder;
+        })
         .join("\n");
 }
 

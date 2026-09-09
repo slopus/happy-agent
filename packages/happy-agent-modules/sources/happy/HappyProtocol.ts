@@ -1,4 +1,23 @@
 import { Type, type Static } from "@sinclair/typebox";
+import { toolCallRequestBlockSchema } from "@slopus/happy-agent-client";
+
+/** Rich user input travels atomically with the text fallback older phones understand. */
+export const happyInputContentSchema = Type.Array(
+    Type.Union([
+        Type.Object(
+            { type: Type.Literal("text"), text: Type.String() },
+            { additionalProperties: false },
+        ),
+        Type.Object(
+            { type: Type.Literal("image"), mimeType: Type.String(), data: Type.String() },
+            { additionalProperties: false },
+        ),
+        toolCallRequestBlockSchema,
+    ]),
+    // Send allows 64 rich blocks plus its required leading text block.
+    { maxItems: 65, contains: toolCallRequestBlockSchema, minContains: 0, maxContains: 1 },
+);
+export type HappyInputContent = Static<typeof happyInputContentSchema>;
 
 /**
  * The shapes Happy speaks on the wire.
@@ -25,7 +44,7 @@ export type HappySessionEvent =
     // silently drops any event it cannot name, so plain words about what went wrong reach a person
     // and a truer-looking event does not.
     | { t: "service"; text: string }
-    | { t: "text"; text: string; thinking?: boolean }
+    | { t: "text"; text: string; thinking?: boolean; content?: HappyInputContent }
     | { t: "tool-call-end"; call: string; result?: string; isError?: boolean }
     | {
           t: "tool-call-start";
@@ -104,7 +123,7 @@ export type HappyRemoteSelection = Static<typeof happyRemoteSelectionSchema>;
 export type HappyRemoteInput =
     | { kind: "echo" }
     | { kind: "attachment"; mimeType?: string; name: string; ref: string; size: number }
-    | { kind: "text"; selection: HappyRemoteSelection; text: string };
+    | { kind: "text"; selection: HappyRemoteSelection; text: string; content?: HappyInputContent };
 
 /** Marks a message Happy Agent itself produced, so its echo can be recognized. */
 export const HAPPY_SENT_FROM_RIG = "rig";

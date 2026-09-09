@@ -3,6 +3,38 @@ import { describe, expect, it } from "vitest";
 import { readHappyRemoteInput } from "../../sources/happy/index.js";
 
 describe("reading a message from Happy", () => {
+    it("retains ordered rich input without treating the fallback text as a second message", () => {
+        const content = [
+            { type: "text", text: "Inspect" },
+            { type: "tool_call_request", name: "list_skills" },
+        ];
+        for (const value of [
+            { role: "user", content: { type: "text", text: "Inspect", content } },
+            {
+                role: "session",
+                content: { role: "user", ev: { t: "text", text: "Inspect", content } },
+            },
+        ])
+            expect(readHappyRemoteInput(value)).toEqual({
+                kind: "text",
+                selection: {},
+                text: "Inspect",
+                content,
+            });
+    });
+
+    it("refuses malformed or repeated rich tool requests instead of downgrading to prose", () => {
+        const request = { type: "tool_call_request", name: "list_skills" };
+        for (const content of [[request, request], [{ ...request, arguments: [] }]]) {
+            expect(
+                readHappyRemoteInput({
+                    role: "user",
+                    content: { type: "text", text: "Inspect", content },
+                }),
+            ).toBeUndefined();
+        }
+    });
+
     it("reads the plain shape the phone sends", () => {
         expect(
             readHappyRemoteInput({ content: { text: "hello", type: "text" }, role: "user" }),

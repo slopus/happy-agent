@@ -1,6 +1,7 @@
 import type { AgentBaseToolOutcome, AgentMessageMetadata } from "@slopus/happy-agent-base";
 import type { SessionUserMessage } from "@slopus/happy-providers";
 import { describe, expect, it } from "vitest";
+import { createAutoPermissionTranscript } from "../../sources/auto/impl/createAutoPermissionTranscript.js";
 
 import {
     assistantTextEvidence,
@@ -20,6 +21,43 @@ function metadata(fields: Record<string, unknown>): AgentMessageMetadata {
 }
 
 describe("userMessageEvidence", () => {
+    it("marks oversized requested arguments as incomplete user evidence", () => {
+        const evidence = userMessageEvidence(
+            {
+                role: "user",
+                content: [
+                    {
+                        type: "tool_call_request",
+                        name: "exec_command",
+                        arguments: { cmd: "x".repeat(10_000) },
+                    },
+                ],
+            },
+            metadata({ messageOrigin: "user" }),
+        )!;
+        expect(createAutoPermissionTranscript([evidence.entry]).userEvidenceOmitted).toBe(true);
+    });
+
+    it("retains exact tool requests as trusted evidence only for a real human", () => {
+        const request = {
+            type: "tool_call_request" as const,
+            name: "exec_command",
+            arguments: { cmd: "git push origin HEAD:main" },
+        };
+        for (const origin of ["user", "agent"]) {
+            const evidence = userMessageEvidence(
+                { role: "user", content: [request] },
+                metadata({ messageOrigin: origin }),
+            )!;
+            expect(evidence.entry.blocks).toEqual([request]);
+            expect(evidence.trustedUserEvidence).toBe(origin === "user");
+            const transcript = createAutoPermissionTranscript([evidence.entry]);
+            expect(transcript.text).toContain("exec_command");
+            expect(transcript.text).toContain("git push origin HEAD:main");
+            expect(transcript.text).not.toContain("[Image");
+        }
+    });
+
     it("classifies a stamped human message as trusted message evidence", () => {
         const entry = userMessageEvidence(
             userText("please edit the file"),

@@ -137,11 +137,11 @@ importers:
         specifier: ^0.34.49
         version: 0.34.49
       '@slopus/happy-agent-base':
-        specifier: 0.0.49
-        version: 0.0.49(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
+        specifier: 0.0.51
+        version: 0.0.51(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
-        specifier: 0.0.56
-        version: 0.0.56
+        specifier: 0.0.57
+        version: 0.0.57
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -277,11 +277,11 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent
       '@slopus/happy-agent-base':
-        specifier: npm:@slopus/happy-agent-base@0.0.49
-        version: 0.0.49(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
+        specifier: npm:@slopus/happy-agent-base@0.0.51
+        version: 0.0.51(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
-        specifier: 0.0.56
-        version: 0.0.56
+        specifier: 0.0.57
+        version: 0.0.57
       '@slopus/happy-agent-compute':
         specifier: npm:@slopus/happy-agent-compute@0.1.10
         version: 0.1.10
@@ -368,8 +368,8 @@ importers:
         specifier: 0.1.3
         version: 0.1.3
       '@slopus/happy-agent-client':
-        specifier: 0.0.56
-        version: 0.0.56
+        specifier: 0.0.57
+        version: 0.0.57
       '@slopus/happy-agent-compute':
         specifier: npm:@slopus/happy-agent-compute@0.1.10
         version: 0.1.10
@@ -411,8 +411,8 @@ importers:
         version: 8.21.1
     devDependencies:
       '@slopus/happy-agent-base':
-        specifier: npm:@slopus/happy-agent-base@0.0.49
-        version: 0.0.49(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
+        specifier: npm:@slopus/happy-agent-base@0.0.51
+        version: 0.0.51(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@types/node':
         specifier: ^24.0.10
         version: 24.13.3
@@ -598,8 +598,8 @@ importers:
         specifier: 0.1.3
         version: 0.1.3
       '@slopus/happy-agent-client':
-        specifier: 0.0.56
-        version: 0.0.56
+        specifier: 0.0.57
+        version: 0.0.57
       '@slopus/happy-providers':
         specifier: 0.0.26
         version: 0.0.26(ws@8.21.1)(zod@4.4.3)
@@ -2006,12 +2006,12 @@ packages:
   '@slopus/ghostty-web@0.1.3':
     resolution: {integrity: sha512-z6t+XKBqUWQPM2tjBbOL6EjuKtD12gqtuLKUjMT4Pn74DjuGNHDw5tEdzn5hA0MTvXPW2w1rQTX089QDa892Xw==}
 
-  '@slopus/happy-agent-base@0.0.49':
-    resolution: {integrity: sha512-hEpKqGjC+VUBglcsxH0fLB6NEM+ubSw68ubU0fFCJb7fW7CDhHBzsbCxoh/5bEH2h3T6nlqSffr9WHwe8Ghniw==}
+  '@slopus/happy-agent-base@0.0.51':
+    resolution: {integrity: sha512-9ZR1qVKb/f6Jc4RHeyl+mLXwBL8D8UjgU/FnxQuOfy59e7Nls8BkljtaqTvo6ViU1FkSqevb1hX51nXFNfroNQ==}
     engines: {node: '>=22.19.0'}
 
-  '@slopus/happy-agent-client@0.0.56':
-    resolution: {integrity: sha512-eTqdPLFmmhvJDBrTv/3pN3YRtBi4A37SrtgPP6VCCnu3lWkCXW4bCyU9mhI3X3t/yD3lEgahCIE/sMCyi6GzDg==}
+  '@slopus/happy-agent-client@0.0.57':
+    resolution: {integrity: sha512-R/mqNXs9X94A9hrRGH//A5UmT6h7VoFag+UyRFKA7325JkyWCq2SU6HhLt7lkqn/26X339TOsfATDw/BOPk/rA==}
     engines: {node: '>=20'}
 
   '@slopus/happy-agent-compute@0.1.10':
@@ -2049,10 +2049,6 @@ packages:
     cpu: [x64]
     os: [linux]
     hasBin: true
-
-  '@slopus/happy-providers@0.0.24':
-    resolution: {integrity: sha512-vHjL/qIVwYL6MYiB7hodLqqcr4kiOIZwJeUwX+Xn0JDZgsKZRigkuYHGlHlntHOudC3ExBWb7eJ8fuTHkGVrRQ==}
-    engines: {bun: '>=1.4.0', node: '>=22.19.0'}
 
   '@slopus/happy-providers@0.0.26':
     resolution: {integrity: sha512-bF7FELH290YnwQbwqI2HlSKdMnCxZMs9pqmaMQ0eN15Ue+mY4dJY5Y1XwNXmOWQkV6I7zEc6Hho9YNSCp7t7/Q==}
@@ -5207,13 +5203,13 @@ snapshots:
 
   '@slopus/ghostty-web@0.1.3': {}
 
-  '@slopus/happy-agent-base@0.0.49(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)':
+  '@slopus/happy-agent-base@0.0.51(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@electric-sql/pglite': 0.5.5
       '@libsql/client': 0.17.4
       '@paralleldrive/cuid2': 3.3.0
       '@sinclair/typebox': 0.34.49
-      '@slopus/happy-providers': 0.0.24(ws@8.21.1)(zod@4.4.3)
+      '@slopus/happy-providers': 0.0.26(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib': 0.0.12
       drizzle-orm: 0.45.2(@electric-sql/pglite@0.5.5)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(postgres@3.4.9)(sql.js@1.14.1)
       postgres: 3.4.9
@@ -5251,7 +5247,7 @@ snapshots:
       - ws
       - zod
 
-  '@slopus/happy-agent-client@0.0.56':
+  '@slopus/happy-agent-client@0.0.57':
     dependencies:
       '@sinclair/typebox': 0.34.49
 
@@ -5291,36 +5287,6 @@ snapshots:
 
   '@slopus/happy-agent-supervisor@0.0.4-linux-x64':
     optional: true
-
-  '@slopus/happy-providers@0.0.24(ws@8.21.1)(zod@4.4.3)':
-    dependencies:
-      '@anthropic-ai/bedrock-sdk': 0.32.0(zod@4.4.3)
-      '@anthropic-ai/claude-agent-sdk': 0.3.251(@anthropic-ai/sdk@0.110.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
-      '@anthropic-ai/sdk': 0.110.0(zod@4.4.3)
-      '@aws-sdk/credential-provider-node': 3.972.71
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
-      '@sinclair/typebox': 0.34.49
-      '@smithy/hash-node': 4.5.2
-      '@smithy/signature-v4': 5.6.9
-      '@steve.kite/stdlib': 0.0.12
-      deunicode: 1.0.7
-      openai: 6.46.0(@aws-sdk/credential-provider-node@3.972.71)(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.6.9)(ws@8.21.1)(zod@4.4.3)
-      undici: 8.8.0
-      wink-porter2-stemmer: 2.0.1
-    optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.251
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.251
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.251
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.251
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.251
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.251
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.251
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.251
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
-      - ws
-      - zod
 
   '@slopus/happy-providers@0.0.26(ws@8.21.1)(zod@4.4.3)':
     dependencies:

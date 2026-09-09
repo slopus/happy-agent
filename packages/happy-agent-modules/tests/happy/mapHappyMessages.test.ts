@@ -57,6 +57,33 @@ function events(mapper: HappyMessageMapper, ...input: AgentEvent[]): HappySessio
 }
 
 describe("Happy message mapping", () => {
+    it("opens a turn for a requested tool before any inference block starts", () => {
+        const mapper = new HappyMessageMapper();
+        const start = event("tool.started", {
+            runId: RUN,
+            rigEvent: {
+                type: "tool_execution_start",
+                toolCall: { id: "requestedcall", name: "list_skills", arguments: {} },
+            },
+        });
+        const output = events(mapper, start, settled());
+        expect(output.map((item) => item.t)).toEqual(["turn-start", "tool-call-start", "turn-end"]);
+    });
+
+    it("retains rich user requests in live and archived text envelopes", () => {
+        const mapper = new HappyMessageMapper();
+        const acceptedEvent = accepted();
+        const blocks = [{ type: "tool_call_request" as const, name: "list_skills" }];
+        const message = historyMessage("", { blocks });
+        const live = mapper.map(acceptedEvent, message);
+        expect(live).toHaveLength(1);
+        expect(live[0]?.content).toMatchObject({
+            role: "user",
+            ev: { t: "text", content: blocks },
+        });
+        expect(mapper.mapHistory([message])[0]?.content.ev).toEqual(live[0]?.content.ev);
+    });
+
     it("shows what the person said", () => {
         const mapper = new HappyMessageMapper();
         const messages = mapper.map(accepted(), historyMessage("build me a thing"));

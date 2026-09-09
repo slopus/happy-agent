@@ -11,6 +11,7 @@ import type {
     AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import type {
+    SessionInputBlock,
     SessionOutputBlock,
     SessionToolCallBlock,
     SessionToolResultMessage,
@@ -18,6 +19,7 @@ import type {
 import { sql, type SQL } from "drizzle-orm";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { clientMetadataValueSchema } from "@slopus/happy-agent-client";
 import { afterCommit, withLogContext, type Context } from "@steve.kite/stdlib";
 import {
     agentDatabaseRows,
@@ -55,7 +57,6 @@ import {
     MAX_HISTORY_RECORDED_TOOL_OUTPUT_LENGTH,
     MAX_HISTORY_TOTAL_MESSAGES,
     historyToolArgumentsSchema,
-    historyToolCallBlockSchema,
     historyToolResultBlockSchema,
     historyToolPresentationSchema,
     historyToolArgumentsWithinByteLimit,
@@ -191,6 +192,11 @@ export class HistoryModule implements AgentModule {
 
     constructor(events?: EventsModule) {
         this.#events = events;
+    }
+
+    /** Preserve user control inputs alongside text and images in pending and accepted history. */
+    inputBlocks(content: readonly SessionInputBlock[]): HistoryBlock[] {
+        return content.map(toHistoryInputBlock);
     }
 
     readonly migrations: readonly AgentModuleMigration[] = [
@@ -1016,7 +1022,9 @@ export class HistoryModule implements AgentModule {
         result: SessionToolResultMessage,
     ): Promise<void> {
         const storedName = await scope.runKV.read(ctx, TOOL_NAME_KEY);
-        const toolName = typeof storedName === "string" ? storedName : "unknown tool";
+        const toolName = Value.Check(historyToolResultBlockSchema.properties.toolName, storedName)
+            ? storedName
+            : "Invalid tool name";
         const storedPresentation =
             result.isError === true
                 ? undefined
@@ -1653,12 +1661,31 @@ export class HistoryModule implements AgentModule {
          * module, and a process restart can resume from the same pending blocks without relying
          * on heap state.
          */
-        onEventTransact: (
+        onEventTransact: async (
             ctx: Context,
             scope: AgentModuleScope,
             event: AgentBasePersistedEvent,
         ): Promise<void> => {
-            return this.#appendPendingBlock(ctx, scope, toHistoryBlock(event));
+            const requested =
+                event.type === "toolcall_end" &&
+                (await scope.runKV.read(ctx, PENDING_INFERENCE_ID_KEY)) === undefined;
+            const block = toHistoryBlock(event, requested);
+            if (block.type === "tool_call" && requested) {
+                // A user-requested call is committed at acceptance, before any inference exists.
+                // Index its own assistant row now so review and result updates have an owner.
+                const runId = await this.#events?.activeRunIdInTransaction(ctx, scope.agent.id);
+                await this.#append(ctx, scope.agent.id, {
+                    at: Date.now(),
+                    blocks: [block],
+                    recordId: block.callId,
+                    role: "assistant",
+                    provider: scope.agent.provider,
+                    ...(scope.agent.model === undefined ? {} : { model: scope.agent.model }),
+                    ...(runId === undefined ? {} : { runId }),
+                });
+                return;
+            }
+            await this.#appendPendingBlock(ctx, scope, block);
         },
 
         /**
@@ -1717,7 +1744,7 @@ export class HistoryModule implements AgentModule {
             // recorded as thinking, the way this module records any other reasoning; reasoning
             // that is only an opaque provider payload has nothing to show and is left out.
             const blocks = accepted.message.content.flatMap((block): HistoryBlock[] => {
-                if (block.type !== "reasoning") return [toHistoryOutputBlock(block)];
+                if (block.type !== "reasoning") return [toHistoryInputBlock(block)];
                 return block.text === undefined ? [] : [{ type: "thinking", thinking: block.text }];
             });
             await this.#append(ctx, scope.agent.id, {
@@ -1774,19 +1801,28 @@ export class HistoryModule implements AgentModule {
             scope: AgentModuleScope,
             call: SessionToolCallBlock,
         ): Promise<void> => {
-            const callBlock: HistoryBlock = {
-                arguments: parseArguments(call.arguments),
-                callId: call.callId,
-                name: call.name,
-                type: "tool_call",
-            };
-            if (
-                !Value.Check(historyToolCallBlockSchema, callBlock) ||
-                !historyToolArgumentsWithinByteLimit(callBlock.arguments)
-            ) {
-                throw new Error("History module received an invalid tool call.");
-            }
             await scope.runKV.write(ctx, TOOL_NAME_KEY, call.name);
+        },
+
+        // Only explicit requests bypass the ordinary bounded history representation. Their
+        // execution validation must fail the call, never roll back acceptance or dispatch.
+        beforeToolCall: async (ctx, scope, call) => {
+            if (!historyToolArgumentsWithinByteLimit(call.arguments)) {
+                const message = await this.message(ctx, scope.agent.id, call.callId);
+                if (
+                    message?.blocks.some(
+                        (block) =>
+                            block.type === "tool_call" &&
+                            block.callId === call.callId &&
+                            block.requested === true,
+                    )
+                ) {
+                    throw new Error(
+                        "Tool arguments exceed the supported size or complexity limits.",
+                    );
+                }
+            }
+            return undefined;
         },
 
         /**
@@ -2433,7 +2469,7 @@ function statsEqual(left: HistoryStats, right: HistoryStats): boolean {
 }
 
 /** The block a persisted event carries. */
-function toHistoryBlock(event: AgentBasePersistedEvent): HistoryBlock {
+function toHistoryBlock(event: AgentBasePersistedEvent, requested = false): HistoryBlock {
     if (event.type === "text_end") return { type: "text", text: event.block.text };
     if (event.type === "reasoning_end") {
         // A provider that signs or encrypts its reasoning exposes none of it. That the model
@@ -2442,12 +2478,24 @@ function toHistoryBlock(event: AgentBasePersistedEvent): HistoryBlock {
             ? { type: "thinking", thinking: "", redacted: true }
             : { type: "thinking", thinking: event.block.text };
     }
-    return {
-        type: "tool_call",
+    const call = {
+        type: "tool_call" as const,
         callId: event.block.callId,
         name: event.block.name,
-        arguments: parseArguments(event.block.arguments),
     };
+    return requested
+        ? { ...call, requested: true, arguments: parseRequestedArguments(event.block.arguments) }
+        : { ...call, arguments: parseArguments(event.block.arguments) };
+}
+
+function parseRequestedArguments(value: string): Static<typeof clientMetadataValueSchema> {
+    try {
+        const parsed: unknown = JSON.parse(value);
+        if (Value.Check(clientMetadataValueSchema, parsed)) return parsed;
+    } catch {
+        // An invalid tool call still needs a durable row before Base records its error result.
+    }
+    return value;
 }
 
 /** The call's arguments as data when they parse, and as the raw text when they do not. */
@@ -2471,7 +2519,8 @@ function createRecordId(): string {
     return globalThis.crypto.randomUUID();
 }
 
-function toHistoryOutputBlock(block: SessionOutputBlock): HistoryBlock {
+function toHistoryInputBlock(block: SessionInputBlock): HistoryBlock {
+    if (block.type === "tool_call_request") return structuredClone(block);
     return block.type === "text"
         ? { text: block.text, type: "text" }
         : { data: block.data, mediaType: block.mimeType, type: "image" };

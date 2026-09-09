@@ -6,6 +6,7 @@ import {
     MAX_HAPPY_MESSAGES_PER_EVENT,
     MAX_HAPPY_OUTBOX_MESSAGE_CHARACTERS,
     MAX_HAPPY_OUTBOX_MESSAGES,
+    HappyMessageMapper,
     type HappyOutboxMessage,
 } from "../../sources/happy/index.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
@@ -49,6 +50,67 @@ async function withDatabase(
 }
 
 describe("Happy sync storage", () => {
+    it("reports an oversized rich message and continues syncing subsequent events", async () => {
+        await withDatabase("happy-oversized-input", async (sync, database) => {
+            await sync.ensureSession(database.context, ATTACH, NOW);
+            const mapper = new HappyMessageMapper();
+            const record = {
+                at: NOW,
+                recordId: "requestedmessage",
+                role: "user" as const,
+                blocks: [
+                    { type: "tool_call_request" as const, name: "list_skills" },
+                    {
+                        type: "image" as const,
+                        mediaType: "image/png",
+                        data: "AAAA".repeat(1_000_001),
+                    },
+                ],
+            };
+            const mapped = mapper.map(
+                {
+                    id: eventId(1),
+                    agentId: ATTACH.agentId,
+                    occurredAt: NOW,
+                    type: "message.accepted",
+                    payload: { id: record.recordId, kind: "send", runId: "run1" },
+                },
+                record,
+            );
+            expect(mapped[0]?.content).toMatchObject({
+                role: "agent",
+                ev: { t: "service", text: expect.stringContaining("too large to sync") },
+            });
+            expect(mapper.mapHistory([record])[0]?.content.ev).toEqual(mapped[0]?.content.ev);
+            expect(JSON.stringify(mapped[0]).length).toBeLessThan(
+                MAX_HAPPY_OUTBOX_MESSAGE_CHARACTERS,
+            );
+            expect(
+                await sync.projectEvent(database.context, {
+                    agentId: ATTACH.agentId,
+                    eventId: eventId(1),
+                    now: NOW,
+                    messages: mapped.map((message) => ({
+                        localId: message.localId,
+                        payload: message,
+                    })),
+                }),
+            ).toMatchObject({ kind: "projected" });
+            expect(
+                await sync.projectEvent(database.context, {
+                    agentId: ATTACH.agentId,
+                    eventId: eventId(2),
+                    now: NOW + 1,
+                    messages: messages(1),
+                }),
+            ).toMatchObject({ kind: "projected" });
+            expect(await sync.pending(database.context, ATTACH.agentId, 10)).toHaveLength(2);
+            expect(
+                (await sync.readSession(database.context, ATTACH.agentId))?.projectionStatus,
+            ).toBe("active");
+        });
+    });
+
     it("attaches an agent once and reports the same session again", async () => {
         await withDatabase("happy-attach", async (sync, database) => {
             const first = await sync.ensureSession(database.context, ATTACH, NOW);

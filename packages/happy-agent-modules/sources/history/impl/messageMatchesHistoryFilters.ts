@@ -35,7 +35,7 @@ export function historyMessageSearchParts(message: HistoryMessage): readonly str
         if (block.type === "text") parts.push(block.text);
         else if (block.type === "image") parts.push(block.mediaType);
         else if (block.type === "thinking") parts.push(block.thinking);
-        else if (block.type === "tool_call") {
+        else if (block.type === "tool_call" || block.type === "tool_call_request") {
             parts.push(block.name, stringify(block.arguments ?? null));
         } else if (block.type === "tool_result") {
             parts.push(block.toolName, block.display ?? "", block.output ?? "");

@@ -61,7 +61,9 @@ The module implements the standard `AgentModule` lifecycle hooks and records raw
 - `tool.started`, `tool.completed`
 - `inference.completed`, `turn.completed`, `loop.settled`
 
-Payloads are the values supplied by Agent Base at the hook boundary, stored verbatim.
+Payloads are the values supplied by Agent Base at the hook boundary. Tool arguments larger than
+1 MiB are replaced in completed-call and dispatch projections with a readable reference to History,
+which owns the exact original input. This keeps repeated argument copies within the journal limit.
 
 Every event belonging to a run also names it. A loop opens before its first message is accepted, so
 `loop.started` is journaled the moment the loop first names its run rather than at the hook that
