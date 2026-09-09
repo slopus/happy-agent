@@ -129,6 +129,14 @@ Spans themselves belong to the code being measured, through `ctx.span`, not to
 this module. Shutdown settles the exporter rather than awaiting it, so a
 collector that has gone away cannot fail an otherwise clean shutdown.
 
+Module initialization and ordinary hooks use `module.<name>.<hook>` spans. Slash-command catalog
+rebuilds use `slash_commands.load`, with children for `slash_commands.agent_context`,
+`slash_commands.contributor.<name>`, and `slash_commands.publish`. The skills contributor adds
+`skills.resolve_compute` and `skills.discover`, separating machine lookup from filesystem scanning.
+Concurrent equivalent skill loads use `skills.discovery.wait` for the callers sharing an active scan.
+Cached catalog reads do not rebuild, and coalesced refreshes share one loading span. These spans
+require `traces = true`; setting only `log_level = "trace"` enables detailed logs, not OTLP tracing.
+
 ## History dump
 
 The durable history already lives in the agent's database, where the model

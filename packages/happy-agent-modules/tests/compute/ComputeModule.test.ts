@@ -19,6 +19,27 @@ const ctx = createRootContext().named("happy-agent-modules-compute");
 const CLAUDE_MODEL = "anthropic/opus-5";
 
 describe("ComputeModule", () => {
+    it("shares discovery identity only for native filesystems with identical boundaries", async () => {
+        const module = new ComputeModule(testConfig, new SecretsModule());
+        const same = withAgentConfig(ctx, { modules: { compute: { cwd: process.cwd() } } });
+        const other = withAgentConfig(ctx, { modules: { compute: { cwd: "/" } } });
+        try {
+            const a = await module.resolve(same, "first");
+            const b = await module.resolve(same, "second");
+            const c = await module.resolve(other, "third");
+            if (!a || !b || !c) throw new Error("Expected native computes.");
+            expect(a).not.toBe(b);
+            expect(module.fileSystemIdentity(a)).toBe(module.fileSystemIdentity(b));
+            expect(module.fileSystemIdentity(a)).not.toBe(module.fileSystemIdentity(c));
+            const fakeA = new FakeCompute(process.cwd());
+            const fakeB = new FakeCompute(process.cwd());
+            expect(module.fileSystemIdentity(fakeA)).not.toBe(module.fileSystemIdentity(fakeB));
+            expect(module.fileSystemIdentity(fakeA)).not.toBe(module.fileSystemIdentity(a));
+        } finally {
+            await module.dispose(ctx);
+        }
+    });
+
     it("creates and caches one distinct compute per agent for every module", async () => {
         const computes: FakeCompute[] = [];
         const provider: HostComputeProvider = {

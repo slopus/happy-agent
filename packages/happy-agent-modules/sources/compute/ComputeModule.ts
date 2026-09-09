@@ -215,6 +215,8 @@ export class ComputeModule implements AgentModule {
     /** Present only for the named alternate construction used by scripted machines. */
     #provider: HostComputeProvider | undefined;
     readonly #computes = new Map<string, CachedCompute>();
+    /** Only filesystems constructed here may share a native discovery identity. */
+    readonly #nativeFileSystemIdentities = new WeakMap<object, string>();
     readonly #promptedAbortNotices = new Map<string, string>();
     readonly #computeLocks: MapAsyncLock<string> = mapAsyncLock<string>();
     readonly #activeOperations = new Set<Promise<unknown>>();
@@ -455,6 +457,16 @@ export class ComputeModule implements AgentModule {
      */
     permissionsForContext(ctx: Context): ComputePermissions {
         return computePermissionsForContext(ctx);
+    }
+
+    /**
+     * Identity for sharing concurrent read-only discovery. Native machines with the same working
+     * directory, home, and host policy see the same filesystem. Alternate providers remain scoped
+     * to the exact filesystem object: matching `id`, `kind`, or paths do not prove shared storage.
+     * Callers must additionally key by the complete per-operation permissions.
+     */
+    fileSystemIdentity(compute: HostCompute): object | string {
+        return this.#nativeFileSystemIdentities.get(compute.fs) ?? compute.fs;
     }
 
     /**
@@ -742,6 +754,14 @@ export class ComputeModule implements AgentModule {
         if (processManager === undefined) {
             return { compute: validatedCompute, processContext, processManager: undefined };
         }
+        this.#nativeFileSystemIdentities.set(
+            validatedCompute.fs,
+            JSON.stringify({
+                cwd: validatedCompute.cwd,
+                home: validatedCompute.fs.home,
+                hostPolicy: providerConfig.hostPolicy,
+            }),
+        );
         const originalDispose = validatedCompute.dispose.bind(validatedCompute);
         const shell =
             agentId === undefined || database === undefined

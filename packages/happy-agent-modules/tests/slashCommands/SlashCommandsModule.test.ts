@@ -1,5 +1,5 @@
-import type { Context } from "@steve.kite/stdlib";
-import { describe, expect, it } from "vitest";
+import { withTracer, type Context } from "@steve.kite/stdlib";
+import { describe, expect, it, vi } from "vitest";
 
 import {
     EventsModule,
@@ -11,6 +11,7 @@ import {
     type SlashCommandInvocation,
 } from "../../sources/index.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
+import { recordingTracer } from "../support/recordingTracer.js";
 
 const invocation: SlashCommandInvocation = {
     mode: {
@@ -58,6 +59,71 @@ class Contributor implements SlashCommandContributor {
 }
 
 describe("SlashCommandsModule", () => {
+    it("traces loading stages and contributor children without changing caching or coalescing", async () => {
+        const events = new EventsModule();
+        const database = moduleDatabase(events.migrations ?? [], "slash-command-tracing-test");
+        await database.ready;
+        try {
+            await events.beforeStart?.(database.context);
+            const { tracer, spans } = recordingTracer();
+            const ctx = withTracer(database.context, tracer);
+            let finishDiscovery = () => {};
+            const gate = new Promise<void>((resolve) => {
+                finishDiscovery = resolve;
+            });
+            let startDiscovery = () => {};
+            const entered = new Promise<void>((resolve) => {
+                startDiscovery = resolve;
+            });
+            const owner = new Contributor("feature", [
+                { description: "First.", hasArguments: false, name: "first" },
+            ]);
+            vi.spyOn(owner, "slashCommands").mockImplementation((ctx) =>
+                ctx.span("feature.scan", async () => {
+                    startDiscovery();
+                    await gate;
+                    return owner.definitions;
+                }),
+            );
+            const commands = new SlashCommandsModule(events, owner);
+            commands.beforeStart(ctx, agents);
+            const first = commands.catalog(ctx, "agent-1");
+            await entered;
+            const second = commands.catalog(ctx, "agent-1");
+            expect(spans[0]?.ends).toBe(0);
+            finishDiscovery();
+            const [left, right] = await Promise.all([first, second]);
+            expect(left).toEqual(right);
+            expect(owner.slashCommands).toHaveBeenCalledOnce();
+            expect(spans.map((span) => span.name)).toEqual([
+                "slash_commands.load",
+                "slash_commands.agent_context",
+                "slash_commands.contributor.feature",
+                "feature.scan",
+                "slash_commands.publish",
+            ]);
+            expect(spans[1]?.parent).toBe(spans[0]);
+            expect(spans[2]?.parent).toBe(spans[0]);
+            expect(spans[3]?.parent).toBe(spans[2]);
+            expect(spans[4]?.parent).toBe(spans[0]);
+            expect(spans.every((span) => span.ends === 1)).toBe(true);
+            await commands.catalog(ctx, "agent-1");
+            expect(spans).toHaveLength(5);
+
+            spans.length = 0;
+            const failure = new Error("discovery failed");
+            vi.mocked(owner.slashCommands).mockRejectedValueOnce(failure);
+            await expect(commands.refresh(ctx, "agent-1")).rejects.toBe(failure);
+            expect(spans.map((span) => span.errors)).toEqual([[failure], [], [failure]]);
+            expect(spans.every((span) => span.ends === 1)).toBe(true);
+            await commands.refresh(ctx, "agent-1");
+            expect(spans.filter((span) => span.name === "slash_commands.load")).toHaveLength(2);
+            expect(spans.some((span) => span.name === "slash_commands.publish")).toBe(false);
+        } finally {
+            database.close();
+        }
+    });
+
     it("keeps image bytes private, dispatches to the owner, and emits only real changes", async () => {
         const events = new EventsModule();
         const database = moduleDatabase(events.migrations ?? [], "slash-command-catalog-test");

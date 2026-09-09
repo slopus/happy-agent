@@ -22,7 +22,6 @@ import {
     SlashCommandNotFoundError,
     slashCommandDefinitionSchema,
     type SlashCommandContributor,
-    type SlashCommandDefinition,
     type SlashCommandImageAsset,
     type SlashCommandInvocation,
     type SlashCommandInvocationResult,
@@ -104,7 +103,7 @@ export class SlashCommandsModule implements AgentModule {
         }
         const active = this.#refreshes.get(agentId);
         if (active !== undefined) return await active;
-        const refreshing = this.#discover(ctx, agentId);
+        const refreshing = ctx.span("slash_commands.load", (ctx) => this.#discover(ctx, agentId));
         this.#refreshes.set(agentId, refreshing);
         try {
             return await refreshing;
@@ -134,7 +133,10 @@ export class SlashCommandsModule implements AgentModule {
         const commands: CachedCommand[] = [];
         const names = new Set<string>();
         for (const owner of this.#contributors) {
-            const definitions = await owner.slashCommands(agentCtx, agentId);
+            const definitions = await agentCtx.span(
+                `slash_commands.contributor.${owner.name}`,
+                (ctx) => owner.slashCommands(ctx, agentId),
+            );
             for (const definition of definitions) {
                 if (!Value.Check(slashCommandDefinitionSchema, definition)) {
                     throw new Error(
@@ -200,11 +202,13 @@ export class SlashCommandsModule implements AgentModule {
         const next = { commands, fingerprint };
         const previous = this.#cache.get(agentId);
         if (previous?.fingerprint !== fingerprint) {
-            await this.#events.record(ctx, {
-                agentId,
-                payload: { slashCommands: descriptors },
-                type: "slash_commands.updated",
-            });
+            await ctx.span("slash_commands.publish", (ctx) =>
+                this.#events.record(ctx, {
+                    agentId,
+                    payload: { slashCommands: descriptors },
+                    type: "slash_commands.updated",
+                }),
+            );
         }
         this.#cache.set(agentId, next);
         return next;
@@ -213,7 +217,9 @@ export class SlashCommandsModule implements AgentModule {
     async #agentContext(ctx: Context, agentId: string): Promise<Context> {
         const agents = this.#agents;
         if (agents === undefined) throw new Error("The slash commands module has not started.");
-        const config = await agents.config(ctx, agentId);
+        const config = await ctx.span("slash_commands.agent_context", (ctx) =>
+            agents.config(ctx, agentId),
+        );
         if (config === undefined) throw new SlashCommandNotFoundError("The agent was not found.");
         return withAgentConfig(ctx, config);
     }

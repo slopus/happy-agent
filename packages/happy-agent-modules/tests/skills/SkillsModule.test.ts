@@ -3,13 +3,14 @@ import type {
     AgentQueuedMessage,
     AgentSystemRef,
 } from "@slopus/happy-agent-base";
-import { createRootContext } from "@steve.kite/stdlib";
+import { createRootContext, withTracer } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
 import { SkillsModule } from "../../sources/skills/index.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { scriptedComputeModule } from "../support/computeModule.js";
+import { recordingTracer } from "../support/recordingTracer.js";
 
 const ctx = createRootContext().named("skills-module-test");
 const agentId = "agent-a";
@@ -24,6 +25,27 @@ function moduleFor(compute: FakeCompute): SkillsModule {
 }
 
 describe("SkillsModule", () => {
+    it("separates compute resolution from filesystem discovery in command loading traces", async () => {
+        const compute = new FakeCompute("/workspace");
+        compute.directories.add("/workspace/.git");
+        compute.write(
+            "/workspace/.agents/skills/review/SKILL.md",
+            skill("review", "Review.", "Instructions."),
+        );
+        const { tracer, spans } = recordingTracer();
+        const traced = withTracer(ctx, tracer);
+        const module = moduleFor(compute);
+        await traced.span("contributor", (ctx) => module.slashCommands(ctx, agentId));
+        expect(spans.map((span) => span.name)).toEqual([
+            "contributor",
+            "skills.resolve_compute",
+            "skills.discover",
+        ]);
+        expect(spans[1]?.parent).toBe(spans[0]);
+        expect(spans[2]?.parent).toBe(spans[0]);
+        expect(spans.every((span) => span.ends === 1)).toBe(true);
+    });
+
     it("discovers user and project skills with deeper project precedence", async () => {
         const compute = new FakeCompute("/workspace/packages/app");
         compute.directories.add("/workspace/.git");

@@ -1,5 +1,13 @@
 # Runtime learnings
 
+## Module loading belongs in distributed traces
+
+Module timing logs alone did not reveal startup and restoration in the trace viewer. The shared
+module wrapper now creates spans for initialization and ordinary hooks, including after-start and
+agent restoration, passing the span context into module work so child spans nest correctly. It
+preserves synchronous returns, asynchronous completion, and original failures. Raw provider events
+remain uninstrumented so streaming deltas cannot flood telemetry.
+
 ## Probe startup is not the database responsiveness deadline
 
 The isolated database deadlock test previously allowed four seconds for cold TypeScript imports,

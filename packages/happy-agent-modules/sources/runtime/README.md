@@ -31,9 +31,11 @@ Each SQLite database acquires its kernel-backed sibling `.lock` database before 
 client is constructed. A live process therefore excludes every other connector, while process
 exit releases ownership even though the reusable lock database remains on disk.
 
-Every agent module is wrapped at composition time with module-labelled logging. The wrapper keeps
-Agent Base's hook ordering and failure behavior unchanged, emits bounded hook timing, and leaves
-high-volume provider deltas to the observation module's focused phase records.
+Every agent module is wrapped at composition time with module-labelled logging and tracing. Spans
+named `module.<name>.beforeStart` measure initialization; `module.<name>.<hook>` spans measure
+ordinary hooks, including `afterStart` and `agentRestored`. Child work receives the span context.
+The wrapper keeps Agent Base's hook ordering and failure behavior unchanged, emits bounded hook
+timing, and leaves high-volume provider deltas to the observation module's focused phase records.
 
 `CodeModeModule` is always the final module in the ordered array. Its opt-in complete instruction
 and tool overrides must see every earlier contribution; moving another module after it would let

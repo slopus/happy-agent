@@ -23,7 +23,7 @@ const instrumented = new WeakSet<object>();
  *
  * Agent Base deliberately owns hook ordering and failure semantics. This wrapper changes neither:
  * it passes through the original result or thrown value, and only observes the boundary. Trace
- * logs show every ordinary hook start and finish; debug logs show module startup and slow hooks;
+ * logs and spans show every ordinary hook start and finish; debug logs show startup and slow hooks;
  * failures are logged. The raw provider-event hook is passed through untouched because observing
  * every streamed delta must not make the diagnostic path become the problem.
  */
@@ -39,20 +39,22 @@ export function instrumentModuleLogging(module: LoadedModule): LoadedModule {
             agents: AgentSystemRef<LibSQLDatabase>,
         ): Promise<LoadedHooks | void> => {
             const moduleCtx = withLogContext(ctx, { module: module.name });
-            const startedAt = Date.now();
-            moduleCtx.log.debug(`module:start module=${logValue(module.name)}`);
-            try {
-                const hooks = await beforeStart?.call(module, moduleCtx, agents);
-                moduleCtx.log.debug(
-                    `module:ready module=${logValue(module.name)} durationMs=${elapsed(startedAt)}`,
-                );
-                return hooks === undefined ? undefined : instrumentHooks(module.name, hooks);
-            } catch (error: unknown) {
-                moduleCtx.log.error(
-                    `module:error module=${logValue(module.name)} durationMs=${elapsed(startedAt)} error=${logValue(describeError(error))}`,
-                );
-                throw error;
-            }
+            return await moduleCtx.span(`module.${module.name}.beforeStart`, async (moduleCtx) => {
+                const startedAt = Date.now();
+                moduleCtx.log.debug(`module:start module=${logValue(module.name)}`);
+                try {
+                    const hooks = await beforeStart?.call(module, moduleCtx, agents);
+                    moduleCtx.log.debug(
+                        `module:ready module=${logValue(module.name)} durationMs=${elapsed(startedAt)}`,
+                    );
+                    return hooks === undefined ? undefined : instrumentHooks(module.name, hooks);
+                } catch (error: unknown) {
+                    moduleCtx.log.error(
+                        `module:error module=${logValue(module.name)} durationMs=${elapsed(startedAt)} error=${logValue(describeError(error))}`,
+                    );
+                    throw error;
+                }
+            });
         },
         writable: true,
     });
@@ -76,30 +78,35 @@ function instrumentHooks(moduleName: string, hooks: LoadedHooks): LoadedHooks {
             }
             const instrumentedHook = (ctx: Context, ...args: readonly unknown[]): unknown => {
                 const moduleCtx = withLogContext(ctx, { module: moduleName });
-                const startedAt = Date.now();
-                moduleCtx.log.trace(
-                    `module:hook:start module=${logValue(moduleName)} hook=${logValue(hook)}`,
-                );
-                try {
-                    const result = Reflect.apply(original, target, [moduleCtx, ...args]) as unknown;
-                    if (isPromiseLike(result)) {
-                        return Promise.resolve(result).then(
-                            (value) => {
-                                finishHook(moduleCtx, moduleName, hook, startedAt);
-                                return value;
-                            },
-                            (error: unknown) => {
-                                failHook(moduleCtx, moduleName, hook, startedAt, error);
-                                throw error;
-                            },
-                        );
+                return moduleCtx.span(`module.${moduleName}.${hook}`, (moduleCtx) => {
+                    const startedAt = Date.now();
+                    moduleCtx.log.trace(
+                        `module:hook:start module=${logValue(moduleName)} hook=${logValue(hook)}`,
+                    );
+                    try {
+                        const result = Reflect.apply(original, target, [
+                            moduleCtx,
+                            ...args,
+                        ]) as unknown;
+                        if (isPromiseLike(result)) {
+                            return Promise.resolve(result).then(
+                                (value) => {
+                                    finishHook(moduleCtx, moduleName, hook, startedAt);
+                                    return value;
+                                },
+                                (error: unknown) => {
+                                    failHook(moduleCtx, moduleName, hook, startedAt, error);
+                                    throw error;
+                                },
+                            );
+                        }
+                        finishHook(moduleCtx, moduleName, hook, startedAt);
+                        return result;
+                    } catch (error: unknown) {
+                        failHook(moduleCtx, moduleName, hook, startedAt, error);
+                        throw error;
                     }
-                    finishHook(moduleCtx, moduleName, hook, startedAt);
-                    return result;
-                } catch (error: unknown) {
-                    failHook(moduleCtx, moduleName, hook, startedAt, error);
-                    throw error;
-                }
+                });
             };
             wrapped.set(property, instrumentedHook);
             return instrumentedHook;

@@ -1,5 +1,14 @@
 # Compute module learnings
 
+## Filesystem discovery identity must come from its owner
+
+Agents on separate containers or emulated machines can advertise the same provider name, working
+directory, and home. Those strings do not establish shared files. Compute now exposes a discovery
+identity that shares only its own native filesystems with identical cwd, home, and host policy;
+alternate filesystems retain object identity. Discovery additionally partitions by the full
+per-operation permissions. This permits safe concurrent scan sharing without mixing machines or
+reusing elevated reads in a restricted call.
+
 ## Bash calls start from a fixed working directory
 
 Each Bash invocation opens a fresh shell in the compute's primary working directory. A directory

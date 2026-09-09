@@ -41,6 +41,8 @@ const MAX_SKILL_FILES_INSPECTED = 256;
 const SKILL_DIRECTORY_PAGE_SIZE = 256;
 const SKILL_INVOCATIONS_KEY = "slash-command-invocations";
 const MAX_SKILL_INVOCATIONS_PER_RUN = 16;
+/** Cap retained in-flight scans; completed catalogs are never cached. */
+const MAX_SHARED_SKILL_SCANS = 128;
 /** A directory skills are looked for under, and what the skills found there are called. */
 const discoveredRootSchema = Type.Object(
     {
@@ -100,6 +102,7 @@ const skillsComputeSchema = Type.Object(
                 home: Type.Optional(Type.String()),
                 exists: callableSchema,
                 lstat: callableSchema,
+                lstatMany: callableSchema,
                 readFileBuffer: callableSchema,
                 readdirPage: callableSchema,
                 realpath: callableSchema,
@@ -115,6 +118,8 @@ const skillsComputeSchema = Type.Object(
 export class SkillsModule implements AgentModule {
     readonly name = "skills";
     readonly #compute: ComputeModule;
+    readonly #discoveries = new Map<object | string, Map<string, Promise<readonly SkillEntry[]>>>();
+    #sharedScanCount = 0;
     #agents: AgentSystemRef | undefined;
 
     constructor(compute: ComputeModule) {
@@ -200,7 +205,7 @@ export class SkillsModule implements AgentModule {
         const compute = await this.#resolveCompute(ctx, agentId);
         if (compute === undefined) throw new Error("This agent has no compute.");
         const permissions = this.#compute.permissionsForContext(ctx);
-        const entries = await discoverSkills(compute, permissions);
+        const entries = await this.#entries(ctx, compute, permissions);
         const entry = entries.find((candidate) => candidate.name === input.name);
         if (entry === undefined) throw new Error(`Unknown skill "${input.name}".`);
         const bytes = await compute.fs.readFileBuffer(permissions, entry.location, {
@@ -218,9 +223,39 @@ export class SkillsModule implements AgentModule {
 
     /** The catalog as it stands right now, or nothing at all when this agent has no machine. */
     async #discover(ctx: Context, agentId: string): Promise<readonly SkillEntry[]> {
-        const compute = await this.#resolveCompute(ctx, agentId);
+        const compute = await ctx.span("skills.resolve_compute", (ctx) =>
+            this.#resolveCompute(ctx, agentId),
+        );
         if (compute === undefined) return [];
-        return await discoverSkills(compute, this.#compute.permissionsForContext(ctx));
+        return await this.#entries(ctx, compute, this.#compute.permissionsForContext(ctx));
+    }
+
+    /** Share only overlapping scans; every later refresh observes the filesystem anew. */
+    async #entries(
+        ctx: Context,
+        compute: HostCompute,
+        permissions: ComputePermissions,
+    ): Promise<readonly SkillEntry[]> {
+        const identity = this.#compute.fileSystemIdentity(compute);
+        const key = JSON.stringify([compute.cwd, compute.fs.home, permissions]);
+        const existing = this.#discoveries.get(identity)?.get(key);
+        if (existing !== undefined) {
+            return await ctx.span("skills.discovery.wait", () => existing);
+        }
+        const pending = ctx.span("skills.discover", () => discoverSkills(compute, permissions));
+        if (this.#sharedScanCount >= MAX_SHARED_SKILL_SCANS) return await pending;
+        const scans =
+            this.#discoveries.get(identity) ?? new Map<string, Promise<readonly SkillEntry[]>>();
+        scans.set(key, pending);
+        this.#discoveries.set(identity, scans);
+        this.#sharedScanCount += 1;
+        try {
+            return await pending;
+        } finally {
+            scans.delete(key);
+            if (scans.size === 0) this.#discoveries.delete(identity);
+            this.#sharedScanCount -= 1;
+        }
     }
 
     /**
@@ -358,11 +393,6 @@ async function discoverSkillRoot(
     byName: Map<string, SkillEntry>,
     budget: DiscoveryBudget,
 ): Promise<void> {
-    try {
-        if (!(await compute.fs.exists(permissions, root.path))) return;
-    } catch {
-        return;
-    }
     let rootIsLink: boolean;
     try {
         rootIsLink = (await compute.fs.lstat(permissions, root.path)).isSymbolicLink;
@@ -405,13 +435,26 @@ async function discoverSkillRoot(
                 break;
             }
             if (!Value.Check(directoryPageSchema, page)) break;
-            for (const name of page.entries) {
-                if (name.startsWith(".") || name === "node_modules") continue;
-                if (!isPlainEntryName(name)) continue;
+            const names = page.entries
+                .filter(
+                    (name) =>
+                        !name.startsWith(".") && name !== "node_modules" && isPlainEntryName(name),
+                )
+                .slice(0, MAX_SKILL_DISCOVERY_ENTRIES - budget.entries);
+            const paths = names.map((name) => join(directory, name));
+            // The backend owns bounded parallelism and per-path permission checks. If a backend
+            // cannot complete its batch, retain the existing best-effort individual read behavior.
+            const stats = await compute.fs.lstatMany(permissions, paths).catch(() => undefined);
+            for (let index = 0; index < names.length; index += 1) {
+                const name = names[index]!;
                 budget.entries += 1;
-                const path = join(directory, name);
+                const path = paths[index]!;
                 try {
-                    const stat = await compute.fs.lstat(permissions, path);
+                    const stat =
+                        stats === undefined
+                            ? await compute.fs.lstat(permissions, path)
+                            : stats[index];
+                    if (stat === undefined) continue;
                     if (stat.isSymbolicLink) {
                         const followed = await compute.fs.stat(permissions, path);
                         if (!followed.isDirectory) continue;
@@ -423,10 +466,11 @@ async function discoverSkillRoot(
                         continue;
                     }
                     if (stat.isDirectory) {
-                        const canonical = await compute.fs.realpath(permissions, path);
-                        if (!visitedDirectories.has(canonical)) {
-                            visitedDirectories.add(canonical);
-                            directories.push({ path: canonical, isContainer: false });
+                        // The parent is canonical and lstat proved this child is not a link.
+                        // Reads inside it still enforce the backend's live symlink boundary.
+                        if (!visitedDirectories.has(path)) {
+                            visitedDirectories.add(path);
+                            directories.push({ path, isContainer: false });
                         }
                         continue;
                     }

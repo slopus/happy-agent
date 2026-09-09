@@ -14,6 +14,11 @@ skills and is given no skill tools.
 The catalog and skill documents are read live through `compute.fs`, bounded, and exposed through
 model instructions plus `list_skills` and `read_skill`. Both tools read inside Happy Agent's own filesystem
 boundary, so neither is reviewed in Auto. The module owns no database and no persistent index.
+Overlapping scans share work only for the same filesystem identity, cwd, home, and full operation
+permissions. Compute supplies native boundary identity; alternate providers use filesystem object
+identity. Sharing retains at most 128 in-flight scans and drops each on completion, so later refreshes
+immediately see edits, additions, removals, and recovered files. Directory metadata is batched through
+the backend, which owns bounded parallelism and permission checks. Completed catalogs are not cached.
 Discovery skips dot-directories, `node_modules`, and malformed or unreadable skills without hiding
 the rest of the catalog; `list_skills` uses its returned cursor to continue a bounded page.
 Frontmatter metadata is parsed as YAML-compatible mapping data, including flow maps, aliases,
