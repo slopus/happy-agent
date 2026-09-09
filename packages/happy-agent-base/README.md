@@ -94,6 +94,39 @@ cannot hide from correctness or security observers. Nothing outside the loop eve
 a hook that drove execution would be deciding inside machinery that also commits results, resumes
 interrupted batches, and settles cancelled ones.
 
+A queued user message may include one `SessionInputTool` block anywhere in its `content`:
+
+```ts
+await agent.send(ctx, {
+    role: "user",
+    content: [
+        { type: "text", text: "/browser Open example.com" },
+        {
+            type: "tool_call_request",
+            name: "load_skill",
+            arguments: { name: "browser", arguments: "Open example.com" },
+        },
+    ],
+});
+```
+
+Base executes this request before asking the model, using the same tool resolution, validation,
+permission hooks, result handling, and recovery as an inferred call. Omitted arguments mean `{}`.
+Only user messages can request a call; malformed requests and multiple requests in one message
+are rejected before admission. An all-at-once queue batch ends at a tool-request message, so later
+messages cannot replace its settings or interrupt the call/result pair in history.
+After the result, Base checks cancellation and processes pending compaction and steering before
+starting inference, just as it does after a model-requested tool call.
+
+Acceptance atomically consumes the queue entry, records its ordinary text and images, and appends
+a Base-generated assistant tool call. Acceptance hooks still receive the original queued message,
+including its request block. `onEventTransact` receives the completed call in that transaction,
+after the acceptance hooks; live call events follow commit. No inference lifecycle is fabricated.
+Providers receive ordinary user content, the call, and its result, never the control block. A
+tool-only message retains its durable delivery identity but contributes no empty user message to
+provider context. A restart before dispatch recovers the recorded call with the same ID; after
+dispatch, the tool's normal durability policy decides whether it can execute again.
+
 Every tool call receives a Base-generated cuid2 `id`; executable calls also receive a call-bound
 `kv`. Events, hooks, task context, modules, results, and execution use that ID. The provider-native
 ID remains only in the raw stream and private provider-context records so replay and server-tool

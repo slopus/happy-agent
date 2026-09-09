@@ -39,6 +39,75 @@ function lock(): (ctx: Context) => Promise<AgentStorageLock> {
 vi.setConfig({ testTimeout: 30_000 });
 
 describe.each(databaseBackends)("AgentStorage Drizzle persistence ($label)", ({ open }) => {
+    it("executes a queued tool request only after its caller's transaction commits", async () => {
+        const { close, database } = await open();
+        const provider = new ScriptedProvider([textTurn("done")]);
+        let executions = 0;
+        const module: AgentModule = {
+            name: "input-tool",
+            beforeStart: () => ({
+                tools: () => [
+                    defineAgentTool({
+                        name: "refresh",
+                        parameters: Type.Object({}),
+                        returnType: Type.Null(),
+                        shouldReviewInAutoMode: () => false,
+                        execute: async () => {
+                            executions++;
+                            return null;
+                        },
+                        toLLM: () => [],
+                    }),
+                ],
+            }),
+        };
+        const system = await AgentSystemLocal.create(
+            ctx,
+            new AgentStorage({ acquireLock: lock(), database }),
+            {
+                providers: providersOf(provider),
+                provider: "scripted",
+                models: [],
+                modules: [module],
+            },
+        );
+        try {
+            const agent = await system.create(ctx, {});
+            await agent.waitForIdle();
+            const rootCtx = withAgentDatabase(ctx, database);
+            const message = {
+                role: "user",
+                content: [{ type: "tool_call_request", name: "refresh" }],
+            } as const;
+            const id = "h12345678901234567890125";
+            await expect(
+                rootCtx.inTx(async (txCtx) => {
+                    await agent.send(txCtx, message, { id });
+                    expect(executions).toBe(0);
+                    expect(provider.sessions).toHaveLength(0);
+                    throw new Error("Roll back tool request");
+                }),
+            ).rejects.toThrow("Roll back tool request");
+            expect(executions).toBe(0);
+            await rootCtx.inTx(async (txCtx) => {
+                await agent.send(txCtx, message, { id });
+                expect(executions).toBe(0);
+                expect(provider.sessions).toHaveLength(0);
+            });
+            await agent.waitForIdle();
+            expect(executions).toBe(1);
+            expect(
+                provider.sessions[0]?.requests[0]?.context.messages.map((message) => message.role),
+            ).toEqual(["assistant", "tool"]);
+            await agent.send(ctx, message, { id });
+            await agent.waitForIdle();
+            expect(executions).toBe(1);
+        } finally {
+            await system.close(ctx);
+            await close();
+        }
+    });
+
     it("runs ordered module migrations once before beforeStart and provides the database", async () => {
         const { close, database } = await open();
         const events: string[] = [];

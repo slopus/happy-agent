@@ -96,6 +96,7 @@ import type { AgentBaseState } from "./AgentBaseState.js";
 import { AgentProviders } from "./AgentProviders.js";
 import type { AgentModuleAction } from "./AgentModuleAction.js";
 import type { AgentQueuedMessage } from "./AgentQueuedMessage.js";
+import { agentInputTool } from "./agentInputTool.js";
 import { ownAgentRequestProfile, type AgentRequestProfile } from "./AgentRequestProfile.js";
 import type { AnyAgentTool } from "./AgentTool.js";
 import { agentToolArgumentsError } from "./AgentToolArgumentsError.js";
@@ -1180,6 +1181,7 @@ export class AgentBase {
         const wait = agentIdOf(ctx) !== this.id && !insideTurn.get(ctx).includes(this.id);
         const metadata = ownAgentMessageMetadata(suppliedMetadata);
         const profile = ownAgentRequestProfile(suppliedProfile);
+        agentInputTool(message);
         if (this.#closed) throw new Error("The agent has been closed.");
         const knownInProcess = this.#offeredMessageIds.has(id);
         if (outerTransaction === undefined) {
@@ -1256,6 +1258,7 @@ export class AgentBase {
     ): Promise<readonly AgentMessageAcceptance[]> {
         if (batch.length === 0) return [];
         if (this.#closed) throw new Error("The agent has been closed.");
+        for (const entry of batch) agentInputTool(entry.message);
         // Admitted: from here on the messages are the agent's responsibility, and a close that
         // begins now waits for them rather than resolving over the top of them.
         const admitted =
@@ -2575,14 +2578,29 @@ export class AgentBase {
                     this.#steeringMode,
                     "steering",
                 );
-                if (!injected && !needsInference) {
+                if (!injected.consumed && !needsInference) {
                     injected = await this.#consumeQueue(ctx, this.#sends, this.#sendMode, "send");
+                }
+                if (injected.call !== undefined) {
+                    if (this.#stopAtSafeEdgeRequested()) return "shutdown";
+                    const stopped = await this.#runToolBatch(
+                        ctx,
+                        [this.#newToolEntry(0, injected.call)],
+                        false,
+                        abort.signal,
+                        abortPromise,
+                    );
+                    if (stopped) break;
+                    needsInference = true;
+                    // Requested calls share the same post-tool boundary as inferred calls:
+                    // settle cancellation, compaction, and newly admitted steering first.
+                    continue;
                 }
                 // Notices follow queue consumption so a model-switching message can replace
                 // history first. Tool settlement and compaction already finished above.
                 await this.#consumeInjections(ctx);
                 // Nothing to answer — a start() on an idle history, or the queues ran dry.
-                if (!this.#noticeAwaitingResponse && !injected && !needsInference) break;
+                if (!this.#noticeAwaitingResponse && !injected.consumed && !needsInference) break;
                 if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 if (preparedContextTokens !== this.#contextTokens) {
                     preparedContextTokens = this.#contextTokens;
@@ -3353,11 +3371,12 @@ export class AgentBase {
         queue: QueueEntry[],
         mode: AgentBaseQueueMode,
         kind: QueueRequest["kind"],
-    ): Promise<boolean> {
+    ): Promise<{ readonly consumed: boolean; readonly call?: SessionToolCallBlock }> {
         const prefix = `${kind}.`;
         /** Filled in once the consumption has committed, then reported to observers. */
         const accepted: AgentBaseAcceptedMessage[] = [];
         let permissionChange: AgentBasePermissionModeChange | undefined;
+        let call: SessionToolCallBlock | undefined;
         const consumed = await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
             if (queue.length === 0) return false;
             // The durable queue, not memory, decides what is left to consume after a restart.
@@ -3377,6 +3396,14 @@ export class AgentBase {
             }
             if (queue.length === 0) return false;
             let count = mode === "all" ? queue.length : 1;
+            // A requested call must be settled before another message can follow it. Its
+            // message also owns the effective selection and permission mode for execution.
+            for (let index = 0; index < count; index += 1) {
+                if (agentInputTool(queue[index]!.message) !== undefined) {
+                    count = index + 1;
+                    break;
+                }
+            }
             if (mode === "all" && count > 1) {
                 // "All" means every request that can safely share one provider context. A
                 // profile boundary must be answered separately: appending both sides after one
@@ -3392,6 +3419,27 @@ export class AgentBase {
                 }
             }
             const batch = queue.slice(0, count);
+            const messages = batch.map(
+                ({ message }): AgentQueuedMessage =>
+                    message.role === "user"
+                        ? {
+                              ...message,
+                              content: message.content.filter(
+                                  (block) => block.type !== "tool_call_request",
+                              ),
+                          }
+                        : message,
+            );
+            const request = agentInputTool(batch[batch.length - 1]!.message);
+            const requestedCall: SessionToolCallBlock | undefined =
+                request === undefined
+                    ? undefined
+                    : {
+                          type: "tool_call",
+                          callId: createId(),
+                          name: request.name,
+                          arguments: JSON.stringify(request.arguments ?? {}),
+                      };
             // Settings carried by the consumed messages become the effective settings for the
             // inference that follows, each defined field superseding the previous value. The
             // effective values are persisted alongside the consumption so a restart keeps them.
@@ -3548,12 +3596,19 @@ export class AgentBase {
                         });
                     }
                 }
-                for (const entry of batch) {
+                for (const [index, entry] of batch.entries()) {
                     await this.#appendRecord(txCtx, {
                         type: "user",
                         id: entry.id,
-                        message: entry.message,
+                        message: messages[index]!,
                         ...(entry.metadata === undefined ? {} : { metadata: entry.metadata }),
+                    });
+                }
+                if (requestedCall !== undefined) {
+                    await this.#appendRecord(txCtx, {
+                        type: "block",
+                        id: requestedCall.callId,
+                        block: requestedCall,
                     });
                 }
                 if (changed) {
@@ -3602,6 +3657,14 @@ export class AgentBase {
                         },
                     );
                 }
+                if (requestedCall !== undefined) {
+                    await this.#invokeTransactHook(txCtx, selection, this.#hooks.onEventTransact, {
+                        type: "toolcall_end",
+                        callId: requestedCall.callId,
+                        arguments: requestedCall.arguments,
+                        block: requestedCall,
+                    });
+                }
             });
             if (reset) {
                 this.#rotateHistoryKV();
@@ -3631,7 +3694,12 @@ export class AgentBase {
                 this.#providerToolIds.clear();
                 this.#contextTokens = undefined;
             }
-            this.#messages.push(...batch.map((entry) => entry.message));
+            this.#messages.push(...messages);
+            if (requestedCall !== undefined) {
+                this.#providerToolIds.set(requestedCall.callId, requestedCall.callId);
+                this.#messages.push({ role: "assistant", content: [requestedCall] });
+                call = requestedCall;
+            }
             // This turn is answering the request that these messages raised. A send accepted
             // while the turn was already running raised it again, and letting that stand would
             // buy an extra turn with an empty queue and a full set of lifecycle hooks.
@@ -3655,7 +3723,20 @@ export class AgentBase {
         for (const message of accepted) {
             await this.#invokeHook(ctx, this.#hooks.messageAccepted, message);
         }
-        return consumed;
+        if (call !== undefined) {
+            await this.#emit(ctx, { type: "toolcall_start", callId: call.callId, name: call.name });
+            await this.#emit(ctx, {
+                type: "toolcall_delta",
+                callId: call.callId,
+                delta: call.arguments,
+            });
+            await this.#emit(ctx, {
+                type: "toolcall_end",
+                callId: call.callId,
+                arguments: call.arguments,
+            });
+        }
+        return { consumed, ...(call === undefined ? {} : { call }) };
     }
 
     /**
@@ -3692,6 +3773,7 @@ export class AgentBase {
             throw new Error(`The queued message under "${key}" has an invalid ID.`);
         }
         const metadata = ownAgentMessageMetadata(envelope.metadata);
+        agentInputTool(envelope.message);
         const options = envelope.options ?? {};
         const profile = ownAgentRequestProfile(options.profile);
         return {
@@ -4097,6 +4179,9 @@ export class AgentBase {
 
         const ordered: SessionMessage[] = [];
         for (const message of messages) {
+            // A tool-only input keeps its user record for delivery identity, but has no
+            // ordinary user content to serialize once its control block has been consumed.
+            if (message.role === "user" && message.content.length === 0) continue;
             if (message.role === "tool" && calls.has(message.callId)) continue;
             ordered.push(message);
             if (message.role !== "assistant") continue;

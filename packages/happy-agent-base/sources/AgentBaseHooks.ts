@@ -33,7 +33,8 @@ import type {
 export type MaybePromise<Value> = Value | Promise<Value>;
 
 /**
- * A provider event whose completed assistant block is being committed to durable history.
+ * An event whose completed assistant block is being committed to durable history. This also
+ * includes tool calls materialized by Base from queued user input, before any inference.
  *
  * Raw stream observation still belongs to `onEvent`. This narrower event is delivered only for
  * valid terminal block events, inside the transaction that appends `block`, so starts, deltas,
@@ -79,7 +80,7 @@ export interface AgentBaseAcceptedMessage {
     readonly id: string;
     /** Which queue the message waited in, and therefore what made it inject when it did. */
     readonly kind: "steering" | "send";
-    /** The message exactly as it entered the conversation, in the role it was queued under. */
+    /** The original queued message, including any tool-request content block Base consumes. */
     readonly message: AgentQueuedMessage;
     /** Immutable module-owned metadata supplied with the message. */
     readonly metadata?: AgentMessageMetadata;
