@@ -20,7 +20,7 @@ import type {
     SessionTextBlock,
     SessionToolResultMessage,
     SessionToolResultBlock,
-    SessionUserInputMessage,
+    SessionUserMessage,
 } from "@/core/SessionContext.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
@@ -273,7 +273,7 @@ function toSessionStoreEntries(
     return entries;
 }
 
-function toSdkUserMessage(message: SessionUserInputMessage): SDKUserMessage {
+function toSdkUserMessage(message: SessionUserMessage): SDKUserMessage {
     return {
         type: "user",
         parent_tool_use_id: null,
@@ -397,7 +397,10 @@ function toSdkContent(content: readonly SessionInputBlock[]) {
     return content.map(toContentBlock);
 }
 
-function toContentBlock(block: SessionTextBlock | SessionImageBlock) {
+function toContentBlock(block: SessionInputBlock) {
+    if (block.type === "tool_call_request") {
+        throw new Error("Tool requests must be executed by the agent before inference.");
+    }
     if (block.type === "text") return { type: "text" as const, text: block.text };
     return {
         type: "image" as const,

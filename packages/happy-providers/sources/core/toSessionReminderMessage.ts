@@ -1,4 +1,4 @@
-import type { SessionSystemMessage, SessionUserInputMessage } from "@/core/SessionContext.js";
+import type { SessionSystemMessage, SessionUserMessage } from "@/core/SessionContext.js";
 
 /**
  * Projects a session system message onto the user role.
@@ -8,7 +8,7 @@ import type { SessionSystemMessage, SessionUserInputMessage } from "@/core/Sessi
  * these into the system prompt instead would lose the position the caller chose and rewrite the
  * cached prefix on every notice.
  */
-export function toSessionReminderMessage(message: SessionSystemMessage): SessionUserInputMessage {
+export function toSessionReminderMessage(message: SessionSystemMessage): SessionUserMessage {
     const text = message.content
         .flatMap((block) => (block.type === "text" ? [block.text] : []))
         .join("\n\n");

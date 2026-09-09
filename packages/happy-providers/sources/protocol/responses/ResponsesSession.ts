@@ -11,11 +11,7 @@ import {
     isEmptyResponseError,
 } from "@/core/EmptyResponseError.js";
 import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
-import type {
-    SessionContext,
-    SessionMessage,
-    SessionUserInputMessage,
-} from "@/core/SessionContext.js";
+import type { SessionContext, SessionMessage, SessionUserMessage } from "@/core/SessionContext.js";
 import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import type { SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
@@ -307,11 +303,11 @@ function emptySessionStream(): SessionStream {
 function preservedResponsesMessages(
     output: readonly unknown[],
     source: readonly SessionMessage[],
-): SessionUserInputMessage[] {
+): SessionUserMessage[] {
     const candidates = source.filter(
-        (message): message is SessionUserInputMessage => message.role === "user",
+        (message): message is SessionUserMessage => message.role === "user",
     );
-    const preserved: SessionUserInputMessage[] = [];
+    const preserved: SessionUserMessage[] = [];
     let candidateIndex = 0;
     for (const item of output) {
         const text = compactedUserText(item);
@@ -357,7 +353,7 @@ function compactedUserText(item: unknown): string | undefined {
         .join("");
 }
 
-function sessionUserText(message: SessionUserInputMessage): string {
+function sessionUserText(message: SessionUserMessage): string {
     return message.content
         .filter((part) => part.type === "text")
         .map((part) => part.text)

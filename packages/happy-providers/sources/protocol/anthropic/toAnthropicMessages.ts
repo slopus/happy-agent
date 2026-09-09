@@ -65,6 +65,9 @@ function toInputContent(content: readonly SessionInputBlock[]): string | BetaCon
 }
 
 function toInputBlock(block: SessionInputBlock): BetaContentBlockParam {
+    if (block.type === "tool_call_request") {
+        throw new Error("Tool requests must be executed by the agent before inference.");
+    }
     if (block.type === "text") return { type: "text", text: block.text };
     return {
         type: "image",

@@ -16,13 +16,16 @@ export function toOpenAIInputContent(
 export function toOpenAIInputContentBlocks(
     content: readonly (SessionInputBlock | SessionOutputBlock)[],
 ): Array<ResponseInputText | ResponseInputImage> {
-    return content.map((block) =>
-        block.type === "text"
+    return content.map((block) => {
+        if (block.type === "tool_call_request") {
+            throw new Error("Tool requests must be executed by the agent before inference.");
+        }
+        return block.type === "text"
             ? { type: "input_text", text: block.text }
             : {
                   type: "input_image",
                   detail: "auto",
                   image_url: `data:${block.mimeType};base64,${block.data}`,
-              },
-    );
+              };
+    });
 }

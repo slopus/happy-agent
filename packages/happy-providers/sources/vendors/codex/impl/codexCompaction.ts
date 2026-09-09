@@ -15,7 +15,7 @@ import type { CodexResponseRequest } from "@/vendors/codex/impl/CodexResponseReq
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import type { ResponseInputItem } from "openai/resources/responses/responses.js";
 import type { SessionUsage } from "@/core/SessionUsage.js";
-import type { SessionMessage, SessionUserInputMessage } from "@/core/SessionContext.js";
+import type { SessionMessage, SessionUserMessage } from "@/core/SessionContext.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import { responseInputItems } from "@/protocol/responses/responseInputItems.js";
 import { responseStreamError } from "@/protocol/responses/responseStreamError.js";
@@ -219,11 +219,11 @@ const PRESERVED_TOKEN_LIMIT = 64_000;
 
 export function preserveCodexCompactionMessages(
     messages: readonly SessionMessage[],
-): SessionUserInputMessage[] {
+): SessionUserMessage[] {
     const candidates = messages.filter(
-        (message): message is SessionUserInputMessage => message.role === "user",
+        (message): message is SessionUserMessage => message.role === "user",
     );
-    const preserved: SessionUserInputMessage[] = [];
+    const preserved: SessionUserMessage[] = [];
     let remainingTokens = PRESERVED_TOKEN_LIMIT;
     for (const message of candidates.toReversed()) {
         if (remainingTokens === 0) break;
@@ -248,13 +248,13 @@ const LOCAL_PRESERVED_TOKEN_LIMIT = 20_000;
 /** Applies Codex's local-compaction policy used for providers without remote compaction. */
 export function preserveCodexLocalCompactionMessages(
     messages: readonly SessionMessage[],
-): SessionUserInputMessage[] {
+): SessionUserMessage[] {
     const candidates = messages.filter(
-        (message): message is SessionUserInputMessage =>
+        (message): message is SessionUserMessage =>
             message.role === "user" &&
             !sessionUserText(message).startsWith(`${context_checkpoint_summary_prefix}\n`),
     );
-    const preserved: SessionUserInputMessage[] = [];
+    const preserved: SessionUserMessage[] = [];
     let remainingTokens = LOCAL_PRESERVED_TOKEN_LIMIT;
     for (const message of candidates.toReversed()) {
         if (remainingTokens === 0) break;
@@ -274,7 +274,7 @@ export function preserveCodexLocalCompactionMessages(
     return preserved;
 }
 
-function sessionUserText(message: SessionUserInputMessage): string {
+function sessionUserText(message: SessionUserMessage): string {
     return message.content
         .filter((block) => block.type === "text")
         .map((block) => block.text)

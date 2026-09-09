@@ -717,23 +717,14 @@ type SessionMessage =
     | SessionCompactionMessage;
 ```
 
-A provider-context user turn contains ordered multimodal input blocks. Agent queues accept the
-broader `SessionUserMessage`, which also has a tool-requesting user-message variant:
+A user turn contains an ordered array of input blocks. A tool request is another input block, not
+a separate kind of user message, and may appear anywhere in its content:
 
 ```ts
-type SessionUserMessage = SessionUserInputMessage | SessionUserToolMessage;
-
-interface SessionUserInputMessage {
+interface SessionUserMessage {
     readonly role: "user";
     readonly content: readonly SessionInputBlock[];
 }
-
-interface SessionUserToolMessage {
-    readonly role: "user";
-    readonly content: readonly [...SessionInputBlock[], SessionInputTool];
-}
-
-type SessionUserBlock = SessionInputBlock | SessionInputTool;
 
 interface SessionInputTool {
     readonly type: "tool_call_request";
@@ -741,7 +732,7 @@ interface SessionInputTool {
     readonly arguments?: Readonly<Record<string, JSONValue>>;
 }
 
-type SessionInputBlock = SessionTextBlock | SessionImageBlock;
+type SessionInputBlock = SessionTextBlock | SessionImageBlock | SessionInputTool;
 
 interface SessionTextBlock {
     readonly type: "text";
@@ -755,11 +746,12 @@ interface SessionImageBlock {
 }
 ```
 
-`SessionUserToolMessage` is a caller-side user message, not a provider-native tool call. The owning
-agent loop executes its `SessionInputTool` content block itself before inference, records the
-resulting assistant call and tool result through its normal lifecycle, and supplies providers with
-the ordinary user input plus that completed lifecycle. Provider sessions never execute this request
-themselves.
+`SessionInputTool` is a caller-side tool request, not a provider-native tool call. A user message
+may contain at most one. The owning agent loop must consume this block before inference, record
+the resulting assistant call and tool result through its normal lifecycle, and supply providers
+with the remaining user content plus that completed lifecycle. Omitted arguments mean an empty
+object. Providers never execute these requests themselves; input serializers reject an unconsumed
+request instead of sending it as text or an image.
 
 A model turn is one ordered block array. Do not flatten or reorder it: provider replay state lives
 on the block it belongs to, so text, reasoning, client tool calls, and provider-owned tool results
