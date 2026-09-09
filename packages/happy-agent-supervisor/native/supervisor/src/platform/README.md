@@ -5,6 +5,12 @@ private procfs. macOS builds and installs one Seatbelt profile in-process.
 `child.rs` holds the fork, wait, and status reproduction both platforms need
 once something has to outlive the workload's `execve`.
 
+Ubuntu AppArmor may transition an unconfined supervisor to `unprivileged_userns (enforce)` only
+after `unshare(CLONE_NEWUSER)` succeeds. Namespace setup errors identify the failed operation and,
+when that restrictive profile is actually observed, explain the required administrator-owned
+application allowance. Bootstrap remains fail-closed; it never changes dumpability ordering,
+AppArmor policy, service privileges, or global sysctls to get past a denial.
+
 Linux read denials are canonicalized and reduced to disjoint subtree roots before
 mounting. A parent mask already hides every child; trying to mask that child again
 would fail after its mount target disappears. Symlink aliases and duplicates converge

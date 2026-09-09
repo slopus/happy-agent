@@ -7,7 +7,8 @@ Both live settings updates and durable reconciliation now exclude only the displ
 comparing connection settings. Renames persist and publish the versioned public roster while
 keeping the existing pool and carrier alive. Endpoint or authentication changes and removal still
 close the old connection. Each configured remote retains its own on-demand Tailcat process; this
-does not introduce a shared multi-destination carrier or restart carriers after request failures.
+does not introduce a shared multi-destination carrier. Tailcat replaces a failed carrier for
+subsequent requests without changing the roster or replaying interrupted HTTP requests.
 
 ## Managed nodes use Tailcat and application tokens
 

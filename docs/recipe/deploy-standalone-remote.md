@@ -126,6 +126,15 @@ the chosen version for the handoff. Before first startup, verify that
 bootstrap created it. On an existing installation inspect ownership before making a scoped repair;
 never recursively change unrelated directories or follow unverified symlinks.
 
+### Ubuntu namespace permissions
+
+Before first startup on Ubuntu 24.04, check the host's AppArmor namespace restriction and follow
+the [Ubuntu AppArmor host prerequisite](../permissions-and-sandbox.md#ubuntu-apparmor-host-prerequisite).
+Obtain approval for the application-specific `userns` grant to the trusted, root-owned daemon
+executable. Preserve an existing confinement profile; do not disable the system-wide restriction,
+grant service capabilities, or switch Auto to Full access. If this host-policy change is not
+authorized, report sandbox startup as blocked rather than claiming deployment is complete.
+
 ## 3. Provision only the selected provider credentials
 
 Never print auth files or tokens, paste them into chat, include them in command arguments, put them

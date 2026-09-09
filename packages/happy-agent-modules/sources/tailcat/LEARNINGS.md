@@ -35,3 +35,13 @@ Bun's HTTP transport. Tailcat still carries and encrypts the remote traffic; the
 hop adapts it to both runtimes without exposing the remote API token to the carrier process.
 Processes, handshake buffers, concurrent sockets, startup, and shutdown are bounded. Recreating a
 failed carrier is allowed for a new request, never a replay of an interrupted mutation.
+
+## A live process is not necessarily a healthy carrier
+
+After a remote restart, a SOCKS process can stay alive while every new handshake fails. Keeping
+its resolved startup promise then pins the connection to that failed process indefinitely.
+Handshake and startup failures now destroy that generation's sockets and reap its process before
+subsequent requests share a fresh startup. Cleanup is generation-checked, so late failures cannot
+tear down a replacement. Permanent close still unregisters the connection; transient recovery
+does not. Destroying the old sockets also evicts them from the owning HTTP pool. No failed request
+is replayed, and no credential or roster change is needed.

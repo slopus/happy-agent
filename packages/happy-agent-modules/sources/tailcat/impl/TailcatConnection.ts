@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect, type Socket } from "node:net";
 
+type CarrierRun = { child: ChildProcess; exited: Promise<void> };
+
 /** A persistent Tailcat SOCKS carrier with native TCP sockets on both Node and Bun. */
 export class TailcatConnection {
     readonly #executable: string;
@@ -9,7 +11,8 @@ export class TailcatConnection {
     readonly #sockets = new Set<Socket>();
     #stopped = false;
     #starting: Promise<number> | undefined;
-    #run: { child: ChildProcess; exited: Promise<void> } | undefined;
+    #run: CarrierRun | undefined;
+    #resetting: Promise<void> | undefined;
 
     constructor(executable: string, address: string, onClose: () => void = () => undefined) {
         this.#executable = executable;
@@ -18,9 +21,21 @@ export class TailcatConnection {
     }
 
     async connect(port: number): Promise<Socket> {
+        // New requests wait for the failed generation to be reaped. They share one startup;
+        // requests already assigned to that generation fail instead of being replayed.
+        await this.#resetting;
         if (this.#stopped) throw failed();
-        const socksPort = await (this.#starting ??= this.#start());
-        if (this.#stopped) throw failed();
+        const starting = (this.#starting ??= this.#start());
+        const run = this.#run;
+        let socksPort: number;
+        try {
+            socksPort = await starting;
+        } catch {
+            if (run === undefined && this.#starting === starting) this.#starting = undefined;
+            await this.#reset(run);
+            throw failed();
+        }
+        if (this.#stopped || this.#run !== run || this.#resetting !== undefined) throw failed();
         const socket = connect({ host: "127.0.0.1", port: socksPort });
         this.#sockets.add(socket);
         socket.once("close", () => this.#sockets.delete(socket));
@@ -49,25 +64,40 @@ export class TailcatConnection {
                         : -1;
             if (bytes < 0) throw failed();
             await readBytes(socket, bytes + 2);
+            if (this.#stopped || this.#run !== run || this.#resetting !== undefined) throw failed();
             socket.setTimeout(0);
             return socket;
         } catch {
             socket.destroy();
+            await this.#reset(run);
             throw failed();
         }
     }
 
     async close(): Promise<void> {
-        this.#stopped = true;
-        this.#onClose();
+        if (!this.#stopped) {
+            this.#stopped = true;
+            this.#onClose();
+        }
+        if (this.#run !== undefined) await this.#reset(this.#run);
+        await this.#resetting;
+    }
+
+    #reset(run: CarrierRun | undefined): Promise<void> {
+        // A late handshake or exit from an older generation cannot close its replacement.
+        if (run === undefined || this.#run !== run) return Promise.resolve();
+        if (this.#resetting !== undefined) return this.#resetting;
         for (const socket of this.#sockets) socket.destroy();
-        const run = this.#run;
-        if (run === undefined) return;
         run.child.kill("SIGTERM");
         const timer = setTimeout(() => run.child.kill("SIGKILL"), 2000);
         timer.unref();
-        await run.exited;
-        clearTimeout(timer);
+        this.#resetting = run.exited.then(() => {
+            clearTimeout(timer);
+            this.#run = undefined;
+            this.#starting = undefined;
+            this.#resetting = undefined;
+        });
+        return this.#resetting;
     }
 
     async #start(): Promise<number> {
@@ -80,10 +110,7 @@ export class TailcatConnection {
         const run = { child, exited };
         this.#run = run;
         void exited.then(() => {
-            if (this.#run === run) {
-                this.#run = undefined;
-                this.#starting = undefined;
-            }
+            void this.#reset(run);
         });
         return await new Promise<number>((resolve, reject) => {
             let settled = false;

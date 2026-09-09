@@ -45,6 +45,11 @@ happy-agent --version
 Replace `0.0.0` with an actual released version. macOS uses `darwin-arm64` or `darwin-x64` and can
 verify the checksum with `shasum -a 256 -c "$ARCHIVE.sha256"`.
 
+On Ubuntu 24.04, complete the administrator-approved
+[AppArmor namespace allowance](permissions-and-sandbox.md#ubuntu-apparmor-host-prerequisite)
+for the trusted daemon executable before starting the service. Keep the system-wide restriction
+and Happy's sandbox enabled; the team's HTTP health check alone does not test shell startup.
+
 Create the service account and its configuration folder:
 
 ```sh

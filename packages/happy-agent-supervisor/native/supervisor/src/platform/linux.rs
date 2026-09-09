@@ -224,16 +224,21 @@ fn run_namespace_init(
 fn enter_user_namespace() -> SupervisorResult<()> {
     let original_uid = unsafe { libc::geteuid() };
     let original_gid = unsafe { libc::getegid() };
-    syscall_zero("create user namespace", unsafe {
-        libc::unshare(libc::CLONE_NEWUSER)
-    })?;
+    if unsafe { libc::unshare(libc::CLONE_NEWUSER) } != 0 {
+        return Err(namespace_setup_error(
+            "create user namespace",
+            std::io::Error::last_os_error(),
+        ));
+    }
     match fs::write("/proc/self/setgroups", b"deny\n") {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(namespace_setup_error("write /proc/self/setgroups", error)),
     }
-    fs::write("/proc/self/uid_map", format!("0 {original_uid} 1\n"))?;
-    fs::write("/proc/self/gid_map", format!("0 {original_gid} 1\n"))?;
+    fs::write("/proc/self/uid_map", format!("0 {original_uid} 1\n"))
+        .map_err(|error| namespace_setup_error("write /proc/self/uid_map", error))?;
+    fs::write("/proc/self/gid_map", format!("0 {original_gid} 1\n"))
+        .map_err(|error| namespace_setup_error("write /proc/self/gid_map", error))?;
     syscall_zero("assume namespace group ID 0", unsafe {
         libc::setresgid(0, 0, 0)
     })?;
@@ -241,6 +246,39 @@ fn enter_user_namespace() -> SupervisorResult<()> {
         libc::setresuid(0, 0, 0)
     })?;
     Ok(())
+}
+
+fn namespace_setup_error(operation: &str, error: std::io::Error) -> crate::SupervisorError {
+    // Ubuntu can allow unshare and only then transition an unconfined process into this
+    // restrictive profile. Inspect the failing child, not its daemon or the sysctl alone.
+    let profile = fs::read_to_string("/proc/self/attr/apparmor/current")
+        .or_else(|_| fs::read_to_string("/proc/self/attr/current"))
+        .ok();
+    std::io::Error::other(namespace_error_message(
+        operation,
+        &error,
+        profile.as_deref(),
+    ))
+    .into()
+}
+
+fn namespace_error_message(
+    operation: &str,
+    error: &std::io::Error,
+    profile: Option<&str>,
+) -> String {
+    let mut message = format!("{operation}: {error}");
+    if matches!(error.raw_os_error(), Some(libc::EACCES | libc::EPERM))
+        && profile.map(str::trim) == Some("unprivileged_userns (enforce)")
+    {
+        message.push_str(
+            ". Ubuntu AppArmor restricted this user namespace. An administrator must configure a \
+             userns allowance for the trusted Happy Agent executable and restart the daemon; see \
+             the Ubuntu AppArmor section in permissions-and-sandbox.md. Keep AppArmor and the \
+             sandbox enabled. No workload was started.",
+        );
+    }
+    message
 }
 
 fn make_mounts_private() -> SupervisorResult<()> {
@@ -812,6 +850,39 @@ fn syscall_zero(description: &str, result: libc::c_int) -> SupervisorResult<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn namespace_errors_identify_only_the_observed_ubuntu_restriction() {
+        for errno in [libc::EACCES, libc::EPERM] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            let message = namespace_error_message(
+                "write /proc/self/setgroups",
+                &error,
+                Some("unprivileged_userns (enforce)\n"),
+            );
+            assert!(message.contains("userns allowance"));
+            assert!(message.contains("No workload was started"));
+            for profile in [
+                None,
+                Some("unconfined\n"),
+                Some("unprivileged_userns (complain)"),
+            ] {
+                let message =
+                    namespace_error_message("write /proc/self/setgroups", &error, profile);
+                assert!(message.starts_with("write /proc/self/setgroups: "));
+                assert!(!message.contains("AppArmor"));
+            }
+        }
+        let error = std::io::Error::from_raw_os_error(libc::ENOSPC);
+        assert!(
+            !namespace_error_message(
+                "create user namespace",
+                &error,
+                Some("unprivileged_userns (enforce)")
+            )
+            .contains("AppArmor")
+        );
+    }
 
     #[test]
     fn read_denials_coalesce_canonical_subtrees_without_hiding_siblings() {

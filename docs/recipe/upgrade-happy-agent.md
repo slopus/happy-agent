@@ -34,6 +34,11 @@ OS/architecture, service user, executable path, supervisor, config directory, Ha
 paths, and connection ID. Resolve symlinks and path/environment overrides before replacing any
 file. Inspect the service definition privately; environment settings may contain secrets.
 
+On Ubuntu, retain the administrator-approved [AppArmor namespace allowance](../permissions-and-sandbox.md#ubuntu-apparmor-host-prerequisite)
+and its exact executable-path binding. Include the profile in the stopped-state backup. A missing
+allowance is a host-policy prerequisite requiring approval, not a reason to disable AppArmor or
+change global sysctls. Verify sandboxed tools through the actual service after the upgrade.
+
 Read all release notes between the installed and proposed versions. Check OS requirements,
 configuration changes, database migrations or generation resets, provider changes, and client
 protocol compatibility. A release that intentionally resets state is not a routine in-place

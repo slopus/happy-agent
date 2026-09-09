@@ -248,6 +248,49 @@ existing file read-only. When it does not exist, it remains absent before,
 during, and after the command; Happy Agent never creates a placeholder or other
 synthetic file at that path.
 
+### Ubuntu AppArmor host prerequisite
+
+Ubuntu 24.04 may restrict unprivileged user namespaces through AppArmor. The supervisor can
+successfully call `unshare(CLONE_NEWUSER)` and then be moved into `unprivileged_userns (enforce)`.
+The next write to `/proc/self/setgroups` fails with `Permission denied` before any workload runs.
+Checking only the daemon's initial `unconfined` label or testing the binary through `sudo` is not
+sufficient; the label at the failing namespace operation is what matters. This is not a provider,
+credential, or workspace-file permission problem.
+
+An administrator can authorize namespaces for the trusted **daemon executable**. This is an
+explicit host-policy grant to that application and its inherited child processes, not a setting
+the agent runtime may change itself. Obtain approval for the exact executable and keep it and
+its parent directories root-owned and not writable by the service account. Do not use a wildcard
+over user-writable temporary supervisor caches, put an allowance on a general shell or interpreter,
+or replace an existing confinement profile with an unconfined one.
+
+For the standard standalone or team service installed at `/usr/local/bin/happy-agent`, which
+otherwise runs unconfined, the administrator-approved `/etc/apparmor.d/happy-agent` profile is:
+
+```text
+abi <abi/4.0>,
+include <tunables/global>
+
+profile happy-agent /usr/local/bin/happy-agent flags=(unconfined) {
+    userns,
+}
+```
+
+Use the actual canonical executable path for a different installation. On a host that already
+confines Happy Agent, have its administrator amend that existing policy instead. Install the
+reviewed profile as root with mode `0644`, check it with
+`sudo apparmor_parser --skip-kernel-load /etc/apparmor.d/happy-agent`, then load it with
+`sudo apparmor_parser --replace /etc/apparmor.d/happy-agent`. Coordinate an idle maintenance window
+and restart Happy Agent through its existing service manager so the new process receives the
+profile. Preserve the profile and its executable-path binding during upgrades.
+
+Leave `kernel.apparmor_restrict_unprivileged_userns` enabled. Do not disable AppArmor, alter global
+sysctls, grant capabilities to the service, or switch the agent to Full access to pass a smoke
+test. The application allowance permits Happy's supervisor to build its sandbox; its filesystem,
+network, capability, and memory protections still apply. Verify a restricted command **through
+the running project agent**, including an allowed workspace write and a refused outside write,
+then verify the same behavior after restart. API health alone does not exercise this boundary.
+
 ## Shell and background processes
 
 A shell command starts with a wait, not a life expectancy.
