@@ -915,6 +915,7 @@ function createApi(
         subscriptions as never,
         team as never,
         { list: () => [], onUpdated: () => () => {} } as never,
+        { onUpdated: () => () => {} } as never,
     );
 }
 

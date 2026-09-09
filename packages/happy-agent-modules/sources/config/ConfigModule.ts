@@ -39,7 +39,8 @@ import {
     remoteConnectionEntrySchema,
     type RemoteConnectionEntry,
 } from "./RemoteConnectionConfig.js";
-import { connectionIdSchema } from "@slopus/happy-agent-client";
+import { connectionIdSchema, nodeNameSchema } from "@slopus/happy-agent-client";
+import { resolveDefaultNodeName } from "./impl/resolveDefaultNodeName.js";
 
 const MAX_PATH_LENGTH = 4_096;
 const MAX_CONFIG_STRING_LENGTH = 16_384;
@@ -361,6 +362,9 @@ const mcpInputSchema = Type.Record(
 );
 const partialValuesSchema = Type.Object(
     {
+        node: Type.Optional(
+            Type.Object({ name: Type.Optional(nodeNameSchema) }, { additionalProperties: false }),
+        ),
         profile: Type.Optional(profileBootstrapSchema),
         api: Type.Optional(apiConfigSchema),
         connections: Type.Optional(remoteConnectionsConfigSchema),
@@ -890,6 +894,7 @@ const resolvedValuesSchema = Type.Object(
                 { additionalProperties: false },
             ),
         ),
+        node: Type.Object({ name: Type.Optional(nodeNameSchema) }, { additionalProperties: false }),
         observation: Type.Object(
             {
                 historyDump: Type.Boolean(),
@@ -1162,6 +1167,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         name: "happy",
         role: "primary",
     },
+    node: {},
     permissions: { protectedPaths: [] },
     presence: { states: {} },
     providerDefaultEnable: false,
@@ -1405,6 +1411,22 @@ export class ConfigModule implements AgentModule {
     /** The current daemon-owned Tailcat setting, including live runtime mutations. */
     get tailcatEnabled(): boolean {
         return this.#tailcatEnabled;
+    }
+
+    /** Initial node identity comes only from machine config, never from P2P or a repository. */
+    async initialNodeName(): Promise<string> {
+        return this.configuration.values.node.name ?? (await resolveDefaultNodeName());
+    }
+
+    /** Durable node work calls this after its database intent commits. */
+    async writeRuntimeNodeName(ctx: Context, name: string): Promise<void> {
+        if (!Value.Check(nodeNameSchema, name)) throw new Error("The node name is invalid.");
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const next = structuredClone(this.#runtimeValues);
+            next.node = { name };
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+        });
     }
 
     /** The fixed loopback and remote service port selected for Tailcat. */
@@ -2242,6 +2264,7 @@ export function parseHappyAgentConfigToml(source: string): {
         "features",
         "mcp_servers",
         "network",
+        "node",
         "observation",
         "p2p",
         "permissions",
@@ -2275,6 +2298,7 @@ export function parseHappyAgentConfigToml(source: string): {
             ? readBoolean(table.providers, "default_enable", "providers.default_enable")
             : undefined;
     const values = {
+        ...(table.node === undefined ? {} : { node: table.node }),
         ...(table.profile === undefined ? {} : { profile: table.profile }),
         ...(table.api === undefined ? {} : { api: table.api }),
         ...(table.connections === undefined ? {} : { connections: table.connections }),
@@ -2338,6 +2362,7 @@ function sourceSnapshot(source: ReadSource): HappyAgentConfigSource {
 
 function normalizeSourceValues(values: PartialValues): Record<string, unknown> {
     return {
+        ...(values.node === undefined ? {} : { node: values.node }),
         ...(values.profile === undefined ? {} : { profile: values.profile }),
         ...(values.docker === undefined ? {} : { docker: normalizeDocker(values.docker) }),
         ...(values.defaults === undefined ? {} : { defaults: normalizeDefaults(values.defaults) }),
@@ -2507,6 +2532,7 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
             ];
         }
         if (partial.p2p !== undefined) merged.p2p = mergeP2p(merged.p2p, partial.p2p);
+        if (partial.node !== undefined) Object.assign(merged.node, partial.node);
         if (partial.presence !== undefined)
             merged.presence = mergePresence(merged.presence, partial.presence);
         if (partial.provider_default_enable !== undefined) {
@@ -3036,6 +3062,7 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         // this machine's traces wherever the repository asked.
         observation: _observation,
         p2p: _p2p,
+        node: _node,
         profile: _profile,
         provider_default_enable: _providerDefaultEnable,
         providers: _providers,

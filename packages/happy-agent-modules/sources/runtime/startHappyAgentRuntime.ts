@@ -53,6 +53,7 @@ import { ImageGenerationModule } from "../imageGeneration/index.js";
 import { MenuBarModule } from "../menuBar/index.js";
 import { McpModule } from "../mcp/index.js";
 import { ModelSwitchModule } from "../modelSwitch/ModelSwitchModule.js";
+import { NodeModule } from "../node/index.js";
 import { ObservationModule } from "../observation/index.js";
 import { PermissionsModule } from "../permissions/index.js";
 import { PresenceModule } from "../presence/index.js";
@@ -148,6 +149,7 @@ export interface HappyAgentRuntimeModules {
     readonly menuBar: MenuBarModule;
     readonly mcp: McpModule;
     readonly modelSwitch: ModelSwitchModule;
+    readonly node: NodeModule;
     readonly observation: ObservationModule;
     readonly permissions: PermissionsModule;
     readonly presence: PresenceModule;
@@ -421,6 +423,7 @@ export async function startHappyAgentRuntime(
         const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
         const titles = new TitlesModule(config, history, workspaces);
         const bots = new BotsModule(config, abort, titles);
+        const node = new NodeModule(config, bots, compute.computeModule, durableFunctions);
         const tailcat = new TailcatModule(config, bots, durableFunctions);
         registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
         const terminals = new TerminalsModule(projects, workspaces, bots);
@@ -515,6 +518,7 @@ export async function startHappyAgentRuntime(
             secrets,
             team,
             connections,
+            node,
         );
         api = apiModule;
 
@@ -544,6 +548,7 @@ export async function startHappyAgentRuntime(
             menuBar,
             mcp,
             modelSwitch,
+            node,
             observation,
             permissions,
             presence,
@@ -596,6 +601,7 @@ export async function startHappyAgentRuntime(
             git,
             durableFunctions,
             bots,
+            node,
             tailcat,
             ...(team.enabled ? [] : [happyTeams]),
             connections,

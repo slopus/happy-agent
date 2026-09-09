@@ -19,6 +19,7 @@ import {
     reorderBotRequestSchema,
     unarchiveBotRequestSchema,
     configPatchSchema,
+    nodeConfigPatchSchema,
     providerVerificationRequestSchema,
     type DrainWaitingFor,
     type MessageMode,
@@ -32,7 +33,7 @@ import {
     type AgentModuleHooks,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
-import type { Static, TSchema } from "@sinclair/typebox";
+import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, shutdown, type Context } from "@steve.kite/stdlib";
 import { WebSocketServer } from "ws";
@@ -55,6 +56,7 @@ import {
 } from "../compactions/index.js";
 import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
+import { NodeModule } from "../node/index.js";
 import { CloudModule, CloudOperationError, type CloudSocialMutationKind } from "../cloud/index.js";
 import { EventsModule, eventIdSchema, type AgentEvent } from "../events/index.js";
 import {
@@ -305,6 +307,7 @@ export class ApiModule implements AgentModule {
     readonly #profile: ProfileModule;
     readonly #team: TeamModule;
     readonly #connections: ConnectionsModule;
+    readonly #node: NodeModule;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
     readonly #secrets: SecretsModule;
@@ -386,6 +389,7 @@ export class ApiModule implements AgentModule {
         secrets: SecretsModule,
         team: TeamModule,
         connections: ConnectionsModule,
+        node: NodeModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -411,6 +415,7 @@ export class ApiModule implements AgentModule {
         this.#secrets = secrets;
         this.#team = team;
         this.#connections = connections;
+        this.#node = node;
     }
 
     readonly beforeStart = async (
@@ -594,34 +599,62 @@ export class ApiModule implements AgentModule {
                 throw new ApiError(503, "unsupported", "Workspaces are disabled in this daemon.");
             }
             if (request.method === "GET" && url.pathname === "/v0/config") {
-                sendJson(response, 200, { config: this.#sanitizedConfig() });
+                sendJson(response, 200, { config: await this.#sanitizedConfig(ctx) });
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/v0/node/avatar") {
+                const asset = await this.#node.avatar(ctx);
+                if (asset === null) throw notFound("This installation has no avatar.");
+                response.setHeader("etag", asset.etag);
+                if (request.headers["if-none-match"] === asset.etag) {
+                    response.writeHead(304);
+                    response.end();
+                    return;
+                }
+                const bytes = Buffer.from(asset.data, "base64");
+                response.writeHead(200, {
+                    "content-type": "image/webp",
+                    "content-length": bytes.length,
+                });
+                response.end(bytes);
                 return;
             }
             if (request.method === "PATCH" && url.pathname === "/v0/config") {
                 const body = await bodyAs(request, configPatchSchema, "configuration patch");
-                if (
-                    body.providers === undefined ||
-                    Object.keys(body).some((key) => key !== "providers") ||
-                    Object.values(body.providers).some(
-                        (provider) =>
-                            Object.keys(provider).length !== 1 ||
-                            !Object.hasOwn(provider, "enabled"),
-                    )
-                ) {
+                if (!Value.Check(runtimeConfigPatchSchema, body)) {
                     throw new ApiError(
                         409,
                         "conflict",
-                        "This daemon can only change provider enablement at runtime.",
+                        "This daemon can only change provider enablement and its display name at runtime.",
+                    );
+                }
+                if (
+                    body.node?.name !== undefined &&
+                    this.#team.enabled &&
+                    teamUser(ctx)?.isOwner !== true
+                ) {
+                    throw new ApiError(
+                        403,
+                        "forbidden",
+                        "Only the team owner can change this installation's name.",
                     );
                 }
                 try {
-                    await this.#providerScan.setOverrides(ctx, body.providers);
+                    if (body.providers !== undefined)
+                        await this.#providerScan.setOverrides(ctx, body.providers);
                 } catch (error: unknown) {
                     if (error instanceof ProviderNotFoundError) throw notFound(error.message);
                     throw error;
                 }
-                this.#journal.append("config.updated", {});
-                sendJson(response, 200, { config: this.#sanitizedConfig() });
+                const nameChanged = await ctx.inTx(async (txCtx) => {
+                    if (body.node?.name === undefined) return false;
+                    const previous = await this.#node.get(txCtx);
+                    await this.#node.setName(txCtx, body.node.name);
+                    return previous.name !== body.node.name;
+                });
+                if (body.providers !== undefined && !nameChanged)
+                    this.#journal.append("config.updated", {});
+                sendJson(response, 200, { config: await this.#sanitizedConfig(ctx) });
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/providers/scan") {
@@ -1334,6 +1367,9 @@ export class ApiModule implements AgentModule {
     #subscribeToModules(ctx: Context): void {
         if (this.#unsubscribe.length > 0) return;
         this.#unsubscribe.push(
+            this.#node.onUpdated(() => {
+                this.#journal.append("config.updated", {});
+            }),
             this.#connections.onUpdated((_eventCtx, snapshot) => {
                 this.#journal.appendOutsideMutation("connections.updated", snapshot);
             }),
@@ -4971,7 +5007,7 @@ export class ApiModule implements AgentModule {
             (workspace: Workspace) => workspace.parentId === workspace.projectRef,
         );
         return {
-            config: this.#sanitizedConfig(),
+            config: await this.#sanitizedConfig(ctx),
             profile,
             onboarding,
             cloud: this.#cloud.status(ctx),
@@ -5198,11 +5234,12 @@ export class ApiModule implements AgentModule {
         };
     }
 
-    #sanitizedConfig(): Record<string, unknown> {
+    async #sanitizedConfig(ctx: Context): Promise<Record<string, unknown>> {
         const values = this.#config.configuration.values;
         const { models, providers } = this.#sanitizedCatalog();
         const defaultModel = this.#config.models[0] ?? this.#config.offeredModels[0];
         return {
+            node: await this.#node.get(ctx),
             defaults: {
                 providerId: defaultModel?.providerId ?? values.defaults.providerId,
                 modelId: defaultModel?.id ?? values.defaults.modelId,
@@ -5608,6 +5645,19 @@ async function readJson(
         throw invalidRequest("The request body must be valid JSON.");
     }
 }
+
+const runtimeConfigPatchSchema = Type.Object(
+    {
+        node: Type.Optional(nodeConfigPatchSchema),
+        providers: Type.Optional(
+            Type.Record(
+                Type.String(),
+                Type.Object({ enabled: Type.Boolean() }, { additionalProperties: false }),
+            ),
+        ),
+    },
+    { additionalProperties: false, minProperties: 1 },
+);
 
 async function bodyAs<Schema extends TSchema>(
     request: IncomingMessage,
