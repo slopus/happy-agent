@@ -6,6 +6,13 @@ Send accepts the published tool-request block schema, with at most one request a
 and image blocks. Pending responses, bootstrap, acceptance, and history retain that block exactly.
 Acceptance is still carried by the run event, not an extra user-message update.
 
+Release 0.4.45 expressed "at most one request" as one array with `contains`, `minContains: 0`,
+and `maxContains: 1`. TypeBox's value check refuses any `contains` array with zero matches
+before it reads `minContains`, so every plain text or image `content` array was rejected with a
+400 and images stopped working. Only text-only sends, which omit `content`, survived. The send
+content schema is now a union of two arrays: text and image blocks alone, or text, image, and
+exactly one request. Any schema test for an "at most one" rule must cover the zero case.
+
 A requested call has no inference-start event. Publish its completed acceptance-time assistant
 row on tool start and its updated row on completion, using History's call-owned message identity.
 Never project it under a synthetic run-level assistant ID: that makes live clients disagree with

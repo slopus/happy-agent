@@ -161,34 +161,48 @@ export const agentCreateBodySchema = Type.Object(
     { additionalProperties: false },
 );
 
+const messageSendTextBlockSchema = Type.Object(
+    { text: Type.String(), type: Type.Literal("text") },
+    { additionalProperties: false },
+);
+
+const messageSendImageBlockSchema = Type.Object(
+    {
+        data: Type.String(),
+        mimeType: Type.String({ minLength: 1, maxLength: 256 }),
+        type: Type.Literal("image"),
+    },
+    { additionalProperties: false },
+);
+
+/**
+ * Ordinary content is text and images. A message may add at most one tool request. The two
+ * shapes are separate arrays because TypeBox rejects any `contains` array with zero matches
+ * even when `minContains` is 0, which would refuse every plain text or image message.
+ */
+const messageSendContentSchema = Type.Union([
+    Type.Array(Type.Union([messageSendTextBlockSchema, messageSendImageBlockSchema]), {
+        maxItems: 64,
+    }),
+    Type.Array(
+        Type.Union([
+            toolCallRequestBlockSchema,
+            messageSendTextBlockSchema,
+            messageSendImageBlockSchema,
+        ]),
+        {
+            maxItems: 64,
+            contains: toolCallRequestBlockSchema,
+            minContains: 1,
+            maxContains: 1,
+        },
+    ),
+]);
+
 export const messageSendBodySchema = Type.Object(
     {
         clientMetadata: Type.Optional(clientMetadataSchema),
-        content: Type.Optional(
-            Type.Array(
-                Type.Union([
-                    toolCallRequestBlockSchema,
-                    Type.Object(
-                        { text: Type.String(), type: Type.Literal("text") },
-                        { additionalProperties: false },
-                    ),
-                    Type.Object(
-                        {
-                            data: Type.String(),
-                            mimeType: Type.String({ minLength: 1, maxLength: 256 }),
-                            type: Type.Literal("image"),
-                        },
-                        { additionalProperties: false },
-                    ),
-                ]),
-                {
-                    maxItems: 64,
-                    contains: toolCallRequestBlockSchema,
-                    minContains: 0,
-                    maxContains: 1,
-                },
-            ),
-        ),
+        content: Type.Optional(messageSendContentSchema),
         delivery: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
         id: Type.Optional(apiIdSchema),
         mode: agentModeSchema,

@@ -37,6 +37,13 @@ describe("messageSendBodySchema", () => {
         }
     });
 
+    it("accepts text and image content without any tool request", () => {
+        const text = { type: "text", text: "Look at this" };
+        const image = { type: "image", mimeType: "image/png", data: "abc" };
+        for (const content of [[text], [text, image], [image], [image, image], []])
+            expect(Value.Check(messageSendBodySchema, { ...message, content })).toBe(true);
+    });
+
     it("rejects multiple requests and malformed request arguments", () => {
         const request = { type: "tool_call_request", name: "list_skills" };
         for (const content of [
