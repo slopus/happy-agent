@@ -1,5 +1,15 @@
 # Config module learnings
 
+## Node display identity is not P2P identity
+
+Reusing `p2p.name` for the daemon's display name conflates separate identities. The Happy Agent
+installation's name and avatar belong to `config.node`, independently of P2P configuration,
+connection-roster labels, conversation agents, and the human profile. Bootstrap already includes
+config, so a separate node snapshot, version, and event are unnecessary. Use `PATCH /v0/config`
+for the name and `config.updated` for name or avatar changes; keep only image bytes on a separate
+endpoint. Avatar presence is represented only by `avatar: { thumbhash } | null`; a separate boolean
+duplicates that fact and permits contradictory states. This is unrelated to online/away availability.
+
 ## Configuration paths follow the platform's casing
 
 The runtime rewrite hardcoded `Happy/Config` everywhere, silently ignoring the documented

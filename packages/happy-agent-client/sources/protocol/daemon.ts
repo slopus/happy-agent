@@ -114,6 +114,33 @@ export const networkConfigSchema = Type.Object({
 });
 export type NetworkConfig = Static<typeof networkConfigSchema>;
 
+/** The installation's own display name, independent of its P2P name. */
+export const nodeNameSchema = Type.String({
+    minLength: 1,
+    maxLength: 128,
+    pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+});
+export type NodeName = Static<typeof nodeNameSchema>;
+
+/** Base64 ThumbHash placeholder; image bytes are fetched separately. */
+export const nodeAvatarSchema = Type.Object({ thumbhash: Type.String({ minLength: 1 }) });
+export type NodeAvatar = Static<typeof nodeAvatarSchema>;
+
+/** Installation display information belongs to config, not a separate resource. */
+export const nodeConfigSchema = Type.Object({
+    name: nodeNameSchema,
+    /** Null when no image is set. */
+    avatar: Nullable(nodeAvatarSchema),
+});
+export type NodeConfig = Static<typeof nodeConfigSchema>;
+
+/** Only the name is HTTP-mutable; avatar mutations belong to admin-bot tools. */
+export const nodeConfigPatchSchema = Type.Object(
+    { name: Type.Optional(nodeNameSchema) },
+    { additionalProperties: false },
+);
+export type NodeConfigPatch = Static<typeof nodeConfigPatchSchema>;
+
 /** Peer-to-peer identity and transports. */
 export const p2pConfigSchema = Type.Object({
     enableDirect: Type.Boolean(),
@@ -224,6 +251,8 @@ export type WorkspaceConfig = Static<typeof workspaceConfigSchema>;
 
 /** The daemon's effective configuration, with every secret removed. */
 export const daemonConfigSchema = Type.Object({
+    /** Installation name and avatar. Absent on older compatible daemons. */
+    node: Type.Optional(nodeConfigSchema),
     defaults: configDefaultsSchema,
     features: configFeaturesSchema,
     mcpServers: Type.Record(Type.String(), mcpServerConfigSchema),
@@ -256,6 +285,7 @@ export const configPatchSchema = Type.Partial(
         defaults: Type.Partial(configDefaultsSchema),
         features: Type.Partial(configFeaturesSchema),
         network: Type.Partial(networkConfigSchema),
+        node: nodeConfigPatchSchema,
         p2p: Type.Partial(p2pConfigSchema),
         permissions: Type.Partial(permissionsConfigSchema),
         providers: Type.Record(

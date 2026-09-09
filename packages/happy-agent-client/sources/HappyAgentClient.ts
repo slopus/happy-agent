@@ -262,6 +262,16 @@ export class HappyAgentClient {
 
     // The daemon
 
+    /** `GET /v0/node/avatar` — authenticated image bytes; `null` when unchanged. */
+    async getNodeAvatar(options: ConditionalRequestOptions = {}): Promise<BinaryContent | null> {
+        return await this.#binary({
+            method: "GET",
+            path: "v0/node/avatar",
+            ifNoneMatch: options.ifNoneMatch,
+            signal: options.signal,
+        });
+    }
+
     /** `GET /` — a greeting confirming the caller reached a Happy agent. */
     async getGreeting(options: RequestOptions = {}): Promise<GreetingResponse> {
         return await this.#json({ method: "GET", path: "", signal: options.signal });

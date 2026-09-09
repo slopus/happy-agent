@@ -179,6 +179,88 @@ durable resource.
 
 ## Endpoints
 
+### Node configuration
+
+A node is this Happy Agent installation, not a conversation agent, bot, human profile, or
+daemon process. Its display name and optional avatar are installation-wide and survive restart.
+They are available in standalone and team deployments through the same authenticated API.
+
+The installation's display information belongs to `config.node`, returned by `GET /v0/config`
+and included through `config` in desktop bootstrap:
+
+```json
+{
+    "config": {
+        "node": {
+            "name": "Steve's Mac",
+            "avatar": { "thumbhash": "3OcRJYB4d3h3iIeHeEh3eIhw+j2w" }
+        }
+    }
+}
+```
+
+- `name` — this installation's own display name, independent of `config.p2p.name`, the hostname,
+  and any connection-roster label. It accepts 1–128 printable characters, including spaces and
+  emoji. An unconfigured installation detects a useful machine display name, preferring the friendly
+  device name where available, and persists that default in generated runtime configuration.
+- `avatar` — `null` without an image, otherwise an object containing its base64 `thumbhash`
+  placeholder. This nullable value alone indicates whether an avatar exists; there is no separate
+  presence flag. Image bytes and local filesystem paths never appear in this snapshot.
+
+There is no separate node snapshot, resource version, or node-information event. These are additive
+capabilities: an older protocol-22-or-later daemon may omit `config.node` and return `404` for the
+avatar endpoint.
+Clients treat that as unavailable node information, not as an incompatible daemon or proof that
+an avatar is absent. They must not substitute `config.p2p.name` as the node's own name.
+
+#### `GET /v0/node/avatar`
+
+Serves the current avatar's image bytes with the correct image `Content-Type`, the normal bearer
+authentication, and a content-derived `ETag`. `If-None-Match` matching the current image returns
+`304` with no body. No avatar returns `404` with `code: "not_found"`, even when a conditional
+header names a removed image. The normal `cache-control: no-store` policy remains in force.
+
+Clients show the ThumbHash while fetching the image. After `config.updated`, they refetch config
+and conditionally refetch the image when one is present, even if the ThumbHash is unchanged.
+The ThumbHash is a placeholder, not a content identity. Clients serialize config refreshes and
+repeat a refresh when an invalidation arrives during an in-flight read, so a stale response cannot
+consume a newer change. Follow events from desktop bootstrap's cursor and refetch on a cursor gap
+or daemon replacement.
+
+#### Changing node information
+
+The node name is a machine setting, not a project setting: `[node] name` may be configured in
+global `happy.toml`, and live changes are persisted in generated `runtime.toml`. It never aliases,
+reads, or writes `p2p.name`. Rename it through `PATCH /v0/config` with
+`{ "node": { "name": "Studio Mac" } }`, using the existing config mutation and notification path
+without `If-Match`. The response is the normal full `config` response. Omitting `node.name`
+leaves it unchanged. Invalid names or unsupported fields inside `node`, including `avatar`, return
+`400` with `code: "invalid_request"`. Team callers changing `node.name` must be the configured
+owner; another onboarded member receives `403` with `code: "forbidden"`, and the entire patch is
+rejected without applying other fields. Standalone callers use the normal bearer authorization.
+
+Active admin bots additionally have `set_node_name` and `set_node_avatar` tools. The former takes
+`name` and uses the same name-setting operation. The latter takes `path`, an absolute local image
+path, or `null` to clear the avatar. Both return the current `{ "name": ..., "avatar": ... }`
+configuration object, exactly as it appears at `config.node`.
+Admin-bot authority is checked again at execution; ordinary agents, non-admin bots, and archived
+admin bots cannot mutate this installation information through these tools. Both tools use the
+shared permission review boundary; reading an image outside the workspace requires the normal
+filesystem review and elevation. There are no HTTP avatar-upload or avatar-delete routes.
+
+Images must be valid PNG, JPEG, or WebP, at most 8 MiB of input and at most 40 million decoded
+pixels. Image decoding is bounded. The daemon normalizes the image and computes the ThumbHash
+itself; tools never accept a caller-supplied ThumbHash. It retains its own durable image bytes,
+so moving or deleting the source file does not remove the avatar. Invalid or oversized images,
+unreadable paths, denied permissions, and failed mutations leave the current configuration,
+avatar bytes, and event stream unchanged.
+
+A name change, avatar replacement, or avatar removal publishes the existing `config.updated`
+event with its unchanged empty payload after committing. Setting the current name, reapplying
+identical normalized bytes, or clearing an absent avatar is a no-op. Avatar bytes and metadata
+commit together. Changes are serialized, transaction-composable, and publish only after commit;
+concurrent changes cannot lose the name or pair one image's ThumbHash with another image's bytes.
+
 ### Remote connections
 
 The main daemon owns a machine-configured roster of remote Happy Agent installations and their
@@ -412,6 +494,10 @@ Response — `200`:
             "allowedLoopbackPorts": [3000],
             "allowLocalBinding": false
         },
+        "node": {
+            "name": "Steve's Mac",
+            "avatar": { "thumbhash": "3OcRJYB4d3h3iIeHeEh3eIhw+j2w" }
+        },
         "p2p": {
             "name": "steves-macbook",
             "role": "primary",
@@ -586,6 +672,9 @@ Field groups:
 - `mcpServers` — configured MCP servers by name. Only `enabled` and the transport kind
   (`"stdio"` or `"http"`) are exposed; commands, URLs, headers, and environment stay private.
 - `network` — the sandbox network policy: allowed and denied domains, allowed ports.
+- `node` — this installation's own display name and nullable avatar ThumbHash metadata, separate
+  from P2P identity. Optional for older compatible daemons; current daemons include it. See node
+  configuration for name mutation, image serving, and admin-tool behavior.
 - `p2p` — peer-to-peer identity and transports. The advertised `name` and `role` are here.
 - `permissions` — permission configuration, including project-relative protected paths.
 - `presence` — the defined presence states and which one is current.
@@ -616,6 +705,7 @@ Requests a runtime settings change. The body is validated against the mutable su
         "codex": { "enabled": false }
     },
     "p2p": { "name": "my-machine" },
+    "node": { "name": "Studio Mac" },
     "settings": {
         "inferenceMaxRetries": 3
     }
@@ -5070,7 +5160,9 @@ event is idempotent by attachment ID.
 
 - `config.updated` — payload `{}`, deliberately empty. Something about the daemon's
   configuration changed — the effective config, the instructions document, or the security
-  policy. It is a nudge to refetch the config endpoints whenever convenient.
+  policy. This includes changes to `config.node.name` or the node avatar through config mutations
+  or admin tools. It is a nudge to refetch the config endpoints whenever convenient; clients
+  displaying the node avatar also conditionally refetch its image bytes.
 - `connections.updated` — payload `{ "connections": [...], "version": "<UUIDv7>" }`, a
   complete replacement of the public remote roster, in the same shape as `GET /v0/connections`
   with `version` always present. An empty array clears the roster. A changed public roster is
@@ -5345,6 +5437,9 @@ Response — `200`:
   objects from their own endpoints. `cloud`, `cloudSocial`, and `happyIntegration` are additive
   and may be absent on an older compatible daemon; a daemon old enough to omit one does not serve
   that feature's endpoints either.
+- `config.node` — the installation's name and nullable avatar ThumbHash metadata are already
+  part of the config object, not a separate bootstrap field. Optional for older compatible
+  daemons; `avatar: null` explicitly means no image is set.
 - `projects` — every active project.
 - `workspaces` — deliberately shallow: each project's root workspace and the workspaces
   directly under it. Each returned project and workspace embeds its active top-level `agents`

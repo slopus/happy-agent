@@ -24,6 +24,17 @@ and includes `organizationId`; `"bearer"` identifies standalone remotes. Older d
 roster reads without emitting this additive event. `connection(id)` creates a separate client
 for the selected remote, without merging its events or state into the parent.
 
+Installation display information is `config.node`, read through `getConfig()` and already included
+in desktop bootstrap's config. Its `avatar` is either `{ thumbhash }` or `null` when no image is set.
+Use `patchConfig({ node: { name } })` to rename the installation independently of `p2p.name`;
+avatar mutations belong to admin-bot tools. `getNodeAvatar()` fetches authenticated image bytes,
+accepts `ifNoneMatch`, and returns `null` for `304`. An absent image rejects with `404`.
+The existing `config.updated` invalidation covers name and avatar changes: refetch config and
+conditionally refetch image bytes even if the ThumbHash is unchanged. Serialize config refreshes
+and refresh again if an invalidation arrives during a read. Follow the bootstrap cursor and refetch
+on state loss or daemon replacement. Older compatible daemons may omit `config.node` and return
+`404` for the avatar route; absence means this feature is unavailable, not that the node has no image.
+
 `HappyReducer` is the stateful layer over that feed. Construct it with a client, register update
 listeners, and start it when the application wants live synchronization. `getState()` and
 `subscribe()` expose a read-only Zustand-style external store suitable for `useSyncExternalStore`:
