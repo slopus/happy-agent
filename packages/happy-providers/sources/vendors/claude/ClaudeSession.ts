@@ -29,6 +29,7 @@ import { claudeUsageFromRateLimitInfo } from "@/vendors/claude/claudeUsageFromRa
 import { ClaudePromptQueue } from "@/vendors/claude/impl/ClaudePromptQueue.js";
 import {
     classifyClaudeError,
+    claudeErrorKind,
     claudeResultErrorMessage,
     isClaudeMidResponseServerError,
 } from "@/vendors/claude/errors/claudeErrors.js";
@@ -894,7 +895,12 @@ export class ClaudeSession extends BaseSession {
                         delta: JSON.stringify(result.structured_output),
                     };
                     yield { type: "text_end" };
-                } else if (!sawText && result.subtype === "success" && result.result.length > 0) {
+                } else if (
+                    !sawText &&
+                    result.subtype === "success" &&
+                    !result.is_error &&
+                    result.result.length > 0
+                ) {
                     yield { type: "text_start" };
                     yield { type: "text_delta", delta: result.result };
                     yield { type: "text_end" };
@@ -916,13 +922,7 @@ export class ClaudeSession extends BaseSession {
                     yield {
                         type: "done",
                         state: "error",
-                        kind:
-                            providerError.type === "out_of_tokens"
-                                ? "billing_error"
-                                : providerError.type === "server_overloaded" ||
-                                    providerError.type === "internal_server_error"
-                                  ? "internal_error"
-                                  : "unknown",
+                        kind: claudeErrorKind(message, providerError),
                         message,
                         providerError,
                     };
@@ -956,13 +956,7 @@ export class ClaudeSession extends BaseSession {
             yield {
                 type: "done",
                 state: "error",
-                kind:
-                    providerError.type === "out_of_tokens"
-                        ? "billing_error"
-                        : providerError.type === "server_overloaded" ||
-                            providerError.type === "internal_server_error"
-                          ? "internal_error"
-                          : "unknown",
+                kind: claudeErrorKind(message, providerError),
                 message,
                 providerError,
             };

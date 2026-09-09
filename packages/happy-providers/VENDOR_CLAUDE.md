@@ -161,6 +161,17 @@ model because the SDK entry type requires a model; the actual next request uses 
 selected model. The real provider trace switches from Opus to Sonnet and verifies the
 selected prompt and stable caller-owned tools on the wire.
 
+Curated million-token Claude models explicitly select the SDK's `[1m]` suffix, including
+Fable 5.1. SDK 2.1.251 accepts `claude-fable-5-1` on the wire but does not have that exact
+model in its local context catalog. Without the suffix its continuation guard assumes 200k,
+so a successful response reporting 235k tokens makes the next request fail locally before
+Rig's 333k compaction threshold. Native `/compact` bypasses that ordinary inference guard;
+manual compaction succeeding does not prove the continuation limit is configured correctly.
+
+SDK results with `subtype: "success"` can still carry `is_error: true`. Their result text is
+an error diagnostic, never an assistant answer. Emit only the terminal failure for these
+results, and classify prompt-length failures with the existing `context_overflow` error kind.
+
 ## Retries
 
 Vanilla Claude Code retries retryable transport and API failures before producing a final

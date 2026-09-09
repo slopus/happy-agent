@@ -14,7 +14,29 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { extractProviderErrorDiagnostics } from "@/core/extractProviderErrorDiagnostics.js";
-import type { SessionProviderError } from "@/core/SessionEvent.js";
+import type { SessionErrorKind, SessionProviderError } from "@/core/SessionEvent.js";
+
+/** Use the existing terminal error kind for both SDK-local and upstream context rejections. */
+export function claudeErrorKind(
+    message: string,
+    providerError: SessionProviderError,
+): SessionErrorKind {
+    const normalized = message.toLowerCase();
+    if (
+        normalized.includes("prompt is too long") ||
+        normalized.includes("input is too long for requested model")
+    ) {
+        return "context_overflow";
+    }
+    if (providerError.type === "out_of_tokens") return "billing_error";
+    if (
+        providerError.type === "server_overloaded" ||
+        providerError.type === "internal_server_error"
+    ) {
+        return "internal_error";
+    }
+    return "unknown";
+}
 
 export function classifyClaudeError(options: {
     assistantError?: SDKAssistantMessageError;
