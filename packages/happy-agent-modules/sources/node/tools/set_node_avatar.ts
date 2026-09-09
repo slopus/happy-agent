@@ -8,6 +8,7 @@ export function setNodeAvatarTool(node: NodeModule, agentId: string) {
         name: "set_node_avatar",
         defer: true,
         capabilities: ["Set this Happy Agent installation's display name and avatar."],
+        searchKeywords: ["node", "daemon", "installation", "avatar", "image", "photo", "icon"],
         description:
             "Set the Happy Agent daemon's avatar from an absolute local PNG, JPEG, or WebP path, up to 8 MiB and 40 million pixels. Pass null to remove it. Only active admin bots may use it. The daemon stores its own image and computes the ThumbHash.",
         parameters: Type.Object(

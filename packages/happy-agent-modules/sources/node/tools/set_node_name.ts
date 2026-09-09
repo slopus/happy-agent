@@ -8,6 +8,7 @@ export function setNodeNameTool(node: NodeModule, agentId: string) {
         name: "set_node_name",
         defer: true,
         capabilities: ["Set this Happy Agent installation's display name and avatar."],
+        searchKeywords: ["node", "daemon", "installation", "name", "rename", "display name"],
         description:
             "Set this Happy Agent daemon's own display name. This is independent of the P2P name, bot names, and your human's profile. Only active admin bots may use it.",
         parameters: Type.Object({ name: nodeNameSchema }, { additionalProperties: false }),
