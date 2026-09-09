@@ -283,8 +283,8 @@ importers:
         specifier: 0.0.58
         version: 0.0.58
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.10
-        version: 0.1.10
+        specifier: npm:@slopus/happy-agent-compute@0.1.11
+        version: 0.1.11
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -371,8 +371,8 @@ importers:
         specifier: 0.0.58
         version: 0.0.58
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.10
-        version: 0.1.10
+        specifier: npm:@slopus/happy-agent-compute@0.1.11
+        version: 0.1.11
       '@slopus/happy-providers':
         specifier: 0.0.26
         version: 0.0.26(ws@8.21.1)(zod@4.4.3)
@@ -2014,41 +2014,9 @@ packages:
     resolution: {integrity: sha512-RzY8nqorRrm9rCeVIcY8VuBwLcn3hCHZ6Nbg/QEUuqmvVeBwlurdXWDYZv0W3JgtVX+E/dbh+m+Ji/0TQ4qx6A==}
     engines: {node: '>=20'}
 
-  '@slopus/happy-agent-compute@0.1.10':
-    resolution: {integrity: sha512-46zrIqMBL8m/J5glUqsEkFapsmOR3O+MQMWa6eJjhUPbc5zTuAqVgwBjEWiSNVUZAoNU5xzVpAVxtJGJ7D9GzQ==}
+  '@slopus/happy-agent-compute@0.1.11':
+    resolution: {integrity: sha512-VYdOFMO/twoSySm+AZvYba9NiUpQmx69GKZjHEQHoUa/RTXdEooObr0DnEtBMBa75yZQmtHJGKs8HF3uHKiTzQ==}
     engines: {node: '>=22.19.0'}
-
-  '@slopus/happy-agent-supervisor@0.0.4':
-    resolution: {integrity: sha512-7tVte0MkXrHcAXkV0l3gVUsdp2JLScUc8SejxrEkkPF0JFJ9BRVt1IIGW7rZx0dz/rehjUTvhl8GkPVmlt8r+Q==}
-    engines: {node: '>=22.19.0'}
-
-  '@slopus/happy-agent-supervisor@0.0.4-darwin-arm64':
-    resolution: {integrity: sha512-mQ7r4owOxlIEmP99tqNFMLAGfnqMFvt8DAhLz/ygGJapfK0wKJFN1gC37BdLazo2/+epXiSN5IqTRPrQBQoS/g==}
-    engines: {node: '>=22.19.0'}
-    cpu: [arm64]
-    os: [darwin]
-    hasBin: true
-
-  '@slopus/happy-agent-supervisor@0.0.4-darwin-x64':
-    resolution: {integrity: sha512-U5jCSY5WCDFK2iT7nm8cerMdEc+3C16AiG1ffRdtI9+gTjA22DOePXdAP6XXjpJARZu5/bTv1QfoUBgdNWYLbw==}
-    engines: {node: '>=22.19.0'}
-    cpu: [x64]
-    os: [darwin]
-    hasBin: true
-
-  '@slopus/happy-agent-supervisor@0.0.4-linux-arm64':
-    resolution: {integrity: sha512-86kIZ79TS8piiu5QoxQ2SDdf84XV8uZoCPYin10Iu3WQyz0en12a4WFa863vAURWrFYQHsVZJhDUrBpcZTKG8Q==}
-    engines: {node: '>=22.19.0'}
-    cpu: [arm64]
-    os: [linux]
-    hasBin: true
-
-  '@slopus/happy-agent-supervisor@0.0.4-linux-x64':
-    resolution: {integrity: sha512-Z29yz6YuKRcZS3zFdwHkoQ5XAlv6KEUNznn40C+r1BDEE5Il0HuukNIjuS/JtbjtPAuLXZ0W9Yo2onXMmN+qhA==}
-    engines: {node: '>=22.19.0'}
-    cpu: [x64]
-    os: [linux]
-    hasBin: true
 
   '@slopus/happy-agent-supervisor@0.0.5':
     resolution: {integrity: sha512-FQxG2WmSQgyd08qX18uNWrpbF79r/nBAQk/AqmYLVpLuw0WaG1iDcOHZeBtOaZR+XlmHmnrgaUnLS/1IKvRTDw==}
@@ -5283,42 +5251,21 @@ snapshots:
     dependencies:
       '@sinclair/typebox': 0.34.49
 
-  '@slopus/happy-agent-compute@0.1.10':
+  '@slopus/happy-agent-compute@0.1.11':
     dependencies:
       '@lydell/node-pty': 1.2.0-beta.15
       '@sinclair/typebox': 0.34.49
-      '@slopus/happy-agent-supervisor': 0.0.4
+      '@slopus/happy-agent-supervisor': 0.0.5
       '@steve.kite/stdlib': 0.0.12
       dockerode: 5.0.1
       just-bash: 3.0.2
     optionalDependencies:
-      '@slopus/happy-agent-supervisor-darwin-arm64': '@slopus/happy-agent-supervisor@0.0.4-darwin-arm64'
-      '@slopus/happy-agent-supervisor-darwin-x64': '@slopus/happy-agent-supervisor@0.0.4-darwin-x64'
-      '@slopus/happy-agent-supervisor-linux-arm64': '@slopus/happy-agent-supervisor@0.0.4-linux-arm64'
-      '@slopus/happy-agent-supervisor-linux-x64': '@slopus/happy-agent-supervisor@0.0.4-linux-x64'
+      '@slopus/happy-agent-supervisor-darwin-arm64': '@slopus/happy-agent-supervisor@0.0.5-darwin-arm64'
+      '@slopus/happy-agent-supervisor-darwin-x64': '@slopus/happy-agent-supervisor@0.0.5-darwin-x64'
+      '@slopus/happy-agent-supervisor-linux-arm64': '@slopus/happy-agent-supervisor@0.0.5-linux-arm64'
+      '@slopus/happy-agent-supervisor-linux-x64': '@slopus/happy-agent-supervisor@0.0.5-linux-x64'
     transitivePeerDependencies:
       - supports-color
-
-  '@slopus/happy-agent-supervisor@0.0.4':
-    dependencies:
-      '@sinclair/typebox': 0.34.49
-    optionalDependencies:
-      '@slopus/happy-agent-supervisor-darwin-arm64': '@slopus/happy-agent-supervisor@0.0.4-darwin-arm64'
-      '@slopus/happy-agent-supervisor-darwin-x64': '@slopus/happy-agent-supervisor@0.0.4-darwin-x64'
-      '@slopus/happy-agent-supervisor-linux-arm64': '@slopus/happy-agent-supervisor@0.0.4-linux-arm64'
-      '@slopus/happy-agent-supervisor-linux-x64': '@slopus/happy-agent-supervisor@0.0.4-linux-x64'
-
-  '@slopus/happy-agent-supervisor@0.0.4-darwin-arm64':
-    optional: true
-
-  '@slopus/happy-agent-supervisor@0.0.4-darwin-x64':
-    optional: true
-
-  '@slopus/happy-agent-supervisor@0.0.4-linux-arm64':
-    optional: true
-
-  '@slopus/happy-agent-supervisor@0.0.4-linux-x64':
-    optional: true
 
   '@slopus/happy-agent-supervisor@0.0.5':
     dependencies:
