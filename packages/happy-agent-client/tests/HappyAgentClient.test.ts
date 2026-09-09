@@ -158,7 +158,6 @@ describe("HappyAgentClient", () => {
     it("manages Cloud authentication and mints verified access tokens", async () => {
         const cloud = {
             authorization: null,
-            enrollment: { status: "enrolled" as const, username: "ada" },
             environment: "production" as const,
             error: null,
             status: "connected" as const,
@@ -171,37 +170,6 @@ describe("HappyAgentClient", () => {
             },
             version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
         };
-        const profile = { firstName: "Ada", lastName: "Lovelace", username: "ada" };
-        const profileResponse = { enrollment: cloud.enrollment, profile };
-        const cloudSocial = {
-            blocked: [],
-            connection: "connected" as const,
-            friends: [],
-            incomingRequests: [],
-            outgoingRequests: [],
-            status: "enrolled" as const,
-            updatedAt: 1_755_400_000_000,
-            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5f",
-        };
-        const backup = {
-            generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
-            rootSecret: "C".repeat(43),
-        };
-        const devices = [
-            {
-                current: true,
-                id: "D".repeat(43),
-                lastAccessedAt: 1_755_400_000_000,
-                metadata: {
-                    agentVersion: "0.4.23",
-                    architecture: "arm64",
-                    installationId: "instance-1",
-                    name: "Ada's MacBook Pro",
-                    osVersion: "25.5.0",
-                    platform: "macOS" as const,
-                },
-            },
-        ];
         const organization = { id: "org_01H", name: "Analytical Engines" };
         const { fetch, requests } = stubFetch((request) => {
             if (request.url.endsWith("/access-token")) {
@@ -214,11 +182,6 @@ describe("HappyAgentClient", () => {
             if (request.url.endsWith("/organizations")) {
                 return json({ organizations: [organization] });
             }
-            if (request.url.endsWith("/keys/backup")) return json({ backup });
-            if (request.url.includes("/devices/")) return json({ devices: [] });
-            if (request.url.endsWith("/devices")) return json({ devices });
-            if (request.url.includes("/social")) return json({ cloudSocial });
-            if (request.url.endsWith("/profile")) return json(profileResponse);
             return json({ cloud });
         });
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
@@ -256,50 +219,6 @@ describe("HappyAgentClient", () => {
         await expect(
             client.deleteCloudOrganization("org/one", { mutationId: "organization-delete-1" }),
         ).resolves.toEqual({ deleted: true });
-        const keyInput = {
-            authHash: "A".repeat(43),
-            encryptionKey: "B".repeat(43),
-            generatedSecret: backup.generatedSecret,
-        };
-        await expect(
-            client.createCloudKeys({ ...keyInput, mutationId: "keys-create-1" }),
-        ).resolves.toEqual({ cloud });
-        await expect(
-            client.restoreCloudKeys({ ...keyInput, mutationId: "keys-restore-1" }),
-        ).resolves.toEqual({ cloud });
-        await expect(
-            client.deleteCloudKeys({
-                confirmation: "YES DELETE MY VAULT",
-                mutationId: "keys-delete-1",
-            }),
-        ).resolves.toEqual({ cloud });
-        await expect(client.getCloudKeyBackup()).resolves.toEqual({ backup });
-        await expect(client.getCloudDevices()).resolves.toEqual({ devices });
-        await expect(client.removeCloudDevice(devices[0]!.id)).resolves.toEqual({ devices: [] });
-        await expect(client.getCloudProfile()).resolves.toEqual(profileResponse);
-        await expect(
-            client.enrollCloudProfile({ mutationId: "enroll-1", username: "ada" }),
-        ).resolves.toEqual(profileResponse);
-        await expect(client.getCloudSocial()).resolves.toEqual({ cloudSocial });
-        await expect(
-            client.sendCloudFriendRequest("grace hopper", { mutationId: "send-1" }),
-        ).resolves.toEqual({ cloudSocial });
-        await expect(
-            client.approveCloudFriendRequest("grace", { mutationId: "approve-1" }),
-        ).resolves.toEqual({ cloudSocial });
-        await expect(
-            client.rejectCloudFriendRequest("grace", { mutationId: "reject-1" }),
-        ).resolves.toEqual({ cloudSocial });
-        await expect(
-            client.revokeCloudFriendRequest("grace", { mutationId: "revoke-1" }),
-        ).resolves.toEqual({ cloudSocial });
-        await expect(client.blockCloudUser("grace", { mutationId: "block-1" })).resolves.toEqual({
-            cloudSocial,
-        });
-        await expect(
-            client.unblockCloudUser("grace", { mutationId: "unblock-1" }),
-        ).resolves.toEqual({ cloudSocial });
-
         expect(requests.map(({ body, method, url }) => ({ body, method, url }))).toEqual([
             { body: null, method: "GET", url: "http://agent.local/v0/cloud" },
             {
@@ -346,68 +265,6 @@ describe("HappyAgentClient", () => {
                 body: JSON.stringify({ mutationId: "organization-delete-1" }),
                 method: "DELETE",
                 url: "http://agent.local/v0/cloud/organizations/org%2Fone",
-            },
-            {
-                body: JSON.stringify({ ...keyInput, mutationId: "keys-create-1" }),
-                method: "POST",
-                url: "http://agent.local/v0/cloud/keys/create",
-            },
-            {
-                body: JSON.stringify({ ...keyInput, mutationId: "keys-restore-1" }),
-                method: "POST",
-                url: "http://agent.local/v0/cloud/keys/restore",
-            },
-            {
-                body: JSON.stringify({
-                    confirmation: "YES DELETE MY VAULT",
-                    mutationId: "keys-delete-1",
-                }),
-                method: "DELETE",
-                url: "http://agent.local/v0/cloud/keys",
-            },
-            { body: null, method: "GET", url: "http://agent.local/v0/cloud/keys/backup" },
-            { body: null, method: "GET", url: "http://agent.local/v0/cloud/devices" },
-            {
-                body: null,
-                method: "DELETE",
-                url: `http://agent.local/v0/cloud/devices/${devices[0]!.id}`,
-            },
-            { body: null, method: "GET", url: "http://agent.local/v0/cloud/profile" },
-            {
-                body: JSON.stringify({ mutationId: "enroll-1", username: "ada" }),
-                method: "PUT",
-                url: "http://agent.local/v0/cloud/profile",
-            },
-            { body: null, method: "GET", url: "http://agent.local/v0/cloud/social" },
-            {
-                body: JSON.stringify({ mutationId: "send-1" }),
-                method: "PUT",
-                url: "http://agent.local/v0/cloud/social/requests/grace%20hopper",
-            },
-            {
-                body: JSON.stringify({ mutationId: "approve-1" }),
-                method: "POST",
-                url: "http://agent.local/v0/cloud/social/requests/grace/approve",
-            },
-            {
-                body: JSON.stringify({ mutationId: "reject-1" }),
-                method: "POST",
-                url: "http://agent.local/v0/cloud/social/requests/grace/reject",
-            },
-            {
-                body: JSON.stringify({ mutationId: "revoke-1" }),
-                method: "DELETE",
-                url: "http://agent.local/v0/cloud/social/requests/grace",
-            },
-            {
-                body: JSON.stringify({ mutationId: "block-1" }),
-                method: "PUT",
-                url: "http://agent.local/v0/cloud/social/blocked/grace",
-            },
-            {
-                body: JSON.stringify({ mutationId: "unblock-1" }),
-                method: "DELETE",
-                url: "http://agent.local/v0/cloud/social/blocked/grace",
             },
         ]);
     });

@@ -21,15 +21,6 @@ export type { SseFrame } from "./readSseFrames.js";
 export type { HappyAgentUpdate, HappyAgentUpdatesOptions } from "./updates.js";
 export { endpointUrl } from "./endpointUrl.js";
 export type { QueryParameters, QueryValue } from "./endpointUrl.js";
-export {
-    CLOUD_GENERATED_SECRET_SEED_BYTES,
-    cloudDerivedKeysSchema,
-    deriveCloudKeys,
-    normalizeCloudPassword,
-    parseCloudGeneratedSecret,
-    stringifyCloudGeneratedSecret,
-} from "./cloudEncryption.js";
-export type { CloudDerivedKeys } from "./cloudEncryption.js";
 export { applyMessageDelta } from "./applyMessageDelta.js";
 export type { MessageDeltaApplication } from "./applyMessageDelta.js";
 export * from "./requestOptions.js";
@@ -40,7 +31,6 @@ export * from "./protocol/bots.js";
 export * from "./protocol/cloud.js";
 export * from "./protocol/common.js";
 export * from "./protocol/connections.js";
-export * from "./protocol/crdt.js";
 export * from "./protocol/daemon.js";
 export * from "./protocol/events.js";
 export * from "./protocol/files.js";

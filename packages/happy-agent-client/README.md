@@ -115,47 +115,12 @@ Tool calls expose the complete `ToolPresentation` discriminated union — explor
 background-terminal interaction, file diff, and web/X search — together with an exported TypeBox
 schema for each variant and `toolPresentationSchema` for the whole set.
 
-Cloud key setup uses two-secret key derivation inspired by 1Password. The caller supplies 16 bytes
-from a cryptographically secure random source, stores the canonical generated secret, and combines
-it with the person's password. Passwords are trimmed, normalized with Unicode NFKD, and stretched
-with PBKDF2-HMAC-SHA-256; the generated factor uses HKDF-SHA-256. Independent encryption and
-authentication results can be passed directly to the create or restore mutation.
-
-The versioned generated-secret format is
-`H1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX`. Its 26 body characters are the big-endian base-31 encoding
-of the 16-byte seed using `23456789ABCDEFGHJKLMNPQRSTVWXYZ`; the dashes and `H1` prefix are not
-part of the seed. For each of the `encryption` and `authentication` purposes, H1 performs:
-
-```text
-password = UTF8(NFKD(trim(input)))
-salt = HKDF-SHA-256(seed, "happy-agent-cloud-keys/H1",
-                   "happy-agent-cloud-keys/H1/password-salt/<purpose>", 32)
-passwordPart = PBKDF2-HMAC-SHA-256(password, salt, 650000, 32)
-generatedPart = HKDF-SHA-256(seed, "happy-agent-cloud-keys/H1",
-                            "happy-agent-cloud-keys/H1/generated-factor/<purpose>", 32)
-result = passwordPart XOR generatedPart
-```
-
-Results are unpadded base64url. The `encryption` result is `encryptionKey`; the `authentication`
-result is `authHash`. The design follows 1Password's published
-[password preprocessing and two-secret derivation](https://agilebits.github.io/security-design/deepKeys.html)
-and [human-readable Secret Key](https://agilebits.github.io/security-design/apsk.html), but H1 is a
-separate Happy format and is not an A3-compatible 1Password Secret Key.
-
-```ts
-const seed = crypto.getRandomValues(new Uint8Array(CLOUD_GENERATED_SECRET_SEED_BYTES));
-const generatedSecret = stringifyCloudGeneratedSecret(seed);
-seed.fill(0);
-
-const keys = await deriveCloudKeys(generatedSecret, password);
-await client.createCloudKeys({ ...keys, generatedSecret });
-
-// The daemon retains this pair together and exposes it only through an on-demand backup read.
-const { backup } = await client.getCloudKeyBackup();
-
-// Recovery-only: delete an unrestorable remote vault before creating it again.
-await client.deleteCloudKeys({ confirmation: "YES DELETE MY VAULT" });
-```
+Cloud exposes WorkOS authentication and organization management. Use `getCloud()` for local
+status, `startCloudAuthorization()` and `completeCloudAuthorization()` for PKCE sign-in,
+`mintCloudAccessToken()` for a verified access token, and `disconnectCloud()` for local sign-out.
+`listCloudOrganizations()`, `createCloudOrganization()`, and `deleteCloudOrganization()` manage
+the connected user's organizations. Desktop bootstrap includes the Cloud snapshot; follow
+`cloud.updated` replacements and keep the greater version.
 
 Focused agent responses and agent bootstrap include the current module-contributed slash-command
 catalog. `invokeSlashCommand` executes one through its owning module, while
