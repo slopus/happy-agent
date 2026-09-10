@@ -18,6 +18,7 @@ import {
     type Timestamp,
 } from "./common.js";
 import type { UsageBreakdown } from "./usage.js";
+import { userIdSchema } from "./users.js";
 
 /** One read the exploration performed: a listing, a file read, or a search. */
 export const explorationOperationSchema = Type.Union([
@@ -146,14 +147,17 @@ export const toolPresentationSchema = Type.Union([
 export type ToolPresentation = Static<typeof toolPresentationSchema>;
 
 /** Stable provenance carried with a message without exposing internal module metadata. */
-export interface MessageMetadata {
+export const messageMetadataSchema = Type.Object({
     /** The provider that produced this message, when it came from inference. */
-    providerId?: string;
+    providerId: Type.Optional(Type.String()),
     /** The model that produced this message, when it came from inference. */
-    modelId?: string;
+    modelId: Type.Optional(Type.String()),
     /** The agent that sent this system-generated message, when one identified itself. */
-    senderAgentId?: Cuid2;
-}
+    senderAgentId: Type.Optional(cuid2Schema),
+    /** The authenticated team member's local Happy user ID, captured at submission. */
+    userId: Type.Optional(userIdSchema),
+});
+export type MessageMetadata = Static<typeof messageMetadataSchema>;
 
 /** One JSON value inside opaque client-owned message metadata. */
 export const clientMetadataValueSchema = Type.Recursive((value) =>

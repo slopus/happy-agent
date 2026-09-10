@@ -45,4 +45,5 @@ export * from "./protocol/secrets.js";
 export * from "./protocol/slashCommands.js";
 export * from "./protocol/terminals.js";
 export * from "./protocol/usage.js";
+export * from "./protocol/users.js";
 export * from "./protocol/workspaces.js";

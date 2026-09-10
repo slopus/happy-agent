@@ -90,6 +90,7 @@ import type {
 } from "./protocol/messages.js";
 import type { BackgroundProcessResponse } from "./protocol/processes.js";
 import type { ProfileResponse, ProfileUpdateRequest } from "./protocol/profile.js";
+import { userIdsSchema, type UsersResponse } from "./protocol/users.js";
 import type {
     ArchiveProjectRequest,
     CloneProjectRequest,
@@ -627,6 +628,19 @@ export class HappyAgentClient {
     }
 
     // Profile
+
+    /** `GET /v0/users` — resolve up to 100 local team user IDs to public display information. */
+    async getUsers(ids: readonly Cuid2[], options: RequestOptions = {}): Promise<UsersResponse> {
+        if (!Value.Check(userIdsSchema, ids)) {
+            throw new Error("Provide at most 100 valid Happy user IDs.");
+        }
+        return await this.#json({
+            method: "GET",
+            path: "v0/users",
+            query: { ids: ids.join(",") },
+            signal: options.signal,
+        });
+    }
 
     /** `GET /v0/profile` — always succeeds; an untouched profile is all `null`. */
     async getProfile(options: RequestOptions = {}): Promise<ProfileResponse> {

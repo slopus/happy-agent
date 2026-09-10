@@ -906,6 +906,32 @@ Stops the inspector.
 Response — `200`: `{ "stopped": true }` — `false` when no inspector was running. The same
 `409` applies when inspector support is absent.
 
+## Team users
+
+### `GET /v0/users`
+
+Resolve a batch of installation-local Happy user IDs, for example the authors in message
+`metadata.userId`. Available only in team mode to authenticated, locally onboarded organization
+members. Standalone mode returns `404` with code `not_found`.
+
+Query `ids` is an optional comma-separated list of at most 100 CUID2 user IDs. Missing or empty
+`ids` returns an empty list, never the whole user directory. Invalid IDs, repeated `ids` query
+parameters, or more than 100 entries return `400` with code `invalid_request`. Duplicate IDs count
+toward the limit but appear only once in the response. Unknown IDs are omitted. Results follow
+the first occurrence of each requested ID.
+
+Response — `200`: `{ "users": [ ... ] }`. Each user contains:
+
+- `id` — the stable installation-local Happy user ID, not a WorkOS ID.
+- `name` — the current non-null display name.
+- `photo` — `null` or `{ "thumbhash": "..." }`, a photo placeholder.
+- `version` — the current UUIDv7 profile resource version.
+- `updatedAt` — the profile's last update timestamp.
+
+This read has no side effects and emits no events. It never returns email addresses, WorkOS IDs,
+or owner flags. Clients may resolve IDs again after a `profile.updated` invalidation. Older
+compatible daemons may return `404` for this additive endpoint.
+
 ## Profile
 
 In standalone mode, one installation is one person. In team mode, the profile routes address the
@@ -2727,10 +2753,21 @@ history, send acceptances, pending state, and events all speak it.
 - `providerId` — the provider that produced the message, when it came from inference.
 - `modelId` — the model that produced the message, when it came from inference.
 - `senderAgentId` — the agent that sent a system-generated message, when one identified itself.
+- `userId` — the installation-local Happy CUID2 of the authenticated person who submitted a
+  user message in team mode. The daemon derives it from authentication; clients cannot set it.
 
 Each field is optional, but the object itself is always present. A message without public
 provenance therefore carries `"metadata": {}`. Clients ignore metadata fields they do not
 recognize as this object grows.
+
+`userId` is captured when a team-mode user message is first durably submitted, for both queue and
+steer delivery. It is retained in the agent's durable message metadata and conversation context,
+pending and accepted history, send responses, bootstrap, and every full-message event or history
+response, including after restart. Re-sending an existing message ID preserves its original
+author even when a different member retries. Client-owned metadata cannot override this identity.
+Standalone messages, older messages without recorded authorship, and agent-generated messages
+omit `userId`; the daemon never backfills it from the current caller. This field does not change
+message content, inject profile text into the model prompt, or change context-reset behavior.
 
 `clientMetadata` is separate from provenance. It is an optional object whose keys and nested
 values may contain any JSON value. The daemon treats it as opaque: it does not interpret its
