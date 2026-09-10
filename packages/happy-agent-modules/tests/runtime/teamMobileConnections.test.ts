@@ -37,6 +37,19 @@ async function listen(server: Server): Promise<string> {
     return `http://127.0.0.1:${address.port}`;
 }
 
+async function nextIntegrationFrame(frames: ReturnType<HappyAgentClient["streamEvents"]>) {
+    // Only skip unrelated event types. Filtering by the expected owner or version would hide
+    // the cross-user integration leaks this scenario is supposed to detect.
+    for (let count = 0; count < 100; count += 1) {
+        const { done, value } = await frames.next();
+        if (done) throw new Error("The event stream ended before an integration update.");
+        if (value.kind !== "event" || value.event.type === "happy.integration.updated") {
+            return value;
+        }
+    }
+    throw new Error("The event stream did not deliver an integration update within 100 frames.");
+}
+
 describe("personal mobile pairing through the team HTTP API", () => {
     it("isolates pairing, bootstrap, pulls, live and replayed events, cancellation and restart without new wire fields", async () => {
         root = await mkdtemp(join(tmpdir(), "team-mobile-"));
@@ -129,6 +142,10 @@ describe("personal mobile pairing through the team HTTP API", () => {
         }
         const original = (await bob.getHappyIntegration()).integration;
         const before = await alice.getDesktopBootstrap();
+        // Shared events can interleave with private integration events in both replay and live
+        // delivery. Force that ordering instead of depending on startup notifications racing us.
+        const replayProfile = (await alice.getProfile()).profile;
+        await alice.updateProfile({ name: "Alice replay" }, { ifMatch: replayProfile.version });
         const alicePairing = (await alice.startHappyIntegration()).integration;
         expect(alicePairing.status).toBe("pairing");
         expect((await bob.getHappyIntegration()).integration).toEqual(original);
@@ -151,10 +168,13 @@ describe("personal mobile pairing through the team HTTP API", () => {
                 .map((event) => event.payload),
         ).toEqual([{ integration: bobPairing }]);
         const abort = new AbortController();
-        const frames = alice.streamEvents({ after: before.cursor, signal: abort.signal });
+        const frames = alice.streamEvents({
+            after: before.cursor,
+            signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10_000)]),
+        });
         try {
             expect((await frames.next()).value?.kind).toBe("hello");
-            const first = (await frames.next()).value;
+            const first = await nextIntegrationFrame(frames);
             expect(first).toMatchObject({
                 kind: "event",
                 event: {
@@ -162,9 +182,11 @@ describe("personal mobile pairing through the team HTTP API", () => {
                     payload: { integration: alicePairing },
                 },
             });
+            const liveProfile = (await alice.getProfile()).profile;
+            await alice.updateProfile({ name: "Alice live" }, { ifMatch: liveProfile.version });
             await bob.cancelHappyIntegration();
             const cancelled = (await alice.cancelHappyIntegration()).integration;
-            const live = (await frames.next()).value;
+            const live = await nextIntegrationFrame(frames);
             expect(live).toMatchObject({
                 kind: "event",
                 event: { type: "happy.integration.updated", payload: { integration: cancelled } },
