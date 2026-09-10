@@ -2,6 +2,15 @@
 
 Feedback and decisions gathered while building this module.
 
+## Child workspaces reuse the project's credential owner
+
+GitHub project cloning resolves a default creator, but child creation used to require every caller
+to pass one explicitly. The API and agent callers omit that internal option, so a ready GitHub
+project could reject every child before Git ran. Creation now defaults to the project's credential
+owner, using the same identity as background provisioning. An explicitly supplied creator still
+takes precedence and must have its own registered credential; missing credentials still fail before
+reservation. Clients do not send tokens or creator identity again to create a child.
+
 ## Archiving stops the work, not just the record
 
 Archiving used to move the row out of the active list, cancel setup, and delete the folder while

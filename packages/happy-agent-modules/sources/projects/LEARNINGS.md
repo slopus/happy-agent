@@ -13,6 +13,14 @@ These installation-wide operations require Auto review or Full access; review di
 filesystem, background setup, network, and configured-credential boundaries. Subagents and the
 cross-workspace opt-out retain no project tools.
 
+## Child creation can restore a local Git credential after restart
+
+Git credential registrations live in memory, so a restarted daemon used to reject child creation
+even with its GitHub token still configured. Projects now restores a missing registration on demand
+for the exact local creator from configuration. Existing registrations are reused; another profile
+or installation never receives the local token. Workspaces asks Projects for this authentication
+instead of reading tokens or deriving creator identities itself.
+
 ## The root catalog is available by default
 
 `features.cross_workspace` defaults to enabled, so a fresh installation gives user-owned root

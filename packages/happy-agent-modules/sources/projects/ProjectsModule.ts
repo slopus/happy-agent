@@ -1774,6 +1774,33 @@ export class ProjectsModule implements AgentModule {
         return this.#git.commandAuthentication(projectId, creator);
     }
 
+    /** Restores a local project's in-memory credential after restart, without changing its owner. */
+    async ensureGitAuthentication(
+        ctx: Context,
+        projectId: string,
+        creator: ProjectCreator,
+    ): Promise<ReturnType<GitModule["commandAuthentication"]>> {
+        const existing = this.gitAuthentication(projectId, creator);
+        if (existing !== undefined) return existing;
+        const local = this.#localCreator;
+        const owner = this.gitCredential(projectId)?.creator;
+        if (
+            local === undefined ||
+            creator.instanceId !== local.instanceId ||
+            creator.profileId !== local.profileId ||
+            owner?.instanceId !== creator.instanceId ||
+            owner.profileId !== creator.profileId
+        ) {
+            return undefined;
+        }
+        const token = this.#config.githubToken;
+        if (token === undefined) return undefined;
+        const project = await this.get(ctx, projectId);
+        if (project?.remoteSource?.kind !== "github") return undefined;
+        await this.registerGitCredential(ctx, projectId, creator, token);
+        return this.gitAuthentication(projectId, creator);
+    }
+
     /** Re-registers the local credential for every managed project and retries what failed. */
     async retryRemoteProjects(ctx: Context, kind: "github"): Promise<void> {
         if (kind !== "github") return;

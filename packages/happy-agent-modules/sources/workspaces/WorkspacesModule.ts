@@ -927,13 +927,16 @@ export class WorkspacesModule implements AgentModule {
         // A nested workspace forks the parent branch by default. The durable baseRef makes a
         // delayed or restarted initialization resolve the same checkout relationship.
         const baseRef = requestedBaseRef ?? parent?.branch;
-        const creator = options.createdBy;
+        // API and agent callers normally omit a creator. Use the same project-owned credential
+        // identity that provisioning passes to Git, while preserving any explicit caller.
+        const creator = options.createdBy ?? projects.gitCredential(projectId)?.creator;
         if (options.githubToken !== undefined && creator !== undefined) {
             await projects.registerGitCredential(ctx, projectId, creator, options.githubToken);
         }
         if (
             project.requiredSecretKind === "github" &&
-            (creator === undefined || projects.gitAuthentication(projectId, creator) === undefined)
+            (creator === undefined ||
+                (await projects.ensureGitAuthentication(ctx, projectId, creator)) === undefined)
         ) {
             throw new Error("GitHub credentials are unavailable for this workspace.");
         }
