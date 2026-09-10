@@ -92,14 +92,20 @@ describe("bots protocol", () => {
     it("validates creation, immutable username, and nullable reorder destinations", () => {
         expect(
             Value.Check(createBotRequestSchema, {
-                id: "bot1",
-                isAdmin: true,
                 mutationId: "create-1",
+                id: "bot1",
+                workspaceId: "workspace1",
+                agentId: "agent1",
                 name: "Research Assistant",
                 username: "research_assistant",
+                isAdmin: true,
             }),
         ).toBe(true);
         expect(Value.Check(createBotRequestSchema, { name: "Research Assistant" })).toBe(true);
+        expect(Value.Check(createBotRequestSchema, { workspaceId: 42 })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { agentId: 42 })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { workspaceId: null })).toBe(false);
+        expect(Value.Check(createBotRequestSchema, { agentId: null })).toBe(false);
         expect(Value.Check(createBotRequestSchema, {})).toBe(true);
         expect(Value.Check(createBotRequestSchema, { id: "bot1", mutationId: "create-1" })).toBe(
             true,

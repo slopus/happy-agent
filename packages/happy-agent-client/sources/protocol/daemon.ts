@@ -14,9 +14,10 @@ import {
  * The newest wire protocol this client was built for.
  *
  * Versions from 22 onward are additive. Existing capabilities remain compatible
- * across that range; unnamed bot creation requires protocol 24 or newer.
+ * across that range; unnamed bot creation requires protocol 24 or newer, and
+ * client-chosen bot workspace and agent identities require protocol 25 or newer.
  */
-export const HAPPY_AGENT_PROTOCOL_VERSION = 24;
+export const HAPPY_AGENT_PROTOCOL_VERSION = 25;
 
 /** The oldest additive protocol supported for existing capabilities. */
 export const HAPPY_AGENT_MIN_PROTOCOL_VERSION = 22;

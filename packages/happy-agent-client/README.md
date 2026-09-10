@@ -105,11 +105,15 @@ returns `reconcile` so the caller can replace the message from authoritative his
 Protocol shapes live in `sources/protocol/`, one file per API chapter, with shared wire
 values declared as TypeBox schemas and their TypeScript types derived with `Static`.
 
-`HAPPY_AGENT_PROTOCOL_VERSION` is 24; `HAPPY_AGENT_MIN_PROTOCOL_VERSION` is 22. The range
+`HAPPY_AGENT_PROTOCOL_VERSION` is 25; `HAPPY_AGENT_MIN_PROTOCOL_VERSION` is 22. The range
 is additive, so clients should not require exact protocol equality for existing features.
 Creating a bot without `name` requires a daemon advertising protocol 24 or newer. With
 an older compatible daemon, supply a deliberate name or leave unnamed creation unavailable.
 An application that requires unnamed creation may require protocol 24 throughout its UI.
+
+`createBot({ id, workspaceId, agentId })` supports optimistic creation on protocol 25+. The caller
+checks the daemon's protocol and may open the conversation locally, queuing sends until creation
+succeeds. Keep `id` for retries; conflicting child IDs return `409`. Omitted IDs are daemon-generated.
 
 Tool calls expose the complete `ToolPresentation` discriminated union — exploration, command,
 background-terminal interaction, file diff, and web/X search — together with an exported TypeBox

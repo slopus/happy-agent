@@ -81,17 +81,18 @@ export type BotListResponse = Static<typeof botListResponseSchema>;
 export const botResponseSchema = Type.Object({ bot: botSchema });
 export type BotResponse = Static<typeof botResponseSchema>;
 
-/** `POST /v0/bots` */
+/** `POST /v0/bots` — client-chosen child IDs require protocol 25+. */
 export const createBotRequestSchema = Type.Object({
-    /** Optional client-supplied ID, which makes creation safely retryable. */
-    id: Type.Optional(cuid2Schema),
-    /** Grants the new bot the `admin_bot` tool role. Omitted means non-admin. */
-    isAdmin: Type.Optional(Type.Boolean()),
     mutationId: Type.Optional(mutationIdSchema),
+    id: Type.Optional(cuid2Schema),
+    workspaceId: Type.Optional(cuid2Schema),
+    agentId: Type.Optional(cuid2Schema),
     /** Protocol 24+: omitted, the bot takes its display name from the first user message. */
     name: Type.Optional(botNameSchema),
     /** Omitted, the daemon derives a unique username from `name`, or from `bot` without a name. */
     username: Type.Optional(botUsernameSchema),
+    /** Grants the new bot the `admin_bot` tool role. Omitted means non-admin. */
+    isAdmin: Type.Optional(Type.Boolean()),
 });
 export type CreateBotRequest = Static<typeof createBotRequestSchema>;
 

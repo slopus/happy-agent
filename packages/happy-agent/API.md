@@ -56,7 +56,7 @@ health included.
 
 All routes are prefixed with `/v0`. Independently of the path version, every daemon advertises
 its identity through the health endpoint as a single `version` object: a numeric `protocol`
-(integer, currently 24) and the `daemon` product version string. Protocol versions from 22 onward
+(integer, currently 25) and the `daemon` product version string. Protocol versions from 22 onward
 are backward-compatible and additive. Clients support that compatibility range for existing
 capabilities instead of requiring equality with their own protocol number. A client may require
 a newer protocol for a capability it needs and must explain that an upgrade is required when the
@@ -68,6 +68,9 @@ with an older compatible daemon it must supply a deliberate name or leave that f
 Named bot-creation requests remain valid, including requests sent by older clients. Applications
 that require this feature throughout their interface may set their minimum protocol to 24 without
 changing the daemon's support for older clients' existing requests.
+
+Protocol 25 adds optional `workspaceId` and `agentId` to bot creation. Clients relying on these
+identities require protocol 25 or newer; older daemons may ignore or reject them.
 
 ### Requests and responses
 
@@ -3917,13 +3920,18 @@ Request:
 
 ```json
 {
+    "id": "b7f2k9m4",
+    "workspaceId": "w9x8y7z6",
+    "agentId": "a1b2c3d4",
     "name": "Research Assistant",
     "username": "research_assistant",
-    "isAdmin": true,
-    "id": "b7f2k9m4"
+    "isAdmin": true
 }
 ```
 
+- `id` — optional client-supplied bot ID; the retry key.
+- `workspaceId`, `agentId` — optional IDs for the new dedicated workspace and its one agent,
+  not existing entities to attach or a creating agent. Require protocol 25 or newer.
 - `name` — optional. Supplied names are deliberate and are never automatically replaced. Omitted,
   the daemon creates an immediately usable bot with the temporary display name `New Bot`; the
   client need not supply a placeholder or naming flag. A supplied blank or invalid name is `400`.
@@ -3937,14 +3945,26 @@ Request:
 - `isAdmin` — optional. `true` allows the bot to create other bots through `create_bot`. Omitted
   or `false`, the bot is non-admin. The bot-facing `create_bot` tool does not expose this field,
   so a bot cannot grant administration to a bot it creates.
-- `id` — optional client-supplied CUID2. Creating with the ID of a bot that already exists
-  returns that bot unchanged, making creation safely retryable.
+
+Malformed IDs return `400 invalid_request`; omitted IDs are generated independently. For a new bot,
+all three must be distinct and unused by any bot, workspace/project root, or agent, archived and
+hidden included (`409 conflict`). Chosen IDs stay unchanged across responses, events, and reads.
+
+Repeating `id` returns the current bot unchanged (`201`), including after rename, archival, or
+restart; other valid creation fields are ignored. Omitted child IDs reuse stored ones; mismatches
+return `409 conflict` with `currentVersion` and `bot`. Retries have no side effects or events.
+Neither child IDs nor `mutationId` deduplicate creation.
+
+Identity checks and creation are atomic: concurrent retries cannot create duplicates and conflicts
+have no side effects. Folder-setup failure rolls back creation without exposing entities or events.
 
 Response — `201`: `{ "bot": { ... } }`. Creation is complete when it answers: the folder exists
 at `~/Happy/Bots/<username>`, the workspace and agent exist, the agent is `"idle"`, and the bot
-is ready for its first message through `POST /v0/agents/:agentId/send`. Creation emits
-`bot.created`; the workspace and agent also emit their own `workspace.created` and
-`agent.created`.
+is ready for its first message through `POST /v0/agents/:agentId/send`. New creation emits
+`bot.created`, `workspace.created`, and `agent.created` once after commit, echoing `mutationId`.
+
+Clients may open the composer immediately under their chosen IDs, queuing sends locally until
+creation succeeds; the response waits for setup.
 
 For an unnamed bot, the first accepted text-bearing user-role message starts one asynchronous
 naming request, using that message alone and the same cheap, bounded inference mechanism as

@@ -9,6 +9,13 @@ onboarding and in standalone mode it is explicitly null; the standalone profile'
 is never exposed as a team user. Older daemons may omit the field, and team profile events remain
 identity-only invalidations rather than broadcasting another member's profile.
 
+## API additions stay concise and fields stay logically grouped
+
+Bot creation's identity fields were scattered alphabetically and its contract was repeated in
+long prose and comments. Put request metadata (`mutationId`) first, then related IDs together
+(`id`, `workspaceId`, `agentId`), then entity fields. Describe changes in the surrounding endpoint's
+concise style. Comments explain only what names do not.
+
 ## One onboarding response combines installation and user readiness
 
 The installation completion marker previously made team members skip setup even when they had

@@ -442,14 +442,18 @@ describe("HappyAgentClient", () => {
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
 
         await expect(client.createBot({})).resolves.toEqual({ bot });
-        await expect(client.createBot({ id: "bot1", mutationId: "create-1" })).resolves.toEqual({
-            bot,
-        });
+        const request = {
+            mutationId: "create-1",
+            id: "bot1",
+            workspaceId: "workspace1",
+            agentId: "agent1",
+        };
+        await expect(client.createBot(request)).resolves.toEqual({ bot });
 
         expect(requests[0]?.method).toBe("POST");
         expect(requests[0]?.url).toBe("http://agent.local/v0/bots");
         expect(requests[0]?.body).toBe("{}");
-        expect(requests[1]?.body).toBe(JSON.stringify({ id: "bot1", mutationId: "create-1" }));
+        expect(requests[1]?.body).toBe(JSON.stringify(request));
     });
 
     it("manages bots through their complete version-guarded catalog surface", async () => {

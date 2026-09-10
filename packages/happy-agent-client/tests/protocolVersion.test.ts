@@ -6,8 +6,8 @@ import {
 } from "../sources/protocol/daemon.js";
 
 describe("Happy Agent protocol version", () => {
-    it("marks unnamed bot creation with protocol 24", () => {
-        expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(24);
+    it("marks client-chosen bot workspace and agent identities with protocol 25", () => {
+        expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(25);
     });
 
     it("keeps the additive compatibility range rooted at protocol 22", () => {
