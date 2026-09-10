@@ -968,9 +968,14 @@ Removes the photo. Response — `200`: `{ "profile": { ... } }`.
 
 ## Onboarding
 
-Onboarding is the daemon telling a client what a fresh installation still needs before it is
-pleasant to use, so first launch can be a guided flow instead of an empty screen. The daemon
-does not enforce any of it — every endpoint works regardless — it only reports.
+Onboarding tells a client what is still needed before first use. The daemon owns two separate
+states: installation onboarding and, in team mode, the authenticated member's user onboarding.
+It combines them into the existing response below; clients do not select a scope, distinguish
+installation setup from personal setup, or use a separate user-onboarding API.
+
+Standalone onboarding remains advisory and installation-wide. Team mode retains the profile
+access gate described under Authentication: a member without a local profile can read onboarding
+but cannot access the rest of the product API until saving that profile.
 
 ### `GET /v0/onboarding`
 
@@ -987,18 +992,33 @@ Response — `200`:
 }
 ```
 
-- `completed` — the client-facing flag: `true` once the person finished (or dismissed) the
-  onboarding flow. It is set explicitly and never flips back on its own.
+- `completed` — the combined client-facing flag. Standalone mode reports the durable installation
+  completion marker, set explicitly when onboarding is finished or dismissed. Team mode reports
+  `true` only when installation onboarding is complete **and** the authenticated member has a
+  durable local profile. Installation completion never substitutes for that member's profile.
+  User readiness is derived from their saved profile, not a second explicit completion marker:
+  saving the profile completes their onboarding immediately if installation onboarding is already
+  complete. Neither another member's profile nor their Happy Cloud account completes this step.
 - `steps` — what the daemon observes, each with a `done` it derives itself:
     - `providers` — at least one provider has working credentials; `signedIn` lists the
       provider keys that do. Signing in happens through the system Codex and Claude Code
       installations, not through this API.
-    - `profile` — the profile has a name.
+    - `profile` — the profile has a name; in team mode this is the authenticated member's
+      local profile.
     - `project` — at least one project exists.
+
+Providers and projects remain installation-wide observations. The onboarding object returned by
+desktop bootstrap uses the same combined state for the authenticated member. Computing the state
+performs no provider or Happy Cloud request beyond ordinary request authentication.
 
 ### `POST /v0/onboarding/complete`
 
-Marks onboarding finished. Idempotent. Response — `200`: `{ "completed": true }` and a
+Marks installation onboarding finished. In team mode the authenticated member must already have
+a local profile with a name; otherwise the existing profile gate returns `401` with
+`{ "error": "Unauthorized", "code": "unauthorized" }` without recording completion or creating a
+user. The same completion request works in both modes, and a successful team request cannot
+complete onboarding for another member who lacks a profile. Idempotent. Response — `200`:
+`{ "completed": true }` and a
 `config.updated` nudge is **not** emitted — clients that care watch their own flow; others
 read the flag on next bootstrap.
 

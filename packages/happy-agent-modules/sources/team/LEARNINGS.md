@@ -15,6 +15,12 @@ exact organization claim. A matching organization member may reach the small pro
 surface before a local user exists; all other product routes require that durable user. Signature
 and claim verification happen locally after the WorkOS JWKS has been retrieved and cached.
 
+Installation onboarding and user onboarding are separate internal states, presented through one
+client-facing flow. A shared installation completion marker does not complete a member whose
+local profile is absent. Personal readiness comes from that member's saved profile; neither the
+owner's profile nor a Happy Cloud identity substitutes for it. Once installation setup is complete,
+saving the member's profile is enough for the combined onboarding state to become complete.
+
 ## Shared profile events are identity-only
 
 Team profile updates are visible to every connected organization member through the server-wide

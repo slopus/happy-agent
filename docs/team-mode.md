@@ -344,6 +344,13 @@ compatible with standalone mode: clients continue sending one combined `name`, w
 the first whitespace-delimited token as `firstName` and the trimmed remainder as `lastName`. A
 single-token name has no last name.
 
+Installation setup and personal setup are separate inside the daemon but appear as one onboarding
+flow to clients. `GET /v0/onboarding` reports `completed: false` for a member without a local
+profile, even if the installation is already onboarded. Saving that member's profile completes
+the combined flow when installation setup is complete. On a fresh installation, the existing
+`POST /v0/onboarding/complete` finishes installation setup after the caller has saved their
+profile. Completing installation setup never lets another member skip their own profile.
+
 The new user receives `isOwner = true` only when the token's WorkOS user ID matches
 `owner_workos_user_id`. Clients cannot set or change that flag. Once the user exists, that WorkOS
 identity can use the rest of the API.

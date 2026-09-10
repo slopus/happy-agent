@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { AgentProviders, type AgentModel } from "@slopus/happy-agent-base";
+import { HappyAgentClient } from "@slopus/happy-agent-client";
 import { CodexApiKeyCredential, CodexProvider } from "@slopus/happy-providers";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -27,6 +28,139 @@ afterEach(async () => {
 });
 
 describe("team mode daemon", () => {
+    it.each([false, true])(
+        "combines installation completion (%s) with each member's own profile across restart",
+        async (installationCompleted) => {
+            const root = await mkdtemp(join(tmpdir(), "happy-agent-team-onboarding-"));
+            temporaryDirectories.push(root);
+            const happyHome = join(root, ".happy");
+            const configPath = join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            );
+            await mkdir(dirname(configPath), { recursive: true });
+            await writeFile(
+                configPath,
+                [
+                    "[feature.team]",
+                    "enabled = true",
+                    'host = "127.0.0.1"',
+                    "port = 0",
+                    `workos_organization_id = "${ORGANIZATION_ID}"`,
+                    `owner_workos_user_id = "${OWNER_WORKOS_USER_ID}"`,
+                ].join("\n"),
+            );
+            const markerPath = join(happyHome, "agent", "onboarding-v0");
+            if (installationCompleted) {
+                await mkdir(dirname(markerPath), { recursive: true });
+                await writeFile(markerPath, "complete\n");
+            }
+
+            const { privateKey, publicKey } = await generateKeyPair("RS256");
+            const jwk = {
+                ...(await exportJWK(publicKey)),
+                alg: "RS256",
+                kid: "team-daemon-test",
+                use: "sig",
+            };
+            const nativeFetch = globalThis.fetch;
+            vi.stubGlobal(
+                "fetch",
+                vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+                    if (String(input).includes("api.workos.com/sso/jwks/")) {
+                        return Response.json({ keys: [jwk] });
+                    }
+                    return await nativeFetch(input, init);
+                }),
+            );
+            daemon = await startHappyAgentDaemon({ happyHome, inference: await inference() });
+            const clientFor = async (subject: string) =>
+                new HappyAgentClient({
+                    endpoint: daemon!.httpUrl!,
+                    token: await signAccessToken(privateKey, subject),
+                });
+            let owner = await clientFor(OWNER_WORKOS_USER_ID);
+            let member = await clientFor(MEMBER_WORKOS_USER_ID);
+            const unfinished = {
+                completed: false,
+                steps: {
+                    profile: { done: false },
+                    project: { done: false },
+                    providers: { done: true, signedIn: ["gym"] },
+                },
+            };
+            await expect(owner.getOnboarding()).resolves.toEqual(unfinished);
+            await expect(member.getOnboarding()).resolves.toEqual(unfinished);
+            await expect(member.getHealth()).resolves.toMatchObject({ ready: true });
+            await expect(member.completeOnboarding()).rejects.toMatchObject({
+                status: 401,
+                code: "unauthorized",
+            });
+            for (const read of [
+                () => member.getConfig(),
+                () => member.listProjects(),
+                () => member.getDesktopBootstrap(),
+            ]) {
+                await expect(read()).rejects.toMatchObject({ status: 401 });
+            }
+            const ownerProfile = await owner.getProfile();
+            await owner.updateProfile(
+                { name: "Ada Lovelace", email: "ada@example.test" },
+                { ifMatch: ownerProfile.profile.version },
+            );
+            await expect(owner.getOnboarding()).resolves.toMatchObject({
+                completed: installationCompleted,
+                steps: { profile: { done: true } },
+            });
+            await expect(owner.completeOnboarding()).resolves.toEqual({ completed: true });
+            await expect(owner.completeOnboarding()).resolves.toEqual({ completed: true });
+            await expect(readFile(markerPath, "utf8")).resolves.toBe("complete\n");
+
+            // Completing the installation must not let another member skip their profile.
+            await expect(member.getOnboarding()).resolves.toEqual(unfinished);
+            const memberProfile = await member.getProfile();
+            expect(memberProfile.profile.name).toBeNull();
+            await member.updateProfile(
+                { name: "Grace Hopper", email: "grace@example.test" },
+                { ifMatch: memberProfile.profile.version },
+            );
+            // No second completion call, scope argument, or client-side team branch is needed.
+            const finished = {
+                ...unfinished,
+                completed: true,
+                steps: { ...unfinished.steps, profile: { done: true } },
+            };
+            await expect(member.getOnboarding()).resolves.toEqual(finished);
+            await expect(member.getDesktopBootstrap()).resolves.toMatchObject({
+                onboarding: finished,
+                profile: { name: "Grace Hopper" },
+            });
+            await expect(member.getConfig()).resolves.toBeDefined();
+            await expect(member.listProjects()).resolves.toBeDefined();
+
+            await daemon.close();
+            daemon = await startHappyAgentDaemon({ happyHome, inference: await inference() });
+            owner = await clientFor(OWNER_WORKOS_USER_ID);
+            member = await clientFor(MEMBER_WORKOS_USER_ID);
+            const newcomer = await clientFor("user_newcomer789");
+            const states = await Promise.all([
+                owner.getOnboarding(),
+                member.getOnboarding(),
+                newcomer.getOnboarding(),
+            ]);
+            expect(states).toEqual([finished, finished, unfinished]);
+            await expect(newcomer.completeOnboarding()).rejects.toMatchObject({ status: 401 });
+            await expect(newcomer.getProfile()).resolves.toMatchObject({
+                profile: { name: null },
+            });
+            await expect(member.getDesktopBootstrap()).resolves.toMatchObject({
+                onboarding: finished,
+            });
+        },
+        30_000,
+    );
+
     it("starts without retaining a local API socket or bearer token", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-team-daemon-"));
         temporaryDirectories.push(root);

@@ -1,5 +1,15 @@
 # API module learnings
 
+## One onboarding response combines installation and user readiness
+
+The installation completion marker previously made team members skip setup even when they had
+no local profile and the API correctly denied product access. Installation onboarding stays
+shared, while personal readiness is derived from the authenticated member's durable profile.
+The existing onboarding response reports completion only when both are satisfied in team mode;
+standalone completion remains unchanged. Desktop bootstrap uses the same calculation. Clients
+never select an onboarding scope, maintain separate system and personal flows, or need another
+completion call after saving a profile on an already-onboarded installation.
+
 ## Cloud is authentication and organizations only
 
 Cloud previously exposed encryption setup, account enrollment, profiles, social state, and device

@@ -4836,8 +4836,10 @@ export class ApiModule implements AgentModule {
             }),
         ]);
         const signedIn = [...new Set(this.#config.models.map((model) => model.providerId))];
+        const installationCompleted = marker !== undefined;
+        const userCompleted = !this.#team.enabled || profileDone;
         return {
-            completed: marker !== undefined,
+            completed: installationCompleted && userCompleted,
             steps: {
                 providers: { done: signedIn.length > 0, signedIn },
                 profile: { done: profileDone },
