@@ -5,6 +5,7 @@ import {
     clientMetadataSchema,
     clientMetadataValueSchema,
     toolCallRequestBlockSchema,
+    userIdSchema,
     type ClientMetadata,
 } from "@slopus/happy-agent-client";
 
@@ -370,6 +371,8 @@ export type HistoryBlock = Static<typeof historyBlockSchema>;
 
 const historyMessageFields = {
     role: historyRoleSchema,
+    /** Authenticated local team user captured when a person submitted this message. */
+    userId: Type.Optional(userIdSchema),
     /**
      * The specific agent that sent an agent- or system-role message, when its metadata named the
      * sender — a collaboration delivery names the collaborator, a goal continuation names the

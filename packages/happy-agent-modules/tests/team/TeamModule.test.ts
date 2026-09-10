@@ -31,6 +31,46 @@ afterEach(() => {
 });
 
 describe("TeamModule", () => {
+    it("looks up bounded user batches in caller order without duplicates or unknown users", async () => {
+        const team = createTeam();
+        const database = moduleDatabase(team.migrations, "team-batch");
+        await database.ready;
+        try {
+            const alice = await team.createUser(database.context, {
+                firstName: "Alice",
+                workosUserId: WORKOS_USER_ID,
+            });
+            const bob = await team.createUser(database.context, {
+                firstName: "Bob",
+                workosUserId: "user_bob123",
+            });
+            await expect(
+                team.getUsers(database.context, [bob.id, "unknown123", alice.id, bob.id]),
+            ).resolves.toEqual([bob, alice]);
+            await expect(team.getUsers(database.context, [])).resolves.toEqual([]);
+            await expect(
+                team.getUsers(database.context, Array(100).fill(alice.id)),
+            ).resolves.toEqual([alice]);
+            await expect(
+                team.getUsers(database.context, Array(101).fill(alice.id)),
+            ).rejects.toThrow();
+            await expect(team.getUsers(database.context, ["user_bad"])).rejects.toThrow();
+            await expect(
+                database.context.inTx(async (ctx) => {
+                    const carol = await team.createUser(ctx, {
+                        firstName: "Carol",
+                        workosUserId: "user_carol123",
+                    });
+                    expect(await team.getUsers(ctx, [carol.id])).toEqual([carol]);
+                    throw new Error("Roll back this user.");
+                }),
+            ).rejects.toThrow("Roll back");
+            expect(await team.listUsers(database.context)).toHaveLength(2);
+        } finally {
+            database.close();
+        }
+    });
+
     it("migrates an empty user database without seeding a user or owner", async () => {
         const team = createTeam();
         const database = moduleDatabase(team.migrations, "team-empty");

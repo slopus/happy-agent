@@ -60,6 +60,23 @@ describe("messageHiddenFromUser", () => {
 });
 
 describe("messageResource", () => {
+    it("exposes user authorship separately from client data without changing content", () => {
+        const message = {
+            at: 100,
+            blocks: [{ type: "text" as const, text: "Unchanged message." }],
+            recordId: "author-message",
+            role: "user" as const,
+            userId: "alice123",
+            clientMetadata: { userId: "bob456" },
+        };
+        expect(messageResource(message)).toMatchObject({
+            metadata: { userId: "alice123" },
+            clientMetadata: { userId: "bob456" },
+            content: [{ type: "text", text: "Unchanged message." }],
+        });
+        expect(messageResource({ ...message, role: "assistant" }).metadata).toEqual({});
+    });
+
     it("projects client-owned metadata separately on a user message", () => {
         const clientMetadata = {
             composer: "mobile",

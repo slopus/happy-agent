@@ -20,6 +20,7 @@ import {
     configPatchSchema,
     nodeConfigPatchSchema,
     providerVerificationRequestSchema,
+    userIdsSchema,
     type DrainWaitingFor,
     type MessageMode,
 } from "@slopus/happy-agent-client";
@@ -568,6 +569,32 @@ export class ApiModule implements AgentModule {
                     );
                 }
                 finishMutation = this.#admitMutation(request, url);
+            }
+            if (request.method === "GET" && url.pathname === "/v0/users") {
+                if (!this.#team.enabled)
+                    throw notFound("Team users are unavailable in standalone mode.");
+                const parameters = url.searchParams.getAll("ids");
+                const ids =
+                    parameters.length === 0 || parameters[0] === ""
+                        ? []
+                        : parameters[0]!.split(",");
+                if (parameters.length > 1 || !Value.Check(userIdsSchema, ids)) {
+                    throw invalidRequest("Provide one list of at most 100 valid Happy user IDs.");
+                }
+                const users = await this.#team.getUsers(ctx, ids);
+                sendJson(response, 200, {
+                    users: users.map((user) => ({
+                        id: user.id,
+                        name:
+                            user.lastName === null
+                                ? user.firstName
+                                : `${user.firstName} ${user.lastName}`,
+                        photo: user.photo === null ? null : { thumbhash: user.photo.thumbhash },
+                        version: user.version,
+                        updatedAt: user.updatedAt,
+                    })),
+                });
+                return;
             }
             if (request.method === "GET" && url.pathname === "/v0/connections") {
                 sendJson(response, 200, await this.#connections.getSnapshot(ctx));
@@ -2987,6 +3014,7 @@ export class ApiModule implements AgentModule {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
             const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
+            const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
             const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
                 id,
@@ -3001,6 +3029,7 @@ export class ApiModule implements AgentModule {
                 profile,
                 metadata: {
                     ...USER_MESSAGE_ORIGIN_METADATA,
+                    ...(userId === undefined ? {} : { userId }),
                     mode: body.mode,
                     ...(body.clientMetadata === undefined
                         ? {}
@@ -3018,6 +3047,7 @@ export class ApiModule implements AgentModule {
                 delivery,
                 createdAt,
                 blocks: this.#history.inputBlocks(content),
+                ...(userId === undefined ? {} : { userId }),
                 mode: body.mode,
                 profile,
                 ...(body.clientMetadata === undefined
@@ -5847,6 +5877,7 @@ function pendingMessageResource(pending: HistoryPendingMessage): Record<string, 
             role: "user",
             blocks: pending.blocks,
             at: pending.createdAt,
+            ...(pending.userId === undefined ? {} : { userId: pending.userId }),
             ...(pending.clientMetadata === undefined
                 ? {}
                 : { clientMetadata: pending.clientMetadata }),

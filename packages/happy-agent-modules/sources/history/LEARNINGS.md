@@ -1,5 +1,14 @@
 # History learnings
 
+## Human authorship belongs to the submitted message
+
+Team-mode submissions capture the authenticated local user ID in daemon-owned message metadata.
+History retains that ID in pending and accepted records; acceptance uses the pending record when
+one exists, including its absence of authorship on older messages. Direct person-authored deliveries
+may carry a validated ID in their own metadata. Agent-generated messages and client-owned metadata
+never supply human authorship. Retries and restarts preserve the original author without changing
+content or adding profile text to the model context.
+
 ## Requested tools are user content followed by a separate assistant call
 
 User input is no longer just text or images. Preserve `tool_call_request` unchanged in pending

@@ -76,6 +76,7 @@ export function messageResource(
         createdAt: message.at ?? 0,
         content: historyBlocks(message.blocks, options),
         metadata: {
+            ...(role === "user" && message.userId !== undefined ? { userId: message.userId } : {}),
             ...(message.provider === undefined ? {} : { providerId: message.provider }),
             ...(message.model === undefined ? {} : { modelId: message.model }),
             ...(message.senderAgentId === undefined

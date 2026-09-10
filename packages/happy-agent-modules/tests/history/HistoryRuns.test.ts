@@ -139,6 +139,81 @@ async function finishInference(
 }
 
 describe("HistoryModule run history", () => {
+    it("never backfills an older pending message from later acceptance metadata", async () => {
+        const world = await setup("history-author-absent");
+        try {
+            await world.history.queuePending(world.database.context, pending("message-old", 100));
+            await acceptBatch(world, [
+                {
+                    ...accepted("message-old", "send"),
+                    metadata: { ...USER_MESSAGE_ORIGIN_METADATA, userId: "alice123" },
+                },
+            ]);
+            expect(
+                await world.history.message(world.database.context, "agent-a", "message-old"),
+            ).not.toHaveProperty("userId");
+        } finally {
+            world.database.close();
+        }
+    });
+
+    it.each(["send", "steering"] as const)(
+        "preserves the original pending author on %s acceptance",
+        async (kind) => {
+            const world = await setup(`history-author-${kind}`);
+            try {
+                await world.history.queuePending(world.database.context, {
+                    ...pending("message-author", 100, kind === "send" ? "queue" : "steer"),
+                    userId: "alice123",
+                });
+                await acceptBatch(world, [
+                    {
+                        ...accepted("message-author", kind),
+                        metadata: { ...USER_MESSAGE_ORIGIN_METADATA, userId: "bob456" },
+                    },
+                ]);
+                expect(
+                    await world.history.message(
+                        world.database.context,
+                        "agent-a",
+                        "message-author",
+                    ),
+                ).toMatchObject({ role: "user", userId: "alice123" });
+                expect(await world.history.pending(world.database.context, "agent-a")).toEqual([]);
+            } finally {
+                world.database.close();
+            }
+        },
+    );
+
+    it.each([
+        { metadata: { ...USER_MESSAGE_ORIGIN_METADATA, userId: "alice123" }, userId: "alice123" },
+        { metadata: { ...USER_MESSAGE_ORIGIN_METADATA, userId: "user_workos" }, userId: undefined },
+        {
+            metadata: { ...USER_MESSAGE_ORIGIN_METADATA, clientMetadata: { userId: "alice123" } },
+            userId: undefined,
+        },
+        { metadata: { userId: "alice123" }, userId: undefined },
+        { metadata: USER_MESSAGE_ORIGIN_METADATA, userId: undefined },
+    ])(
+        "accepts only valid person-authored provenance without a pending row %#",
+        async ({ metadata, userId }) => {
+            const world = await setup("history-author-direct");
+            try {
+                await acceptBatch(world, [{ ...accepted("message-author", "send"), metadata }]);
+                const message = await world.history.message(
+                    world.database.context,
+                    "agent-a",
+                    "message-author",
+                );
+                expect(message?.userId).toBe(userId);
+                if (userId === undefined) expect(message).not.toHaveProperty("userId");
+            } finally {
+                world.database.close();
+            }
+        },
+    );
+
     it("normalizes a removed pending request profile when the message is accepted", async () => {
         const world = await setup("history-runs-request-profile");
         try {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { createId } from "@paralleldrive/cuid2";
+import { userIdsSchema } from "@slopus/happy-agent-client";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
@@ -34,6 +35,7 @@ import {
     type UpdateTeamProfileInput,
 } from "./TeamUser.js";
 import { WorkOSAccessTokenVerifier } from "./WorkOSAccessTokenVerifier.js";
+import { queryTeamUsers } from "./persistence/queryTeamUsers.js";
 
 export const TEAM_USERS_MIGRATION_KEY = "001-users";
 export const TEAM_USER_PHOTOS_MIGRATION_KEY = "002-user-photos";
@@ -43,25 +45,6 @@ export const TEAM_ONBOARDING_PROFILE_VERSION = "00000000-0000-7000-8000-00000020
 
 const USERS_TABLE = "happy_agent_team_users";
 const USER_PHOTOS_TABLE = "happy_agent_team_user_photos";
-
-const storedUserRowSchema = Type.Object(
-    {
-        content_hash: Type.Union([Type.String(), Type.Null()]),
-        created_at: Type.Integer({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
-        email: Type.Union([Type.String(), Type.Null()]),
-        first_name: Type.String(),
-        height: Type.Union([Type.Integer(), Type.Null()]),
-        id: Type.String(),
-        is_owner: Type.Integer({ maximum: 1, minimum: 0 }),
-        last_name: Type.Union([Type.String(), Type.Null()]),
-        profile_version: Type.String(),
-        thumbhash: Type.Union([Type.String(), Type.Null()]),
-        updated_at: Type.Integer({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
-        width: Type.Union([Type.Integer(), Type.Null()]),
-        workos_user_id: Type.String(),
-    },
-    { additionalProperties: false },
-);
 
 const storedPhotoRowSchema = Type.Object(
     {
@@ -332,18 +315,32 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
     }
 
     async getUser(ctx: Context, userId: string): Promise<TeamUser | undefined> {
-        return (await this.#readUsers(ctx, sql`u.id = ${userId}`))[0];
+        return (await queryTeamUsers(ctx, { id: userId }))[0];
+    }
+
+    /** Resolve a bounded batch in first-requested order, omitting unknown and duplicate IDs. */
+    async getUsers(ctx: Context, ids: readonly string[]): Promise<readonly TeamUser[]> {
+        if (!Value.Check(userIdsSchema, ids)) {
+            throw new TeamProfileInputError("Provide at most 100 valid Happy user IDs.");
+        }
+        const uniqueIds = [...new Set(ids)];
+        const users = await queryTeamUsers(ctx, { ids: uniqueIds });
+        const byId = new Map(users.map((user) => [user.id, user]));
+        return uniqueIds.flatMap((id) => {
+            const user = byId.get(id);
+            return user === undefined ? [] : [user];
+        });
     }
 
     async findUserByWorkOSUserId(
         ctx: Context,
         workosUserId: string,
     ): Promise<TeamUser | undefined> {
-        return (await this.#readUsers(ctx, sql`u.workos_user_id = ${workosUserId}`))[0];
+        return (await queryTeamUsers(ctx, { workosUserId }))[0];
     }
 
     async listUsers(ctx: Context): Promise<readonly TeamUser[]> {
-        return await this.#readUsers(ctx);
+        return await queryTeamUsers(ctx);
     }
 
     /** Store already-normalized media for module callers that already own preprocessing. */
@@ -525,63 +522,6 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
                     updated_at = ${user.updatedAt}
                 WHERE id = ${user.id}`,
         );
-    }
-
-    async #readUsers(ctx: Context, predicate = sql`1 = 1`): Promise<readonly TeamUser[]> {
-        const rows = await agentDatabaseRows<unknown>(
-            ctx.db,
-            sql`SELECT
-                    u.id,
-                    u.workos_user_id,
-                    u.first_name,
-                    u.last_name,
-                    u.is_owner,
-                    u.email,
-                    u.profile_version,
-                    u.created_at,
-                    u.updated_at,
-                    p.content_hash,
-                    p.thumbhash,
-                    p.width,
-                    p.height
-                FROM ${sql.raw(USERS_TABLE)} u
-                LEFT JOIN ${sql.raw(USER_PHOTOS_TABLE)} p ON p.user_id = u.id
-                WHERE ${predicate}
-                ORDER BY u.id`,
-        );
-        return rows.map((value) => {
-            if (!Value.Check(storedUserRowSchema, value)) {
-                throw new Error("A stored team user is invalid.");
-            }
-            const photo =
-                value.content_hash === null ||
-                value.thumbhash === null ||
-                value.width === null ||
-                value.height === null
-                    ? null
-                    : {
-                          contentHash: value.content_hash,
-                          height: value.height,
-                          thumbhash: value.thumbhash,
-                          width: value.width,
-                      };
-            const user: TeamUser = {
-                createdAt: value.created_at,
-                email: value.email,
-                firstName: value.first_name,
-                id: value.id,
-                isOwner: value.is_owner === 1,
-                lastName: value.last_name,
-                photo,
-                updatedAt: value.updated_at,
-                version: value.profile_version,
-                workosUserId: value.workos_user_id,
-            };
-            if (!Value.Check(teamUserSchema, user)) {
-                throw new Error("A stored team user is invalid.");
-            }
-            return user;
-        });
     }
 
     #assertExpectedVersion(user: TeamUser, expectedVersion: string): void {

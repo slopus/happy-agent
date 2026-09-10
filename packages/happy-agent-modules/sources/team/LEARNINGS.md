@@ -1,5 +1,13 @@
 # Team — learnings
 
+## Public user lookup is bounded display information
+
+Message authors use installation-local Happy IDs, not WorkOS IDs. Batch lookup accepts at most
+100 IDs, preserves first-requested order, omits unknown and duplicate IDs, and reads only matching
+rows in the caller's transaction. An empty batch never lists the directory. The authenticated team
+API returns names and photo placeholders with profile versions, but excludes email, WorkOS
+identity, and owner flags. Profile invalidations let clients refresh these display records.
+
 ## Team users project through the existing profile interaction
 
 The standalone profile is one installation-owned person and may initialize itself on first use.

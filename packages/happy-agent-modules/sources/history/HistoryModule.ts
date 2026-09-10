@@ -19,7 +19,7 @@ import type {
 import { sql, type SQL } from "drizzle-orm";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { clientMetadataValueSchema } from "@slopus/happy-agent-client";
+import { clientMetadataValueSchema, userIdSchema } from "@slopus/happy-agent-client";
 import { afterCommit, withLogContext, type Context } from "@steve.kite/stdlib";
 import {
     agentDatabaseRows,
@@ -1739,6 +1739,14 @@ export class HistoryModule implements AgentModule {
             await this.#beginRun(ctx, scope.agent.id, runId, accepted.kind, acceptedAt);
             const isSystem = accepted.message.role === "system";
             const fromUser = !isSystem && isUserOriginMetadata(accepted.metadata);
+            const metadataUserId = accepted.metadata?.["userId"];
+            // An existing pending row is authoritative, including an older row with no author.
+            const userId =
+                pending !== undefined
+                    ? pending.userId
+                    : Value.Check(userIdSchema, metadataUserId)
+                      ? metadataUserId
+                      : undefined;
             const sender = fromUser ? undefined : senderAgentIdOf(accepted.metadata);
             // A message from another agent may carry the reasoning that agent exposed. It is
             // recorded as thinking, the way this module records any other reasoning; reasoning
@@ -1762,6 +1770,7 @@ export class HistoryModule implements AgentModule {
                           profile: pending?.profile ?? accepted.profile,
                           ...(mutationId === undefined ? {} : { mutationId }),
                           ...(clientMetadata === undefined ? {} : { clientMetadata }),
+                          ...(userId === undefined ? {} : { userId }),
                       }
                     : {}),
                 ...(sender === undefined ? {} : { senderAgentId: sender }),
