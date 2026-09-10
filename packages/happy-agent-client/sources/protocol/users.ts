@@ -2,13 +2,9 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { Nullable, resourceVersionSchema, timestampSchema } from "./common.js";
 import { profilePhotoSchema } from "./profile.js";
+import { userIdSchema } from "./userId.js";
 
-/** An installation-local Happy user identity, never a WorkOS identity. */
-export const userIdSchema = Type.String({
-    minLength: 2,
-    maxLength: 32,
-    pattern: "^[a-z][a-z0-9]*$",
-});
+export { userIdSchema } from "./userId.js";
 
 /** The bounded batch accepted by the team-user lookup, in caller order. */
 export const userIdsSchema = Type.Array(userIdSchema, { maxItems: 100 });

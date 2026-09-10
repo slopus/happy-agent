@@ -950,6 +950,7 @@ same user. The configured owner WorkOS user ID determines `isOwner`; the client 
 
 ```json
 {
+    "userId": null,
     "name": "Steve Korshakov",
     "email": "steve@korshakov.com",
     "photo": { "thumbhash": "3OcRJYB4d3h/iIeHeEh3eIhw+j3A" },
@@ -958,11 +959,23 @@ same user. The configured owner WorkOS user ID determines `isOwner`; the client 
 }
 ```
 
+- `userId` — optional additive field identifying the authenticated team member by their
+  installation-local Happy CUID2, matching `metadata.userId` on messages and `id` from
+  `GET /v0/users`. Current daemons always include it: it is `null` in standalone mode and before
+  the authenticated team member has saved a local profile. Older compatible daemons may omit it.
+  This is never a WorkOS ID or the standalone profile's private identity. It is read-only and
+  cannot be supplied in a profile update.
 - `name` — display name, or `null`.
 - `email` — email address, or `null`.
 - `photo` — `null`, or an object with the photo's ThumbHash placeholder; the image itself is
   fetched from `GET /v0/profile/photo`, exactly like a project avatar.
 - `version` — the UUIDv7 resource version for `If-Match` and event chaining, as in the basics.
+
+Every profile representation uses this same shape, including profile and photo mutation
+responses, version-conflict responses, and `GET /v0/bootstrap/desktop`'s `profile`. In team mode
+each response resolves the authenticated caller's own ID; it never substitutes the owner or
+another member. Standalone `profile.updated` events include the same profile with `userId: null`;
+team profile events remain identity-only invalidations rather than broadcasting profile fields.
 
 ### `GET /v0/profile`
 
