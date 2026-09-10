@@ -5,6 +5,11 @@ import type { TSchema } from "@sinclair/typebox";
  * The raw pattern is never sent to models.
  */
 function patternToDescription(pattern: string): string {
+    // Secret values may contain newlines (for example, PEM keys); only NUL is banned.
+    if (pattern === "^[^\\u0000]*$" || pattern === "^[^\u0000]*$") {
+        return "Must not contain null bytes.";
+    }
+
     // Common "no control or newline" patterns used across the codebase.
     if (
         pattern.includes("\\u0000") ||
@@ -44,7 +49,7 @@ function patternToDescription(pattern: string): string {
 
 /**
  * Recursively sanitizes a JSON Schema (or TypeBox serialized) node:
- * - Removes all `pattern` and `patternProperties` (regex constraints).
+ * - Removes regex constraints, projecting patterned dictionary values onto `additionalProperties`.
  * - Automatically injects a human description of the removed pattern constraint.
  * - Recurses into standard schema containers.
  */
@@ -73,8 +78,22 @@ function sanitizeNode(node: unknown): unknown {
         }
     }
 
-    // Remove other regex constructs.
+    // Patterned keys cannot reach the provider, but their value schemas must survive.
+    // Once the key patterns are removed, an unknown key may have matched any one of
+    // them or the original additionalProperties schema. A union is therefore the
+    // safe wire approximation; the unchanged original still validates calls locally.
     if ("patternProperties" in out) {
+        const values = Object.values(out.patternProperties as Record<string, unknown>);
+        // An omitted or true fallback already allows every value. Keep its wire
+        // representation unchanged rather than expanding unconstrained dictionaries.
+        if (
+            values.length > 0 &&
+            out.additionalProperties !== undefined &&
+            out.additionalProperties !== true
+        ) {
+            if (out.additionalProperties !== false) values.push(out.additionalProperties);
+            out.additionalProperties = values.length === 1 ? values[0] : { anyOf: values };
+        }
         delete out.patternProperties;
     }
 
@@ -131,7 +150,8 @@ function sanitizeNode(node: unknown): unknown {
  * - If no schema is provided, returns a safe empty object schema.
  * - Ensures the top level is always an object schema (throws if a non-object root is supplied).
  * - Strips every `pattern` / `patternProperties` (any regex) so that unsupported syntax
- *   such as Unicode property escapes never reaches the provider.
+ *   such as Unicode property escapes never reaches the provider. Patterned dictionary
+ *   value schemas become `additionalProperties`, unioned with any existing fallback.
  * - When a pattern is removed, a human-readable description of the constraint is
  *   automatically added (or appended) to the field's description.
  *

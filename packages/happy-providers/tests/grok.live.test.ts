@@ -21,6 +21,56 @@ async function resolveGrokCredential(): Promise<GrokCredential | null> {
 }
 
 describeLive("GrokProvider live", () => {
+    it("accepts nonempty secret dictionaries on Grok 4.6 without calling a tool", async () => {
+        const credential = await resolveGrokCredential();
+        if (credential === null) {
+            expect.fail("RIG_LIVE_TEST=1 is set but no grok credentials were found");
+        }
+        const parameters = Type.Object(
+            {
+                description: Type.String({ minLength: 1, maxLength: 2_000 }),
+                environment: Type.Optional(
+                    Type.Record(
+                        Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_]*$" }),
+                        Type.String({ maxLength: 65_536, pattern: "^[^\\u0000]*$" }),
+                        { additionalProperties: false, minProperties: 1, maxProperties: 256 },
+                    ),
+                ),
+            },
+            { additionalProperties: false },
+        );
+        const instructions = "Reply briefly to greetings. Do not call tools.";
+        const provider = new GrokProvider({
+            credential,
+            model: "grok-4.6",
+            inferenceMaxRetries: 0,
+        });
+        const session = await provider.session(`grok-dictionary-live-${Date.now()}`, {
+            instructions,
+            tools: [
+                { name: "create_secret", parameters, defer: true },
+                { name: "update_secret", parameters, defer: true },
+            ],
+        });
+
+        try {
+            const events = await collectSessionEvents(
+                session.run(testContext, {
+                    context: {
+                        instructions,
+                        messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+                    },
+                    effort: "low",
+                }),
+            );
+            expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+            expect(textFromSessionEvents(events).trim().length).toBeGreaterThan(0);
+            expect(events.some((event) => event.type === "toolcall_start")).toBe(false);
+        } finally {
+            await session.destroy();
+        }
+    }, 120_000);
+
     it("streams tool-less inference against Grok 4.6", async () => {
         const credential = await resolveGrokCredential();
         if (credential === null) {
