@@ -1,5 +1,13 @@
 # API module learnings
 
+## Cloud is authentication and organizations only
+
+Cloud previously exposed encryption setup, account enrollment, profiles, social state, and device
+management. The API now exposes only WorkOS authentication and organizations. Retired routes return
+not found; desktop bootstrap and the journal carry only the authentication snapshot, and Cloud
+errors include only that snapshot. Keep the separate local profile and Happy integration surfaces
+independent of Cloud account state.
+
 ## Input requests and generated calls retain distinct identities
 
 Send accepts the published tool-request block schema, with at most one request among the text

@@ -452,7 +452,7 @@ export async function startHappyAgentRuntime(
         });
 
         const installation = new InstallationModule(projects);
-        const cloud = new CloudModule(durableFunctions, profile, config);
+        const cloud = new CloudModule(durableFunctions);
         const happyTeams = new HappyTeamsModule(cloud, bots);
         const connections = new ConnectionsModule(config, bots, cloud, tailcat, durableFunctions);
         registerShutdown(

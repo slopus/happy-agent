@@ -10,9 +10,7 @@ import {
     type Cloud,
     type CloudAuthorizing,
     type CloudConnected,
-    type CloudDevice,
     type CloudDisconnected,
-    type CloudSocial,
 } from "@slopus/happy-agent-client";
 import { ensureAgentDatabaseConnection } from "@slopus/happy-agent-base";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
@@ -22,13 +20,10 @@ import { ApiModule } from "../../sources/api/ApiModule.js";
 import {
     CloudModule,
     CloudOperationError,
-    type CloudSocialUpdatedListener,
     type CloudUpdatedListener,
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
-import { CloudWorkOS } from "../../sources/cloud/CloudWorkOS.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
-import { testProfileModule } from "../support/testProfileModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -64,29 +59,6 @@ vi.mock("@workos-inc/node", async (importOriginal) => {
 const VERSION_1 = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
 const VERSION_2 = "01991f3a-5c1e-7001-8000-2f9a1b3c4d5e";
 const VERSION_3 = "01991f3a-5c1e-7002-8000-2f9a1b3c4d5e";
-const cloudKeyInput = {
-    authHash: Buffer.alloc(32, 1).toString("base64url"),
-    encryptionKey: Buffer.alloc(32, 2).toString("base64url"),
-    generatedSecret: "H1-222A5-AS7TZ-QRFS4-BJ48X-Q4S7SN",
-};
-const cloudKeyBackup = {
-    generatedSecret: cloudKeyInput.generatedSecret,
-    rootSecret: Buffer.alloc(32, 3).toString("base64url"),
-};
-const currentDeviceId = Buffer.alloc(32, 4).toString("base64url");
-const siblingDeviceId = Buffer.alloc(32, 5).toString("base64url");
-const currentDevice: CloudDevice = {
-    current: true,
-    id: currentDeviceId,
-    lastAccessedAt: 1_755_400_000_000,
-    metadata: null,
-};
-const siblingDevice: CloudDevice = {
-    current: false,
-    id: siblingDeviceId,
-    lastAccessedAt: 1_755_400_001_000,
-    metadata: null,
-};
 const existingOrganization = { id: "org_existing", name: "Existing Team" };
 const createdOrganization = { id: "org_created", name: "Analytical Engines" };
 
@@ -124,37 +96,6 @@ const connected: CloudConnected = {
     user,
     version: VERSION_3,
 };
-const socialUnenrolled: CloudSocial = {
-    blocked: [],
-    connection: null,
-    friends: [],
-    incomingRequests: [],
-    outgoingRequests: [],
-    status: "unenrolled",
-    updatedAt: 1,
-    version: VERSION_1,
-};
-const socialEnrolled: CloudSocial = {
-    ...socialUnenrolled,
-    connection: "connecting",
-    status: "enrolled",
-    updatedAt: 2,
-    version: VERSION_2,
-};
-const socialWithFriend: CloudSocial = {
-    ...socialEnrolled,
-    connection: "connected",
-    friends: [
-        {
-            firstName: "Grace",
-            username: "grace",
-            version: VERSION_3,
-        },
-    ],
-    updatedAt: 3,
-    version: VERSION_3,
-};
-
 const cleanups: (() => Promise<void>)[] = [];
 
 beforeEach(() => {
@@ -178,10 +119,6 @@ beforeEach(() => {
         "fetch",
         vi.fn(async () => Response.json({ message: "hello", userId: user.id })),
     );
-    vi.spyOn(CloudWorkOS.prototype, "getVaultIdentity").mockResolvedValue(undefined);
-    vi.spyOn(CloudWorkOS.prototype, "getProfileState").mockResolvedValue({
-        profile: { firstName: null, username: null },
-    });
 });
 
 afterEach(async () => {
@@ -191,7 +128,7 @@ afterEach(async () => {
 });
 
 describe("Cloud HTTP API", () => {
-    it("carries every client operation through the API and echoes mutation events", async () => {
+    it("carries authentication and organization operations through the API and echoes mutation events", async () => {
         const fixture = await apiFixture();
         const before = fixture.api.cursor();
 
@@ -226,43 +163,6 @@ describe("Cloud HTTP API", () => {
                 mutationId: "cloud-organization-delete-1",
             }),
         ).resolves.toEqual({ deleted: true });
-        await expect(
-            fixture.client.createCloudKeys({ ...cloudKeyInput, mutationId: "cloud-keys-create-1" }),
-        ).resolves.toEqual({ cloud: connected });
-        await expect(
-            fixture.client.restoreCloudKeys({
-                ...cloudKeyInput,
-                mutationId: "cloud-keys-restore-1",
-            }),
-        ).resolves.toEqual({ cloud: connected });
-        await expect(
-            fixture.client.deleteCloudKeys({
-                confirmation: "YES DELETE MY VAULT",
-                mutationId: "cloud-keys-delete-1",
-            }),
-        ).resolves.toEqual({ cloud: connected });
-        await expect(fixture.client.getCloudKeyBackup()).resolves.toEqual({
-            backup: cloudKeyBackup,
-        });
-        await expect(fixture.client.getCloudDevices()).resolves.toEqual({
-            devices: [currentDevice, siblingDevice],
-        });
-        await expect(fixture.client.removeCloudDevice(siblingDeviceId)).resolves.toEqual({
-            devices: [currentDevice],
-        });
-        await expect(fixture.client.getCloudProfile()).resolves.toEqual({
-            profile: { firstName: null, username: null },
-        });
-        await expect(fixture.client.getCloudSocial()).resolves.toEqual({
-            cloudSocial: socialUnenrolled,
-        });
-        await expect(
-            fixture.client.enrollCloudProfile({
-                mutationId: "cloud-profile-1",
-                username: "ada",
-            }),
-        ).resolves.toEqual({ profile: { firstName: "Ada", username: "ada" } });
-
         const events = await fixture.client.getEvents({ after: before });
         expect(events.events).toEqual([
             expect.objectContaining({
@@ -273,18 +173,8 @@ describe("Cloud HTTP API", () => {
                 payload: { cloud: connected, mutationId: "cloud-complete-1" },
                 type: "cloud.updated",
             }),
-            expect.objectContaining({
-                payload: { mutationId: "cloud-profile-1", version: socialEnrolled.version },
-                type: "cloud.social.updated",
-            }),
-            expect.objectContaining({
-                payload: { mutationId: "cloud-profile-1" },
-                type: "cloud.profile.updated",
-            }),
         ]);
         expect(JSON.stringify(events)).not.toContain("access-token");
-        expect(JSON.stringify(events)).not.toContain(cloudKeyBackup.rootSecret);
-        expect(JSON.stringify(events)).not.toContain(cloudKeyInput.generatedSecret);
 
         await expect(
             fixture.client.disconnectCloud({ mutationId: "cloud-disconnect-1" }),
@@ -293,21 +183,6 @@ describe("Cloud HTTP API", () => {
             fixture.context,
             expect.objectContaining({ redirectUri: "desktop-app://workos/callback" }),
         );
-        expect(fixture.cloud.createKeys).toHaveBeenCalledWith(
-            fixture.context,
-            expect.objectContaining(cloudKeyInput),
-        );
-        expect(fixture.cloud.restoreKeys).toHaveBeenCalledWith(
-            fixture.context,
-            expect.objectContaining(cloudKeyInput),
-        );
-        expect(fixture.cloud.deleteKeys).toHaveBeenCalledWith(
-            fixture.context,
-            expect.objectContaining({ confirmation: "YES DELETE MY VAULT" }),
-        );
-        expect(fixture.cloud.getKeyBackup).toHaveBeenCalledWith(fixture.context);
-        expect(fixture.cloud.getDevices).toHaveBeenCalledWith(fixture.context);
-        expect(fixture.cloud.removeDevice).toHaveBeenCalledWith(fixture.context, siblingDeviceId);
         expect(fixture.cloud.listOrganizations).toHaveBeenCalledWith(fixture.context);
         expect(fixture.cloud.createOrganization).toHaveBeenCalledWith(
             fixture.context,
@@ -317,6 +192,50 @@ describe("Cloud HTTP API", () => {
             fixture.context,
             createdOrganization.id,
         );
+    });
+
+    it("returns not found for every retired Cloud and CRDT route", async () => {
+        const fixture = await apiFixture(connected);
+        const before = fixture.api.cursor();
+        const routes = [
+            ["POST", "/v0/cloud/keys/create"],
+            ["POST", "/v0/cloud/keys/restore"],
+            ["DELETE", "/v0/cloud/keys"],
+            ["GET", "/v0/cloud/keys/backup"],
+            ["GET", "/v0/cloud/devices"],
+            ["DELETE", `/v0/cloud/devices/${Buffer.alloc(32, 1).toString("base64url")}`],
+            ["GET", "/v0/cloud/profile"],
+            ["PUT", "/v0/cloud/profile"],
+            ["GET", "/v0/cloud/social"],
+            ["PUT", "/v0/cloud/social/requests/ada"],
+            ["DELETE", "/v0/cloud/social/requests/ada"],
+            ["POST", "/v0/cloud/social/requests/ada/approve"],
+            ["POST", "/v0/cloud/social/requests/ada/reject"],
+            ["PUT", "/v0/cloud/social/blocked/ada"],
+            ["DELETE", "/v0/cloud/social/blocked/ada"],
+            ["GET", "/v0/services/crdt"],
+            ["POST", "/v0/services/crdt"],
+            ["GET", "/v0/services/crdt/service1"],
+            ["POST", "/v0/services/crdt/service1/updates"],
+            ["PUT", "/v0/services/crdt/service1/members/user1"],
+            ["DELETE", "/v0/services/crdt/service1/members/user1"],
+        ] as const;
+
+        for (const [method, path] of routes) {
+            const response = await apiFetch(fixture.api, fixture.context)(
+                `http://happy-agent.test${path}`,
+                {
+                    headers: { authorization: `Bearer ${fixture.token}` },
+                    method,
+                },
+            );
+            expect(response.status, `${method} ${path}`).toBe(404);
+            await expect(response.json()).resolves.toMatchObject({ code: "not_found" });
+        }
+        await expect(fixture.client.getCloud()).resolves.toEqual({ cloud: connected });
+        await expect(fixture.client.getEvents({ after: before })).resolves.toMatchObject({
+            events: [],
+        });
     });
 
     it("rejects malformed organization input before invoking Cloud", async () => {
@@ -374,76 +293,6 @@ describe("Cloud HTTP API", () => {
         expect(fixture.cloud.deleteOrganization).not.toHaveBeenCalled();
     });
 
-    it("rejects malformed device IDs and request bodies before invoking Cloud", async () => {
-        const fixture = await apiFixture(connected);
-
-        await expect(fixture.client.removeCloudDevice("not-a-device")).rejects.toMatchObject({
-            code: "invalid_request",
-            status: 400,
-        });
-        const response = await apiFetch(fixture.api, fixture.context)(
-            `http://happy-agent.test/v0/cloud/devices/${siblingDeviceId}`,
-            {
-                body: "{}",
-                headers: {
-                    authorization: `Bearer ${fixture.token}`,
-                    "content-type": "application/json",
-                },
-                method: "DELETE",
-            },
-        );
-        expect(response.status).toBe(400);
-        expect(fixture.cloud.removeDevice).not.toHaveBeenCalled();
-    });
-
-    it("returns the authoritative roster when current-device removal conflicts", async () => {
-        const fixture = await apiFixture(connected);
-        fixture.cloud.removeDevice.mockRejectedValueOnce(
-            new CloudOperationError(
-                409,
-                "conflict",
-                "Disconnect Cloud to remove this device.",
-                connected,
-                undefined,
-                [currentDevice, siblingDevice],
-            ),
-        );
-
-        await expect(fixture.client.removeCloudDevice(currentDeviceId)).rejects.toMatchObject({
-            body: { devices: [currentDevice, siblingDevice] },
-            code: "conflict",
-            status: 409,
-        });
-    });
-
-    it("routes every supported Cloud friends mutation and emits compact invalidations", async () => {
-        const fixture = await apiFixture(connected);
-        const before = fixture.api.cursor();
-
-        await expect(
-            fixture.client.sendCloudFriendRequest("grace", { mutationId: "social-send" }),
-        ).resolves.toEqual({ cloudSocial: socialWithFriend });
-        await fixture.client.approveCloudFriendRequest("grace");
-        await fixture.client.rejectCloudFriendRequest("grace");
-        await fixture.client.revokeCloudFriendRequest("grace");
-        await fixture.client.blockCloudUser("grace");
-        await fixture.client.unblockCloudUser("grace");
-
-        expect(fixture.cloud.mutateSocial.mock.calls.map((call) => call.slice(1))).toEqual([
-            ["send-request", "grace"],
-            ["approve-request", "grace"],
-            ["reject-request", "grace"],
-            ["revoke-request", "grace"],
-            ["block", "grace"],
-            ["unblock", "grace"],
-        ]);
-        const events = await fixture.client.getEvents({ after: before });
-        expect(events.events[0]).toMatchObject({
-            payload: { mutationId: "social-send", version: VERSION_3 },
-            type: "cloud.social.updated",
-        });
-    });
-
     it("returns an authoritative Cloud snapshot when minting discovers revocation", async () => {
         const revoked: CloudDisconnected = {
             ...disconnected,
@@ -472,19 +321,6 @@ describe("Cloud HTTP API", () => {
         });
     });
 
-    it("does not expose an incomplete stored key backup through generic API failures", async () => {
-        const fixture = await apiFixture(connected);
-        fixture.cloud.getKeyBackup.mockRejectedValueOnce(
-            new Error(`incomplete ${cloudKeyInput.generatedSecret} ${cloudKeyBackup.rootSecret}`),
-        );
-
-        const error = await fixture.client.getCloudKeyBackup().catch((caught: unknown) => caught);
-
-        expect(error).toMatchObject({ code: "internal", status: 500 });
-        expect(JSON.stringify(error)).not.toContain(cloudKeyInput.generatedSecret);
-        expect(JSON.stringify(error)).not.toContain(cloudKeyBackup.rootSecret);
-    });
-
     it("accepts a genuinely empty chunked body for optional Cloud mutations", async () => {
         const fixture = await apiFixture(connected);
         const response = await apiFetch(fixture.api, fixture.context)(
@@ -501,57 +337,6 @@ describe("Cloud HTTP API", () => {
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toEqual({ cloud: disconnected });
         expect(fixture.cloud.disconnect).toHaveBeenCalledTimes(1);
-    });
-
-    it("rejects malformed profile input before invoking Cloud", async () => {
-        const fixture = await apiFixture(connected);
-
-        const error = await fixture.client
-            .enrollCloudProfile({ username: "UPPERCASE" })
-            .catch((caught: unknown) => caught);
-
-        expect(error).toMatchObject({ code: "invalid_request", status: 400 });
-        expect(fixture.cloud.enrollProfile).not.toHaveBeenCalled();
-    });
-
-    it("rejects an inexact vault reset confirmation before invoking Cloud", async () => {
-        const fixture = await apiFixture(connected);
-
-        const error = await fixture.client
-            .deleteCloudKeys({ confirmation: "yes delete my vault" } as never)
-            .catch((caught: unknown) => caught);
-
-        expect(error).toMatchObject({ code: "invalid_request", status: 400 });
-        expect(fixture.cloud.deleteKeys).not.toHaveBeenCalled();
-    });
-
-    it("returns the connected snapshot when a Cloud username is unavailable", async () => {
-        const fixture = await apiFixture(connected);
-        const before = fixture.api.cursor();
-        fixture.cloud.enrollProfile.mockRejectedValueOnce(
-            new CloudOperationError(
-                409,
-                "conflict",
-                "The Cloud username is unavailable.",
-                connected,
-            ),
-        );
-
-        const error = await fixture.client
-            .enrollCloudProfile({
-                mutationId: "cloud-profile-conflict",
-                username: "taken_name",
-            })
-            .catch((caught: unknown) => caught);
-
-        expect(error).toMatchObject({
-            body: { cloud: connected, code: "conflict" },
-            code: "conflict",
-            status: 409,
-        });
-        await expect(fixture.client.getEvents({ after: before })).resolves.toMatchObject({
-            events: [],
-        });
     });
 
     it("carries the real Cloud module through completion, minting, and API events", async () => {
@@ -578,55 +363,6 @@ describe("Cloud HTTP API", () => {
             "refresh-b",
         );
 
-        workos.refresh.mockResolvedValueOnce({
-            accessToken: "access-c",
-            refreshToken: "refresh-c",
-            user,
-        });
-        vi.mocked(fetch).mockResolvedValue(Response.json({ message: "hello", userId: user.id }));
-        await expect(fixture.client.getCloudProfile()).resolves.toEqual({
-            enrollment: { status: "checking" },
-            profile: { firstName: null, username: null },
-        });
-
-        workos.refresh.mockResolvedValueOnce({
-            accessToken: "access-d",
-            refreshToken: "refresh-d",
-            user,
-        });
-        vi.mocked(fetch).mockImplementation(async (input, init) => {
-            const path = new URL(String(input)).pathname;
-            if (path === "/v0/hello") {
-                return Response.json({ message: "hello", userId: user.id });
-            }
-            expect(path).toBe("/v0/profile");
-            expect(init?.method).toBe("PUT");
-            return Response.json({ firstName: "Ada Lovelace", username: "ada" });
-        });
-        await expect(
-            fixture.client.enrollCloudProfile({
-                mutationId: "cloud-real-profile",
-                username: "ada",
-            }),
-        ).resolves.toEqual({
-            enrollment: { status: "enrolling", username: "ada" },
-            profile: { firstName: "Ada Lovelace", username: "ada" },
-        });
-        await vi.waitFor(async () => {
-            expect((await createCloudDatabase().read(fixture.context))?.session).toMatchObject({
-                enrollment: { status: "enrolled", username: "ada" },
-            });
-        });
-        expect(
-            vi
-                .mocked(fetch)
-                .mock.calls.some(
-                    ([, init]) =>
-                        init?.body ===
-                        JSON.stringify({ firstName: "Ada Lovelace", username: "ada" }),
-                ),
-        ).toBe(true);
-
         const events = await fixture.client.getEvents({ after: before });
         expect(events.events).toEqual(
             expect.arrayContaining([
@@ -638,83 +374,12 @@ describe("Cloud HTTP API", () => {
                     payload: { cloud: completed.cloud, mutationId: "cloud-real-complete" },
                     type: "cloud.updated",
                 }),
-                expect.objectContaining({
-                    payload: {
-                        mutationId: "cloud-real-profile",
-                        cloud: expect.objectContaining({
-                            enrollment: { status: "enrolling", username: "ada" },
-                        }),
-                    },
-                    type: "cloud.updated",
-                }),
             ]),
         );
         expect(JSON.stringify(events)).not.toContain("access-a");
         expect(JSON.stringify(events)).not.toContain("access-b");
-        expect(JSON.stringify(events)).not.toContain("access-c");
-        expect(JSON.stringify(events)).not.toContain("access-d");
         expect(JSON.stringify(events)).not.toContain("refresh-a");
         expect(JSON.stringify(events)).not.toContain("refresh-b");
-        expect(JSON.stringify(events)).not.toContain("refresh-c");
-        expect(JSON.stringify(events)).not.toContain("refresh-d");
-    });
-
-    it("carries a confirmed vault reset through the real durable Cloud module", async () => {
-        vi.mocked(CloudWorkOS.prototype.getVaultIdentity).mockResolvedValue("unknown-vault-key");
-        const deleteVault = vi
-            .spyOn(CloudWorkOS.prototype, "deleteVault")
-            .mockResolvedValue(undefined);
-        vi.mocked(fetch).mockImplementation(async (input, init) => {
-            const path = new URL(String(input)).pathname;
-            if (path === "/v0/hello") {
-                return Response.json({ message: "hello", userId: user.id });
-            }
-            if (path === "/v0/profile" && init?.method === "PUT") {
-                return Response.json({ firstName: "Ada Lovelace", username: "ada" });
-            }
-            throw new Error(`Unexpected Cloud request: ${path}`);
-        });
-        const fixture = await actualCloudApiFixture();
-
-        const authorizing = await fixture.client.startCloudAuthorization({
-            environment: "production",
-            redirectUri: "happy-auth://callback",
-        });
-        await fixture.client.completeCloudAuthorization({
-            callbackUrl: `happy-auth://callback?code=code-a&state=${encodeURIComponent(new URL(authorizing.cloud.authorization.url).searchParams.get("state") ?? `state-${"x".repeat(16)}`)}`,
-        });
-        await fixture.client.enrollCloudProfile({ username: "ada" });
-        await vi.waitFor(() => {
-            expect(fixture.cloud.status(fixture.context)).toMatchObject({
-                enrollment: { status: "enrolled" },
-                keys: { status: "restore_required" },
-            });
-        });
-        const before = fixture.api.cursor();
-
-        await expect(
-            fixture.client.deleteCloudKeys({
-                confirmation: "YES DELETE MY VAULT",
-                mutationId: "cloud-reset-real",
-            }),
-        ).resolves.toMatchObject({ cloud: { keys: { status: "create_required" } } });
-
-        expect(deleteVault).toHaveBeenCalledWith(expect.any(String));
-        const events = await fixture.client.getEvents({ after: before });
-        expect(
-            events.events
-                .filter((event) => event.type === "cloud.updated")
-                .map((event) => event.payload),
-        ).toEqual([
-            expect.objectContaining({
-                cloud: expect.objectContaining({ keys: { status: "resetting" } }),
-                mutationId: "cloud-reset-real",
-            }),
-            expect.objectContaining({
-                cloud: expect.objectContaining({ keys: { status: "create_required" } }),
-                mutationId: "cloud-reset-real",
-            }),
-        ]);
     });
 });
 
@@ -726,10 +391,6 @@ async function apiFixture(
     const context = createRootContext().named("cloud-api-test");
     let current = initial;
     let updated: CloudUpdatedListener | undefined;
-    let profileUpdated: ((ctx: Context) => void) | undefined;
-    let socialUpdated: CloudSocialUpdatedListener | undefined;
-    let social = socialUnenrolled;
-    let devices = [currentDevice, siblingDevice];
     const cloud = {
         complete: vi.fn(async (ctx: Context) => {
             current = connected;
@@ -742,42 +403,14 @@ async function apiFixture(
             return disconnected;
         }),
         createOrganization: vi.fn(async () => createdOrganization),
-        createKeys: vi.fn(async () => connected),
         deleteOrganization: vi.fn(async () => undefined),
-        deleteKeys: vi.fn(async () => connected),
-        getKeyBackup: vi.fn(async () => cloudKeyBackup),
-        getDevices: vi.fn(async () => ({ devices })),
         listOrganizations: vi.fn(async () => ({ organizations: [existingOrganization] })),
         mint: vi.fn(async () => ({ accessToken: "access-token", cloud: connected })),
-        getProfile: vi.fn(async () => ({ profile: { firstName: null, username: null } })),
-        getSocial: vi.fn(() => ({ cloudSocial: social })),
-        mutateSocial: vi.fn(async (ctx: Context) => {
-            social = socialWithFriend;
-            socialUpdated?.(ctx, social, "mutation");
-            return { cloudSocial: social };
-        }),
         onUpdated: vi.fn((listener: CloudUpdatedListener) => {
             updated = listener;
             return () => {
                 updated = undefined;
             };
-        }),
-        onProfileUpdated: vi.fn((listener: (ctx: Context) => void) => {
-            profileUpdated = listener;
-            return () => {
-                profileUpdated = undefined;
-            };
-        }),
-        onSocialUpdated: vi.fn((listener: CloudSocialUpdatedListener) => {
-            socialUpdated = listener;
-            return () => {
-                socialUpdated = undefined;
-            };
-        }),
-        restoreKeys: vi.fn(async () => connected),
-        removeDevice: vi.fn(async (_ctx: Context, id: string) => {
-            devices = devices.filter((device) => device.id !== id);
-            return { devices };
         }),
         start: vi.fn(async (ctx: Context) => {
             current = authorizing;
@@ -785,13 +418,6 @@ async function apiFixture(
             return authorizing;
         }),
         status: vi.fn(() => current),
-        socialStatus: vi.fn(() => social),
-        enrollProfile: vi.fn(async (ctx: Context) => {
-            social = socialEnrolled;
-            socialUpdated?.(ctx, social, "mutation");
-            profileUpdated?.(ctx);
-            return { profile: { firstName: "Ada", username: "ada" } };
-        }),
     };
     const subscriptions = new Proxy(
         {},
@@ -836,20 +462,16 @@ async function apiFixture(
 async function actualCloudApiFixture() {
     const directory = await mkdtemp(join(tmpdir(), "happy-cloud-api-real-"));
     const durableFunctions = new DurableFunctionsModule();
-    const profile = testProfileModule();
-    const cloud = new CloudModule(durableFunctions, profile);
+    const cloud = new CloudModule(durableFunctions);
     const database = moduleDatabase(
-        [...cloud.migrations, ...profile.migrations, ...durableFunctions.migrations],
+        [...cloud.migrations, ...durableFunctions.migrations],
         "cloud-api-real",
     );
     ensureAgentDatabaseConnection(database.database);
     await database.ready;
-    await profile.open(database.context, "test-instance");
     await resolveModuleHooks(database.context, cloud);
     const durableHooks = await resolveModuleHooks(database.context, durableFunctions);
     await durableHooks.afterStart?.(database.context, {} as never);
-    const local = await profile.ensure(database.context);
-    await profile.update(database.context, local.id, { name: "Ada Lovelace" });
     const subscriptions = new Proxy(
         {},
         {

@@ -1,13 +1,9 @@
-import { agentDatabaseRun } from "@slopus/happy-agent-base";
+import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
 import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-    cloudEnrollment,
-    cloudMigrations,
-    cloudSession,
-    createCloudDatabase,
-} from "../../sources/cloud/CloudDatabase.js";
+import { cloudSession, createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
+import { cloudMigrations } from "../../sources/cloud/CloudMigrations.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 
 const databases: ModuleDatabase[] = [];
@@ -45,9 +41,7 @@ describe("Cloud storage", () => {
             {
                 error: null,
                 pending: false,
-                session: cloudSession("production", "refresh-a", user, {
-                    status: "create_required",
-                }),
+                session: cloudSession("production", "refresh-a", user),
             },
             () => 999,
         );
@@ -55,13 +49,6 @@ describe("Cloud storage", () => {
         expect(connected.version > authorizing.version).toBe(true);
         expect(connected.updatedAt).toBe(999);
         await expect(store.read(database.context)).resolves.toEqual(connected);
-
-        const resetting = await store.replace(database.context, {
-            error: null,
-            pending: false,
-            session: { ...connected.session!, keys: { status: "resetting" } },
-        });
-        expect(resetting.session?.keys).toEqual({ status: "resetting" });
     });
 
     it("commits a rotated refresh token without changing the public version", async () => {
@@ -69,7 +56,7 @@ describe("Cloud storage", () => {
         const connected = await store.replace(database.context, {
             error: null,
             pending: false,
-            session: cloudSession("staging", "refresh-a", user, { status: "restore_required" }),
+            session: cloudSession("staging", "refresh-a", user),
         });
 
         const rotated = await store.rotateRefreshToken(database.context, "refresh-a", "refresh-b");
@@ -82,32 +69,72 @@ describe("Cloud storage", () => {
         ).rejects.toThrow("changed while it was refreshing");
     });
 
-    it("stores enrollment as public versioned Cloud state", async () => {
-        const { database, store } = await fixture("cloud-storage-enrollment");
-        const connected = await store.replace(database.context, {
-            error: null,
-            pending: false,
-            session: cloudSession("production", "refresh-a", user, {
-                status: "create_required",
-            }),
-        });
-        const profileVersion = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
-
-        const enrolled = await store.replace(database.context, {
+    it("retains the seven historical migrations and removes only retired state on upgrade", async () => {
+        expect(cloudMigrations.map(([key]) => key)).toEqual([
+            "001-cloud-state",
+            "002-cloud-social-state",
+            "003-cloud-keys",
+            "004-cloud-murmur-store",
+            "005-cloud-enrollment",
+            "006-cloud-disconnect",
+            "007-cloud-disconnect-refresh-token",
+            "008-cloud-workos-only",
+        ]);
+        const database = moduleDatabase(cloudMigrations.slice(0, 7), "cloud-upgrade");
+        databases.push(database);
+        await database.ready;
+        const state = {
             error: null,
             pending: false,
             session: {
-                ...connected.session!,
-                enrollment: cloudEnrollment("ada", profileVersion),
+                environment: "staging",
+                refreshToken: "retained-refresh",
+                user,
+                enrollment: { status: "enrolled", username: "ada", profileVersion: null },
+                keys: { status: "ready" },
+                keysReconciliationCallId: "obsolete-call",
             },
+            updatedAt: 1_000,
+            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+        };
+        await agentDatabaseRun(
+            database.context.db,
+            sql`INSERT INTO happy_agent_cloud_state (singleton_id, state_json)
+                VALUES (1, ${JSON.stringify(state)})`,
+        );
+        await agentDatabaseRun(
+            database.context.db,
+            sql`CREATE TABLE unrelated_state (value TEXT NOT NULL)`,
+        );
+        await agentDatabaseRun(
+            database.context.db,
+            sql`INSERT INTO unrelated_state (value) VALUES ('keep')`,
+        );
+        const migrate = cloudMigrations[7]![1];
+        await migrate(database.context, database.database);
+        await migrate(database.context, database.database);
+        const store = createCloudDatabase();
+        await expect(store.read(database.context)).resolves.toEqual({
+            ...state,
+            session: { environment: "staging", refreshToken: "retained-refresh", user },
         });
-
-        expect(enrolled.version > connected.version).toBe(true);
-        expect(enrolled.session?.enrollment).toEqual({
-            profileVersion,
-            status: "enrolled",
-            username: "ada",
-        });
+        const tables = await agentDatabaseRows<{ name: string }>(
+            database.context.db,
+            sql`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`,
+        );
+        expect(tables.map(({ name }) => name)).toEqual([
+            "happy_agent_cloud_state",
+            "unrelated_state",
+        ]);
+        expect(
+            await agentDatabaseRows(database.context.db, sql`SELECT value FROM unrelated_state`),
+        ).toEqual([{ value: "keep" }]);
+        const signedOut = await store.replace(
+            database.context,
+            { error: null, pending: false, session: null },
+            () => 999,
+        );
+        expect(signedOut.version > state.version).toBe(true);
     });
 
     it("rejects malformed durable state", async () => {

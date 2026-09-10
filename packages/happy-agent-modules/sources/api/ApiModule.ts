@@ -13,7 +13,6 @@ import {
     secretAttachmentMutationRequestSchema,
     updateSecretRequestSchema,
     archiveBotRequestSchema,
-    cloudKeyValueSchema,
     createBotRequestSchema,
     renameBotRequestSchema,
     reorderBotRequestSchema,
@@ -57,7 +56,7 @@ import {
 import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
 import { NodeModule } from "../node/index.js";
-import { CloudModule, CloudOperationError, type CloudSocialMutationKind } from "../cloud/index.js";
+import { CloudModule, CloudOperationError } from "../cloud/index.js";
 import { EventsModule, eventIdSchema, type AgentEvent } from "../events/index.js";
 import {
     fileReadQuerySchema,
@@ -174,15 +173,11 @@ import {
     apiIdSchema,
     cloudMutationRequestSchema,
     cloudOrganizationSchema,
-    cloudSocialMutationRequestSchema,
     completeCloudAuthorizationRequestSchema,
     createCloudOrganizationRequestSchema,
-    createCloudKeysRequestSchema,
-    deleteCloudKeysRequestSchema,
     documentBodySchema,
     draftBodySchema,
     emptyMutationBodySchema,
-    enrollCloudProfileRequestSchema,
     gitWatchBodySchema,
     invokeSlashCommandRequestSchema,
     messageSendBodySchema,
@@ -193,7 +188,6 @@ import {
     questionAnswerBodySchema,
     renameBodySchema,
     reorderBodySchema,
-    restoreCloudKeysRequestSchema,
     securityDocumentBodySchema,
     startCloudAuthorizationRequestSchema,
     terminalCreateBodySchema,
@@ -842,124 +836,6 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, { deleted: true });
                 return;
             }
-            if (request.method === "POST" && url.pathname === "/v0/cloud/keys/create") {
-                const body = await bodyAs(
-                    request,
-                    createCloudKeysRequestSchema,
-                    "Cloud key creation",
-                    8 * 1_024,
-                );
-                const cloud = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#cloudOperation(() => this.#cloud.createKeys(ctx, body)),
-                );
-                sendJson(response, 200, { cloud });
-                return;
-            }
-            if (request.method === "POST" && url.pathname === "/v0/cloud/keys/restore") {
-                const body = await bodyAs(
-                    request,
-                    restoreCloudKeysRequestSchema,
-                    "Cloud key restoration",
-                    8 * 1_024,
-                );
-                const cloud = await this.#withMutationId(
-                    body.mutationId,
-                    async () =>
-                        await this.#cloudOperation(() => this.#cloud.restoreKeys(ctx, body)),
-                );
-                sendJson(response, 200, { cloud });
-                return;
-            }
-            if (request.method === "DELETE" && url.pathname === "/v0/cloud/keys") {
-                const body = await bodyAs(
-                    request,
-                    deleteCloudKeysRequestSchema,
-                    "Cloud vault reset",
-                    2 * 1_024,
-                );
-                const cloud = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#cloudOperation(() => this.#cloud.deleteKeys(ctx, body)),
-                );
-                sendJson(response, 200, { cloud });
-                return;
-            }
-            if (request.method === "GET" && url.pathname === "/v0/cloud/keys/backup") {
-                const backup = await this.#cloudOperation(() => this.#cloud.getKeyBackup(ctx));
-                sendJson(response, 200, { backup });
-                return;
-            }
-            if (request.method === "GET" && url.pathname === "/v0/cloud/devices") {
-                sendJson(
-                    response,
-                    200,
-                    await this.#cloudOperation(() => this.#cloud.getDevices(ctx)),
-                );
-                return;
-            }
-            if (request.method === "DELETE" && url.pathname.startsWith("/v0/cloud/devices/")) {
-                const match = /^\/v0\/cloud\/devices\/([^/]+)$/.exec(url.pathname);
-                if (match === null) throw invalidRequest("The Cloud device route is invalid.");
-                await requireEmptyBody(request);
-                const deviceId = decodePathSegment(match[1]!, "Cloud device ID");
-                if (!Value.Check(cloudKeyValueSchema, deviceId)) {
-                    throw invalidRequest("The Cloud device ID is invalid.");
-                }
-                sendJson(
-                    response,
-                    200,
-                    await this.#cloudOperation(() => this.#cloud.removeDevice(ctx, deviceId)),
-                );
-                return;
-            }
-            if (request.method === "GET" && url.pathname === "/v0/cloud/profile") {
-                sendJson(
-                    response,
-                    200,
-                    await this.#cloudOperation(() => this.#cloud.getProfile(ctx)),
-                );
-                return;
-            }
-            if (request.method === "PUT" && url.pathname === "/v0/cloud/profile") {
-                const body = await bodyAs(
-                    request,
-                    enrollCloudProfileRequestSchema,
-                    "Cloud enrollment",
-                    8 * 1_024,
-                );
-                const result = await this.#withMutationId(body.mutationId, async () => {
-                    return await this.#cloudOperation(() => this.#cloud.enrollProfile(ctx, body));
-                });
-                sendJson(response, 200, result);
-                return;
-            }
-            if (request.method === "GET" && url.pathname === "/v0/cloud/social") {
-                sendJson(response, 200, this.#cloud.getSocial(ctx));
-                return;
-            }
-            const cloudSocialMutation = parseCloudSocialMutation(request.method, url.pathname);
-            if (cloudSocialMutation !== undefined) {
-                const body = await optionalBodyAs(
-                    request,
-                    cloudSocialMutationRequestSchema,
-                    "Cloud friends request",
-                    2 * 1_024,
-                );
-                const result = await this.#withMutationId(
-                    body.mutationId,
-                    async () =>
-                        await this.#cloudOperation(() =>
-                            this.#cloud.mutateSocial(
-                                ctx,
-                                cloudSocialMutation.mutation,
-                                cloudSocialMutation.username,
-                            ),
-                        ),
-                );
-                sendJson(response, 200, result);
-                return;
-            }
             if (request.method === "GET" && url.pathname === "/v0/integrations/happy") {
                 sendJson(response, 200, { integration: this.#happy.integration(ctx) });
                 return;
@@ -1480,19 +1356,6 @@ export class ApiModule implements AgentModule {
             }),
             this.#cloud.onUpdated((_eventCtx, cloud) => {
                 this.#journal.append("cloud.updated", { cloud }, cloud.updatedAt);
-            }),
-            this.#cloud.onProfileUpdated(() => {
-                this.#journal.append("cloud.profile.updated", {});
-            }),
-            this.#cloud.onSocialUpdated((_eventCtx, social, origin) => {
-                const append = (): void => {
-                    this.#journal.append("cloud.social.updated", { version: social.version });
-                };
-                if (origin === "background") {
-                    this.#journal.appendOutsideMutation("cloud.social.updated", {
-                        version: social.version,
-                    });
-                } else append();
             }),
             this.#happy.onIntegrationUpdated((_eventCtx, integration) => {
                 this.#journal.append(
@@ -4688,13 +4551,8 @@ export class ApiModule implements AgentModule {
             return await operation();
         } catch (error: unknown) {
             if (error instanceof CloudOperationError) {
-                const details = {
-                    cloud: error.cloud,
-                    ...(error.cloudSocial === undefined ? {} : { cloudSocial: error.cloudSocial }),
-                    ...(error.devices === undefined ? {} : { devices: error.devices }),
-                };
                 throw new ApiError(error.status, error.code, error.message, {
-                    ...details,
+                    cloud: error.cloud,
                 });
             }
             throw error;
@@ -5011,7 +4869,6 @@ export class ApiModule implements AgentModule {
             profile,
             onboarding,
             cloud: this.#cloud.status(ctx),
-            cloudSocial: this.#cloud.socialStatus(ctx),
             happyIntegration: this.#happy.integration(ctx),
             bots: await Promise.all(bots.map(async (bot) => await this.#botResource(ctx, bot))),
             projects: await Promise.all(
@@ -5683,12 +5540,6 @@ async function optionalBodyAs<Schema extends TSchema>(
     return value as Static<Schema>;
 }
 
-async function requireEmptyBody(request: IncomingMessage): Promise<void> {
-    if ((await readBytes(request, 2 * 1_024)).byteLength !== 0) {
-        throw invalidRequest("This request must not have a body.");
-    }
-}
-
 function queryAs<Schema extends TSchema>(
     value: unknown,
     schema: Schema,
@@ -6115,41 +5966,6 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
         return JSON.stringify(left) === JSON.stringify(right);
     } catch {
         return false;
-    }
-}
-
-function parseCloudSocialMutation(
-    method: string | undefined,
-    pathname: string,
-): { readonly mutation: CloudSocialMutationKind; readonly username: string } | undefined {
-    if (method !== "DELETE" && method !== "POST" && method !== "PUT") return undefined;
-    const request = /^\/v0\/cloud\/social\/requests\/([^/]+)$/.exec(pathname);
-    const decision = /^\/v0\/cloud\/social\/requests\/([^/]+)\/(approve|reject)$/.exec(pathname);
-    const blocked = /^\/v0\/cloud\/social\/blocked\/([^/]+)$/.exec(pathname);
-    let mutation: CloudSocialMutationKind | undefined;
-    let encodedUsername: string | undefined;
-    if (request !== null && method === "PUT") {
-        mutation = "send-request";
-        encodedUsername = request[1];
-    } else if (request !== null && method === "DELETE") {
-        mutation = "revoke-request";
-        encodedUsername = request[1];
-    } else if (decision !== null && method === "POST") {
-        mutation = decision[2] === "approve" ? "approve-request" : "reject-request";
-        encodedUsername = decision[1];
-    } else if (blocked !== null && method === "PUT") {
-        mutation = "block";
-        encodedUsername = blocked[1];
-    } else if (blocked !== null && method === "DELETE") {
-        mutation = "unblock";
-        encodedUsername = blocked[1];
-    } else if (pathname.startsWith("/v0/cloud/social/")) {
-        throw invalidRequest("The Cloud friends route is invalid.");
-    } else return undefined;
-    try {
-        return { mutation, username: decodeURIComponent(encodedUsername!) };
-    } catch {
-        throw invalidRequest("The Cloud username is invalid.");
     }
 }
 
