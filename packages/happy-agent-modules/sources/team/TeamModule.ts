@@ -235,6 +235,18 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
         return await this.findUserByWorkOSUserId(ctx, identity.workosUserId);
     }
 
+    /** Bind an independently owned personal connection to its locally onboarded member. */
+    connectionContext(ctx: Context, user: TeamUser): Context {
+        return withTeamUser(
+            withTeamIdentity(ctx, {
+                organizationId:
+                    this.#config.configuration.values.feature.team.workosOrganizationId!,
+                workosUserId: user.workosUserId,
+            }),
+            user,
+        );
+    }
+
     /** Create one durable team member, deriving owner status only from deployment config. */
     async createUser(ctx: Context, input: CreateTeamUserInput): Promise<TeamUser> {
         if (!Value.Check(createTeamUserInputSchema, input)) {

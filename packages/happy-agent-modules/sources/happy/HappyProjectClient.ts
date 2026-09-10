@@ -48,6 +48,7 @@ interface RemoteProjectIdentity {
 }
 
 export interface HappyProjectClientOptions {
+    readonly ownerId?: string;
     readonly avatarAsset: (
         ctx: Context,
         projectId: string,
@@ -198,7 +199,10 @@ export class HappyProjectClient {
             "POST",
             {
                 dataEncryptionKey: wrapped,
-                externalId: state.localProjectId,
+                externalId:
+                    this.#options.ownerId === undefined
+                        ? state.localProjectId
+                        : `${this.#options.ownerId}:${state.localProjectId}`,
                 metadata: encodedMetadata,
             },
         );

@@ -1,3 +1,4 @@
+import { personalProjectMigration } from "./persistence/personalConnectionMigrations.js";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
@@ -42,6 +43,7 @@ export const happyProjectSyncMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    personalProjectMigration,
 ];
 
 interface HappyProjectSyncRow {
@@ -58,7 +60,7 @@ interface HappyProjectSyncRow {
 }
 
 /** Durable local-to-remote project identity and upload high-water marks. */
-export function createHappyProjectSyncDatabase() {
+export function createHappyProjectSyncDatabase(ownerId = "") {
     async function read(
         ctx: Context,
         localProjectId: string,
@@ -66,7 +68,7 @@ export function createHappyProjectSyncDatabase() {
         const rows = await agentDatabaseRows<HappyProjectSyncRow>(
             ctx.db,
             sql`SELECT * FROM ${sql.raw(PROJECTS_TABLE)}
-                WHERE local_project_id = ${localProjectId} LIMIT 1`,
+                WHERE owner_id = ${ownerId} AND local_project_id = ${localProjectId} LIMIT 1`,
         );
         const row = rows[0];
         return row === undefined ? undefined : parse(row);
@@ -92,19 +94,19 @@ export function createHappyProjectSyncDatabase() {
                 await agentDatabaseRun(
                     ctx.db,
                     sql`DELETE FROM ${sql.raw(PROJECTS_TABLE)}
-                        WHERE local_project_id = ${input.localProjectId}`,
+                        WHERE owner_id = ${ownerId} AND local_project_id = ${input.localProjectId}`,
                 );
             }
             await agentDatabaseRun(
                 ctx.db,
                 sql`INSERT INTO ${sql.raw(PROJECTS_TABLE)}
-                    (local_project_id, credential_fingerprint, remote_project_id,
+                    (owner_id, local_project_id, credential_fingerprint, remote_project_id,
                      encryption_variant, encryption_key_base64, metadata_fingerprint,
                      avatar_fingerprint, avatar_version, created_at_ms, updated_at_ms)
-                    VALUES (${input.localProjectId}, ${input.credentialFingerprint}, NULL,
+                    VALUES (${ownerId}, ${input.localProjectId}, ${input.credentialFingerprint}, NULL,
                             ${input.encryptionVariant}, ${input.encryptionKeyBase64}, NULL,
                             NULL, NULL, ${now}, ${now})
-                    ON CONFLICT (local_project_id) DO NOTHING`,
+                    ON CONFLICT (owner_id, local_project_id) DO NOTHING`,
             );
             const created = await read(ctx, input.localProjectId);
             if (created === undefined) {
@@ -125,7 +127,7 @@ export function createHappyProjectSyncDatabase() {
                     SET remote_project_id = ${remoteProjectId}, metadata_fingerprint = NULL,
                         avatar_fingerprint = NULL, avatar_version = NULL,
                         updated_at_ms = ${now}
-                    WHERE local_project_id = ${localProjectId}`,
+                    WHERE owner_id = ${ownerId} AND local_project_id = ${localProjectId}`,
             );
         },
 
@@ -136,7 +138,7 @@ export function createHappyProjectSyncDatabase() {
                     SET remote_project_id = NULL, metadata_fingerprint = NULL,
                         avatar_fingerprint = NULL, avatar_version = NULL,
                         updated_at_ms = ${now}
-                    WHERE local_project_id = ${localProjectId}`,
+                    WHERE owner_id = ${ownerId} AND local_project_id = ${localProjectId}`,
             );
         },
 
@@ -150,7 +152,7 @@ export function createHappyProjectSyncDatabase() {
                 ctx.db,
                 sql`UPDATE ${sql.raw(PROJECTS_TABLE)}
                     SET metadata_fingerprint = ${fingerprint}, updated_at_ms = ${now}
-                    WHERE local_project_id = ${localProjectId}`,
+                    WHERE owner_id = ${ownerId} AND local_project_id = ${localProjectId}`,
             );
         },
 
@@ -166,7 +168,7 @@ export function createHappyProjectSyncDatabase() {
                 sql`UPDATE ${sql.raw(PROJECTS_TABLE)}
                     SET avatar_fingerprint = ${fingerprint}, avatar_version = ${version},
                         updated_at_ms = ${now}
-                    WHERE local_project_id = ${localProjectId}`,
+                    WHERE owner_id = ${ownerId} AND local_project_id = ${localProjectId}`,
             );
         },
     };

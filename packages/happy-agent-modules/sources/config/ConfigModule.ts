@@ -1880,6 +1880,14 @@ export class ConfigModule implements AgentModule {
         return value.length > MAX_CONFIG_STRING_LENGTH ? undefined : value;
     }
 
+    /** Private data root for a locally onboarded member's mobile connection. */
+    happyMobileDataDirectory(userId: string): string {
+        if (!Value.Check(Type.String({ pattern: "^[a-z][a-z0-9]{1,31}$" }), userId)) {
+            throw new Error("The mobile connection owner is invalid.");
+        }
+        return join(this.configuration.paths.agentHome, "users", userId);
+    }
+
     /** The process-level Happy settings used to find and authorize the mobile integration. */
     get happyEnvironment(): Readonly<NodeJS.ProcessEnv> {
         const environment: NodeJS.ProcessEnv = {};

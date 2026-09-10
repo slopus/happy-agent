@@ -44,6 +44,7 @@ export class ApiEventJournal {
     readonly #capacity: number;
     readonly #events: ApiEvent[] = [];
     readonly #listeners = new Set<ApiEventListener>();
+    readonly #owners = new WeakMap<ApiEvent, string>();
     readonly #createCursor: () => string;
     #originCursor: string;
 
@@ -64,7 +65,7 @@ export class ApiEventJournal {
         return this.#events.at(0)?.cursor ?? this.#originCursor;
     }
 
-    append(type: string, payload: unknown, occurredAt = Date.now()): ApiEvent {
+    append(type: string, payload: unknown, occurredAt = Date.now(), ownerId?: string): ApiEvent {
         const event: ApiEvent = Object.freeze({
             cursor: this.#createCursor(),
             occurredAt: Math.max(0, Math.trunc(occurredAt)),
@@ -74,6 +75,7 @@ export class ApiEventJournal {
         if (!Value.Check(apiEventSchema, event)) {
             throw new Error("The converted API event is invalid.");
         }
+        if (ownerId !== undefined) this.#owners.set(event, ownerId);
         this.#events.push(event);
         if (this.#events.length > this.#capacity) {
             const removed = this.#events.shift();
@@ -81,6 +83,14 @@ export class ApiEventJournal {
         }
         for (const listener of [...this.#listeners]) listener(event);
         return event;
+    }
+
+    /** Owner metadata is bounded by retained events and never enters the wire envelope. */
+    visibleTo(event: ApiEvent, userId: string | undefined): boolean {
+        const owner = this.#owners.get(event);
+        if (owner !== undefined) return owner === userId;
+        // An unowned mobile snapshot belongs to standalone mode, never to a team member.
+        return event.type !== "happy.integration.updated" || userId === undefined;
     }
 
     /**

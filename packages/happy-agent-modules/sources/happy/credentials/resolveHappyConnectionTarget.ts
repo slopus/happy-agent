@@ -14,6 +14,7 @@ export interface HappyConnectionTarget {
 
 /** Resolves where a new pairing is stored and which Happy server authorizes it. */
 export async function resolveHappyConnectionTarget(options: {
+    adoptExternalSettings?: boolean;
     dataDirectory: string;
     environment?: NodeJS.ProcessEnv;
     homeDirectory?: string;
@@ -23,7 +24,9 @@ export async function resolveHappyConnectionTarget(options: {
     const targetPaths = getHappyPaths(options.dataDirectory);
     const sourceHome = resolveHappyHome(environment, homeDirectory);
     const [sourceSettings, targetSettings] = await Promise.all([
-        readJson(join(sourceHome, "settings.json")),
+        options.adoptExternalSettings === false
+            ? undefined
+            : readJson(join(sourceHome, "settings.json")),
         readJson(targetPaths.settingsPath),
     ]);
     const sourceServerUrl = readString(sourceSettings, "serverUrl");

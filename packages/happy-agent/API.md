@@ -1337,10 +1337,43 @@ the authoritative current `cloud` and never include credentials or upstream resp
 
 ## Happy integration
 
-The Happy integration connects this daemon to the Happy mobile app. Its state is runtime,
-installation-wide state rather than a durable resource guarded by `If-Match`: the daemon exposes
-one current snapshot and announces complete replacements whenever it changes. Credentials,
-tokens, private keys, and server responses are never exposed through this API.
+The Happy integration connects this daemon to the Happy mobile app. It is separate from Cloud's
+WorkOS authentication and organization management; personal mobile connections do not change
+the Cloud API. Its state is runtime state rather than a durable resource guarded by `If-Match`:
+the daemon exposes one current snapshot per connection owner and announces complete replacements
+whenever it changes. Credentials, tokens, private keys, and server responses are never exposed
+through this API.
+
+In standalone mode, the connection remains installation-wide. In team mode, every locally
+onboarded user owns a separate personal mobile connection, identified by their installation-local
+Happy user ID. Authentication selects the owner for every integration endpoint and desktop
+bootstrap; clients cannot supply an owner override. Even the installation owner can only manage
+their own mobile connection through these endpoints.
+
+This scoping is transparent to clients. Existing routes, request and response bodies, bootstrap
+fields, and event payloads are unchanged. No owner field is added to the integration snapshot or
+event payload, and no protocol-version bump, client capability check, or SDK release is needed.
+Connection ownership and event visibility are daemon-internal state derived from authentication.
+
+Team users pair independently and the daemon maintains their mobile connections in parallel.
+Pairing attempts, credentials and encryption keys, remote machine and session bindings, sync
+progress, connection status, and version high-water marks are isolated by owner. Starting,
+cancelling, unlinking, re-pairing, or rejecting credentials for one user never replaces or closes
+another user's connection. A slow or unavailable connection must not block another user's
+pairing or synchronization. Restart reconnects each user's saved connection independently,
+without requiring that user to have an open desktop connection.
+
+Team mode never imports installation-wide or external Happy CLI credentials into a user's
+connection and never assigns an existing installation-wide mobile link to a member. Each member
+must explicitly pair their own account; unowned installation credentials remain unused and are
+not deleted. A shared integration-disable setting still disables all mobile connections without
+mixing their credentials or snapshots. Standalone credential adoption remains unchanged.
+
+Personal connections do not change the team's existing access to shared projects, agents, or
+bots. Each connection synchronizes the work its owner may access through the team API, using
+its own remote bindings. Incoming mobile messages carry that connection owner's authenticated
+Happy user ID in `metadata.userId`; the mobile payload cannot override it. Other incoming mobile
+operations execute with the same team-user authority, not installation-owner authority.
 
 ### The Happy integration object
 
@@ -1399,9 +1432,11 @@ The fields form a status-discriminated state rather than independent flags:
 - `"failed"` has an error and no authorization, and may be configured or unconfigured depending
   on which operation failed.
 
-The daemon durably preserves the integration version high-water mark. Every replacement is greater
-than every integration version that installation previously exposed, including across daemon
-restarts and system-clock rollback.
+The daemon durably preserves the integration version high-water mark for each owner. Every
+replacement is greater than every integration version previously exposed for that owner,
+including across daemon restarts and system-clock rollback. Versions belonging to different
+users are not compared. Clients switching authenticated users discard the previous user's
+integration snapshot and reload the new user's bootstrap and event stream.
 
 Pairing state and its ephemeral private key live only in this daemon process. A restart abandons
 an unfinished attempt and returns to `"disconnected"`; durable credentials survive and the new
@@ -1411,7 +1446,15 @@ When Happy rejects credentials, the daemon removes its owned copy and remembers 
 the matching external Happy CLI credential. Restarting must not import that same rejected credential
 again. A genuinely changed external credential may be imported, and successful pairing clears the
 rejection marker. The same suppression applies when a person explicitly unlinks the integration;
-unlinking never edits the external Happy CLI installation.
+unlinking never edits the external Happy CLI installation. These external-credential rules apply
+only in standalone mode; team connections use only their individually paired credentials.
+
+All operations below address the selected owner's connection. In team mode, reads, mutation
+responses and errors, and desktop bootstrap contain only the authenticated user's integration.
+`happy.integration.updated` is delivered only to that owner, both in event pulls and in live or
+replayed SSE. Other members never receive its snapshot, authorization payload, or error. An old
+installation-wide integration event with no owner is not delivered to team clients. This
+privacy boundary is enforced by the daemon, not by client-side filtering.
 
 ### `GET /v0/integrations/happy`
 
@@ -1452,9 +1495,10 @@ Response — `200`: `{ "integration": { ... } }`. A cancelled pairing emits one
 
 ### `DELETE /v0/integrations/happy`
 
-Unlinks this daemon from Happy. The operation cancels pairing, closes the live Happy connection,
-removes daemon-owned credentials, and suppresses re-import of the exact external credential that
-was present when the person unlinked. It never changes or deletes the external Happy CLI
+Unlinks the selected owner's mobile connection from Happy. The operation cancels pairing, closes
+that owner's live Happy connection, and removes their daemon-owned credentials. In standalone
+mode it also suppresses re-import of the exact external credential present when the person
+unlinked. It never changes or deletes external Happy CLI credentials or another team user's
 credentials. The operation is idempotent and has no request body.
 
 The resulting snapshot is unconfigured, with no authorization or error. Its status is
@@ -4373,9 +4417,11 @@ event is idempotent by attachment ID.
   reconciling it with a snapshot.
     - `cloud` (full Cloud object).
     - `mutationId` — echoed when an API mutation caused the change.
-- `happy.integration.updated` — the installation-wide Happy connection state changed. This is
-  a complete replacement rather than a version-chain diff; clients keep the greater embedded
-  `version` when reconciling it with a snapshot.
+- `happy.integration.updated` — the Happy mobile connection state changed: installation-wide in
+  standalone mode, private to the authenticated connection owner in team mode. This is a complete
+  replacement rather than a version-chain diff; clients keep the greater embedded `version` when
+  reconciling snapshots for the same owner. Team clients never receive another owner's event or
+  an unowned installation-wide integration event.
     - `integration` (full Happy integration object).
 
 The set grows with the product; clients skip event types they do not recognize.
@@ -4406,6 +4452,13 @@ Response — `200`:
 
 `cursor` is where this page ended — pass it as the next `after`. `latestCursor` is the newest
 event the daemon holds, so the client knows how far behind it still is.
+
+In team mode, private Happy integration events are filtered by authenticated owner before their
+payloads are returned. Journal cursors remain opaque installation-wide positions: `cursor`
+advances past scanned events hidden from that user, and `latestCursor` still describes the
+journal, not just visible events. A page may therefore contain no events while advancing its
+cursor. Filtering must not strand pagination behind another user's events or change cursor
+retention and `cursor_unavailable` semantics.
 
 When `after` has fallen out of the journal window — `409`:
 
@@ -4451,6 +4504,10 @@ protocol-22 daemons. `HappyAgentClient.updates()` emits `daemon_started` once fo
 After `hello`, every event is one SSE frame: the SSE `id:` field carries the event's `cursor`
 (feeding `Last-Event-ID`), the `event:` field is the event's `type`, and `data:` is the
 envelope.
+In team mode, the same owner filtering applies to replay and live delivery. Hidden Happy
+integration events produce no event frame for another member; resuming after the last visible
+cursor must still deliver all subsequent visible events in journal order. The hello cursor and
+gap rules retain their installation-wide journal meaning.
 Comment heartbeats keep the connection alive through proxies; clients ignore them. A client
 that falls too far behind reading is disconnected rather than buffered without bound, and comes
 back with its last cursor — landing in either the resumed or the gap case above.
@@ -4595,6 +4652,10 @@ Response — `200`:
   objects from their own endpoints. `cloud` and `happyIntegration` are additive
   and may be absent on an older compatible daemon; a daemon old enough to omit one does not serve
   that feature's endpoints either.
+- In team mode, `happyIntegration` is exactly the authenticated user's personal mobile snapshot,
+  with the same wire shape, never another member's connection or an installation-wide fallback.
+  The bootstrap cursor and owner-filtered event stream preserve the same snapshot-to-stream
+  guarantee as standalone mode. The separate `cloud` object is unchanged.
 - `config.node` — the installation's name and nullable avatar ThumbHash metadata are already
   part of the config object, not a separate bootstrap field. Optional for older compatible
   daemons; `avatar: null` explicitly means no image is set.

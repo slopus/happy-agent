@@ -3,6 +3,13 @@
 This module connects an agent to Happy, the mobile app. A session running here
 shows up on the phone, streams as it works, and can be driven from there.
 
+`HappyModule` owns one `HappyConnection` per authenticated team user, or the existing single
+connection in standalone mode. Team credentials live under `<data>/users/<userId>/happy/` and
+never adopt the shared Happy CLI login. The unchanged API selects the caller's connection from
+authentication; pairing, status, bootstrap, and events are private to that user. Every connection
+has its own lifecycle, locks, machine registration, and session/project sync state. Incoming
+mobile messages retain the connection owner's team identity.
+
 ```
 Happy CLI credentials       API QR pairing
         |                         |
@@ -50,18 +57,18 @@ key, so the account secret never leaves the phone.
 ## Storage
 
 The sync database has two tables for what a restart must not lose.
-`happy_agent_happy_sessions` holds one row per attached agent: the session it
+`happy_agent_happy_sessions` holds one row per owner and attached agent: the session it
 mirrors, the tag that keeps remote session creation idempotent, the key its
 payloads are encrypted with, how far Happy's own stream has been read, and how
 far the agent's history has been projected. `happy_agent_happy_outbox` holds
 the messages that are written but not yet accepted, in the order they were
 produced.
 
-Both belong to the account that produced them. Signing in to a different
+Both are keyed by connection owner as well as agent, and belong to the account that produced them. Signing in to a different
 account discards the remote identity, the cursor and the queue, because none of
 it belongs to the new account.
 
-Integration metadata has its own singleton table. It keeps the public
+Integration metadata has one row per connection owner (the empty owner is standalone). It keeps the public
 snapshot's UUIDv7 high-water mark monotonic across restart and clock rollback,
 and remembers bounded SHA-256 fingerprints of credentials this daemon must not
 adopt again. Happy rejection and explicit unlink both suppress only the exact
@@ -97,7 +104,7 @@ catalogs and the same journal the daemon's HTTP routes write to. That is what
 makes a session driven from the phone and the same session driven from a desktop
 client leave identical history behind.
 
-`HappyModule` does that work itself, and hands its own pieces only the narrow
+Each module-owned `HappyConnection` does that work, and hands its own pieces only the narrow
 contract each of them needs — `HappySessionOperations` for the session client,
 `HappySpawnOperations` for a phone starting something new — so the wire handling
 can be exercised without a daemon behind it.

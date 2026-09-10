@@ -1,5 +1,22 @@
 # Happy module learnings
 
+## Personal team connections are transparent to clients
+
+Adding an owner field and a protocol bump for personal mobile connections was unnecessary.
+The agreed contract keeps the existing routes, request and response shapes, bootstrap, and event
+payloads unchanged: authentication selects the user's connection inside the daemon, including
+private event delivery. Each team user owns independent pairing, credentials, and parallel mobile
+connections; standalone behavior stays installation-wide. This is internal ownership and routing,
+not a new client capability, so it needs documentation and daemon work, not an SDK release or
+protocol-version negotiation. Happy mobile is separate from the WorkOS-based Cloud integration.
+
+The module now owns one connection lifecycle per user. Owner-keyed storage isolates projection
+cursors, queued messages, remote bindings, and rejection fingerprints even when two members pair
+the same mobile account. Credentials never come from the shared CLI login in team mode. Pairing's
+independent context retains the member identity so subsequent mobile RPCs and messages cannot
+fall back to standalone authority. Existing standalone records retain the empty owner through
+new migrations; no existing migration is rewritten and no old link is assigned to a team member.
+
 ## Rich user input remains one message
 
 Text envelopes carrying an explicit tool request retain their ordered input blocks in optional

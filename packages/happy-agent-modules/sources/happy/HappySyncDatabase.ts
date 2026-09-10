@@ -1,3 +1,4 @@
+import { personalSessionMigration } from "./persistence/personalConnectionMigrations.js";
 import {
     agentDatabaseRows,
     agentDatabaseRun,
@@ -73,6 +74,7 @@ export const happySyncMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    personalSessionMigration,
 ];
 
 interface SessionRow {
@@ -101,14 +103,14 @@ interface SessionRow {
  * same transaction as the event it projects, so the queue can never disagree
  * with the history it was built from.
  */
-export function createHappySyncDatabase() {
+export function createHappySyncDatabase(ownerId = "") {
     async function readSession(
         ctx: Context,
         agentId: string,
     ): Promise<HappySyncSession | undefined> {
         const rows = await agentDatabaseRows<SessionRow>(
             ctx.db,
-            sql`SELECT * FROM ${sql.raw(SESSIONS_TABLE)} WHERE agent_id = ${agentId} LIMIT 1`,
+            sql`SELECT * FROM ${sql.raw(SESSIONS_TABLE)} WHERE owner_id = ${ownerId} AND agent_id = ${agentId} LIMIT 1`,
         );
         return rows[0] === undefined ? undefined : parseSession(rows[0]);
     }
@@ -127,7 +129,7 @@ export function createHappySyncDatabase() {
                     projection_stall_cause = NULL,
                     projection_error = NULL,
                     updated_at_ms = ${now}
-                WHERE agent_id = ${agentId}`,
+                WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
         );
     }
 
@@ -145,7 +147,7 @@ export function createHappySyncDatabase() {
                     projection_stall_cause = ${cause},
                     projection_error = ${reason},
                     updated_at_ms = ${now}
-                WHERE agent_id = ${agentId}`,
+                WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
         );
         return { cause, kind: "stalled" };
     }
@@ -157,7 +159,7 @@ export function createHappySyncDatabase() {
         const rows = await agentDatabaseRows<{ deferred: number; total: number }>(
             ctx.db,
             sql`SELECT deferred, COUNT(*) AS total FROM ${sql.raw(OUTBOX_TABLE)}
-                WHERE agent_id = ${agentId} GROUP BY deferred`,
+                WHERE owner_id = ${ownerId} AND agent_id = ${agentId} GROUP BY deferred`,
         );
         let deferred = 0;
         let ready = 0;
@@ -178,7 +180,7 @@ export function createHappySyncDatabase() {
         const rows = await agentDatabaseRows<{ highest: number | null }>(
             ctx.db,
             sql`SELECT MAX(position) AS highest FROM ${sql.raw(OUTBOX_TABLE)}
-                WHERE agent_id = ${agentId}`,
+                WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
         );
         let position = Number(rows[0]?.highest ?? 0);
         for (const message of messages) {
@@ -187,10 +189,10 @@ export function createHappySyncDatabase() {
             await agentDatabaseRun(
                 ctx.db,
                 sql`INSERT INTO ${sql.raw(OUTBOX_TABLE)}
-                    (agent_id, position, local_id, payload_json, deferred, created_at_ms)
-                    VALUES (${agentId}, ${position}, ${message.localId},
+                    (owner_id, agent_id, position, local_id, payload_json, deferred, created_at_ms)
+                    VALUES (${ownerId}, ${agentId}, ${position}, ${message.localId},
                             ${JSON.stringify(message.payload)}, ${deferred ? 1 : 0}, ${now})
-                    ON CONFLICT (agent_id, local_id) DO NOTHING`,
+                    ON CONFLICT (owner_id, agent_id, local_id) DO NOTHING`,
             );
         }
     }
@@ -219,22 +221,22 @@ export function createHappySyncDatabase() {
             if (existing !== undefined) {
                 await agentDatabaseRun(
                     ctx.db,
-                    sql`DELETE FROM ${sql.raw(OUTBOX_TABLE)} WHERE agent_id = ${input.agentId}`,
+                    sql`DELETE FROM ${sql.raw(OUTBOX_TABLE)} WHERE owner_id = ${ownerId} AND agent_id = ${input.agentId}`,
                 );
                 await agentDatabaseRun(
                     ctx.db,
-                    sql`DELETE FROM ${sql.raw(SESSIONS_TABLE)} WHERE agent_id = ${input.agentId}`,
+                    sql`DELETE FROM ${sql.raw(SESSIONS_TABLE)} WHERE owner_id = ${ownerId} AND agent_id = ${input.agentId}`,
                 );
             }
             await agentDatabaseRun(
                 ctx.db,
                 sql`INSERT INTO ${sql.raw(SESSIONS_TABLE)}
-                    (agent_id, session_id, credential_fingerprint, tag, remote_session_id,
+                    (owner_id, agent_id, session_id, credential_fingerprint, tag, remote_session_id,
                      encryption_variant, encryption_key_base64, last_remote_seq,
                      history_backfilled, projected_event_id, projection_status,
                      projection_stall_cause, projection_error, created_at_ms, updated_at_ms)
-                    VALUES (${input.agentId}, ${input.sessionId}, ${input.credentialFingerprint},
-                            ${happySessionTag(input.sessionId)}, NULL, ${input.encryptionVariant},
+                    VALUES (${ownerId}, ${input.agentId}, ${input.sessionId}, ${input.credentialFingerprint},
+                            ${happySessionTag(ownerId === "" ? input.sessionId : `${ownerId}:${input.sessionId}`)}, NULL, ${input.encryptionVariant},
                             ${input.encryptionKeyBase64}, 0, 0, NULL, 'active', NULL, NULL,
                             ${now}, ${now})`,
             );
@@ -256,7 +258,7 @@ export function createHappySyncDatabase() {
             const rows = await agentDatabaseRows<{ agent_id: string }>(
                 ctx.db,
                 sql`SELECT agent_id FROM ${sql.raw(SESSIONS_TABLE)}
-                    WHERE credential_fingerprint = ${credentialFingerprint}
+                    WHERE owner_id = ${ownerId} AND credential_fingerprint = ${credentialFingerprint}
                     ORDER BY updated_at_ms DESC, agent_id DESC
                     LIMIT ${limit}`,
             );
@@ -274,7 +276,7 @@ export function createHappySyncDatabase() {
                 ctx.db,
                 sql`UPDATE ${sql.raw(SESSIONS_TABLE)}
                     SET remote_session_id = ${remoteSessionId}, updated_at_ms = ${now}
-                    WHERE agent_id = ${agentId}`,
+                    WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
             );
         },
 
@@ -289,7 +291,7 @@ export function createHappySyncDatabase() {
                 ctx.db,
                 sql`UPDATE ${sql.raw(SESSIONS_TABLE)}
                     SET last_remote_seq = ${lastRemoteSeq}, updated_at_ms = ${now}
-                    WHERE agent_id = ${agentId} AND last_remote_seq < ${lastRemoteSeq}`,
+                    WHERE owner_id = ${ownerId} AND agent_id = ${agentId} AND last_remote_seq < ${lastRemoteSeq}`,
             );
         },
 
@@ -310,7 +312,7 @@ export function createHappySyncDatabase() {
                     SET history_backfilled = 1,
                         projected_event_id = ${projectedEventId ?? null},
                         updated_at_ms = ${now}
-                    WHERE agent_id = ${agentId}`,
+                    WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
             );
         },
 
@@ -428,7 +430,7 @@ export function createHappySyncDatabase() {
                 await agentDatabaseRun(
                     ctx.db,
                     sql`UPDATE ${sql.raw(OUTBOX_TABLE)} SET deferred = 0
-                        WHERE agent_id = ${agentId} AND position = ${entry.position}`,
+                        WHERE owner_id = ${ownerId} AND agent_id = ${agentId} AND position = ${entry.position}`,
                 );
             }
             return promoted;
@@ -445,7 +447,7 @@ export function createHappySyncDatabase() {
                 await agentDatabaseRun(
                     ctx.db,
                     sql`DELETE FROM ${sql.raw(OUTBOX_TABLE)}
-                        WHERE agent_id = ${agentId} AND local_id = ${localId}`,
+                        WHERE owner_id = ${ownerId} AND agent_id = ${agentId} AND local_id = ${localId}`,
                 );
             }
             await agentDatabaseRun(
@@ -455,7 +457,7 @@ export function createHappySyncDatabase() {
                         projection_stall_cause = NULL,
                         projection_error = NULL,
                         updated_at_ms = ${now}
-                    WHERE agent_id = ${agentId} AND projection_stall_cause = 'capacity'`,
+                    WHERE owner_id = ${ownerId} AND agent_id = ${agentId} AND projection_stall_cause = 'capacity'`,
             );
         },
 
@@ -463,11 +465,11 @@ export function createHappySyncDatabase() {
         async removeSession(ctx: Context, agentId: string): Promise<void> {
             await agentDatabaseRun(
                 ctx.db,
-                sql`DELETE FROM ${sql.raw(OUTBOX_TABLE)} WHERE agent_id = ${agentId}`,
+                sql`DELETE FROM ${sql.raw(OUTBOX_TABLE)} WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
             );
             await agentDatabaseRun(
                 ctx.db,
-                sql`DELETE FROM ${sql.raw(SESSIONS_TABLE)} WHERE agent_id = ${agentId}`,
+                sql`DELETE FROM ${sql.raw(SESSIONS_TABLE)} WHERE owner_id = ${ownerId} AND agent_id = ${agentId}`,
             );
         },
     };
@@ -485,7 +487,7 @@ export function createHappySyncDatabase() {
         }>(
             ctx.db,
             sql`SELECT local_id, payload_json, position FROM ${sql.raw(OUTBOX_TABLE)}
-                WHERE agent_id = ${agentId} AND deferred = ${deferred}
+                WHERE owner_id = ${ownerId} AND agent_id = ${agentId} AND deferred = ${deferred}
                 ORDER BY position ASC
                 LIMIT ${limit}`,
         );

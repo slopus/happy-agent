@@ -65,6 +65,13 @@ cancel, disconnect, and re-pair methods. Its `status` is a discriminated union: 
 renderable opaque QR data, failure always has a display-safe error, and connected states always
 carry configured credentials. A desktop client installs the bootstrap snapshot, follows complete
 `happy.integration.updated` replacements from the bootstrap cursor, and keeps the greater version.
+In team mode, these same methods, bootstrap, and events transparently address the authenticated
+user's personal mobile connection. Ownership is resolved inside the daemon, not exposed as a new
+snapshot field or request argument. Routes, wire shapes, and the protocol version remain unchanged;
+no SDK update or capability negotiation is needed. Discard the old snapshot and restart bootstrap
+and event subscriptions when switching authenticated users. The daemon filters private mobile
+events in both pulls and SSE; a pull page may contain no visible events while advancing its cursor
+past another user's events.
 The integration remains separate from required onboarding, so a product may present pairing as an
 optional onboarding screen or later in settings without changing onboarding completion.
 

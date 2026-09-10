@@ -865,7 +865,7 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/integrations/happy") {
-                sendJson(response, 200, { integration: this.#happy.integration(ctx) });
+                sendJson(response, 200, { integration: await this.#happy.integration(ctx) });
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/integrations/happy/start") {
@@ -1090,11 +1090,11 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/events") {
-                this.#handleEventPull(url, response);
+                this.#handleEventPull(ctx, url, response);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/events/stream") {
-                this.#handleEventStream(request, response, url);
+                this.#handleEventStream(ctx, request, response, url);
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/drain") {
@@ -1399,11 +1399,12 @@ export class ApiModule implements AgentModule {
             this.#cloud.onUpdated((_eventCtx, cloud) => {
                 this.#journal.append("cloud.updated", { cloud }, cloud.updatedAt);
             }),
-            this.#happy.onIntegrationUpdated((_eventCtx, integration) => {
+            this.#happy.onIntegrationUpdated((_eventCtx, integration, ownerId) => {
                 this.#journal.append(
                     "happy.integration.updated",
                     { integration },
                     integration.updatedAt,
+                    ownerId,
                 );
             }),
             this.#compute.onProcessEvent(async (event) => {
@@ -3459,7 +3460,7 @@ export class ApiModule implements AgentModule {
         void task.finally(() => this.#backgroundMetadataUpdates.delete(task));
     }
 
-    #handleEventPull(url: URL, response: ServerResponse): void {
+    #handleEventPull(ctx: Context, url: URL, response: ServerResponse): void {
         const after = optionalCursor(url.searchParams.get("after"));
         const until = optionalCursor(url.searchParams.get("until"));
         const limit = integerParameter(url.searchParams.get("limit"), 100, 1, 10_000);
@@ -3469,10 +3470,20 @@ export class ApiModule implements AgentModule {
                 cursor: this.#journal.cursor(),
             });
         }
-        sendJson(response, 200, replay);
+        sendJson(response, 200, {
+            ...replay,
+            events: replay.events.filter((event) =>
+                this.#journal.visibleTo(event, teamUser(ctx)?.id),
+            ),
+        });
     }
 
-    #handleEventStream(request: IncomingMessage, response: ServerResponse, url: URL): void {
+    #handleEventStream(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): void {
         const supplied =
             request.headers["last-event-id"] ?? url.searchParams.get("after") ?? undefined;
         const after = Array.isArray(supplied)
@@ -3500,6 +3511,7 @@ export class ApiModule implements AgentModule {
         });
         unsubscribe = this.#journal.subscribe((event) => {
             if (writer.closed) return;
+            if (!this.#journal.visibleTo(event, teamUser(ctx)?.id)) return;
             if (replaying) {
                 pending.push(event);
                 return;
@@ -3528,6 +3540,7 @@ export class ApiModule implements AgentModule {
             return;
         }
         for (const event of replay) {
+            if (!this.#journal.visibleTo(event, teamUser(ctx)?.id)) continue;
             if (!writer.write(sseEventFrame(event))) return;
         }
         replaying = false;
@@ -4916,7 +4929,7 @@ export class ApiModule implements AgentModule {
             profile,
             onboarding,
             cloud: this.#cloud.status(ctx),
-            happyIntegration: this.#happy.integration(ctx),
+            happyIntegration: await this.#happy.integration(ctx),
             bots: await Promise.all(bots.map(async (bot) => await this.#botResource(ctx, bot))),
             projects: await Promise.all(
                 projects.map(
@@ -5687,7 +5700,12 @@ export class MutationAwareApiEventJournal extends ApiEventJournal {
         this.#mutationIds = mutationIds;
     }
 
-    override append(type: string, payload: unknown, occurredAt?: number): ApiEvent {
+    override append(
+        type: string,
+        payload: unknown,
+        occurredAt?: number,
+        ownerId?: string,
+    ): ApiEvent {
         const mutationId = this.#mutationIds.getStore();
         if (
             mutationId === undefined ||
@@ -5695,12 +5713,13 @@ export class MutationAwareApiEventJournal extends ApiEventJournal {
             typeof payload !== "object" ||
             Array.isArray(payload)
         ) {
-            return super.append(type, payload, occurredAt);
+            return super.append(type, payload, occurredAt, ownerId);
         }
         return super.append(
             type,
             { ...(payload as Record<string, unknown>), mutationId },
             occurredAt,
+            ownerId,
         );
     }
 

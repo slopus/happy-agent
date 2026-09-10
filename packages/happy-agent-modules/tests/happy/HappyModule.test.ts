@@ -275,6 +275,7 @@ async function fixture() {
                 archivedBots.push(botId);
             },
         } as never,
+        { enabled: false } as never,
     );
     modules.push(module);
     module.beforeStart(database.context, agents as never);
@@ -301,6 +302,18 @@ async function fixture() {
 }
 
 describe("Happy mobile messages", () => {
+    it("appends personal storage migrations after the released module-wide prefix", async () => {
+        const test = await fixture();
+        expect(test.module.migrations.map(([key]) => key)).toEqual([
+            "001-happy-sync",
+            "002-happy-integration-state",
+            "003-happy-project-sync",
+            "004-personal-session-sync",
+            "005-personal-integration-state",
+            "006-personal-project-sync",
+        ]);
+    });
+
     it("queues the exact rich request without also injecting its display fallback", async () => {
         const test = await fixture();
         test.configs.set("agent-rich", { metadata: { happy: SELECTION } });
@@ -766,6 +779,7 @@ describe("archiving a Happy session", () => {
                 list: async () => [],
                 onEvent: () => () => undefined,
             } as never,
+            { enabled: false } as never,
         );
         modules.push(module);
         const hooks = module.beforeStart(database.context, agents as never);

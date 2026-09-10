@@ -9,6 +9,7 @@ import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
 
 import { createHappyIntegrationVersion } from "./createHappyIntegrationVersion.js";
+import { personalIntegrationMigration } from "./persistence/personalConnectionMigrations.js";
 
 /** The immutable migration that gives Happy integration state a durable singleton. */
 export const HAPPY_INTEGRATION_MIGRATION_KEY = "002-happy-integration-state";
@@ -55,6 +56,7 @@ export const happyIntegrationMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    personalIntegrationMigration,
 ];
 
 /**
@@ -63,12 +65,12 @@ export const happyIntegrationMigrations: readonly AgentModuleMigration[] = [
  * Every mutation composes with a caller transaction. The version is reserved before an
  * integration snapshot publishes, so it remains strictly newer over restart and clock rollback.
  */
-export function createHappyIntegrationDatabase() {
+export function createHappyIntegrationDatabase(ownerId = "") {
     async function read(ctx: Context): Promise<HappyIntegrationState> {
         const rows = await agentDatabaseRows<unknown>(
             ctx.db,
             sql`SELECT state_json FROM ${sql.raw(HAPPY_INTEGRATION_STATE_TABLE)}
-                WHERE singleton_id = 1`,
+                WHERE owner_id = ${ownerId}`,
         );
         const row = rows[0];
         if (row === undefined) return { blockedCredentialFingerprints: [] };
@@ -88,7 +90,7 @@ export function createHappyIntegrationDatabase() {
             return await ctx.inTx(async (txCtx) => {
                 const current = await read(txCtx);
                 const version = createHappyIntegrationVersion(current.version, now);
-                await write(txCtx, {
+                await write(txCtx, ownerId, {
                     blockedCredentialFingerprints: current.blockedCredentialFingerprints,
                     version,
                 });
@@ -133,7 +135,7 @@ export function createHappyIntegrationDatabase() {
                     blockedCredentialFingerprints: boundedFingerprints,
                     ...(current.version === undefined ? {} : { version: current.version }),
                 };
-                await write(txCtx, next);
+                await write(txCtx, ownerId, next);
                 return next;
             });
         },
@@ -149,7 +151,7 @@ export function createHappyIntegrationDatabase() {
                     blockedCredentialFingerprints: [],
                     ...(current.version === undefined ? {} : { version: current.version }),
                 };
-                await write(txCtx, next);
+                await write(txCtx, ownerId, next);
                 return next;
             });
         },
@@ -158,15 +160,15 @@ export function createHappyIntegrationDatabase() {
 
 export type HappyIntegrationDatabase = ReturnType<typeof createHappyIntegrationDatabase>;
 
-async function write(ctx: Context, state: HappyIntegrationState): Promise<void> {
+async function write(ctx: Context, ownerId: string, state: HappyIntegrationState): Promise<void> {
     if (!Value.Check(happyIntegrationStateSchema, state)) {
         throw new Error("The Happy integration state is invalid.");
     }
     await agentDatabaseRun(
         ctx.db,
-        sql`INSERT INTO ${sql.raw(HAPPY_INTEGRATION_STATE_TABLE)} (singleton_id, state_json)
-            VALUES (1, ${JSON.stringify(state)})
-            ON CONFLICT (singleton_id)
+        sql`INSERT INTO ${sql.raw(HAPPY_INTEGRATION_STATE_TABLE)} (owner_id, state_json)
+            VALUES (${ownerId}, ${JSON.stringify(state)})
+            ON CONFLICT (owner_id)
             DO UPDATE SET state_json = EXCLUDED.state_json`,
     );
 }

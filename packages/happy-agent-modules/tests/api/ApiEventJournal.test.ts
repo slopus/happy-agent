@@ -4,6 +4,43 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiEventJournal, apiEventSchema } from "../../sources/api/ApiEventJournal.js";
 
 describe("ApiEventJournal", () => {
+    it("keeps private ownership off the wire and retains global cursor progress", () => {
+        const journal = new ApiEventJournal(3, () => 1_755_400_000_000);
+        const origin = journal.cursor();
+        const standalone = journal.append("happy.integration.updated", {
+            integration: "standalone",
+        });
+        const alice = journal.append(
+            "happy.integration.updated",
+            { integration: "alice" },
+            1,
+            "alice123",
+        );
+        const bob = journal.append(
+            "happy.integration.updated",
+            { integration: "bob" },
+            1,
+            "bob456",
+        );
+        expect(Value.Check(apiEventSchema, alice)).toBe(true);
+        expect(alice).not.toHaveProperty("ownerId");
+        expect(journal.visibleTo(standalone, "alice123")).toBe(false);
+        expect(journal.visibleTo(alice, undefined)).toBe(false);
+        expect(journal.visibleTo(alice, "alice123")).toBe(true);
+        expect(journal.visibleTo(bob, "alice123")).toBe(false);
+        const hiddenPage = journal.replay(origin, undefined, 1)!;
+        expect(hiddenPage.events.filter((event) => journal.visibleTo(event, "alice123"))).toEqual(
+            [],
+        );
+        expect(hiddenPage.cursor).toBe(standalone.cursor);
+        expect(hiddenPage.latestCursor).toBe(bob.cursor);
+        expect(journal.replay(hiddenPage.cursor, undefined, 1)?.events).toEqual([alice]);
+        const publicEvent = journal.append("project.created", {});
+        expect(journal.visibleTo(publicEvent, "alice123")).toBe(true);
+        expect(journal.visibleTo(publicEvent, "bob456")).toBe(true);
+        expect(journal.replay(origin, undefined, 3)).toBeUndefined();
+    });
+
     it("reads from the oldest retained event when after is omitted", () => {
         const journal = new ApiEventJournal(10, () => 1_755_400_000_000);
         const first = journal.append("project.created", { project: { id: "p1" } });
