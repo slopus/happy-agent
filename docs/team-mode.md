@@ -4,6 +4,11 @@ Team mode runs one Happy Agent daemon for multiple members of one WorkOS organiz
 existing Happy Agent HTTP contract while changing the transport, authentication, and profile
 storage behind it.
 
+For the end-to-end setup sequence, use [Create and deploy a Happy team](recipe/deploy-happy-team.md).
+It includes Happy Social sign-in, creating the named team, verifying a local connection, and asking
+for invitation emails only after the deployment works. [Happy teams](happy-teams.md) explains the
+account and membership model.
+
 ## Before you begin
 
 You need:
@@ -17,6 +22,15 @@ You need:
 The management agent and deployed server may be different machines. Team-management tools are
 available only on standalone installations because a team server's organization is fixed by its
 deployment configuration.
+
+Before managing teams, the user must authenticate through **Settings → Account → Join Happy
+Social** and bind an email address. Any email address they can access works; a company domain is
+not required. Complete any email verification requested by that flow.
+
+Check `get_happy_workos_state` first: a successful result with the WorkOS user and client IDs
+confirms login, so do not ask the user to confirm or repeat sign-in. Request the interactive flow
+only if the tool reports missing or invalid authentication; permission and connectivity failures
+are separate blockers.
 
 The walkthrough below uses a dedicated Linux service account with `/var/lib/happy-agent` as its
 home. That puts machine configuration at `/var/lib/happy-agent/happy/config/happy.toml` and private
@@ -244,6 +258,14 @@ socket and local bearer token. Tailcat provides end-to-end WireGuard encryption,
 DERP fallback, but it does not replace WorkOS authentication.
 
 ## 5. Verify a team connection
+
+For normal setup, first check the service and live Tailcat endpoint, then have the active local
+admin bot register a WorkOS-authenticated connection with `set_remote_connection` and verify it
+with `check_remote_connection_health`. Follow
+[the local connection walkthrough](recipe/deploy-happy-team.md#5-add-the-local-connection-and-verify-it)
+for exact inputs and completion checks. This path manages organization-scoped tokens without
+manual credential extraction. The commands below are an optional low-level diagnostic, not a
+required token-transfer step.
 
 Install Tailcat v0.4.0 on a client machine, obtain a WorkOS access token for the configured client
 and organization, then run:

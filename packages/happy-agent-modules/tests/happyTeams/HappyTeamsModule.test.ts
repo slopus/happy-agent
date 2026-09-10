@@ -31,6 +31,7 @@ const archivedAdmin = {
 
 function fixture() {
     const cloud = {
+        inviteTeamMember: vi.fn(async () => ({ id: "invitation_created" })),
         createTeam: vi.fn(async (_ctx: Context, name: string, endpoint: string) => ({
             endpoint,
             id: "org_created",
@@ -84,6 +85,48 @@ function call() {
 }
 
 describe("HappyTeamsModule", () => {
+    it("restricts invitations to active admin bots and rechecks authority at execution", async () => {
+        const test = fixture();
+        const tool = (await toolsFor(test.module, test.agents, "admin-agent")).find(
+            ({ name }) => name === "invite_happy_team_member",
+        )!;
+        expect(tool).toMatchObject({ durable: false, requiresAutoOrFullAccess: true });
+        expect(tool.shouldRunInFullAccessInAutoMode).toBeUndefined();
+        expect(await tool.shouldReviewInAutoMode({}, ctx)).toBe(true);
+        const input = { team_id: "org_team", email: "person@example.com" };
+        expect(Value.Check(tool.parameters, input)).toBe(true);
+        expect(Value.Check(tool.parameters, { ...input, role: "admin" })).toBe(false);
+        expect(Value.Check(tool.parameters, { ...input, actingAgentId: "admin-agent" })).toBe(
+            false,
+        );
+        expect(tool.describeAutoPermissionAction?.(input, ctx)).toContain("person@example.com");
+        expect(tool.describeAutoPermissionAction?.(input, ctx)).toContain("org_team");
+        expect(tool.describeAutoPermissionAction?.(input, ctx)).toContain(
+            "external Happy Cloud API",
+        );
+        await expect(tool.execute(ctx, input, call())).resolves.toEqual({
+            id: "invitation_created",
+        });
+        expect(test.cloud.inviteTeamMember).toHaveBeenCalledWith(
+            ctx,
+            "org_team",
+            "person@example.com",
+        );
+        vi.mocked(test.cloud.inviteTeamMember).mockClear();
+
+        for (const agentId of ["human-agent", "member-agent", "archived-admin-agent", "subagent"]) {
+            expect(
+                (await toolsFor(test.module, test.agents, agentId)).map(({ name }) => name),
+            ).not.toContain("invite_happy_team_member");
+            await expect(
+                test.module.invite(ctx, agentId, input.team_id, input.email),
+            ).rejects.toThrow("Only an active admin bot");
+        }
+        vi.mocked(test.bots.forAgent).mockResolvedValue(archivedAdmin);
+        await expect(tool.execute(ctx, input, call())).rejects.toThrow("Only an active admin bot");
+        expect(test.cloud.inviteTeamMember).not.toHaveBeenCalled();
+    });
+
     it("gives the WorkOS state tool only to an active admin bot", async () => {
         const test = fixture();
         const humanTools = await toolsFor(test.module, test.agents, "human-agent");
@@ -94,7 +137,11 @@ describe("HappyTeamsModule", () => {
 
         const names = ["list_happy_teams", "create_happy_team", "update_happy_team"];
         expect(humanTools.map(({ name }) => name)).toEqual(names);
-        expect(adminTools.map(({ name }) => name)).toEqual([...names, "get_happy_workos_state"]);
+        expect(adminTools.map(({ name }) => name)).toEqual([
+            ...names,
+            "get_happy_workos_state",
+            "invite_happy_team_member",
+        ]);
         expect(memberTools.map(({ name }) => name)).toEqual(names);
         expect(archivedAdminTools.map(({ name }) => name)).toEqual(names);
         expect(subagentTools).toEqual([]);

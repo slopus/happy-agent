@@ -8,10 +8,11 @@ import type {
 import type { Context } from "@steve.kite/stdlib";
 
 import { BotsModule, type BotRecord } from "../bots/index.js";
-import { CloudModule, type HappyTeam } from "../cloud/index.js";
+import { CloudModule, type HappyTeam, type HappyTeamInvitation } from "../cloud/index.js";
 
 import { createHappyTeamTool } from "./tools/create_happy_team.js";
 import { getHappyWorkOSStateTool } from "./tools/get_happy_workos_state.js";
+import { inviteHappyTeamMemberTool } from "./tools/invite_happy_team_member.js";
 import { listHappyTeamsTool } from "./tools/list_happy_teams.js";
 import { updateHappyTeamTool } from "./tools/update_happy_team.js";
 
@@ -38,6 +39,7 @@ export class HappyTeamsModule implements AgentModule {
             ];
             if (await this.#isActiveAdminBot(_ctx, scope.agent.id)) {
                 tools.push(getHappyWorkOSStateTool(this, scope.agent.id));
+                tools.push(inviteHappyTeamMemberTool(this, scope.agent.id));
             }
             return tools;
         },
@@ -83,6 +85,21 @@ export class HappyTeamsModule implements AgentModule {
             );
         }
         return await this.#cloud.getWorkOSState(ctx);
+    }
+
+    async invite(
+        ctx: Context,
+        actingAgentId: string,
+        teamId: string,
+        email: string,
+    ): Promise<HappyTeamInvitation> {
+        if (
+            (await this.#requireAgents().parentOf(ctx, actingAgentId)) !== null ||
+            !(await this.#isActiveAdminBot(ctx, actingAgentId))
+        ) {
+            throw new Error("Only an active admin bot can invite people to Happy teams.");
+        }
+        return await this.#cloud.inviteTeamMember(ctx, teamId, email);
     }
 
     async #assertAdministrator(ctx: Context, actingAgentId: string): Promise<void> {

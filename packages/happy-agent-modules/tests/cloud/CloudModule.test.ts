@@ -154,6 +154,80 @@ async function connect(
 }
 
 describe("CloudModule", () => {
+    it("validates invitations before refresh and uses one rotated, verified credential without leaking links", async () => {
+        const logs: CloudLogRecord[] = [];
+        const { database, module } = await fixture("cloud-team-invitation", logs);
+        await connect(module, database);
+        const before = module.status(database.context);
+        await expect(
+            module.inviteTeamMember(database.context, "org_team", "invalid"),
+        ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+        expect(workos.refresh).not.toHaveBeenCalled();
+        const invitation = {
+            acceptedAt: null,
+            acceptanceLink: "https://signin.example/invite?token=recipient-secret",
+            createdAt: "2026-09-10T00:00:00Z",
+            email: "person@example.com",
+            expiresAt: "2026-09-17T00:00:00Z",
+            id: "invitation_created",
+            revokedAt: null,
+            status: "pending",
+        };
+        const request = vi.fn<typeof fetch>().mockImplementation(async (url) => {
+            if (String(url).endsWith("/v0/hello")) {
+                expect(
+                    (await createCloudDatabase().read(database.context))?.session?.refreshToken,
+                ).toBe("refresh-b");
+                return Response.json({ message: "hello", userId: user.id });
+            }
+            return Response.json({ invitation }, { status: 201 });
+        });
+        vi.stubGlobal("fetch", request);
+        await expect(
+            module.inviteTeamMember(database.context, "org_team", " Person@Example.com "),
+        ).resolves.toEqual(invitation);
+        expect(workos.refresh).toHaveBeenCalledOnce();
+        expect(request.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+            "/v0/hello",
+            "/v0/organizations/org_team/invitations",
+        ]);
+        expect(module.status(database.context)).toEqual(before);
+        expect(JSON.stringify(logs)).not.toMatch(/recipient-secret|access-b|refresh-b/);
+    });
+
+    it.each([
+        [403, "forbidden", 403, "must administer"],
+        [409, "already_member", 409, "already belongs"],
+        [409, "pending_invitation", 409, "pending invitation"],
+        [502, "organizations_unavailable", 503, "may already have been sent"],
+    ] as const)(
+        "surfaces invitation failure %s %s without replay or credential loss",
+        async (status, error, expected, message) => {
+            const { database, module } = await fixture(`cloud-invite-${error}`);
+            await connect(module, database);
+            const invite = vi.fn(async () => Response.json({ error }, { status }));
+            vi.stubGlobal(
+                "fetch",
+                vi.fn(async (url) =>
+                    String(url).endsWith("/v0/hello")
+                        ? Response.json({ message: "hello", userId: user.id })
+                        : invite(),
+                ),
+            );
+            await expect(
+                module.inviteTeamMember(database.context, "org_team", "person@example.com"),
+            ).rejects.toMatchObject({
+                status: expected,
+                message: expect.stringContaining(message),
+            });
+            expect(invite).toHaveBeenCalledOnce();
+            expect(
+                (await createCloudDatabase().read(database.context))?.session?.refreshToken,
+            ).toBe("refresh-b");
+            expect(module.status(database.context).status).toBe("connected");
+        },
+    );
+
     it("signs out locally with the caller transaction and publishes only after commit", async () => {
         const { database, module } = await fixture("cloud-transactional-signout");
         const connected = await connect(module, database);

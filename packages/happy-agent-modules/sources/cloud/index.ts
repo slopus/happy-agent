@@ -11,3 +11,9 @@ export {
     normalizeHappyTeamEndpoint,
     type HappyTeam,
 } from "./HappyTeam.js";
+export {
+    happyTeamInvitationEmailInputSchema,
+    happyTeamInvitationOrganizationIdSchema,
+    happyTeamInvitationSchema,
+    type HappyTeamInvitation,
+} from "./HappyTeamInvitation.js";

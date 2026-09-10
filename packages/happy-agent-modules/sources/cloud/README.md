@@ -39,6 +39,12 @@ names the created team so the caller can finish setup without creating a duplica
 client ID; authorization of that agent-facing lookup belongs to its consumer. Cloud exposes no
 team quota or inferred capacity; the team list is the available team data.
 
+`HappyTeamsModule` also uses `inviteTeamMember` to send one email-addressed member invitation through
+`POST /v0/organizations/:id/invitations`. This stays an internal module operation, not a new public
+Happy Agent route. Cloud validates the inputs before minting, uses the existing serialized credential
+rotation, and never retries the remote mutation. The result carries a recipient-sensitive acceptance
+link; neither that link nor invitation state is added to status, bootstrap, or Cloud events.
+
 The opt-in `pnpm --filter @slopus/happy-agent-modules test:live:workos-staging` suite creates a
 temporary staging WorkOS user and exercises verified token minting, organization management,
 team endpoints, organization-scoped minting, and local sign-out. Use the registered

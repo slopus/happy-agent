@@ -12,6 +12,18 @@ identifiers needed for `feature.team.owner_workos_user_id` and `feature.team.wor
 reads the client ID from the connected Cloud environment instead of assuming production. The tool
 remains separate from `create_happy_team`, so organization creation has one purpose and one result.
 
+An active admin bot also receives `invite_happy_team_member`, taking `team_id` and `email`. It uses
+Happy Cloud's WorkOS invitation API to invite one member with WorkOS's configured email delivery.
+It is not available to human roots, non-admin or archived bots, or subagents, and authority is
+checked again when executed. The connected WorkOS user must administer that exact organization.
+There is no role or delivery override. The result includes the pending invitation, expiry, and
+sensitive acceptance link; share that link only with the intended recipient. WorkOS may allow
+another address on the same corporate domain to accept. Creation does not prove email delivery.
+
+Invitation creation is reviewed in Auto and unavailable in Read only or Workspace write. It is
+non-durable and is never retried automatically: a failed request may already have sent an email.
+Existing members and pending invitations produce distinct, human-readable conflict messages.
+
 The three management tools are present for human-owned root agents and direct bots. A non-admin bot
 receives a clear refusal when it calls one, including the installation's admin bots; a human
 subagent does not receive them. The WorkOS state tool is absent from human roots, ordinary bots,

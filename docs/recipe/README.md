@@ -15,3 +15,10 @@ ask for confirmation of each routine step, and do not bypass permission or crede
 
 Recipes ship with Happy Agent and are available beside the installed documentation README, even
 when the current agent's workspace is unrelated to the Happy Agent source checkout.
+
+## Happy teams
+
+Read [Create and deploy a Happy team](deploy-happy-team.md) for the complete shared-server workflow:
+Happy Social sign-in and a bound email, a specifically named team, a team-mode deployment, a verified
+local connection, and only then a request for invitation emails. The companion
+[Happy teams guide](../happy-teams.md) explains the account and administration boundaries.

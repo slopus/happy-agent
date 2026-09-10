@@ -28,6 +28,12 @@ import {
     normalizeHappyTeamEndpoint,
     type HappyTeam,
 } from "./HappyTeam.js";
+import {
+    happyTeamInvitationOrganizationIdSchema,
+    happyTeamInvitationSchema,
+    normalizeHappyTeamInvitationEmail,
+    type HappyTeamInvitation,
+} from "./HappyTeamInvitation.js";
 
 const WORKOS_TIMEOUT_MS = 15_000;
 const MAX_WORKOS_RESPONSE_BYTES = 1024 * 1_024;
@@ -123,6 +129,18 @@ const organizationEndpointResponseSchema = Type.Object(
 );
 const organizationNotFoundSchema = Type.Object({ error: Type.Literal("not_found") }, exact);
 const organizationDeletedSchema = Type.Object({ status: Type.Literal("deleted") }, exact);
+const invitationResponseSchema = Type.Object({ invitation: happyTeamInvitationSchema }, exact);
+const invitationConflictSchema = Type.Object(
+    { error: Type.Union([Type.Literal("already_member"), Type.Literal("pending_invitation")]) },
+    exact,
+);
+
+export class CloudInvitationConflictError extends Error {
+    constructor(readonly reason: Static<typeof invitationConflictSchema>["error"]) {
+        super("The recipient already has membership or a pending invitation.");
+        this.name = "CloudInvitationConflictError";
+    }
+}
 
 const workOSParseErrorSchema = Type.Object(
     {
@@ -415,6 +433,40 @@ export class CloudWorkOS {
         if (!Value.Check(organizationDeletedSchema, result.body)) {
             throw new CloudServiceUnavailableError("response-invalid", result.status);
         }
+    }
+
+    async inviteTeamMember(
+        accessToken: string,
+        organizationId: string,
+        email: string,
+    ): Promise<HappyTeamInvitation> {
+        const normalizedEmail = normalizeHappyTeamInvitationEmail(email);
+        if (
+            !Value.Check(happyTeamInvitationOrganizationIdSchema, organizationId) ||
+            normalizedEmail === undefined
+        ) {
+            throw new CloudOrganizationInvalidRequestError();
+        }
+        const result = await this.#request(
+            `/v0/organizations/${encodeURIComponent(organizationId)}/invitations`,
+            accessToken,
+            "POST",
+            { email: normalizedEmail },
+            [400, 403, 409],
+        );
+        if (result.status === 400) throw new CloudOrganizationInvalidRequestError();
+        if (result.status === 403) throw new CloudOrganizationForbiddenError();
+        if (result.status === 409 && Value.Check(invitationConflictSchema, result.body)) {
+            throw new CloudInvitationConflictError(result.body.error);
+        }
+        if (
+            result.status !== 201 ||
+            !Value.Check(invitationResponseSchema, result.body) ||
+            result.body.invitation.email !== normalizedEmail
+        ) {
+            throw new CloudServiceUnavailableError("response-invalid", result.status);
+        }
+        return structuredClone(result.body.invitation);
     }
 
     async #request(

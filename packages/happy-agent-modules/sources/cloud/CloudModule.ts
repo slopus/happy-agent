@@ -54,6 +54,7 @@ import {
 import {
     CloudCredentialsRejectedError,
     CloudIdentityMismatchError,
+    CloudInvitationConflictError,
     CloudOrganizationForbiddenError,
     CloudOrganizationInvalidEndpointError,
     CloudOrganizationInvalidRequestError,
@@ -68,6 +69,11 @@ import {
     normalizeHappyTeamEndpoint,
     type HappyTeam,
 } from "./HappyTeam.js";
+import {
+    happyTeamInvitationOrganizationIdSchema,
+    normalizeHappyTeamInvitationEmail,
+    type HappyTeamInvitation,
+} from "./HappyTeamInvitation.js";
 
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1_000;
 const AUTHORIZATION_EXPIRY_RETRY_MS = 5_000;
@@ -702,6 +708,72 @@ export class CloudModule implements AgentModule {
                     503,
                     "cloud_unavailable",
                     "Happy teams are temporarily unavailable.",
+                );
+            }
+        });
+    }
+
+    async inviteTeamMember(
+        _ctx: Context,
+        organizationId: string,
+        email: string,
+    ): Promise<HappyTeamInvitation> {
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const normalizedEmail = normalizeHappyTeamInvitationEmail(email);
+            if (
+                !Value.Check(happyTeamInvitationOrganizationIdSchema, organizationId) ||
+                normalizedEmail === undefined
+            ) {
+                throw this.#error(
+                    400,
+                    "invalid_request",
+                    "The team ID or invitation email is invalid.",
+                );
+            }
+            const minted = await this.#mintInLock(ctx, true);
+            try {
+                return await this.#client(minted.cloud.environment).inviteTeamMember(
+                    minted.accessToken,
+                    organizationId,
+                    normalizedEmail,
+                );
+            } catch (error: unknown) {
+                if (error instanceof CloudOrganizationInvalidRequestError) {
+                    throw this.#error(
+                        400,
+                        "invalid_request",
+                        "The team ID or invitation email is invalid.",
+                    );
+                }
+                if (error instanceof CloudOrganizationForbiddenError) {
+                    throw this.#error(
+                        403,
+                        "forbidden",
+                        "The connected Cloud user must administer this Happy team to invite members.",
+                    );
+                }
+                if (error instanceof CloudInvitationConflictError) {
+                    throw this.#error(
+                        409,
+                        "conflict",
+                        error.reason === "already_member"
+                            ? "This email address already belongs to the Happy team."
+                            : "This email address already has a pending invitation to the Happy team.",
+                    );
+                }
+                logCloudFailure(
+                    ctx,
+                    "organizations",
+                    minted.cloud.environment,
+                    "happy-team-invite",
+                    error,
+                );
+                throw this.#error(
+                    503,
+                    "cloud_unavailable",
+                    "The invitation could not be confirmed. It may already have been sent; check the team's invitations before trying again.",
                 );
             }
         });

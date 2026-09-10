@@ -57,6 +57,12 @@
 
 ## Organizations and teams
 
+- Email invitations use Happy Cloud's organization invitation endpoint with the same serialized
+  refresh-and-verify boundary. Validate and normalize the email and organization ID before minting;
+  send only the email, leaving the member role and delivery policy to the worker. Never retry the
+  mutation. Preserve forbidden, existing-member, and pending-invitation outcomes without exposing
+  raw upstream errors. A returned pending invitation must match the recipient and contain a bounded
+  HTTPS acceptance link without credentials. Keep that link out of Cloud snapshots and logs.
 - Organization operations use the connected human identity and the same serialized refresh and
   verification boundary. Project only bounded IDs and names publicly. Remote mutations have no
   local mirror or organization event; never retry an ambiguous create, delete, or endpoint write.
