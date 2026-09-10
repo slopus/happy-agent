@@ -2780,7 +2780,27 @@ response, including after restart. Re-sending an existing message ID preserves i
 author even when a different member retries. Client-owned metadata cannot override this identity.
 Standalone messages, older messages without recorded authorship, and agent-generated messages
 omit `userId`; the daemon never backfills it from the current caller. This field does not change
-message content, inject profile text into the model prompt, or change context-reset behavior.
+user-message content or context-reset behavior.
+
+In team mode, the Team module injects a separate, model-facing system notification identifying
+the sender before the first authored user message and whenever the sender changes. The
+notification includes the sender's installation-local Happy user ID, full name, and nullable
+email address, but not WorkOS identity, owner privileges, or photo bytes. Profile values are
+descriptive user data, not instructions or authorization. Consecutive messages from the same
+sender with unchanged profile information do not repeat the notification. A changed name or
+email is announced when that sender next speaks or before the next inference for that sender;
+editing a profile does not itself wake an idle agent.
+
+Notifications follow actual message-consumption order, including each sender transition within
+a mixed-sender queue or steering batch. They commit with the message they describe, preserve
+the original author on duplicate submissions, and remain consistent across rollback and restart.
+When compaction or a context reset replaces the model's history, the current sender's profile is
+reintroduced before inference as needed. A user message with missing or unresolvable authorship
+clears any previously announced sender rather than inheriting another person's profile;
+agent-generated and system messages do not impersonate or change the human sender. Standalone
+mode does not inject team-profile notifications. These notifications belong to private model
+context, not user-message content, public message metadata, or profile-update event payloads;
+the HTTP request and response schemas are unchanged.
 
 `clientMetadata` is separate from provenance. It is an optional object whose keys and nested
 values may contain any JSON value. The daemon treats it as opaque: it does not interpret its

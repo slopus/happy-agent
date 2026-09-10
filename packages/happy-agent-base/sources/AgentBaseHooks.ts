@@ -88,6 +88,19 @@ export interface AgentBaseAcceptedMessage {
     readonly profile: AgentRequestProfile;
 }
 
+/** A safe, transactional position for module-owned system notifications in model history. */
+export type AgentBaseSystemNotificationBoundary =
+    | {
+          readonly type: "message";
+          /** The queued message about to be appended, with its original identity and metadata. */
+          readonly accepted: AgentBaseAcceptedMessage;
+      }
+    | {
+          readonly type: "inference";
+          /** The request about to start, after pending input, tools, and compaction settle. */
+          readonly inference: AgentBaseInferenceStart;
+      };
+
 /** What the activation hook sees when the agent stops being settled and starts owing work. */
 export interface AgentBaseActivation {
     /**
@@ -395,6 +408,21 @@ export interface AgentBaseHooks {
         ctx: Context,
         change: AgentBaseModelChange,
     ) => MaybePromise<SessionSystemMessage | undefined>;
+    /**
+     * Supplies system notifications immediately before each consumed message, and again before
+     * inference after pending input, tools, and compaction settle. A message boundary runs after
+     * any model/profile history reset and receives the selection effective for its batch.
+     * Notifications and module KV writes commit with that message or inference stage; failure
+     * rolls the whole transaction back and prevents inference. Notifications retain their system
+     * role and do not trigger message-accepted hooks or recursively invoke this hook.
+     * Keep deduplication in history KV and longer-lived feature state in agent KV. The inference
+     * boundary lets a module restore context after compaction or refresh changed feature data.
+     * This hook must do bounded transactional work, not start external or long-lived effects.
+     */
+    readonly systemNotificationsTransact?: (
+        ctx: Context,
+        boundary: AgentBaseSystemNotificationBoundary,
+    ) => MaybePromise<readonly SessionSystemMessage[] | void>;
     /**
      * Runs inside the transaction that moves a queued message into the durable conversation, once
      * per message and in the order the messages were appended. The context carries the selection

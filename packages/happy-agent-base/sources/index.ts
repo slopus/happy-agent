@@ -140,6 +140,7 @@ export {
     type AgentBasePermissionModeChange,
     type AgentBasePersistedEvent,
     type AgentBaseSettlement,
+    type AgentBaseSystemNotificationBoundary,
     type AgentBaseToolCall,
     type AgentBaseToolCallDecision,
     type AgentBaseToolOutcome,

@@ -204,6 +204,16 @@ handoffs; across modules, the first returned message wins and a failure preserve
 Lifecycle action hooks may return `{ type: "inject", message }` to queue a system notice. Notices
 are durable and append only after pending tool results and compaction have settled, immediately
 before the inference that should see them.
+`systemNotificationsTransact` supplies notices at an exact history position: before each queued
+message (including each message within an `"all"` batch), and before inference after tools and
+compaction settle. It receives either a `"message"` boundary with the original accepted-message
+envelope or an `"inference"` boundary with the request's lifecycle IDs. Modules return system
+messages in module order, without rewriting user content or triggering acceptance events for the
+notices. A message boundary runs after any model/profile reset. Module state and notifications
+commit atomically with message consumption or the inference stage; a hook failure rolls them all
+back and prevents the request. Keep the last announced value in `historyKV` and any state needed
+after a reset in `kv`, so a module can suppress redundant notices across restarts and reintroduce
+context after compaction. Hooks must remain bounded, transactional, and free of external effects.
 `prepareInference` runs after queued input has joined the conversation and immediately before a
 possible provider request. It may return only `{ type: "compact" }`; the replacement runs before
 the durable inference stage opens, then preparation is evaluated against the replacement. The

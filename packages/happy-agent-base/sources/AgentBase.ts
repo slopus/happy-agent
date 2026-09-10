@@ -60,6 +60,7 @@ import type {
     AgentBasePermissionModeChange,
     AgentBasePersistedEvent,
     AgentBaseSettlement,
+    AgentBaseSystemNotificationBoundary,
     AgentBaseToolOutcome,
     MaybePromise,
 } from "./AgentBaseHooks.js";
@@ -2825,13 +2826,22 @@ export class AgentBase {
             "agent.turn.id": inferenceStart.turnId,
             "agent.inference.id": inferenceStart.inferenceId,
         });
-        await this.#enterStage(
+        const notifications = await this.#enterStage(
             ctx,
             "inference",
-            this.#hooks.beforeInferenceTransact === undefined
+            this.#hooks.beforeInferenceTransact === undefined &&
+                this.#hooks.systemNotificationsTransact === undefined
                 ? undefined
-                : (hookCtx) => this.#hooks.beforeInferenceTransact?.(hookCtx, inferenceStart),
+                : async (hookCtx) => {
+                      const messages = await this.#appendSystemNotifications(hookCtx, {
+                          type: "inference",
+                          inference: inferenceStart,
+                      });
+                      await this.#hooks.beforeInferenceTransact?.(hookCtx, inferenceStart);
+                      return messages;
+                  },
         );
+        this.#messages.push(...(notifications ?? []));
         await this.#invokeHook(ctx, this.#hooks.beforeInference, inferenceStart);
         // Explicit drain takes the earliest pre-request edge. Preserve the stdlib coordinator's
         // established behavior: once its inference hook has begun, graceful shutdown lets that
@@ -3240,6 +3250,20 @@ export class AgentBase {
         await this.#persistence.append(ctx, record);
     }
 
+    /** Called only with a lent transactional hook context; memory changes after commit. */
+    async #appendSystemNotifications(
+        ctx: Context,
+        boundary: AgentBaseSystemNotificationBoundary,
+    ): Promise<readonly SessionSystemMessage[]> {
+        const notifications = structuredClone(
+            (await this.#hooks.systemNotificationsTransact?.(ctx, boundary)) ?? [],
+        );
+        for (const message of notifications) {
+            await this.#appendRecord(ctx, { type: "system", message });
+        }
+        return notifications;
+    }
+
     /** Remove deduplication identities for user records a history replacement is deleting. */
     async #deleteRecordIdentities(ctx: Context, records: readonly AgentRecord[]): Promise<void> {
         for (const record of records) {
@@ -3529,6 +3553,7 @@ export class AgentBase {
                 }
             }
             let reset = modelReset || profileChanged;
+            const appendedMessages: SessionMessage[] = [];
             await this.#recordTransaction(lockCtx, async (txCtx) => {
                 if (
                     (selectionChanged || (profileChanged && this.#messages.length > 0)) &&
@@ -3597,12 +3622,40 @@ export class AgentBase {
                     }
                 }
                 for (const [index, entry] of batch.entries()) {
+                    if (this.#hooks.systemNotificationsTransact !== undefined) {
+                        const notificationCtx = withAgentContext(txCtx, {
+                            id: this.id,
+                            provider,
+                            model,
+                            effort,
+                            serviceTier,
+                            permissionMode,
+                        });
+                        const notifications = await this.#withTransactionalContext(
+                            notificationCtx,
+                            (hookCtx) =>
+                                this.#appendSystemNotifications(hookCtx, {
+                                    type: "message",
+                                    accepted: {
+                                        id: entry.id,
+                                        kind,
+                                        message: entry.message,
+                                        ...(entry.metadata === undefined
+                                            ? {}
+                                            : { metadata: entry.metadata }),
+                                        profile: entry.options.profile,
+                                    },
+                                }),
+                        );
+                        appendedMessages.push(...notifications);
+                    }
                     await this.#appendRecord(txCtx, {
                         type: "user",
                         id: entry.id,
                         message: messages[index]!,
                         ...(entry.metadata === undefined ? {} : { metadata: entry.metadata }),
                     });
+                    appendedMessages.push(messages[index]!);
                 }
                 if (requestedCall !== undefined) {
                     await this.#appendRecord(txCtx, {
@@ -3694,7 +3747,7 @@ export class AgentBase {
                 this.#providerToolIds.clear();
                 this.#contextTokens = undefined;
             }
-            this.#messages.push(...messages);
+            this.#messages.push(...appendedMessages);
             if (requestedCall !== undefined) {
                 this.#providerToolIds.set(requestedCall.callId, requestedCall.callId);
                 this.#messages.push({ role: "assistant", content: [requestedCall] });

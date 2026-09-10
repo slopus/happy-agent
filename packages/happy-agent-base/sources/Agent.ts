@@ -267,6 +267,9 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
     );
     const withModelChanged = modules.filter((module) => module.hooks.modelChanged !== undefined);
     const withEvents = modules.filter((module) => module.hooks.onEvent !== undefined);
+    const withSystemNotifications = modules.filter(
+        (module) => module.hooks.systemNotificationsTransact !== undefined,
+    );
     // Observing hooks fan out with per-module isolation: one throwing module must never
     // prevent the modules after it from observing.
     const fanOut = <Arguments extends readonly unknown[]>(
@@ -551,6 +554,24 @@ function mergeModules<Tool extends AnyAgentTool, Database extends AgentDatabase>
                       // preserving the history; on a compatible change it merely observed.
                       if (failed && change.wasReset) throw failure;
                       return injected;
+                  },
+              }),
+        ...(withSystemNotifications.length === 0
+            ? {}
+            : {
+                  systemNotificationsTransact: async (ctx, boundary) => {
+                      const notifications: SessionSystemMessage[] = [];
+                      for (const module of withSystemNotifications) {
+                          const messages = await module.hooks.systemNotificationsTransact!(
+                              moduleCtx(ctx, module),
+                              scopeOf(ctx, module),
+                              boundary,
+                          );
+                          // Own each contribution before another module runs. A failed module
+                          // rejects the transaction, including all earlier contributions.
+                          notifications.push(...structuredClone(messages ?? []));
+                      }
+                      return notifications;
                   },
               }),
         ...spread(

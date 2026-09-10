@@ -27,6 +27,7 @@ import type {
     AgentBaseToolCallDecision,
     AgentBaseToolOutcome,
     AgentBaseSettlement,
+    AgentBaseSystemNotificationBoundary,
     AgentBaseTurn,
     AgentBaseTurnStart,
     MaybePromise,
@@ -325,6 +326,18 @@ export interface AgentModuleHooks<
         scope: AgentModuleScope<Database>,
         change: AgentBaseModelChange,
     ) => MaybePromise<SessionSystemMessage | undefined>;
+    /**
+     * Supplies system notifications immediately before each accepted message and before inference
+     * after pending input, tools, and compaction settle. Modules run in array order; their returned
+     * notices are appended in that order. Notifications and scoped KV writes commit with the
+     * message or inference stage. Failure rolls the entire transaction back. See
+     * `AgentBaseHooks.systemNotificationsTransact` for the boundary and lifetime contract.
+     */
+    readonly systemNotificationsTransact?: (
+        ctx: Context,
+        scope: AgentModuleScope<Database>,
+        boundary: AgentBaseSystemNotificationBoundary,
+    ) => MaybePromise<readonly SessionSystemMessage[] | void>;
     /**
      * Runs inside the transaction appending a queued message to the durable conversation, once per
      * message. Modules run in array order and a failure propagates, rolling the consumption back.
