@@ -166,6 +166,8 @@ describe("ProjectsModule", () => {
         expect(await projectToolNames(await projectsModule(), "agent-a")).toEqual([
             "list_projects",
             "set_project_avatar",
+            "create_project",
+            "clone_project",
         ]);
         expect(
             await projectToolNames(await projectsModule(NO_CROSS_WORKSPACE_TOML), "agent-a"),

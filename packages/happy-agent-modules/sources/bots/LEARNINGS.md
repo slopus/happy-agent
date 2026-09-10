@@ -1,5 +1,14 @@
 # Bots — learnings
 
+## Chief of Staff creates and imports local Happy projects
+
+Project coordination needs more than a catalog listing. Chief of Staff now checks for duplicates,
+registers local folders with `create_project`, and imports GitHub or other HTTPS Git repositories
+with `clone_project`. It creates a new folder through the permission-checked shell before
+registration, selects configured credentials without handling raw tokens, and verifies background
+setup before delegating work. Creating a Happy project does not create a remote repository, and
+unavailable project tools are a boundary to explain, not bypass.
+
 ## Recipes are executed automatically within user authority
 
 Chief of Staff must perform the applicable recipe's routine discovery, setup, and verification,

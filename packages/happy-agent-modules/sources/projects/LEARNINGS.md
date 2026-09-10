@@ -2,6 +2,17 @@
 
 Feedback and decisions gathered while building this module.
 
+## Project creation and imports are available to coordinating agents
+
+Chief of Staff could see projects but could not register or import them. Root agents with
+cross-workspace tools now receive `create_project` for existing local folders and `clone_project`
+for GitHub or other HTTPS Git remotes. New empty projects use ordinary permission-checked folder
+creation followed by registration. Both tools reuse the catalog's public operations and durable
+setup, retaining a project ID in the tool call's KV so replay does not create another clone.
+These installation-wide operations require Auto review or Full access; review discloses the host
+filesystem, background setup, network, and configured-credential boundaries. Subagents and the
+cross-workspace opt-out retain no project tools.
+
 ## The root catalog is available by default
 
 `features.cross_workspace` defaults to enabled, so a fresh installation gives user-owned root

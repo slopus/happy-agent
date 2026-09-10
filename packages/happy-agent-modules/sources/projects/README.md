@@ -105,15 +105,23 @@ Settings are a bounded object, not arbitrary JSON: an optional
 
 ## Tools
 
-Two durable, provider-neutral tools are available and never review in Auto mode:
+Four durable, provider-neutral tools are available:
 
 - `list_projects` lists projects in their independent main-list order in bounded cursor pages.
 - `set_project_avatar` takes a project ID and a PNG, JPEG, or WebP path inside that project's
   folder, then stores the normalized picture as a generated avatar.
+- `create_project` registers an existing local folder; a new folder is created with the ordinary
+  permission-checked shell first.
+- `clone_project` imports a GitHub repository or another credential-free HTTPS Git remote into
+  managed storage, optionally selecting the configured GitHub credential for a GitHub source.
 
-Registering, renaming, archiving, reordering, and settings writes happen through the public API
-below, on behalf of a person. A model may change only the avatar, through the bounded project-owned
-image path accepted by `set_project_avatar`.
+Listing and avatar selection do not review in Auto. Registration and cloning require Auto or Full
+access and always review in Auto, with a temporary Full access scope for the host operation. Their
+review descriptions disclose the installation-wide catalog, host filesystem, and, for clones,
+external Git and configured credential access. Both reuse the public operations below, remember
+their project ID in the invocation's KV, and return while durable setup proceeds in the background.
+Use `list_projects` to check readiness or failure. Renaming, archiving, reordering, and settings
+writes remain public-API operations.
 
 The tools exist only when both are true:
 

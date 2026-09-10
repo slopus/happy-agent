@@ -280,6 +280,12 @@ describe("BotsModule", () => {
             await expect(fixture.instructions(chief.agentId)).resolves.toContain(
                 "Execute relevant recipes automatically by default within the user's authorized task.",
             );
+            await expect(fixture.instructions(chief.agentId)).resolves.toContain(
+                "Use create_project to register an existing local folder",
+            );
+            await expect(fixture.instructions(chief.agentId)).resolves.toContain(
+                "Use clone_project for GitHub repositories (owner/name) or other HTTPS Git remotes",
+            );
 
             const archived = await fixture.bots.archive(
                 fixture.database.context,
