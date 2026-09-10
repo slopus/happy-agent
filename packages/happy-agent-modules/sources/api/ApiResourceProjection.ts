@@ -331,6 +331,7 @@ export function questionResource(
 export function profileResource(profile: Profile | undefined): Record<string, unknown> {
     if (profile === undefined) {
         return {
+            userId: null,
             name: null,
             email: null,
             photo: null,
@@ -339,6 +340,7 @@ export function profileResource(profile: Profile | undefined): Record<string, un
         };
     }
     return {
+        userId: null,
         name: profile.name,
         email: profile.email,
         photo: profile.photo === null ? null : { thumbhash: profile.photo.thumbhash },

@@ -5476,6 +5476,7 @@ function isTeamOnboardingRoute(method: string | undefined, pathname: string): bo
 function teamProfileResource(user: TeamUser | undefined): Record<string, unknown> {
     if (user === undefined) {
         return {
+            userId: null,
             name: null,
             email: null,
             photo: null,
@@ -5484,6 +5485,7 @@ function teamProfileResource(user: TeamUser | undefined): Record<string, unknown
         };
     }
     return {
+        userId: user.id,
         name: user.lastName === null ? user.firstName : `${user.firstName} ${user.lastName}`,
         email: user.email,
         photo: user.photo === null ? null : { thumbhash: user.photo.thumbhash },

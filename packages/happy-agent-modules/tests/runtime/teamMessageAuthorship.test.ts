@@ -177,13 +177,22 @@ describe("team authorship across the real runtime and HTTP API", () => {
         await expect(outsider.getUsers([])).rejects.toMatchObject({ status: 401 });
         const onboard = async (client: HappyAgentClient, name: string) => {
             const empty = await client.getProfile();
-            await client.updateProfile(
+            expect(empty.profile.userId).toBeNull();
+            const saved = await client.updateProfile(
                 { name, email: `${name.toLowerCase()}@example.test` },
                 { ifMatch: empty.profile.version },
             );
+            expect(saved.profile.userId).toMatch(/^[a-z][a-z0-9]+$/);
+            expect((await client.getProfile()).profile).toEqual(saved.profile);
+            expect((await client.getDesktopBootstrap()).profile).toEqual(saved.profile);
+            await expect(
+                client.updateProfile({ name: "Stale profile" }, { ifMatch: empty.profile.version }),
+            ).rejects.toMatchObject({ status: 409, body: { profile: saved.profile } });
+            return saved.profile.userId;
         };
-        await onboard(clients.alice, "Alice");
-        await onboard(clients.bob, "Bob");
+        const aliceProfileId = await onboard(clients.alice, "Alice");
+        const bobProfileId = await onboard(clients.bob, "Bob");
+        expect(bobProfileId).not.toBe(aliceProfileId);
         const { project } = await clients.alice.registerProject({ path: workspace });
         const { agent } = await clients.alice.createAgent({
             workspaceId: project.id,
@@ -196,6 +205,7 @@ describe("team authorship across the real runtime and HTTP API", () => {
         });
         await began;
         const aliceId = first.message.metadata.userId;
+        expect(aliceId).toBe(aliceProfileId);
         expect(aliceId).toMatch(/^[a-z][a-z0-9]+$/);
         const queued = await clients.bob.sendMessage(agent.id, {
             id: "bobqueued123",
@@ -205,6 +215,7 @@ describe("team authorship across the real runtime and HTTP API", () => {
             clientMetadata: { userId: aliceId! },
         });
         const bobId = queued.message.metadata.userId;
+        expect(bobId).toBe(bobProfileId);
         expect(bobId).toMatch(/^[a-z][a-z0-9]+$/);
         expect(bobId).not.toBe(aliceId);
         expect(queued.message).toMatchObject({
@@ -339,7 +350,42 @@ describe("team authorship across the real runtime and HTTP API", () => {
             content: [{ type: "text", text: "Bob's original text" }],
         });
         const current = await clients.bob.getProfile();
+        expect(current.profile.userId).toBe(bobProfileId);
+        expect((await clients.bob.getDesktopBootstrap()).profile).toEqual(current.profile);
+        expect((await clients.alice.getDesktopBootstrap()).profile.userId).toBe(aliceProfileId);
+        const spoofedProfile = await fetch(`${clients.endpoint}/v0/profile`, {
+            method: "PATCH",
+            headers: {
+                authorization: `Bearer ${bobToken}`,
+                "content-type": "application/json",
+                "if-match": current.profile.version,
+            },
+            body: JSON.stringify({ userId: aliceProfileId }),
+        });
+        expect(spoofedProfile.status).toBe(400);
+        expect((await clients.bob.getProfile()).profile).toEqual(current.profile);
         await clients.bob.updateProfile({ name: "Robert" }, { ifMatch: current.profile.version });
+        const renamed = await clients.bob.getProfile();
+        expect(renamed.profile.userId).toBe(bobProfileId);
+        const photo = await clients.bob.setProfilePhoto(
+            {
+                contentType: "image/png",
+                data: Uint8Array.from(
+                    Buffer.from(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                        "base64",
+                    ),
+                ),
+            },
+            { ifMatch: renamed.profile.version },
+        );
+        expect(photo.profile.userId).toBe(bobProfileId);
+        expect((await clients.bob.getDesktopBootstrap()).profile).toEqual(photo.profile);
+        await expect(
+            clients.bob.deleteProfilePhoto({ ifMatch: renamed.profile.version }),
+        ).rejects.toMatchObject({ status: 409, body: { profile: photo.profile } });
+        const removed = await clients.bob.deleteProfilePhoto({ ifMatch: photo.profile.version });
+        expect(removed.profile).toMatchObject({ userId: bobProfileId, photo: null });
         expect((await clients.alice.getUsers([bobId!])).users[0]).toMatchObject({
             id: bobId,
             name: "Robert",

@@ -1,5 +1,14 @@
 # API module learnings
 
+## The current profile identifies the authenticated team member
+
+The profile endpoint and desktop bootstrap share one profile projection. Its read-only `userId`
+is the authenticated member's local Happy ID, matching message authorship and batch user lookup.
+It stays the same in profile/photo mutation and conflict responses and after restart. Before team
+onboarding and in standalone mode it is explicitly null; the standalone profile's private identity
+is never exposed as a team user. Older daemons may omit the field, and team profile events remain
+identity-only invalidations rather than broadcasting another member's profile.
+
 ## One onboarding response combines installation and user readiness
 
 The installation completion marker previously made team members skip setup even when they had

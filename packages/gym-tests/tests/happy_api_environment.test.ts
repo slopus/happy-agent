@@ -31,11 +31,13 @@ describe("Happy Agent environment API", () => {
             gym = await createAgentGym({ timeoutMs: 15_000 });
             const initial = await gym.client.getProfile();
             expect(initial.profile).toMatchObject({
+                userId: null,
                 email: null,
                 name: null,
                 photo: null,
             });
             expect(initial.profile.version.length).toBeGreaterThan(0);
+            expect((await gym.client.getDesktopBootstrap()).profile).toEqual(initial.profile);
 
             const stream = gym.stream();
             let updated: typeof initial | undefined;
@@ -51,6 +53,7 @@ describe("Happy Agent environment API", () => {
                     { ifMatch: initial.profile.version },
                 );
                 expect(updated.profile).toMatchObject({
+                    userId: null,
                     email: "steve@example.test",
                     name: "Steve Korshakov",
                     photo: null,
@@ -108,6 +111,7 @@ describe("Happy Agent environment API", () => {
             if (updated === undefined) throw new Error("The profile update did not complete.");
             await gym.restart();
             await expect(gym.client.getProfile()).resolves.toEqual(updated);
+            expect((await gym.client.getDesktopBootstrap()).profile).toEqual(updated.profile);
         },
         TEST_TIMEOUT_MS,
     );
@@ -132,6 +136,7 @@ describe("Happy Agent environment API", () => {
                 { ifMatch: initial.profile.version },
             );
             expect(withPhoto.profile.photo?.thumbhash).toEqual(expect.any(String));
+            expect(withPhoto.profile.userId).toBeNull();
             expect(withPhoto.profile.photo?.thumbhash.length).toBeGreaterThan(0);
             expect(withPhoto.profile.version).not.toBe(initial.profile.version);
 
@@ -160,6 +165,7 @@ describe("Happy Agent environment API", () => {
                 ifMatch: withPhoto.profile.version,
             });
             expect(withoutPhoto.profile.photo).toBeNull();
+            expect(withoutPhoto.profile.userId).toBeNull();
             await expect(gym.client.getProfilePhoto()).rejects.toMatchObject({
                 code: "not_found",
                 status: 404,
