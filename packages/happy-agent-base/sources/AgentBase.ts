@@ -3525,10 +3525,12 @@ export class AgentBase {
                         modelReset = true;
                     } else {
                         const [previousKey, nextKey] = await Promise.all([
-                            this.#providers.contextCompatibilityKeyOf(
-                                this.#providerId,
-                                this.#model,
-                            ),
+                            // The old route may have been disabled or disappeared. Unknown
+                            // compatibility requires a fresh context, not a working old
+                            // provider before the user's replacement can be accepted.
+                            this.#providers
+                                .contextCompatibilityKeyOf(this.#providerId, this.#model)
+                                .catch(() => null),
                             this.#providers.contextCompatibilityKeyOf(provider, model),
                         ]);
                         modelReset =
