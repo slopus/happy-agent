@@ -1800,6 +1800,12 @@ export class WorkspacesModule implements AgentModule {
         return structuredClone(raw);
     }
 
+    /** Identity reservations remain occupied even when workspace features are disabled. */
+    async hasIdentity(ctx: Context, workspaceId: string): Promise<boolean> {
+        this.#assertId(workspaceId, "workspace");
+        return (await this.#store.get(ctx, workspaceId)) !== undefined;
+    }
+
     /** Permanently places one user-controlled root agent in a workspace. */
     async attachAgent(
         ctx: Context,

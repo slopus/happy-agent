@@ -42,6 +42,7 @@ import { AbortModule } from "../abort/index.js";
 import {
     BotAvatarInputError,
     BotConflictError,
+    BotInputError,
     BotNotFoundError,
     BotsModule,
     type BotEvent,
@@ -197,7 +198,7 @@ import {
 } from "./ApiSchemas.js";
 import { WorkspaceProxy } from "./WorkspaceProxy.js";
 
-const API_PROTOCOL_VERSION = 24;
+const API_PROTOCOL_VERSION = 25;
 const MAX_JSON_BODY_BYTES = 48 * 1024 * 1024;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
 const HEARTBEAT_MS = 15_000;
@@ -1016,18 +1017,32 @@ export class ApiModule implements AgentModule {
             if (request.method === "POST" && url.pathname === "/v0/bots") {
                 const body = await bodyAs(request, createBotRequestSchema, "bot creation");
                 const { mutationId, ...input } = body;
-                const existing =
-                    body.id === undefined ? undefined : await this.#bots.get(ctx, body.id);
-                const bot = await this.#withMutationId(
-                    mutationId,
-                    async () => await this.#bots.create(ctx, input),
-                );
+                const creation = await this.#withMutationId(mutationId, async () => {
+                    try {
+                        return await this.#bots.createWithResult(ctx, input);
+                    } catch (error) {
+                        if (error instanceof BotConflictError && error.bot !== undefined) {
+                            const bot = await this.#botResource(ctx, error.bot);
+                            throw new ApiError(409, "conflict", error.message, {
+                                currentVersion: bot["version"],
+                                bot,
+                            });
+                        }
+                        throw error;
+                    }
+                });
+                const { bot, created } = creation;
                 // Initial slash-command discovery is part of the same settled public agent
                 // snapshot used by ordinary agent creation.
-                await this.#slashCommands.catalog(ctx, bot.agentId);
+                if (created) {
+                    await this.#slashCommands.catalog(ctx, bot.agentId);
+                }
+                // Join already-running creation work without starting discovery again on a retry.
+                // Creation itself can enqueue its catalog event, so fence after that work settles.
+                await this.#agentEventChains.get(bot.agentId);
                 await this.#queueAgentWork(ctx, bot.agentId, undefined, async () => undefined);
                 const resource = await this.#botResource(ctx, bot);
-                if (existing === undefined && !this.#announcedAgentCreations.has(bot.agentId)) {
+                if (created && !this.#announcedAgentCreations.has(bot.agentId)) {
                     const agent = resource["agent"] as Record<string, unknown>;
                     boundedAdd(
                         this.#announcedAgentCreations,
@@ -5317,6 +5332,10 @@ export class ApiModule implements AgentModule {
         }
         if (error instanceof BotNotFoundError) {
             sendJson(response, 404, { code: "not_found", error: error.message });
+            return;
+        }
+        if (error instanceof BotInputError) {
+            sendJson(response, 400, { code: "invalid_request", error: error.message });
             return;
         }
         if (error instanceof BotConflictError) {

@@ -18,6 +18,8 @@ import { afterCommit, detach, type Context, type RootContext } from "@steve.kite
 
 import { AbortModule } from "../abort/index.js";
 import { ConfigModule } from "../config/index.js";
+import { ProjectsModule } from "../projects/index.js";
+import { WorkspacesModule } from "../workspaces/index.js";
 import { senderAgentIdMetadata } from "../impl/messageOrigin.js";
 import { MAX_NAMING_MESSAGE_CHARS, TitlesModule } from "../titles/index.js";
 
@@ -25,8 +27,10 @@ import {
     botRecordSchema,
     createBotInputSchema,
     BotConflictError,
+    BotInputError,
     BotNotFoundError,
     type BotAvatarAsset,
+    type BotCreation,
     type BotRecord,
     type CreateBotInput,
 } from "./Bot.js";
@@ -70,6 +74,8 @@ export class BotsModule implements AgentModule {
     readonly #abort: AbortModule;
     readonly #backgroundScope = new AsyncResource("happy-agent-bot-naming");
     readonly #config: ConfigModule;
+    readonly #projects: ProjectsModule;
+    readonly #workspaces: WorkspacesModule;
     readonly #listeners = new Set<BotEventListener>();
     readonly #namingTasks = new Map<string, Promise<void>>();
     readonly #titles: TitlesModule;
@@ -77,10 +83,18 @@ export class BotsModule implements AgentModule {
     #closed = false;
     #lifetime: RootContext | undefined;
 
-    constructor(config: ConfigModule, abort: AbortModule, titles: TitlesModule) {
+    constructor(
+        config: ConfigModule,
+        abort: AbortModule,
+        titles: TitlesModule,
+        projects: ProjectsModule,
+        workspaces: WorkspacesModule,
+    ) {
         this.#config = config;
         this.#abort = abort;
         this.#titles = titles;
+        this.#projects = projects;
+        this.#workspaces = workspaces;
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -169,6 +183,11 @@ export class BotsModule implements AgentModule {
      * a name the database refuses aborts the transaction before anything reaches the disk.
      */
     async create(ctx: Context, input: CreateBotInput): Promise<BotRecord> {
+        return (await this.#create(ctx, input)).bot;
+    }
+
+    /** Reports creation inside its transaction so a retry cannot repeat post-creation work. */
+    async createWithResult(ctx: Context, input: CreateBotInput): Promise<BotCreation> {
         return await this.#create(ctx, input);
     }
 
@@ -177,29 +196,50 @@ export class BotsModule implements AgentModule {
         input: CreateBotInput,
         systemKey?: BotSystemKey,
         initialAvatar?: BotInitialAvatar,
-    ): Promise<BotRecord> {
+    ): Promise<BotCreation> {
         if (!Value.Check(createBotInputSchema, input)) {
-            throw new Error("Bot creation input is invalid.");
+            throw new BotInputError();
         }
         return await ctx.inTx(async (txCtx) => {
             if (input.id !== undefined) {
                 const existing = await readBot(txCtx, input.id);
-                if (existing !== undefined) return existing;
+                if (existing !== undefined) {
+                    if (
+                        (input.workspaceId !== undefined &&
+                            input.workspaceId !== existing.workspaceId) ||
+                        (input.agentId !== undefined && input.agentId !== existing.agentId)
+                    ) {
+                        throw new BotConflictError(
+                            "The requested identities do not match this bot.",
+                            existing,
+                        );
+                    }
+                    return { bot: structuredClone(existing), created: false };
+                }
             }
             const agents = this.#requireAgents();
-            const botId = input.id ?? (await this.#unusedIdentity(txCtx, new Set()));
-            if (
-                (await readBotByWorkspace(txCtx, botId)) !== undefined ||
-                (await readBotByAgent(txCtx, botId)) !== undefined ||
-                (await agents.config(txCtx, botId)) !== undefined
-            ) {
-                throw new BotConflictError("The requested bot ID is already in use.");
+            const supplied = [input.id, input.workspaceId, input.agentId].filter(
+                (id) => id !== undefined,
+            );
+            const reserved = new Set(supplied);
+            if (reserved.size !== supplied.length) {
+                throw new BotConflictError(
+                    "The bot, workspace, and agent must have distinct identities.",
+                );
             }
+            for (const id of reserved) {
+                if (await this.#identityInUse(txCtx, id)) {
+                    throw new BotConflictError("A requested identity is already in use.");
+                }
+            }
+            const botId = input.id ?? (await this.#unusedIdentity(txCtx, reserved));
+            reserved.add(botId);
+            const workspaceId = input.workspaceId ?? (await this.#unusedIdentity(txCtx, reserved));
+            reserved.add(workspaceId);
+            const agentId = input.agentId ?? (await this.#unusedIdentity(txCtx, reserved));
             const name = input.name ?? "New Bot";
             const username = await this.#chooseUsername(txCtx, input.name ?? "bot", input.username);
             const path = this.#config.botPath(username);
-            const workspaceId = await this.#unusedIdentity(txCtx, new Set([botId]));
-            const agentId = await this.#unusedIdentity(txCtx, new Set([botId, workspaceId]));
             const now = Date.now();
             const config: AgentConfig = {
                 provenance: { createdAt: now },
@@ -268,7 +308,7 @@ export class BotsModule implements AgentModule {
                 type: "bot_created",
                 bot,
             });
-            return structuredClone(bot);
+            return { bot: structuredClone(bot), created: true };
         });
     }
 
@@ -289,7 +329,7 @@ export class BotsModule implements AgentModule {
                 CHIEF_OF_STAFF_SYSTEM_KEY,
                 { asset: avatar, source: "generated" },
             );
-            await insertSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, created.id);
+            await insertSystemBotSeed(txCtx, CHIEF_OF_STAFF_SYSTEM_KEY, created.bot.id);
         });
     }
 
@@ -614,16 +654,23 @@ export class BotsModule implements AgentModule {
     }
 
     async #unusedIdentity(ctx: Context, excluded: ReadonlySet<string>): Promise<string> {
-        const agents = this.#requireAgents();
         for (;;) {
             const id = createId();
             if (excluded.has(id)) continue;
-            if ((await readBot(ctx, id)) !== undefined) continue;
-            if ((await readBotByWorkspace(ctx, id)) !== undefined) continue;
-            if ((await readBotByAgent(ctx, id)) !== undefined) continue;
-            if ((await agents.config(ctx, id)) !== undefined) continue;
+            if (await this.#identityInUse(ctx, id)) continue;
             return id;
         }
+    }
+
+    async #identityInUse(ctx: Context, id: string): Promise<boolean> {
+        return (
+            (await readBot(ctx, id)) !== undefined ||
+            (await readBotByWorkspace(ctx, id)) !== undefined ||
+            (await readBotByAgent(ctx, id)) !== undefined ||
+            (await this.#requireAgents().config(ctx, id)) !== undefined ||
+            (await this.#projects.get(ctx, id)) !== undefined ||
+            (await this.#workspaces.hasIdentity(ctx, id))
+        );
     }
 
     async #required(ctx: Context, botId: string): Promise<BotRecord> {

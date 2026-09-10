@@ -35,6 +35,12 @@ asks for a one-to-three-word person, role, or character identity based on the li
 function, rather than a task title. The result renames both the bot and its conversation. Explicitly
 named bots, built-ins, and bots renamed while inference is running are never overwritten.
 
+Creation also accepts optional bot, workspace, and agent IDs. All three are reserved together and
+checked against the bot, project, workspace, and agent catalogs, including archived records.
+Repeating the bot ID returns its current state; supplied child IDs must match the stored ones.
+`createWithResult` reports whether the transaction created the bot so an API retry does not repeat
+discovery or publish creation again. Folder failure rolls the entire creation back.
+
 On every inference, the module adds the owning bot's current display name, immutable username,
 and stable bot ID to that bot agent's system instructions. It contributes nothing to ordinary
 agents, and a rename reaches the bot on its next turn without changing its agent identity.

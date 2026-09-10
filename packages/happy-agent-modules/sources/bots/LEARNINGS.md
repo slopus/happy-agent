@@ -1,5 +1,14 @@
 # Bots — learnings
 
+## Optimistic creation reserves all three identities together
+
+The phone needs stable bot, workspace, and agent IDs before creation finishes. Creation now accepts
+each ID independently and checks all catalogs in the same transaction, including hidden agents and
+archived or disabled workspaces. Checking only the bot catalog could let a chosen workspace ID hide
+an existing project. The bot ID remains the only retry key: matching retries return the current bot,
+while mismatched child IDs return the current bot in a conflict. The transaction reports whether it
+created anything so retries do not repeat discovery or publish duplicate creation events.
+
 ## Chief of Staff creates and imports local Happy projects
 
 Project coordination needs more than a catalog listing. Chief of Staff now checks for duplicates,

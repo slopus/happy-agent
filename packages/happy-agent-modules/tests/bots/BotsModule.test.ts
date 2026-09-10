@@ -33,6 +33,8 @@ import { HistoryModule } from "../../sources/history/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
 import { TitlesModule } from "../../sources/titles/index.js";
 import { WorkspacesModule } from "../../sources/workspaces/index.js";
+import { projectMigrations } from "../../sources/projects/index.js";
+import { workspaceMigrations } from "../../sources/workspaces/index.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { providersOf, sharedKV, textTurn } from "../support/fixtures.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
@@ -631,26 +633,27 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
             },
         },
     );
-    const database = moduleDatabase(botMigrations, name);
+    const database = moduleDatabase(
+        [...projectMigrations, ...workspaceMigrations, ...botMigrations],
+        name,
+    );
     await database.ready;
     const compute = new ComputeModule(config, new SecretsModule());
     const abort = new AbortModule(compute);
     const agents = new BotAgents();
     abort.beforeStart(database.context, agents.asRef());
     const git = new GitModule();
-    const titles = new TitlesModule(
+    const projects = projectsModuleFor(config, git);
+    const workspaces = new WorkspacesModule(
         config,
-        new HistoryModule(),
-        new WorkspacesModule(
-            config,
-            projectsModuleFor(config, git),
-            git,
-            abort,
-            new DurableFunctionsModule(),
-        ),
+        projects,
+        git,
+        abort,
+        new DurableFunctionsModule(),
     );
+    const titles = new TitlesModule(config, new HistoryModule(), workspaces);
     const naming = vi.spyOn(titles, "suggestBotName");
-    const bots = new BotsModule(config, abort, titles);
+    const bots = new BotsModule(config, abort, titles, projects, workspaces);
     const hooks = bots.beforeStart(database.context, agents.asRef());
     const events: BotEvent[] = [];
     const agentKVs = new Map<string, AgentKV>();

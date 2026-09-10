@@ -42,6 +42,8 @@ export const botRecordSchema = Type.Object(
 export const createBotInputSchema = Type.Object(
     {
         id: Type.Optional(cuid2Schema),
+        workspaceId: Type.Optional(cuid2Schema),
+        agentId: Type.Optional(cuid2Schema),
         isAdmin: Type.Optional(Type.Boolean()),
         name: Type.Optional(botNameSchema),
         username: Type.Optional(botUsernameSchema),
@@ -69,12 +71,24 @@ export const botAvatarAssetSchema = Type.Object(
 export type BotRecord = Static<typeof botRecordSchema>;
 export type BotStatus = Static<typeof botStatusSchema>;
 export type CreateBotInput = Static<typeof createBotInputSchema>;
+export const botCreationSchema = Type.Object({ bot: botRecordSchema, created: Type.Boolean() });
+export type BotCreation = Static<typeof botCreationSchema>;
 export type BotAvatarAsset = Static<typeof botAvatarAssetSchema>;
 
+export class BotInputError extends Error {
+    constructor() {
+        super("The bot creation request is invalid.");
+        this.name = "BotInputError";
+    }
+}
+
 export class BotConflictError extends Error {
-    constructor(message: string) {
+    readonly bot: BotRecord | undefined;
+
+    constructor(message: string, bot?: BotRecord) {
         super(message);
         this.name = "BotConflictError";
+        this.bot = bot === undefined ? undefined : structuredClone(bot);
     }
 }
 
