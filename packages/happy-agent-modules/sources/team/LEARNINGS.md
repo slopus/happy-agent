@@ -15,6 +15,8 @@ and these writes commit together through Base's transactional notification hook.
 partial delivery and redundant notices after retries or restart, restores the profile after history
 replacement, and refreshes name/email changes before inference without waking an idle agent.
 Photo-only or version-only updates do not repeat unchanged profile text.
+Standalone Team instances expose no startup hook: the runtime installs the standalone Profile
+module instead, so a disabled Team must not advertise agent runtime behavior.
 
 ## Public user lookup is bounded display information
 

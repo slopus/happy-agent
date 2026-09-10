@@ -76,6 +76,7 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
     Database
 > {
     readonly name = "team";
+    readonly beforeStart?: () => AgentModuleHooks<never, Database>;
     readonly migrations: readonly AgentModuleMigration<Database>[] = [
         [
             TEAM_USERS_MIGRATION_KEY,
@@ -177,16 +178,15 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
             clientId: team.workosClientId,
             organizationId: team.workosOrganizationId,
         });
+        this.beforeStart = () => ({
+            systemNotificationsTransact: (ctx, scope, boundary) =>
+                teamSenderNotifications(ctx, this, scope, boundary),
+        });
     }
 
     get enabled(): boolean {
         return this.#config.configuration.values.feature.team.enabled;
     }
-
-    readonly beforeStart = (): AgentModuleHooks<never, Database> => ({
-        systemNotificationsTransact: (ctx, scope, boundary) =>
-            teamSenderNotifications(ctx, this, scope, boundary),
-    });
 
     /** Watch durable user-profile changes after their transaction commits. */
     onProfileUpdated(listener: TeamUserProfileChangedListener): () => void {
