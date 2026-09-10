@@ -1,5 +1,21 @@
 # Team — learnings
 
+## Sender profiles are notifications at consumption, not message prefixes
+
+The model could not see which team member was speaking even though messages retained their
+authenticated user IDs. Team now inserts a separate system notification before each actual
+sender transition, including transitions inside queued and steering batches. It includes the
+Happy user ID, full name, and nullable email, explicitly as descriptive data rather than authority.
+WorkOS IDs, ownership, and photos stay out of model context. User content and public history are
+unchanged; only positively human-authored messages select a sender, never client metadata or
+agent-generated messages. Missing or unresolved human authorship clears the previous profile.
+
+The current identity lives in agent KV; the last announced text lives in history KV. Notifications
+and these writes commit together through Base's transactional notification hook. This prevents
+partial delivery and redundant notices after retries or restart, restores the profile after history
+replacement, and refreshes name/email changes before inference without waking an idle agent.
+Photo-only or version-only updates do not repeat unchanged profile text.
+
 ## Public user lookup is bounded display information
 
 Message authors use installation-local Happy IDs, not WorkOS IDs. Batch lookup accepts at most

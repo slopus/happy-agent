@@ -7,7 +7,8 @@ History retains that ID in pending and accepted records; acceptance uses the pen
 one exists, including its absence of authorship on older messages. Direct person-authored deliveries
 may carry a validated ID in their own metadata. Agent-generated messages and client-owned metadata
 never supply human authorship. Retries and restarts preserve the original author without changing
-content or adding profile text to the model context.
+content. History keeps profile text out of user messages and public history; Team separately owns
+model-facing system notifications when the sender or their displayed profile changes.
 
 ## Requested tools are user content followed by a separate assistant call
 

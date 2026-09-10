@@ -225,6 +225,15 @@ describe("team authorship across the real runtime and HTTP API", () => {
         expect((await clients.alice.getAgentBootstrap(agent.id)).pending).toContainEqual(
             queued.message,
         );
+        // These all wait behind the first inference and must be announced in consumption order,
+        // not as the most recently authenticated caller or as one sender for the entire batch.
+        await clients.bob.sendMessage(agent.id, { text: "Bob again", mode, delivery: "queue" });
+        await clients.alice.sendMessage(agent.id, {
+            text: "Alice returns",
+            mode,
+            delivery: "queue",
+        });
+        await clients.bob.sendMessage(agent.id, { text: "Bob returns", mode, delivery: "queue" });
         const retry = await clients.alice.sendMessage(agent.id, {
             id: queued.message.id,
             text: "Do not replace this text or author",
@@ -349,6 +358,48 @@ describe("team authorship across the real runtime and HTTP API", () => {
             role: "user",
             content: [{ type: "text", text: "Bob's original text" }],
         });
+        const notices = records.flatMap((record) =>
+            record.type === "system"
+                ? record.message.content.flatMap((block) =>
+                      block.type === "text" && block.text.startsWith("# Team sender profile")
+                          ? [block.text]
+                          : [],
+                  )
+                : [],
+        );
+        expect(notices).toHaveLength(4);
+        for (const [index, name] of ["Alice", "Bob", "Alice", "Bob"].entries()) {
+            expect(notices[index]).toContain(`Name: "${name}"`);
+            expect(notices[index]).toContain(`Email: "${name.toLowerCase()}@example.test"`);
+            expect(notices[index]).toContain(name === "Alice" ? aliceId! : bobId!);
+            expect(notices[index]).not.toContain("user_alice123");
+            expect(notices[index]).not.toContain("user_bob456");
+        }
+        const delivered = provider.sessions
+            .flatMap((session) => session.requests)
+            .at(-1)!
+            .context.messages.filter(
+                (message) =>
+                    message.role === "user" ||
+                    (message.role === "system" &&
+                        message.content.some(
+                            (block) =>
+                                block.type === "text" &&
+                                block.text.startsWith("# Team sender profile"),
+                        )),
+            );
+        expect(delivered).toEqual([
+            { role: "system", content: [{ type: "text", text: notices[0] }] },
+            { role: "user", content: [{ type: "text", text: "Alice's original text" }] },
+            { role: "system", content: [{ type: "text", text: notices[1] }] },
+            { role: "user", content: [{ type: "text", text: "Bob's original text" }] },
+            { role: "user", content: [{ type: "text", text: "Bob again" }] },
+            { role: "system", content: [{ type: "text", text: notices[2] }] },
+            { role: "user", content: [{ type: "text", text: "Alice returns" }] },
+            { role: "system", content: [{ type: "text", text: notices[3] }] },
+            { role: "user", content: [{ type: "text", text: "Bob returns" }] },
+            { role: "user", content: [{ type: "text", text: "Bob steers" }] },
+        ]);
         const current = await clients.bob.getProfile();
         expect(current.profile.userId).toBe(bobProfileId);
         expect((await clients.bob.getDesktopBootstrap()).profile).toEqual(current.profile);
@@ -390,6 +441,41 @@ describe("team authorship across the real runtime and HTTP API", () => {
             id: bobId,
             name: "Robert",
         });
+        await clients.bob.sendMessage(agent.id, {
+            id: "robert123",
+            text: "My profile changed",
+            mode,
+        });
+        await vi.waitFor(
+            async () => {
+                const history = await clients.bob.getMessages(agent.id);
+                expect(
+                    history.runs
+                        .flatMap((run) => run.messages)
+                        .some(
+                            (message) =>
+                                message.role === "user" &&
+                                message.id === "robert123" &&
+                                message.status === "accepted",
+                        ),
+                ).toBe(true);
+                expect(history.runs.every((run) => run.status !== "running")).toBe(true);
+            },
+            { timeout: 10_000 },
+        );
+        const renamedContext = provider.sessions.flatMap((session) => session.requests).at(-1)!
+            .context.messages;
+        expect(renamedContext.at(-2)).toMatchObject({
+            role: "system",
+            content: [{ type: "text", text: expect.stringContaining('Name: "Robert"') }],
+        });
+        expect(renamedContext.at(-1)).toEqual({
+            role: "user",
+            content: [{ type: "text", text: "My profile changed" }],
+        });
+        expect(JSON.stringify((await clients.bob.getMessages(agent.id)).runs)).not.toContain(
+            "# Team sender profile",
+        );
         expect(
             (await clients.alice.getMessages(agent.id)).runs
                 .flatMap((run) => run.messages)

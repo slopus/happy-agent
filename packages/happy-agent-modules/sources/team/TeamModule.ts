@@ -7,6 +7,7 @@ import {
     agentDatabaseRun,
     type AgentDatabase,
     type AgentModule,
+    type AgentModuleHooks,
     type AgentModuleMigration,
 } from "@slopus/happy-agent-base";
 import { Type } from "@sinclair/typebox";
@@ -36,6 +37,7 @@ import {
 } from "./TeamUser.js";
 import { WorkOSAccessTokenVerifier } from "./WorkOSAccessTokenVerifier.js";
 import { queryTeamUsers } from "./persistence/queryTeamUsers.js";
+import { teamSenderNotifications } from "./impl/teamSenderNotifications.js";
 
 export const TEAM_USERS_MIGRATION_KEY = "001-users";
 export const TEAM_USER_PHOTOS_MIGRATION_KEY = "002-user-photos";
@@ -180,6 +182,11 @@ export class TeamModule<Database extends AgentDatabase = AgentDatabase> implemen
     get enabled(): boolean {
         return this.#config.configuration.values.feature.team.enabled;
     }
+
+    readonly beforeStart = (): AgentModuleHooks<never, Database> => ({
+        systemNotificationsTransact: (ctx, scope, boundary) =>
+            teamSenderNotifications(ctx, this, scope, boundary),
+    });
 
     /** Watch durable user-profile changes after their transaction commits. */
     onProfileUpdated(listener: TeamUserProfileChangedListener): () => void {
