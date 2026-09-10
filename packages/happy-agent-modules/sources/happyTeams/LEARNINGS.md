@@ -2,6 +2,13 @@
 
 ## Administration has two independent authorities
 
+Direct node access uses `mint_happy_workos_token`, available only to an active admin bot and
+rechecked against its captured agent ID and root ancestry on execution. The required team ID scopes
+the WorkOS credential to that organization, preserving the connected human's permissions rather
+than inventing a bot identity. Auto reviews disclosure of this sensitive bearer credential into
+the tool result/history. Minting is non-durable; no refresh token, optional lifetime, or identity
+override is exposed. Tokens must not be echoed in final answers or saved to files.
+
 Email invitations are active-admin-bot-only, unlike the older root-user team management tools.
 `invite_happy_team_member` is absent for human roots, ordinary or archived bots, and subagents;
 execution rechecks the captured acting agent before touching Cloud. Happy Cloud independently

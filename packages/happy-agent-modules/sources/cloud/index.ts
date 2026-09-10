@@ -4,6 +4,7 @@ export {
     type CloudOperationErrorCode,
     type CloudUpdatedListener,
 } from "./CloudModule.js";
+export { type ShortLivedWorkOSToken } from "./shortLivedWorkOSToken.js";
 export {
     happyTeamEndpointInputSchema,
     happyTeamEndpointSchema,

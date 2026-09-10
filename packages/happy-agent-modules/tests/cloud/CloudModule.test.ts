@@ -423,6 +423,50 @@ describe("CloudModule", () => {
         );
     });
 
+    it("withholds long-lived tokens after persisting rotation, then releases a five-minute team token", async () => {
+        const { database, module } = await fixture("cloud-module-short-lived-team-mint");
+        await connect(module, database);
+        const issuedAt = Math.floor(Date.now() / 1_000);
+        const makeToken = (lifetime: number) =>
+            `${Buffer.from('{"alg":"RS256"}').toString("base64url")}.${Buffer.from(
+                JSON.stringify({
+                    client_id: "client_01KZD3XE9YAFAMT0P8TD4HP73E",
+                    exp: issuedAt + lifetime,
+                    iat: issuedAt,
+                    iss: "https://api.workos.com/user_management/client_01KZD3XE9YAFAMT0P8TD4HP73E",
+                    org_id: "org_target",
+                    sid: "session_test",
+                    sub: user.id,
+                }),
+            ).toString("base64url")}.test-signature`;
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: makeToken(3600),
+            refreshToken: "rotated-after-withheld",
+            user,
+        });
+        await expect(
+            module.mintShortLivedForOrganization(database.context, "org_target"),
+        ).rejects.toThrow("longer than five minutes");
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "rotated-after-withheld",
+        );
+        const accessToken = makeToken(300);
+        workos.refresh.mockResolvedValueOnce({ accessToken, refreshToken: "next-refresh", user });
+        await expect(
+            module.mintShortLivedForOrganization(database.context, "org_target"),
+        ).resolves.toEqual({ accessToken, expiresAt: (issuedAt + 300) * 1_000 });
+        expect(workos.refresh).toHaveBeenLastCalledWith({
+            refreshToken: "rotated-after-withheld",
+            organizationId: "org_target",
+        });
+        expect(JSON.stringify(module.status(database.context))).not.toContain(accessToken);
+        workos.refresh.mockClear();
+        await expect(module.mintShortLivedForOrganization(database.context, "")).rejects.toThrow(
+            "organization ID is invalid",
+        );
+        expect(workos.refresh).not.toHaveBeenCalled();
+    });
+
     it("mints a team token with organization scope and durably rotates the shared credential", async () => {
         const { database, module } = await fixture("cloud-module-team-mint");
         await connect(module, database);

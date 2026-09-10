@@ -1,4 +1,9 @@
 export { HappyTeamsModule } from "./HappyTeamsModule.js";
+export {
+    mintHappyWorkOSTokenInputSchema,
+    mintHappyWorkOSTokenResultSchema,
+    mintHappyWorkOSTokenTool,
+} from "./tools/mint_happy_workos_token.js";
 export { createHappyTeamInputSchema, createHappyTeamTool } from "./tools/create_happy_team.js";
 export {
     getHappyWorkOSStateInputSchema,

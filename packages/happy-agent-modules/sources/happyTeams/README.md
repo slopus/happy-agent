@@ -12,6 +12,21 @@ identifiers needed for `feature.team.owner_workos_user_id` and `feature.team.wor
 reads the client ID from the connected Cloud environment instead of assuming production. The tool
 remains separate from `create_happy_team`, so organization creation has one purpose and one result.
 
+An active admin bot can call `mint_happy_workos_token` with `team_id` to connect directly to a
+WorkOS-authenticated team node. It returns `access_token`, `team_id`, and the actual `expires_at`
+(Unix milliseconds). The credential acts as the connected Cloud user in that organization and
+is not limited to one node or to read-only operations. Authority is rechecked on execution; human
+roots, subagents, ordinary bots, and archived admins cannot mint through this tool. Auto reviews
+credential disclosure, and Read only and Workspace write cannot execute it.
+
+WorkOS controls token lifetime in the application's Sessions settings. Set Access token duration
+to five minutes or less: the tool withholds longer-lived, expired, malformed, or mismatched tokens,
+without undoing the already-persisted refresh-token rotation. It never manufactures a shorter
+expiry for an otherwise longer-lived token. Minting is non-durable and never automatically replayed.
+The bearer token appears in the requested tool result/history; no refresh token is exposed. Use it
+only with the intended trusted team node, never echo it in a final answer or save it to a file.
+Expiry blocks new authenticated requests, not previously started work or an already-open stream.
+
 An active admin bot also receives `invite_happy_team_member`, taking `team_id` and `email`. It uses
 Happy Cloud's WorkOS invitation API to invite one member with WorkOS's configured email delivery.
 It is not available to human roots, non-admin or archived bots, or subagents, and authority is

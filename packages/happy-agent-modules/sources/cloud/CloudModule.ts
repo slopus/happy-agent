@@ -64,6 +64,7 @@ import {
 } from "./CloudWorkOS.js";
 import { createCloudVersion } from "./createCloudVersion.js";
 import { cloudMigrations } from "./CloudMigrations.js";
+import { shortLivedWorkOSToken, type ShortLivedWorkOSToken } from "./shortLivedWorkOSToken.js";
 import {
     happyTeamEndpointInputSchema,
     normalizeHappyTeamEndpoint,
@@ -443,6 +444,27 @@ export class CloudModule implements AgentModule {
             signal?.throwIfAborted();
             this.#assertRunning();
             return (await this.#mintInLock(ctx, true, organizationId)).accessToken;
+        });
+    }
+
+    /** Release an organization credential only when WorkOS's real lifetime is at most five minutes. */
+    async mintShortLivedForOrganization(
+        _ctx: Context,
+        organizationId: string,
+    ): Promise<ShortLivedWorkOSToken> {
+        if (!Value.Check(cloudOrganizationSchema.properties.id, organizationId)) {
+            throw this.#error(400, "invalid_request", "The team organization ID is invalid.");
+        }
+        const ctx = this.#ownedContext();
+        return await this.#lock.runInLock(ctx, async () => {
+            this.#assertRunning();
+            const minted = await this.#mintInLock(ctx, true, organizationId);
+            return shortLivedWorkOSToken(
+                minted.accessToken,
+                organizationId,
+                minted.authenticated.user.id,
+                this.#client(minted.cloud.environment).workosClientId,
+            );
         });
     }
 

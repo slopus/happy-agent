@@ -31,6 +31,10 @@ const archivedAdmin = {
 
 function fixture() {
     const cloud = {
+        mintShortLivedForOrganization: vi.fn(async () => ({
+            accessToken: "sensitive-access-token",
+            expiresAt: 1_800_000_300_000,
+        })),
         inviteTeamMember: vi.fn(async () => ({ id: "invitation_created" })),
         createTeam: vi.fn(async (_ctx: Context, name: string, endpoint: string) => ({
             endpoint,
@@ -85,6 +89,56 @@ function call() {
 }
 
 describe("HappyTeamsModule", () => {
+    it("exposes short-lived tokens only to active admin bots and rechecks captured authority", async () => {
+        const test = fixture();
+        const tool = (await toolsFor(test.module, test.agents, "admin-agent")).find(
+            ({ name }) => name === "mint_happy_workos_token",
+        )!;
+        const input = { team_id: "org_team" };
+        expect(tool).toMatchObject({ durable: false, requiresAutoOrFullAccess: true });
+        expect(tool.shouldRunInFullAccessInAutoMode).toBeUndefined();
+        expect(await tool.shouldReviewInAutoMode(input, ctx)).toBe(true);
+        expect(tool.describeAutoPermissionAction?.(input, ctx)).toContain("org_team");
+        expect(tool.describeAutoPermissionAction?.(input, ctx)).toContain("external WorkOS");
+        expect(tool.describeAutoPermissionAction?.(input, ctx)).toContain("tool result");
+        expect(Value.Check(tool.parameters, input)).toBe(true);
+        for (const invalid of [
+            {},
+            { team_id: "not-a-team" },
+            { ...input, actingAgentId: "admin-agent" },
+            { ...input, expires_in: 3600 },
+        ]) {
+            expect(Value.Check(tool.parameters, invalid)).toBe(false);
+        }
+        const result = await tool.execute(ctx, input, call());
+        expect(result).toEqual({
+            access_token: "sensitive-access-token",
+            expires_at: 1_800_000_300_000,
+            team_id: "org_team",
+        });
+        expect(Value.Check(tool.returnType, result)).toBe(true);
+        expect(test.cloud.mintShortLivedForOrganization).toHaveBeenCalledWith(ctx, "org_team");
+        vi.mocked(test.cloud.mintShortLivedForOrganization).mockClear();
+        for (const agentId of ["human-agent", "member-agent", "archived-admin-agent", "subagent"]) {
+            expect(
+                (await toolsFor(test.module, test.agents, agentId)).map(({ name }) => name),
+            ).not.toContain("mint_happy_workos_token");
+            await expect(test.module.mintWorkOSToken(ctx, agentId, "org_team")).rejects.toThrow(
+                "Only an active admin bot",
+            );
+        }
+        vi.mocked(test.agents.parentOf).mockResolvedValue("parent-agent");
+        await expect(tool.execute(ctx, input, call())).rejects.toThrow("Only an active admin bot");
+        vi.mocked(test.agents.parentOf).mockResolvedValue(null);
+        for (const currentBot of [member, archivedAdmin, undefined]) {
+            vi.mocked(test.bots.forAgent).mockResolvedValue(currentBot);
+            await expect(tool.execute(ctx, input, call())).rejects.toThrow(
+                "Only an active admin bot",
+            );
+        }
+        expect(test.cloud.mintShortLivedForOrganization).not.toHaveBeenCalled();
+    });
+
     it("restricts invitations to active admin bots and rechecks authority at execution", async () => {
         const test = fixture();
         const tool = (await toolsFor(test.module, test.agents, "admin-agent")).find(
@@ -141,6 +195,7 @@ describe("HappyTeamsModule", () => {
             ...names,
             "get_happy_workos_state",
             "invite_happy_team_member",
+            "mint_happy_workos_token",
         ]);
         expect(memberTools.map(({ name }) => name)).toEqual(names);
         expect(archivedAdminTools.map(({ name }) => name)).toEqual(names);

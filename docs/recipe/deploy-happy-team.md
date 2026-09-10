@@ -119,8 +119,36 @@ the one registered with the team. Keep the listener private behind Tailcat and k
 authentication enabled. An unauthenticated health request should be rejected; that rejection alone
 does not prove authenticated readiness.
 
+The admin bot can verify the running node directly, not just inspect its source code or
+configuration. For authenticated diagnostics within the user's task, call `mint_happy_workos_token`
+on the local standalone installation:
+
+```json
+{ "team_id": "org_REPLACE_WITH_CREATED_TEAM_ID" }
+```
+
+Use the returned `access_token` as `Authorization: Bearer <access_token>` for bounded requests to
+the intended trusted team node over Tailcat or verified HTTPS. Follow the
+[Tailcat request example](../team-mode.md#5-verify-a-team-connection) for the transport; a
+`tailcat://` endpoint is not an ordinary HTTP URL. Start with `GET /v0/health`, then inspect
+`GET /v0/onboarding` and `GET /v0/profile` to check actual authentication and readiness. After
+profile onboarding, use other documented read endpoints relevant to the task to inspect live
+state. Read the shipped `API.md` for request and response contracts, execute the checks, and report
+what the node actually returned. Code inspection alone does not establish that the deployment
+works. Keep changes and agent smoke tests within the user's authorized scope; possessing the token
+does not authorize unrelated operations.
+
+The token carries the connected user's permissions in that organization and expires within five
+minutes; `expires_at` is its actual expiry in Unix milliseconds. Mint it just before the checks.
+WorkOS must have Access token duration set to five minutes or less; the tool withholds longer-lived
+tokens. Report that configuration blocker rather than bypassing the limit. Keep the token out of
+files, saved connection settings, logs, and final answers; do not forward it to unrelated endpoints
+or through redirects. Never copy a refresh token. If an expired token blocks a still-authorized
+read, mint a fresh one; do not automatically replay a mutation with an uncertain outcome.
+
 Resolve deployment failures before adding the local connection. These service checks establish
-that the host is running; the next step tests the user's actual authenticated path.
+that the host is running and allow direct authenticated diagnostics; the next step also tests the
+user's saved local connection and actual agent use.
 
 ## 5. Add the local connection and verify it
 
@@ -145,7 +173,9 @@ Once the deployed service checks pass, call `set_remote_connection`:
 The `address` is the exact case-sensitive Tailcat address, not the full `tailcat://` URL. Supply
 the actual Tailcat port and the created team's organization ID. Do not supply a standalone bearer
 `token` for a team connection. The connection layer obtains an organization-scoped WorkOS token
-from the connected Happy Cloud account; do not extract or transfer that token manually.
+from the connected Happy Cloud account automatically. The short-lived diagnostic token from step 4
+is only for direct checks; do not extract the connection's credentials or replace its managed
+authentication with that token.
 
 This tool saves local machine runtime configuration and applies it without a local daemon
 restart. It grants this installation's authenticated clients access to the remote API. It does

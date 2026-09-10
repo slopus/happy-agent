@@ -30,6 +30,13 @@
 
 ## Rotation and verification
 
+- Admin-bot direct access uses a separate short-lived organization mint operation. WorkOS, not
+  the refresh call, configures access-token duration. After the ordinary serialized rotation and
+  Cloud verification, require matching user, client, issuer, and organization claims, a valid
+  current lifetime, and both total and remaining lifetime at most five minutes. Return the real
+  expiry; never relabel a longer token. A withheld token still leaves its replacement refresh
+  token durably saved. The existing public mint and internal connection mint stay unchanged.
+
 - Refresh tokens rotate. Persist the replacement immediately after refresh and before `/v0/hello`.
   Clear credentials only on WorkOS `invalid_grant`; hello failures are unavailable, because even its
   `401` may indicate verifier infrastructure trouble rather than revoked credentials.
