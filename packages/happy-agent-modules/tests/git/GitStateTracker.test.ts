@@ -81,13 +81,19 @@ describe("GitStateTracker scheduling", () => {
         await writeFile(join(repository, "dist", "generated.js"), "generated\n");
         let fullStatusReads = 0;
         let pathStatusReads = 0;
+        let activeCommands = 0;
         const scan = scanGitRunnerFromCommandRunner({
             async run(cwd, args, options) {
                 if (args[0] === "status") {
                     if (args.includes("--branch")) fullStatusReads += 1;
                     else pathStatusReads += 1;
                 }
-                return await gitRunner.run(cwd, ["--no-optional-locks", ...args], options);
+                activeCommands += 1;
+                try {
+                    return await gitRunner.run(cwd, ["--no-optional-locks", ...args], options);
+                } finally {
+                    activeCommands -= 1;
+                }
             },
         });
         const tracker = new GitStateTracker(createRootContext(), scan, owner());
@@ -95,9 +101,18 @@ describe("GitStateTracker scheduling", () => {
 
         tracker.watch(watched);
         await waitFor(() => tracker.snapshot(watched) !== undefined);
+        // Arming a Windows watcher can deliver a pending ref-directory event and queue one
+        // more reconciliation. Measure generated-file churn only after initial work settles.
+        await waitForSettled(
+            () => activeCommands === 0,
+            () => fullStatusReads,
+            300,
+        );
         const scansBeforeChurn = fullStatusReads;
+        const pathsBeforeChurn = pathStatusReads;
+        await writeFile(join(repository, "dist", "generated.js"), "generated again\n");
         tracker.markWorktreeChanged(watched, "dist/generated.js");
-        await waitFor(() => pathStatusReads > 0);
+        await waitFor(() => pathStatusReads > pathsBeforeChurn);
         await waitForNoChange(() => fullStatusReads, 300);
 
         expect(fullStatusReads).toBe(scansBeforeChurn);
@@ -256,6 +271,27 @@ async function waitForNoChange(read: () => number, durationMs: number): Promise<
         expect(read()).toBe(initial);
         await new Promise((resolve) => setTimeout(resolve, 5));
     }
+}
+
+async function waitForSettled(
+    idle: () => boolean,
+    read: () => number,
+    durationMs: number,
+): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    let observed = read();
+    let stableSince = Date.now();
+    while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const current = read();
+        if (!idle() || current !== observed) {
+            observed = current;
+            stableSince = Date.now();
+        } else if (Date.now() - stableSince >= durationMs) {
+            return;
+        }
+    }
+    throw new Error("Timed out waiting for initial Git tracking to settle.");
 }
 
 function stampedSnapshot(): GitChangeSnapshot {

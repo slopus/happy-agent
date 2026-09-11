@@ -1,5 +1,5 @@
 import { spawn as spawnChildProcess, type ChildProcess } from "node:child_process";
-import { basename } from "node:path";
+import { shellCommandArgs } from "./shellCommandArgs.js";
 
 import { spawn as spawnPty } from "@lydell/node-pty";
 import type { Context } from "@steve.kite/stdlib";
@@ -61,7 +61,9 @@ export async function startProcessTransport<Result>(
         const executable =
             options.args === undefined ? (options.shell ?? resolveSystemShell()) : options.command;
         const args =
-            options.args === undefined ? shellArgs(executable, options.command) : [...options.args];
+            options.args === undefined
+                ? shellCommandArgs(executable, options.command)
+                : [...options.args];
         const transport =
             options.tty === true
                 ? startPtyTransport(executable, args, options)
@@ -249,15 +251,4 @@ function startPtyTransport(
 
 function toPtyInput(data: string | Uint8Array): string {
     return typeof data === "string" ? data : Buffer.from(data).toString("utf8");
-}
-
-function shellArgs(shell: string, command: string): string[] {
-    if (process.platform === "win32") {
-        const shellName = basename(shell).toLowerCase();
-        if (shellName === "cmd.exe" || shellName === "cmd") {
-            return ["/d", "/s", "/c", command];
-        }
-        return ["-c", command];
-    }
-    return ["-lc", command];
 }

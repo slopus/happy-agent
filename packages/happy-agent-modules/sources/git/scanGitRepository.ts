@@ -68,6 +68,11 @@ async function scanOnce(
             cwd: options.path,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
+        // --branch always emits branch.oid, including an explicit (initial) for an unborn
+        // repository. Missing output must never turn an existing checkout into an empty-tree diff.
+        if (!result.stdout.split("\0").some((field) => field.startsWith("# branch.oid "))) {
+            throw new Error("Git status did not return its branch identity.");
+        }
         statusTruncated = result.truncated;
         status = parseGitStatusV2(
             result.truncated

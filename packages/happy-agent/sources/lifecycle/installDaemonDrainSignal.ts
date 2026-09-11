@@ -14,6 +14,8 @@ export async function installDaemonDrainSignal(
     daemon: HappyAgentDaemon,
     directory: string,
 ): Promise<() => Promise<void>> {
+    // Windows uses the authenticated daemon API for graceful draining.
+    if (process.platform === "win32") return async () => {};
     const path = daemonDrainStatePath(directory);
     const initial: DaemonDrainState = {
         version: 1,

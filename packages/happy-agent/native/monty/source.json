@@ -1,0 +1,8 @@
+{
+    "repository": "https://github.com/pydantic/monty.git",
+    "tag": "v0.0.21",
+    "version": "0.0.21",
+    "commit": "70fe3f5781381eb33579e45046f8cb3845953373",
+    "toolchain": "1.95.0-x86_64-pc-windows-gnu",
+    "target": "x86_64-pc-windows-gnu"
+}

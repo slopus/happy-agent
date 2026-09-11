@@ -1,5 +1,6 @@
-import { chmod, lstat, unlink } from "node:fs/promises";
+import { chmod, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { isWindowsNamedPipe, readAgentSocketInformation } from "./agentSocketPaths.js";
 
 import {
     type PreparedHappyAgentRuntime,
@@ -85,11 +86,11 @@ export async function bindBunAgentSocket(
             proxyHttpAddress: { unix: proxyHttpSocketPath },
             publicAddress: { unix: paths.socketPath },
         });
-        await Promise.all([
-            chmod(paths.socketPath, 0o600),
-            chmod(proxyHttpSocketPath, 0o600),
-            chmod(nativeHttpSocketPath, 0o600),
-        ]);
+        await Promise.all(
+            [paths.socketPath, proxyHttpSocketPath, nativeHttpSocketPath]
+                .filter((path) => !isWindowsNamedPipe(path))
+                .map((path) => chmod(path, 0o600)),
+        );
     } catch (error) {
         bridge?.close();
         forwarder.close();
@@ -230,8 +231,9 @@ export function bunRuntime(): BunRuntime {
 }
 
 async function removeOwnedSocket(path: string): Promise<void> {
+    if (isWindowsNamedPipe(path)) return;
     try {
-        const information = await lstat(path);
+        const information = await readAgentSocketInformation(path);
         if (
             information.isSocket() &&
             (process.getuid === undefined ||

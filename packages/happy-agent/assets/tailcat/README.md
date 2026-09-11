@@ -1,6 +1,6 @@
 # Tailcat binary assets
 
-Happy Agent embeds Tailcat v0.4.0 for each of its four release targets. Binary integrity is pinned
+Happy Agent embeds Tailcat v0.4.0 for each of its five release targets. Binary integrity is pinned
 in `v0.4.0/SHA256SUMS` and checked again by `scripts/resolveTailcatBinaryAsset.ts` before a Happy
 Agent standalone binary is compiled.
 
@@ -27,3 +27,5 @@ The checked-in executables are unsigned. The Happy Agent release workflow signs 
 Darwin Tailcat executable with Happy's Developer ID before embedding it, then submits both the
 exact signed Tailcat and Happy Agent executables to Apple's notary service. The BSD-3-Clause
 license is in `LICENSE` and is materialized beside Tailcat at runtime.
+
+The Windows x64 executable is extracted unchanged from the official `tailcat_0.4.0_windows_amd64.zip`, verified against archive SHA-256 `c238a4e8d3b460423a67e5ad400888b73ffa0b28e15173fd32c9acb699a3a89e`. Its executable hash is recorded in `v0.4.0/SHA256SUMS`. Windows release signing must run before embedding the executable.

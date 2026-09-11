@@ -1,7 +1,8 @@
-import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
+import { chmod, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { isWindowsNamedPipe, readAgentSocketInformation } from "./agentSocketPaths.js";
 
 import type {
     HappyAgentConfiguration,
@@ -55,7 +56,7 @@ export async function bindNodeAgentSocket(
     const previousUmask = process.umask(0o077);
     try {
         await listenOnSocket(server, socketPath);
-        await chmod(socketPath, 0o600);
+        if (!isWindowsNamedPipe(socketPath)) await chmod(socketPath, 0o600);
     } catch (error) {
         await closeServer(server, connections, socketPath).catch(() => undefined);
         throw error;
@@ -157,13 +158,19 @@ function createAgentHttpServer(prepared: PreparedHappyAgentRuntime): {
 }
 
 export async function prepareAgentSocketPath(socketPath: string): Promise<void> {
+    if (isWindowsNamedPipe(socketPath)) {
+        if (await socketIsActive(socketPath)) {
+            throw new Error(`Another Happy agent is already listening on ${socketPath}.`);
+        }
+        return;
+    }
     if (Buffer.byteLength(socketPath) > 103) {
         throw new Error("The Happy agent socket path is too long for a Unix socket.");
     }
     await mkdir(dirname(socketPath), { mode: 0o700, recursive: true });
     let information;
     try {
-        information = await lstat(socketPath);
+        information = await readAgentSocketInformation(socketPath);
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
         throw error;
@@ -186,9 +193,10 @@ export async function prepareAgentSocketPath(socketPath: string): Promise<void> 
 
 /** Remove an inactive socket left by an interrupted daemon without preparing a new listener. */
 export async function removeInactiveAgentSocket(socketPath: string): Promise<void> {
+    if (isWindowsNamedPipe(socketPath)) return;
     let information;
     try {
-        information = await lstat(socketPath);
+        information = await readAgentSocketInformation(socketPath);
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
         throw error;
@@ -268,8 +276,9 @@ async function closeServer(
     }).catch((error: unknown) => {
         if (!(error instanceof Error) || !/not running/i.test(error.message)) throw error;
     });
+    if (isWindowsNamedPipe(socketPath)) return;
     try {
-        const information = await lstat(socketPath);
+        const information = await readAgentSocketInformation(socketPath);
         if (
             information.isSocket() &&
             (process.getuid === undefined ||

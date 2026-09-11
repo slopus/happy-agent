@@ -1,3 +1,4 @@
+import { localAgentSocketPath, ensurePrivateDirectory } from "@slopus/happy-agent-compute";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -1819,8 +1820,7 @@ export class ConfigModule implements AgentModule {
         for (const directory of directories) {
             // Keep the user-facing Happy parent normally accessible; only Config is private.
             await mkdir(dirname(directory), { recursive: true });
-            await mkdir(directory, { mode: 0o700, recursive: true });
-            await chmod(directory, 0o700);
+            await ensurePrivateDirectory(directory);
         }
         await Promise.all([
             writeUserFileIfMissing(paths.globalConfigPath, HAPPY_TOML_TEMPLATE),
@@ -2478,7 +2478,7 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         publicHome,
         runtimeConfigPath: join(agentHome, "runtime.toml"),
         securityPath: join(configHome, "SECURITY.md"),
-        socketPath: join(agentHome, "server.sock"),
+        socketPath: localAgentSocketPath(agentHome),
         tailcatAddressPath: join(agentHome, "tailcat", "address"),
         tailcatHome: join(agentHome, "tailcat"),
         tailcatKeyPath: join(agentHome, "tailcat", "default.private.json"),

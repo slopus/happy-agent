@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 
 export interface HappyAgentDocumentationFile {
@@ -75,10 +75,61 @@ async function replaceFile(path: string, contents: string | Uint8Array): Promise
     try {
         await writeFile(temporary, contents, { flag: "wx", mode: 0o444 });
         await chmod(temporary, 0o444);
-        await rename(temporary, path);
-        await chmod(path, 0o444);
+        // Windows cannot atomically replace a file while its read-only attribute is set.
+        // Use a verified file handle so changing that attribute cannot follow a replaced link.
+        const previous =
+            process.platform === "win32" ? await openExistingDocument(path) : undefined;
+        const identity = await previous?.stat();
+        if (previous) {
+            try {
+                await previous.chmod(0o644);
+            } finally {
+                // Windows rejects replacement while this handle is open.
+                await previous.close();
+            }
+        }
+        try {
+            await rename(temporary, path);
+        } catch (error) {
+            if (identity) {
+                const retained = await openExistingDocument(path);
+                if (retained) {
+                    try {
+                        const current = await retained.stat();
+                        if (current.dev === identity.dev && current.ino === identity.ino) {
+                            await retained.chmod(0o444);
+                        }
+                    } finally {
+                        await retained.close();
+                    }
+                }
+            }
+            throw error;
+        }
     } finally {
         await rm(temporary, { force: true });
+    }
+}
+
+async function openExistingDocument(path: string) {
+    const status = await lstat(path).catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+        throw error;
+    });
+    if (!status) return undefined;
+    if (!status.isFile() || status.isSymbolicLink()) {
+        throw new Error(`Happy Agent documentation file is unsafe: ${path}`);
+    }
+    const handle = await open(path, "r");
+    try {
+        const opened = await handle.stat();
+        if (opened.dev !== status.dev || opened.ino !== status.ino || !opened.isFile()) {
+            throw new Error(`Happy Agent documentation file changed while opening: ${path}`);
+        }
+        return handle;
+    } catch (error) {
+        await handle.close();
+        throw error;
     }
 }
 

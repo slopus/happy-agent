@@ -96,3 +96,12 @@ unrelated database work responsive. It does not open a new libSQL transaction fo
 nontransactional edit, because the local libSQL client rotates its native connection after each
 transaction; custom stores without the production database boundary use an Agent KV transaction as
 the safe fallback.
+
+## Windows protected placeholders
+
+The Windows product policy permits empty protected placeholders when project metadata is absent.
+Native NTFS denials need an existing object, so the supervisor creates protected root files as
+empty files and protects metadata directories before releasing a restricted command. The same
+Windows metadata names belong to the file-tool policy. Existing content is preserved, missing
+denies outside writable roots remain absent, and macOS/Linux behavior stays unchanged. This is
+the explicitly approved Windows exception to the general no-placeholder rule.

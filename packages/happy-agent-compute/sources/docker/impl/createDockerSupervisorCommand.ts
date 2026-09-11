@@ -21,6 +21,7 @@ export function createDockerSupervisorCommand(options: {
     return createSupervisorCommand({
         command: options.command,
         policy: options.policy,
+        platform: "linux",
         shell: options.shell,
         supervisorPath: options.supervisorPath ?? DOCKER_SUPERVISOR_PATH,
     });

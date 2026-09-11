@@ -1,3 +1,4 @@
+import { localAgentSocketPath } from "@slopus/happy-agent-compute";
 import { createServer, type RequestListener, type Server } from "node:http";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -138,7 +139,7 @@ async function serveFetch(
     await mkdir(localRoot, { recursive: true });
     const root = await mkdtemp(join(localRoot, "rig-fetch-"));
     roots.push(root);
-    const socketPath = join(root, "daemon.sock");
+    const socketPath = localAgentSocketPath(root);
     const server = createServer(listener);
     servers.push(server);
     await new Promise<void>((resolve, reject) => {

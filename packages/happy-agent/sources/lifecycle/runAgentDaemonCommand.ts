@@ -7,7 +7,11 @@ import { readDaemonTokenIfPresent } from "./daemonToken.js";
 import { drainDaemonFromSignal } from "./drainDaemonFromSignal.js";
 import { ensureAgentDaemon } from "./ensureAgentDaemon.js";
 import { getHappyDaemonPaths } from "./getHappyDaemonPaths.js";
-import { formatDrainProgress, stopLocalProtocolServer } from "./stopLocalProtocolServer.js";
+import {
+    drainLocalProtocolServer,
+    formatDrainProgress,
+    stopLocalProtocolServer,
+} from "./stopLocalProtocolServer.js";
 
 export type AgentDaemonCommand = "drain" | "kill" | "reload" | "start" | "stop" | "status";
 
@@ -38,7 +42,15 @@ export async function runAgentDaemonCommand(
     const log = options.log ?? ((line: string) => console.log(line));
     const paths = getHappyDaemonPaths();
     if (command === "drain") {
-        await drainDaemonFromSignal(paths, log);
+        if (process.platform === "win32") {
+            const connection = await connectToExistingDaemon();
+            if (connection === undefined)
+                throw new AgentDaemonError("The daemon is unavailable; no drain was performed.");
+            await drainLocalProtocolServer(connection.client, log);
+            log("The daemon is drained and still running.");
+        } else {
+            await drainDaemonFromSignal(paths, log);
+        }
         return;
     }
     const ensureOptions = {

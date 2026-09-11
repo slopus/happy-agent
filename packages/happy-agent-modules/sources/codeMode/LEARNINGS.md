@@ -97,7 +97,11 @@ The checkpoint uses a unique same-directory private temporary file, file fsync, 
 directory fsync. When recursive state directories are created for the first time, their entries and
 existing parent are synced as well. Directory sync ignores only explicit unsupported-operation
 codes; I/O and capacity failures propagate, so the call cannot publish a result whose checkpoint is
-not durable.
+not durable. Windows reports `EPERM` when flushing an opened directory. Ignore that error only
+from the directory handle’s sync operation; errors opening the directory or syncing the writable
+checkpoint file still fail the call. Windows retains file-data sync and atomic replacement, but
+the platform does not provide the POSIX directory-sync guarantee through this API. POSIX mode-bit
+assertions also do not describe Windows ACLs.
 
 ## Incompatible bytes are evidence worth keeping once
 

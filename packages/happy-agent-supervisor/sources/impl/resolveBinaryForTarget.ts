@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { PLATFORM_TARGETS, type PlatformKey } from "../platform.js";
 
 const require = createRequire(import.meta.url);
-const executable = "happy-agent-supervisor";
 
 export function resolveBinaryForTarget(key: PlatformKey, binaryPath?: string): string {
     if (binaryPath !== undefined) {
@@ -18,6 +17,8 @@ export function resolveBinaryForTarget(key: PlatformKey, binaryPath?: string): s
     }
 
     const platform = PLATFORM_TARGETS[key];
+    const executable =
+        platform.os === "win32" ? "happy-agent-supervisor.exe" : "happy-agent-supervisor";
     try {
         const manifest = require.resolve(`${platform.alias}/package.json`);
         const installed = path.join(

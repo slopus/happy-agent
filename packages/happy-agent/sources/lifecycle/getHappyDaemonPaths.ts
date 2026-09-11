@@ -1,3 +1,4 @@
+import { localAgentSocketPath } from "@slopus/happy-agent-compute";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -29,7 +30,7 @@ export function getHappyDaemonPaths(
         logPath: join(directory, "daemon.log"),
         observationLogPath: join(directory, "observation", "agent.log"),
         pidPath: join(directory, "daemon.pid"),
-        socketPath: join(directory, "server.sock"),
+        socketPath: localAgentSocketPath(directory),
         tokenPath: join(directory, "token"),
     };
 }

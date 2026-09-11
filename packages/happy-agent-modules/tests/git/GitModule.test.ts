@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitModule } from "../../sources/git/GitModule.js";
 import type { GitCommandRunner } from "../../sources/git/GitCommandRunner.js";
@@ -113,6 +113,40 @@ describe("GitModule snapshots", () => {
         module.dispose();
         await module.snapshot(repository, "one");
         expect(statusCalls).toBeGreaterThan(afterInvalidate);
+    });
+
+    it("keeps a slow snapshot cached for its full lifetime after scanning completes", async () => {
+        const repository = await createRepository();
+        const head = await commitFile(repository, "tracked.txt", "one\n");
+        await setOriginMain(repository, head);
+        let now = 1_000;
+        let statusCalls = 0;
+        const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+        const module = open({
+            async run(cwd, args, options) {
+                if (args[0] === "status") {
+                    statusCalls += 1;
+                    // Native Windows scans can take longer than the two-second cache lifetime.
+                    now += 7_000;
+                }
+                return await gitRunner.run(cwd, args, options);
+            },
+        });
+        try {
+            const first = await module.snapshot(repository, "slow");
+            const afterFirst = statusCalls;
+            expect(afterFirst).toBeGreaterThan(0);
+            expect(await module.snapshot(repository, "slow")).toBe(first);
+            now += 1_999;
+            expect(await module.snapshot(repository, "slow")).toBe(first);
+            expect(statusCalls).toBe(afterFirst);
+
+            now += 2;
+            expect(await module.snapshot(repository, "slow")).not.toBe(first);
+            expect(statusCalls).toBeGreaterThan(afterFirst);
+        } finally {
+            clock.mockRestore();
+        }
     });
 
     it("addresses a batch of catalog entities as live snapshots", async () => {

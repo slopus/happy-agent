@@ -1,3 +1,4 @@
+import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, open } from "node:fs/promises";
 
@@ -60,7 +61,7 @@ export async function ensureAgentDaemon(
 ): Promise<AgentDaemonConnection> {
     const paths = getHappyDaemonPaths();
     const currentIdentity = getDaemonIdentity();
-    await mkdir(paths.directory, { mode: 0o700, recursive: true });
+    await ensurePrivateDirectory(paths.directory);
 
     for (let attempt = 0; attempt < DAEMON_RESTART_ATTEMPTS; attempt += 1) {
         const observed = await observeAgentDaemon(paths);
@@ -154,7 +155,9 @@ async function startAgentDaemonProcess(
         child = await spawnAgentDaemon(paths, options.entrypoint);
     }
     const client = createDaemonClient(paths, token);
-    const readiness = waitForReady(client);
+    // A freshly spawned native executable may spend several seconds loading and
+    // securing its runtime before it can publish the first health response.
+    const readiness = waitForReady(client, DAEMON_CHILD_STARTUP_TIMEOUT_MS);
     if (child === undefined) {
         await readiness;
     } else {
@@ -201,6 +204,7 @@ async function spawnAgentDaemon(
         await log.chmod(0o600);
         const child = spawn(command.executable, command.arguments, {
             detached: true,
+            windowsHide: true,
             env: process.env,
             stdio: ["ignore", log.fd, log.fd],
         });
@@ -278,8 +282,11 @@ async function terminateSpawnedDaemon(child: SpawnedAgentDaemonProcess): Promise
     });
 }
 
-export async function waitForReady(client: HappyAgentClient): Promise<HealthResponse> {
-    let deadline = Date.now() + 5_000;
+export async function waitForReady(
+    client: Pick<HappyAgentClient, "getHealth">,
+    initialTimeoutMs = 5_000,
+): Promise<HealthResponse> {
+    let deadline = Date.now() + initialTimeoutMs;
     let observedStarting = false;
     let recoveredAfterStartingFailure = false;
     while (Date.now() < deadline) {

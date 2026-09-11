@@ -8,7 +8,8 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { ensureWindowsPrivateDirectory } from "./ensureWindowsPrivateDirectory.js";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 
 export interface EmbeddedFile {
@@ -19,6 +20,7 @@ export interface EmbeddedFile {
 }
 
 const materializedRoots = new Map<string, string>();
+let windowsCacheRoot: string | undefined;
 
 /**
  * Materializes Bun-embedded files when a native loader or executable needs an ordinary path.
@@ -57,7 +59,10 @@ export function materializeEmbeddedFiles(name: string, files: readonly EmbeddedF
     if (cached !== undefined) return cached;
 
     const userId = typeof process.getuid === "function" ? process.getuid() : 0;
-    const userRoot = join(tmpdir(), `happy-agent-${userId}`);
+    const userRoot =
+        process.platform === "win32"
+            ? (windowsCacheRoot ??= createWindowsCacheRoot())
+            : join(tmpdir(), `happy-agent-${userId}`);
     ensureOwnedDirectory(userRoot);
     const cacheRoot = join(userRoot, "binary-assets");
     ensureOwnedDirectory(cacheRoot);
@@ -167,4 +172,13 @@ function isMissingFileError(error: unknown): boolean {
 
 function isDestinationExistsError(error: unknown): boolean {
     return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+function createWindowsCacheRoot(): string {
+    const directory = join(
+        process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
+        "HappyAgentRuntime",
+    );
+    ensureWindowsPrivateDirectory(directory);
+    return directory;
 }

@@ -1,3 +1,4 @@
+import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
 import { chmod, mkdir } from "node:fs/promises";
 import { ConnectionsModule } from "../connections/index.js";
 
@@ -305,8 +306,7 @@ export async function startHappyAgentRuntime(
     };
 
     try {
-        await mkdir(paths.agentHome, { mode: 0o700, recursive: true });
-        await chmod(paths.agentHome, 0o700);
+        await ensurePrivateDirectory(paths.agentHome);
         await config.writeRuntimeConfiguration(ctx.named("runtime-configuration"));
         try {
             await mkdir(paths.publicHome, { mode: 0o755, recursive: true });

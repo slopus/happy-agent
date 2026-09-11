@@ -65,6 +65,12 @@ describe("stopLocalProtocolServer", () => {
 
             await stopLocalProtocolServer(client, "/tmp/rig/server.sock");
 
+            // Windows can report the OS process as gone before Node dispatches
+            // its child-process exit callback. Assert the shutdown contract first.
+            if (process.platform === "win32") {
+                expect(() => process.kill(child.pid!, 0)).toThrow();
+                if (!exited) await once(child, "exit");
+            }
             expect(exited).toBe(true);
         } finally {
             if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");

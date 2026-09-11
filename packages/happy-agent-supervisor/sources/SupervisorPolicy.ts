@@ -62,6 +62,8 @@ export const supervisorPolicySchema = Type.Object(
         deniedReadPaths: Type.Optional(Type.Array(Type.String())),
         allowedWritePaths: Type.Optional(Type.Array(Type.String())),
         deniedWritePaths: Type.Optional(Type.Array(Type.String())),
+        /** Windows placeholder type for protected project files that may be absent. */
+        deniedWriteFilePaths: Type.Optional(Type.Array(Type.String())),
         network: supervisorNetworkPolicySchema,
     },
     { additionalProperties: false },

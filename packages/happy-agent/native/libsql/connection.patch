@@ -1,0 +1,14 @@
+diff --git a/src/local/connection.rs b/src/local/connection.rs
+index 7012651..c83bafd 100644
+--- a/src/local/connection.rs
++++ b/src/local/connection.rs
+@@ -108,6 +108,9 @@ impl Connection {
+     pub fn disconnect(&mut self) {
+         if Arc::get_mut(&mut self.drop_ref).is_some() {
+             unsafe { libsql_sys::ffi::sqlite3_close_v2(self.raw) };
++            // The outer wrapper also disconnects before this Connection drops.
++            // sqlite3_close_v2(NULL) is a no-op, so repeated teardown is safe.
++            self.raw = std::ptr::null_mut();
+         }
+     }
+ 

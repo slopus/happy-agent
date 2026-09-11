@@ -229,8 +229,10 @@ describe("CodeModeModule", () => {
         await finishTurn(first.hooks, first.scope);
         const snapshot = await readFile(snapshotPath);
         expect(snapshot.byteLength).toBeGreaterThan(0);
-        expect((await stat(dirname(snapshotPath))).mode & 0o777).toBe(0o700);
-        expect((await stat(snapshotPath)).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32") {
+            expect((await stat(dirname(snapshotPath))).mode & 0o777).toBe(0o700);
+            expect((await stat(snapshotPath)).mode & 0o777).toBe(0o600);
+        }
         expect(await readdir(dirname(snapshotPath))).toEqual(["snapshot.bin"]);
         await first.module.close();
 
@@ -351,9 +353,11 @@ describe("CodeModeModule", () => {
             await expect(
                 readFile(join(dirname(snapshotPath), "snapshot.invalid.bin"), "utf8"),
             ).resolves.toBe("not a monty dump");
-            expect(
-                (await stat(join(dirname(snapshotPath), "snapshot.invalid.bin"))).mode & 0o777,
-            ).toBe(0o600);
+            if (process.platform !== "win32") {
+                expect(
+                    (await stat(join(dirname(snapshotPath), "snapshot.invalid.bin"))).mode & 0o777,
+                ).toBe(0o600);
+            }
         } finally {
             await enabled.module.close();
         }

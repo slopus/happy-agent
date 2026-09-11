@@ -1,0 +1,126 @@
+diff --git a/lib-cjs/sqlite3.js b/lib-cjs/sqlite3.js
+index 0f8a1cd9965e9a0a939802035887c05d417a32b9..6cbaee76d35f12763bd93e3d0f7ab509e38f13f4 100644
+--- a/lib-cjs/sqlite3.js
++++ b/lib-cjs/sqlite3.js
+@@ -286,19 +286,32 @@ class Sqlite3Transaction {
+             return;
+         }
+         this.#checkNotClosed();
+-        executeStmt(this.#database, "ROLLBACK", this.#intMode);
++        try {
++            executeStmt(this.#database, "ROLLBACK", this.#intMode);
++        } finally {
++            if (libsql_1.default.supportsExplicitDisposal) this.#database.close();
++        }
+     }
+     async commit() {
+         this.#checkNotClosed();
+-        executeStmt(this.#database, "COMMIT", this.#intMode);
++        try {
++            executeStmt(this.#database, "COMMIT", this.#intMode);
++        } finally {
++            if (libsql_1.default.supportsExplicitDisposal) this.#database.close();
++        }
+     }
+     close() {
+-        if (this.#database.inTransaction) {
+-            executeStmt(this.#database, "ROLLBACK", this.#intMode);
++        if (!this.#database.open) return;
++        try {
++            if (this.#database.inTransaction) {
++                executeStmt(this.#database, "ROLLBACK", this.#intMode);
++            }
++        } finally {
++            if (libsql_1.default.supportsExplicitDisposal) this.#database.close();
+         }
+     }
+     get closed() {
+-        return !this.#database.inTransaction;
++        return !this.#database.open || !this.#database.inTransaction;
+     }
+     #checkNotClosed() {
+         if (this.closed) {
+@@ -329,8 +342,9 @@ function executeStmt(db, stmt, intMode) {
+             }
+         }
+     }
++    let sqlStmt;
+     try {
+-        const sqlStmt = db.prepare(sql);
++        sqlStmt = db.prepare(sql);
+         sqlStmt.safeIntegers(true);
+         let returnsData = true;
+         try {
+@@ -361,6 +375,9 @@ function executeStmt(db, stmt, intMode) {
+     catch (e) {
+         throw mapSqliteError(e);
+     }
++    finally {
++        sqlStmt?.finalize?.();
++    }
+ }
+ function rowFromSql(sqlRow, columns, intMode) {
+     const row = {};
+diff --git a/lib-esm/sqlite3.js b/lib-esm/sqlite3.js
+index 95d88406a747d59c08ccb375a993b2765d803435..35b2941163de7bbd50d7162e59fb693d12d2065e 100644
+--- a/lib-esm/sqlite3.js
++++ b/lib-esm/sqlite3.js
+@@ -263,19 +263,32 @@ export class Sqlite3Transaction {
+             return;
+         }
+         this.#checkNotClosed();
+-        executeStmt(this.#database, "ROLLBACK", this.#intMode);
++        try {
++            executeStmt(this.#database, "ROLLBACK", this.#intMode);
++        } finally {
++            if (Database.supportsExplicitDisposal) this.#database.close();
++        }
+     }
+     async commit() {
+         this.#checkNotClosed();
+-        executeStmt(this.#database, "COMMIT", this.#intMode);
++        try {
++            executeStmt(this.#database, "COMMIT", this.#intMode);
++        } finally {
++            if (Database.supportsExplicitDisposal) this.#database.close();
++        }
+     }
+     close() {
+-        if (this.#database.inTransaction) {
+-            executeStmt(this.#database, "ROLLBACK", this.#intMode);
++        if (!this.#database.open) return;
++        try {
++            if (this.#database.inTransaction) {
++                executeStmt(this.#database, "ROLLBACK", this.#intMode);
++            }
++        } finally {
++            if (Database.supportsExplicitDisposal) this.#database.close();
+         }
+     }
+     get closed() {
+-        return !this.#database.inTransaction;
++        return !this.#database.open || !this.#database.inTransaction;
+     }
+     #checkNotClosed() {
+         if (this.closed) {
+@@ -305,8 +318,9 @@ function executeStmt(db, stmt, intMode) {
+             }
+         }
+     }
++    let sqlStmt;
+     try {
+-        const sqlStmt = db.prepare(sql);
++        sqlStmt = db.prepare(sql);
+         sqlStmt.safeIntegers(true);
+         let returnsData = true;
+         try {
+@@ -337,6 +351,9 @@ function executeStmt(db, stmt, intMode) {
+     catch (e) {
+         throw mapSqliteError(e);
+     }
++    finally {
++        sqlStmt?.finalize?.();
++    }
+ }
+ function rowFromSql(sqlRow, columns, intMode) {
+     const row = {};

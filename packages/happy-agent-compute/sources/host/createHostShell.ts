@@ -142,6 +142,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
         command: string,
         cwd: string,
         shell: string,
+        tty: boolean | undefined,
     ): Promise<PreparedHostCommand> => {
         if (permissions.mode === "full_access") {
             return { command, shell };
@@ -162,7 +163,12 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                 ...(options.hostPolicy === undefined ? {} : { hostPolicy: options.hostPolicy }),
             }),
         ).filter((path) => shouldDenySensitiveReadPath(path, canonicalCwd, canonicalHome));
-        const protectedNames = [".git", ...projectProtectedFileNames(options.hostPolicy)];
+        const protectedDirectoryNames =
+            process.platform === "win32" ? [".git", ".agents", ".codex"] : [".git"];
+        const protectedNames = [
+            ...protectedDirectoryNames,
+            ...projectProtectedFileNames(options.hostPolicy),
+        ];
         const protectedPaths =
             permissions.mode === "read_only"
                 ? []
@@ -190,9 +196,16 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                 ...sensitiveReadPaths,
             ],
             deniedWritePaths:
-                process.platform === "darwin"
+                process.platform === "darwin" || process.platform === "win32"
                     ? absoluteDeniedWritePaths
                     : existingHostPaths(canonicalCwd, deniedWritePaths),
+            ...(process.platform !== "win32" || permissions.mode === "read_only"
+                ? {}
+                : {
+                      deniedWriteFilePaths: projectProtectedFileNames(options.hostPolicy)
+                          .filter((name) => !protectedDirectoryNames.includes(name))
+                          .map((name) => join(canonicalCwd, name)),
+                  }),
             ...(permissions.allowedReadPaths === undefined
                 ? {}
                 : { allowedReadPaths: permissions.allowedReadPaths }),
@@ -206,7 +219,10 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                   }),
         });
         const supervisorCommand = createSupervisorCommand({
-            command: withWorkingDirectory(command, cwd),
+            ...(options.environment === undefined ? {} : { environment: options.environment }),
+            command: process.platform === "win32" ? command : withWorkingDirectory(command, cwd),
+            cwd,
+            ...(tty === undefined ? {} : { tty }),
             policy,
             shell,
             supervisorPath,
@@ -412,6 +428,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                 runOptions.command,
                 cwd,
                 shell,
+                runOptions.tty,
             );
             const commandEnvironment = toolEnvironment;
             const processRunOptions: ProcessRunOptions = {
@@ -486,6 +503,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                     runOptions.command,
                     cwd,
                     shell,
+                    runOptions.tty,
                 );
                 const commandEnvironment = toolEnvironment;
                 const processStartOptions: ProcessStartOptions = {

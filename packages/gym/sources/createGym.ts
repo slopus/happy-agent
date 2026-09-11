@@ -13,6 +13,7 @@ import { InterceptingHttpProxy } from "./InterceptingHttpProxy.js";
 import { MockInferenceServer } from "./MockInferenceServer.js";
 import { profileGymTiming } from "./profileGymTiming.js";
 import { resolveGymExecution } from "./resolveGymExecution.js";
+import { nativeWindowsGymSandboxHome } from "./nativeWindowsGymSandboxHome.js";
 import { resolveGymImageTag } from "./resolveGymImageTag.js";
 import {
     acquireSharedDockerRunner,
@@ -37,6 +38,10 @@ export async function createGym(options: GymOptions): Promise<Gym> {
     const cols = options.cols ?? 100;
     const rows = options.rows ?? 32;
     const execution = resolveGymExecution(options);
+    const nativeSandboxHome =
+        options.mode === "native-windows"
+            ? await nativeWindowsGymSandboxHome({ ...process.env, ...options.environment })
+            : undefined;
     if (
         options.mountWorkspaceIntoDockerSession === true &&
         (execution !== "docker" || options.dockerSocket !== true)
@@ -78,12 +83,14 @@ export async function createGym(options: GymOptions): Promise<Gym> {
         await rm(dockerFixture?.hostRoot ?? workspacePath, { force: true, recursive: true });
         throw error;
     }
-    const inference = new MockInferenceServer(options.inference ?? []);
+    const listenHost = execution === "docker" ? "0.0.0.0" : "127.0.0.1";
+    const inference = new MockInferenceServer(options.inference ?? [], [], listenHost);
     const httpProxy =
         options.httpProxy === undefined
             ? undefined
             : new InterceptingHttpProxy(
                   options.httpProxy === true ? undefined : options.httpProxy.handler,
+                  listenHost,
               );
     const containerName = dockerRunner?.containerName ?? `happy-terminal-gym-${randomUUID()}`;
     const sessionArguments = [
@@ -101,7 +108,9 @@ export async function createGym(options: GymOptions): Promise<Gym> {
         "--import",
         pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href,
         "--import",
-        join(repositoryRoot, "packages/gym/sources/registerTypeScriptSourceHooks.mjs"),
+        pathToFileURL(
+            join(repositoryRoot, "packages/gym/sources/registerTypeScriptSourceHooks.mjs"),
+        ).href,
         join(repositoryRoot, "packages/happy-terminal/sources/main.ts"),
     ];
     let ghostty: GhosttyTerminal | undefined;
@@ -130,6 +139,7 @@ export async function createGym(options: GymOptions): Promise<Gym> {
                       inference,
                       httpProxy,
                       repositoryRoot,
+                      nativeSandboxHome,
                   )
                 : undefined;
         const dockerEnvironmentArguments =
@@ -311,14 +321,32 @@ function createLocalEnvironment(
     inference: MockInferenceServer,
     httpProxy: InterceptingHttpProxy | undefined,
     repositoryRoot: string,
+    nativeSandboxHome: string | undefined,
 ): Record<string, string> {
     const environment = {
         HOME: homePath,
+        HAPPY_HOME_DIR: join(homePath, ".happy"),
+        ...(process.platform !== "win32"
+            ? {}
+            : {
+                  USERPROFILE: homePath,
+                  APPDATA: join(homePath, "AppData", "Roaming"),
+                  LOCALAPPDATA: join(homePath, "AppData", "Local"),
+                  // PowerShell uses PATHEXT to execute console programs and wait for them.
+                  // Without it, even an absolute .exe can launch as a detached document.
+                  PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+                  SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
+                  WINDIR: process.env.WINDIR ?? "C:\\Windows",
+                  COMSPEC: process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe",
+                  TEMP: process.env.TEMP ?? homePath,
+                  TMP: process.env.TMP ?? homePath,
+              }),
         PATH: process.env.PATH ?? "",
         HAPPY_TERMINAL_CONFIGURATION_DIRECTORY: join(homePath, "happy", "config"),
         HAPPY_GYM_INFERENCE_URL: inference.localUrl,
         HAPPY_GYM_TOKEN: inference.token,
-        HAPPY_TERMINAL_GYM_DISPLAY_WORKSPACE: "/workspace",
+        HAPPY_TERMINAL_GYM_DISPLAY_WORKSPACE:
+            options.mode === "native-windows" ? workspacePath : "/workspace",
         HAPPY_TERMINAL_GYM_HAPPY_AGENT_COMMAND: JSON.stringify([
             process.execPath,
             join(repositoryRoot, "packages/happy-agent/dist/cli.js"),
@@ -326,7 +354,8 @@ function createLocalEnvironment(
         HAPPY_TERMINAL_GYM_HOME_PATH: homePath,
         HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON: "1",
         HAPPY_TERMINAL_GYM_WORKSPACE_PATH: workspacePath,
-        HAPPY_TERMINAL_GYM_RUNTIME: "just-bash",
+        HAPPY_TERMINAL_GYM_RUNTIME:
+            options.mode === "native-windows" ? "native-windows" : "just-bash",
         HAPPY_TERMINAL_SERVER_DIRECTORY: join(homePath, ".server"),
         HAPPY_TERMINAL_MODEL: options.modelId ?? defaultModelId(options.providerId ?? "gym"),
         HAPPY_TERMINAL_PROVIDER: options.providerId ?? "gym",
@@ -339,6 +368,10 @@ function createLocalEnvironment(
             ? {}
             : { HAPPY_TERMINAL_PERMISSION_MODE: options.permissionMode ?? "full_access" }),
         ...localEnvironmentValues(options.environment, httpProxy?.localUrl),
+        ...(nativeSandboxHome === undefined
+            ? {}
+            : { HAPPY_WINDOWS_SANDBOX_HOME: nativeSandboxHome }),
+        ...(process.platform === "win32" ? { HAPPY_WINDOWS_SANDBOX_NO_PROVISION: "1" } : {}),
         ...(options.liveInference === true ? { [LIVE_INFERENCE_ENV]: "1" } : {}),
     };
     if (httpProxy === undefined) return environment;

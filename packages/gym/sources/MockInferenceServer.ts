@@ -14,6 +14,7 @@ export class MockInferenceServer {
     readonly requests: GymInferenceRequest[] = [];
     readonly token = randomBytes(24).toString("hex");
 
+    #listenHost: "127.0.0.1" | "0.0.0.0";
     #agentCallIndex = 0;
     #handler: GymInferenceHandler;
     #pathReplacements: readonly [string, string][];
@@ -24,7 +25,9 @@ export class MockInferenceServer {
     constructor(
         inference: readonly GymMockResponse[] | GymInferenceHandler,
         pathReplacements: readonly [string, string][] = [],
+        listenHost: "127.0.0.1" | "0.0.0.0" = "127.0.0.1",
     ) {
+        this.#listenHost = listenHost;
         this.#pathReplacements = pathReplacements;
         this.#timeScale = readTimeScale();
         if (typeof inference === "function") {
@@ -61,7 +64,7 @@ export class MockInferenceServer {
         });
         await new Promise<void>((resolve, reject) => {
             server.once("error", reject);
-            server.listen(0, "0.0.0.0", () => {
+            server.listen(0, this.#listenHost, () => {
                 server.off("error", reject);
                 resolve();
             });

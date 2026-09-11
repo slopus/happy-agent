@@ -1,6 +1,10 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createSensitiveReadPaths } from "../../../sources/sandbox/impl/createSensitiveReadPaths.js";
+
+const home = resolve("/home/tester");
+const privateConfig = resolve("/private/config");
 
 describe("createSensitiveReadPaths", () => {
     it.each([undefined, "", "relative/config"])(
@@ -8,21 +12,21 @@ describe("createSensitiveReadPaths", () => {
         (configuredDirectory) => {
             const paths = createSensitiveReadPaths({
                 environment: { XDG_CONFIG_HOME: configuredDirectory },
-                homeDirectory: "/home/tester",
+                homeDirectory: home,
             });
 
-            expect(paths).toContain("/home/tester/.config/gh");
+            expect(paths).toContain(join(home, ".config", "gh"));
             expect(paths).not.toContain("relative/config/gh");
         },
     );
 
     it("honors an absolute XDG config directory", () => {
         const paths = createSensitiveReadPaths({
-            environment: { XDG_CONFIG_HOME: "/private/config" },
+            environment: { XDG_CONFIG_HOME: privateConfig },
             homeDirectory: "/home/tester",
         });
 
-        expect(paths).toContain("/private/config/gh");
+        expect(paths).toContain(join(privateConfig, "gh"));
     });
 
     it("protects caller-declared private directories", () => {

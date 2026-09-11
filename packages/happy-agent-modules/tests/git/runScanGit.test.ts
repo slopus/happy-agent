@@ -9,6 +9,22 @@ import { cleanupRoots, createRepository, git } from "./helpers.js";
 afterEach(cleanupRoots);
 
 describe("runScanGit", () => {
+    it.each([4096, 18577, 262145])(
+        "reads %i binary Git blob bytes exactly inside the read-only sandbox",
+        async (length) => {
+            const repository = await createRepository();
+            const bytes = Buffer.from(Array.from({ length }, (_unused, index) => index % 256));
+            await writeFile(join(repository, "binary data.bin"), bytes);
+            await git(repository, ["add", "--all"]);
+            await git(repository, ["commit", "--quiet", "--message", "binary fixture"]);
+            const result = await runScanGit({
+                args: ["show", "HEAD:binary data.bin"],
+                cwd: repository,
+            });
+            expect(result.stdoutBytes).toEqual(bytes);
+            expect(result.truncated).toBe(false);
+        },
+    );
     it("reads a repository through the read-only execution boundary", async () => {
         const repository = await createRepository();
         const evidence = join(repository, "alias-executed.txt");

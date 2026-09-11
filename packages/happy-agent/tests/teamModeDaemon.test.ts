@@ -23,7 +23,11 @@ afterEach(async () => {
     daemon = undefined;
     vi.unstubAllGlobals();
     await Promise.all(
-        temporaryDirectories.splice(0).map((path) => rm(path, { force: true, recursive: true })),
+        temporaryDirectories
+            .splice(0)
+            .map((path) =>
+                rm(path, { force: true, recursive: true, maxRetries: 10, retryDelay: 100 }),
+            ),
     );
 });
 

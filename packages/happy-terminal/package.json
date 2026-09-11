@@ -44,7 +44,7 @@
         "access": "public"
     },
     "scripts": {
-        "build": "TMPDIR=\"$PWD/../../.local\" tsx scripts/build.ts",
+        "build": "tsx scripts/build.ts",
         "check": "tsc --noEmit",
         "start": "node dist/main.js",
         "test": "vitest run --isolate=false",

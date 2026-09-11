@@ -45,6 +45,11 @@ export function assembleEnvironmentPrompt(options: {
         `- Platform: ${environment.platform}`,
         ...(shell.length === 0 ? [] : [`- Shell: ${shell}`]),
         `- OS version: ${environment.osVersion}`,
+        ...(environment.platform === "win32"
+            ? [
+                  "- Commands run on native Windows. Use the listed shell’s syntax and Windows paths; the bash tool name does not imply a Linux shell. Use PowerShell LiteralPath arguments for file operations.",
+              ]
+            : []),
         ...(currentModelLine === undefined ? [] : [currentModelLine]),
         `- Current provider: \`${currentProvider}\``,
         `- Happy Agent documentation: ${options.documentationPath}`,

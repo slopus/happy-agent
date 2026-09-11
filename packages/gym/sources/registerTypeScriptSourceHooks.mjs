@@ -1,5 +1,9 @@
 import { existsSync } from "node:fs";
-import { registerHooks } from "node:module";
+import { registerHooks, setSourceMapsSupport } from "node:module";
+
+// tsx enables dependency maps globally. Parsing large bundled dependency maps
+// dominates Windows cold startup; retain source maps for the gym and Happy code.
+setSourceMapsSupport(true, { nodeModules: false, generatedCode: false });
 
 const distributionPrefix = "file:///app/packages/happy-terminal/dist/";
 const sourcePrefix = "file:///app/packages/happy-terminal/sources/";

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, win32 } from "node:path";
 
 /** Filesystem locations shared by Happy Terminal and the Happy Agent daemon. */
 export interface HappyDaemonPaths {
@@ -33,7 +34,7 @@ export function getHappyDaemonPaths(
         logPath: join(agentDirectory, "daemon.log"),
         observationLogPath: join(agentDirectory, "observation", "agent.log"),
         pidPath: join(agentDirectory, "daemon.pid"),
-        socketPath: join(agentDirectory, "server.sock"),
+        socketPath: localAgentSocketPath(agentDirectory),
         tokenPath: join(agentDirectory, "token"),
         updateCachePath: join(distDirectory, "latest.json"),
         versionsDirectory: join(distDirectory, "version"),
@@ -41,7 +42,11 @@ export function getHappyDaemonPaths(
 }
 
 export function happyAgentBinaryPath(paths: HappyDaemonPaths, version: string): string {
-    return join(paths.versionsDirectory, version, "happy-agent");
+    return join(
+        paths.versionsDirectory,
+        version,
+        process.platform === "win32" ? "happy-agent.exe" : "happy-agent",
+    );
 }
 
 function resolveHappyHome(environment: NodeJS.ProcessEnv, homeDirectory: string): string {
@@ -53,4 +58,13 @@ function resolveHappyHome(environment: NodeJS.ProcessEnv, homeDirectory: string)
         ? join(homeDirectory, configured.slice(1))
         : configured;
     return isAbsolute(expanded) ? expanded : join(homeDirectory, expanded);
+}
+
+/** Matches the daemon endpoint without coupling the terminal client to its runtime. */
+function localAgentSocketPath(agentDirectory: string): string {
+    if (process.platform !== "win32") return join(agentDirectory, "server.sock");
+    const identity = createHash("sha256")
+        .update(win32.resolve(agentDirectory).toLowerCase())
+        .digest("hex");
+    return `\\\\.\\pipe\\happy-agent-${identity}`;
 }

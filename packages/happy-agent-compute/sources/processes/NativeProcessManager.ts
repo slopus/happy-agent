@@ -351,7 +351,7 @@ export class ManagedProcess {
 
             let force: NodeJS.Timeout | undefined;
             const forceAfterMs = options.forceAfterMs ?? DEFAULT_KILL_GRACE_MS;
-            if (this.pid !== null && signal !== "SIGKILL" && forceAfterMs > 0) {
+            if (this.pid !== null && signal !== "SIGKILL") {
                 force = setTimeout(() => {
                     if (!this.#settled && this.pid !== null) {
                         // The grace period outlives the call that asked for the kill, so the

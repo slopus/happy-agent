@@ -46,7 +46,6 @@ import type {
     SecretSummary,
     SessionEvent,
     SessionTask,
-    SteerMessageResponse,
     SubagentSummary,
     WorkflowRun,
 } from "../protocol/index.js";
@@ -62,6 +61,7 @@ import { CODEX_DARK_DIFF_PALETTE, CODEX_LIGHT_DIFF_PALETTE } from "./CodexFileDi
 import type {
     CodingAssistantAgentBackend,
     CodingAssistantModelChoice,
+    SteeringSubmissionResponse,
 } from "./CodingAssistantAgentBackend.js";
 import { createEditorTheme } from "./createEditorTheme.js";
 import {
@@ -3279,12 +3279,15 @@ export class CodingAssistantApp implements Component, Focusable {
     #settleLocalSteeringSubmission(
         local: LocalSteeringSubmission | undefined,
         accepted: boolean,
-        response?: void | SteerMessageResponse,
+        response?: void | SteeringSubmissionResponse,
     ): void {
         if (local === undefined) return;
         this.#inFlightSteeringSubmissions.delete(local.id);
         if (local.invalidated) return;
-        if (response?.delivery === "run") {
+        if (response?.delivery === "run" || response?.delivery === "pending") {
+            // The public API owns an accepted pending message even when the old
+            // run finishes before its POST returns. Its successor consumes it;
+            // restoring it here would turn already submitted work into a draft.
             local.invalidated = true;
             this.#tryRequestSteeringInterrupt(local.runId);
             this.#requestRender();

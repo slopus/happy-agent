@@ -342,6 +342,7 @@ export function createDockerShell(
             supervisorPolicy = restricted
                 ? createSupervisorPolicy({
                       cwd,
+                      platform: "linux",
                       permissions,
                       ...(permissions.allowedReadPaths === undefined
                           ? {}
