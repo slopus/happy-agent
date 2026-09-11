@@ -16,6 +16,7 @@ import {
     createBotRequestSchema,
     renameBotRequestSchema,
     reorderBotRequestSchema,
+    reorderConnectionRequestSchema,
     unarchiveBotRequestSchema,
     configPatchSchema,
     nodeConfigPatchSchema,
@@ -599,6 +600,28 @@ export class ApiModule implements AgentModule {
             }
             if (request.method === "GET" && url.pathname === "/v0/connections") {
                 sendJson(response, 200, await this.#connections.getSnapshot(ctx));
+                return;
+            }
+            const connectionReorder = /^\/v0\/connections\/([a-z][a-z0-9_-]{0,63})\/reorder$/.exec(
+                url.pathname,
+            );
+            if (request.method === "POST" && connectionReorder !== null) {
+                const body = await bodyAs(
+                    request,
+                    reorderConnectionRequestSchema,
+                    "connection reorder",
+                );
+                const expectedVersion = request.headers["if-match"];
+                if (!Value.Check(eventIdSchema, expectedVersion))
+                    throw invalidRequest("A valid If-Match resource version is required.");
+                const snapshot = await this.#connections.reorder(
+                    ctx,
+                    connectionReorder[1]!,
+                    body.afterId,
+                    expectedVersion,
+                    body.mutationId,
+                );
+                sendJson(response, 200, snapshot);
                 return;
             }
             const remote = remoteRoute(request.url);
@@ -1288,8 +1311,11 @@ export class ApiModule implements AgentModule {
             this.#node.onUpdated(() => {
                 this.#journal.append("config.updated", {});
             }),
-            this.#connections.onUpdated((_eventCtx, snapshot) => {
-                this.#journal.appendOutsideMutation("connections.updated", snapshot);
+            this.#connections.onUpdated((_eventCtx, snapshot, mutationId) => {
+                this.#journal.appendOutsideMutation(
+                    "connections.updated",
+                    mutationId === undefined ? snapshot : { ...snapshot, mutationId },
+                );
             }),
             this.#events.subscribe((event) => this.#enqueueAgentEvent(ctx, event)),
             this.#projects.onEvent(async (_eventCtx, event) => {
@@ -5334,7 +5360,16 @@ export class ApiModule implements AgentModule {
             return;
         }
         if (error instanceof RemoteConnectionError) {
-            sendJson(response, error.status, { error: error.message, code: error.code });
+            sendJson(response, error.status, {
+                error: error.message,
+                code: error.code,
+                ...(error.current === undefined
+                    ? {}
+                    : {
+                          currentVersion: error.current.version,
+                          connections: error.current.connections,
+                      }),
+            });
             return;
         }
         if (error instanceof SecretApiInputError) {

@@ -2,8 +2,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import type { AgentModule, AgentModuleHooks, AgentModuleScope } from "@slopus/happy-agent-base";
-import type { Connection, ConnectionsUpdatedPayload } from "@slopus/happy-agent-client";
+import {
+    connectionIdSchema,
+    reorderConnectionRequestSchema,
+    resourceVersionSchema,
+    type Connection,
+    type ConnectionsUpdatedPayload,
+} from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import { afterCommit, asyncLock, detach, withLifetime, type Context } from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
@@ -17,6 +24,7 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { RemoteConnectionError } from "./RemoteConnectionError.js";
 import { RemoteProxyConnection } from "./impl/RemoteProxyConnection.js";
+import { connectionOrderKeyBetween } from "./impl/connectionOrderKey.js";
 import {
     listConnectionsTool,
     setConnectionTool,
@@ -35,7 +43,9 @@ import {
 export class ConnectionsModule implements AgentModule {
     readonly name = "connections";
     readonly migrations = connectionsMigrations;
-    readonly #listeners = new Set<(ctx: Context, snapshot: ConnectionsUpdatedPayload) => void>();
+    readonly #listeners = new Set<
+        (ctx: Context, snapshot: ConnectionsUpdatedPayload, mutationId?: string) => void
+    >();
     readonly #config: ConfigModule;
     readonly #bots: BotsModule;
     readonly #cloud: CloudModule;
@@ -102,7 +112,9 @@ export class ConnectionsModule implements AgentModule {
         return this.#config.remoteConnectionEntrySchema;
     }
 
-    onUpdated(listener: (ctx: Context, snapshot: ConnectionsUpdatedPayload) => void): () => void {
+    onUpdated(
+        listener: (ctx: Context, snapshot: ConnectionsUpdatedPayload, mutationId?: string) => void,
+    ): () => void {
         this.#listeners.add(listener);
         return () => {
             this.#listeners.delete(listener);
@@ -113,43 +125,161 @@ export class ConnectionsModule implements AgentModule {
     async getSnapshot(ctx: Context): Promise<ConnectionsUpdatedPayload> {
         return await ctx.inTx(async (txCtx) => {
             const previous = await queryConnectionSnapshot(txCtx);
-            const connections = this.list();
+            const connections = this.#configuredRoster(previous?.connections ?? []);
             if (previous !== undefined && isDeepStrictEqual(previous.connections, connections))
                 return previous;
             const snapshot = { connections, version: createConnectionVersion(previous?.version) };
-            await saveConnectionSnapshot(txCtx, snapshot);
-            afterCommit(txCtx, (committedCtx) => {
-                for (const listener of this.#listeners)
-                    listener(committedCtx, structuredClone(snapshot));
-            });
+            await this.#saveSnapshot(txCtx, snapshot);
             return snapshot;
         });
     }
 
-    list(): Connection[] {
-        return Object.entries(this.#config.connections)
+    async list(ctx: Context): Promise<Connection[]> {
+        return (await this.getSnapshot(ctx)).connections;
+    }
+
+    #configuredRoster(previous: readonly Connection[]): Connection[] {
+        const keys = new Map(previous.map((connection) => [connection.id, connection.orderKey]));
+        const configured = this.#config.connections;
+        let lastKey =
+            previous
+                .filter((connection) => {
+                    const entry = Object.hasOwn(configured, connection.id)
+                        ? configured[connection.id]
+                        : undefined;
+                    return entry !== undefined && entry.enabled !== false;
+                })
+                .at(-1)?.orderKey ?? null;
+        return Object.entries(configured)
             .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-            .flatMap(([id, entry]) =>
-                entry.enabled === false
-                    ? []
-                    : [
-                          {
-                              id,
-                              name: entry.name,
-                              ...("token" in entry
-                                  ? { authentication: "bearer" as const }
-                                  : {
-                                        authentication: "workos" as const,
-                                        organizationId: entry.workos_organization_id,
-                                    }),
-                          },
-                      ],
+            .flatMap(([id, entry]) => {
+                if (entry.enabled === false) return [];
+                let orderKey = keys.get(id);
+                if (orderKey === undefined) {
+                    orderKey = connectionOrderKeyBetween(lastKey, null);
+                    lastKey = orderKey;
+                }
+                return [
+                    {
+                        id,
+                        name: entry.name,
+                        orderKey,
+                        ...("token" in entry
+                            ? { authentication: "bearer" as const }
+                            : {
+                                  authentication: "workos" as const,
+                                  organizationId: entry.workos_organization_id,
+                              }),
+                    },
+                ];
+            })
+            .sort((left, right) =>
+                left.orderKey < right.orderKey
+                    ? -1
+                    : left.orderKey > right.orderKey
+                      ? 1
+                      : left.id < right.id
+                        ? -1
+                        : left.id > right.id
+                          ? 1
+                          : 0,
             );
+    }
+
+    /** Compare-and-swap the shared roster in the caller's transaction; transports are untouched. */
+    async reorder(
+        ctx: Context,
+        id: string,
+        afterId: string | null,
+        expectedVersion: string,
+        mutationId?: string,
+    ): Promise<ConnectionsUpdatedPayload> {
+        if (
+            !Value.Check(connectionIdSchema, id) ||
+            !Value.Check(reorderConnectionRequestSchema, { afterId, mutationId }) ||
+            !Value.Check(resourceVersionSchema, expectedVersion)
+        ) {
+            throw new RemoteConnectionError(
+                400,
+                "invalid_request",
+                "Provide a valid connection, destination, and roster version.",
+            );
+        }
+        return await ctx.inTx(async (txCtx) => {
+            // Reconciliation is a separate roster transition. A rejected move must return a
+            // persisted version, never a freshly reconciled snapshot that its rollback discards.
+            const previous = await queryConnectionSnapshot(txCtx);
+            if (previous === undefined) {
+                throw new RemoteConnectionError(
+                    503,
+                    "remote_unavailable",
+                    "The connection roster is not ready.",
+                );
+            }
+            if (previous.version !== expectedVersion)
+                throw new RemoteConnectionError(
+                    409,
+                    "conflict",
+                    "The connections have changed.",
+                    previous,
+                );
+            const currentIndex = previous.connections.findIndex(
+                (connection) => connection.id === id,
+            );
+            const current = previous.connections[currentIndex];
+            if (current === undefined)
+                throw new RemoteConnectionError(
+                    404,
+                    "not_found",
+                    "The remote connection was not found.",
+                );
+            if (id === afterId)
+                throw new RemoteConnectionError(
+                    400,
+                    "invalid_request",
+                    "A connection cannot be placed after itself.",
+                );
+            const remaining = previous.connections.filter((connection) => connection.id !== id);
+            const afterIndex =
+                afterId === null
+                    ? -1
+                    : remaining.findIndex((connection) => connection.id === afterId);
+            if (afterId !== null && afterIndex === -1)
+                throw new RemoteConnectionError(
+                    404,
+                    "not_found",
+                    "The destination connection was not found.",
+                );
+            if (currentIndex === afterIndex + 1) return previous;
+            const orderKey = connectionOrderKeyBetween(
+                remaining[afterIndex]?.orderKey ?? null,
+                remaining[afterIndex + 1]?.orderKey ?? null,
+            );
+            remaining.splice(afterIndex + 1, 0, { ...current, orderKey });
+            const snapshot = {
+                connections: remaining,
+                version: createConnectionVersion(previous.version),
+            };
+            await this.#saveSnapshot(txCtx, snapshot, mutationId);
+            return snapshot;
+        });
+    }
+
+    async #saveSnapshot(
+        ctx: Context,
+        snapshot: ConnectionsUpdatedPayload,
+        mutationId?: string,
+    ): Promise<void> {
+        await saveConnectionSnapshot(ctx, snapshot);
+        afterCommit(ctx, (committedCtx) => {
+            for (const listener of this.#listeners)
+                listener(committedCtx, structuredClone(snapshot), mutationId);
+        });
     }
 
     async listForAdmin(ctx: Context, agentId: string): Promise<Connection[]> {
         await this.#requireAdmin(ctx, agentId);
-        return this.list();
+        return await this.list(ctx);
     }
 
     async set(
@@ -159,7 +289,7 @@ export class ConnectionsModule implements AgentModule {
         entry: RemoteConnectionEntry,
     ): Promise<Connection[]> {
         await this.#requireAdmin(ctx, agentId);
-        await this.#lock.runInLock(ctx, async () => {
+        return await this.#lock.runInLock(ctx, async () => {
             if (this.#closed)
                 throw new RemoteConnectionError(
                     503,
@@ -170,7 +300,7 @@ export class ConnectionsModule implements AgentModule {
                 Object.hasOwn(this.#config.connections, id) &&
                 isDeepStrictEqual(this.#config.connections[id], entry)
             )
-                return;
+                return await this.list(ctx);
             await this.#config.updateRuntimeConnection(ctx, id, entry);
             await this.#reconcilePool(id, entry);
             await this.#durable.invoke(ctx, {
@@ -178,8 +308,8 @@ export class ConnectionsModule implements AgentModule {
                 arguments: {},
                 lockKeys: ["connections"],
             });
+            return await this.list(ctx);
         });
-        return this.list();
     }
 
     async forward(

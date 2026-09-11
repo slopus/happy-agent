@@ -60,12 +60,18 @@ async function fixture() {
         tailcat as unknown as TailcatModule,
         durable as unknown as DurableFunctionsModule,
     );
-    const hooks = module.beforeStart(ctx);
+    const database = moduleDatabase(module.migrations, "connections");
+    ensureAgentDatabaseConnection(database.database);
+    databases.push(database);
+    await database.ready;
+    const hooks = module.beforeStart(database.context);
     return {
         root,
         home,
         config,
         module,
+        database,
+        context: database.context,
         hooks,
         durable,
         tailcat,
@@ -77,14 +83,36 @@ async function fixture() {
 }
 
 describe("configured remote roster", () => {
+    it("reorders without replacing an existing pool or carrier", async () => {
+        const f = await fixture();
+        vi.spyOn(RemoteProxyConnection.prototype, "health").mockResolvedValue({
+            reachable: true,
+            authenticated: true,
+            ready: true,
+        });
+        try {
+            await f.module.set(f.context, "admin", "second", {
+                name: "Second",
+                address: "tcOther",
+                token,
+            });
+            const initial = await f.module.getSnapshot(f.context);
+            await f.module.checkHealth(f.context, "admin", "mac");
+            const moved = await f.module.reorder(f.context, "mac", "second", initial.version);
+            expect(moved.connections.map((connection) => connection.id)).toEqual(["second", "mac"]);
+            await f.module.checkHealth(f.context, "admin", "mac");
+            expect(f.tailcat.openRemote).toHaveBeenCalledTimes(1);
+            expect(f.closeTransport).not.toHaveBeenCalled();
+        } finally {
+            await f.module.close(f.context);
+        }
+    });
+
     it.each(["set", "reconcile"] as const)(
         "preserves the pool and carrier when %s changes only the display name",
         async (mode) => {
             const f = await fixture();
-            const database = moduleDatabase(f.module.migrations, "connection-rename");
-            ensureAgentDatabaseConnection(database.database);
-            databases.push(database);
-            await database.ready;
+            const database = f.database;
             const health = vi.spyOn(RemoteProxyConnection.prototype, "health").mockResolvedValue({
                 reachable: true,
                 authenticated: true,
@@ -97,7 +125,7 @@ describe("configured remote roster", () => {
             try {
                 await f.module.checkHealth(ctx, "admin", "mac");
                 const renamed = { name: "Renamed Mac", address: "tcCaseSensitive", token };
-                if (mode === "set") await f.module.set(ctx, "admin", "mac", renamed);
+                if (mode === "set") await f.module.set(f.context, "admin", "mac", renamed);
                 else await f.config.updateRuntimeConnection(ctx, "mac", renamed);
                 await reconcile(database.context);
 
@@ -107,7 +135,12 @@ describe("configured remote roster", () => {
                 expect(health.mock.contexts[1]).toBe(health.mock.contexts[0]);
                 const snapshot = await f.module.getSnapshot(database.context);
                 expect(snapshot.connections).toEqual([
-                    { id: "mac", name: "Renamed Mac", authentication: "bearer" },
+                    {
+                        id: "mac",
+                        name: "Renamed Mac",
+                        authentication: "bearer",
+                        orderKey: initial.connections[0]!.orderKey,
+                    },
                 ]);
                 expect(snapshot.version > initial.version).toBe(true);
                 expect(events).toEqual([snapshot]);
@@ -156,7 +189,7 @@ describe("configured remote roster", () => {
             const reconcile = f.durable.register.mock.calls[0]![0].executor;
             try {
                 await f.module.checkHealth(ctx, "admin", "mac");
-                if (mode === "set") await f.module.set(ctx, "admin", "mac", entry);
+                if (mode === "set") await f.module.set(f.context, "admin", "mac", entry);
                 else await f.config.updateRuntimeConnection(ctx, "mac", entry);
                 await reconcile(ctx);
                 expect(f.closeTransport).toHaveBeenCalledTimes(1);
@@ -177,10 +210,7 @@ describe("configured remote roster", () => {
 
     it("commits the complete snapshot before notifying and rolls both back with the caller", async () => {
         const f = await fixture();
-        const database = moduleDatabase(f.module.migrations, "connection-snapshot");
-        ensureAgentDatabaseConnection(database.database);
-        databases.push(database);
-        await database.ready;
+        const database = f.database;
         const events: ConnectionsUpdatedPayload[] = [];
         f.module.onUpdated((_ctx, snapshot) => events.push(snapshot));
         const initial = await f.module.getSnapshot(database.context);
@@ -223,10 +253,7 @@ describe("configured remote roster", () => {
 
     it("retains the version across restart and private changes but reconciles offline public edits", async () => {
         const f = await fixture();
-        const database = moduleDatabase(f.module.migrations, "connection-restart");
-        ensureAgentDatabaseConnection(database.database);
-        databases.push(database);
-        await database.ready;
+        const database = f.database;
         const initial = await f.module.getSnapshot(database.context);
         await f.config.updateRuntimeConnection(ctx, "mac", {
             name: "Build Mac",
@@ -263,7 +290,13 @@ describe("configured remote roster", () => {
         const current = await edited.getSnapshot(database.context);
         expect(current.version > initial.version).toBe(true);
         expect(current.connections).toEqual([
-            { id: "mac", name: "Team", authentication: "workos", organizationId: "org_test" },
+            {
+                id: "mac",
+                name: "Team",
+                authentication: "workos",
+                organizationId: "org_test",
+                orderKey: initial.connections[0]!.orderKey,
+            },
         ]);
         expect(events).toEqual([current]);
         expect(JSON.stringify(current)).not.toContain("tcTeam");
@@ -296,16 +329,21 @@ describe("configured remote roster", () => {
     });
     it("keeps credentials and addresses out of the public roster", async () => {
         const f = await fixture();
-        expect(f.module.list()).toEqual([
-            { id: "mac", name: "Build Mac", authentication: "bearer" },
+        expect(await f.module.list(f.context)).toEqual([
+            {
+                id: "mac",
+                name: "Build Mac",
+                authentication: "bearer",
+                orderKey: expect.any(String),
+            },
         ]);
-        expect(JSON.stringify(f.module.list())).not.toContain(token);
-        expect(JSON.stringify(f.module.list())).not.toContain("tcCaseSensitive");
+        expect(JSON.stringify(await f.module.list(f.context))).not.toContain(token);
+        expect(JSON.stringify(await f.module.list(f.context))).not.toContain("tcCaseSensitive");
     });
 
     it("persists replacement credentials and removal tombstones across restart", async () => {
         const f = await fixture();
-        await f.module.set(ctx, "admin", "mac", {
+        await f.module.set(f.context, "admin", "mac", {
             name: "Engineering",
             address: "tcTeam",
             workos_organization_id: "org_test",
@@ -317,8 +355,8 @@ describe("configured remote roster", () => {
             workos_organization_id: "org_test",
         });
         expect(updated.connections.mac).not.toHaveProperty("token");
-        await f.module.set(ctx, "admin", "mac", { enabled: false });
-        expect(f.module.list()).toEqual([]);
+        await f.module.set(f.context, "admin", "mac", { enabled: false });
+        expect(await f.module.list(f.context)).toEqual([]);
         expect((await ConfigModule.load(f.home)).connections.mac).toEqual({ enabled: false });
         expect(
             await readFile(f.config.configuration.paths.runtimeConfigPath, "utf8"),
@@ -354,7 +392,7 @@ describe("configured remote roster", () => {
         await expect(healthTool.execute(ctx, { id: "mac" }, {} as never)).rejects.toThrow(
             "active admin",
         );
-        expect(f.module.list()).toHaveLength(1);
+        expect(await f.module.list(f.context)).toHaveLength(1);
     });
 
     it.each([

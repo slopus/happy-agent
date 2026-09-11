@@ -23,6 +23,15 @@ and publishes `onUpdated` after commit. The API forwards that exact `{ connectio
 snapshot as `connections.updated`; clients keep the greater version across list reads and events.
 Startup and durable reconciliation recover offline edits without exposing private configuration.
 
+Every public entry carries a required fractional `orderKey`. Migration backfills existing entries
+in their prior ID order. `list(ctx)` and admin tools read the same durable ordered snapshot;
+new and re-enabled entries append, while replacements preserve their key. `reorder(ctx, id,
+afterId, expectedVersion, mutationId?)` moves one entry after a neighbour (`null` means first).
+It composes with the caller's transaction, rejects stale roster versions, preserves neighbour
+keys, and emits nothing for a no-op. Notifications carry an optional explicit mutation echo,
+so background reconciliation never inherits a request's identity. Reordering never changes
+private configuration or opens, closes, or replaces a remote transport.
+
 `check_remote_connection_health` is also restricted to active admin bots, including an execution-time
 check. It checks the configured endpoint through the same pool with a 30-second deadline and a
 64 KiB response bound. Team health checks require a connected Cloud user with access to the target

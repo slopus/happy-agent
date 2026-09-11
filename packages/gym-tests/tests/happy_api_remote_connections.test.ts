@@ -34,12 +34,18 @@ describe("remote roster through the public Happy Agent API", () => {
         expect(await gym.client.listConnections()).toEqual({
             version: expect.any(String),
             connections: [
-                { id: "builder", name: "Build Mac", authentication: "bearer" },
+                {
+                    id: "builder",
+                    name: "Build Mac",
+                    authentication: "bearer",
+                    orderKey: expect.any(String),
+                },
                 {
                     id: "engineering",
                     name: "Engineering",
                     authentication: "workos",
                     organizationId: "org_test",
+                    orderKey: expect.any(String),
                 },
             ],
         });
@@ -124,7 +130,14 @@ describe("remote roster through the public Happy Agent API", () => {
             await gym.send("Add the standalone remote.", sendOptions);
             const first = await nextSnapshot();
             expect(first).toEqual({
-                connections: [{ id: "remote", name: "Build Mac", authentication: "bearer" }],
+                connections: [
+                    {
+                        id: "remote",
+                        name: "Build Mac",
+                        authentication: "bearer",
+                        orderKey: expect.any(String),
+                    },
+                ],
                 version: expect.any(String),
             });
             expect(first.version > initial.version!).toBe(true);
@@ -138,7 +151,14 @@ describe("remote roster through the public Happy Agent API", () => {
             );
             const renamed = await nextSnapshot();
             expect(renamed).toEqual({
-                connections: [{ id: "remote", name: "Renamed Mac", authentication: "bearer" }],
+                connections: [
+                    {
+                        id: "remote",
+                        name: "Renamed Mac",
+                        authentication: "bearer",
+                        orderKey: first.connections[0]!.orderKey,
+                    },
+                ],
                 version: expect.any(String),
             });
             expect(renamed.version > first.version).toBe(true);
@@ -152,6 +172,7 @@ describe("remote roster through the public Happy Agent API", () => {
                         name: "Engineering",
                         authentication: "workos",
                         organizationId: "org_test",
+                        orderKey: first.connections[0]!.orderKey,
                     },
                 ],
                 version: expect.any(String),

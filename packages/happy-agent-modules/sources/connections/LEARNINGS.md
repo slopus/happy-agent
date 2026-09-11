@@ -9,6 +9,16 @@ response arrives, remove the local API's default Cache-Control before forwarding
 upstream policy also stays absent. Locally generated failures retain the API's no-store policy;
 hop-by-hop headers are still stripped.
 
+## Display order is required, durable public state
+
+Sorting connections by ID prevented user reordering and inserted new connections into the middle
+of the roster. Every connection now has a required fractional `orderKey`, backfilled by a new
+migration for existing snapshots. New and re-enabled connections append after the surviving
+user-chosen order. Renames and credential changes retain keys. Reordering uses the roster version
+for concurrency, changes only the moved key, and publishes the complete snapshot after commit
+without touching transports. A conflict returns the persisted roster, never a reconciliation
+version that the rejected operation would roll back.
+
 ## Display names do not own transport lifetimes
 
 Renaming a remote used to close its HTTP pool, active requests, and outbound Tailcat process.
