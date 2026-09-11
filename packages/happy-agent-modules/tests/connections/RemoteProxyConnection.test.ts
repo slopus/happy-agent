@@ -42,6 +42,8 @@ async function fixture(handler: (request: IncomingMessage, response: ServerRespo
     });
     cleanup.push(() => pool.close());
     const gateway = createServer((req, res) => {
+        // The API applies this default before handing requests to the proxy.
+        res.setHeader("cache-control", "no-store");
         void pool
             .forward(req, res, req.url!, async () => "remote-token")
             .catch((error) => {
@@ -67,6 +69,48 @@ async function fixture(handler: (request: IncomingMessage, response: ServerRespo
 }
 
 describe("remote HTTP proxy", () => {
+    it.each([
+        { status: 200, cacheControl: "private, max-age=3600, stale-while-revalidate=86400" },
+        { status: 304, cacheControl: "private, max-age=3600, stale-while-revalidate=86400" },
+        { status: 200, cacheControl: "public, max-age=600" },
+        { status: 404, cacheControl: "no-store" },
+        { status: 200, cacheControl: undefined },
+    ])(
+        "preserves upstream caching headers for $status with $cacheControl",
+        async ({ status, cacheControl }) => {
+            const etag = '"remote-image"';
+            const date = "Fri, 11 Sep 2026 03:36:16 GMT";
+            const expires = "Fri, 11 Sep 2026 04:36:16 GMT";
+            const f = await fixture((req, res) => {
+                expect(req.headers["if-none-match"]).toBe(etag);
+                expect(req.headers["cache-control"]).toBe("no-cache");
+                res.writeHead(status, {
+                    ...(cacheControl === undefined ? {} : { "cache-control": cacheControl }),
+                    etag,
+                    vary: "Authorization, Accept-Encoding",
+                    date,
+                    age: "120",
+                    expires,
+                    connection: "keep-alive, x-hop-only",
+                    "x-hop-only": "must-not-forward",
+                });
+                res.end(status === 304 ? undefined : "remote-body");
+            });
+            const response = await fetch(f.url, {
+                headers: { "if-none-match": etag, "cache-control": "no-cache" },
+            });
+            expect(response.status).toBe(status);
+            expect(response.headers.get("cache-control")).toBe(cacheControl ?? null);
+            expect(response.headers.get("etag")).toBe(etag);
+            expect(response.headers.get("vary")).toBe("Authorization, Accept-Encoding");
+            expect(response.headers.get("date")).toBe(date);
+            expect(response.headers.get("age")).toBe("120");
+            expect(response.headers.get("expires")).toBe(expires);
+            expect(response.headers.get("x-hop-only")).toBeNull();
+            expect(await response.text()).toBe(status === 304 ? "" : "remote-body");
+        },
+    );
+
     it("bounds concurrent health checks and releases pending work on close", async () => {
         const f = await fixture((_req, _res) => undefined);
         const pending = Array.from({ length: 32 }, () =>

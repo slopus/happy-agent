@@ -1,5 +1,16 @@
 # API module learnings
 
+## Avatars and artwork share private browser caching
+
+The blanket no-store response policy prevented browsers from retaining images despite their
+content-derived ETags. Fixing only project avatars left node avatars, bot avatars, profile photos
+(standalone and team), and slash-command artwork uncached. All five image endpoints now use one
+header helper for successful reads and conditional 304 responses: one hour of private-cache
+freshness followed by 24 hours of stale-while-revalidate. Vary on Authorization isolates cached
+images between credentials. Apply this policy only after finding the image; JSON, missing images,
+and authentication errors remain no-store. Cache headers enable request-driven revalidation, not
+an hourly timer or replacement of an already displayed image.
+
 ## The current profile identifies the authenticated team member
 
 The profile endpoint and desktop bootstrap share one profile projection. Its read-only `userId`

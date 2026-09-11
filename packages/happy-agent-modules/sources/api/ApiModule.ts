@@ -627,6 +627,7 @@ export class ApiModule implements AgentModule {
             if (request.method === "GET" && url.pathname === "/v0/node/avatar") {
                 const asset = await this.#node.avatar(ctx);
                 if (asset === null) throw notFound("This installation has no avatar.");
+                setImageCacheHeaders(response);
                 response.setHeader("etag", asset.etag);
                 if (request.headers["if-none-match"] === asset.etag) {
                     response.writeHead(304);
@@ -931,16 +932,15 @@ export class ApiModule implements AgentModule {
                     ? await this.#team.getCurrentUserPhoto(ctx)
                     : await this.#profile.getPhoto(ctx);
                 if (photo === undefined) throw notFound("The profile has no photo.");
+                setImageCacheHeaders(response);
                 if (request.headers["if-none-match"] === photo.etag) {
                     response.writeHead(304, {
-                        "cache-control": "no-store",
                         etag: photo.etag,
                     });
                     response.end();
                     return;
                 }
                 response.writeHead(200, {
-                    "cache-control": "no-store",
                     "content-length": photo.bytes.byteLength,
                     "content-type": photo.contentType,
                     etag: photo.etag,
@@ -2849,16 +2849,15 @@ export class ApiModule implements AgentModule {
             const name = decodePathSegment(slashCommandImage[2] as string, "slash command name");
             const image = await this.#slashCommands.image(ctx, agentId, name);
             if (image === undefined) throw notFound("The slash command has no image.");
+            setImageCacheHeaders(response);
             if (request.headers["if-none-match"] === image.etag) {
                 response.writeHead(304, {
-                    "cache-control": "no-store",
                     etag: image.etag,
                 });
                 response.end();
                 return true;
             }
             response.writeHead(200, {
-                "cache-control": "no-store",
                 "content-length": image.blob.byteLength,
                 "content-type": image.mediaType,
                 etag: image.etag,
@@ -3691,16 +3690,15 @@ export class ApiModule implements AgentModule {
             await this.#requireProject(ctx, projectId);
             const asset = await this.#projects.avatarAsset(ctx, projectId);
             if (asset === undefined) throw notFound("The project has no avatar.");
+            setImageCacheHeaders(response);
             if (request.headers["if-none-match"] === asset.etag) {
                 response.writeHead(304, {
-                    "cache-control": "no-store",
                     etag: asset.etag,
                 });
                 response.end();
                 return true;
             }
             response.writeHead(200, {
-                "cache-control": "no-store",
                 "content-length": asset.bytes.byteLength,
                 "content-type": asset.contentType,
                 etag: asset.etag,
@@ -3794,13 +3792,13 @@ export class ApiModule implements AgentModule {
                     throw error;
                 });
                 if (asset === undefined) throw notFound("The bot has no avatar.");
+                setImageCacheHeaders(response);
                 if (request.headers["if-none-match"] === asset.etag) {
-                    response.writeHead(304, { "cache-control": "no-store", etag: asset.etag });
+                    response.writeHead(304, { etag: asset.etag });
                     response.end();
                     return true;
                 }
                 response.writeHead(200, {
-                    "cache-control": "no-store",
                     "content-length": asset.bytes.byteLength,
                     "content-type": "image/webp",
                     etag: asset.etag,
@@ -5759,6 +5757,11 @@ async function writeOwnerOnlyDocument(path: string, content: string): Promise<vo
 
 function setCommonHeaders(response: ServerResponse): void {
     response.setHeader("cache-control", "no-store");
+}
+
+function setImageCacheHeaders(response: ServerResponse): void {
+    response.setHeader("cache-control", "private, max-age=3600, stale-while-revalidate=86400");
+    response.setHeader("vary", "Authorization");
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {

@@ -1,5 +1,14 @@
 # Remote connection learnings
 
+## Upstream responses own their caching policy
+
+The remote HTTP proxy replaced every upstream cache policy with no-store, defeating browser
+caching even when a remote image explicitly allowed it. Forward upstream end-to-end headers
+unchanged, including cache directives, validators, freshness metadata, and Vary. Once an upstream
+response arrives, remove the local API's default Cache-Control before forwarding it so an absent
+upstream policy also stays absent. Locally generated failures retain the API's no-store policy;
+hop-by-hop headers are still stripped.
+
 ## Display names do not own transport lifetimes
 
 Renaming a remote used to close its HTTP pool, active requests, and outbound Tailcat process.

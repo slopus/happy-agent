@@ -227,13 +227,14 @@ export class RemoteProxyConnection {
                     responseStarted = true;
                     remote = response;
                     const responseHeaders = proxyHeaders(response.headers);
-                    responseHeaders["cache-control"] = "no-store";
                     if (upgraded) {
                         const socket = destination as Duplex;
                         socket.write(responseHead(response.statusCode ?? 502, responseHeaders));
                         response.pipe(socket);
                     } else {
                         const output = destination as ServerResponse;
+                        // Drop the local API default even when the upstream supplies no policy.
+                        output.removeHeader("cache-control");
                         output.writeHead(response.statusCode ?? 502, responseHeaders);
                         response.pipe(output);
                     }

@@ -75,8 +75,31 @@ identities require protocol 25 or newer; older daemons may ignore or reject them
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
-- Responses carry `cache-control: no-store`; nothing served by the daemon is cacheable.
+- Responses carry `Cache-Control: no-store` unless an endpoint explicitly documents a cacheable
+  response. Avatar, profile-photo, and slash-command image responses are private-cacheable as
+  described below; JSON and error responses remain non-cacheable. Remote API proxies preserve the
+  upstream caching headers.
 - Timestamps are Unix epoch milliseconds unless stated otherwise.
+
+### Image caching
+
+Project avatars, node avatars, bot avatars, the authenticated user's profile photo (in standalone
+and team mode), and slash-command artwork share one caching policy. Both `200` and `304`
+responses carry `Cache-Control: private, max-age=3600, stale-while-revalidate=86400`,
+`Vary: Authorization`, and the content-derived `ETag`.
+
+The image may be reused from the browser's private cache for one hour after fetching or
+successful validation. During the following 24 hours, a request may serve the stale cached
+image immediately while revalidating it in the background with `If-None-Match`. Beyond that
+window, the cached image must be validated before reuse. Shared caches must not store it, and
+private caches must distinguish requests by authorization. This policy does not schedule
+requests or automatically replace an image already displayed by the client.
+
+Clients should invalidate displayed images after a known change and clear them after removal
+rather than waiting for cache expiry. ThumbHashes are placeholders, not content identities.
+Missing images return `404`, even when a conditional request names the removed image. All error
+responses retain `Cache-Control: no-store`. Older compatible daemons may continue to return
+`Cache-Control: no-store` for successful image responses.
 
 ### Errors
 
@@ -221,7 +244,8 @@ an avatar is absent. They must not substitute `config.p2p.name` as the node's ow
 Serves the current avatar's image bytes with the correct image `Content-Type`, the normal bearer
 authentication, and a content-derived `ETag`. `If-None-Match` matching the current image returns
 `304` with no body. No avatar returns `404` with `code: "not_found"`, even when a conditional
-header names a removed image. The normal `cache-control: no-store` policy remains in force.
+header names a removed image. Successful and conditional responses use the shared image-caching
+policy above.
 
 Clients show the ThumbHash while fetching the image. After `config.updated`, they refetch config
 and conditionally refetch the image when one is present, even if the ThumbHash is unchanged.
@@ -377,7 +401,10 @@ This prefix exposes the selected remote's complete HTTP API. For example,
 `/api/` reaches its `/`. Methods, query strings, request bodies, conditional headers, response
 statuses and bodies, SSE streams, terminal WebSocket upgrades, and workspace `CONNECT` tunnels
 retain their remote semantics. The proxy strips only its routing prefix and transport-specific
-hop-by-hop headers. It does not follow redirects, buffer complete streams, replay requests, or
+hop-by-hop headers. It preserves upstream end-to-end response headers, including `Cache-Control`,
+`ETag`, `Vary`, `Date`, `Age`, and `Expires` when present; it does not replace or synthesize an
+upstream caching policy. Conditional requests and `304` responses retain these same semantics.
+It does not follow redirects, buffer complete streams, replay requests, or
 merge remote events into the main daemon's journal. Remote identifiers and cursors remain opaque
 and belong to the selected client instance.
 
@@ -1041,7 +1068,10 @@ Response — `200`: `{ "profile": { ... } }` and a `profile.updated` event.
 
 ### `GET /v0/profile/photo`
 
-The photo bytes with their content type; `404` when none is set.
+The authenticated user's photo bytes with their content type and content-derived `ETag`;
+`If-None-Match` matching the current photo returns `304` without a body. Successful and conditional
+responses use the shared image-caching policy in standalone and team mode. Returns `404` when no
+photo is set, including when a conditional request names a removed photo.
 
 ### `PUT /v0/profile/photo`
 
@@ -2008,8 +2038,9 @@ and no new agent can be attached to an archived project; an attachment in flight
 
 Serves the project picture's image bytes. The response carries an `ETag` derived from the image
 content and supports conditional requests, so a client that already holds the picture gets
-`304`. A project without a picture is `404`; the `thumbhash` in the project object is what a
-client shows in the meantime.
+`304`. Successful and conditional responses use the shared image-caching policy. A project without
+a picture is `404`, including when `If-None-Match` names a removed picture. The `thumbhash` in the
+project object is the placeholder when no cached image is available.
 
 ### `PUT /v0/projects/:projectId/avatar`
 
@@ -2719,8 +2750,8 @@ The built-in command contributions include:
 
 Serves the current cached image bytes for one focused command. The response carries the image's
 content type and a content-derived `ETag`, supports `If-None-Match` with `304`, and uses
-`Cache-Control: no-store` like project and profile images. A command that does not exist or has no
-image is `404`. The endpoint does not refresh command discovery by itself; agent snapshots, turns,
+the shared image-caching policy for successful and conditional responses. A command that does not
+exist or has no image is `404`. The endpoint does not refresh command discovery by itself; agent snapshots, turns,
 and command invocation refresh the catalog and announce changed image content through
 `agent.slash_commands.updated`.
 
@@ -4121,8 +4152,8 @@ between its destination neighbours; neighbour keys and versions remain unchanged
 
 ### `GET /v0/bots/:botId/avatar`
 
-Serves the bot picture's image bytes, with the same `ETag`, conditional-request, and `404`
-behavior as a project avatar.
+Serves the bot picture's image bytes, with the same `ETag`, conditional-request, image-caching,
+and `404` behavior as a project avatar.
 
 ### `PUT /v0/bots/:botId/avatar`
 

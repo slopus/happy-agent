@@ -248,7 +248,10 @@ describe("node display configuration through the public API", () => {
         expect(image.contentType).toBe("image/webp");
         expect(image.etag).toMatch(/^"[a-f0-9]{64}"$/);
         expect(image.data.byteLength).toBeGreaterThan(0);
-        expect((await gym.raw.get("/v0/node/avatar")).headers["cache-control"]).toBe("no-store");
+        expect((await gym.raw.get("/v0/node/avatar")).headers).toMatchObject({
+            "cache-control": "private, max-age=3600, stale-while-revalidate=86400",
+            vary: "Authorization",
+        });
         await expect(gym.client.getNodeAvatar({ ifNoneMatch: image.etag! })).resolves.toBeNull();
         await gym.send(`Set the same daemon avatar from ${path} again.`, sendOptions);
         expect(await updates(gym, cursor)).toHaveLength(1);
