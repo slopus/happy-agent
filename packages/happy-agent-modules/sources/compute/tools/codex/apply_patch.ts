@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -17,6 +17,18 @@ const applyPatchParametersSchema = Type.Object(
         }),
         workdir: Type.Optional(
             Type.String({ description: "Working directory for relative paths." }),
+        ),
+        sandbox_permissions: Type.Optional(
+            Type.Union([Type.Literal("use_default"), Type.Literal("require_escalated")], {
+                description:
+                    "Request reviewed Full access for this patch in Auto mode. Protected and outside-workspace paths are also reviewed automatically when omitted.",
+            }),
+        ),
+        justification: Type.Optional(
+            Type.String({
+                description:
+                    "Concise user-facing reason why sandbox escalation is needed. Use only with require_escalated.",
+            }),
         ),
     },
     { additionalProperties: false },
@@ -56,9 +68,10 @@ const applyPatchResultSchema = Type.Object(
  */
 export function codexApplyPatchTool(compute: Compute, reads: FileReadLog) {
     const reviewsPatch = async (
-        args: { patch: string; workdir?: string },
+        args: Static<typeof applyPatchParametersSchema>,
         ctx: Context,
     ): Promise<boolean> => {
+        if (args.sandbox_permissions === "require_escalated") return true;
         let workdir: string;
         try {
             workdir = resolveComputePath(args.workdir ?? compute.cwd, compute.cwd, compute.fs.home);
@@ -103,7 +116,9 @@ Put \`*** Move to: new/path.ts\` directly after \`*** Update File:\` to rename t
         // Writing files cannot commit atomically with the tool result, and a patch applied twice
         // would no longer match what it was written against.
         durable: false,
-        describeAutoPermissionAction: ({ patch, workdir }) => {
+        autoPermissionInstructions:
+            'For apply_patch, request reviewed Full access for this patch with sandbox_permissions: "require_escalated" and a concise justification. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate.',
+        describeAutoPermissionAction: ({ patch, workdir, sandbox_permissions, justification }) => {
             let root = workdir ?? compute.cwd;
             try {
                 root = resolveComputePath(root, compute.cwd, compute.fs.home);
@@ -115,10 +130,12 @@ Put \`*** Move to: new/path.ts\` directly after \`*** Update File:\` to rename t
                 paths.length === 0
                     ? "not available from the patch"
                     : paths.map((path) => JSON.stringify(path)).join(", ");
-            const access = paths.some((path) => !isPathInside(compute.cwd, path))
-                ? "unrestricted filesystem access outside the workspace sandbox"
-                : "reviewed filesystem writes inside the workspace, including paths the machine protects";
-            return `applying a patch. Affected paths: ${affected}. Working directory: ${JSON.stringify(root)}. Access: ${access}`;
+            const access =
+                sandbox_permissions === "require_escalated" ||
+                paths.some((path) => !isPathInside(compute.cwd, path))
+                    ? "unrestricted filesystem access outside the workspace sandbox"
+                    : "reviewed filesystem writes inside the workspace, including paths the machine protects";
+            return `applying a patch. Affected paths: ${affected}. Working directory: ${JSON.stringify(root)}. Access: ${access}${justification === undefined ? "" : `. Reason given: ${justification}`}`;
         },
         shouldReviewInAutoMode: reviewsPatch,
         shouldRunInFullAccessInAutoMode: reviewsPatch,

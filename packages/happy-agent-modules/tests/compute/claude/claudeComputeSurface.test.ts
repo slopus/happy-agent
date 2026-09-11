@@ -22,10 +22,11 @@ const VENDOR_ARGUMENTS: Readonly<
     Record<string, { readonly required: readonly string[]; readonly optional: readonly string[] }>
 > = {
     Read: { required: ["file_path"], optional: ["offset", "limit"] },
-    Write: { required: ["file_path", "content"], optional: [] },
+    // Happy Agent adds the same reviewed elevation flag as Bash to file mutations.
+    Write: { required: ["file_path", "content"], optional: ["dangerouslyDisableSandbox"] },
     Edit: {
         required: ["file_path", "old_string", "new_string"],
-        optional: ["replace_all"],
+        optional: ["replace_all", "dangerouslyDisableSandbox"],
     },
     Glob: { required: ["pattern"], optional: ["path"] },
     Grep: {

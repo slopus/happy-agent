@@ -1,5 +1,15 @@
 # Compute module learnings
 
+## File mutations can explicitly request reviewed elevation
+
+Patch, write, and edit tools previously inferred elevation only from their target paths, so a model
+could not request it using the same explicit controls as shell tools. Codex `apply_patch` now accepts
+`sandbox_permissions` and `justification`; Claude `Write` and `Edit` accept
+`dangerouslyDisableSandbox`; Grok `write` and `search_replace` accept `sandbox_permissions` and
+`description`. These optional Happy Agent extensions request review and temporary Full access for
+one call, never a persistent mode change. Omitting the flag retains automatic review for protected,
+outside-workspace, and symlink-escaping paths. Read only and Workspace write do not elevate.
+
 ## Filesystem discovery identity must come from its owner
 
 Agents on separate containers or emulated machines can advertise the same provider name, working

@@ -142,7 +142,7 @@ describe("codex compute tool surface", () => {
         // calling convention cannot reach here and the patch travels in a normal field.
         expect(applyPatch.grammar).toBeUndefined();
         expect(parameterShape(applyPatch)).toEqual({
-            properties: ["patch", "workdir"],
+            properties: ["justification", "patch", "sandbox_permissions", "workdir"],
             required: ["patch"],
             additionalProperties: false,
         });

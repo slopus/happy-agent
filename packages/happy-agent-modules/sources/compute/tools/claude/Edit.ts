@@ -44,6 +44,12 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
                         description: "Replace all occurrences of old_string (default false)",
                     }),
                 ),
+                dangerouslyDisableSandbox: Type.Optional(
+                    Type.Boolean({
+                        description:
+                            "Request reviewed Full access for this edit in Auto mode. Protected and outside-workspace paths are also reviewed automatically when omitted.",
+                    }),
+                ),
             },
             exact,
         ),
@@ -58,11 +64,18 @@ export function claudeEditTool(compute: Compute, reads: FileReadLog) {
         // The same edit run twice matches different text the second time, so a replay after a
         // restart would not be the change the model asked for.
         durable: false,
-        describeAutoPermissionAction: ({ file_path }) =>
-            describeComputePathAction(compute, file_path, "editing", { write: true }),
-        shouldReviewInAutoMode: ({ file_path }, ctx) =>
+        autoPermissionInstructions:
+            "For Edit, request reviewed Full access for this file change with dangerouslyDisableSandbox: true. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate.",
+        describeAutoPermissionAction: ({ file_path, dangerouslyDisableSandbox }) =>
+            describeComputePathAction(compute, file_path, "editing", {
+                write: true,
+                fullAccess: dangerouslyDisableSandbox === true,
+            }),
+        shouldReviewInAutoMode: ({ file_path, dangerouslyDisableSandbox }, ctx) =>
+            dangerouslyDisableSandbox === true ||
             shouldReviewComputePath(compute, file_path, { write: true }, ctx),
-        shouldRunInFullAccessInAutoMode: ({ file_path }, ctx) =>
+        shouldRunInFullAccessInAutoMode: ({ file_path, dangerouslyDisableSandbox }, ctx) =>
+            dangerouslyDisableSandbox === true ||
             shouldReviewComputePath(compute, file_path, { write: true }, ctx),
         execute: async (ctx, { file_path, old_string, new_string, replace_all }) =>
             await editComputeText(compute, reads, ctx, {

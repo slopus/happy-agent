@@ -34,6 +34,12 @@ export function claudeWriteTool(compute: Compute, reads: FileReadLog) {
                         "The absolute path to the file to write (must be absolute, not relative)",
                 }),
                 content: Type.String({ description: "The content to write to the file" }),
+                dangerouslyDisableSandbox: Type.Optional(
+                    Type.Boolean({
+                        description:
+                            "Request reviewed Full access for this write in Auto mode. Protected and outside-workspace paths are also reviewed automatically when omitted.",
+                    }),
+                ),
             },
             exact,
         ),
@@ -49,11 +55,18 @@ export function claudeWriteTool(compute: Compute, reads: FileReadLog) {
         // A file on disk cannot be rolled back with the tool result, so replaying this call after a
         // restart would overwrite whatever happened in between.
         durable: false,
-        describeAutoPermissionAction: ({ file_path }) =>
-            describeComputePathAction(compute, file_path, "writing", { write: true }),
-        shouldReviewInAutoMode: ({ file_path }, ctx) =>
+        autoPermissionInstructions:
+            "For Write, request reviewed Full access for this file change with dangerouslyDisableSandbox: true. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate.",
+        describeAutoPermissionAction: ({ file_path, dangerouslyDisableSandbox }) =>
+            describeComputePathAction(compute, file_path, "writing", {
+                write: true,
+                fullAccess: dangerouslyDisableSandbox === true,
+            }),
+        shouldReviewInAutoMode: ({ file_path, dangerouslyDisableSandbox }, ctx) =>
+            dangerouslyDisableSandbox === true ||
             shouldReviewComputePath(compute, file_path, { write: true }, ctx),
-        shouldRunInFullAccessInAutoMode: ({ file_path }, ctx) =>
+        shouldRunInFullAccessInAutoMode: ({ file_path, dangerouslyDisableSandbox }, ctx) =>
+            dangerouslyDisableSandbox === true ||
             shouldReviewComputePath(compute, file_path, { write: true }, ctx),
         execute: async (ctx, { file_path, content }) =>
             await writeComputeTextFile(compute, reads, ctx, { path: file_path, content }),

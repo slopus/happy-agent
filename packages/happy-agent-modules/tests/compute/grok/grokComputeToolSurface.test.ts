@@ -43,10 +43,12 @@ const vendorSchemas: Readonly<
     write: {
         properties: ["file_path", "content"],
         required: ["file_path", "content"],
+        added: ["sandbox_permissions", "description"],
     },
     search_replace: {
         properties: ["file_path", "old_string", "new_string", "replace_all"],
         required: ["file_path", "old_string", "new_string"],
+        added: ["sandbox_permissions", "description"],
     },
     list_dir: {
         properties: ["target_directory"],

@@ -27,6 +27,18 @@ export function grokWriteTool(compute: Compute, reads: FileReadLog) {
                     description: "The absolute path to the file to write.",
                 }),
                 content: Type.String({ description: "The full file content to write." }),
+                sandbox_permissions: Type.Optional(
+                    Type.Union([Type.Literal("use_default"), Type.Literal("require_escalated")], {
+                        description:
+                            "Request reviewed Full access for this write in Auto mode. Protected and outside-workspace paths are also reviewed automatically when omitted.",
+                    }),
+                ),
+                description: Type.Optional(
+                    Type.String({
+                        description:
+                            "Concise user-facing reason why sandbox escalation is needed. Use only with require_escalated.",
+                    }),
+                ),
             },
             { additionalProperties: false },
         ),
@@ -41,11 +53,19 @@ export function grokWriteTool(compute: Compute, reads: FileReadLog) {
         ),
         // The filesystem write cannot commit atomically with the tool result.
         durable: false,
-        describeAutoPermissionAction: ({ file_path }) =>
-            describeComputePathAction(compute, file_path, "writing", { write: true }),
-        shouldReviewInAutoMode: ({ file_path }, ctx) =>
+        autoPermissionInstructions:
+            'For write, request reviewed Full access for this file change with sandbox_permissions: "require_escalated" and explain why in description. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate.',
+        describeAutoPermissionAction: ({ file_path, sandbox_permissions, description }) =>
+            describeComputePathAction(compute, file_path, "writing", {
+                write: true,
+                fullAccess: sandbox_permissions === "require_escalated",
+                ...(description === undefined ? {} : { reason: description }),
+            }),
+        shouldReviewInAutoMode: ({ file_path, sandbox_permissions }, ctx) =>
+            sandbox_permissions === "require_escalated" ||
             shouldReviewComputePath(compute, file_path, { write: true }, ctx),
-        shouldRunInFullAccessInAutoMode: ({ file_path }, ctx) =>
+        shouldRunInFullAccessInAutoMode: ({ file_path, sandbox_permissions }, ctx) =>
+            sandbox_permissions === "require_escalated" ||
             shouldReviewComputePath(compute, file_path, { write: true }, ctx),
         execute: async (ctx, { file_path, content }) =>
             await writeComputeTextFile(compute, reads, ctx, { path: file_path, content }),

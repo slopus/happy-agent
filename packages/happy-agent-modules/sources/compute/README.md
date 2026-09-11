@@ -83,7 +83,15 @@ Each directory under `tools/` has its own README describing every tool it ships.
 
 The vendor descriptors under `packages/happy-providers/sources/vendors/*/tools/` are the truth these
 surfaces are matched against — names, argument names, defaults, and the wording models were trained
-on. Three departures from that truth are deliberate:
+on. These departures from that truth are deliberate:
+
+- **File mutations accept explicit elevation.** Codex `apply_patch` accepts optional
+  `sandbox_permissions: "require_escalated"` and `justification`; Claude `Write` and `Edit` accept
+  `dangerouslyDisableSandbox: true`; Grok `write` and `search_replace` accept
+  `sandbox_permissions: "require_escalated"` and a reason in `description`. Auto reviews the exact
+  proposed change and elevates only the approved call. Protected and outside-workspace paths are
+  still reviewed automatically when the flag is omitted or disabled. Read only and Workspace write
+  never elevate. These are Happy Agent extensions; vendor reference descriptors stay unchanged.
 
 - **Claude's `Task*` tools are `Bash*` here.** The descriptors define one `TaskOutput`/`TaskInput`/
   `TaskStop` family covering "a background shell task, agent, or workflow" — one handle for three
@@ -103,7 +111,8 @@ on. Three departures from that truth are deliberate:
 - **`apply_patch` takes JSON.** Codex's real `apply_patch` is a freeform tool whose whole argument
   string is the patch. Agent Base parses every tool call's arguments as JSON before a tool sees
   them (`AgentBase.ts`) and exposes no argument-parse hook, and `happy-agent-base` is frozen, so
-  this `apply_patch` is an ordinary JSON tool taking `{ patch, workdir? }`. Its description says so
+  this `apply_patch` is an ordinary JSON tool taking `patch`, optional `workdir`, and the optional
+  elevation fields above. Its description says so
   plainly instead of repeating the vendor's "do not wrap in JSON" sentence.
 
 ## What every surface shares

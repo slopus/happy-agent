@@ -13,7 +13,7 @@ export function describeComputePathAction(
     compute: Compute,
     path: string,
     operation: string,
-    options: { write?: boolean } = {},
+    options: { write?: boolean; fullAccess?: boolean; reason?: string } = {},
 ): string {
     let resolvedPath = path;
     try {
@@ -22,13 +22,15 @@ export function describeComputePathAction(
         // Keep the written path so the reviewer still sees what was proposed.
     }
     const access =
-        options.write === true &&
-        isProtectedComputePath(resolvedPath, projectProtectedComputePaths(compute.cwd))
-            ? "protected project config requiring Full access"
-            : options.write === true && isProtectedGitControlPath(resolvedPath)
-              ? "protected Git control path requiring Full access"
-              : isPathInside(compute.cwd, resolvedPath)
-                ? "reviewed filesystem path requiring Full access after canonical path checks"
-                : "unrestricted filesystem access outside the workspace sandbox";
-    return `${operation} ${JSON.stringify(resolvedPath)}. Access: ${access}`;
+        options.fullAccess === true
+            ? "unrestricted filesystem access outside the workspace sandbox"
+            : options.write === true &&
+                isProtectedComputePath(resolvedPath, projectProtectedComputePaths(compute.cwd))
+              ? "protected project config requiring Full access"
+              : options.write === true && isProtectedGitControlPath(resolvedPath)
+                ? "protected Git control path requiring Full access"
+                : isPathInside(compute.cwd, resolvedPath)
+                  ? "reviewed filesystem path requiring Full access after canonical path checks"
+                  : "unrestricted filesystem access outside the workspace sandbox";
+    return `${operation} ${JSON.stringify(resolvedPath)}. Access: ${access}${options.reason === undefined ? "" : `. Reason given: ${options.reason}`}`;
 }
