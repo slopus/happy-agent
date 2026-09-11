@@ -58,6 +58,12 @@ not found; desktop bootstrap and the journal carry only the authentication snaps
 errors include only that snapshot. Keep the separate local profile and Happy integration surfaces
 independent of Cloud account state.
 
+Team nodes must not connect an installation-wide personal Cloud account. Both authorization
+start and completion now throw the existing unsupported API error before parsing bodies or
+calling Cloud, including when an attempt predates team mode. Keep this deployment restriction
+at the API seam; standalone authorization and the existing Cloud status and disconnect routes
+remain unchanged.
+
 ## Input requests and generated calls retain distinct identities
 
 Send accepts the published tool-request block schema, with at most one request among the text

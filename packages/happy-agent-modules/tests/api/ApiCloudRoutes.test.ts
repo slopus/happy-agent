@@ -24,6 +24,7 @@ import {
 } from "../../sources/cloud/CloudModule.js";
 import { createCloudDatabase } from "../../sources/cloud/CloudDatabase.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
+import { withTeamUser } from "../../sources/team/index.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -269,6 +270,48 @@ describe("Cloud HTTP API", () => {
         });
     });
 
+    it.each([disconnected, authorizing, connected])(
+        "rejects account connection without side effects on a $status team node",
+        async (initial) => {
+            const fixture = await apiFixture(initial, { team: true });
+            const before = fixture.api.cursor();
+            const rejection = {
+                code: "unsupported",
+                status: 501,
+                message: "Connecting a Cloud account is unavailable in team mode.",
+            };
+
+            await expect(
+                fixture.client.startCloudAuthorization({
+                    environment: "production",
+                    redirectUri: "desktop-app://workos/callback",
+                }),
+            ).rejects.toMatchObject(rejection);
+            await expect(
+                fixture.client.completeCloudAuthorization({
+                    callbackUrl: "desktop-app://workos/callback?code=code&state=state",
+                }),
+            ).rejects.toMatchObject(rejection);
+            for (const path of ["/v0/cloud/auth/start", "/v0/cloud/auth/complete"]) {
+                const response = await apiFetch(fixture.api, fixture.context)(
+                    `http://happy-agent.test${path}`,
+                    {
+                        body: "not-json",
+                        headers: { authorization: `Bearer ${fixture.token}` },
+                        method: "POST",
+                    },
+                );
+                expect(response.status).toBe(501);
+                expect(await response.json()).toMatchObject({ code: "unsupported" });
+            }
+            expect(fixture.cloud.start).not.toHaveBeenCalled();
+            expect(fixture.cloud.complete).not.toHaveBeenCalled();
+            await expect(fixture.client.getCloud()).resolves.toEqual({ cloud: initial });
+            expect((await fixture.client.getEvents({ after: before })).events).toEqual([]);
+            expect(fixture.api.cursor()).toBe(before);
+        },
+    );
+
     it("rejects every organization operation before parsing bodies in team mode", async () => {
         const fixture = await apiFixture(connected, { team: true });
 
@@ -388,7 +431,22 @@ async function apiFixture(
     options: { readonly team?: boolean } = {},
 ) {
     const directory = await mkdtemp(join(tmpdir(), "happy-cloud-api-"));
-    const context = createRootContext().named("cloud-api-test");
+    const root = createRootContext().named("cloud-api-test");
+    const context =
+        options.team === true
+            ? withTeamUser(root, {
+                  createdAt: 0,
+                  email: user.email,
+                  firstName: user.firstName,
+                  id: "teamuser",
+                  isOwner: false,
+                  lastName: user.lastName,
+                  photo: null,
+                  updatedAt: 0,
+                  version: VERSION_1,
+                  workosUserId: user.id,
+              })
+            : root;
     let current = initial;
     let updated: CloudUpdatedListener | undefined;
     const cloud = {

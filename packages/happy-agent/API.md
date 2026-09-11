@@ -1241,6 +1241,9 @@ This is a local status read. It performs no WorkOS refresh or Happy Cloud networ
 
 ### `POST /v0/cloud/auth/start`
 
+Unavailable in team mode: returns `501` with code `unsupported` before parsing the request body
+or starting authorization. It changes no Cloud state and emits no event.
+
 Starts or joins a WorkOS authorization-code flow with PKCE. Request:
 
 ```json
@@ -1265,6 +1268,10 @@ one `cloud.updated`; an idempotent retry emits nothing.
 Response — `200`: `{ "cloud": { ... } }` with the authorizing Cloud object.
 
 ### `POST /v0/cloud/auth/complete`
+
+Unavailable in team mode: returns `501` with code `unsupported` before parsing the request body
+or exchanging credentials, including for attempts started before enabling team mode. It changes
+no Cloud state and emits no event.
 
 Completes the one pending authorization attempt. Request:
 

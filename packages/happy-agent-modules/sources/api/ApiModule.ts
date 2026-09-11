@@ -781,6 +781,9 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/cloud/auth/start") {
+                if (this.#team.enabled) {
+                    throw unsupported("Connecting a Cloud account is unavailable in team mode.");
+                }
                 const body = await bodyAs(
                     request,
                     startCloudAuthorizationRequestSchema,
@@ -795,6 +798,9 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/cloud/auth/complete") {
+                if (this.#team.enabled) {
+                    throw unsupported("Connecting a Cloud account is unavailable in team mode.");
+                }
                 const body = await bodyAs(
                     request,
                     completeCloudAuthorizationRequestSchema,
