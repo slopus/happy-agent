@@ -1,5 +1,12 @@
 # Auto module — learnings
 
+- The converter used to change every critical-risk allow into a denial while keeping the
+  reviewer's approval rationale. An informed user approval reached the reviewer and produced an
+  allow, but the agent was falsely told the reviewer had refused again. Critical-risk verdicts
+  now pass through unchanged in both Auto and Permissions; the reviewer applies the policy and
+  user evidence. Codex likewise uses the returned outcome at execution time rather than a
+  hard-coded critical-risk veto. The separate high-risk authorization check is unchanged.
+
 - A user's explicit tool request is structured authorization evidence, not an image placeholder
   and not assistant-generated tool prose. Preserve its exact name and arguments in the durable
   evidence archive and render them under the message's existing provenance. Only positively

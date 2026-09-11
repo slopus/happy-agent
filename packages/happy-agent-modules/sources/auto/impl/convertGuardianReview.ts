@@ -18,8 +18,8 @@ import { shouldAllowAutoPermissionReview } from "./shouldAllowAutoPermissionRevi
  * review that *did* return text, so there are only two v2 outcomes:
  *
  * - a parsed allow whose own risk and authorization support it becomes `allowed`;
- * - a parsed deny, a parsed allow the independent policy rejects (critical, or high without at
- *   least medium authorization), and unreadable text all become `denied`. An unreadable but
+ * - a parsed deny, a parsed allow the independent policy rejects (high without at least medium
+ *   authorization), and unreadable text all become `denied`. An unreadable but
  *   completed answer is a v1 rejection, not a v2 "unavailable": the reviewer answered, it just
  *   answered unintelligibly.
  *

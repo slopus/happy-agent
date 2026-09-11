@@ -65,8 +65,9 @@ tool names:
    `tool.shouldRunInFullAccessInAutoMode?.(args, ctx)` are read. A missing or blank action
    description is a tool-definition error and is refused without inventing a generic action. The
    request then goes to the configured `PermissionReviewer`.
-5. An `allowed` decision is checked again by the independent Auto policy: critical risk is never
-   allowed, and high risk requires at least medium user authorization. A policy-rejected or
+5. An `allowed` decision is checked again by the independent Auto policy: high risk requires at
+   least medium user authorization. Critical-risk outcomes remain the reviewer's policy decision;
+   the runtime does not unconditionally veto an allow based on that label. A policy-rejected or
    reviewer-denied decision refuses that call. A decision that never came back (no reviewer,
    a thrown error, or a timeout) produces an unproven refusal.
 
@@ -119,7 +120,8 @@ long-window rate.
   sandbox), and an `AbortSignal` in `signal` that is aborted when the bounded review times out.
   `PermissionReviewDecision` carries `risk` and `userAuthorization` on an allowed result (they
   may also be supplied on a denial). The reviewer reports them, while the module independently
-  rejects critical risk and high-risk actions without medium-or-higher authorization. Review must
+  rejects high-risk actions without medium-or-higher authorization. Critical-risk outcomes are
+  honored as returned by the reviewer. Review must
   never become a question put to the person and must answer in bounded time.
 - `PermissionEventListener` is `(ctx, event) => Promise<void> | void`. It may be asynchronous, and
   the module awaits it so a healthy host has durably recorded what happened before the run settles;

@@ -216,8 +216,8 @@ const deniedPermissionReviewDecisionSchema = Type.Object(
 
 /**
  * The reviewer must return the risk and authorization it relied on. Permissions applies its own
- * policy to an allowed result: critical actions never pass, and high-risk actions require at
- * least medium user authorization.
+ * high-risk authorization check to an allowed result: high-risk actions require at least medium
+ * user authorization. Critical-risk outcomes remain the reviewer's policy decision.
  */
 export const permissionReviewDecisionSchema = Type.Union([
     allowedPermissionReviewDecisionSchema,

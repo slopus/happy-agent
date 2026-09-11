@@ -12,8 +12,10 @@ describe("shouldAllowAutoPermissionReview", () => {
         ["high", "low", false],
         ["high", "medium", true],
         ["high", "high", true],
-        ["critical", "high", false],
-        ["critical", "medium", false],
+        ["critical", "high", true],
+        ["critical", "medium", true],
+        ["critical", "low", true],
+        ["critical", "unknown", true],
     ] as const)(
         "treats %s risk with %s authorization as allowed=%s",
         (risk, userAuthorization, allowed) => {
@@ -28,13 +30,13 @@ describe("shouldAllowAutoPermissionReview", () => {
         },
     );
 
-    it("preserves an explicit deny decision", () => {
+    it.each(["low", "critical"] as const)("preserves an explicit %s-risk deny decision", (risk) => {
         expect(
             shouldAllowAutoPermissionReview({
                 decision: "deny",
                 denialKind: "rejected",
                 reason: "Needs confirmation.",
-                risk: "low",
+                risk,
                 userAuthorization: "high",
             }),
         ).toBe(false);

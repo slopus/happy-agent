@@ -310,10 +310,7 @@ describe("permissions boundary contracts", () => {
             shouldAllowAutoPermissionReview(
                 allowedDecision({ risk: "critical", userAuthorization: "high" }),
             ),
-        ).toBe(false);
-        expect(autoPermissionPolicyDenialReason(allowedDecision({ risk: "critical" }))).toContain(
-            "does not allow critical-risk actions",
-        );
+        ).toBe(true);
         expect(
             autoPermissionPolicyDenialReason(
                 allowedDecision({ risk: "high", userAuthorization: "low" }),

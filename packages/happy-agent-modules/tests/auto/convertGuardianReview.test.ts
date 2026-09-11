@@ -49,16 +49,21 @@ describe("convertGuardianReview", () => {
         expect(decision.outcome).toBe("denied");
     });
 
-    it("denies a critical allow regardless of authorization", () => {
+    it("honors a critical allow after informed user authorization", () => {
         const decision = convertGuardianReview({
             text: guardian("allow", {
                 risk_level: "critical",
                 user_authorization: "high",
-                rationale: "Destructive.",
+                rationale: "The user explicitly approved the exact action after risk disclosure.",
             }),
             userEvidenceOmitted: false,
         });
-        expect(decision.outcome).toBe("denied");
+        expect(decision).toEqual({
+            outcome: "allowed",
+            risk: "critical",
+            userAuthorization: "high",
+            reason: "The user explicitly approved the exact action after risk disclosure.",
+        });
     });
 
     it("treats a completed but unreadable answer as a denial, not an error", () => {

@@ -291,7 +291,7 @@ describe("PermissionsModule", () => {
         });
     });
 
-    it("does not honor an allowed critical-risk review", async () => {
+    it("honors an allowed critical-risk review and restores Auto after execution", async () => {
         ran.length = 0;
         const events: PermissionEvent[] = [];
         const reviewer = reviewerAnswering(() => ({
@@ -303,7 +303,8 @@ describe("PermissionsModule", () => {
             "critical-agent",
             [
                 toolCallTurn("call-1", "publish", JSON.stringify({ target: "/etc/hosts" })),
-                textTurn("stop"),
+                toolCallTurn("call-2", "look", "{}"),
+                textTurn("done"),
             ],
             { reviewer, events },
         );
@@ -312,9 +313,12 @@ describe("PermissionsModule", () => {
         await agent.waitForIdle();
         await agent.close();
 
-        expect(ran).toEqual([]);
-        expect(toolResults(provider).join("\n")).toContain("independent Auto policy");
-        expect(events[0]).toMatchObject({ type: "permission_action_denied" });
+        expect(ran).toEqual([
+            { tool: "publish", mode: "full_access" },
+            { tool: "look", mode: "auto" },
+        ]);
+        expect(toolResults(provider).join("\n")).toContain("published");
+        expect(events[0]).toMatchObject({ type: "permission_action_reviewed", elevated: true });
     });
 
     it("refuses a high-risk allow without medium user authorization", async () => {

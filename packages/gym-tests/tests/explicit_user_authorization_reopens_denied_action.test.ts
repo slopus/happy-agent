@@ -12,9 +12,14 @@ afterEach(async () => {
 });
 
 describe("explicit user authorization after a denial", () => {
-    it.each(["allow", "deny"] as const)(
-        "submits the same action to a fresh review and honors a second %s",
-        async (secondOutcome) => {
+    it.each([
+        { risk: "high", secondOutcome: "allow" },
+        { risk: "high", secondOutcome: "deny" },
+        { risk: "critical", secondOutcome: "allow" },
+        { risk: "critical", secondOutcome: "deny" },
+    ] as const)(
+        "submits the same action to a fresh review and honors $risk risk with $secondOutcome",
+        async ({ risk, secondOutcome }) => {
             let mainCalls = 0;
             let reviews = 0;
             const gym = await createGym({
@@ -31,7 +36,7 @@ describe("explicit user authorization after a denial", () => {
                                     type: "text",
                                     text: [
                                         "<review>",
-                                        "<risk_level>high</risk_level>",
+                                        `<risk_level>${risk}</risk_level>`,
                                         `<user_authorization>${reviews === 1 ? "low" : "high"}</user_authorization>`,
                                         `<outcome>${outcome}</outcome>`,
                                         "<rationale>This overwrites approved.txt; explicit authorization is required and policy still applies.</rationale>",
