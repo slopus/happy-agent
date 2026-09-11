@@ -1,7 +1,9 @@
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { clientFrameEvent, createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
@@ -10,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket } from "ws";
 
 const gyms = new Set<AgentGym>();
+const execFile = promisify(execFileCallback);
 const servers = new Set<Server>();
 const webSocketServers = new Set<WebSocketServer>();
 
@@ -39,6 +42,396 @@ afterEach(async () => {
 });
 
 describe("Happy integration API", () => {
+    it("distinguishes unborn and clean native comparisons without widening a subfolder project", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            files: { "outside.txt": "outside", "selected/inside.txt": "inside" },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        const git = async (...args: string[]) =>
+            (
+                await execFile("git", args, { cwd: gym.workspacePath, timeout: 10_000 })
+            ).stdout.trim();
+        await git("init", "--initial-branch=main");
+        await git("config", "user.name", "Gym");
+        await git("config", "user.email", "gym@example.test");
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === gym.workspacePath),
+            "the unborn repository session",
+        );
+        await gym.waitUntil(
+            () => happy.hasRpc(`${session.id}:gitState`) || undefined,
+            "native Git registration",
+        );
+        expect(await happy.rpc(session.id, "gitState", {})).toMatchObject({
+            success: true,
+            git: { comparison: "unavailable", base: null, countsExact: false },
+        });
+        await git("add", ".");
+        await git("commit", "-m", "base");
+        const base = await git("rev-parse", "HEAD");
+        await git("update-ref", "refs/remotes/origin/main", base);
+        const clean = await gym.waitUntil(async () => {
+            const result = (await happy.rpc(session.id, "gitState", {})) as {
+                git?: { comparison: string };
+            };
+            return result.git?.comparison === "ready" ? result : undefined;
+        }, "a ready clean comparison");
+        expect(clean).toMatchObject({
+            success: true,
+            git: { base, changedFiles: 0, countsExact: true, files: [] },
+        });
+        const selected = join(gym.workspacePath, "selected");
+        await gym.createSession({ cwd: selected });
+        const nested = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === selected),
+            "the subfolder session",
+        );
+        await gym.waitUntil(
+            () => happy.hasRpc(`${nested.id}:gitState`) || undefined,
+            "subfolder Git registration",
+        );
+        expect(await happy.rpc(nested.id, "gitState", {})).toMatchObject({
+            success: false,
+            code: "unsupported",
+        });
+        expect(await happy.rpc(nested.id, "readFile", { path: "inside.txt" })).toMatchObject({
+            success: true,
+            content: Buffer.from("inside").toString("base64"),
+        });
+        expect(
+            await happy.rpc(nested.id, "readFileAtRevision", {
+                path: "inside.txt",
+                revision: base,
+            }),
+        ).toMatchObject({ success: true, content: Buffer.from("inside").toString("base64") });
+        expect(
+            await happy.rpc(nested.id, "readFileAtRevision", {
+                path: "../outside.txt",
+                revision: base,
+            }),
+        ).toMatchObject({ success: false, code: "invalid" });
+    }, 60_000);
+
+    it("reads each native bot's own workspace and refuses reads while it is being archived", async () => {
+        const archiveRequested = new Set<string>();
+        let releaseArchive!: () => void;
+        const archiveReleased = new Promise<void>((resolve) => {
+            releaseArchive = resolve;
+        });
+        const happy = await startProtocolHappyServer({
+            authorizePairing: true,
+            beforeArchive: async (id) => {
+                archiveRequested.add(id);
+                await archiveReleased;
+            },
+        });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        try {
+            const first = (await gym.client.createBot({ name: "First Viewer" })).bot;
+            const second = (await gym.client.createBot({ name: "Second Viewer" })).bot;
+            if (first.compute.type !== "host" || second.compute.type !== "host")
+                throw new Error("Bot workspaces must be local.");
+            await writeFile(join(first.compute.path, "same.txt"), "first");
+            await writeFile(join(second.compute.path, "same.txt"), "second");
+            await gym.client.startHappyIntegration();
+            await waitForIntegration(gym, "connected");
+            const session = await gym.waitUntil(
+                () => happy.sessions.find((item) => item.metadata.bot?.id === first.id),
+                "the first bot session",
+            );
+            await gym.waitUntil(
+                () => happy.hasRpc(`${session.id}:readFile`) || undefined,
+                "bot read registration",
+            );
+            expect(
+                await happy.rpc(session.id, "readFile", {
+                    path: "same.txt",
+                    cwd: second.compute.path,
+                    workspaceId: second.workspaceId,
+                }),
+            ).toMatchObject({ success: true, content: Buffer.from("first").toString("base64") });
+            expect(
+                await happy.rpc(session.id, "readFile", {
+                    path: join(second.compute.path, "same.txt"),
+                }),
+            ).toMatchObject({ success: false, code: "forbidden" });
+            await gym.client.archiveBot(first.id, { ifMatch: first.version });
+            await gym.waitUntil(
+                () => archiveRequested.has(session.id) || undefined,
+                "the held bot archive request",
+            );
+            expect(await happy.rpc(session.id, "readFile", { path: "same.txt" })).toMatchObject({
+                success: false,
+                code: "missing",
+            });
+        } finally {
+            releaseArchive();
+        }
+    }, 60_000);
+
+    it("reads a native child workspace without falling back to its parent folder", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            files: { "same.txt": "parent" },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        const root = (await gym.client.listProjects()).projects.find(
+            (project) =>
+                project.compute.type === "host" && project.compute.path === gym.workspacePath,
+        )!;
+        await gym.waitForEvent(
+            (event) =>
+                event.type === "workspace.updated" &&
+                event.payload.workspaceId === root.id &&
+                event.payload.changes.initialization?.status === "ready",
+            "the root workspace initialization",
+        );
+        const created = await gym.client.createWorkspace({
+            agentId: gym.defaultSessionId,
+            name: "Native child",
+            parentId: root.id,
+        });
+        await gym.waitForEvent(
+            (event) =>
+                event.type === "workspace.updated" &&
+                event.payload.workspaceId === created.workspace.id &&
+                event.payload.changes.initialization?.status === "ready",
+            "the child workspace initialization",
+        );
+        const child = (await gym.client.getWorkspace(created.workspace.id)).workspace;
+        if (child.compute.type !== "host") throw new Error("The child workspace must be local.");
+        const childPath = child.compute.path;
+        await writeFile(join(childPath, "same.txt"), "child");
+        await gym.client.createAgent({ id: "nativechildviewer", workspaceId: child.id });
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === childPath),
+            "the child session",
+        );
+        await gym.waitUntil(
+            () => happy.hasRpc(`${session.id}:readFile`) || undefined,
+            "child read registration",
+        );
+        expect(await happy.rpc(session.id, "readFile", { path: "same.txt" })).toMatchObject({
+            success: true,
+            content: Buffer.from("child").toString("base64"),
+        });
+        expect(
+            await happy.rpc(session.id, "readFile", { path: join(gym.workspacePath, "same.txt") }),
+        ).toMatchObject({ success: false, code: "forbidden" });
+    }, 60_000);
+
+    it("compares native changes with origin/main's merge base and reads pinned before bytes", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            files: {
+                "old.txt": "rename me\n",
+                "modified.txt": "before\n",
+                "deleted.txt": "delete me\n",
+                "large.bin": Buffer.alloc(512 * 1024 + 1),
+            },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        const git = async (...args: string[]) =>
+            (
+                await execFile("git", args, { cwd: gym.workspacePath, timeout: 10_000 })
+            ).stdout.trim();
+        await git("init", "--initial-branch=main");
+        await git("config", "user.name", "Gym");
+        await git("config", "user.email", "gym@example.test");
+        await git("add", ".");
+        await git("commit", "-m", "base");
+        const base = await git("rev-parse", "HEAD");
+        await git("update-ref", "refs/remotes/origin/main", base);
+        await git("checkout", "-b", "topic");
+        await git("mv", "old.txt", "new.txt");
+        await git("commit", "-m", "committed rename");
+        await git("branch", "-f", "main", "HEAD");
+        await gym.writeFile("modified.txt", "after\n");
+        await unlink(join(gym.workspacePath, "deleted.txt"));
+        await gym.writeFile("untracked.txt", "untracked\n");
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === gym.workspacePath),
+            "the repository session",
+        );
+        await gym.waitUntil(
+            () => happy.hasRpc(`${session.id}:gitState`) || undefined,
+            "native Git RPC registration",
+        );
+        const state = await happy.rpc(session.id, "gitState", {});
+        expect(state).toMatchObject({
+            success: true,
+            git: {
+                base,
+                comparison: "ready",
+                changedFiles: 4,
+                countsExact: true,
+                filesTruncated: false,
+                files: expect.arrayContaining([
+                    expect.objectContaining({
+                        path: "new.txt",
+                        previousPath: "old.txt",
+                        status: "renamed",
+                    }),
+                    expect.objectContaining({
+                        path: "modified.txt",
+                        status: "modified",
+                        unstaged: true,
+                    }),
+                    expect.objectContaining({ path: "deleted.txt", status: "deleted" }),
+                    expect.objectContaining({ path: "untracked.txt", status: "untracked" }),
+                ]),
+            },
+        });
+        expect(
+            await happy.rpc(session.id, "readFileAtRevision", { path: "old.txt", revision: base }),
+        ).toEqual({ success: true, content: Buffer.from("rename me\n").toString("base64") });
+        expect(await happy.rpc(session.id, "readFile", { path: "new.txt" })).toMatchObject({
+            success: true,
+            content: Buffer.from("rename me\n").toString("base64"),
+        });
+        expect(
+            await happy.rpc(session.id, "readFileAtRevision", {
+                path: "untracked.txt",
+                revision: base,
+            }),
+        ).toMatchObject({ success: false, code: "missing" });
+        expect(
+            await happy.rpc(session.id, "readFileAtRevision", {
+                path: "large.bin",
+                revision: base,
+            }),
+        ).toMatchObject({ success: false, code: "too_large" });
+        expect(
+            await happy.rpc(session.id, "readFileAtRevision", {
+                path: "old.txt",
+                revision: "f".repeat(40),
+            }),
+        ).toMatchObject({ success: false, code: "unavailable" });
+        expect(
+            await happy.rpc(session.id, "readFileAtRevision", {
+                path: "old.txt",
+                revision: "HEAD",
+            }),
+        ).toMatchObject({ success: false, code: "invalid" });
+        await git("update-ref", "-d", "refs/remotes/origin/main");
+        await gym.waitUntil(async () => {
+            const result = (await happy.rpc(session.id, "gitState", {})) as {
+                success: boolean;
+                git?: { comparison: string };
+            };
+            return result.git?.comparison === "unavailable" ? result : undefined;
+        }, "missing origin/main to make comparison unavailable");
+    }, 60_000);
+
+    it("bounds native reads and refuses symlink escapes and FIFOs without blocking", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            files: {
+                "maximum.bin": Buffer.alloc(512 * 1024, 255),
+                "oversized.bin": Buffer.alloc(512 * 1024 + 1),
+                "empty.txt": "",
+            },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        const outside = join(dirname(gym.workspacePath), "private.txt");
+        await writeFile(outside, "outside");
+        await symlink(outside, join(gym.workspacePath, "escape"));
+        await execFile("mkfifo", [join(gym.workspacePath, "pipe")], { timeout: 10_000 });
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === gym.workspacePath),
+            "the workspace session",
+        );
+        await gym.waitUntil(
+            () => happy.hasRpc(`${session.id}:readFile`) || undefined,
+            "native file RPC registration",
+        );
+        expect(await happy.rpc(session.id, "gitState", {})).toMatchObject({
+            success: false,
+            code: "unsupported",
+        });
+        expect(await happy.rpc(session.id, "readFile", { path: "maximum.bin" })).toMatchObject({
+            success: true,
+            content: Buffer.alloc(512 * 1024, 255).toString("base64"),
+        });
+        expect(await happy.rpc(session.id, "readFile", { path: "oversized.bin" })).toMatchObject({
+            success: false,
+            code: "too_large",
+        });
+        for (const path of [outside, "escape"])
+            expect(await happy.rpc(session.id, "readFile", { path })).toMatchObject({
+                success: false,
+                code: "forbidden",
+            });
+        expect(await happy.rpc(session.id, "readFile", { path: "pipe" })).toMatchObject({
+            success: false,
+            code: "invalid",
+        });
+        expect(
+            await happy.rpc(session.id, "readFile", {
+                path: join(gym.workspacePath, "empty.txt"),
+                cwd: dirname(gym.workspacePath),
+            }),
+        ).toMatchObject({ success: true, content: "" });
+        expect(await readFile(outside, "utf8")).toBe("outside");
+    }, 60_000);
+
+    it("reads native session files over encrypted RPC without shell access", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            files: { "native.txt": "Native changes\n" },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === gym.workspacePath),
+            "the workspace session",
+        );
+        await gym.waitUntil(
+            () => happy.hasRpc(`${session.id}:abort`) || undefined,
+            "session RPC registration",
+        );
+        expect(await happy.rpc(session.id, "readFile", { path: "native.txt" })).toMatchObject({
+            success: true,
+            content: Buffer.from("Native changes\n").toString("base64"),
+        });
+        expect(session.metadata.capabilities).toMatchObject({
+            files: { read: true, write: false },
+            shell: false,
+        });
+        expect(await happy.rpc(session.id, "readFile", { path: "absent.txt" })).toMatchObject({
+            success: false,
+            code: "missing",
+        });
+        expect(await happy.rpc(session.id, "readFile", { path: "../outside.txt" })).toMatchObject({
+            success: false,
+            code: "invalid",
+        });
+    }, 60_000);
+
     it.each(["immediate", "in-flight"] as const)(
         "restores a bot during %s relay archival",
         async (timing) => {
@@ -600,6 +993,8 @@ function sendJson(response: ServerResponse, body: unknown, status = 200): void {
 }
 
 interface ProtocolHappyServer {
+    hasRpc(method: string): boolean;
+    rpc(sessionId: string, method: string, params: unknown): Promise<unknown>;
     readonly metadata: ReadonlyMap<string, Record<string, unknown>>;
     readonly outgoing: ReadonlyMap<string, readonly unknown[]>;
     deliver(sessionId: string, message: unknown): void;
@@ -625,6 +1020,9 @@ async function startProtocolHappyServer(options: {
     let machineRegistrations = 0;
     let sessionCreations = 0;
     let socketConnections = 0;
+    const rpcSockets = new Map<string, WebSocket>();
+    const rpcAnswers = new Map<string, (value: string) => void>();
+    let nextRpc = 0;
     const sessions: {
         id: string;
         tag: string;
@@ -781,12 +1179,19 @@ async function startProtocolHappyServer(options: {
         );
         socket.on("message", (value) => {
             const packet = value.toString();
+            const answerMatch = /^43(\d+)(\[.*)$/s.exec(packet);
+            if (answerMatch) {
+                rpcAnswers.get(answerMatch[1]!)?.(JSON.parse(answerMatch[2]!)[0]);
+                return;
+            }
             const eventMatch = /^42(\d*)(\[.*)$/s.exec(packet);
             if (eventMatch) {
                 const [event, payload] = JSON.parse(eventMatch[2]!) as [
                     string,
-                    { sid?: string; metadata?: string; expectedVersion?: number },
+                    { sid?: string; metadata?: string; expectedVersion?: number; method?: string },
                 ];
+                if (event === "rpc-register" && payload.method)
+                    rpcSockets.set(payload.method, socket);
                 if (event === "update-metadata" && payload.sid && payload.metadata) {
                     const decoded = decode(payload.metadata);
                     if (decoded !== undefined) metadata.set(payload.sid, decoded);
@@ -809,6 +1214,26 @@ async function startProtocolHappyServer(options: {
     await once(server, "listening");
     const address = server.address() as AddressInfo;
     return {
+        hasRpc: (method) => rpcSockets.has(method),
+        rpc: async (sessionId, method, params) => {
+            const socket = rpcSockets.get(`${sessionId}:abort`);
+            if (!socket) throw new Error("The session RPC socket is not connected.");
+            const id = String(++nextRpc);
+            return await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    rpcAnswers.delete(id);
+                    reject(new Error("The session RPC timed out."));
+                }, 10_000);
+                rpcAnswers.set(id, (answer) => {
+                    clearTimeout(timeout);
+                    rpcAnswers.delete(id);
+                    resolve(decode(answer));
+                });
+                socket.send(
+                    `42${id}${JSON.stringify(["rpc-request", { method: `${sessionId}:${method}`, params: encode(params) }])}`,
+                );
+            });
+        },
         metadata,
         outgoing,
         deliver: (sessionId, message) => {

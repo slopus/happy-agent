@@ -165,7 +165,6 @@ import {
     apiResourceVersion,
     botResource,
     botWorkspaceResource,
-    gitResource,
     profileResource,
     projectResource,
     questionResource,
@@ -1347,7 +1346,7 @@ export class ApiModule implements AgentModule {
             this.#git.onSnapshot(async (_ctx, entity, snapshot) => {
                 this.#journal.append("git.updated", {
                     workspaceId: entity.workspaceId ?? entity.projectId,
-                    git: gitResource(snapshot),
+                    git: this.#git.resource(snapshot),
                 });
             }),
             this.#files.onEvent((_eventCtx, event) => {
@@ -4425,7 +4424,7 @@ export class ApiModule implements AgentModule {
             const workspaceId = git[1] as string;
             const { root } = await this.#resolveWorkspaceScope(ctx, workspaceId);
             const snapshot = await this.#git.snapshot(root, workspaceId);
-            sendJson(response, 200, { git: gitResource(snapshot) });
+            sendJson(response, 200, { git: this.#git.resource(snapshot) });
             return true;
         }
         return false;
@@ -4461,7 +4460,7 @@ export class ApiModule implements AgentModule {
         this.#git.replaceTracked(tracked.map(({ entity }) => entity));
         for (const { entity, workspaceId } of tracked) {
             const snapshot = this.#git.trackedSnapshot(entity);
-            if (snapshot !== undefined) snapshots[workspaceId] = gitResource(snapshot);
+            if (snapshot !== undefined) snapshots[workspaceId] = this.#git.resource(snapshot);
         }
         sendJson(response, 200, { snapshots });
     }

@@ -14,6 +14,7 @@ import type { BotsModule } from "../bots/index.js";
 import type { ComputeModule } from "../compute/index.js";
 import type { ConfigModule } from "../config/index.js";
 import type { EventsModule } from "../events/index.js";
+import type { ProjectFilesModule } from "../files/index.js";
 import type { GitModule } from "../git/index.js";
 import type { HistoryModule } from "../history/index.js";
 import type { ProjectsModule } from "../projects/index.js";
@@ -65,6 +66,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
         workspaces: WorkspacesModule,
         bots: BotsModule,
         team: TeamModule,
+        files: ProjectFilesModule,
     ) {
         super(
             config,
@@ -78,6 +80,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
             userInput,
             workspaces,
             bots,
+            files,
         );
         this.#team = team;
         this.#createConnection = (user) =>
@@ -93,6 +96,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
                 userInput,
                 workspaces,
                 bots,
+                files,
                 team,
                 user,
             );

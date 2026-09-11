@@ -167,6 +167,39 @@ An attachment arrives as its own message just before the words that go with it,
 so it is held rather than delivered, and the read position does not move until
 the message that claims it has been delivered too.
 
+## Reading workspace changes from the phone
+
+The encrypted session RPC adds three read-only methods. Clients discover them through
+`capabilities.rpcMethods`, not a daemon-version comparison. `files.read` is true; shell,
+file browsing, search, and writes remain unavailable. Existing session-control RPCs are unchanged.
+
+```text
+<remote session id>:gitState            {}                 -> { success: true, git }
+<remote session id>:readFile            { path }           -> { success: true, content, hash }
+<remote session id>:readFileAtRevision  { path, revision } -> { success: true, content }
+```
+
+The request schemas live in `HappyWorkspaceRead.ts`. File content is base64, with a SHA-256 hash
+for current reads. HTTP and Happy share `GitModule.resource`: facts, merge base with `origin/main`,
+counts, file paths (including rename sources), truncation and scan time, without private bytes.
+
+`revision` is a full lowercase 40- or 64-character object ID, normally `git.base`, never `HEAD`.
+A rename's before side uses `previousPath`; its current side uses `path`. Current files remain live,
+not an atomic snapshot of the list. Binary files and inexact counts remain explicit in the UI.
+
+Each request resolves the session's active owner through the catalogs, not metadata or a supplied
+`cwd`. Unknown fields are ignored. Paths are relative POSIX paths; current-file reads also accept
+native absolute links inside that root. Traversal, symlink escapes and non-files are refused.
+Git state is unsupported for plain folders or projects below a repository's root.
+
+The existing file methods receive a 524,288-byte limit; their HTTP default remains unchanged.
+Before encryption, any JSON response above 700,000 UTF-8 bytes becomes a small `too_large` failure.
+This includes exceptionally large Git lists. Git's existing cache and 1,000-file cap are unchanged.
+
+Failures are `{ success: false, code, error }`; codes are `invalid`, `forbidden`, `missing`,
+`too_large`, `unavailable`, or `unsupported`. Only a ready comparison with zero changed files means
+“No changes.” A genuine zero-byte file succeeds; absence or failure does not. This adds no HTTP route.
+
 ## Machine identity
 
 Each daemon owns a machine identity so Happy can tell two daemons on one

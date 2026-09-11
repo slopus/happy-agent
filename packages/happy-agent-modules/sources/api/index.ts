@@ -29,7 +29,6 @@ export { type MessageResourceOptions } from "./ApiToolPresentation.js";
 export {
     apiResourceVersion,
     agentResource,
-    gitResource,
     profileResource,
     projectResource,
     projectResourceWithSettings,

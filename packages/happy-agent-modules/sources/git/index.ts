@@ -16,6 +16,7 @@ export {
     type GitCredentialRef,
     type GitEntity,
     type GitOperationOptions,
+    type GitResource,
     type GitSnapshotObserver,
     type GitWatchInput,
 } from "./GitModule.js";
@@ -45,7 +46,7 @@ export { gitRepositoryProbeSchema, type GitRepositoryProbe } from "./probeGitRep
 export { type GitWorktreeIdentity } from "./readGitWorktreeIdentity.js";
 export { type GitComparisonBase } from "./resolveGitComparisonBase.js";
 export { workspaceBaseSchema, type WorkspaceBase } from "./resolveWorkspaceBase.js";
-export { type GitRevisionFile } from "./readGitFileAtRevision.js";
+export { GitRevisionFileTooLargeError, type GitRevisionFile } from "./readGitFileAtRevision.js";
 export { type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
 export { type UntrackedFileCount } from "./countUntrackedFileLines.js";
 export { type HostingRepository } from "./parseHostingRepository.js";

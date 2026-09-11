@@ -50,4 +50,17 @@ describe("Git file reads", () => {
             truncated: false,
         });
     });
+
+    it("does not report a missing revision as an absent file", async () => {
+        const repository = await createRepository();
+        await commitFile(repository, "note.txt", "content");
+        await expect(
+            readGitFileAtRevision({
+                maximumBytes: 100,
+                path: repository,
+                relativePath: "note.txt",
+                revision: "f".repeat(40),
+            }),
+        ).rejects.toThrow();
+    });
 });

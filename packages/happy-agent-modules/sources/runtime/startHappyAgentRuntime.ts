@@ -474,6 +474,7 @@ export async function startHappyAgentRuntime(
             workspaces,
             bots,
             team,
+            files,
         );
         const goal = new GoalModule();
         const gemini = new GeminiModule(config, compute.computeModule);

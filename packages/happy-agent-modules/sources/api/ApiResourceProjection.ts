@@ -5,7 +5,6 @@ import type { Context } from "@steve.kite/stdlib";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
-import type { GitChangeSnapshot } from "../git/index.js";
 import type { BotRecord } from "../bots/index.js";
 import type { Profile } from "../profile/index.js";
 import { ProjectsModule, type Project, type ProjectSettings } from "../projects/index.js";
@@ -251,38 +250,6 @@ export function terminalResource(
     terminal: Terminal,
 ): Record<string, unknown> {
     return { ...terminal };
-}
-
-export function gitResource(snapshot: GitChangeSnapshot): Record<string, unknown> {
-    return {
-        facts: {
-            branch: snapshot.facts.branch ?? null,
-            detached: snapshot.facts.detached,
-            head: snapshot.facts.head ?? null,
-            upstream: snapshot.facts.upstream ?? null,
-            ahead: snapshot.facts.ahead,
-            behind: snapshot.facts.behind,
-        },
-        comparison: snapshot.comparison,
-        base: snapshot.base ?? null,
-        changedFiles: snapshot.changedFiles,
-        insertions: snapshot.insertions,
-        deletions: snapshot.deletions,
-        countsExact: snapshot.countsExact,
-        conflicted: snapshot.conflicted,
-        files: snapshot.files.map((file) => ({
-            path: file.path,
-            ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
-            status: file.status,
-            staged: file.staged,
-            unstaged: file.unstaged,
-            binary: file.binary,
-            ...(file.insertions === undefined ? {} : { insertions: file.insertions }),
-            ...(file.deletions === undefined ? {} : { deletions: file.deletions }),
-        })),
-        filesTruncated: snapshot.filesTruncated,
-        scannedAt: snapshot.scannedAt,
-    };
 }
 
 export function questionResource(

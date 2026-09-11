@@ -17,6 +17,7 @@ import { happyIntegrationMigrations } from "../../sources/happy/HappyIntegration
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import type { BotRecord } from "../../sources/bots/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
+import { ProjectFileError } from "../../sources/files/index.js";
 
 const happyConnection = vi.hoisted(() => ({
     configuration: {
@@ -240,6 +241,9 @@ async function fixture() {
             observe: () => undefined,
         } as never,
         {
+            topLevel: async () => {
+                throw new Error("Not a Git repository.");
+            },
             onSnapshot: () => () => undefined,
             track: (entity: Record<string, unknown>) => {
                 gitState.tracked.push(entity);
@@ -276,6 +280,23 @@ async function fixture() {
             },
         } as never,
         { enabled: false } as never,
+        {
+            resolveRoot: async (_ctx: Context, projectId: string, workspaceId?: string) => {
+                if (workspaceId !== undefined && workspaces.get(workspaceId)?.status !== "ready")
+                    throw new ProjectFileError(409, "conflict", "The workspace is not ready.");
+                return {
+                    projectId,
+                    root:
+                        workspaceId === undefined
+                            ? projects.get(projectId)!.repositoryRef
+                            : workspaces.get(workspaceId)!.path,
+                };
+            },
+            read: async (root: { root: string }) => ({
+                content: Buffer.from(root.root).toString("base64"),
+                hash: "a".repeat(64),
+            }),
+        } as never,
     );
     modules.push(module);
     module.beforeStart(database.context, agents as never);
@@ -302,6 +323,50 @@ async function fixture() {
 }
 
 describe("Happy mobile messages", () => {
+    it("reports a plain-folder Git view as unsupported rather than asking the phone to retry", async () => {
+        const test = await fixture();
+        test.configs.set("viewer", { metadata: {} });
+        test.projectAgents.set("viewer", "project-1");
+        await expect(
+            test.module.gitState(databases.at(-1)!.context, "viewer"),
+        ).rejects.toMatchObject({ code: "unsupported" });
+    });
+
+    it("resolves reads through fresh catalog ownership, never an agent's working directory", async () => {
+        const test = await fixture();
+        const ctx = databases.at(-1)!.context;
+        test.configs.set("viewer", {
+            metadata: {},
+            environment: {
+                osVersion: "test",
+                platform: "darwin",
+                shell: "/bin/zsh",
+                workingDirectory: "/outside",
+            },
+        });
+        await expect(
+            test.module.readFile(ctx, "viewer", { path: "note.txt" }),
+        ).rejects.toMatchObject({ code: "unsupported" });
+        test.projectAgents.set("viewer", "project-1");
+        expect(await test.module.readFile(ctx, "viewer", { path: "note.txt" })).toMatchObject({
+            success: true,
+            content: Buffer.from("/projects/rig").toString("base64"),
+        });
+        test.workspaceAgents.set("viewer", "workspace-1");
+        expect(await test.module.readFile(ctx, "viewer", { path: "note.txt" })).toMatchObject({
+            success: true,
+            content: Buffer.from("/projects/rig/rpc").toString("base64"),
+        });
+        test.workspaces.get("workspace-1")!.status = "initializing";
+        await expect(
+            test.module.readFile(ctx, "viewer", { path: "note.txt" }),
+        ).rejects.toMatchObject({ code: "conflict" });
+        test.configs.set("viewer", { metadata: { archivedAt: 1 } });
+        await expect(
+            test.module.readFile(ctx, "viewer", { path: "note.txt" }),
+        ).rejects.toMatchObject({ code: "missing" });
+    });
+
     it("appends personal storage migrations after the released module-wide prefix", async () => {
         const test = await fixture();
         expect(test.module.migrations.map(([key]) => key)).toEqual([
@@ -780,6 +845,7 @@ describe("archiving a Happy session", () => {
                 onEvent: () => () => undefined,
             } as never,
             { enabled: false } as never,
+            {} as never,
         );
         modules.push(module);
         const hooks = module.beforeStart(database.context, agents as never);

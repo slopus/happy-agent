@@ -1,5 +1,15 @@
 # Happy module learnings
 
+## Mobile reads are a transport adapter, not another file API
+
+The first native bridge duplicated file readers, Git response mapping and output schemas. It now
+calls the existing file methods with optional limits and shares GitModule's public projection
+with HTTP. One JSON byte check before encryption handles the relay's size ceiling; an oversized
+preview is an explicit error. Catalog ownership still determines the root, absolute file links
+remain contained, and missing files, failed reads and unavailable comparisons remain distinct.
+Request validation and the small success/error envelope belong to Happy; filesystem and Git
+behavior stay in their existing modules.
+
 ## Personal team connections are transparent to clients
 
 Adding an owner field and a protocol bump for personal mobile connections was unnecessary.

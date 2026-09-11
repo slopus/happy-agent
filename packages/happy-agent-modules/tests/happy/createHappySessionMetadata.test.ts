@@ -212,12 +212,19 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         // Happy Agent's Happy connection has no file or shell surface of its own.
         expect(capabilities.files).toEqual({
             browse: false,
-            read: false,
+            read: true,
             search: false,
             write: false,
         });
         expect(capabilities.shell).toBe(false);
-        expect(capabilities.rpcMethods).toEqual(["abort", "communication", "killSession"]);
+        expect(capabilities.rpcMethods).toEqual([
+            "abort",
+            "communication",
+            "killSession",
+            "gitState",
+            "readFile",
+            "readFileAtRevision",
+        ]);
         expect(capabilities.attachments).toEqual({
             enabled: true,
             maxBytes: MAX_HAPPY_ATTACHMENT_BYTES,

@@ -20,6 +20,7 @@ import type { AgentEvent, EventsModuleListener } from "../events/index.js";
 import { ComputeModule } from "../compute/index.js";
 import { BotsModule } from "../bots/index.js";
 import { EventsModule } from "../events/index.js";
+import { ProjectFilesModule, type ProjectFileRoot } from "../files/index.js";
 import { GitModule, type GitChangeSnapshot, type GitTrackedEntity } from "../git/index.js";
 import {
     HistoryModule,
@@ -72,6 +73,15 @@ import { createHappySyncDatabase } from "./HappySyncDatabase.js";
 import { createHappyProjectSyncDatabase } from "./HappyProjectSyncDatabase.js";
 import { HappyMessageMapper } from "./mapHappyMessages.js";
 import { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js";
+import {
+    HAPPY_READ_MAX_BYTES,
+    HappyReadRefused,
+    type HappyGitStateResponse,
+    type HappyReadFileRequest,
+    type HappyReadFileAtRevisionRequest,
+    type HappyReadFileResponse,
+    type HappyReadFileAtRevisionResponse,
+} from "./HappyWorkspaceRead.js";
 
 /** How many agents one daemon keeps connected to Happy at once. */
 const MAX_CONNECTED_AGENTS = 64;
@@ -165,6 +175,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #botUpdates = mapAsyncLock<string>();
     readonly #compute: ComputeModule;
     readonly #events: EventsModule;
+    readonly #files: ProjectFilesModule;
     readonly #git: GitModule;
     readonly #history: HistoryModule;
     readonly #scheduling: SchedulingModule;
@@ -213,6 +224,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         userInput: UserInputModule,
         workspaces: WorkspacesModule,
         bots: BotsModule,
+        files: ProjectFilesModule,
         team?: TeamModule,
         owner?: TeamUser,
     ) {
@@ -224,6 +236,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         this.#config = config;
         this.#compute = compute;
         this.#events = events;
+        this.#files = files;
         this.#git = git;
         this.#history = history;
         this.#projects = projects;
@@ -949,6 +962,80 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             this.#providerUsage.list().find((entry) => entry.providerId === providerId)?.usage ??
             null
         );
+    }
+
+    /** The same branch comparison the workspace API and the phone's badge describe. */
+    async gitState(ctx: Context, agentId: string): Promise<HappyGitStateResponse> {
+        const root = await this.#readRoot(ctx, agentId);
+        const topLevel = await this.#git.topLevel(root.root).catch(() => undefined);
+        if (topLevel !== root.root) {
+            throw new HappyReadRefused(
+                "unsupported",
+                "Changes require a workspace at the root of an available Git repository.",
+            );
+        }
+        return { success: true, git: this.#git.resource(await this.#git.snapshot(root.root)) };
+    }
+
+    async readFile(
+        ctx: Context,
+        agentId: string,
+        request: HappyReadFileRequest,
+    ): Promise<HappyReadFileResponse> {
+        const root = await this.#readRoot(ctx, agentId);
+        return {
+            success: true,
+            ...(await this.#files.read(root, { path: request.path }, HAPPY_READ_MAX_BYTES)),
+        };
+    }
+
+    async readFileAtRevision(
+        ctx: Context,
+        agentId: string,
+        request: HappyReadFileAtRevisionRequest,
+    ): Promise<HappyReadFileAtRevisionResponse> {
+        const root = await this.#readRoot(ctx, agentId);
+        const file = await this.#files.readRevision(root, request, {
+            maximumBytes: HAPPY_READ_MAX_BYTES,
+            strict: true,
+        });
+        if (file.content === null)
+            throw new HappyReadRefused("missing", "The file was not found at this revision.");
+        return { success: true, content: file.content };
+    }
+
+    /** Catalog ownership is authority. Metadata and caller-supplied working directories are not. */
+    async #readRoot(ctx: Context, agentId: string): Promise<ProjectFileRoot> {
+        const config = await this.#system().config(ctx, agentId);
+        if (
+            config === undefined ||
+            typeof config.metadata?.archivedAt === "number" ||
+            this.#retiredAgents.has(agentId)
+        ) {
+            throw new HappyReadRefused("missing", "This session is no longer available.");
+        }
+        const bot = await this.#bots.forAgent(ctx, agentId);
+        if (bot !== undefined) return await this.#files.resolveBotRoot(ctx, bot.workspaceId);
+        const workspaceId = await this.#workspaces.workspaceForAgent(ctx, agentId);
+        const workspace =
+            workspaceId === undefined ? undefined : await this.#workspaces.get(ctx, workspaceId);
+        if (workspaceId !== undefined && workspace === undefined)
+            throw new HappyReadRefused("unavailable", "This workspace is not available.");
+        const project =
+            workspace === undefined
+                ? await this.#projects.projectForAgent(ctx, agentId)
+                : await this.#projects.get(ctx, workspace.projectRef);
+        if (project === undefined)
+            throw new HappyReadRefused(
+                "unsupported",
+                "This session has no workspace available for file reads.",
+            );
+        if (project.status !== "active")
+            throw new HappyReadRefused(
+                "unavailable",
+                "This project is not available to read right now.",
+            );
+        return await this.#files.resolveRoot(ctx, project.id, workspaceId);
     }
 
     /** One agent as Happy needs to describe it, or nothing when it is gone. */

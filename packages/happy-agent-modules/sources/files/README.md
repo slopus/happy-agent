@@ -22,3 +22,7 @@ such as `node_modules` remain visible without being recursively indexed. Reading
 page adds only its containing directory to a bounded least-recently-used watch set. Changes there,
 and successful module writes, coalesce into `files_changed` events with exact relative paths when
 the operating system provides them.
+
+Smaller transports pass an optional byte limit to `read` or `readRevision`; the default remains
+44 MiB. Current reads verify a contained regular file and stream at most the limit plus one byte.
+Revision callers may request strict errors; the HTTP preview retains its nullable default.

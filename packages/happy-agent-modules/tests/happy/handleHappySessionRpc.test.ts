@@ -7,6 +7,13 @@ function recorder() {
     return {
         calls,
         options: {
+            gitState: async () => ({
+                success: false as const,
+                code: "unavailable" as const,
+                error: "Git is unavailable.",
+            }),
+            readFile: async () => ({ success: true as const, content: "", hash: "0".repeat(64) }),
+            readFileAtRevision: async () => ({ success: true as const, content: "" }),
             abort: async () => {
                 calls.push("abort");
             },
@@ -105,9 +112,9 @@ describe("carrying out what the phone asked", () => {
 
     it("refuses a method it does not have", async () => {
         const { calls, options } = recorder();
-        expect(await handleHappySessionRpc({ ...options, method: "readFile", params: {} })).toEqual(
-            { error: "Method not found" },
-        );
+        expect(await handleHappySessionRpc({ ...options, method: "bash", params: {} })).toEqual({
+            error: "Method not found",
+        });
         expect(calls).toEqual([]);
     });
 });

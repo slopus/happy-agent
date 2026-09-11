@@ -140,6 +140,19 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
         working: false,
     };
     const operations: HappySessionOperations = {
+        gitState: async () => ({
+            success: false,
+            code: "unavailable",
+            error: "Git is unavailable.",
+        }),
+        readFile: async (_ctx, agentId, request) => {
+            calls.push({ kind: "readFile", detail: { agentId, ...request } });
+            return { success: true, content: "", hash: "0".repeat(64) };
+        },
+        readFileAtRevision: async (_ctx, agentId, request) => {
+            calls.push({ kind: "readFileAtRevision", detail: { agentId, ...request } });
+            return { success: true, content: "" };
+        },
         abort: async () => {
             calls.push({ detail: undefined, kind: "abort" });
         },
@@ -308,8 +321,154 @@ describe("keeping one session in step with Happy", () => {
             { method: "remote-1:abort" },
             { method: "remote-1:communication" },
             { method: "remote-1:killSession" },
+            { method: "remote-1:gitState" },
+            { method: "remote-1:readFile" },
+            { method: "remote-1:readFileAtRevision" },
         ]);
         await session.close();
+    });
+
+    it("binds encrypted reads to the attached agent and ignores caller-supplied authority", async () => {
+        const socket = new FakeSocket();
+        const { calls, operations } = fakeOperations();
+        const session = client({ operations, server: fakeServer(), socket });
+        try {
+            await session.settle();
+            expect(
+                await socket.rpc("remote-1:readFile", {
+                    path: "a.txt",
+                    cwd: "/outside",
+                    agentId: "other",
+                }),
+            ).toEqual({ success: true, content: "", hash: "0".repeat(64) });
+            expect(
+                await socket.rpc("remote-1:readFileAtRevision", {
+                    path: "old.txt",
+                    revision: "a".repeat(40),
+                    workspaceId: "other",
+                }),
+            ).toEqual({ success: true, content: "" });
+            expect(calls).toEqual([
+                { kind: "readFile", detail: { agentId: AGENT_ID, path: "a.txt" } },
+                {
+                    kind: "readFileAtRevision",
+                    detail: { agentId: AGENT_ID, path: "old.txt", revision: "a".repeat(40) },
+                },
+            ]);
+            expect(await socket.rpc("remote-2:readFile", { path: "a.txt" })).toEqual({
+                error: "Invalid request",
+            });
+            expect(calls).toHaveLength(2);
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("rejects malformed reads and moving revision selectors before invoking an operation", async () => {
+        const socket = new FakeSocket();
+        const { calls, operations } = fakeOperations();
+        const session = client({ operations, server: fakeServer(), socket });
+        try {
+            await session.settle();
+            for (const revision of [
+                "HEAD",
+                "main",
+                "origin/main",
+                "abc",
+                "A".repeat(40),
+                "a".repeat(40) + ":outside",
+            ]) {
+                expect(
+                    await socket.rpc("remote-1:readFileAtRevision", { path: "a.txt", revision }),
+                ).toMatchObject({ success: false, code: "invalid" });
+            }
+            for (const params of [
+                null,
+                [],
+                { path: "" },
+                { path: 1 },
+                { path: "a".repeat(16_385) },
+            ]) {
+                expect(await socket.rpc("remote-1:readFile", params)).toMatchObject({
+                    success: false,
+                    code: "invalid",
+                });
+            }
+            expect(await socket.rpc("remote-1:gitState", null)).toMatchObject({
+                success: false,
+                code: "invalid",
+            });
+            expect(calls).toEqual([]);
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("keeps a maximum-sized file inside the encrypted relay budget and sanitizes failures", async () => {
+        const socket = new FakeSocket();
+        const content = Buffer.alloc(512 * 1024, 255).toString("base64");
+        const { operations } = fakeOperations({
+            readFile: async () => ({ success: true, content, hash: "a".repeat(64) }),
+        });
+        const session = client({ operations, server: fakeServer(), socket });
+        try {
+            await session.settle();
+            const answer = await socket.rpc("remote-1:readFile", { path: "big.bin" });
+            expect(answer).toEqual({ success: true, content, hash: "a".repeat(64) });
+            expect(Buffer.byteLength(encode(answer))).toBeLessThan(950_000);
+            operations.readFile = async () => {
+                throw new Error("private /secret/path and credentials");
+            };
+            const failure = await socket.rpc("remote-1:readFile", { path: "a.txt" });
+            expect(failure).toMatchObject({ success: false, code: "unavailable" });
+            expect(JSON.stringify(failure)).not.toContain("secret");
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("refuses an oversized UTF-8 Git preview through the shared pre-encryption limit", async () => {
+        const socket = new FakeSocket();
+        const { operations } = fakeOperations({
+            gitState: async () => ({
+                success: true,
+                git: {
+                    facts: {
+                        ahead: 0,
+                        behind: 0,
+                        branch: null,
+                        detached: false,
+                        head: null,
+                        upstream: null,
+                    },
+                    comparison: "ready",
+                    base: "a".repeat(40),
+                    changedFiles: 300,
+                    countsExact: true,
+                    conflicted: false,
+                    deletions: 0,
+                    insertions: 0,
+                    filesTruncated: false,
+                    scannedAt: 1,
+                    files: Array.from({ length: 300 }, (_, index) => ({
+                        path: `${index}/${"界".repeat(1024)}`,
+                        status: "untracked" as const,
+                        staged: false,
+                        unstaged: true,
+                        binary: false,
+                    })),
+                },
+            }),
+        });
+        const session = client({ operations, server: fakeServer(), socket });
+        try {
+            await session.settle();
+            const answer = await socket.rpc("remote-1:gitState", {});
+            expect(answer).toMatchObject({ success: false, code: "too_large" });
+            expect(Buffer.byteLength(encode(answer))).toBeLessThan(1000);
+        } finally {
+            await session.close();
+        }
     });
 
     it("sends what the outbox owes, encrypted, and forgets it once accepted", async () => {

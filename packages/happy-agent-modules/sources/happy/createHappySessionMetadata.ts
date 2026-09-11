@@ -138,7 +138,7 @@ export function createHappySessionMetadata(options: {
             },
             files: {
                 browse: false,
-                read: false,
+                read: true,
                 search: false,
                 write: false,
             },

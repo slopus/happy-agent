@@ -1,5 +1,14 @@
 # Project files — learnings
 
+## Smaller transports reuse the existing read methods
+
+Separate bounded-reader siblings duplicated the file API unnecessarily. `read` now accepts an
+optional byte limit and shares one regular-file, contained, bounded stream with every caller.
+It checks size before reading and reads at most one extra byte to detect growth. `readRevision`
+accepts the same limit through options; strict callers preserve failures while the default keeps
+the HTTP preview's nullable result. Absolute native file links are normalized only within the
+selected root; the HTTP request schema still requires relative paths. The 44 MiB default is unchanged.
+
 ## Preserve parent ignore rules when upgrading the native finder
 
 FFF 0.10.6 includes image and binary filenames in plain folders, but its walker loses parent

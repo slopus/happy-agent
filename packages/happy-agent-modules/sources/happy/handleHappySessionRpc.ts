@@ -1,8 +1,26 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import {
+    happyGitStateRequestSchema,
+    happyReadFileRequestSchema,
+    happyReadFileAtRevisionRequestSchema,
+    type HappyReadFailure,
+    type HappyGitStateResponse,
+    type HappyReadFileRequest,
+    type HappyReadFileAtRevisionRequest,
+    type HappyReadFileResponse,
+    type HappyReadFileAtRevisionResponse,
+} from "./HappyWorkspaceRead.js";
 
 /** What Happy may ask this session to do. */
-export const HAPPY_SESSION_RPC_METHODS = ["abort", "communication", "killSession"] as const;
+export const HAPPY_SESSION_RPC_METHODS = [
+    "abort",
+    "communication",
+    "killSession",
+    "gitState",
+    "readFile",
+    "readFileAtRevision",
+] as const;
 
 const communicationSchema = Type.Object(
     {
@@ -25,9 +43,28 @@ export async function handleHappySessionRpc(options: {
     answerQuestion: (requestId: string, answers: Record<string, unknown>) => Promise<void>;
     archive: () => Promise<void>;
     cancelQuestion: (requestId: string) => Promise<void>;
+    gitState: () => Promise<HappyGitStateResponse>;
+    readFile: (request: HappyReadFileRequest) => Promise<HappyReadFileResponse>;
+    readFileAtRevision: (
+        request: HappyReadFileAtRevisionRequest,
+    ) => Promise<HappyReadFileAtRevisionResponse>;
     method: string;
     params: unknown;
 }): Promise<unknown> {
+    if (options.method === "gitState") {
+        if (!Value.Check(happyGitStateRequestSchema, options.params)) return invalidRead();
+        return await options.gitState();
+    }
+    if (options.method === "readFile") {
+        const request = options.params;
+        if (!Value.Check(happyReadFileRequestSchema, request)) return invalidRead();
+        return await options.readFile({ path: request.path });
+    }
+    if (options.method === "readFileAtRevision") {
+        const request = options.params;
+        if (!Value.Check(happyReadFileAtRevisionRequestSchema, request)) return invalidRead();
+        return await options.readFileAtRevision({ path: request.path, revision: request.revision });
+    }
     if (options.method === "abort") {
         await options.abort();
         return { success: true };
@@ -53,4 +90,8 @@ export async function handleHappySessionRpc(options: {
         return { success: true };
     }
     return { error: "Method not found" };
+}
+
+function invalidRead(): HappyReadFailure {
+    return { success: false, code: "invalid", error: "The workspace read request is invalid." };
 }

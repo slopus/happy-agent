@@ -15,10 +15,7 @@ export async function resolveGitComparisonBase(options: {
     run: GitBaseRunner;
 }): Promise<GitComparisonBase> {
     if (options.head === undefined) {
-        const emptyTree = await tryRun(options.run, ["hash-object", "-t", "tree", "/dev/null"]);
-        return emptyTree === undefined
-            ? { error: "This repository has no commits yet." }
-            : { base: emptyTree };
+        return { error: "This repository has no commits yet." };
     }
     const originMain = await tryRun(options.run, [
         "rev-parse",

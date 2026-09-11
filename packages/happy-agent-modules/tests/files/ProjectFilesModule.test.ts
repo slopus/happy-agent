@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import {
+    mkdir,
+    mkdtemp,
+    readFile,
+    realpath,
+    rm,
+    symlink,
+    unlink,
+    writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,7 +15,7 @@ import { createHash } from "node:crypto";
 import { Value } from "@sinclair/typebox/value";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { GitModule } from "../../sources/git/index.js";
+import { GitRevisionFileTooLargeError, type GitModule } from "../../sources/git/index.js";
 import {
     fileRevisionQuerySchema,
     projectFilesEventSchema,
@@ -220,6 +229,83 @@ describe("ProjectFilesModule client access", () => {
         await expect(readFile(join(directory, "AGENTS.md"), "utf8")).resolves.toBe(
             "Updated by the client.\n",
         );
+    });
+});
+
+describe("ProjectFilesModule bounded viewer reads", () => {
+    it("reads exact binary and empty bytes at the bound without changing the HTTP read limit", async () => {
+        await writeFile(join(directory, "binary.bin"), Buffer.alloc(512 * 1024, 255));
+        await writeFile(join(directory, "empty.txt"), "");
+        const binary = await files.read(root, { path: "binary.bin" }, 512 * 1024);
+        expect(Buffer.from(binary.content, "base64")).toEqual(Buffer.alloc(512 * 1024, 255));
+        expect(await files.read(root, { path: join(root.root, "empty.txt") }, 512 * 1024)).toEqual({
+            content: "",
+            hash: hash(""),
+        });
+        await writeFile(join(directory, "binary.bin"), Buffer.alloc(512 * 1024 + 1));
+        await expect(files.read(root, { path: "binary.bin" }, 512 * 1024)).rejects.toMatchObject({
+            code: "too_large",
+        });
+        expect(
+            Buffer.from((await files.read(root, { path: "binary.bin" })).content, "base64"),
+        ).toHaveLength(512 * 1024 + 1);
+    });
+
+    it("refuses traversal, outside absolute paths, symlink escapes and non-files", async () => {
+        await mkdir(join(directory, "selected"));
+        await writeFile(join(directory, "outside.txt"), "private");
+        await symlink(join(root.root, "outside.txt"), join(directory, "selected", "escape"));
+        const selected = { ...root, root: join(root.root, "selected") };
+        for (const path of ["../outside.txt", "a/../outside.txt", "bad\u0000path", "bad\\path"]) {
+            await expect(files.read(selected, { path }, 100)).rejects.toMatchObject({
+                code: "invalid",
+            });
+        }
+        for (const path of [join(root.root, "outside.txt"), "escape"]) {
+            await expect(files.read(selected, { path }, 100)).rejects.toMatchObject({
+                code: "forbidden",
+            });
+        }
+        await expect(files.read(root, { path: "selected" }, 100)).rejects.toMatchObject({
+            code: "invalid",
+        });
+        await expect(files.read(root, { path: "absent" }, 100)).rejects.toMatchObject({
+            code: "missing",
+        });
+    });
+
+    it("preserves revision absence, size errors and operational failure as different outcomes", async () => {
+        const query = { path: "note.txt", revision: "a".repeat(40) };
+        readGitFileAtRevision.mockResolvedValueOnce({ found: true, content: Buffer.alloc(0) });
+        expect(await files.readRevision(root, query, { maximumBytes: 100, strict: true })).toEqual({
+            content: "",
+            hash: hash(""),
+        });
+        expect(readGitFileAtRevision).toHaveBeenLastCalledWith({
+            maximumBytes: 100,
+            path: root.root,
+            relativePath: query.path,
+            revision: query.revision,
+        });
+        readGitFileAtRevision.mockResolvedValueOnce({ found: false });
+        expect(await files.readRevision(root, query, { maximumBytes: 100, strict: true })).toEqual({
+            content: null,
+            hash: null,
+        });
+        readGitFileAtRevision.mockRejectedValueOnce(new GitRevisionFileTooLargeError());
+        await expect(
+            files.readRevision(root, query, { maximumBytes: 100, strict: true }),
+        ).rejects.toMatchObject({
+            code: "too_large",
+        });
+        readGitFileAtRevision.mockRejectedValueOnce(new Error("Git is broken"));
+        await expect(
+            files.readRevision(root, query, { maximumBytes: 100, strict: true }),
+        ).rejects.toThrow("Git is broken");
+        readGitFileAtRevision.mockRejectedValueOnce(new GitRevisionFileTooLargeError());
+        expect(await files.readRevision(root, query)).toEqual({ content: null, hash: null });
+        readGitFileAtRevision.mockRejectedValueOnce(new Error("Git is broken"));
+        expect(await files.readRevision(root, query)).toEqual({ content: null, hash: null });
     });
 });
 

@@ -8,6 +8,13 @@ export const gitRevisionFileSchema = Type.Union([
 ]);
 export type GitRevisionFile = Static<typeof gitRevisionFileSchema>;
 
+export class GitRevisionFileTooLargeError extends Error {
+    constructor() {
+        super("The file at this revision is too large to read.");
+        this.name = "GitRevisionFileTooLargeError";
+    }
+}
+
 export async function readGitFileAtRevision(options: {
     maximumBytes: number;
     path: string;
@@ -17,15 +24,24 @@ export async function readGitFileAtRevision(options: {
     signal?: AbortSignal;
 }): Promise<GitRevisionFile> {
     assertRevision(options.revision);
+    const runGit = options.runGit ?? runScanGit;
+    // Git may say a path "does not exist in" even when the revision itself is missing.
+    // Establish the tree first so only genuine path absence receives found:false.
+    await runGit({
+        args: ["cat-file", "-e", `${options.revision}^{tree}`],
+        cwd: options.path,
+        maximumBytes: 1,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
     try {
-        const result = await (options.runGit ?? runScanGit)({
+        const result = await runGit({
             args: ["cat-file", "blob", `${options.revision}:./${options.relativePath}`],
             cwd: options.path,
             maximumBytes: options.maximumBytes,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
         if (result.truncated) {
-            throw new Error("The file at this revision is too large to read.");
+            throw new GitRevisionFileTooLargeError();
         }
         return { content: result.stdoutBytes, found: true };
     } catch (error) {

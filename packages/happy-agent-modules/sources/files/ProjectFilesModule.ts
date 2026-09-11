@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
     mkdir,
+    open,
     lstat,
     readdir,
     readFile,
@@ -10,13 +12,14 @@ import {
     unlink,
     writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { buffer } from "node:stream/consumers";
 
 import type { AgentModule } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { createRootContext, detach, type Context, type RootContext } from "@steve.kite/stdlib";
-import type { GitModule } from "../git/index.js";
+import { GitRevisionFileTooLargeError, type GitModule } from "../git/index.js";
 import type { BotsModule } from "../bots/index.js";
 import type { ProjectsModule } from "../projects/index.js";
 import type { WorkspacesModule } from "../workspaces/index.js";
@@ -51,6 +54,11 @@ export const fileReadQuerySchema = Type.Object(
     { path: relativeFilePathSchema },
     { additionalProperties: false },
 );
+const fileReadInputSchema = Type.Object(
+    { path: Type.String({ minLength: 1, maxLength: 16_384, pattern: "^[^\\u0000]+$" }) },
+    { additionalProperties: false },
+);
+const fileReadLimitSchema = Type.Integer({ minimum: 1, maximum: MAX_FILE_BYTES });
 export const fileRevisionQuerySchema = Type.Object(
     {
         path: relativeFilePathSchema,
@@ -336,52 +344,103 @@ export class ProjectFilesModule implements AgentModule {
         };
     }
 
-    async read(root: ProjectFileRoot, query: FileReadQuery): Promise<FileReadResult> {
-        assertSchema(fileReadQuerySchema, query, "file read query");
-        if (query.path.length === 0) {
-            throw new ProjectFileError(400, "invalid", "A file path is required.");
+    /** Smaller transports may lower the ordinary file limit. HTTP paths remain relative. */
+    async read(
+        root: ProjectFileRoot,
+        query: FileReadQuery,
+        maximumBytes = MAX_FILE_BYTES,
+    ): Promise<FileReadResult> {
+        assertSchema(fileReadInputSchema, query, "file read query");
+        assertSchema(fileReadLimitSchema, maximumBytes, "file read limit");
+        if (query.path.split(/[\\/]/).some((part) => part === "..")) {
+            throw new ProjectFileError(
+                400,
+                "invalid",
+                "The path must not contain parent-directory traversal.",
+            );
         }
-        const path = await this.#resolveExisting(root.root, query.path, false);
-        this.#assertWithinRoot(path, root.root);
-        const relativeDirectory = dirname(query.path);
-        this.#watcherInstance().watchDirectory(
-            root,
-            relativeDirectory === "." ? "" : relativeDirectory,
-            dirname(path),
+        let relativePath = query.path;
+        if (isAbsolute(relativePath)) {
+            this.#assertWithinRoot(relativePath, root.root);
+            relativePath = relative(root.root, relativePath).split(sep).join("/");
+        }
+        const path = await this.#resolveExisting(root.root, relativePath, false);
+        const handle = await open(
+            path,
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
         );
-        const bytes = await readFile(path);
-        this.#assertSize(bytes.byteLength);
-        this.#index.ensure(root.root, query.path);
-        return {
-            content: bytes.toString("base64"),
-            hash: sha256(bytes),
-        };
+        try {
+            const information = await handle.stat();
+            if (!information.isFile())
+                throw new ProjectFileError(
+                    400,
+                    "invalid",
+                    "The requested path is not a regular file.",
+                );
+            const current = await this.#resolveExisting(root.root, relativePath, false);
+            const currentInformation = await stat(current);
+            if (
+                current !== path ||
+                information.dev !== currentInformation.dev ||
+                information.ino !== currentInformation.ino
+            ) {
+                throw new ProjectFileError(
+                    403,
+                    "forbidden",
+                    "The file location changed while it was being opened.",
+                );
+            }
+            this.#assertSize(information.size, maximumBytes);
+            // end is inclusive: the extra byte detects growth without buffering the whole file.
+            const bytes = await buffer(
+                handle.createReadStream({ autoClose: false, end: maximumBytes }),
+            );
+            this.#assertSize(bytes.byteLength, maximumBytes);
+            const relativeDirectory = dirname(relativePath);
+            this.#watcherInstance().watchDirectory(
+                root,
+                relativeDirectory === "." ? "" : relativeDirectory,
+                dirname(path),
+            );
+            this.#index.ensure(root.root, relativePath);
+            return { content: bytes.toString("base64"), hash: sha256(bytes) };
+        } finally {
+            await handle.close();
+        }
     }
 
+    /** Strict callers distinguish missing paths from failed reads; HTTP keeps its preview default. */
     async readRevision(
         root: ProjectFileRoot,
         query: FileRevisionQuery,
+        options: { maximumBytes?: number; strict?: boolean } = {},
     ): Promise<{ readonly content: string | null; readonly hash: string | null }> {
+        const maximumBytes = options.maximumBytes ?? MAX_FILE_BYTES;
         assertSchema(fileRevisionQuerySchema, query, "file revision query");
-        if (query.path.length === 0) {
+        assertSchema(fileReadLimitSchema, maximumBytes, "file read limit");
+        if (query.path.length === 0)
             throw new ProjectFileError(400, "invalid", "A file path is required.");
-        }
         this.#assertRelativePath(query.path);
-        // Git answering with nothing — an unknown revision, a path that was not a file there, or
-        // content past the bound — is "this file has no content at that revision", which is what a
-        // client asking to see an older version needs to be told.
-        const file = await this.#git
-            .readFileAtRevision({
-                maximumBytes: MAX_FILE_BYTES,
+        try {
+            const file = await this.#git.readFileAtRevision({
+                maximumBytes,
                 path: root.root,
                 relativePath: query.path,
                 revision: query.revision,
-            })
-            .catch(() => ({ found: false }) as const);
-        if (!file.found) return { content: null, hash: null };
-        const bytes = Buffer.from(file.content);
-        this.#assertSize(bytes.byteLength);
-        return { content: bytes.toString("base64"), hash: sha256(bytes) };
+            });
+            if (!file.found) return { content: null, hash: null };
+            const bytes = Buffer.from(file.content);
+            return { content: bytes.toString("base64"), hash: sha256(bytes) };
+        } catch (error) {
+            if (!options.strict) return { content: null, hash: null };
+            if (error instanceof GitRevisionFileTooLargeError)
+                throw new ProjectFileError(
+                    413,
+                    "too_large",
+                    "The file exceeds the viewer size limit.",
+                );
+            throw error;
+        }
     }
 
     async write(root: ProjectFileRoot, input: FileWriteInput): Promise<FileWriteResult> {
@@ -570,8 +629,8 @@ export class ProjectFilesModule implements AgentModule {
         }
     }
 
-    #assertSize(bytes: number): void {
-        if (bytes > MAX_FILE_BYTES) {
+    #assertSize(bytes: number, maximumBytes = MAX_FILE_BYTES): void {
+        if (bytes > maximumBytes) {
             throw new ProjectFileError(
                 413,
                 "too_large",

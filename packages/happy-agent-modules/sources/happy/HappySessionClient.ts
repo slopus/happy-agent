@@ -40,6 +40,15 @@ import type { HappySyncSession } from "./HappySync.js";
 import type { HappySyncDatabase } from "./HappySyncDatabase.js";
 import { readHappyRemoteInput } from "./readHappyRemoteInput.js";
 import { isAgentPermissionMode } from "@slopus/happy-agent-base";
+import {
+    HAPPY_RPC_MAX_JSON_BYTES,
+    happyReadFailure,
+    type HappyGitStateResponse,
+    type HappyReadFileRequest,
+    type HappyReadFileResponse,
+    type HappyReadFileAtRevisionRequest,
+    type HappyReadFileAtRevisionResponse,
+} from "./HappyWorkspaceRead.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 2_000;
@@ -80,6 +89,9 @@ export interface HappySessionOperations {
     /** Dismisses a question the person chose not to answer. */
     cancelQuestion: (ctx: Context, agentId: string, requestId: string) => Promise<void>;
 
+    /** The session workspace's changes since its merge base with origin/main. */
+    gitState: (ctx: Context, agentId: string) => Promise<HappyGitStateResponse>;
+
     /** Every model the phone may offer, across providers. */
     models: () => readonly HappyModel[];
 
@@ -88,6 +100,20 @@ export interface HappySessionOperations {
 
     /** Latest advisory account quota for a provider, when one has been reported. */
     providerUsage: (providerId: string) => ProviderUsage | null;
+
+    /** One bounded current file inside the session's workspace. */
+    readFile: (
+        ctx: Context,
+        agentId: string,
+        request: HappyReadFileRequest,
+    ) => Promise<HappyReadFileResponse>;
+
+    /** One bounded historical file at the phone's pinned comparison revision. */
+    readFileAtRevision: (
+        ctx: Context,
+        agentId: string,
+        request: HappyReadFileAtRevisionRequest,
+    ) => Promise<HappyReadFileAtRevisionResponse>;
 
     /** One session as Happy needs to describe it, or nothing when it is gone. */
     session: (ctx: Context, agentId: string) => Promise<HappySessionSnapshot | undefined>;
@@ -577,45 +603,56 @@ export class HappySessionClient {
         request: unknown,
         callback: (response: string) => void,
     ): Promise<void> {
-        const state = await this.#options.sync.readSession(
-            this.#options.context,
-            this.#options.agentId,
-        );
+        const { sync, context, agentId, sessionId, operations } = this.#options;
+        const state = await sync.readSession(context, agentId);
         if (state === undefined) {
             callback("");
             return;
         }
         let answer: unknown;
+        const validRequest = Value.Check(rpcRequestSchema, request);
+        const workspaceRead =
+            validRequest &&
+            (request.method === `${remoteSessionId}:gitState` ||
+                request.method === `${remoteSessionId}:readFile` ||
+                request.method === `${remoteSessionId}:readFileAtRevision`);
         try {
             if (this.#archiving) {
-                answer = { error: "This session has ended." };
-            } else if (!Value.Check(rpcRequestSchema, request)) {
+                answer = workspaceRead
+                    ? { success: false, code: "missing", error: "This session has ended." }
+                    : { error: "This session has ended." };
+            } else if (!validRequest) {
                 answer = { error: "Invalid request" };
             } else {
                 const prefix = `${remoteSessionId}:`;
                 const params = this.#decode(state, request.params);
                 answer = request.method.startsWith(prefix)
                     ? await handleHappySessionRpc({
-                          abort: () =>
-                              this.#options.operations.abort(
-                                  this.#options.context,
-                                  this.#options.agentId,
-                              ),
+                          abort: () => operations.abort(context, agentId),
                           answerQuestion: (requestId, answers) =>
                               this.#answerQuestion(requestId, answers),
-                          archive: () =>
-                              this.#options.operations.archiveSession(
-                                  this.#options.context,
-                                  this.#options.sessionId,
-                              ),
+                          archive: () => operations.archiveSession(context, sessionId),
                           cancelQuestion: (requestId) => this.#cancelQuestion(requestId),
+                          gitState: () => operations.gitState(context, agentId),
+                          readFile: (input) => operations.readFile(context, agentId, input),
+                          readFileAtRevision: (input) =>
+                              operations.readFileAtRevision(context, agentId, input),
                           method: request.method.slice(prefix.length),
                           params,
                       })
                     : { error: "Invalid request" };
             }
         } catch (error) {
-            answer = { error: error instanceof Error ? error.message : "The request failed." };
+            answer = workspaceRead
+                ? happyReadFailure(error)
+                : { error: error instanceof Error ? error.message : "The request failed." };
+        }
+        if (Buffer.byteLength(JSON.stringify(answer)) > HAPPY_RPC_MAX_JSON_BYTES) {
+            answer = {
+                success: false,
+                code: "too_large",
+                error: "This preview is too large for the phone. Open the workspace on your computer.",
+            };
         }
         callback(this.#encode(state, answer));
     }

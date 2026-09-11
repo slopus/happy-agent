@@ -63,6 +63,8 @@ const MAX_CACHE_ENTRIES = 32;
 const MAX_SNAPSHOT_FILES = 1_000;
 const MAX_WATCH_ENTITIES = 256;
 
+export type GitResource = ReturnType<GitModule["resource"]>;
+
 export const gitEntitySchema = Type.Object(
     {
         projectId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -562,6 +564,39 @@ export class GitModule implements AgentModule {
     }
 
     // --- Snapshots -------------------------------------------------------------------------
+
+    /** The public Git state shared by HTTP and encrypted session reads. */
+    resource(snapshot: GitChangeSnapshot) {
+        return {
+            facts: {
+                branch: snapshot.facts.branch ?? null,
+                detached: snapshot.facts.detached,
+                head: snapshot.facts.head ?? null,
+                upstream: snapshot.facts.upstream ?? null,
+                ahead: snapshot.facts.ahead,
+                behind: snapshot.facts.behind,
+            },
+            comparison: snapshot.comparison,
+            base: snapshot.base ?? null,
+            changedFiles: snapshot.changedFiles,
+            insertions: snapshot.insertions,
+            deletions: snapshot.deletions,
+            countsExact: snapshot.countsExact,
+            conflicted: snapshot.conflicted,
+            files: snapshot.files.map((file) => ({
+                path: file.path,
+                ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
+                status: file.status,
+                staged: file.staged,
+                unstaged: file.unstaged,
+                binary: file.binary,
+                ...(file.insertions === undefined ? {} : { insertions: file.insertions }),
+                ...(file.deletions === undefined ? {} : { deletions: file.deletions }),
+            })),
+            filesTruncated: snapshot.filesTruncated,
+            scannedAt: snapshot.scannedAt,
+        };
+    }
 
     /** This module's identity, which every snapshot version is counted within. */
     generation(): string {
