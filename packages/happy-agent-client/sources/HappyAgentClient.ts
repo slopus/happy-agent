@@ -1,6 +1,11 @@
 import type { Cuid2 } from "./protocol/common.js";
 import { Value } from "@sinclair/typebox/value";
-import { connectionIdSchema, type ConnectionListResponse } from "./protocol/connections.js";
+import {
+    connectionIdSchema,
+    type ConnectionListResponse,
+    type ReorderConnectionRequest,
+    type ReorderConnectionResponse,
+} from "./protocol/connections.js";
 import type {
     BinaryContent,
     ConditionalRequestOptions,
@@ -224,6 +229,24 @@ export class HappyAgentClient {
     /** `GET /v0/connections` — the main daemon's configured remote roster. */
     async listConnections(options: RequestOptions = {}): Promise<ConnectionListResponse> {
         return await this.#json({ method: "GET", path: "v0/connections", signal: options.signal });
+    }
+
+    /** `POST /v0/connections/:id/reorder` — guarded by the complete roster's version. */
+    async reorderConnection(
+        id: string,
+        request: ReorderConnectionRequest,
+        options: VersionedRequestOptions,
+    ): Promise<ReorderConnectionResponse> {
+        if (!Value.Check(connectionIdSchema, id)) {
+            throw new Error("The remote connection ID is invalid.");
+        }
+        return await this.#json({
+            method: "POST",
+            path: `v0/connections/${id}/reorder`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
     }
 
     /** A separate client for a remote daemon, using the main daemon's authenticated proxy. */

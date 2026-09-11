@@ -24,6 +24,13 @@ and includes `organizationId`; `"bearer"` identifies standalone remotes. Older d
 roster reads without emitting this additive event. `connection(id)` creates a separate client
 for the selected remote, without merging its events or state into the parent.
 
+Ordering-capable daemons return a required fractional `orderKey` on every connection, backfill
+existing connections in their previous order, and append new ones at the end. The roster is
+already sorted by key. Use `reorderConnection(id, { afterId, mutationId }, { ifMatch: version })`
+to move one after another, or pass `afterId: null` to move it first. The response and the existing
+`connections.updated` event carry the complete ordered roster; neighbours retain their keys.
+Older daemons may omit keys and return `404` for reordering; leave the feature unavailable there.
+
 Installation display information is `config.node`, read through `getConfig()` and already included
 in desktop bootstrap's config. Its `avatar` is either `{ thumbhash }` or `null` when no image is set.
 Use `patchConfig({ node: { name } })` to rename the installation independently of `p2p.name`;

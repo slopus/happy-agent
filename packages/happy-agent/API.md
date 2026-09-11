@@ -274,8 +274,9 @@ authorization. Managed connections use WorkOS or fixed bearer authentication; th
 the former invitation/emoji pairing flow.
 
 Only machine configuration and tools restricted to active admin bots may add, replace, or remove
-roster entries. Tool authority is rechecked at execution. There are no public HTTP roster mutation
-routes, and project configuration cannot register connections or supply credentials. Live changes
+roster entries. Tool authority is rechecked at execution. Public HTTP callers may reorder existing
+entries, but cannot add, replace, or remove them. Project configuration cannot register connections
+or supply credentials. Live changes
 are persisted in generated `runtime.toml`; configured connections are restored after restart.
 Removing a connection closes its transport and active requests, but never deletes remote data.
 
@@ -287,21 +288,36 @@ format, and ports are integers from 1 through 65535. At most 100 entries may be 
 Runtime entries override global entries by ID; a runtime entry with `enabled = false` hides that
 global connection. An enabled entry is complete rather than merging credential fields.
 
+Every public connection has a required, opaque fractional `orderKey`, compared lexicographically
+as on projects. Ordering is daemon-owned, persists across restarts, and is independent of
+transport configuration. A new migration fills missing keys for existing connections in their
+previous ascending ID order before the roster is served. Newly enabled connections append after
+the last existing connection; adding several together uses ascending ID order among those new
+connections. Renaming or replacing an enabled connection preserves its key. Removing and later
+re-adding a connection appends it to the end. Existing database migrations remain unchanged.
+
 #### `GET /v0/connections`
 
-Returns the enabled configured roster in ascending ID order without probing remote health. This
+Returns the enabled configured roster in ascending `orderKey` order, with ID as the tie-breaker,
+without probing remote health. This
 read remains available when a remote is unreachable or Cloud is disconnected. Response — `200`:
 
 ```json
 {
     "version": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f",
     "connections": [
-        { "id": "build-mac", "name": "Build Mac", "authentication": "bearer" },
+        {
+            "id": "build-mac",
+            "name": "Build Mac",
+            "authentication": "bearer",
+            "orderKey": "00000000000000000001"
+        },
         {
             "id": "engineering",
             "name": "Engineering",
             "authentication": "workos",
-            "organizationId": "org_01H..."
+            "organizationId": "org_01H...",
+            "orderKey": "00000000000000000002"
         }
     ]
 }
@@ -326,6 +342,33 @@ the stream using the normal snapshot/cursor rules. A restart with unchanged conf
 the same roster version; startup reconciliation incorporates offline machine-configuration edits
 before serving the roster. The event carries no health status and does not change the existing authentication
 discriminator: `workos` identifies a team remote, while `bearer` identifies a standalone remote.
+
+#### `POST /v0/connections/:id/reorder`
+
+Moves an enabled connection in the installation-wide roster. Requires normal API authentication
+and local profile onboarding in team mode, but not admin-bot authority: this changes only display
+order, never membership, credentials, or transport settings. Requires `If-Match` with the current
+roster version returned by `GET /v0/connections`.
+
+Request: `{ "afterId": "build-mac", "mutationId": "..." }` — the enabled connection to place this
+one after, or `null` to move it first. `mutationId` is optional and has the usual echo-only meaning.
+
+Response — `200`: `{ "connections": [ ... ], "version": "..." }`, the complete ordered roster.
+Reordering assigns only the moved connection a fractional `orderKey` between its destination
+neighbours. Neighbour keys remain unchanged. An actual move advances the roster version and
+publishes one `connections.updated` event with the same complete snapshot and mutation echo after
+commit. Moving a connection to its current position is a no-op, preserving its key and roster
+version and emitting no event. Reordering never closes transports or interrupts active requests.
+
+An unknown or disabled target or `afterId` is `404 not_found`; placing a connection after itself
+or supplying an invalid body is `400 invalid_request`. A missing or malformed `If-Match` is
+`400 invalid_request`. A stale version is `409 conflict` with `currentVersion` and the current
+ordered `connections`. Rejected operations change no keys, version, transport, or events.
+Concurrent roster changes and reorders are serialized and transaction-composable; persistence
+commits before memory or notifications change. The response and event expose no credentials or
+transport addresses. Older daemons without this endpoint return `404`; callers leave reordering
+unavailable there. Older daemons may omit `orderKey`; this required field is guaranteed by the
+ordering-capable daemon after migration, not synthesized by clients for older daemons.
 
 #### `/v0/connections/:id/api/*`
 
@@ -358,7 +401,8 @@ release resources. Each connection permits at most 32 concurrent requests/attach
 overflow with `503 remote_busy`. Streams use backpressure and bounded buffers. Reconnecting the
 carrier never replays an in-flight request; clients reconnect SSE using the remote cursor.
 
-`HappyAgentClient.listConnections()` reads the roster. `client.connection(id)` creates an
+`HappyAgentClient.listConnections()` reads the roster. `reorderConnection(id, request, options)`
+moves one connection using the roster version as `options.ifMatch`. `client.connection(id)` creates an
 independent client rooted at this proxy prefix, reusing only the main endpoint, bearer token, and
 fetch transport. All existing methods and attachment URLs then address the remote. The child has
 no local replica state in common with its parent; consumers create a separate reducer when needed.
