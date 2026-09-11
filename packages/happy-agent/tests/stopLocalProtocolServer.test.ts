@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
 import { HappyAgentApiError, type HappyAgentClient } from "@slopus/happy-agent-client";
+import { isDaemonProcessRunning } from "../sources/lifecycle/daemonPid.js";
 
 const mocks = vi.hoisted(() => ({
     waitForSocketRemoval: vi.fn(),
@@ -65,7 +66,8 @@ describe("stopLocalProtocolServer", () => {
 
             await stopLocalProtocolServer(client, "/tmp/rig/server.sock");
 
-            expect(exited).toBe(true);
+            // Linux can report a dead process before Node delivers the child's exit event.
+            expect(await isDaemonProcessRunning(child.pid!)).toBe(false);
         } finally {
             if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
             if (!exited) await once(child, "exit");
