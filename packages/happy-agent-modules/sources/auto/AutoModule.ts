@@ -47,7 +47,7 @@ import {
     AUTO_SECURITY_MD_MAX_BYTES,
     readAutoSecurityPolicy,
 } from "./impl/readAutoSecurityPolicy.js";
-import { reviewerModelForAgent, type AutoReviewerRoute } from "./impl/reviewerModelForAgent.js";
+import { reviewerModelsForAgent, type AutoReviewerRoute } from "./impl/reviewerModelForAgent.js";
 import { buildAutoReviewCatalog } from "./impl/buildAutoReviewCatalog.js";
 import { reviewerAgentId } from "./impl/reviewerAgentId.js";
 import { convertGuardianReview } from "./impl/convertGuardianReview.js";
@@ -132,6 +132,8 @@ export class AutoModule implements AgentModule {
     #catalog: readonly AgentModel[] = [];
     /** Live private reviewer agents this process has built, keyed by the main agent they review. */
     readonly #reviewers = new Map<string, Agent>();
+    /** A route change must rebuild the private conversation and resend the complete evidence. */
+    readonly #reviewerRoutes = new Map<string, AutoReviewerRoute>();
     /** Per-main-agent serialization tail: reviews for one agent are strictly FIFO. */
     readonly #tails = new Map<string, Promise<void>>();
     /** In-flight callId → tool name, so a tool result can be labelled as v1 did. */
@@ -403,6 +405,33 @@ export class AutoModule implements AgentModule {
         ctx: Context,
         request: PermissionReviewRequest,
     ): Promise<PermissionReviewDecision> {
+        this.#requireSystem();
+        const routes = reviewerModelsForAgent({
+            models: this.#catalog,
+            active: this.#activeRoute(request),
+        });
+        const failures: string[] = [];
+        for (const route of routes) {
+            try {
+                return await this.#runReviewOnRoute(ctx, request, route);
+            } catch (error) {
+                // Only route unavailability permits another model. Never seek a second judgement,
+                // retry a request, or continue after cancellation or an ordinary inference failure.
+                if (!(error instanceof ReviewerRouteUnavailableError) || request.signal.aborted)
+                    throw error;
+                failures.push(`${route.modelId}: ${error.message.slice(0, 240)}`);
+            }
+        }
+        throw new Error(
+            `No automatic permission reviewer route was available. ${failures.join("; ")}`,
+        );
+    }
+
+    async #runReviewOnRoute(
+        ctx: Context,
+        request: PermissionReviewRequest,
+        route: AutoReviewerRoute,
+    ): Promise<PermissionReviewDecision> {
         // Reviews for one agent are strictly FIFO, so this one may have waited behind another while
         // its turn was stopped. The signal is read again here, after the queue releases it, because
         // a review whose turn is already gone must never reach the reviewer.
@@ -419,13 +448,12 @@ export class AutoModule implements AgentModule {
         const entries = await this.#evidence.readEntries(mainDatabase, mainAgentId, generation);
 
         const reviewerId = reviewerAgentId(mainAgentId);
-        const route = reviewerModelForAgent({
-            models: this.#catalog,
-            active: this.#activeRoute(request),
-        });
-
         const cursor = await this.#readCursor(reviewerId);
+        const previousRoute = this.#reviewerRoutes.get(mainAgentId);
         const rebuild =
+            previousRoute?.providerId !== route.providerId ||
+            previousRoute?.modelId !== route.modelId ||
+            previousRoute?.effort !== route.effort ||
             cursor === undefined ||
             cursor.evidenceGeneration !== generation ||
             !cursor.lastReviewNormal;
@@ -445,6 +473,7 @@ export class AutoModule implements AgentModule {
             }
             activeCursor = cursor;
         }
+        this.#reviewerRoutes.set(mainAgentId, route);
         // "First" is a fact about the reviewer's own session, not about how far the cursor reached.
         // A rebuilt reviewer has no history to continue; a reused one does even when the archive was
         // empty both times, and sending it a fresh `<conversation>` would deny it the context it is
@@ -527,14 +556,17 @@ export class AutoModule implements AgentModule {
             throw new Error("Permission review was stopped.");
         }
         if (capture.doneState !== "normal") {
-            // A completed-but-not-normal run is a v1 rejection with an unreadable answer; the
-            // reviewer is discarded so the next review starts over from the whole transcript.
+            // No verdict exists. PermissionsModule records reviewer failures as unproven/unavailable
+            // and retains the error in the public reason, without inventing a risk judgement.
             await this.#discardReviewer(system, mainAgentId, reviewerId, generation);
-            return convertGuardianReview({
-                text: "",
-                ...(transcript === undefined ? {} : { transcript }),
-                userEvidenceOmitted: whole.userEvidenceOmitted,
-            });
+            const reason = `Automatic permission review did not complete: ${capture.errorMessage ?? unfinishedReviewReason(capture.doneState)}.`;
+            if (
+                capture.doneState === "error" &&
+                (capture.inferenceStarted !== true || reviewerModelNotFound(capture.errorMessage))
+            ) {
+                throw new ReviewerRouteUnavailableError(reason);
+            }
+            throw new Error(reason);
         }
 
         await this.#writeCursor(reviewerId, {
@@ -593,6 +625,7 @@ export class AutoModule implements AgentModule {
         // Mark the cursor so the next review rebuilds and resends the whole transcript, matching
         // v1 discardUnfinishedReview. The reviewer is deleted now; the next review recreates it.
         this.#reviewers.delete(mainAgentId);
+        this.#reviewerRoutes.delete(mainAgentId);
         await this.#writeCursor(reviewerId, {
             evidenceGeneration: generation,
             reviewedPosition: 0,
@@ -791,4 +824,29 @@ function trustedAnswerText(
 
 function callKey(agentId: string, callId: string): string {
     return `${agentId}\u0000${callId}`;
+}
+
+function unfinishedReviewReason(state: string | undefined): string {
+    switch (state) {
+        case "length":
+            return "the reviewer reached its response length limit";
+        case "tool_call":
+            return "the reviewer stopped at a tool call without a final decision";
+        case "cancelled":
+            return "the reviewer was cancelled";
+        case "error":
+            return "the provider reported an error without details";
+        default:
+            return "the provider stream ended without a completion event";
+    }
+}
+
+/** A construction failure or model-not-found is route unavailability, never a verdict. */
+class ReviewerRouteUnavailableError extends Error {}
+
+function reviewerModelNotFound(message: string | undefined): boolean {
+    // Require a missing-model diagnostic, not just an HTTP 404 (which may name another resource).
+    return (
+        message !== undefined && /\bmodel\b[^\n]*\b(?:does not exist|not found)\b/i.test(message)
+    );
 }

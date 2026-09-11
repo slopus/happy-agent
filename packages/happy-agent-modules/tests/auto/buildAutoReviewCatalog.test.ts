@@ -40,13 +40,13 @@ describe("buildAutoReviewCatalog", () => {
         expect(hidden?.effortLevels).toEqual(["low", "medium", "high", "xhigh"]);
     });
 
-    it("adds sonnet-5 for claude providers and both sonnet-5 and gpt-5.4 for bedrock providers", () => {
+    it("adds native reviewer routes without resurrecting unavailable Bedrock Sonnet", () => {
         const catalog = buildAutoReviewCatalog({
             models: [model("claude", "anthropic/opus-5"), model("bedrock", "anthropic/opus-5")],
             typeOf: typeOfFrom({ claude: "claude", bedrock: "bedrock" }),
         });
         expect(find(catalog, "claude", "anthropic/sonnet-5")).toBeDefined();
-        expect(find(catalog, "bedrock", "anthropic/sonnet-5")).toBeDefined();
+        expect(find(catalog, "bedrock", "anthropic/sonnet-5")).toBeUndefined();
         expect(find(catalog, "bedrock", "openai/gpt-5.4")).toBeDefined();
         // A bedrock provider is not codex, so it gains no codex-auto-review route.
         expect(find(catalog, "bedrock", "openai/codex-auto-review")).toBeUndefined();

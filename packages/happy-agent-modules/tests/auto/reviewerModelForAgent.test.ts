@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     reviewerModelForAgent,
+    reviewerModelsForAgent,
     type AutoReviewerRoute,
 } from "../../sources/auto/impl/reviewerModelForAgent.js";
 
@@ -23,6 +24,28 @@ const active = (
 ): AutoReviewerRoute => ({ providerId, modelId, effort });
 
 describe("reviewerModelForAgent", () => {
+    it("lists each same-provider fallback once in precedence order, retaining active effort", () => {
+        const ids = [
+            "anthropic/sonnet-5",
+            "openai/codex-auto-review",
+            "openai/gpt-5.4",
+            "anthropic/opus-5",
+        ];
+        const models = ids.map((id) => model("bedrock", id, ["low", "medium"], "medium"));
+        const routes = reviewerModelsForAgent({
+            models,
+            active: active("bedrock", "anthropic/opus-5", "low"),
+        });
+        expect(routes.map((route) => route.modelId)).toEqual(ids);
+        expect(routes.at(-1)?.effort).toBe("low");
+        expect(
+            reviewerModelsForAgent({
+                models,
+                active: active("bedrock", "openai/gpt-5.4", "low"),
+            }).map((route) => route.modelId),
+        ).toEqual(["openai/codex-auto-review", "openai/gpt-5.4"]);
+    });
+
     it("selects_codex_auto_review_without_exposing_it_in_the_public_catalog", () => {
         const models = [
             model("codex", "openai/gpt-5.6-sol", ["low", "medium", "high"], "medium"),

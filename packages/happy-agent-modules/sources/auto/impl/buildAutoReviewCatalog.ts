@@ -14,8 +14,8 @@ import type { ProviderModelCompatibilityType } from "@slopus/happy-providers";
  *   from the public model picker, at its v1 effort range and `low` default;
  * - a Bedrock provider gains `openai/gpt-5.4` (default `medium`) so a Bedrock conversation reviews
  *   on GPT-5.4, exactly as v1 did;
- * - a Claude-compatible or Bedrock provider gains `anthropic/sonnet-5`, so an Opus/Fable
- *   conversation reviews on Sonnet on the same provider route.
+ * - a Claude-compatible provider gains `anthropic/sonnet-5`. Bedrock Sonnet must already be
+ *   in the configured catalog: its transport and region determine whether AWS serves it.
  *
  * A route already present in the main catalog for a provider is never overridden: the deployment's
  * own effort levels and default win, and the addition only fills a route the public catalog did not
@@ -65,7 +65,7 @@ export function buildAutoReviewCatalog(options: {
     for (const providerId of providerIds) {
         const kind = typeOf(providerId);
         if (kind === "codex") add(providerId, CODEX_AUTO_REVIEW);
-        if (kind === "claude" || kind === "bedrock") add(providerId, SONNET_5);
+        if (kind === "claude") add(providerId, SONNET_5);
         if (kind === "bedrock") add(providerId, GPT_5_4);
     }
     return catalog;

@@ -41,9 +41,19 @@
   unparseable, and the unreadable answer became a `rejected` denial telling the agent not to route
   around a judgement the reviewer never made. Free text can break a format the model has to
   assemble by hand; tags have nothing to escape.
-- Unreadable verdicts are still classified as `rejected`. The user noted that `unavailable` is the
-  honest bucket — a verdict that could not be read is not a judgement about the action — but chose
-  the format fix first; the reclassification is still open.
+- A reviewer ending in error, length, tool-call, cancellation, or without a completion event has
+  made no judgement. Such runs now fail as unavailable; Permissions records an unproven outcome
+  with the provider error in its bounded, public reason. A caller-aborted review still follows the
+  existing cancellation cleanup and makes no refusal event. A normal but genuinely unparseable
+  answer remains a rejected denial, as explicitly requested. Full reviewer transcripts cannot be
+  exposed in the recorded review without a human-approved API specification addition.
+- A preferred reviewer route is not guaranteed to instantiate just because it appears in a
+  curated catalog. Construction failures and explicit missing-model errors now advance once
+  through the same provider's reviewer precedence, ending with the active model. Each failed
+  route is discarded and the next gets complete evidence, within the original review deadline
+  and cancellation signal. Denials, malformed normal answers, and ordinary inference failures
+  never trigger fallback. No failed-route blacklist survives the review; a route change rebuilds
+  the private conversation rather than continuing another model's review history.
 - The `messageOrigin` stamp must be the metadata's own property. Reading it through the prototype
   chain lets a shared or polluted prototype authorize every message that omits the marker, which is
   the forgery the positive-marker rule exists to prevent.

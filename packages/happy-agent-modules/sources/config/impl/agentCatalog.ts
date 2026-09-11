@@ -209,6 +209,7 @@ export function agentModelCatalog(
         const source = provider.type === "bedrock" ? BEDROCK_CATALOG : CATALOG;
         for (const candidate of source) {
             if (provider.type !== "bedrock" && candidate.providerId !== provider.type) continue;
+            if (!modelAvailableOnProvider(provider, candidate.id)) continue;
             const enabled =
                 isProviderEnabled(id) &&
                 provider.includeModels?.includes(candidate.id) !== false &&
@@ -379,10 +380,24 @@ function concreteAgentModelCatalog(
         const source = provider.type === "bedrock" ? BEDROCK_CATALOG : CATALOG;
         for (const candidate of source) {
             if (provider.type !== "bedrock" && candidate.providerId !== provider.type) continue;
+            if (!modelAvailableOnProvider(provider, candidate.id)) continue;
             models.push({ ...candidate, enabled: true, providerId: id });
         }
     }
     return models;
+}
+
+/** AWS's Sonnet 5 model card lists Mantle in-region support only in these regions.
+ * https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5.html
+ * Runtime inference profiles have separate availability; never silently switch transport/region.
+ */
+function modelAvailableOnProvider(provider: ConcreteConfiguredProvider, modelId: string): boolean {
+    if (provider.type !== "bedrock" || modelId !== "anthropic/sonnet-5") return true;
+    if (resolveAnthropicBedrockTransport(provider, modelId) !== "mantle") return true;
+    const region = provider.modelOverrides?.[modelId]?.region ?? provider.region ?? "us-east-1";
+    return ["us-east-1", "us-gov-west-1", "eu-north-1", "eu-west-1", "ap-southeast-4"].includes(
+        region,
+    );
 }
 
 function bedrockModelRegion(

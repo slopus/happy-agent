@@ -44,22 +44,37 @@ export function reviewerModelForAgent(options: {
     /** The main agent's current provider/model/effort route. */
     active: AutoReviewerRoute;
 }): AutoReviewerRoute {
+    return reviewerModelsForAgent(options)[0]!;
+}
+
+/** Each eligible route once, in reviewer precedence; never crosses the active provider. */
+export function reviewerModelsForAgent(options: {
+    models: readonly AgentModel[];
+    active: AutoReviewerRoute;
+}): AutoReviewerRoute[] {
     const { models, active } = options;
+    const routes: AutoReviewerRoute[] = [];
 
     if (
         active.modelId.startsWith("anthropic/opus-") ||
         active.modelId.startsWith("anthropic/fable-")
     ) {
         const sonnet = findRoute(models, active.providerId, REVIEWER_MODEL_SONNET);
-        if (sonnet !== undefined) return routeFor(sonnet);
+        if (sonnet !== undefined) routes.push(routeFor(sonnet));
     }
 
     for (const candidateId of [REVIEWER_MODEL_CODEX_AUTO_REVIEW, REVIEWER_MODEL_GPT_5_4]) {
         const hidden = findRoute(models, active.providerId, candidateId);
-        if (hidden !== undefined) return routeFor(hidden);
+        if (hidden !== undefined) routes.push(routeFor(hidden));
     }
 
-    if (findRoute(models, active.providerId, active.modelId) !== undefined) return active;
+    if (
+        findRoute(models, active.providerId, active.modelId) !== undefined &&
+        !routes.some((route) => route.modelId === active.modelId)
+    )
+        routes.push(active);
+
+    if (routes.length > 0) return routes;
 
     throw new Error(
         `No reviewer model route could be resolved for ${active.modelId} on provider ` +

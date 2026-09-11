@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { AgentModel, AgentStorage } from "@slopus/happy-agent-base";
+import type { AgentModel, AgentStorage, AgentProviders } from "@slopus/happy-agent-base";
 import { ComputeModule, type HostComputeProvider } from "../../sources/compute/index.js";
 import { ConfigModule } from "../../sources/config/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
@@ -54,7 +54,13 @@ export interface AutoWorld {
  * security policy writes the file configuration reads, and a test that wants project instructions
  * writes the `AGENTS.md` the system-prompt module reads off the machine.
  */
-export async function autoWorld(script: ScriptedTurn[] = []): Promise<AutoWorld> {
+export async function autoWorld(
+    script: ScriptedTurn[] = [],
+    options: {
+        models?: readonly AgentModel[];
+        providers?: (provider: ScriptedProvider) => AgentProviders;
+    } = {},
+): Promise<AutoWorld> {
     // A root of its own rather than a temporary directory directly: the working folder is derived
     // as a sibling of the Happy home, so a home made straight in `tmpdir()` would put every test's
     // working folder at the same shared path.
@@ -62,7 +68,10 @@ export async function autoWorld(script: ScriptedTurn[] = []): Promise<AutoWorld>
     const happyHome = join(root, ".happy");
     const provider = new ScriptedProvider(script);
     const config = await ConfigModule.load(happyHome, {
-        inference: { models: AUTO_TEST_MODELS, providers: providersOf(provider) },
+        inference: {
+            models: options.models ?? AUTO_TEST_MODELS,
+            providers: options.providers?.(provider) ?? providersOf(provider),
+        },
     });
     const publicHome = config.configuration.paths.publicHome;
     await mkdir(publicHome, { recursive: true });

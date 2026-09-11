@@ -7,10 +7,11 @@ import {
     type AgentBaseInferenceStart,
     type AgentModuleScope,
     type AgentSystemRef,
+    type AgentModel,
 } from "@slopus/happy-agent-base";
 import type { SessionEvent } from "@slopus/happy-providers";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AutoModule } from "../../sources/auto/index.js";
 import type { ComputeModule } from "../../sources/compute/index.js";
@@ -117,13 +118,35 @@ async function reviewWorld(
         readonly gate?: () => Promise<void>;
         readonly signal?: AbortSignal;
         readonly signals?: readonly AbortSignal[];
+        readonly models?: readonly AgentModel[];
+        readonly failResolution?: (model: string | undefined) => boolean;
+        readonly failSession?: boolean;
     } = {},
 ): Promise<{
     world: ReviewWorld;
     review(): Promise<Awaited<ReturnType<AutoModule["reviewer"]["review"]>>>;
 }> {
     const lifetime = createRootContext().named("auto-review-system-test");
-    const installation = await autoWorld(script);
+    const installation = await autoWorld(script, {
+        ...(options.models === undefined ? {} : { models: options.models }),
+        providers: (provider) => {
+            const providers = new AgentProviders();
+            providers.add(
+                "scripted",
+                async ({ model }) => {
+                    if (options.failResolution?.(model))
+                        throw new Error(`Cannot instantiate ${model}`);
+                    return provider;
+                },
+                "gym",
+            );
+            return providers;
+        },
+    });
+    if (options.failSession)
+        vi.spyOn(installation.provider, "session").mockRejectedValueOnce(
+            new Error("Cannot instantiate reviewer session"),
+        );
 
     if (options.globalSecurity !== undefined) {
         await installation.writeGlobalSecurity(options.globalSecurity);
@@ -170,7 +193,7 @@ async function reviewWorld(
                 agent: {
                     id: MAIN_AGENT_ID,
                     provider: "scripted",
-                    model: "scripted/model",
+                    model: options.models?.[0]?.id ?? "scripted/model",
                     effort: "low",
                 },
             } as unknown as AgentModuleScope,
@@ -227,6 +250,153 @@ afterEach(async () => {
 });
 
 describe("AutoModule reviewer", () => {
+    const fallbackModels: readonly AgentModel[] = [
+        "anthropic/opus-5",
+        "anthropic/sonnet-5",
+        "openai/gpt-5.4",
+    ].map((id) => ({
+        id,
+        providerId: "scripted",
+        name: id,
+        effortLevels: ["low"],
+        defaultEffort: "low",
+    }));
+    const missingModel =
+        "404 not_found_error: The model 'anthropic.claude-sonnet-5' does not exist";
+    const missingTurn: SessionEvent[] = [
+        { type: "done", state: "error", kind: "unknown", message: missingModel },
+    ];
+    const allow = verdictTurn(
+        taggedVerdict({ outcome: "allow", risk_level: "low", user_authorization: "high" }),
+    );
+
+    it("falls back from a model 404 to the next route with the complete evidence", async () => {
+        const { world, review } = await reviewWorld([missingTurn, allow], {
+            models: fallbackModels,
+        });
+        worlds.push(world);
+        await expect(review()).resolves.toMatchObject({
+            outcome: "allowed",
+            transcript: { modelId: "openai/gpt-5.4" },
+        });
+        const requests = world.provider.sessions.flatMap((session) => session.requests);
+        expect(requests.map((request) => request.model)).toEqual([
+            "anthropic/sonnet-5",
+            "openai/gpt-5.4",
+        ]);
+        expect(JSON.stringify(requests[1]?.context)).toContain("<conversation>");
+        expect(JSON.stringify(requests[1]?.context)).not.toContain("continued=");
+    });
+
+    it.each(["resolve", "session"])(
+        "falls back when the preferred route cannot %s",
+        async (failure) => {
+            const { world, review } = await reviewWorld([allow], {
+                models: fallbackModels,
+                failResolution: (model) => failure === "resolve" && model === "anthropic/sonnet-5",
+                failSession: failure === "session",
+            });
+            worlds.push(world);
+            await expect(review()).resolves.toMatchObject({
+                outcome: "allowed",
+                transcript: { modelId: "openai/gpt-5.4" },
+            });
+        },
+    );
+
+    it("ends at the active model and fails closed once every route is unavailable", async () => {
+        const { world, review } = await reviewWorld([missingTurn, missingTurn, missingTurn], {
+            models: fallbackModels,
+        });
+        worlds.push(world);
+        await expect(review()).rejects.toThrow(missingModel);
+        expect(
+            world.provider.sessions
+                .flatMap((session) => session.requests)
+                .map((request) => request.model),
+        ).toEqual(["anthropic/sonnet-5", "openai/gpt-5.4", "anthropic/opus-5"]);
+    });
+
+    it.each([
+        ["unparseable", verdictTurn("not a verdict")],
+        [
+            "denied",
+            verdictTurn(
+                taggedVerdict({ outcome: "deny", risk_level: "high", user_authorization: "low" }),
+            ),
+        ],
+    ] as const)("does not seek another verdict after a %s answer", async (_name, turn) => {
+        const { world, review } = await reviewWorld([[...turn], allow], { models: fallbackModels });
+        worlds.push(world);
+        await expect(review()).resolves.toMatchObject({ outcome: "denied" });
+        expect(world.provider.sessions.flatMap((session) => session.requests)).toHaveLength(1);
+    });
+
+    it("does not fall back for an ordinary inference error", async () => {
+        const { world, review } = await reviewWorld([errorTurn(), allow], {
+            models: fallbackModels,
+        });
+        worlds.push(world);
+        await expect(review()).rejects.toThrow("review inference failed");
+        expect(world.provider.sessions.flatMap((session) => session.requests)).toHaveLength(1);
+    });
+
+    it("does not fall back when a started provider request throws or reports a non-model 404", async () => {
+        for (const turn of [
+            (() => {
+                throw new Error("Connection failed");
+            }) as ScriptedTurn,
+            [
+                {
+                    type: "done",
+                    state: "error",
+                    kind: "unknown",
+                    message: "404: endpoint not found",
+                },
+            ] as SessionEvent[],
+        ]) {
+            const { world, review } = await reviewWorld([turn, allow], { models: fallbackModels });
+            worlds.push(world);
+            await expect(review()).rejects.toThrow();
+            expect(world.provider.sessions.flatMap((session) => session.requests)).toHaveLength(1);
+        }
+    });
+
+    it("rebuilds when a later review returns from a fallback to the preferred route", async () => {
+        const { world, review } = await reviewWorld([missingTurn, allow, allow], {
+            models: fallbackModels,
+        });
+        worlds.push(world);
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+        const requests = world.provider.sessions.flatMap((session) => session.requests);
+        expect(requests.map((request) => request.model)).toEqual([
+            "anthropic/sonnet-5",
+            "openai/gpt-5.4",
+            "anthropic/sonnet-5",
+        ]);
+        expect(JSON.stringify(requests[2]?.context)).not.toContain("continued=");
+        expect(JSON.stringify(requests[2]?.context)).toContain("<conversation>");
+    });
+
+    it("does not start fallback after the caller cancels the failed review", async () => {
+        const controller = new AbortController();
+        const { world, review } = await reviewWorld(
+            [
+                () =>
+                    (async function* () {
+                        controller.abort();
+                        yield* missingTurn;
+                    })(),
+                allow,
+            ],
+            { models: fallbackModels, signal: controller.signal },
+        );
+        worlds.push(world);
+        await expect(review()).rejects.toThrow("Permission review was stopped");
+        expect(world.provider.sessions.flatMap((session) => session.requests)).toHaveLength(1);
+    });
+
     it("rejects a review requested before the private system starts", async () => {
         const context = createRootContext().named("auto-review-not-started");
         const installation = await autoWorld();
@@ -333,13 +503,36 @@ describe("AutoModule reviewer", () => {
         expect(decision.outcome).toBe("denied");
     });
 
-    it("maps a completed non-normal reviewer run to a rejected unreadable verdict", async () => {
+    it("reports a failed reviewer as unavailable with the provider error", async () => {
         const { world, review } = await reviewWorld([errorTurn()]);
         worlds.push(world);
 
-        const decision = await review();
+        // PermissionsModule maps a reviewer exception to unproven/unavailable, not a denial.
+        await expect(review()).rejects.toThrow("review inference failed");
+    });
 
-        expect(decision).toMatchObject({
+    it.each(["length", "tool_call", "cancelled", undefined] as const)(
+        "does not parse a verdict from an unfinished reviewer: %s",
+        async (state) => {
+            const events = verdictTurn(
+                taggedVerdict({ outcome: "allow", risk_level: "low", user_authorization: "high" }),
+            ).slice(0, -1);
+            if (state !== undefined)
+                events.push({
+                    type: "done",
+                    state,
+                    tokens: { input: 1, output: 1 },
+                } as SessionEvent);
+            const { world, review } = await reviewWorld([events]);
+            worlds.push(world);
+            await expect(review()).rejects.toThrow("Automatic permission review did not complete");
+        },
+    );
+
+    it("keeps a genuinely unparseable normal answer classified as a denial", async () => {
+        const { world, review } = await reviewWorld([verdictTurn("not a verdict")]);
+        worlds.push(world);
+        await expect(review()).resolves.toMatchObject({
             outcome: "denied",
             reason: "The automatic permission review returned an unreadable decision.",
             risk: "medium",
@@ -570,7 +763,7 @@ describe("AutoModule reviewer", () => {
         const { world, review } = await reviewWorld([errorTurn(), verdictTurn(verdict)]);
         worlds.push(world);
 
-        await expect(review()).resolves.toMatchObject({ outcome: "denied" });
+        await expect(review()).rejects.toThrow("review inference failed");
         await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
 
         const requests = world.provider.sessions.flatMap((session) => session.requests);

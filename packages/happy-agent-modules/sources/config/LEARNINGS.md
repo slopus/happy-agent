@@ -38,6 +38,13 @@ Keep the Bedrock catalog limited to models AWS currently documents, and add a re
 after its model ID and wire behavior are known. A native Codex model can otherwise appear usable
 through Bedrock even though AWS does not serve it.
 
+Sonnet 5 uses `anthropic.claude-sonnet-5` on Mantle, but AWS documents in-region
+availability only in N. Virginia, GovCloud West, Stockholm, Ireland, and Melbourne.
+Oregon returned model-not-found despite having the correct ID. Both ordinary and smart-route
+catalogs now respect the selected transport and per-model region override; the private reviewer
+catalog must not re-add a Bedrock Sonnet route configuration omitted. Runtime overrides retain
+their existing inference-profile routing; catalog filtering never silently changes regions.
+
 ## Tailcat exposure is an explicit machine setting
 
 `[feature.tailcat] enabled = true` asks the Tailcat module to expose whichever API transport the

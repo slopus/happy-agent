@@ -32,6 +32,37 @@ function persistedEvent(event: unknown): AgentBasePersistedEvent {
 }
 
 describe("AutoReviewRuntimeModule", () => {
+    it("retains provider errors and clears them before the next inference", () => {
+        const module = new AutoReviewRuntimeModule();
+        const hooks = module.beforeStart();
+        module.beginReview("reviewer", "instructions");
+        hooks.onEvent?.(context, scope(), {
+            type: "done",
+            state: "error",
+            kind: "unknown",
+            message: "404: model does not exist",
+        });
+        expect(module.takeCapture("reviewer").errorMessage).toBe("404: model does not exist");
+        expect(module.takeCapture("reviewer").errorMessage).toBeUndefined();
+    });
+
+    it("does not reuse a previous inference's done event for an unfinished continuation", () => {
+        const module = new AutoReviewRuntimeModule();
+        const hooks = module.beforeStart();
+        module.beginReview("reviewer", "instructions");
+        hooks.onEvent?.(context, scope(), {
+            type: "done",
+            state: "normal",
+            tokens: { input: 1, output: 1 },
+        });
+        hooks.beforeInference?.(context, scope(), {} as never);
+        hooks.afterInference?.(context, scope(), { state: undefined } as AgentBaseInference);
+        expect(module.takeCapture("reviewer")).toMatchObject({
+            doneState: undefined,
+            inferenceStarted: true,
+        });
+    });
+
     it("uses the bundled instructions until a review overrides them", () => {
         const module = new AutoReviewRuntimeModule();
         const hooks = module.beforeStart();

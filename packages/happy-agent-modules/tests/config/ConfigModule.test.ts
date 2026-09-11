@@ -23,6 +23,46 @@ afterEach(async () => {
 });
 
 describe("ConfigModule", () => {
+    it.each([
+        ["us-west-2", "", false],
+        ["us-east-1", "", true],
+        ["eu-north-1", "", true],
+        ["eu-west-1", "", true],
+        ["ap-southeast-4", "", true],
+        ["us-gov-west-1", "", true],
+        ["us-west-2", 'transport = "runtime"', true],
+        ["us-west-2", 'region = "us-east-1"', true],
+        ["us-east-1", 'region = "us-west-2"', false],
+    ])("limits Mantle Sonnet to documented regions: %s %s", async (region, override, offered) => {
+        const root = await mkdtemp(join(tmpdir(), "happy-sonnet-regions-"));
+        temporaryDirectories.push(root);
+        const folder = join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config");
+        await mkdir(folder, { recursive: true });
+        await writeFile(
+            join(folder, "happy.toml"),
+            [
+                "[providers.oregon]",
+                'type = "bedrock"',
+                "enabled = true",
+                `region = "${region}"`,
+                '[providers.oregon.model_overrides."anthropic/sonnet-5"]',
+                override,
+                "[providers.router]",
+                'type = "smart"',
+                "enabled = true",
+                'providers = ["oregon"]',
+            ].join("\n"),
+        );
+        const config = await ConfigModule.load(join(root, ".happy"));
+        for (const providerId of ["oregon", "router"]) {
+            expect(
+                config.catalog.some(
+                    (model) => model.providerId === providerId && model.id === "anthropic/sonnet-5",
+                ),
+            ).toBe(offered);
+        }
+    });
+
     it("loads standalone profile bootstrap records from machine configuration", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-config-profile-"));
         temporaryDirectories.push(root);

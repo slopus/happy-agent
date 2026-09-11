@@ -52,6 +52,10 @@ export interface AutoReviewCapture {
     readonly inferred: boolean;
     /** How the reviewer's run ended: `"normal"` is a completed verdict, anything else is not. */
     readonly doneState: SessionDoneState | undefined;
+    /** The provider's human-readable failure, not a permission judgement. */
+    readonly errorMessage?: string;
+    /** Set before sending inference, after provider/session construction has succeeded. */
+    readonly inferenceStarted?: boolean;
 }
 
 interface ReviewerState {
@@ -60,6 +64,8 @@ interface ReviewerState {
     usage: SessionUsage;
     inferred: boolean;
     doneState: SessionDoneState | undefined;
+    errorMessage?: string;
+    inferenceStarted?: boolean;
 }
 
 const EMPTY_USAGE: SessionUsage = {
@@ -115,12 +121,18 @@ export class AutoReviewRuntimeModule implements AgentModule {
             usage: state.usage,
             inferred: state.inferred,
             doneState: state.doneState,
+            ...(state.errorMessage === undefined ? {} : { errorMessage: state.errorMessage }),
+            ...(state.inferenceStarted === undefined
+                ? {}
+                : { inferenceStarted: state.inferenceStarted }),
         };
         // Fresh containers, so the capture just returned is never mutated behind its holder.
         state.entries = [];
         state.usage = { ...EMPTY_USAGE };
         state.inferred = false;
         state.doneState = undefined;
+        delete state.errorMessage;
+        delete state.inferenceStarted;
         return capture;
     }
 
@@ -141,6 +153,14 @@ export class AutoReviewRuntimeModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
+        beforeInference: (_ctx: Context, scope: AgentModuleScope): void => {
+            const state = this.#state.get(scope.agent.id);
+            if (state === undefined) return;
+            state.inferenceStarted = true;
+            state.doneState = undefined;
+            delete state.errorMessage;
+        },
+
         instructions: (_ctx: Context, scope: AgentModuleScope): string =>
             this.#state.get(scope.agent.id)?.instructions ?? PERMISSION_REVIEW_INSTRUCTIONS,
 
@@ -190,6 +210,8 @@ export class AutoReviewRuntimeModule implements AgentModule {
                 state.inferred = true;
             } else if (event.type === "done") {
                 state.doneState = event.state;
+                if (event.state === "error") state.errorMessage = event.message;
+                else delete state.errorMessage;
             }
         },
 
@@ -203,6 +225,7 @@ export class AutoReviewRuntimeModule implements AgentModule {
             if (state === undefined) return;
             state.inferred = true;
             if (inference.state !== undefined) state.doneState = inference.state;
+            if (inference.errorMessage !== undefined) state.errorMessage = inference.errorMessage;
         },
     };
 
