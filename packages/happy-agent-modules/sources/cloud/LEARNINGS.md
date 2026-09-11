@@ -56,6 +56,11 @@
 
 ## Non-blocking organization credentials
 
+- A missing Cloud login is not an invalidated cache entry. Organization-cache guards and ordinary
+  minting share the same login-recovery messages: sign in when disconnected, sign in again after
+  credential rejection, or finish an active sign-in. Only a changed cache entry while still
+  connected asks for another team token. Preserve the existing error code and authoritative Cloud
+  snapshot; reporting the error must not refresh credentials or replace the login state.
 - Refreshing WorkOS on every proxied team request serialized parallel agent state reads into
   successive network round trips. Internal organization minting now keeps at most 100 verified
   access tokens in memory, keyed by organization, and shares one in-flight refresh and its outcome

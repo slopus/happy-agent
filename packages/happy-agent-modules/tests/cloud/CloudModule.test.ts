@@ -179,6 +179,54 @@ function deferred<T>() {
 }
 
 describe("CloudModule", () => {
+    it.each([
+        [
+            "disconnected",
+            "Cloud is not authenticated on this Happy Agent. Sign in to Cloud to continue.",
+        ],
+        ["authorizing", "Cloud sign-in is in progress. Complete sign-in on this Happy Agent."],
+        [
+            "credentials_rejected",
+            "Cloud authorization has expired. Sign in to Cloud again on this Happy Agent.",
+        ],
+    ] as const)(
+        "explains %s login recovery without requesting another team token",
+        async (state, message) => {
+            const { database, module } = await fixture(`cloud-team-login-recovery-${state}`);
+            if (state === "authorizing") {
+                await module.start(database.context, {
+                    environment: "production",
+                    redirectUri: "happy-auth://callback",
+                });
+            } else if (state === "credentials_rejected") {
+                await connect(module, database);
+                workos.refresh.mockRejectedValueOnce(
+                    new OauthException(400, "request-id", "invalid_grant", "expired", {}),
+                );
+                await expect(module.mint(database.context)).rejects.toMatchObject({
+                    code: "cloud_unauthorized",
+                });
+            }
+            workos.refresh.mockClear();
+            vi.mocked(fetch).mockClear();
+            const cloud = module.status(database.context);
+            for (const read of [
+                () => module.mintForOrganization(database.context, "org_target"),
+                () => module.mint(database.context),
+            ]) {
+                await expect(read()).rejects.toMatchObject({
+                    status: 409,
+                    code: "cloud_not_authenticated",
+                    message,
+                    cloud,
+                });
+            }
+            expect(module.status(database.context)).toBe(cloud);
+            expect(workos.refresh).not.toHaveBeenCalled();
+            expect(fetch).not.toHaveBeenCalled();
+        },
+    );
+
     it("shares one verified organization mint across concurrent requests and reuses it", async () => {
         const { database, module } = await fixture("cloud-team-cache-concurrent");
         await connect(module, database);
@@ -462,7 +510,11 @@ describe("CloudModule", () => {
         await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalledOnce());
         const disconnecting = module.disconnect(database.context);
         const queued = module.mintForOrganization(database.context, "org_target");
-        const rejected = expect(queued).rejects.toMatchObject({ code: "cloud_not_authenticated" });
+        const rejected = expect(queued).rejects.toMatchObject({
+            code: "cloud_not_authenticated",
+            message:
+                "Cloud is not authenticated on this Happy Agent. Sign in to Cloud to continue.",
+        });
         refresh.resolve({ accessToken: "public-token", refreshToken: "rotated", user });
         await blocking;
         await disconnecting;

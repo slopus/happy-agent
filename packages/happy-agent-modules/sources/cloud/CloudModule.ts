@@ -551,10 +551,8 @@ export class CloudModule implements AgentModule {
         credential: OrganizationCredential,
     ): void {
         this.#assertRunning();
-        if (
-            this.#organizationCredentials.get(organizationId) !== credential ||
-            this.#cloud.status !== "connected"
-        ) {
+        if (this.#cloud.status !== "connected") throw this.#notAuthenticated();
+        if (this.#organizationCredentials.get(organizationId) !== credential) {
             throw this.#error(
                 409,
                 "cloud_not_authenticated",
@@ -925,11 +923,7 @@ export class CloudModule implements AgentModule {
         const stored = await this.#readOwned(ctx);
         const session = stored?.session;
         if (session === null || session === undefined || this.#cloud.status !== "connected") {
-            throw this.#error(
-                409,
-                "cloud_not_authenticated",
-                "Cloud is not authenticated on this Happy Agent.",
-            );
+            throw this.#notAuthenticated();
         }
 
         let authenticated;
@@ -1181,6 +1175,16 @@ export class CloudModule implements AgentModule {
         message: string,
     ): CloudOperationError {
         return new CloudOperationError(status, code, message, this.#cloud);
+    }
+
+    #notAuthenticated(): CloudOperationError {
+        const message =
+            this.#cloud.error?.code === "credentials_rejected"
+                ? "Cloud authorization has expired. Sign in to Cloud again on this Happy Agent."
+                : this.#cloud.status === "authorizing"
+                  ? "Cloud sign-in is in progress. Complete sign-in on this Happy Agent."
+                  : "Cloud is not authenticated on this Happy Agent. Sign in to Cloud to continue.";
+        return this.#error(409, "cloud_not_authenticated", message);
     }
 
     #assertRunning(): void {
