@@ -38,7 +38,7 @@ product never overrides it.
 
 ## Tools
 
-- **`gemini_imagegen`** — an image from any of Gemini's three image models, published the same way
+- **`gemini_imagegen`** — a JPEG image from any of Gemini's three image models, published the same way
   `codex_imagegen` publishes: decoded to prove it is a real image, written into the shared
   generated-files folder under the tool call's name, and handed back to the model as both the path
   and the image itself. Whatever Gemini wrote about the image comes back as its description.
@@ -46,7 +46,8 @@ product never overrides it.
     `model` chooses between `gemini-3.1-flash-image` (Nano Banana 2, the default),
     `gemini-3-pro-image` (Nano Banana Pro), and `gemini-2.5-flash-image` (Nano Banana).
     `reference_image_paths` names local pictures the result is built from — editing, composition,
-    character consistency, or style. `aspect_ratio`, `image_size`, and `output_format` are optional,
+    character consistency, or style. The tool generates JPEGs only; there is no output-format or
+    MIME-type selection. `aspect_ratio` and `image_size` are optional,
     and are checked against the chosen model's own published limits before a generation is spent:
     the panoramic ratios and 0.5K belong to 3.1 Flash Image alone, and 2.5 Flash Image has one fixed
     size. `GeminiImageModels.ts` is that catalog, hardcoded rather than discovered, because Rig never

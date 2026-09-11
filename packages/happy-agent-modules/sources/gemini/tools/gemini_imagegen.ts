@@ -10,7 +10,6 @@ import type { GeminiConnection } from "../Gemini.js";
 import {
     DEFAULT_GEMINI_IMAGE_MODEL,
     GEMINI_ASPECT_RATIOS,
-    GEMINI_IMAGE_MIME_TYPES,
     GEMINI_IMAGE_MODELS,
     GEMINI_IMAGE_SIZES,
 } from "../GeminiImageModels.js";
@@ -59,7 +58,7 @@ export function geminiGenerateImageTool(connection: GeminiConnection, config: Co
             "edit image",
             "generate visual",
         ],
-        description: `Generate a new image with Gemini (Nano Banana) from a detailed visual prompt, optionally building on reference images you provide.
+        description: `Generate a new JPEG image with Gemini (Nano Banana) from a detailed visual prompt, optionally building on reference images you provide. This tool generates JPEGs only; the output format cannot be selected.
 
 Models:
 ${MODEL_GUIDE}
@@ -106,12 +105,6 @@ Guidelines:
                     },
                 ),
             ),
-            output_format: Type.Optional(
-                Type.Union(
-                    GEMINI_IMAGE_MIME_TYPES.map((mimeType) => Type.Literal(mimeType)),
-                    { description: "Encoding to request; Gemini chooses when this is omitted" },
-                ),
-            ),
         }),
         returnType: generatedImageSchema,
         // Generating an image is billed work that leaves a file behind, so an interrupted call is
@@ -142,7 +135,6 @@ Guidelines:
                 ...(args.model === undefined ? {} : { model: args.model }),
                 ...(args.aspect_ratio === undefined ? {} : { aspectRatio: args.aspect_ratio }),
                 ...(args.image_size === undefined ? {} : { imageSize: args.image_size }),
-                ...(args.output_format === undefined ? {} : { mimeType: args.output_format }),
                 prompt: args.prompt,
                 referenceImages: references.map((image) => ({
                     base64: image.bytes.toString("base64"),
@@ -150,8 +142,7 @@ Guidelines:
                 })),
                 ...(ctx.lifetime === undefined ? {} : { signal: ctx.lifetime }),
             });
-            // Gemini decides the encoding it answers in, so the file is named after the format
-            // actually decoded rather than the one that was asked for.
+            // Validate the returned bytes and derive the extension from the decoded image.
             const base64 = Buffer.from(generated.bytes).toString("base64");
             const image = await decodeAndValidateImage(base64, ["png", "jpeg"]);
             const fileName = `${call.id.replaceAll(/[^A-Za-z0-9_-]/gu, "_")}.${EXTENSIONS[image.format]}`;

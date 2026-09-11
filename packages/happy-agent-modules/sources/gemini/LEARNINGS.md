@@ -6,7 +6,7 @@
 an agent without a resolved machine lost image generation entirely — on a Bedrock-only
 installation with a Gemini key, the agent had Gemini web search but no image tool. The user's
 direction is that the two vendor image tools share one approach rather than two: like
-`codex_imagegen`, the Gemini tool is gated only on its credential, proves the answer is a real PNG
+`codex_imagegen`, the Gemini tool is gated only on its credential, proves the answer is a real image
 via the shared `impl/images` helpers, publishes into the shared generated-files folder under the
 tool call's name, and hands the model both the path and the image. The tools stay separate
 vendor-shaped definitions in their own modules — unifying behavior does not mean merging one
@@ -17,15 +17,18 @@ machine and keep the compute gate.
 
 `gemini_imagegen` offers every Gemini image model and every documented parameter: `model`,
 `reference_image_paths` (the API takes them as `{type:"image", mime_type, data}` blocks in the same
-`input` array as the prompt), `aspect_ratio`, `image_size`, and `output_format`. Reading and
+`input` array as the prompt), `aspect_ratio`, and `image_size`. Reading and
 normalizing local reference files is shared image-pipeline work in `sources/impl/images/`, not
 either vendor module's own, so Codex and Gemini prepare them identically and only the final
 request shape differs.
 
-Three facts settled from Google's Interactions API reference, having been guessed wrong before:
-`response_format.mime_type` is real and accepts both `image/png` and `image/jpeg`; the aspect
-ratios and resolutions differ per model, so arguments are validated against that model's published
-table before a billed request; and every REST example pins `Api-Revision`, which Rig now sends.
+The tool previously offered PNG/JPEG selection based on the API documentation. Human feedback
+corrected this: Gemini image generation produces JPEGs only. The tool now explains that explicitly,
+offers no `output_format` argument, and sends no `response_format.mime_type`. MIME types still
+describe reference-image inputs and returned media; they are not output-encoding requests.
+
+Aspect ratios and resolutions differ per model, so arguments are validated against that model's
+published table before a billed request. Every REST example pins `Api-Revision`, which Rig sends.
 The model catalog is hardcoded in `GeminiImageModels.ts` — Rig never asks a provider what it
 offers.
 

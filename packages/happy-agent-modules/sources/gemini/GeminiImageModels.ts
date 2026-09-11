@@ -30,12 +30,8 @@ export const GEMINI_ASPECT_RATIOS = [...COMMON_ASPECT_RATIOS, ...FLASH_ONLY_ASPE
 /** Every resolution any model accepts. Google rejects a lowercase `k`. */
 export const GEMINI_IMAGE_SIZES = ["0.5K", "1K", "2K", "4K"] as const;
 
-/** The encodings Gemini will return an image in. */
-export const GEMINI_IMAGE_MIME_TYPES = ["image/jpeg", "image/png"] as const;
-
 export type GeminiAspectRatio = (typeof GEMINI_ASPECT_RATIOS)[number];
 export type GeminiImageSize = (typeof GEMINI_IMAGE_SIZES)[number];
-export type GeminiImageMimeType = (typeof GEMINI_IMAGE_MIME_TYPES)[number];
 
 /** One image model, and the requests it documents that it can answer. */
 export interface GeminiImageModel {

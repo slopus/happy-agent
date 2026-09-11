@@ -40,7 +40,6 @@ describe("Gemini media APIs", () => {
             aspectRatio: "16:9",
             fetch: request as unknown as typeof fetch,
             imageSize: "2K",
-            mimeType: "image/jpeg",
             prompt: "A moonlit harbor",
         });
 
@@ -49,13 +48,12 @@ describe("Gemini media APIs", () => {
             mimeType: "image/jpeg",
             text: "A moonlit harbor.",
         });
-        expect(requestBody(request)).toMatchObject({
+        expect(requestBody(request)).toEqual({
             input: [{ type: "text", text: "A moonlit harbor" }],
             model: "gemini-3.1-flash-image",
             response_format: {
                 aspect_ratio: "16:9",
                 image_size: "2K",
-                mime_type: "image/jpeg",
                 type: "image",
             },
         });

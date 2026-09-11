@@ -57,6 +57,14 @@ function requestBody(request: ReturnType<typeof vi.fn>): Record<string, unknown>
 }
 
 describe("the Gemini module's tools", () => {
+    it("describes JPEG generation without offering an output format", async () => {
+        const { tools } = await machine();
+        const imageTool = tools.find((tool) => tool.name === "gemini_imagegen")!;
+
+        expect(imageTool.description).toContain("JPEG");
+        expect(imageTool.parameters.properties).not.toHaveProperty("output_format");
+    });
+
     it("offers exactly the three Gemini media tools, each declaring its external boundary", async () => {
         const { tools } = await machine();
 
@@ -132,7 +140,7 @@ describe("the Gemini module's tools", () => {
         await rm(result.path, { force: true });
     });
 
-    it("publishes a JPEG answer as a .jpg, since Gemini picks the encoding", async () => {
+    it("publishes a JPEG answer as a .jpg", async () => {
         const bytes = await sharp({
             create: { width: 8, height: 8, channels: 3, background: { r: 10, g: 90, b: 10 } },
         })
@@ -181,15 +189,13 @@ describe("the Gemini module's tools", () => {
             reference_image_paths: [referencePath],
             aspect_ratio: "21:9",
             image_size: "4K",
-            output_format: "image/png",
         });
 
         const body = requestBody(request);
         expect(body.model).toBe("gemini-3-pro-image");
-        expect(body.response_format).toMatchObject({
+        expect(body.response_format).toEqual({
             aspect_ratio: "21:9",
             image_size: "4K",
-            mime_type: "image/png",
             type: "image",
         });
         const input = body.input as { type: string; mime_type?: string }[];
