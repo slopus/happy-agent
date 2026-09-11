@@ -153,7 +153,389 @@ async function connect(
     });
 }
 
+function teamToken(organizationId: string, lifetime = 300) {
+    const issuedAt = Math.floor(Date.now() / 1_000);
+    return `${Buffer.from('{"alg":"RS256"}').toString("base64url")}.${Buffer.from(
+        JSON.stringify({
+            client_id: "client_01KZD3XE9YAFAMT0P8TD4HP73E",
+            exp: issuedAt + lifetime,
+            iat: issuedAt,
+            iss: "https://api.workos.com/user_management/client_01KZD3XE9YAFAMT0P8TD4HP73E",
+            org_id: organizationId,
+            sid: "session_test",
+            sub: user.id,
+        }),
+    ).toString("base64url")}.test-signature`;
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((onResolve, onReject) => {
+        resolve = onResolve;
+        reject = onReject;
+    });
+    return { promise, resolve, reject };
+}
+
 describe("CloudModule", () => {
+    it("shares one verified organization mint across concurrent requests and reuses it", async () => {
+        const { database, module } = await fixture("cloud-team-cache-concurrent");
+        await connect(module, database);
+        vi.mocked(fetch).mockClear();
+        const accessToken = teamToken("org_target");
+        workos.refresh.mockResolvedValue({ accessToken, refreshToken: "rotated", user });
+
+        await expect(
+            Promise.all(
+                Array.from({ length: 10 }, () =>
+                    module.mintForOrganization(database.context, "org_target"),
+                ),
+            ),
+        ).resolves.toEqual(Array(10).fill(accessToken));
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            accessToken,
+        );
+        expect(workos.refresh).toHaveBeenCalledOnce();
+        expect(fetch).toHaveBeenCalledOnce();
+        expect((await createCloudDatabase().read(database.context))?.session?.refreshToken).toBe(
+            "rotated",
+        );
+    });
+
+    it("serves valid cached tokens during background refresh and waits only after expiry", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(1_000_000);
+        const { database, module } = await fixture("cloud-team-cache-background");
+        await connect(module, database);
+        const accessToken = teamToken("org_target");
+        workos.refresh.mockResolvedValueOnce({ accessToken, refreshToken: "rotated", user });
+        await module.mintForOrganization(database.context, "org_target");
+
+        const refresh = deferred<{
+            accessToken: string;
+            refreshToken: string;
+            user: typeof user;
+        }>();
+        workos.refresh.mockImplementation(() => refresh.promise);
+        vi.setSystemTime(1_270_000);
+        const warm = vi.fn();
+        const warming = module.mintForOrganization(database.context, "org_target").then(warm);
+        try {
+            await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalledTimes(2));
+            await vi.waitFor(() => expect(warm).toHaveBeenCalledWith(accessToken));
+            await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+                accessToken,
+            );
+            vi.setSystemTime(1_300_000);
+            const expired = vi.fn();
+            const waiting = module
+                .mintForOrganization(database.context, "org_target")
+                .then(expired);
+            await Promise.resolve();
+            expect(expired).not.toHaveBeenCalled();
+            const replacement = teamToken("org_target");
+            refresh.resolve({ accessToken: replacement, refreshToken: "next", user });
+            await waiting;
+            expect(expired).toHaveBeenCalledWith(replacement);
+            expect(workos.refresh).toHaveBeenCalledTimes(2);
+        } finally {
+            refresh.resolve({ accessToken: teamToken("org_target"), refreshToken: "next", user });
+            await warming;
+        }
+    });
+
+    it("does not put cached requests behind another organization's credential rotation", async () => {
+        const { database, module } = await fixture("cloud-team-cache-lock");
+        await connect(module, database);
+        const accessToken = teamToken("org_cached");
+        workos.refresh.mockResolvedValueOnce({ accessToken, refreshToken: "rotated", user });
+        await module.mintForOrganization(database.context, "org_cached");
+        const refresh = deferred<{
+            accessToken: string;
+            refreshToken: string;
+            user: typeof user;
+        }>();
+        workos.refresh.mockImplementationOnce(() => refresh.promise);
+        const other = module.mintForOrganization(database.context, "org_other");
+        await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalledTimes(2));
+        const served = vi.fn();
+        const cached = module.mintForOrganization(database.context, "org_cached").then(served);
+        try {
+            await vi.waitFor(() => expect(served).toHaveBeenCalledWith(accessToken));
+        } finally {
+            refresh.resolve({ accessToken: teamToken("org_other"), refreshToken: "next", user });
+            await Promise.all([other, cached]);
+        }
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(workos.refresh).toHaveBeenLastCalledWith({
+            organizationId: "org_other",
+            refreshToken: "rotated",
+        });
+    });
+
+    it("shares failed verification without caching it and retries later with the rotated credential", async () => {
+        const { database, module } = await fixture("cloud-team-cache-failure");
+        await connect(module, database);
+        const accessToken = teamToken("org_target");
+        workos.refresh.mockResolvedValue({ accessToken, refreshToken: "rotated", user });
+        vi.mocked(fetch).mockResolvedValueOnce(new Response("unavailable", { status: 503 }));
+        const results = await Promise.allSettled(
+            Array.from({ length: 10 }, () =>
+                module.mintForOrganization(database.context, "org_target"),
+            ),
+        );
+        expect(results).toEqual(
+            Array(10).fill(
+                expect.objectContaining({
+                    status: "rejected",
+                    reason: expect.objectContaining({ code: "cloud_unavailable" }),
+                }),
+            ),
+        );
+        expect(workos.refresh).toHaveBeenCalledOnce();
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            accessToken,
+        );
+        expect(workos.refresh).toHaveBeenLastCalledWith({
+            organizationId: "org_target",
+            refreshToken: "rotated",
+        });
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps a valid token after background failure, backs off, and never serves it after expiry", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(1_000_000);
+        const { database, module } = await fixture("cloud-team-cache-background-failure");
+        await connect(module, database);
+        const accessToken = teamToken("org_target");
+        workos.refresh.mockResolvedValueOnce({ accessToken, refreshToken: "rotated", user });
+        await module.mintForOrganization(database.context, "org_target");
+        workos.refresh.mockRejectedValue(new Error("offline"));
+        vi.setSystemTime(1_270_000);
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            accessToken,
+        );
+        // A public mint uses the same lock: its completion proves the background refresh settled.
+        await expect(module.mint(database.context)).rejects.toMatchObject({
+            code: "cloud_unavailable",
+        });
+        expect(workos.refresh).toHaveBeenCalledTimes(3);
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            accessToken,
+        );
+        expect(workos.refresh).toHaveBeenCalledTimes(3);
+        vi.setSystemTime(1_300_000);
+        await expect(
+            module.mintForOrganization(database.context, "org_target"),
+        ).rejects.toMatchObject({ code: "cloud_unavailable" });
+        expect(workos.refresh).toHaveBeenCalledTimes(4);
+    });
+
+    it("invalidates cached tokens only when sign-out commits and never reuses them for another account", async () => {
+        const { database, module } = await fixture("cloud-team-cache-signout");
+        await connect(module, database);
+        const accessToken = teamToken("org_target");
+        workos.refresh.mockResolvedValueOnce({ accessToken, refreshToken: "rotated", user });
+        await module.mintForOrganization(database.context, "org_target");
+        await expect(
+            database.context.inTx(async (ctx) => {
+                await module.disconnect(ctx);
+                throw new Error("rollback");
+            }),
+        ).rejects.toThrow("rollback");
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            accessToken,
+        );
+        expect(workos.refresh).toHaveBeenCalledOnce();
+
+        await module.disconnect(database.context);
+        await expect(
+            module.mintForOrganization(database.context, "org_target"),
+        ).rejects.toMatchObject({ code: "cloud_not_authenticated" });
+        const otherUser = { ...user, id: "user_other" };
+        workos.exchange.mockResolvedValueOnce({
+            accessToken: "login-other",
+            refreshToken: "other-refresh",
+            user: otherUser,
+        });
+        vi.mocked(fetch).mockResolvedValueOnce(
+            Response.json({ message: "hello", userId: otherUser.id }),
+        );
+        await connect(module, database, "staging");
+        workos.refresh.mockRejectedValueOnce(new Error("offline"));
+        await expect(
+            module.mintForOrganization(database.context, "org_target"),
+        ).rejects.toMatchObject({ code: "cloud_unavailable" });
+        expect(workos.refresh).toHaveBeenLastCalledWith({
+            organizationId: "org_target",
+            refreshToken: "other-refresh",
+        });
+    });
+
+    it("clears every organization's cached token on definitive credential rejection", async () => {
+        const { database, module } = await fixture("cloud-team-cache-revoked");
+        await connect(module, database);
+        for (const organizationId of ["org_first", "org_second"]) {
+            workos.refresh.mockResolvedValueOnce({
+                accessToken: teamToken(organizationId),
+                refreshToken: "rotated",
+                user,
+            });
+            await module.mintForOrganization(database.context, organizationId);
+        }
+        workos.refresh.mockRejectedValueOnce(
+            new OauthException(400, "request-id", "invalid_grant", "expired", {}),
+        );
+        await expect(module.mint(database.context)).rejects.toMatchObject({
+            code: "cloud_unauthorized",
+        });
+        for (const organizationId of ["org_first", "org_second"]) {
+            await expect(
+                module.mintForOrganization(database.context, organizationId),
+            ).rejects.toMatchObject({ code: "cloud_not_authenticated" });
+        }
+        expect(workos.refresh).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not let one cancelled waiter cancel another caller's shared mint", async () => {
+        const { database, module } = await fixture("cloud-team-cache-cancelled-waiter");
+        await connect(module, database);
+        const refresh = deferred<{
+            accessToken: string;
+            refreshToken: string;
+            user: typeof user;
+        }>();
+        workos.refresh.mockImplementationOnce(() => refresh.promise);
+        const controller = new AbortController();
+        const cancelled = module.mintForOrganization(
+            database.context,
+            "org_target",
+            controller.signal,
+        );
+        const active = module.mintForOrganization(database.context, "org_target");
+        controller.abort();
+        const rejected = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+        const accessToken = teamToken("org_target");
+        refresh.resolve({ accessToken, refreshToken: "rotated", user });
+        await rejected;
+        await expect(active).resolves.toBe(accessToken);
+        expect(workos.refresh).toHaveBeenCalledOnce();
+    });
+
+    it("skips queued minting when all waiters cancel before consuming a refresh token", async () => {
+        const { database, module } = await fixture("cloud-team-cache-cancelled-queue");
+        await connect(module, database);
+        const refresh = deferred<{
+            accessToken: string;
+            refreshToken: string;
+            user: typeof user;
+        }>();
+        workos.refresh.mockImplementationOnce(() => refresh.promise);
+        const blocking = module.mint(database.context);
+        await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalledOnce());
+        const controller = new AbortController();
+        const cancelled = module.mintForOrganization(
+            database.context,
+            "org_target",
+            controller.signal,
+        );
+        const rejected = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+        controller.abort();
+        refresh.resolve({ accessToken: "public-token", refreshToken: "rotated", user });
+        await blocking;
+        await rejected;
+        expect(workos.refresh).toHaveBeenCalledOnce();
+    });
+
+    it("fences queued organization minting behind a committed sign-out", async () => {
+        const { database, module } = await fixture("cloud-team-cache-signout-queue");
+        await connect(module, database);
+        const refresh = deferred<{
+            accessToken: string;
+            refreshToken: string;
+            user: typeof user;
+        }>();
+        workos.refresh.mockImplementationOnce(() => refresh.promise);
+        const blocking = module.mint(database.context);
+        await vi.waitFor(() => expect(workos.refresh).toHaveBeenCalledOnce());
+        const disconnecting = module.disconnect(database.context);
+        const queued = module.mintForOrganization(database.context, "org_target");
+        const rejected = expect(queued).rejects.toMatchObject({ code: "cloud_not_authenticated" });
+        refresh.resolve({ accessToken: "public-token", refreshToken: "rotated", user });
+        await blocking;
+        await disconnecting;
+        await rejected;
+        expect(workos.refresh).toHaveBeenCalledOnce();
+        expect((await createCloudDatabase().read(database.context))?.session).toBeNull();
+    });
+
+    it("withholds and does not cache a verified token for the wrong organization", async () => {
+        const { database, module } = await fixture("cloud-team-cache-wrong-organization");
+        await connect(module, database);
+        workos.refresh.mockResolvedValueOnce({
+            accessToken: teamToken("org_other"),
+            refreshToken: "rotated",
+            user,
+        });
+        await expect(
+            module.mintForOrganization(database.context, "org_target"),
+        ).rejects.toMatchObject({
+            code: "cloud_unavailable",
+        });
+        const accessToken = teamToken("org_target");
+        workos.refresh.mockResolvedValueOnce({ accessToken, refreshToken: "next", user });
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            accessToken,
+        );
+        expect(workos.refresh).toHaveBeenCalledTimes(2);
+        expect(workos.refresh).toHaveBeenLastCalledWith({
+            organizationId: "org_target",
+            refreshToken: "rotated",
+        });
+    });
+
+    it("rejects cached reads after stopping and leaves public minting uncached", async () => {
+        const { database, module } = await fixture("cloud-team-cache-stop");
+        await connect(module, database);
+        const accessToken = teamToken("org_target");
+        workos.refresh.mockResolvedValue({ accessToken, refreshToken: "rotated", user });
+        await module.mintForOrganization(database.context, "org_target");
+        await module.mint(database.context);
+        await module.mint(database.context);
+        expect(workos.refresh).toHaveBeenCalledTimes(3);
+        await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
+            accessToken,
+        );
+        expect(workos.refresh).toHaveBeenCalledTimes(3);
+        await module.stop();
+        await expect(module.mintForOrganization(database.context, "org_target")).rejects.toThrow(
+            "stopping",
+        );
+    });
+
+    it("bounds the cache and evicts the least recently used settled organization", async () => {
+        const { database, module } = await fixture("cloud-team-cache-bound");
+        await connect(module, database);
+        workos.refresh.mockImplementation(
+            async ({ organizationId }: { organizationId: string }) => ({
+                accessToken: teamToken(organizationId),
+                refreshToken: "rotated",
+                user,
+            }),
+        );
+        for (let index = 0; index < 100; index += 1) {
+            await module.mintForOrganization(database.context, `org_${index}`);
+        }
+        await module.mintForOrganization(database.context, "org_0");
+        await module.mintForOrganization(database.context, "org_100");
+        await module.mintForOrganization(database.context, "org_0");
+        expect(workos.refresh).toHaveBeenCalledTimes(101);
+        await module.mintForOrganization(database.context, "org_1");
+        expect(workos.refresh).toHaveBeenCalledTimes(102);
+    });
+
     it("validates invitations before refresh and uses one rotated, verified credential without leaking links", async () => {
         const logs: CloudLogRecord[] = [];
         const { database, module } = await fixture("cloud-team-invitation", logs);
@@ -473,13 +855,14 @@ describe("CloudModule", () => {
         workos.refresh.mockClear();
         const previousToken = (await createCloudDatabase().read(database.context))?.session
             ?.refreshToken;
+        const accessToken = teamToken("org_target");
         workos.refresh.mockResolvedValueOnce({
-            accessToken: "team-access",
+            accessToken,
             refreshToken: "team-refresh",
             user,
         });
         await expect(module.mintForOrganization(database.context, "org_target")).resolves.toBe(
-            "team-access",
+            accessToken,
         );
         expect(workos.refresh).toHaveBeenCalledWith({
             refreshToken: previousToken,

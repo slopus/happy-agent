@@ -35,6 +35,16 @@ credential for both remote writes. If endpoint configuration fails after creatio
 names the created team so the caller can finish setup without creating a duplicate.
 
 `ConnectionsModule` uses `mintForOrganization` for organization-scoped WorkOS credentials.
+This internal path retains at most 100 verified tokens in a process-local, organization-keyed LRU
+cache. Valid cached reads bypass the rotation lock entirely. Requests within the final fifth of a
+token's lifetime (at most 60 seconds) trigger a shared background refresh and immediately use the
+current token; only missing or expired tokens wait. Failed background refreshes retain valid tokens
+and back off for five seconds, without delaying an expired-token request. Every actual refresh
+still serializes rotation and persistence before verification. JWT identity, organization, client,
+issuer, and lifetime are checked before caching. Committed sign-out or account changes, definitive
+credential rejection, and shutdown discard cached credentials and fence off old queued work.
+Public `mint` and short-lived direct-access minting do not use this cache.
+
 `getWorkOSState` returns only the freshly verified WorkOS user ID and the connected deployment's
 client ID; authorization of that agent-facing lookup belongs to its consumer. Cloud exposes no
 team quota or inferred capacity; the team list is the available team data.

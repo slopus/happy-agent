@@ -35,7 +35,8 @@
   Cloud verification, require matching user, client, issuer, and organization claims, a valid
   current lifetime, and both total and remaining lifetime at most five minutes. Return the real
   expiry; never relabel a longer token. A withheld token still leaves its replacement refresh
-  token durably saved. The existing public mint and internal connection mint stay unchanged.
+  token durably saved. Public minting remains fresh on every call; internal connection minting
+  uses the verified organization-token cache described below.
 
 - Refresh tokens rotate. Persist the replacement immediately after refresh and before `/v0/hello`.
   Clear credentials only on WorkOS `invalid_grant`; hello failures are unavailable, because even its
@@ -52,6 +53,22 @@
 - Exchanges and rotations are independently owned Cloud workflows on the module's named database
   context. Preflight that database before contacting WorkOS and immediately commit credential
   changes; a caller transaction cannot safely roll back a consumed external credential.
+
+## Non-blocking organization credentials
+
+- Refreshing WorkOS on every proxied team request serialized parallel agent state reads into
+  successive network round trips. Internal organization minting now keeps at most 100 verified
+  access tokens in memory, keyed by organization, and shares one in-flight refresh and its outcome
+  among concurrent callers. Rotation of the shared refresh credential remains globally serialized.
+- A valid cached token never waits for the credential lock, even while another organization is
+  refreshing. A request near expiry starts a background refresh and immediately uses the existing
+  token. Only a missing or expired token waits. Background failure preserves the still-valid token
+  and briefly backs off further background attempts; expiry never permits serving a stale token.
+- Cache only after durable refresh rotation, Cloud verification, and matching user, organization,
+  client, issuer, and current JWT lifetime checks. Keep access tokens out of durable storage and
+  public snapshots. Sign-out, account changes, and credential rejection invalidate the cache only
+  after commit; rolled-back sign-out preserves it. Shutdown clears it too. Queued work cannot
+  repopulate a cleared cache, and one cancelled caller cannot cancel another caller's shared mint.
 
 ## Secret boundaries
 

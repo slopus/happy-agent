@@ -411,8 +411,17 @@ and belong to the selected client instance.
 Every request first authenticates to the main daemon normally. Team callers must have completed
 local profile onboarding. The main daemon replaces that request's authorization with the configured
 remote bearer credential for a standalone secondary. For a team remote reached through a standalone
-main, Cloud mints an organization-scoped WorkOS access token for the connected user, serializing and
-persisting refresh-token rotation through its existing authentication boundary. For a team main,
+main, Cloud mints and verifies an organization-scoped WorkOS access token for the connected user
+once, then reuses it from a bounded in-memory cache keyed by organization until its actual
+expiration. Shortly before expiry, a request starts a background refresh and immediately uses the
+still-valid cached token. Cached requests never wait for minting or refresh; only requests without
+a token or with an expired token wait. Concurrent requests for the same organization share one
+in-flight mint or refresh, including its failure; a later request may try again. A failed background
+refresh does not prevent reuse of a still-valid token. Actual refresh-token rotations
+remain serialized across organizations and are persisted through the existing authentication
+boundary before verification. Cached tokens and in-flight results cannot cross a committed
+sign-out, account or environment change, authoritative credential rejection, or daemon shutdown.
+This internal reuse does not change `POST /v0/cloud/access-token`. For a team main,
 the caller's authenticated WorkOS access token is forwarded; it must also authorize the destination
 organization. The proxy never substitutes the team's owner identity. The remote independently
 checks authentication, organization membership, and profile onboarding. Secrets are never returned

@@ -66,6 +66,10 @@ import { createCloudVersion } from "./createCloudVersion.js";
 import { cloudMigrations } from "./CloudMigrations.js";
 import { shortLivedWorkOSToken, type ShortLivedWorkOSToken } from "./shortLivedWorkOSToken.js";
 import {
+    organizationAccessToken,
+    type OrganizationAccessToken,
+} from "./organizationAccessToken.js";
+import {
     happyTeamEndpointInputSchema,
     normalizeHappyTeamEndpoint,
     type HappyTeam,
@@ -78,6 +82,16 @@ import {
 
 const AUTHORIZATION_LIFETIME_MS = 10 * 60 * 1_000;
 const AUTHORIZATION_EXPIRY_RETRY_MS = 5_000;
+const ORGANIZATION_TOKEN_CACHE_LIMIT = 100;
+const ORGANIZATION_TOKEN_REFRESH_AHEAD_MS = 60_000;
+const ORGANIZATION_TOKEN_REFRESH_RETRY_MS = 5_000;
+
+interface OrganizationCredential {
+    token?: OrganizationAccessToken;
+    pending?: Promise<string>;
+    refreshAfter: number;
+    readonly waiters: Set<AbortSignal | undefined>;
+}
 
 interface CloudAttempt {
     readonly codeVerifier: string;
@@ -146,6 +160,7 @@ export class CloudModule implements AgentModule {
     readonly #listeners = new Set<CloudUpdatedListener>();
     readonly #lock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #clients = new Map<CloudEnvironment, CloudWorkOS>();
+    readonly #organizationCredentials = new Map<string, OrganizationCredential>();
     #attempt: CloudAttempt | undefined;
     #cloud: Cloud;
     #context: Context | undefined;
@@ -193,11 +208,13 @@ export class CloudModule implements AgentModule {
         if (ctx === undefined) {
             this.#stopping = true;
             this.#attempt = undefined;
+            this.#organizationCredentials.clear();
             return;
         }
         await this.#lock.runInLock(ctx, async () => {
             this.#stopping = true;
             this.#attempt = undefined;
+            this.#organizationCredentials.clear();
         });
     }
 
@@ -429,7 +446,7 @@ export class CloudModule implements AgentModule {
         });
     }
 
-    /** Mint for a configured team through the same serialized credential-rotation boundary. */
+    /** Reuse verified team tokens without waiting for the credential-rotation boundary. */
     async mintForOrganization(
         _ctx: Context,
         organizationId: string,
@@ -440,11 +457,110 @@ export class CloudModule implements AgentModule {
             throw this.#error(400, "invalid_request", "The team organization ID is invalid.");
         }
         const ctx = this.#ownedContext();
-        return await this.#lock.runInLock(ctx, async () => {
-            signal?.throwIfAborted();
-            this.#assertRunning();
-            return (await this.#mintInLock(ctx, true, organizationId)).accessToken;
-        });
+        const now = Date.now();
+        let credential = this.#organizationCredentials.get(organizationId);
+        if (credential === undefined) {
+            // Bound both retained tokens and queued refreshes. Never evict work in flight.
+            for (const [id, entry] of this.#organizationCredentials) {
+                if (entry.pending === undefined && (entry.token?.expiresAt ?? 0) <= now) {
+                    this.#organizationCredentials.delete(id);
+                }
+            }
+            if (this.#organizationCredentials.size >= ORGANIZATION_TOKEN_CACHE_LIMIT) {
+                const oldest = [...this.#organizationCredentials].find(
+                    ([, entry]) => entry.pending === undefined,
+                );
+                if (oldest === undefined) {
+                    throw this.#error(503, "cloud_unavailable", "Cloud authentication is busy.");
+                }
+                this.#organizationCredentials.delete(oldest[0]);
+            }
+            credential = { refreshAfter: 0, waiters: new Set() };
+        }
+        this.#organizationCredentials.delete(organizationId);
+        this.#organizationCredentials.set(organizationId, credential);
+        const token = credential.token;
+        const usable = token !== undefined && token.issuedAt <= now && now < token.expiresAt;
+        if (!usable) credential.waiters.add(signal);
+        if (credential.pending === undefined && (!usable || now >= credential.refreshAfter)) {
+            credential.pending = this.#refreshOrganization(ctx, organizationId, credential, usable);
+            // Background failures are logged by the mint boundary. Foreground callers still
+            // receive the very same rejection; never leave a detached rejection unobserved.
+            void credential.pending.catch(() => {});
+        }
+        if (usable) return token.accessToken;
+        const accessToken = await credential.pending!;
+        signal?.throwIfAborted();
+        this.#assertOrganizationCredential(organizationId, credential);
+        return accessToken;
+    }
+
+    async #refreshOrganization(
+        ctx: Context,
+        organizationId: string,
+        credential: OrganizationCredential,
+        background: boolean,
+    ): Promise<string> {
+        try {
+            return await this.#lock.runInLock(ctx, async () => {
+                this.#assertOrganizationCredential(organizationId, credential);
+                if (!background && [...credential.waiters].every((signal) => signal?.aborted)) {
+                    throw new DOMException("The token request was cancelled.", "AbortError");
+                }
+                const minted = await this.#mintInLock(ctx, true, organizationId);
+                this.#assertOrganizationCredential(organizationId, credential);
+                const token = organizationAccessToken(
+                    minted.accessToken,
+                    organizationId,
+                    minted.authenticated.user.id,
+                    this.#client(minted.cloud.environment).workosClientId,
+                );
+                if (token === undefined) {
+                    throw this.#error(
+                        503,
+                        "cloud_unavailable",
+                        "Cloud returned an invalid team access token.",
+                    );
+                }
+                credential.token = token;
+                credential.refreshAfter =
+                    token.expiresAt -
+                    Math.min(
+                        ORGANIZATION_TOKEN_REFRESH_AHEAD_MS,
+                        (token.expiresAt - token.issuedAt) / 5,
+                    );
+                return token.accessToken;
+            });
+        } catch (error: unknown) {
+            credential.refreshAfter = Date.now() + ORGANIZATION_TOKEN_REFRESH_RETRY_MS;
+            throw error;
+        } finally {
+            delete credential.pending;
+            credential.waiters.clear();
+            if (
+                credential.token === undefined &&
+                this.#organizationCredentials.get(organizationId) === credential
+            ) {
+                this.#organizationCredentials.delete(organizationId);
+            }
+        }
+    }
+
+    #assertOrganizationCredential(
+        organizationId: string,
+        credential: OrganizationCredential,
+    ): void {
+        this.#assertRunning();
+        if (
+            this.#organizationCredentials.get(organizationId) !== credential ||
+            this.#cloud.status !== "connected"
+        ) {
+            throw this.#error(
+                409,
+                "cloud_not_authenticated",
+                "Cloud authentication has changed. Request a new team token.",
+            );
+        }
     }
 
     /** Release an organization credential only when WorkOS's real lifetime is at most five minutes. */
@@ -924,6 +1040,7 @@ export class CloudModule implements AgentModule {
             const attempt: CloudAttempt = { ...draft, version: stored.version };
             const cloud = project(stored, attempt);
             afterCommit(txCtx, (postCommitCtx) => {
+                this.#organizationCredentials.clear();
                 this.#attempt = attempt;
                 this.#cloud = cloud;
                 for (const listener of this.#listeners) listener(postCommitCtx, cloud);
@@ -949,6 +1066,14 @@ export class CloudModule implements AgentModule {
             const stored = await this.#database.replace(txCtx, value);
             const cloud = project(stored, options.attempt);
             afterCommit(txCtx, (postCommitCtx) => {
+                if (
+                    cloud.status !== "connected" ||
+                    this.#cloud.status !== "connected" ||
+                    cloud.environment !== this.#cloud.environment ||
+                    cloud.user.id !== this.#cloud.user.id
+                ) {
+                    this.#organizationCredentials.clear();
+                }
                 options.onCommit?.();
                 this.#cloud = cloud;
                 for (const listener of this.#listeners) listener(postCommitCtx, cloud);
