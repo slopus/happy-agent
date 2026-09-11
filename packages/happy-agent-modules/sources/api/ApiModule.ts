@@ -6,6 +6,8 @@ import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { ConnectionsModule, RemoteConnectionError } from "../connections/index.js";
+import { queryTeamDraft, saveTeamDraft } from "./persistence/teamDraft.js";
+import { teamDraftMigration } from "./persistence/migrations/001-team-drafts.js";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -283,6 +285,7 @@ interface ApiAdmittedMutation {
  */
 export class ApiModule implements AgentModule {
     readonly name = "api";
+    readonly migrations = [teamDraftMigration];
 
     readonly #abort: AbortModule;
     readonly #config: ConfigModule;
@@ -1929,7 +1932,7 @@ export class ApiModule implements AgentModule {
         if (event.type === "agent.metadata-changed") {
             const update = recordValue(payload?.["update"]);
             if (update === undefined) return;
-            if (Object.hasOwn(update, "draft")) {
+            if (!this.#team.enabled && Object.hasOwn(update, "draft")) {
                 this.#journal.append(
                     "agent.draft.updated",
                     { agentId, draft: await this.#agentDraft(ctx, agentId) },
@@ -2834,6 +2837,31 @@ export class ApiModule implements AgentModule {
             if (operation === "draft" && request.method === "PUT") {
                 await this.#assertUserControlledAgent(ctx, agentId);
                 const body = await bodyAs(request, draftBodySchema, "agent draft");
+                if (this.#team.enabled) {
+                    const userId = teamUser(ctx)?.id;
+                    if (userId === undefined)
+                        throw new ApiError(401, "unauthorized", "Unauthorized");
+                    const draft = await this.#withMutationId(
+                        body.mutationId,
+                        async () =>
+                            await ctx.inTx(async (txCtx) => {
+                                const saved = await saveTeamDraft(txCtx, agentId, userId, body);
+                                if (saved.changed) {
+                                    afterCommit(txCtx, () => {
+                                        this.#journal.append(
+                                            "agent.draft.updated",
+                                            { agentId, draft: saved.draft },
+                                            Date.now(),
+                                            userId,
+                                        );
+                                    });
+                                }
+                                return saved.draft;
+                            }),
+                    );
+                    sendJson(response, 200, { draft });
+                    return true;
+                }
                 const config = await this.#agentSystem().config(ctx, agentId);
                 if (config === undefined) throw notFound("The agent was not found.");
                 const storedAt =
@@ -3203,6 +3231,11 @@ export class ApiModule implements AgentModule {
     async #agentDraft(ctx: Context, agentId: string): Promise<Record<string, unknown>> {
         const config = await this.#agentSystem().config(ctx, agentId);
         if (config === undefined) throw notFound("The agent was not found.");
+        if (this.#team.enabled) {
+            const userId = teamUser(ctx)?.id;
+            if (userId === undefined) throw new ApiError(401, "unauthorized", "Unauthorized");
+            return await queryTeamDraft(ctx, agentId, userId);
+        }
         const value = config.metadata?.["draft"] ?? null;
         const updatedAt = config.metadata?.["draftUpdatedAt"];
         return {

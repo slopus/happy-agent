@@ -4,6 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiEventJournal, apiEventSchema } from "../../sources/api/ApiEventJournal.js";
 
 describe("ApiEventJournal", () => {
+    it("never exposes an unowned standalone draft to a team user", () => {
+        const journal = new ApiEventJournal();
+        const event = journal.append("agent.draft.updated", { draft: "standalone" });
+        expect(journal.visibleTo(event, "alice123")).toBe(false);
+        expect(journal.visibleTo(event, undefined)).toBe(true);
+    });
+
     it("keeps private ownership off the wire and retains global cursor progress", () => {
         const journal = new ApiEventJournal(3, () => 1_755_400_000_000);
         const origin = journal.cursor();

@@ -1,5 +1,15 @@
 # API module learnings
 
+## Team drafts belong to users, not shared agent metadata
+
+Shared agent metadata made teammates read and overwrite each other's composer drafts. Team
+drafts now persist one current value and clear timestamp per authenticated user and agent.
+Last-write-wins comparison and saving share a transaction, and the exact committed snapshot
+becomes an owner-filtered event only after commit. Reads and bootstrap use the same owner;
+journal pulls, replay, and live delivery keep private payloads off other users' connections.
+Standalone drafts remain in agent metadata, and existing global drafts are never assigned to
+team users. Ownership stays internal: endpoints, payloads, and the published client are unchanged.
+
 ## Filter archived agents before building catalog resources
 
 Desktop bootstrap used to build every attached agent's activity and resource, discard archived

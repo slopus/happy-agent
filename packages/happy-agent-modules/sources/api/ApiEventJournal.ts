@@ -89,8 +89,11 @@ export class ApiEventJournal {
     visibleTo(event: ApiEvent, userId: string | undefined): boolean {
         const owner = this.#owners.get(event);
         if (owner !== undefined) return owner === userId;
-        // An unowned mobile snapshot belongs to standalone mode, never to a team member.
-        return event.type !== "happy.integration.updated" || userId === undefined;
+        // Unowned personal state belongs to standalone mode, never to a team member.
+        return (
+            (event.type !== "happy.integration.updated" && event.type !== "agent.draft.updated") ||
+            userId === undefined
+        );
     }
 
     /**

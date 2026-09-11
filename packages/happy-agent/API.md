@@ -3651,6 +3651,12 @@ Returns the current composer draft as separate current state. A draft is the tex
 mode it will be sent with. The wrapper retains `updatedAt` even when `value` is `null`, so a clear
 cannot be overwritten by an older device reconnecting later.
 
+In team mode, drafts belong to the authenticated user and agent together. Reads, writes,
+clears, and focused bootstrap address only that user's draft; devices belonging to the same
+user share it. Another user's draft and timestamp never affect this state. Existing global
+drafts are not exposed to team users. Standalone drafts remain installation-wide per agent.
+The endpoints and request and response shapes are unchanged; clients never select a draft owner.
+
 Response — `200`:
 
 ```json
@@ -3695,8 +3701,8 @@ Request:
 
 - `draft` — the composer state, or `null` to clear it.
 - `updatedAt` — optional; when the client last touched this draft. Drafts are last-write-wins
-  across devices: a write carrying an older `updatedAt` than the stored draft is ignored, so a
-  stale device cannot clobber what was typed elsewhere. Omitted, the write always applies.
+  across the owner's devices: a write carrying an older `updatedAt` than the stored draft is
+  ignored, so a stale device cannot clobber what was typed elsewhere. Omitted, the write always applies.
 
 Response — `200`: the same `{ "draft": { "value", "updatedAt" } }` shape as `GET`, carrying
 the authoritative stored state — which is the previous one when the write was ignored as stale.
@@ -4378,7 +4384,8 @@ event is idempotent by attachment ID.
     - `context` — the complete context object from the agent usage/bootstrap response, or `null`
       until the next inference measures the replacement context.
 - `agent.draft.updated` — the focused composer draft changed. It is current state and has no
-  resource version chain; replace it whole.
+  resource version chain; replace it whole. In team mode, only the authenticated draft owner
+  receives this event, including journal pulls, replay, and live delivery. Its payload is unchanged.
     - `agentId` (ID string).
     - `draft` — the complete `{ "value", "updatedAt" }` object from the draft/bootstrap response.
 - `agent.profiles.updated` — the focused agent's request-profile catalog changed because its
@@ -4544,8 +4551,8 @@ Response — `200`:
 `cursor` is where this page ended — pass it as the next `after`. `latestCursor` is the newest
 event the daemon holds, so the client knows how far behind it still is.
 
-In team mode, private Happy integration events are filtered by authenticated owner before their
-payloads are returned. Journal cursors remain opaque installation-wide positions: `cursor`
+In team mode, private Happy integration and draft events are filtered by authenticated owner
+before their payloads are returned. Journal cursors remain opaque installation-wide positions: `cursor`
 advances past scanned events hidden from that user, and `latestCursor` still describes the
 journal, not just visible events. A page may therefore contain no events while advancing its
 cursor. Filtering must not strand pagination behind another user's events or change cursor
@@ -4598,7 +4605,7 @@ envelope.
 In team mode, the same owner filtering applies to replay and live delivery. Hidden Happy
 integration events produce no event frame for another member; resuming after the last visible
 cursor must still deliver all subsequent visible events in journal order. The hello cursor and
-gap rules retain their installation-wide journal meaning.
+gap rules retain their installation-wide journal meaning. The same rules apply to private draft events.
 Comment heartbeats keep the connection alive through proxies; clients ignore them. A client
 that falls too far behind reading is disconnected rather than buffered without bound, and comes
 back with its last cursor — landing in either the resumed or the gap case above.
@@ -4683,7 +4690,7 @@ Response — `200`:
 ```
 
 - `agent` — exactly the focused agent resource.
-- `draft` — exactly the focused draft response object.
+- `draft` — exactly the focused draft response object, scoped to the authenticated user in team mode.
 - `mode` — exactly the focused mode response; `null` on a fresh agent.
 - `context`, `usage` — exactly the focused usage response fields.
 - `pending` — every not-yet-accepted `queue` and `steer` message, oldest first and never paged.
