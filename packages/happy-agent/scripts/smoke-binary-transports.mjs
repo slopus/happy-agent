@@ -9,6 +9,7 @@ import { inflateRawSync } from "node:zlib";
 import { HappyAgentClient } from "@slopus/happy-agent-client";
 
 import { createUnixSocketFetch } from "../dist/lifecycle/createUnixSocketFetch.js";
+import { getHappyDaemonPaths } from "../dist/lifecycle/getHappyDaemonPaths.js";
 import { checkBinaryKeepAlive } from "./check-binary-keepalive.mjs";
 
 const WEBSOCKET_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -71,7 +72,10 @@ async function main() {
                     content: [
                         {
                             arguments: {
-                                cmd: "printf 'compute-pty-ok\\n'",
+                                cmd:
+                                    process.platform === "win32"
+                                        ? "Write-Output 'compute-pty-ok'"
+                                        : "printf 'compute-pty-ok\\n'",
                                 tty: true,
                                 yield_time_ms: 1_000,
                             },
@@ -165,7 +169,7 @@ async function main() {
     let terminal;
     try {
         const tokenPath = `${happyHome}/agent/token`;
-        const socketPath = `${happyHome}/agent/server.sock`;
+        const socketPath = getHappyDaemonPaths({ HAPPY_HOME_DIR: happyHome }).socketPath;
         const token = (await waitFor(async () => await readFile(tokenPath, "utf8"), daemon)).trim();
         client = new HappyAgentClient({
             endpoint: "http://happy-agent.release",
@@ -284,7 +288,7 @@ async function main() {
         try {
             terminal = (
                 await client.openTerminal(project.id, {
-                    command: "cat",
+                    command: process.platform === "win32" ? "cmd.exe /d /q" : "cat",
                 })
             ).terminal;
             await readTerminalOutput({
@@ -413,7 +417,11 @@ async function readTerminalOutput(options) {
                                 terminalFrame(
                                     TERMINAL_PACKET.input,
                                     1,
-                                    Buffer.from("standalone-terminal-ok\n"),
+                                    Buffer.from(
+                                        process.platform === "win32"
+                                            ? "echo standalone-terminal-ok\r"
+                                            : "standalone-terminal-ok\n",
+                                    ),
                                 ),
                             );
                         });

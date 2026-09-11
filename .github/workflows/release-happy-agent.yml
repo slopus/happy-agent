@@ -31,6 +31,12 @@ env:
     RELEASE_PRERELEASE: ${{ inputs.prerelease }}
 
 jobs:
+    windows:
+        needs: verify
+        uses: ./.github/workflows/build-windows.yml
+        with:
+            version: ${{ inputs.version }}
+
     verify:
         name: Verify release inputs and source
         runs-on: ubuntu-24.04
@@ -94,6 +100,9 @@ jobs:
 
             - name: Build Happy Agent JavaScript
               run: |
+                  pnpm --filter @slopus/happy-agent-supervisor build
+                  pnpm --filter @slopus/happy-providers build
+                  pnpm --filter @slopus/happy-agent-compute build
                   pnpm --filter @slopus/happy-agent-modules build
                   pnpm --filter @slopus/happy-agent build
 
@@ -160,6 +169,9 @@ jobs:
 
             - name: Build Happy Agent JavaScript
               run: |
+                  pnpm --filter @slopus/happy-agent-supervisor build
+                  pnpm --filter @slopus/happy-providers build
+                  pnpm --filter @slopus/happy-agent-compute build
                   pnpm --filter @slopus/happy-agent-modules build
                   pnpm --filter @slopus/happy-agent build
 
@@ -369,6 +381,7 @@ jobs:
         needs:
             - verify
             - build
+            - windows
         runs-on: ubuntu-24.04
         timeout-minutes: 15
         permissions:
