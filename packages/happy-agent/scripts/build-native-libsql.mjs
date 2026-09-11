@@ -93,7 +93,18 @@ if (!existsSync(crate)) {
     );
 }
 patch(source, "binding.patch");
+// An extracted crate has no .git directory. When its cache lives inside this
+// repository, `git apply` otherwise finds the parent worktree and silently
+// skips every crate-relative path (even --reverse --check returns success).
+// Give this verified source archive its own patch root before applying it.
+if (!existsSync(join(crate, ".git"))) run("git", ["init", "--quiet"], crate);
 patch(crate, "connection.patch");
+if (
+    !readFileSync(join(crate, "src/local/connection.rs"), "utf8").includes(
+        "self.raw = std::ptr::null_mut();",
+    )
+)
+    throw new Error("The native libsql connection teardown patch was not applied.");
 copyFileSync(join(metadataRoot, "Cargo.lock"), join(source, "Cargo.lock"));
 run(
     "cargo",

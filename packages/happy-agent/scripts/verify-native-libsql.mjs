@@ -33,6 +33,7 @@ const fixture = await mkdtemp(join(tmpdir(), "happy-native-libsql-"));
 const file = join(fixture, "transactions.db");
 const db = createClient({ url: pathToFileURL(file).href });
 let committed = 0;
+console.log("Checking 3,000 native database transactions with forced garbage collection.");
 try {
     await db.execute("PRAGMA journal_mode=WAL");
     await db.execute("CREATE TABLE probe(id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
@@ -65,6 +66,7 @@ try {
 }
 db.close();
 await rename(file, file + ".closed");
+console.log("Transactions and immediate file release passed; checking 10,000 repeated closes.");
 for (let index = 0; index < 10000; index++) {
     const connection = new Database(":memory:");
     connection.close();
