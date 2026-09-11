@@ -9,6 +9,7 @@ import { inflateRawSync } from "node:zlib";
 import { HappyAgentClient } from "@slopus/happy-agent-client";
 
 import { createUnixSocketFetch } from "../dist/lifecycle/createUnixSocketFetch.js";
+import { checkBinaryKeepAlive } from "./check-binary-keepalive.mjs";
 
 const WEBSOCKET_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const TERMINAL_MAGIC = 0x5254;
@@ -35,7 +36,9 @@ async function main() {
     }
 
     const binary = resolve(binaryArgument);
-    const root = await mkdtemp("/tmp/happy-agent-binary-smoke-");
+    const scratch = resolve(import.meta.dirname, "../../../.context");
+    await mkdir(scratch, { recursive: true });
+    const root = await mkdtemp(`${scratch}/b`);
     const happyHome = `${root}/.happy`;
     const workspacePath = `${root}/workspace`;
     await mkdir(workspacePath, { recursive: true });
@@ -140,7 +143,10 @@ async function main() {
     const inferencePort = await listenHttp(inferenceFixture);
 
     const daemonOutput = [];
-    const daemon = spawn(binary, ["run"], {
+    const daemonArguments = process.argv.includes("--bun-source")
+        ? [resolve(import.meta.dirname, "../dist/cli.js"), "run"]
+        : ["run"];
+    const daemon = spawn(binary, daemonArguments, {
         cwd: workspacePath,
         env: {
             ...process.env,
@@ -167,6 +173,24 @@ async function main() {
             token,
         });
         await waitFor(async () => ((await client.getHealth()).ready ? true : undefined), daemon);
+
+        process.stdout.write("Checking standalone HTTP keep-alive.\n");
+        await checkBinaryKeepAlive(socketPath, token);
+        const eventsAbort = new AbortController();
+        const events = client.streamEvents({
+            signal: AbortSignal.any([eventsAbort.signal, AbortSignal.timeout(10_000)]),
+        });
+        try {
+            const first = await events.next();
+            if (first.done)
+                throw new Error("The standalone event stream closed before its first frame.");
+        } finally {
+            eventsAbort.abort();
+            await events.return(undefined);
+        }
+        await client.getHealth();
+        process.stdout.write("Standalone HTTP keep-alive is healthy.\n");
+        if (process.argv.includes("--keepalive-only")) return;
 
         const registered = await client.registerProject({ path: workspacePath });
         const project = await waitFor(async () => {
@@ -415,6 +439,17 @@ async function openWebSocket(options) {
         socket.once("connect", resolveConnect);
         socket.once("error", rejectConnect);
     });
+    const bytes = new SocketBytes(socket);
+    // Native HTTP must be able to upgrade a reused connection, not just its first request.
+    socket.write(
+        "HEAD /v0/health HTTP/1.1\r\nHost: happy-agent.release\r\n" +
+            `Authorization: Bearer ${options.token}\r\nConnection: keep-alive\r\n\r\n`,
+    );
+    const prelude = (await bytes.readUntil("\r\n\r\n", 10_000)).toString("utf8");
+    if (/connection:\s*close/i.test(prelude)) {
+        socket.destroy();
+        throw new Error("The HTTP connection closed before a subsequent WebSocket upgrade.");
+    }
     const key = randomBytes(16).toString("base64");
     socket.write(
         `GET ${options.path} HTTP/1.1\r\n` +
@@ -425,7 +460,6 @@ async function openWebSocket(options) {
             `Sec-WebSocket-Key: ${key}\r\n` +
             `Authorization: Bearer ${options.token}\r\n\r\n`,
     );
-    const bytes = new SocketBytes(socket);
     const headers = (await bytes.readUntil("\r\n\r\n", 10_000)).toString("utf8");
     if (!headers.startsWith("HTTP/1.1 101 ")) {
         socket.destroy();

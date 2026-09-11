@@ -48,13 +48,9 @@ export async function bindAgentSocket(
 export async function bindNodeAgentSocket(
     prepared: PreparedHappyAgentRuntime,
     socketPath: string,
-    options: { readonly maxRequestsPerSocket?: number } = {},
 ): Promise<BoundAgentSocket> {
     await prepareAgentSocketPath(socketPath);
     const { connections, server } = createAgentHttpServer(prepared);
-    if (options.maxRequestsPerSocket !== undefined) {
-        server.maxRequestsPerSocket = options.maxRequestsPerSocket;
-    }
 
     const previousUmask = process.umask(0o077);
     try {

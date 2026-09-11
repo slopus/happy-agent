@@ -76,7 +76,6 @@ export interface BunSocketBridgeOptions {
     ) => Promise<PreparedWorkspaceProxySocket>;
     readonly proxyHttpSocketPath: string;
     readonly publicSocketPath: string;
-    readonly webSocketPath: string;
 }
 
 export interface BunSocketBridge {
@@ -228,14 +227,9 @@ function routeInitialRequest(
             .catch(() => refuse(socket, 500, "Internal Server Error"));
         return;
     }
-    const webSocket =
-        parsed.method === "GET" &&
-        parsed.upgrade?.toLowerCase() === "websocket" &&
-        parsed.connection
-            ?.toLowerCase()
-            .split(",")
-            .some((value) => value.trim() === "upgrade") === true;
-    connectUnixPeer(bun, socket, webSocket ? options.webSocketPath : options.httpSocketPath);
+    // Native Bun HTTP owns every ordinary request and local WebSocket upgrade, including
+    // later requests on a keep-alive connection. Only raw tunnels are handled above.
+    connectUnixPeer(bun, socket, options.httpSocketPath);
 }
 
 function routeProxyRequest(

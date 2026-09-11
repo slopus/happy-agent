@@ -25,6 +25,7 @@ import {
     type BunServerWebSocket,
     type BunWebSocketState,
 } from "./createBunBinaryWebSocket.js";
+import { createBunHttpForwarder } from "./createBunHttpForwarder.js";
 
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 
@@ -39,6 +40,7 @@ interface BunTerminalWebSocket extends BunServerWebSocket {
 interface BunWebSocketServer {
     stop(closeActiveConnections?: boolean): Promise<void> | void;
     upgrade(request: Request, options: { readonly data: TerminalWebSocketData }): boolean;
+    timeout(request: Request, seconds: number): void;
 }
 
 interface BunRuntime extends BunSocketRuntime {
@@ -52,23 +54,22 @@ export async function bindBunAgentSocket(
     const bun = bunRuntime();
     const httpSocketPath = join(paths.agentHome, "h.sock");
     const proxyHttpSocketPath = join(paths.agentHome, "p.sock");
-    const webSocketPath = join(paths.agentHome, "w.sock");
+    const nativeHttpSocketPath = join(paths.agentHome, "w.sock");
+    const forwarder = createBunHttpForwarder(httpSocketPath);
     await Promise.all([
         prepareAgentSocketPath(paths.socketPath),
         prepareAgentSocketPath(proxyHttpSocketPath),
-        prepareAgentSocketPath(webSocketPath),
+        prepareAgentSocketPath(nativeHttpSocketPath),
     ]);
 
     let http: BoundAgentSocket | undefined;
-    let webSockets: BunWebSocketServer | undefined;
+    let nativeHttp: BunWebSocketServer | undefined;
     let bridge: BunSocketBridge | undefined;
     const previousUmask = process.umask(0o077);
     try {
-        http = await bindNodeAgentSocket(prepared, httpSocketPath, {
-            maxRequestsPerSocket: 1,
-        });
+        http = await bindNodeAgentSocket(prepared, httpSocketPath);
         await prepared.api.listenWorkspaceProxyHttp(proxyHttpSocketPath);
-        webSockets = startWebSocketServer(bun, prepared, webSocketPath);
+        nativeHttp = startHttpServer(bun, prepared, nativeHttpSocketPath, forwarder);
         bridge = startBunSocketBridge(bun, {
             forwardRemoteAttachment: async (head, stream, bytes) => {
                 const request = new IncomingMessage(new Socket());
@@ -88,7 +89,7 @@ export async function bindBunAgentSocket(
                     request.destroy();
                 }
             },
-            httpSocketPath,
+            httpSocketPath: nativeHttpSocketPath,
             prepareWorkspaceProxy: async (pathname, authorization) =>
                 await prepared.api.prepareWorkspaceProxySocket(
                     prepared.context("bun-http-connect"),
@@ -97,18 +98,21 @@ export async function bindBunAgentSocket(
                 ),
             proxyHttpSocketPath,
             publicSocketPath: paths.socketPath,
-            webSocketPath,
         });
         await Promise.all([
             chmod(paths.socketPath, 0o600),
             chmod(proxyHttpSocketPath, 0o600),
-            chmod(webSocketPath, 0o600),
+            chmod(nativeHttpSocketPath, 0o600),
         ]);
     } catch (error) {
         bridge?.close();
-        await Promise.resolve(webSockets?.stop(true)).catch(() => undefined);
+        forwarder.close();
+        await Promise.resolve(nativeHttp?.stop(true)).catch(() => undefined);
         await http?.close().catch(() => undefined);
-        await Promise.all([removeOwnedSocket(paths.socketPath), removeOwnedSocket(webSocketPath)]);
+        await Promise.all([
+            removeOwnedSocket(paths.socketPath),
+            removeOwnedSocket(nativeHttpSocketPath),
+        ]);
         throw error;
     } finally {
         process.umask(previousUmask);
@@ -120,11 +124,12 @@ export async function bindBunAgentSocket(
         close: () => {
             closing ??= (async () => {
                 bridge!.close();
-                await Promise.resolve(webSockets!.stop(true));
+                forwarder.close();
+                await Promise.resolve(nativeHttp!.stop(true));
                 await http!.close();
                 await Promise.all([
                     removeOwnedSocket(paths.socketPath),
-                    removeOwnedSocket(webSocketPath),
+                    removeOwnedSocket(nativeHttpSocketPath),
                 ]);
             })();
             return closing;
@@ -132,14 +137,31 @@ export async function bindBunAgentSocket(
     };
 }
 
-function startWebSocketServer(
+function startHttpServer(
     bun: BunRuntime,
     prepared: PreparedHappyAgentRuntime,
     socketPath: string,
+    forwarder: ReturnType<typeof createBunHttpForwarder>,
 ): BunWebSocketServer {
     return bun.serve({
         unix: socketPath,
+        idleTimeout: 60,
+        // The shared API owns its per-route streaming body limits.
+        maxRequestBodySize: Number.MAX_SAFE_INTEGER,
         async fetch(request: Request, server: BunWebSocketServer) {
+            if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+                server.timeout(request, 0);
+                try {
+                    return await forwarder.forward(request, () => server.timeout(request, 60));
+                } catch {
+                    server.timeout(request, 60);
+                    return socketResponse(
+                        500,
+                        "internal",
+                        "The API connection could not be completed.",
+                    );
+                }
+            }
             const pathname = new URL(request.url).pathname;
             const terminal = await prepared.api.prepareTerminalSocket(
                 prepared.context("bun-websocket-upgrade"),

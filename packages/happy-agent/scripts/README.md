@@ -49,3 +49,14 @@ smoke proves Bun image normalization and ThumbHash, embedded file indexing, a Bu
 a Monty workflow, live terminal input/output over the binary protocol, and HTTP through a real
 workspace `CONNECT` tunnel. These boundaries must be tested in the executable itself because the
 normal API gym runs the same source under Node rather than Bun.
+
+The transport smoke also checks multiple successful and rejected HTTP requests on one connection,
+SSE cancellation, and a local terminal WebSocket upgrade after an ordinary HTTP request. Use
+`--keepalive-only` for the focused HTTP/SSE check. To test the built JavaScript with the pinned Bun
+runtime before compiling an executable, pass the Bun executable as the first argument and add
+`--bun-source`; this exercises runtime behavior but does not replace release-binary verification.
+
+Run `node scripts/smoke-bun-http.mjs <bun-executable>` for the TCP HTTP half. It starts an isolated
+team-mode daemon, verifies generated test-signed WorkOS tokens against a fixture public key, and
+checks the same successful/rejected requests on one connection plus authenticated SSE cancellation.
+No real WorkOS account or external WorkOS request is used.
