@@ -56,7 +56,15 @@ if (!existsSync(join(source, ".git"))) {
     if (existsSync(source)) throw new Error(`Expected an empty source destination: ${source}`);
     run(
         "git",
-        ["clone", "--filter=blob:none", "--no-checkout", metadata.repository, source],
+        [
+            "clone",
+            "--config",
+            "core.autocrlf=false",
+            "--filter=blob:none",
+            "--no-checkout",
+            metadata.repository,
+            source,
+        ],
         cache,
     );
     run("git", ["checkout", "--detach", metadata.commit]);
@@ -78,7 +86,11 @@ if (!existsSync(crate)) {
     }
     const archivePath = join(cache, "libsql.crate");
     writeFileSync(archivePath, archive);
-    run("tar", ["-xf", archivePath, "-C", cache], cache);
+    run(
+        join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"),
+        ["-xf", archivePath, "-C", cache],
+        cache,
+    );
 }
 patch(source, "binding.patch");
 patch(crate, "connection.patch");
