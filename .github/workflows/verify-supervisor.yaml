@@ -11,6 +11,11 @@ name: Verify happy-agent-supervisor
 
 on:
     workflow_dispatch:
+        inputs:
+            windows_only:
+                description: Build and validate only the standalone Windows Agent
+                type: boolean
+                default: false
 
 permissions:
     contents: read
@@ -20,7 +25,13 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    windows:
+        uses: ./.github/workflows/build-windows.yml
+        with:
+            version: 0.4.48-windows-ci.${{ github.run_number }}
+
     supervisor:
+        if: ${{ !inputs.windows_only }}
         name: ${{ matrix.name }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 30
@@ -101,6 +112,7 @@ jobs:
                   if-no-files-found: error
 
     package:
+        if: ${{ !inputs.windows_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20
