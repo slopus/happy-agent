@@ -13,7 +13,9 @@ const HOP_HEADERS = new Set([
 ]);
 
 /** Stream native Bun HTTP requests through the existing authenticated API handler. */
-export function createBunHttpForwarder(socketPath: string) {
+export function createBunHttpForwarder(
+    target: string | { readonly hostname: string; readonly port: number },
+) {
     const agent = new Agent({
         keepAlive: true,
         maxSockets: 256,
@@ -34,7 +36,7 @@ export function createBunHttpForwarder(socketPath: string) {
             return await new Promise<Response>((resolve, reject) => {
                 const upstream = httpRequest({
                     agent,
-                    socketPath,
+                    ...(typeof target === "string" ? { socketPath: target } : target),
                     method: request.method,
                     path: `${url.pathname}${url.search}`,
                     headers: Object.fromEntries(headers),

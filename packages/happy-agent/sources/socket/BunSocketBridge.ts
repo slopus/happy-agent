@@ -10,8 +10,14 @@ const HEADER_TIMEOUT_SECONDS = 10;
 const CONNECT_TIMEOUT_MS = 30_000;
 
 interface BunSocketListener {
+    readonly hostname?: string;
+    readonly port?: number;
     stop(closeActiveConnections?: boolean): void;
 }
+
+export type BunSocketAddress =
+    | { readonly unix: string }
+    | { readonly hostname: string; readonly port: number };
 
 interface BunSocket {
     data: SocketState;
@@ -69,16 +75,20 @@ export interface BunSocketBridgeOptions {
         stream: Duplex,
         head: Buffer,
     ) => Promise<void>;
-    readonly httpSocketPath: string;
+    readonly httpAddress: BunSocketAddress;
     readonly prepareWorkspaceProxy: (
         pathname: string,
         authorization: string | string[] | undefined,
     ) => Promise<PreparedWorkspaceProxySocket>;
-    readonly proxyHttpSocketPath: string;
-    readonly publicSocketPath: string;
+    readonly proxyHttpAddress: BunSocketAddress;
+    /** Private, connection-scoped admission for a loopback workspace HTTP listener. */
+    readonly proxyHttpAuthorization?: string;
+    readonly publicAddress: BunSocketAddress;
 }
 
 export interface BunSocketBridge {
+    readonly hostname: string | undefined;
+    readonly port: number | undefined;
     close(): void;
 }
 
@@ -88,7 +98,7 @@ export function startBunSocketBridge(
 ): BunSocketBridge {
     const listener = bun.listen({
         allowHalfOpen: true,
-        unix: options.publicSocketPath,
+        ...options.publicAddress,
         socket: {
             open(socket: BunSocket) {
                 socket.data = clientState();
@@ -120,7 +130,11 @@ export function startBunSocketBridge(
             },
         },
     });
-    return { close: () => listener.stop(true) };
+    return {
+        hostname: listener.hostname,
+        port: listener.port,
+        close: () => listener.stop(true),
+    };
 }
 
 function receiveClientData(
@@ -211,7 +225,7 @@ function routeInitialRequest(
             .then((prepared) => {
                 if (state.closed) return;
                 if (!prepared.handled) {
-                    connectUnixPeer(bun, socket, options.httpSocketPath);
+                    connectPeer(bun, socket, options.httpAddress, () => undefined);
                     return;
                 }
                 if ("rejection" in prepared) {
@@ -229,7 +243,7 @@ function routeInitialRequest(
     }
     // Native Bun HTTP owns every ordinary request and local WebSocket upgrade, including
     // later requests on a keep-alive connection. Only raw tunnels are handled above.
-    connectUnixPeer(bun, socket, options.httpSocketPath);
+    connectPeer(bun, socket, options.httpAddress, () => undefined);
 }
 
 function routeProxyRequest(
@@ -247,7 +261,21 @@ function routeProxyRequest(
     state.phase = "connecting";
     socket.timeout?.(0);
     if (parsed.method !== "CONNECT") {
-        connectUnixPeer(bun, socket, options.proxyHttpSocketPath);
+        if (options.proxyHttpAuthorization !== undefined) {
+            // Only the first inner request is inspected. The admitted internal connection
+            // then owns ordinary HTTP framing and keep-alive, just like the Unix listener.
+            const lines = state.buffer
+                .subarray(0, parsed.bytes - 4)
+                .toString("latin1")
+                .split("\r\n");
+            const head = lines.filter((line) => !/^proxy-authorization\s*:/i.test(line));
+            head.push(`Proxy-Authorization: ${options.proxyHttpAuthorization}`);
+            state.buffer = Buffer.concat([
+                Buffer.from(`${head.join("\r\n")}\r\n\r\n`, "latin1"),
+                state.buffer.subarray(parsed.bytes),
+            ]);
+        }
+        connectPeer(bun, socket, options.proxyHttpAddress, () => undefined);
         return;
     }
     let target: URL;
@@ -266,10 +294,6 @@ function routeProxyRequest(
     connectTcpPeer(bun, socket, target.hostname, port);
 }
 
-function connectUnixPeer(bun: BunRuntime, client: BunSocket, path: string): void {
-    connectPeer(bun, client, { unix: path }, () => undefined);
-}
-
 function connectTcpPeer(bun: BunRuntime, client: BunSocket, hostname: string, port: number): void {
     connectPeer(bun, client, { hostname, port }, () => {
         enqueueWrite(client, Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n"));
@@ -279,7 +303,7 @@ function connectTcpPeer(bun: BunRuntime, client: BunSocket, hostname: string, po
 function connectPeer(
     bun: BunRuntime,
     client: BunSocket,
-    address: { readonly unix: string } | { readonly hostname: string; readonly port: number },
+    address: BunSocketAddress,
     connected: () => void,
 ): void {
     const state = clientStateOf(client);

@@ -1,7 +1,5 @@
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { IncomingMessage } from "node:http";
-import { Socket } from "node:net";
 
 import {
     type PreparedHappyAgentRuntime,
@@ -13,6 +11,7 @@ import {
     startBunSocketBridge,
     type BunRuntime as BunSocketRuntime,
     type BunSocketBridge,
+    type BunSocketAddress,
 } from "./BunSocketBridge.js";
 import {
     bindNodeAgentSocket,
@@ -26,6 +25,7 @@ import {
     type BunWebSocketState,
 } from "./createBunBinaryWebSocket.js";
 import { createBunHttpForwarder } from "./createBunHttpForwarder.js";
+import { forwardBunRemoteAttachment } from "./forwardBunRemoteAttachment.js";
 
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 
@@ -37,7 +37,9 @@ interface BunTerminalWebSocket extends BunServerWebSocket {
     data: TerminalWebSocketData;
 }
 
-interface BunWebSocketServer {
+export interface BunWebSocketServer {
+    readonly hostname: string;
+    readonly port: number;
     stop(closeActiveConnections?: boolean): Promise<void> | void;
     upgrade(request: Request, options: { readonly data: TerminalWebSocketData }): boolean;
     timeout(request: Request, seconds: number): void;
@@ -69,35 +71,19 @@ export async function bindBunAgentSocket(
     try {
         http = await bindNodeAgentSocket(prepared, httpSocketPath);
         await prepared.api.listenWorkspaceProxyHttp(proxyHttpSocketPath);
-        nativeHttp = startHttpServer(bun, prepared, nativeHttpSocketPath, forwarder);
+        nativeHttp = startBunHttpServer(bun, prepared, { unix: nativeHttpSocketPath }, forwarder);
         bridge = startBunSocketBridge(bun, {
-            forwardRemoteAttachment: async (head, stream, bytes) => {
-                const request = new IncomingMessage(new Socket());
-                request.method = head.method;
-                request.url = head.target;
-                request.headers = head.headers;
-                request.complete = true;
-                try {
-                    const handled = await prepared.api.handleRemoteAttachment(
-                        prepared.context("bun-remote-attachment"),
-                        request,
-                        stream,
-                        bytes,
-                    );
-                    if (!handled) stream.destroy();
-                } finally {
-                    request.destroy();
-                }
-            },
-            httpSocketPath: nativeHttpSocketPath,
+            forwardRemoteAttachment: (head, stream, bytes) =>
+                forwardBunRemoteAttachment(prepared, head, stream, bytes),
+            httpAddress: { unix: nativeHttpSocketPath },
             prepareWorkspaceProxy: async (pathname, authorization) =>
                 await prepared.api.prepareWorkspaceProxySocket(
                     prepared.context("bun-http-connect"),
                     pathname,
                     authorization,
                 ),
-            proxyHttpSocketPath,
-            publicSocketPath: paths.socketPath,
+            proxyHttpAddress: { unix: proxyHttpSocketPath },
+            publicAddress: { unix: paths.socketPath },
         });
         await Promise.all([
             chmod(paths.socketPath, 0o600),
@@ -137,14 +123,14 @@ export async function bindBunAgentSocket(
     };
 }
 
-function startHttpServer(
+export function startBunHttpServer(
     bun: BunRuntime,
     prepared: PreparedHappyAgentRuntime,
-    socketPath: string,
+    address: BunSocketAddress,
     forwarder: ReturnType<typeof createBunHttpForwarder>,
 ): BunWebSocketServer {
     return bun.serve({
-        unix: socketPath,
+        ...address,
         idleTimeout: 60,
         // The shared API owns its per-route streaming body limits.
         maxRequestBodySize: Number.MAX_SAFE_INTEGER,
@@ -226,7 +212,7 @@ function socketResponse(status: number, code: string, message: string): Response
     );
 }
 
-function bunRuntime(): BunRuntime {
+export function bunRuntime(): BunRuntime {
     const bun = (globalThis as { Bun?: unknown }).Bun;
     if (
         typeof bun !== "object" ||

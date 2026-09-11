@@ -1305,6 +1305,10 @@ export class ApiModule implements AgentModule {
         await this.#workspaceProxy.listen(path);
     }
 
+    async listenWorkspaceProxyTcp(token: string): Promise<number> {
+        return await this.#workspaceProxy.listenTcp(token);
+    }
+
     #subscribeToModules(ctx: Context): void {
         if (this.#unsubscribe.length > 0) return;
         this.#unsubscribe.push(

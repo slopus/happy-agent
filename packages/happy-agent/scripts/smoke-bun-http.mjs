@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import { HappyAgentClient } from "@slopus/happy-agent-client";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { checkBinaryKeepAlive } from "./check-binary-keepalive.mjs";
+import { checkTeamTerminal } from "./check-team-terminal.mjs";
+import { checkTeamWorkspaceProxy } from "./check-team-workspace-proxy.mjs";
 
 async function main() {
     if (!process.argv[2])
@@ -103,8 +105,23 @@ async function main() {
             await events.return(undefined);
         }
         await client.getHealth();
+        const workspacePath = `${root}/workspace`;
+        await mkdir(workspacePath);
+        const { project } = await client.registerProject({ path: workspacePath });
+        await checkTeamWorkspaceProxy(endpoint, `/v0/workspaces/${project.id}/proxy`, token);
+        const { terminal } = await client.openTerminal(project.id, {
+            command: "while IFS= read -r line; do printf 'team-echo:%s\\n' \"$line\"; done",
+        });
+        const attachUrl = client.terminalAttachUrl(project.id, terminal.id);
+        try {
+            await checkTeamTerminal(attachUrl, "invalid", 401);
+            await checkTeamTerminal(attachUrl, token);
+            await checkTeamTerminal(attachUrl, token);
+        } finally {
+            await client.stopTerminal(project.id, terminal.id);
+        }
         process.stdout.write(
-            "Bun TCP HTTP keep-alive, per-request authentication, and SSE cancellation are healthy.\n",
+            "Bun team HTTP, authentication, SSE cancellation, terminal input/output, and reattachment are healthy.\n",
         );
     } catch (error) {
         if (output) process.stderr.write(output);

@@ -1,4 +1,5 @@
 import { chmod, unlink } from "node:fs/promises";
+import { timingSafeEqual } from "node:crypto";
 import {
     createServer,
     request as requestHttp,
@@ -21,12 +22,22 @@ export class WorkspaceProxy {
     readonly #server = createServer();
     readonly #sockets = new Set<Duplex>();
     #socketPath: string | undefined;
+    #tcpToken: string | undefined;
+    readonly #admitted = new WeakSet<Duplex>();
 
     constructor() {
         this.#server.on("request", (request, response) => {
+            if (!this.#admit(request)) {
+                sendProxyError(response, 407, "Proxy authentication is required.");
+                return;
+            }
             this.#forwardRequest(request, response);
         });
         this.#server.on("connect", (request, socket, head) => {
+            if (!this.#admit(request)) {
+                refuse(socket, 407, "Proxy Authentication Required");
+                return;
+            }
             this.#openTunnel(request, socket, head);
         });
         this.#server.on("connection", (socket) => {
@@ -70,17 +81,64 @@ export class WorkspaceProxy {
         await chmod(path, 0o600);
     }
 
+    /** Bun team listeners use loopback TCP internally, never a local API socket. */
+    async listenTcp(token: string): Promise<number> {
+        if (this.#server.listening && this.#tcpToken !== token) {
+            throw new Error("The workspace HTTP proxy is already listening.");
+        }
+        this.#tcpToken = token;
+        if (!this.#server.listening) {
+            await new Promise<void>((resolve, reject) => {
+                const failed = (error: Error): void => {
+                    this.#server.off("listening", listening);
+                    reject(error);
+                };
+                const listening = (): void => {
+                    this.#server.off("error", failed);
+                    resolve();
+                };
+                this.#server.once("error", failed);
+                this.#server.once("listening", listening);
+                this.#server.listen({ host: "127.0.0.1", port: 0 });
+            });
+        }
+        const address = this.#server.address();
+        if (address === null || typeof address === "string") {
+            throw new Error("The workspace HTTP proxy is not listening on TCP.");
+        }
+        return address.port;
+    }
+
+    #admit(request: IncomingMessage): boolean {
+        const token = this.#tcpToken;
+        if (token === undefined) return true;
+        const authorization = request.headers["proxy-authorization"];
+        delete request.headers["proxy-authorization"];
+        if (this.#admitted.has(request.socket)) return true;
+        const expected = `Bearer ${token}`;
+        if (
+            typeof authorization !== "string" ||
+            Buffer.byteLength(authorization) !== Buffer.byteLength(expected) ||
+            !timingSafeEqual(Buffer.from(authorization), Buffer.from(expected))
+        )
+            return false;
+        this.#admitted.add(request.socket);
+        return true;
+    }
+
     async close(): Promise<void> {
         for (const socket of this.#sockets) socket.destroy();
         this.#sockets.clear();
         const path = this.#socketPath;
         this.#socketPath = undefined;
-        if (path === undefined) return;
+        this.#tcpToken = undefined;
+        if (!this.#server.listening) return;
         await new Promise<void>((resolve, reject) => {
             this.#server.close((error) => (error === undefined ? resolve() : reject(error)));
         }).catch((error: unknown) => {
             if (!(error instanceof Error) || !/not running/i.test(error.message)) throw error;
         });
+        if (path === undefined) return;
         await unlink(path).catch((error: NodeJS.ErrnoException) => {
             if (error.code !== "ENOENT") throw error;
         });

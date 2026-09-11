@@ -1,12 +1,12 @@
 # Daemon HTTP transports
 
-The Node runtime binds its standard HTTP server directly. In the standalone Bun runtime,
+The Node runtime binds its standard HTTP server directly. In both standalone and team Bun runtimes,
 the native HTTP server owns ordinary HTTP parsing, connection reuse, and local terminal
-WebSocket upgrades. The public Unix socket retains a bounded admission adapter for raw
+WebSocket upgrades. The public Unix socket or team TCP listener retains a bounded admission adapter for raw
 CONNECT tunnels and opaque remote attachments.
 
 ```text
-Public Unix socket
+Public Unix socket / team TCP listener
   ├─ CONNECT / remote attachment → raw tunnel adapter
   └─ ordinary HTTP / local WebSocket → Bun.serve
        ├─ HTTP → reusable streaming HTTP pool → existing API handler
@@ -27,3 +27,12 @@ serve multiple requests and subsequently upgrade to a local terminal WebSocket.
 Run the package's transport unit tests and `scripts/smoke-binary-transports.mjs` for changes here.
 The smoke covers real Bun keep-alive, authenticated SSE, WebSocket reuse, and workspace CONNECT.
 Node-only tests do not establish Bun socket compatibility.
+
+Team internal hops bind only loopback TCP and create no Unix socket or standalone token file.
+The workspace HTTP hop has a random, memory-only connection-admission credential, stripped before
+forwarding to the destination. Ordinary API and terminal requests keep their WorkOS authentication.
+
+After building the modules, run `pnpm --filter @slopus/happy-agent test:bun:transports` for the
+asynchronous-upgrade regression. Run `scripts/smoke-bun-http.mjs <bun-executable>` after building
+the daemon to check fixture-signed WorkOS authentication, real terminal input/output and reconnect,
+HTTP keep-alive, SSE cancellation, and both workspace tunnel forms.

@@ -58,5 +58,7 @@ runtime before compiling an executable, pass the Bun executable as the first arg
 
 Run `node scripts/smoke-bun-http.mjs <bun-executable>` for the TCP HTTP half. It starts an isolated
 team-mode daemon, verifies generated test-signed WorkOS tokens against a fixture public key, and
-checks the same successful/rejected requests on one connection plus authenticated SSE cancellation.
+checks the same successful/rejected requests on one connection, authenticated SSE cancellation,
+terminal input/output and reattachment, invalid-token rejection, and authenticated workspace
+HTTP keep-alive and nested CONNECT tunnels.
 No real WorkOS account or external WorkOS request is used.

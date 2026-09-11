@@ -36,7 +36,8 @@
         "build:bun": "pnpm dlx bun@1.4.0 scripts/build-binary.ts",
         "build:bun:all": "pnpm dlx bun@1.4.0 scripts/build-binary.ts --all",
         "check": "tsc --noEmit",
-        "test": "vitest run --passWithNoTests"
+        "test": "vitest run --passWithNoTests",
+        "test:bun:transports": "pnpm dlx bun@1.4.0 test ./tests/bun/teamTerminalTransport.bun.mjs"
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.49",

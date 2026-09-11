@@ -79,6 +79,19 @@ export async function bindAgentHttpServer(
     host: string,
     port: number,
 ): Promise<BoundAgentHttpServer> {
+    if ("bun" in process.versions) {
+        const { bindBunAgentHttpServer } = await import("./bindBunAgentHttpServer.js");
+        return await bindBunAgentHttpServer(prepared, host, port);
+    }
+    return await bindNodeAgentHttpServer(prepared, host, port);
+}
+
+/** Internal HTTP handler listener, also used behind Bun's native transport. */
+export async function bindNodeAgentHttpServer(
+    prepared: PreparedHappyAgentRuntime,
+    host: string,
+    port: number,
+): Promise<BoundAgentHttpServer> {
     const { connections, server } = createAgentHttpServer(prepared);
     try {
         await listenOnTcp(server, host, port);
