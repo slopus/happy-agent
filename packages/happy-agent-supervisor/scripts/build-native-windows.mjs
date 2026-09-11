@@ -25,9 +25,21 @@ if (!existsSync(join(source, ".git"))) {
     if (existsSync(source))
         throw new Error(`Source directory exists without a Git checkout: ${source}`);
     mkdirSync(dirname(source), { recursive: true });
-    run("git", ["clone", "--filter=blob:none", "--no-checkout", metadata.repository, source], {
-        cwd: dirname(source),
-    });
+    run(
+        "git",
+        [
+            "clone",
+            "--config",
+            "core.autocrlf=false",
+            "--filter=blob:none",
+            "--no-checkout",
+            metadata.repository,
+            source,
+        ],
+        {
+            cwd: dirname(source),
+        },
+    );
     run("git", ["sparse-checkout", "set", "codex-rs"]);
     run("git", ["checkout", "--detach", metadata.commit]);
 }
