@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { computePermissions } from "../../sources/ComputePermissions.js";
@@ -20,8 +21,8 @@ describe("createSupervisorPolicy", () => {
             }),
         ).toEqual({
             mode: "workspace_write",
-            deniedReadPaths: ["/workspace/secrets"],
-            allowedWritePaths: ["/cache"],
+            deniedReadPaths: [resolve("/workspace", "secrets")],
+            allowedWritePaths: [resolve("/workspace", "../cache")],
             network: {
                 egress: true,
                 allowedHosts: ["example.com"],

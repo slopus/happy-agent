@@ -1,14 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import {
-    computePermissions,
-    createHostCompute,
-    quoteShellArgument,
-} from "@slopus/happy-agent-compute";
+import { computePermissions, createHostCompute } from "@slopus/happy-agent-compute";
 import { createRootContext } from "@steve.kite/stdlib";
 
 import type { GitCommandRunner } from "./GitCommandRunner.js";
+import { createScanGitCommand } from "./createScanGitCommand.js";
 import { resolveGitExecutable } from "./resolveGitExecutable.js";
 
 const SCAN_TIMEOUT_MS = 10_000;
@@ -37,7 +34,7 @@ const SAFE_CONFIGURATION = [
     "-c",
     "core.fsmonitor=false",
     "-c",
-    "core.hooksPath=/dev/null",
+    process.platform === "win32" ? "core.hooksPath=NUL" : "core.hooksPath=/dev/null",
     "-c",
     "diff.external=",
     "-c",
@@ -77,6 +74,7 @@ export async function runScanGit(options: {
         options.cwd,
         "--no-optional-locks",
         ...SAFE_CONFIGURATION,
+
         ...options.args,
     ];
     const rootContext = createRootContext();
@@ -94,10 +92,7 @@ export async function runScanGit(options: {
         const maximumBytes = options.maximumBytes ?? SCAN_OUTPUT_LIMIT;
         // The shared shell result is UTF-8 text. Base64 keeps `cat-file` and every future binary
         // reader byte-exact while Git and any helper it starts remain inside the same sandbox.
-        const command = [
-            "set -o pipefail",
-            `${argv.map((argument) => quoteShellArgument(argument)).join(" ")} | /usr/bin/base64`,
-        ].join("\n");
+        const command = createScanGitCommand(argv);
         const result = await compute.shell.run({
             command,
             maxOutputBytes: Math.ceil(maximumBytes / 3) * 4 + 1024,
@@ -205,7 +200,7 @@ function scanEnvironment(cwd: string, gitCeilingDirectories?: string): NodeJS.Pr
         environment.GIT_CEILING_DIRECTORIES = gitCeilingDirectories;
     }
     environment.LC_ALL = "C";
-    environment.SHELL = "/bin/bash";
+    if (process.platform !== "win32") environment.SHELL = "/bin/bash";
     return environment;
 }
 

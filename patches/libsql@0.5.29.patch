@@ -1,0 +1,52 @@
+diff --git a/index.js b/index.js
+index e24987954ec427320f51fd8037f9754b60ffa363..2029733116e41fc5bf9ee043c533ffcf896c5706 100644
+--- a/index.js
++++ b/index.js
+@@ -49,6 +49,8 @@ const {
+   statementColumns,
+   statementSafeIntegers,
+   rowsNext,
++  rowsClose,
++  statementFinalize,
+ } = requireNative();
+ 
+ const Authorization = require("./auth");
+@@ -368,7 +370,14 @@ class Statement {
+     const iter = {
+       nextRows: Array(100),
+       nextRowIndex: 100,
++      return() {
++        if (rows !== undefined && rowsClose) rowsClose.call(rows);
++        rows = undefined;
++        this.nextRows.fill(undefined);
++        return { done: true };
++      },
+       next() {
++        if (rows === undefined) return { done: true };
+         try {
+           if (this.nextRowIndex === 100) {
+             rowsNext.call(rows, this.nextRows);
+@@ -376,9 +385,7 @@ class Statement {
+           }
+           const row = this.nextRows[this.nextRowIndex];
+           this.nextRows[this.nextRowIndex] = undefined;
+-          if (!row) {
+-            return { done: true };
+-          }
++          if (!row) return this.return();
+         this.nextRowIndex++;
+           return { value: row, done: false };
+         } catch (err) {
+@@ -436,6 +443,12 @@ class Statement {
+   }
+ }
+ 
++// Added by the matching native build. Other platform bindings keep their
++// existing disposal behavior until built with these native exports.
++if (statementFinalize) {
++  Statement.prototype.finalize = function () { statementFinalize.call(this.stmt); };
++}
++Database.supportsExplicitDisposal = Boolean(statementFinalize && rowsClose);
+ module.exports = Database;
+ module.exports.Authorization = Authorization;
+ module.exports.SqliteError = SqliteError;

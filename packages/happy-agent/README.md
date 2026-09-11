@@ -7,7 +7,7 @@ locks, module composition, events, HTTP routing, Happy synchronization, files, G
 the Agent System itself. This package owns the daemon process and its whole lifecycle:
 
 - start the modules-owned runtime;
-- in standalone mode, bind its API to the configured Unix domain socket;
+- in standalone mode, bind its API to the local Unix domain socket or Windows named pipe;
 - in team mode, bind its API to the configured TCP host and port;
 - attach either API transport to the modules-owned Tailcat tunnel controller;
 - forward HTTP, WebSocket upgrades, and `CONNECT` tunnels to the API module;
@@ -28,6 +28,10 @@ happy-agent status   # report whether the daemon is running
 happy-agent reload   # stop the running daemon, then start a fresh one
 happy-agent run      # run the daemon in the foreground of this process
 happy-agent --version
+# Windows only:
+happy-agent sandbox status          # inspect configuration without provisioning
+happy-agent sandbox setup           # explicitly initialize the sandbox
+happy-agent sandbox setup --retry   # retry a failed setup deliberately
 ```
 
 `start` spawns a detached runtime process, redirects its output to the rotated daemon log, and
@@ -54,6 +58,28 @@ wait for terminal/background jobs to finish. Never send `SIGUSR2` to an unsuppor
 or signal the entire service process group. See the shipped
 [upgrade recipe](../../docs/recipe/upgrade-happy-agent.md) for the complete sequence.
 
+Windows sandbox setup uses the matching supervisor included with Happy Agent. Its default
+state directory is `.happy/windows-sandbox` under the actual Windows profile, independent of
+`HAPPY_HOME_DIR`, `HOME`, and `USERPROFILE`. Advanced local development can select one existing
+state directory with an absolute `HAPPY_WINDOWS_SANDBOX_HOME`; do not create separate
+provisioning roots per project or test. Setup may request UAC once. A failed or cancelled
+attempt is retained, so further commands fail with an actionable error rather than repeatedly
+requesting elevation; `sandbox setup --retry` deliberately permits another attempt.
+`HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1` prevents all provisioning, including explicit setup;
+read-only `sandbox status` still works. It does not disable sandbox enforcement.
+
+Automatic first setup is allowed only for the canonical Windows state when no Happy
+sandbox accounts exist. An explicit missing development state requires deliberate
+`sandbox setup`. After setup returns cancellation or failure, `--retry` may retry it
+directly. If a helper is still pending or its outcome is unknown in the current boot,
+finish the existing Windows prompt or restart Windows before retrying; a retry never
+overlaps that helper.
+
+Sandbox status checks the setup version, saved identities and enabled accounts.
+A restricted command verifies that those credentials can actually log on and execute.
+Explicit development state overrides still refer to the same global Happy accounts;
+they are not independent sandbox installations.
+
 ## Standalone binaries
 
 The repository can compile Happy Agent into one Bun executable for the current platform:
@@ -62,11 +88,19 @@ The repository can compile Happy Agent into one Bun executable for the current p
 pnpm build:bun
 ```
 
-`pnpm build:bun:all` produces macOS and Linux binaries for arm64 and x64 under
-`packages/happy-agent/dist/bin/`. The normal TypeScript package stays Node-compatible; native
-libraries, WebAssembly, workers, and provider executables are adapted only at the binary build
-boundary. Each release binary also embeds the matching Tailcat v0.4.0 executable for its macOS or
-Linux arm64/x64 target.
+`pnpm build:bun:all` selects macOS/Linux arm64/x64 and Windows x64 under
+`packages/happy-agent/dist/bin/`; every selected target requires its native assets.
+Windows source builds need the explicit native build steps in
+[the build-script guide](scripts/README.md#native-windows-11-x64). The ordinary TypeScript
+package stays Node-compatible; native libraries, WebAssembly, workers and provider
+executables are adapted at the standalone build boundary. Each target embeds its
+matching Tailcat v0.4.0 asset.
+
+Windows 11 x64 is the native Windows target. Happy ships one agent executable
+containing its own supervisor and matching sandbox helpers, with no separate
+Codex server installation. Read the build-script guide for its supported policy
+limits, one-time UAC setup, local run commands and native verification. Windows
+public publishing/signing, WSL, and Claude onboarding validation are separate work.
 
 Releases are created from the manual **Release Happy Agent** GitHub Actions workflow on `main`.
 The workflow takes a semantic version without the leading `v` and Markdown release notes, runs the

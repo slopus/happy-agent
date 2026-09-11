@@ -4,6 +4,7 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const lane = process.argv[2];
 if (
@@ -11,12 +12,18 @@ if (
     lane !== "fast" &&
     lane !== "slow" &&
     lane !== "docker" &&
-    lane !== "heavy"
+    lane !== "heavy" &&
+    lane !== "native-windows"
 ) {
-    throw new Error("Usage: node runGymLane.ts <local|fast|slow|docker|heavy>");
+    throw new Error("Usage: node runGymLane.ts <local|fast|slow|docker|heavy|native-windows>");
+}
+
+if (lane === "native-windows" && process.platform !== "win32") {
+    throw new Error("The native Windows gym lane requires Windows.");
 }
 
 const root = dirname(fileURLToPath(import.meta.url));
+const vitestEntry = createRequire(import.meta.url).resolve("vitest/vitest.mjs");
 const testDirectory = join(root, "tests");
 const slowTests = new Set([
     "agent_waits_past_polling_window_for_workflow.test.ts",
@@ -65,6 +72,9 @@ const tests = readdirSync(testDirectory)
     .filter((name) => name.endsWith(".test.ts"))
     .filter((name) => !name.endsWith(".live.test.ts"))
     .filter((name) => {
+        const nativeWindows = name.startsWith("native_windows_");
+        if (lane === "native-windows") return nativeWindows;
+        if (nativeWindows) return false;
         if (lane === "heavy") return heavyTests.has(name);
         if (heavyTests.has(name)) return false;
         const source = readFileSync(join(testDirectory, name), "utf8");
@@ -119,7 +129,7 @@ if (lane === "docker") {
         await runTests(
             lane,
             tests.filter((test) => !timingSensitiveTests.has(test.name)).map((test) => test.path),
-            lane === "heavy" ? 1 : 3,
+            lane === "heavy" || lane === "native-windows" ? 1 : 3,
         ),
     ];
     const timingSensitive = tests
@@ -130,7 +140,7 @@ if (lane === "docker") {
     }
 }
 
-cleanupDockerRunners(environment.HAPPY_TERMINAL_GYM_RUN_ID);
+if (lane !== "native-windows") cleanupDockerRunners(environment.HAPPY_TERMINAL_GYM_RUN_ID);
 
 for (const result of results) {
     if (result.error !== undefined) throw result.error;
@@ -149,17 +159,21 @@ function runTests(
     if (paths.length === 0) return Promise.resolve({ status: 0 });
     return new Promise((resolve) => {
         const child = spawn(
-            "pnpm",
+            process.execPath,
             [
-                "exec",
-                "vitest",
+                vitestEntry,
                 "run",
                 `--maxWorkers=${String(workers)}`,
                 `--testTimeout=${lane === "fast" ? "120000" : lane === "heavy" ? "360000" : "210000"}`,
                 ...paths,
                 ...process.argv.slice(3),
             ],
-            { cwd: root, env: { ...environment, ...additionalEnvironment }, stdio: "inherit" },
+            {
+                cwd: root,
+                env: { ...environment, ...additionalEnvironment },
+                stdio: "inherit",
+                windowsHide: true,
+            },
         );
         let error: Error | undefined;
         child.once("error", (cause) => {

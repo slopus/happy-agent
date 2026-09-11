@@ -1,3 +1,4 @@
+import { assertGymRuntimeSupported } from "./assertGymRuntimeSupported.js";
 import { startHappyAgentDaemon, type HappyAgentDaemon } from "../main.js";
 import { syncHappyAgentDocs } from "../documentation/syncHappyAgentDocs.js";
 import { removeDaemonPidSync } from "./daemonPid.js";
@@ -21,6 +22,7 @@ export interface RunAgentDaemonOptions {
 export async function runAgentDaemon(
     options: RunAgentDaemonOptions = {},
 ): Promise<HappyAgentDaemon> {
+    assertGymRuntimeSupported();
     const identity = getDaemonIdentity();
     const gymInference = createGymInferenceFromEnvironment();
     const paths = getHappyDaemonPaths();

@@ -1,0 +1,8 @@
+{
+    "repository": "https://github.com/tursodatabase/libsql-js",
+    "commit": "55bee86d1c284f1ddf2b9e280e870d2b6cef884a",
+    "crateVersion": "0.9.30",
+    "crateSha256": "30fe980ac5693ed1f3db490559fb578885e913a018df64af8a1a46e1959a78df",
+    "toolchain": "1.95.0-x86_64-pc-windows-gnu",
+    "upstreamDoubleCloseFix": "https://github.com/tursodatabase/libsql/pull/2261"
+}

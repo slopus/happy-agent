@@ -633,7 +633,7 @@ export class GitModule implements AgentModule {
             this.#cache.delete(oldest);
         }
         this.#cache.set(key, {
-            expiresAt: now + SNAPSHOT_CACHE_MS,
+            expiresAt: Date.now() + SNAPSHOT_CACHE_MS,
             root,
             snapshot,
         });

@@ -36,7 +36,7 @@ export interface GymOptions {
     inference?: readonly GymMockResponse[] | GymInferenceHandler | undefined;
     /** Permit a scenario to retain an explicitly configured external provider endpoint. */
     liveInference?: boolean;
-    mode?: "docker" | "just-bash";
+    mode?: "docker" | "just-bash" | "native-windows";
     modelId?: string;
     mountWorkspaceIntoDockerSession?: boolean;
     permissionMode?: "auto" | "from_config" | "full_access" | "read_only" | "workspace_write";

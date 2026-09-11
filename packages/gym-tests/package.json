@@ -13,7 +13,9 @@
         "test:gym:live:grok": "HAPPY_TERMINAL_LIVE_TEST=1 vitest run tests/grok_4_6_real_inference_uses_terminal_and_tool.live.test.ts --testTimeout=300000",
         "test:gym:slow": "node runGymLane.ts slow",
         "test:gym:full": "pnpm run test:gym:fast && pnpm run test:gym:slow && pnpm run test:gym:docker",
-        "test:gym:docker": "pnpm run prepare:image && HAPPY_TERMINAL_GYM_SKIP_BUILD=1 node runGymLane.ts docker"
+        "test:gym:docker": "pnpm run prepare:image && HAPPY_TERMINAL_GYM_SKIP_BUILD=1 node runGymLane.ts docker",
+        "test:gym:windows": "node runGymLane.ts native-windows",
+        "test:gym:live:windows": "vitest run tests/native_windows_live_gpt_edits_and_runs_tests.live.test.ts --maxWorkers=1 --testTimeout=360000"
     },
     "dependencies": {
         "@openai/codex": "0.145.0"

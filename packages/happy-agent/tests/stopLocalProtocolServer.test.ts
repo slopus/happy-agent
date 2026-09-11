@@ -66,7 +66,7 @@ describe("stopLocalProtocolServer", () => {
 
             await stopLocalProtocolServer(client, "/tmp/rig/server.sock");
 
-            // Linux can report a dead process before Node delivers the child's exit event.
+            // The OS can report a dead process before Node delivers the child's exit event.
             expect(await isDaemonProcessRunning(child.pid!)).toBe(false);
         } finally {
             if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");

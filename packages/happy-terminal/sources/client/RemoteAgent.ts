@@ -38,6 +38,7 @@ import type {
     CodingAssistantClientProvider,
     CodingAssistantModelChoice,
     SteeringRunOptions,
+    SteeringSubmissionResponse,
 } from "../app/CodingAssistantAgentBackend.js";
 import type {
     AbortRunOptions,
@@ -46,7 +47,6 @@ import type {
     ReadBackgroundProcessResponse,
     RunShellCommandResponse,
     SessionProviderQuota,
-    SteerMessageResponse,
     StopBackgroundProcessResponse,
 } from "../protocol/index.js";
 import { fetchProviderQuotas } from "./fetchProviderQuotas.js";
@@ -329,7 +329,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
     async steer(
         content: string | readonly ContentBlock[],
         options: SteeringRunOptions = {},
-    ): Promise<void | SteerMessageResponse> {
+    ): Promise<SteeringSubmissionResponse> {
         const selection = this.#selection;
         const submitted = await this.#client.sendMessage(this.id, {
             ...toSendBody(content, options.displayText, this.#messageMode(selection)),
@@ -338,6 +338,7 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
         });
         this.#lastMode = submitted.message.mode;
         this.#clearSelection(selection);
+        return { delivery: "pending", messageId: submitted.message.id };
     }
 
     async send(

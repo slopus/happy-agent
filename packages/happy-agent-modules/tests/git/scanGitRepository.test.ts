@@ -105,3 +105,21 @@ describe("scanGitRepository", () => {
 async function readFifo(path: string): Promise<void> {
     await execFile("dd", [`if=${path}`, "of=/dev/null", "bs=2", "count=1"]);
 }
+
+it.each(["", "? lol.txt\0"])(
+    "does not infer an unborn repository from incomplete status %j",
+    async (stdout) => {
+        const seen: string[][] = [];
+        const result = await scanGitRepository({
+            path: process.cwd(),
+            runGit: async ({ args }) => {
+                seen.push([...args]);
+                const output = args[0] === "status" ? stdout : "";
+                return { stdout: output, stdoutBytes: Buffer.from(output), truncated: false };
+            },
+        });
+        expect(result.comparison).toBe("unavailable");
+        expect(result.error).toContain("branch identity");
+        expect(seen.some((args) => args[0] === "hash-object" || args[0] === "diff")).toBe(false);
+    },
+);

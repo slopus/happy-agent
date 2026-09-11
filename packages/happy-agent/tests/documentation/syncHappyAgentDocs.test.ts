@@ -42,6 +42,22 @@ describe("syncHappyAgentDocs", () => {
         expect((await lstat(join(happyHome, "docs", "README.md"))).mode & 0o222).toBe(0);
     });
 
+    it("replaces read-only documentation on repeated startup", async () => {
+        const root = await temporaryDirectory("happy-agent-docs-restart-");
+        const source = join(root, "packaged-docs");
+        const happyHome = join(root, ".happy");
+        await mkdir(source, { recursive: true });
+        await writeFile(join(source, "README.md"), "first release\n");
+        await syncHappyAgentDocs(happyHome, source);
+        await writeFile(join(source, "README.md"), "second release\n");
+        await syncHappyAgentDocs(happyHome, source);
+        await syncHappyAgentDocs(happyHome, source);
+        await expect(readFile(join(happyHome, "docs", "README.md"), "utf8")).resolves.toBe(
+            "second release\n",
+        );
+        expect((await lstat(join(happyHome, "docs", "README.md"))).mode & 0o222).toBe(0);
+    });
+
     it("restores shipped files to their current contents on every startup", async () => {
         const root = await temporaryDirectory("happy-agent-docs-update-");
         const source = join(root, "packaged-docs");
@@ -72,7 +88,12 @@ describe("syncHappyAgentDocs", () => {
         await mkdir(outside, { recursive: true });
         await writeFile(join(source, "README.md"), "shipped\n", "utf8");
         await import("node:fs/promises").then(
-            async ({ symlink }) => await symlink(outside, join(happyHome, "docs")),
+            async ({ symlink }) =>
+                await symlink(
+                    outside,
+                    join(happyHome, "docs"),
+                    process.platform === "win32" ? "junction" : "dir",
+                ),
         );
 
         await expect(syncHappyAgentDocs(happyHome, source)).rejects.toThrow(
@@ -93,7 +114,12 @@ describe("syncHappyAgentDocs", () => {
         await mkdir(outside, { recursive: true });
         await writeFile(join(source, "guides", "workspaces.md"), "shipped\n", "utf8");
         await import("node:fs/promises").then(
-            async ({ symlink }) => await symlink(outside, join(happyHome, "docs", "guides")),
+            async ({ symlink }) =>
+                await symlink(
+                    outside,
+                    join(happyHome, "docs", "guides"),
+                    process.platform === "win32" ? "junction" : "dir",
+                ),
         );
 
         await expect(syncHappyAgentDocs(happyHome, source)).rejects.toThrow(

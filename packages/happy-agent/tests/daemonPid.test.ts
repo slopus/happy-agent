@@ -62,7 +62,8 @@ describe("daemon PID persistence", () => {
             });
 
             if (!exited) await once(child, "exit");
-            expect(child.signalCode).toBe("SIGKILL");
+            if (process.platform === "win32") expect(child.exitCode).not.toBeNull();
+            else expect(child.signalCode).toBe("SIGKILL");
             await expect(readDaemonPid(pidPath)).resolves.toBeUndefined();
         } finally {
             if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");

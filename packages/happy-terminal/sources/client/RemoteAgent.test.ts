@@ -94,6 +94,47 @@ describe("RemoteAgent", () => {
         });
     });
 
+    it("reports durable steering acceptance without assigning it to the previous run", async () => {
+        const mode = {
+            effort: "low",
+            modelId: "openai/gpt-5.6-sol",
+            permissionMode: "read_only",
+            providerId: "codex",
+            serviceTier: null,
+        } as const;
+        const sent: unknown[] = [];
+        const remote = new RemoteAgent({
+            agent: { id: "agent", status: "idle" } as never,
+            bootstrap: {
+                context: null,
+                draft: { updatedAt: null, value: null },
+                mode,
+                pending: [],
+            } as never,
+            client: {
+                sendMessage: async (agentId: string, request: { id: string }) => {
+                    sent.push({ agentId, request });
+                    return { cursor: "0", message: { id: request.id, mode, runId: null } };
+                },
+            } as never,
+            config: { defaults: mode, models: {}, providers: {} } as never,
+            events: {} as never,
+            history: { runs: [] } as never,
+        });
+        await expect(
+            remote.steer("follow up", {
+                clientSubmissionId: "clientmessage",
+                expectedRunId: "finishedrun",
+            }),
+        ).resolves.toEqual({ delivery: "pending", messageId: "clientmessage" });
+        expect(sent).toMatchObject([
+            {
+                agentId: "agent",
+                request: { delivery: "steer", id: "clientmessage", text: "follow up" },
+            },
+        ]);
+    });
+
     it("ignores API tool-call request blocks that are not transcript output", () => {
         const mode = {
             effort: "low",

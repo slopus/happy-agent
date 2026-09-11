@@ -55,12 +55,14 @@ export interface InterceptedHttpExchange {
 export class InterceptingHttpProxy {
     readonly exchanges: InterceptedHttpExchange[] = [];
 
+    #listenHost: "127.0.0.1" | "0.0.0.0";
     #handler: HttpInterceptHandler | undefined;
     #server: ReturnType<typeof createServer> | undefined;
     #sockets = new Set<Socket>();
     #url: string | undefined;
 
-    constructor(handler?: HttpInterceptHandler) {
+    constructor(handler?: HttpInterceptHandler, listenHost: "127.0.0.1" | "0.0.0.0" = "127.0.0.1") {
+        this.#listenHost = listenHost;
         this.#handler = handler;
     }
 
@@ -88,7 +90,7 @@ export class InterceptingHttpProxy {
         });
         await new Promise<void>((resolve, reject) => {
             server.once("error", reject);
-            server.listen(0, "0.0.0.0", () => {
+            server.listen(0, this.#listenHost, () => {
                 server.off("error", reject);
                 resolve();
             });
@@ -189,14 +191,16 @@ export class InterceptingHttpProxy {
 
         try {
             const action = await this.#handler?.(exchange.request, requestIndex);
-            if (clientSocket.destroyed) return;
             if (action?.response !== undefined) {
                 const interceptedResponse = normalizeResponse(action.response);
                 exchange.response = interceptedResponse;
                 exchange.responseSource = "interceptor";
-                writeConnectResponse(clientSocket, interceptedResponse);
+                // Retain the handler's result even when its client disconnected while awaiting it.
+                if (!clientSocket.destroyed)
+                    writeConnectResponse(clientSocket, interceptedResponse);
                 return;
             }
+            if (clientSocket.destroyed) return;
 
             const forwardedRequest = applyRequestReplacement(exchange.request, action?.request);
             exchange.forwardedRequest = forwardedRequest;

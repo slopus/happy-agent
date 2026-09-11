@@ -3,7 +3,7 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm --filter @slopus/happy-terminal build",
+        "build": "pnpm --filter @slopus/happy-agent-supervisor build && pnpm --filter @slopus/happy-agent-client build && pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm --filter @slopus/happy-terminal build",
         "build:bun": "pnpm build && pnpm --filter @slopus/happy-agent build:bun",
         "build:bun:all": "pnpm build && pnpm --filter @slopus/happy-agent build:bun:all",
         "build:gym": "pnpm --filter @slopus/happy-terminal-gym run build:image",
@@ -57,7 +57,10 @@
     "packageManager": "pnpm@10.28.1",
     "pnpm": {
         "overrides": {
-            "@steve.kite/stdlib": "0.0.12"
+            "@steve.kite/stdlib": "0.0.12",
+            "@slopus/happy-agent-supervisor": "workspace:*",
+            "@slopus/happy-agent-compute": "workspace:*",
+            "@slopus/happy-providers": "workspace:*"
         },
         "supportedArchitectures": {
             "cpu": [
@@ -66,7 +69,8 @@
             ],
             "os": [
                 "darwin",
-                "linux"
+                "linux",
+                "win32"
             ]
         },
         "onlyBuiltDependencies": [
@@ -86,6 +90,10 @@
             "@ffprobe-installer/linux-x64",
             "@ffprobe-installer/win32-ia32",
             "@ffprobe-installer/win32-x64"
-        ]
+        ],
+        "patchedDependencies": {
+            "libsql@0.5.29": "patches/libsql@0.5.29.patch",
+            "@libsql/client@0.17.4": "patches/@libsql__client@0.17.4.patch"
+        }
     }
 }

@@ -1,3 +1,4 @@
+import "../../scripts/windowsSandboxTestSetup.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

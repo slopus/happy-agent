@@ -31,8 +31,10 @@ describe("CodeModeCheckpointStore", () => {
             version: 1,
         });
         expect(Array.from(restored?.snapshot ?? [])).toEqual([1, 2, 3]);
-        expect((await stat(path)).mode & 0o777).toBe(0o600);
-        expect((await stat(join(path, ".."))).mode & 0o777).toBe(0o700);
+        if (process.platform !== "win32") {
+            expect((await stat(path)).mode & 0o777).toBe(0o600);
+            expect((await stat(join(path, ".."))).mode & 0o777).toBe(0o700);
+        }
         expect(await readdir(join(path, ".."))).toEqual(["snapshot.bin"]);
     });
 
@@ -79,6 +81,8 @@ describe("CodeModeCheckpointStore", () => {
     it("ignores only explicit unsupported directory-sync errors", () => {
         expect(isUnsupportedDirectorySyncError(fileError("EINVAL"))).toBe(true);
         expect(isUnsupportedDirectorySyncError(fileError("ENOTSUP"))).toBe(true);
+        expect(isUnsupportedDirectorySyncError(fileError("EPERM"))).toBe(false);
+        expect(isUnsupportedDirectorySyncError(fileError("EACCES"))).toBe(false);
         expect(isUnsupportedDirectorySyncError(fileError("EIO"))).toBe(false);
         expect(isUnsupportedDirectorySyncError(fileError("ENOSPC"))).toBe(false);
     });

@@ -14,3 +14,5 @@ export {
     MAX_ACTIVE_HOST_SESSIONS,
     MAX_RETAINED_HOST_SESSIONS,
 } from "./impl/hostSessionLimits.js";
+
+export { localAgentSocketPath, ensurePrivateDirectory } from "./localAgentPaths.js";

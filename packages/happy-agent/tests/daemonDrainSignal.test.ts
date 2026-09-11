@@ -30,7 +30,8 @@ afterEach(async () => {
     );
 });
 
-describe("local signal draining", () => {
+// POSIX SIGUSR2 is replaced by authenticated API draining on Windows.
+describe.skipIf(process.platform === "win32")("local signal draining", () => {
     it("reports real progress, handles repeated signals once, and never shuts down", async () => {
         const directory = await temporaryDirectory();
         const drain = vi.fn();

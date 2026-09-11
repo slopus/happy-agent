@@ -209,7 +209,14 @@ async function syncDirectory(path: string): Promise<void> {
     let directory;
     try {
         directory = await open(path, "r");
-        await directory.sync();
+        try {
+            await directory.sync();
+        } catch (error) {
+            // Windows cannot flush an opened directory through fsync. Only this
+            // directory operation may ignore EPERM: opening the directory and
+            // flushing the checkpoint's writable file handle must still succeed.
+            if (process.platform !== "win32" || !isFileError(error, "EPERM")) throw error;
+        }
     } catch (error) {
         if (!isUnsupportedDirectorySyncError(error)) throw error;
     } finally {

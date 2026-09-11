@@ -1,0 +1,2257 @@
+diff --git a/codex-rs/utils/pty/src/lib.rs b/codex-rs/utils/pty/src/lib.rs
+index 1200c11..0e1d701 100644
+--- a/codex-rs/utils/pty/src/lib.rs
++++ b/codex-rs/utils/pty/src/lib.rs
+@@ -21,6 +21,7 @@ pub use pipe::spawn_process_no_stdin as spawn_pipe_process_no_stdin;
+ pub use process::ProcessDriver;
+ /// Handle for interacting with a spawned process (PTY or pipe).
+ pub use process::ProcessHandle;
++pub use process::ProcessOutputReceiver;
+ /// Process signal supported by spawned-process handles.
+ pub use process::ProcessSignal;
+ /// Bundle of process handles plus split output and exit receivers returned by spawn helpers.
+diff --git a/codex-rs/utils/pty/src/process.rs b/codex-rs/utils/pty/src/process.rs
+index 5593450..679d253 100644
+--- a/codex-rs/utils/pty/src/process.rs
++++ b/codex-rs/utils/pty/src/process.rs
+@@ -360,11 +360,31 @@ pub struct SpawnedProcess {
+     pub exit_rx: oneshot::Receiver<i32>,
+ }
+
++/// Output receiver used by a driver. Windows IPC uses bounded MPSC for lossless
++/// backpressure; existing broadcast-backed drivers retain their original contract.
++pub trait ProcessOutputReceiver: Send + 'static {
++    fn recv_output(
++        &mut self,
++    ) -> impl std::future::Future<Output = Result<Vec<u8>, broadcast::error::RecvError>> + Send;
++}
++
++impl ProcessOutputReceiver for broadcast::Receiver<Vec<u8>> {
++    async fn recv_output(&mut self) -> Result<Vec<u8>, broadcast::error::RecvError> {
++        self.recv().await
++    }
++}
++
++impl ProcessOutputReceiver for mpsc::Receiver<Vec<u8>> {
++    async fn recv_output(&mut self) -> Result<Vec<u8>, broadcast::error::RecvError> {
++        self.recv().await.ok_or(broadcast::error::RecvError::Closed)
++    }
++}
++
+ /// Driver-backed process handles for non-standard spawn backends.
+-pub struct ProcessDriver {
++pub struct ProcessDriver<Output = broadcast::Receiver<Vec<u8>>> {
+     pub writer_tx: mpsc::Sender<Vec<u8>>,
+-    pub stdout_rx: broadcast::Receiver<Vec<u8>>,
+-    pub stderr_rx: Option<broadcast::Receiver<Vec<u8>>>,
++    pub stdout_rx: Output,
++    pub stderr_rx: Option<Output>,
+     pub exit_rx: oneshot::Receiver<i32>,
+     pub terminator: Option<Box<dyn FnMut() + Send + Sync>>,
+     pub writer_handle: Option<JoinHandle<()>>,
+@@ -375,7 +395,9 @@ pub struct ProcessDriver {
+ }
+
+ /// Build a `SpawnedProcess` from a driver that supplies stdin/output/exit channels.
+-pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
++pub fn spawn_from_driver<Output: ProcessOutputReceiver>(
++    driver: ProcessDriver<Output>,
++) -> SpawnedProcess {
+     let ProcessDriver {
+         writer_tx,
+         stdout_rx: stdout_driver_rx,
+@@ -395,7 +417,7 @@ pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
+     let (stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(256);
+     let (exit_seen_tx, exit_seen_rx) = watch::channel(false);
+     let spawn_stream_reader =
+-        |mut output_rx: broadcast::Receiver<Vec<u8>>,
++        |mut output_rx: Output,
+          output_tx: mpsc::Sender<Vec<u8>>,
+          mut exit_seen_rx: watch::Receiver<bool>| {
+             tokio::spawn(async move {
+@@ -409,13 +431,13 @@ pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
+                         // Instead, keep waiting until the driver closes the broadcast sender.
+                         // That makes the shutdown contract explicit: the backend is responsible
+                         // for dropping its sender when it has truly finished forwarding output.
+-                        output_rx.recv().await
++                        output_rx.recv_output().await
+                     } else {
+                         tokio::select! {
+                             _ = exit_seen_rx.changed() => {
+                                 continue;
+                             }
+-                            result = output_rx.recv() => result,
++                            result = output_rx.recv_output() => result,
+                         }
+                     };
+                     match recv_result {
+diff --git a/codex-rs/utils/pty/src/tests.rs b/codex-rs/utils/pty/src/tests.rs
+index b3d732b..972d23b 100644
+--- a/codex-rs/utils/pty/src/tests.rs
++++ b/codex-rs/utils/pty/src/tests.rs
+@@ -1604,3 +1604,60 @@ async fn pipe_spawn_no_stdin_can_preserve_inherited_fds() -> anyhow::Result<()>
+
+     Ok(())
+ }
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn lossless_driver_backpressures_tiny_chunks_and_drains_after_exit() -> anyhow::Result<()> {
++    let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
++    let (stdout_tx, stdout_driver_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
++    let (stderr_tx, stderr_driver_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
++    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<i32>();
++    let spawned = spawn_from_driver(ProcessDriver {
++        writer_tx,
++        stdout_rx: stdout_driver_rx,
++        stderr_rx: Some(stderr_driver_rx),
++        exit_rx,
++        terminator: None,
++        writer_handle: None,
++        resizer: None,
++        #[cfg(windows)]
++        tty: false,
++    });
++    let SpawnedProcess {
++        session: _session,
++        stdout_rx,
++        stderr_rx,
++        exit_rx,
++    } = spawned;
++    // Exit may arrive before the final stream bytes. Neither exit nor a slow
++    // consumer may turn the bounded output queues into a lossy broadcast.
++    exit_tx.send(7).expect("send early exit");
++    assert_eq!(exit_rx.await?, 7);
++    let mut producer = tokio::spawn(async move {
++        for index in 0..8192_u32 {
++            stdout_tx.send(index.to_le_bytes().to_vec()).await?;
++            stderr_tx
++                .send((u32::MAX - index).to_le_bytes().to_vec())
++                .await?;
++        }
++        Ok::<_, tokio::sync::mpsc::error::SendError<Vec<u8>>>(())
++    });
++    // The queues contain far fewer than 8192 chunks, so completion without
++    // draining would mean data was discarded or buffering became unbounded.
++    assert!(
++        tokio::time::timeout(tokio::time::Duration::from_millis(20), &mut producer)
++            .await
++            .is_err()
++    );
++    let stdout_task = tokio::spawn(async move { collect_split_output(stdout_rx).await });
++    let stderr_task = tokio::spawn(async move { collect_split_output(stderr_rx).await });
++    tokio::time::timeout(tokio::time::Duration::from_secs(5), producer).await???;
++    let stdout = stdout_task.await?;
++    let stderr = stderr_task.await?;
++    let expected_stdout: Vec<u8> = (0..8192_u32).flat_map(u32::to_le_bytes).collect();
++    let expected_stderr: Vec<u8> = (0..8192_u32)
++        .flat_map(|index| (u32::MAX - index).to_le_bytes())
++        .collect();
++    assert_eq!(stdout, expected_stdout);
++    assert_eq!(stderr, expected_stderr);
++    Ok(())
++}
+diff --git a/codex-rs/windows-sandbox-rs/Cargo.toml b/codex-rs/windows-sandbox-rs/Cargo.toml
+index 62f969e..6ca2a05 100644
+--- a/codex-rs/windows-sandbox-rs/Cargo.toml
++++ b/codex-rs/windows-sandbox-rs/Cargo.toml
+@@ -11,11 +11,11 @@ path = "src/lib.rs"
+ doctest = false
+
+ [[bin]]
+-name = "codex-windows-sandbox-setup"
++name = "happy-sandbox-setup"
+ path = "src/bin/setup_main/main.rs"
+
+ [[bin]]
+-name = "codex-command-runner"
++name = "happy-sandbox-runner"
+ path = "src/bin/command_runner/main.rs"
+
+ [[bin]]
+@@ -64,6 +64,7 @@ version = "2.0"
+
+ [target.'cfg(windows)'.dependencies.windows-sys]
+ features = [
++    "Wdk_System_Threading",
+     "Win32_Foundation",
+     "Win32_System_Diagnostics_Debug",
+     "Win32_Security",
+@@ -100,3 +101,7 @@ version = "0.52"
+
+ [dev-dependencies]
+ pretty_assertions = { workspace = true }
++
++[[bin]]
++name = "happy-agent-supervisor"
++path = "src/bin/happy_main.rs"
+diff --git a/codex-rs/windows-sandbox-rs/build.rs b/codex-rs/windows-sandbox-rs/build.rs
+index 6ba79e6..6d588e9 100644
+--- a/codex-rs/windows-sandbox-rs/build.rs
++++ b/codex-rs/windows-sandbox-rs/build.rs
+@@ -1,39 +1,70 @@
+-use std::env;
+-use std::path::PathBuf;
++use std::{env, fs, path::PathBuf, process::Command};
+
+-const SETUP_BIN: &str = "codex-windows-sandbox-setup";
+-const SETUP_MANIFEST: &str = "codex-windows-sandbox-setup.manifest";
+-
+-fn main() -> Result<(), String> {
+-    println!("cargo:rerun-if-changed={SETUP_MANIFEST}");
+-
+-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+-        return Ok(());
+-    }
+-
+-    let manifest_dir = env::var_os("CARGO_MANIFEST_DIR")
+-        .ok_or_else(|| "CARGO_MANIFEST_DIR should be set for build scripts".to_string())?;
+-    let manifest_path = PathBuf::from(manifest_dir).join(SETUP_MANIFEST);
+-    let manifest_path = manifest_path.display();
+-
+-    // Keep this scoped to the setup helper so Codex binaries that link the
+-    // library do not inherit any resource metadata from this package.
+-    match (
+-        env::var("CARGO_CFG_TARGET_ENV").as_deref(),
+-        env::var("CARGO_CFG_TARGET_ABI").as_deref(),
+-    ) {
+-        (Ok("msvc"), _) => {
+-            println!("cargo:rustc-link-arg-bin={SETUP_BIN}=/MANIFEST:EMBED");
+-            println!("cargo:rustc-link-arg-bin={SETUP_BIN}=/MANIFESTINPUT:{manifest_path}");
+-        }
+-        (Ok("gnu"), Ok("llvm")) => {
+-            println!("cargo:rustc-link-arg-bin={SETUP_BIN}=-Wl,-Xlink=/manifest:embed");
+-            println!(
+-                "cargo:rustc-link-arg-bin={SETUP_BIN}=-Wl,-Xlink=/manifestinput:{manifest_path}"
+-            );
+-        }
+-        _ => {}
++fn main() -> Result<(), Box<dyn std::error::Error>> {
++    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") { return Ok(()); }
++    let source = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest directory")?);
++    let output = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing build output")?);
++    let manifest = source.join("codex-windows-sandbox-setup.manifest");
++    println!("cargo:rerun-if-changed={}", manifest.display());
++    println!("cargo:rerun-if-env-changed=HAPPY_AGENT_RELEASE_VERSION");
++    println!("cargo:rerun-if-env-changed=RC");
++    println!("cargo:rerun-if-env-changed=WINDRES");
++    let version = env::var("HAPPY_AGENT_RELEASE_VERSION").unwrap_or_else(|_| env::var("CARGO_PKG_VERSION").unwrap());
++    let numbers: Vec<u16> = version.split(['.', '-']).take(3).map(str::parse).collect::<Result<_, _>>()?;
++    if numbers.len() != 3 { return Err("Happy helper version must start with major.minor.patch".into()); }
++    let numeric = format!("{},{},{},0", numbers[0], numbers[1], numbers[2]);
++    let display_version = format!("{}.{}.{}.0", numbers[0], numbers[1], numbers[2]);
++    let msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
++    for (binary, description) in [
++        ("happy-agent-supervisor", "Happy Agent Supervisor"),
++        ("happy-sandbox-runner", "Happy Sandbox Runner"),
++        ("happy-sandbox-setup", "Happy Sandbox Setup"),
++    ] {
++        let rc = output.join(format!("{binary}.rc"));
++        let resource = output.join(format!("{binary}.{}", if msvc {"res"} else {"o"}));
++        let manifest_path = manifest.to_string_lossy().replace('\\', "/");
++        // asInvoker is deliberate: only the explicit provisioning flow uses runas.
++        let content = format!(r#"
++1 24 "{manifest_path}"
++1 VERSIONINFO
++ FILEVERSION {numeric}
++ PRODUCTVERSION {numeric}
++ FILEFLAGSMASK 0x3fL
++ FILEFLAGS 0x0L
++ FILEOS 0x40004L
++ FILETYPE 0x1L
++ FILESUBTYPE 0x0L
++BEGIN
++ BLOCK "StringFileInfo"
++ BEGIN
++  BLOCK "040904b0"
++  BEGIN
++   VALUE "CompanyName", "Slopus\0"
++   VALUE "FileDescription", "{description}\0"
++   VALUE "FileVersion", "{display_version}\0"
++   VALUE "InternalName", "{binary}\0"
++   VALUE "OriginalFilename", "{binary}.exe\0"
++   VALUE "ProductName", "Happy\0"
++   VALUE "ProductVersion", "{display_version}\0"
++  END
++ END
++ BLOCK "VarFileInfo"
++ BEGIN
++  VALUE "Translation", 0x0409, 1200
++ END
++END
++"#);
++        fs::write(&rc, content)?;
++        let status = if msvc {
++            Command::new(env::var_os("RC").unwrap_or_else(|| "rc.exe".into()))
++                .arg("/nologo").arg(format!("/fo{}", resource.display())).arg(&rc).status()?
++        } else {
++            Command::new(env::var_os("WINDRES").unwrap_or_else(|| "windres.exe".into()))
++                .args(["--input-format=rc", "--output-format=coff", "-i"])
++                .arg(&rc).arg("-o").arg(&resource).status()?
++        };
++        if !status.success() { return Err(format!("Windows resource compilation failed for {binary}").into()); }
++        println!("cargo:rustc-link-arg-bin={binary}={}", resource.display());
+     }
+-
+     Ok(())
+ }
+diff --git a/codex-rs/windows-sandbox-rs/src/acl.rs b/codex-rs/windows-sandbox-rs/src/acl.rs
+index 064b7fe..1008d62 100644
+--- a/codex-rs/windows-sandbox-rs/src/acl.rs
++++ b/codex-rs/windows-sandbox-rs/src/acl.rs
+@@ -524,6 +524,17 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+     disallow_mask: u32,
+     inheritance: u32,
+ ) -> Result<bool> {
++    // Directory-only ACEs must not reapply inherited permissions across a
++    // user's existing subtree. A MAXIMUM_ALLOWED handle disables propagation
++    // for SetSecurityInfo, as documented by Windows. Pin the directory without
++    // following reparses while reading and changing its DACL.
++    let directory_only = if inheritance == 0 && path.is_dir() {
++        Some(crate::no_reparse_dir::open_directory_no_reparse(
++            path, 0x02000000 /* MAXIMUM_ALLOWED */,
++            FILE_SHARE_READ | FILE_SHARE_WRITE,
++            crate::no_reparse_dir::DirectoryOpenDisposition::OpenExisting,
++        )?)
++    } else { None };
+     let (p_dacl, p_sd) = fetch_dacl_handle(path)?;
+     let mut entries: Vec<EXPLICIT_ACCESS_W> = Vec::new();
+     for sid in sids {
+@@ -553,7 +564,13 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+             &mut p_new_dacl,
+         );
+         if code2 == ERROR_SUCCESS {
+-            let code3 = SetNamedSecurityInfoW(
++            let code3 = if let Some(directory) = directory_only.as_ref() {
++                SetSecurityInfo(
++                    directory.as_raw_handle() as isize, 1, DACL_SECURITY_INFORMATION,
++                    std::ptr::null_mut(), std::ptr::null_mut(), p_new_dacl, std::ptr::null_mut(),
++                )
++            } else {
++                SetNamedSecurityInfoW(
+                 to_wide(path).as_ptr() as *mut u16,
+                 1,
+                 DACL_SECURITY_INFORMATION,
+@@ -561,7 +578,8 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+                 std::ptr::null_mut(),
+                 p_new_dacl,
+                 std::ptr::null_mut(),
+-            );
++            )
++            };
+             if code3 == ERROR_SUCCESS {
+                 added = true;
+                 if !p_new_dacl.is_null() {
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs b/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs
+index 1e3c88b..54f4755 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs
+@@ -10,5 +10,5 @@ fn main() -> anyhow::Result<()> {
+
+ #[cfg(not(target_os = "windows"))]
+ fn main() {
+-    panic!("codex-command-runner is Windows-only");
++    panic!("happy-sandbox-runner is Windows-only");
+ }
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs b/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
+index b380aa0..58956f1 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs
+@@ -77,7 +77,7 @@ use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
+ use windows_sys::Win32::System::Threading::TerminateProcess;
+ use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+-const READ_ACL_MUTEX_NAME: &str = "Local\\CodexSandboxReadAcl";
++const READ_ACL_MUTEX_NAME: &str = "Local\\HappySandboxReadAcl";
+ const TERMINATION_WAIT_MS: u32 = 5_000;
+ const WAIT_TIMEOUT: u32 = 0x0000_0102;
+
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/main.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/main.rs
+index 2624607..40189d0 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/main.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/main.rs
+@@ -8,5 +8,5 @@ fn main() -> anyhow::Result<()> {
+
+ #[cfg(not(target_os = "windows"))]
+ fn main() {
+-    panic!("codex-windows-sandbox-setup is Windows-only");
++    panic!("happy-sandbox-setup is Windows-only");
+ }
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
+index f80efe4..7f2baa2 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
+@@ -46,11 +46,8 @@ use std::ffi::OsStr;
+ use std::ffi::c_void;
+ use std::io::Write;
+ use std::os::windows::io::AsRawHandle;
+-use std::os::windows::process::CommandExt;
+ use std::path::Path;
+ use std::path::PathBuf;
+-use std::process::Command;
+-use std::process::Stdio;
+ use std::sync::mpsc;
+ use windows_sys::Win32::Foundation::GetLastError;
+ use windows_sys::Win32::Foundation::HLOCAL;
+@@ -89,7 +86,6 @@ const WRITE_ROOT_ALLOW_MASK: u32 =
+ mod sandbox_users;
+ mod setup_runtime_bin;
+ use read_acl_mutex::acquire_read_acl_mutex;
+-use read_acl_mutex::read_acl_mutex_exists;
+ use sandbox_users::commit_setup_marker;
+ use sandbox_users::prepare_setup_marker;
+ use sandbox_users::provision_sandbox_users;
+@@ -184,24 +180,6 @@ fn workspace_write_cap_sids_for_path(
+     Ok(sid_strs)
+ }
+
+-fn spawn_read_acl_helper(payload: &Payload, _log: &mut dyn Write) -> Result<()> {
+-    let mut read_payload = payload.clone();
+-    read_payload.mode = SetupMode::ReadAclsOnly;
+-    read_payload.refresh_only = true;
+-    let payload_json = serde_json::to_vec(&read_payload)?;
+-    let payload_b64 = BASE64.encode(payload_json);
+-    let exe = std::env::current_exe().context("locate setup helper")?;
+-    Command::new(&exe)
+-        .arg(payload_b64)
+-        .stdin(Stdio::null())
+-        .stdout(Stdio::null())
+-        .stderr(Stdio::null())
+-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+-        .spawn()
+-        .context("spawn read ACL helper")?;
+-    Ok(())
+-}
+-
+ struct ReadAclSubjects<'a> {
+     sandbox_group_psid: *mut c_void,
+     rx_psids: &'a [*mut c_void],
+@@ -360,7 +338,10 @@ fn lock_sandbox_dir(
+             FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE,
+             GRANT_ACCESS,
+         ),
+-        (real_sid, real_user_mask, GRANT_ACCESS),
++        // Setup may create this directory elevated, making Administrators
++        // its owner. The ordinary Happy process must still be able to refresh
++        // the DACL. Grant that right only to the real user, never the sandbox.
++        (real_sid, real_user_mask | WRITE_DAC, GRANT_ACCESS),
+     ];
+     unsafe {
+         let mut eas: Vec<EXPLICIT_ACCESS_W> = Vec::new();
+@@ -598,13 +579,7 @@ fn run_setup(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Result<(
+ }
+
+ fn run_read_acl_only(payload: &Payload, log: &mut dyn Write) -> Result<()> {
+-    let _read_acl_guard = match acquire_read_acl_mutex()? {
+-        Some(guard) => guard,
+-        None => {
+-            log_line(log, "read ACL helper already running; skipping")?;
+-            return Ok(());
+-        }
+-    };
++    let _read_acl_guard = acquire_read_acl_mutex()?;
+     log_line(log, "read-acl-only mode: applying read ACLs")?;
+     let sandbox_group_sid = resolve_sandbox_users_group_sid()?;
+     let sandbox_group_psid = sid_bytes_to_psid(&sandbox_group_sid)?;
+@@ -621,6 +596,19 @@ fn run_read_acl_only(payload: &Payload, log: &mut dyn Write) -> Result<()> {
+             sandbox_group_psid,
+             rx_psids: &rx_psids,
+         };
++        // Windows shells resolve each parent directory before accepting their
++        // initial location. Only traversal and attributes are needed: no
++        // directory listing, file data, writes, or inherited permissions.
++        let ancestors: Vec<PathBuf> = payload.read_roots.iter().chain(&payload.write_roots)
++            .flat_map(|root| root.ancestors().skip(1).map(Path::to_path_buf))
++            .collect::<HashSet<_>>().into_iter().collect();
++        apply_read_acls(
++            &ancestors, &subjects, log, &mut refresh_errors,
++            windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES
++                | windows_sys::Win32::Storage::FileSystem::FILE_TRAVERSE
++                | windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE,
++            "project ancestor metadata and traversal", 0,
++        )?;
+         apply_read_acls(
+             &payload.read_roots,
+             &subjects,
+@@ -716,10 +704,10 @@ fn provision_sandbox(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) ->
+             let _ = log_line(log, message);
+         },
+     );
++    // WFP is a required security boundary, including on first installation.
++    // Never report ready after an unsuccessful network-policy installation.
++    wfp_result?;
+     if repairing_disabled_accounts {
+-        // Ordinary setup keeps its best-effort WFP behavior. Recovery must not reopen logons
+-        // after cleanup removed protections unless restoring those protections succeeded.
+-        wfp_result?;
+         for username in [&payload.offline_username, &payload.online_username] {
+             let flags = local_user_flags(username)?.ok_or_else(|| {
+                 anyhow::anyhow!("sandbox user {username} disappeared during repair")
+@@ -889,45 +877,13 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
+         )?;
+     }
+
+-    if payload.read_roots.is_empty() {
+-        log_line(log, "no read roots to grant; skipping read ACL helper")?;
+-    } else {
+-        match read_acl_mutex_exists() {
+-            Ok(true) => {
+-                log_line(log, "read ACL helper already running; skipping spawn")?;
+-            }
+-            Ok(false) => {
+-                spawn_read_acl_helper(payload, log).map_err(|err| {
+-                    anyhow::Error::new(SetupFailure::new(
+-                        SetupErrorCode::HelperReadAclHelperSpawnFailed,
+-                        format!("spawn read ACL helper failed: {err}"),
+-                    ))
+-                })?;
+-            }
+-            Err(err) => {
+-                log_line(
+-                    log,
+-                    &format!("read ACL mutex check failed: {err}; spawning anyway"),
+-                )?;
+-                spawn_read_acl_helper(payload, log).map_err(|spawn_err| {
+-                    anyhow::Error::new(SetupFailure::new(
+-                        SetupErrorCode::HelperReadAclHelperSpawnFailed,
+-                        format!(
+-                            "spawn read ACL helper failed after mutex error {err}: {spawn_err}"
+-                        ),
+-                    ))
+-                })?;
+-            }
+-        }
+-    }
++    // A selected project must be accessible before CreateProcessWithLogonW.
++    // Deferring read grants races the first command in a newly added project.
++    // Complete this request's roots under the ACL mutex; never drop them merely
++    // because another project is being provisioned concurrently.
++    run_read_acl_only(payload, log).context("prepare selected project read access")?;
+
+-    if refresh_only {
+-        setup_runtime_bin::ensure_codex_app_runtime_paths_readable(
+-            sandbox_group_psid,
+-            &mut refresh_errors,
+-            log,
+-        )?;
+-    }
++    // Happy provisions its own helpers; never modify the installed Codex app ACLs.
+
+     let mut grant_tasks: Vec<(PathBuf, String)> = Vec::new();
+
+@@ -1090,7 +1046,7 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
+         log_line(
+             log,
+             &format!(
+-                "setup refresh: processed {} write roots (read roots delegated); errors={:?}",
++                "setup refresh: processed {} write roots (read roots completed); errors={:?}",
+                 payload.write_roots.len(),
+                 refresh_errors
+             ),
+@@ -1144,8 +1100,8 @@ mod tests {
+     fn payload_json() -> serde_json::Value {
+         json!({
+             "version": SETUP_VERSION,
+-            "offline_username": "CodexSandboxOffline",
+-            "online_username": "CodexSandboxOnline",
++            "offline_username": "HappySandboxOffline",
++            "online_username": "HappySandboxOnline",
+             "codex_home": "C:\\codex-home",
+             "command_cwd": "C:\\workspace",
+             "read_roots": [],
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/firewall.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/firewall.rs
+index bf2476d..4608f9a 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/firewall.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/firewall.rs
+@@ -29,16 +29,16 @@ use codex_windows_sandbox::SetupFailure;
+
+ // This is the stable identifier we use to find/update the rule idempotently.
+ // It intentionally does not change between installs.
+-const OFFLINE_BLOCK_RULE_NAME: &str = "codex_sandbox_offline_block_outbound";
+-const OFFLINE_BLOCK_LOOPBACK_TCP_RULE_NAME: &str = "codex_sandbox_offline_block_loopback_tcp";
+-const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_NAME: &str = "codex_sandbox_offline_block_loopback_udp";
++const OFFLINE_BLOCK_RULE_NAME: &str = "happy_sandbox_offline_block_outbound";
++const OFFLINE_BLOCK_LOOPBACK_TCP_RULE_NAME: &str = "happy_sandbox_offline_block_loopback_tcp";
++const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_NAME: &str = "happy_sandbox_offline_block_loopback_udp";
+
+ // Friendly text shown in the firewall UI.
+-const OFFLINE_BLOCK_RULE_FRIENDLY: &str = "Codex Sandbox Offline - Block Non-Loopback Outbound";
++const OFFLINE_BLOCK_RULE_FRIENDLY: &str = "Happy Sandbox Offline - Block Non-Loopback Outbound";
+ const OFFLINE_BLOCK_LOOPBACK_TCP_RULE_FRIENDLY: &str =
+-    "Codex Sandbox Offline - Block Loopback TCP (Except Proxy)";
+-const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_FRIENDLY: &str = "Codex Sandbox Offline - Block Loopback UDP";
+-const OFFLINE_PROXY_ALLOW_RULE_NAME: &str = "codex_sandbox_offline_allow_loopback_proxy";
++    "Happy Sandbox Offline - Block Loopback TCP (Except Proxy)";
++const OFFLINE_BLOCK_LOOPBACK_UDP_RULE_FRIENDLY: &str = "Happy Sandbox Offline - Block Loopback UDP";
++const OFFLINE_PROXY_ALLOW_RULE_NAME: &str = "happy_sandbox_offline_allow_loopback_proxy";
+ const LOOPBACK_REMOTE_ADDRESSES: &str = "127.0.0.0/8,::/127";
+ const NON_LOOPBACK_REMOTE_ADDRESSES: &str = "0.0.0.0-126.255.255.255,128.0.0.0-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff";
+
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
+index a96b6a5..3ca29b0 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win/read_acl_mutex.rs
+@@ -1,61 +1,28 @@
+ use anyhow::Result;
+ use codex_windows_sandbox::to_wide;
+ use std::ffi::OsStr;
+-use windows_sys::Win32::Foundation::CloseHandle;
+-use windows_sys::Win32::Foundation::ERROR_ALREADY_EXISTS;
+-use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+-use windows_sys::Win32::Foundation::GetLastError;
+-use windows_sys::Win32::Foundation::HANDLE;
+-use windows_sys::Win32::System::Threading::CreateMutexW;
+-use windows_sys::Win32::System::Threading::MUTEX_ALL_ACCESS;
+-use windows_sys::Win32::System::Threading::OpenMutexW;
+-use windows_sys::Win32::System::Threading::ReleaseMutex;
++use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
++use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
+
+-const READ_ACL_MUTEX_NAME: &str = "Local\\CodexSandboxReadAcl";
++const READ_ACL_MUTEX_NAME: &str = "Local\\HappySandboxReadAcl";
+
+-pub(super) struct ReadAclMutexGuard {
+-    handle: HANDLE,
+-}
++pub(super) struct ReadAclMutexGuard { handle: HANDLE }
+
+ impl Drop for ReadAclMutexGuard {
+     fn drop(&mut self) {
+-        unsafe {
+-            let _ = ReleaseMutex(self.handle);
+-            CloseHandle(self.handle);
+-        }
++        unsafe { ReleaseMutex(self.handle); CloseHandle(self.handle); }
+     }
+ }
+
+-pub(super) fn read_acl_mutex_exists() -> Result<bool> {
++pub(super) fn acquire_read_acl_mutex() -> Result<ReadAclMutexGuard> {
+     let name = to_wide(OsStr::new(READ_ACL_MUTEX_NAME));
+-    let handle = unsafe { OpenMutexW(MUTEX_ALL_ACCESS, 0, name.as_ptr()) };
+-    if handle == 0 {
+-        let err = unsafe { GetLastError() };
+-        if err == ERROR_FILE_NOT_FOUND {
+-            return Ok(false);
+-        }
+-        return Err(anyhow::anyhow!("OpenMutexW failed: {err}"));
+-    }
+-    unsafe {
+-        CloseHandle(handle);
+-    }
+-    Ok(true)
+-}
+-
+-pub(super) fn acquire_read_acl_mutex() -> Result<Option<ReadAclMutexGuard>> {
+-    let name = to_wide(OsStr::new(READ_ACL_MUTEX_NAME));
+-    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 1, name.as_ptr()) };
+-    if handle == 0 {
+-        return Err(anyhow::anyhow!("CreateMutexW failed: {}", unsafe {
+-            GetLastError()
+-        }));
+-    }
+-    let err = unsafe { GetLastError() };
+-    if err == ERROR_ALREADY_EXISTS {
+-        unsafe {
+-            CloseHandle(handle);
+-        }
+-        return Ok(None);
++    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
++    if handle == 0 { return Err(anyhow::anyhow!("CreateMutexW failed: {}", unsafe { GetLastError() })); }
++    let outcome = unsafe { WaitForSingleObject(handle, 30_000) };
++    if outcome != WAIT_OBJECT_0 && outcome != WAIT_ABANDONED {
++        let error = unsafe { GetLastError() };
++        unsafe { CloseHandle(handle); }
++        return Err(anyhow::anyhow!("Could not acquire Happy project ACL lock: wait={outcome}, error={error}"));
+     }
+-    Ok(Some(ReadAclMutexGuard { handle }))
++    Ok(ReadAclMutexGuard { handle })
+ }
+diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win_acl_tests.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win_acl_tests.rs
+index df39cfd..3477e13 100644
+--- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win_acl_tests.rs
++++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win_acl_tests.rs
+@@ -92,6 +92,14 @@ fn lock_sandbox_dir_blocks_inherited_write_for_runner_files() {
+             refresh_only: false,
+         };
+         lock_sandbox_bin_dir(&payload, &sandbox_group_sid).expect("lock sandbox bin");
++        let real_sid = resolve_sid(&payload.real_user).expect("real user SID");
++        let real_psid = sid_bytes_to_psid(&real_sid).expect("real user PSID");
++        assert!(path_mask_allows(&sandbox_bin, &[real_psid], super::WRITE_DAC, true)
++            .expect("ordinary Happy must be able to refresh the helper DACL"));
++        assert!(!path_mask_allows(&sandbox_bin, &[sandbox_group_psid], super::WRITE_DAC, false)
++            .expect("sandbox users must never be able to change the helper DACL"));
++        unsafe { LocalFree(real_psid as HLOCAL); }
++        lock_sandbox_bin_dir(&payload, &sandbox_group_sid).expect("repeat helper ACL refresh");
+         let new_runner = sandbox_bin.join("new-runner.exe");
+         fs::write(&new_runner, b"new").expect("create new runner");
+
+diff --git a/codex-rs/windows-sandbox-rs/src/desktop.rs b/codex-rs/windows-sandbox-rs/src/desktop.rs
+index d8e7d19..7d55a5a 100644
+--- a/codex-rs/windows-sandbox-rs/src/desktop.rs
++++ b/codex-rs/windows-sandbox-rs/src/desktop.rs
+@@ -63,7 +63,7 @@ use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITE_OWNER;
+ use windows_sys::Win32::System::StationsAndDesktops::DESKTOP_WRITEOBJECTS;
+ use windows_sys::Win32::System::StationsAndDesktops::OpenDesktopW;
+
+-const PRIVATE_DESKTOP_PREFIX: &str = "CodexSandboxDesktop-";
++const PRIVATE_DESKTOP_PREFIX: &str = "HappySandboxDesktop-";
+
+ const DESKTOP_ALL_ACCESS: u32 = DESKTOP_READOBJECTS
+     | DESKTOP_CREATEWINDOW
+@@ -346,7 +346,7 @@ struct PrivateDesktop {
+ impl PrivateDesktop {
+     fn create(logs_base_dir: Option<&Path>) -> Result<Self> {
+         let mut rng = SmallRng::from_entropy();
+-        let name = format!("CodexSandboxDesktop-{:x}", rng.r#gen::<u128>());
++        let name = format!("HappySandboxDesktop-{:x}", rng.r#gen::<u128>());
+         let name_wide = to_wide(&name);
+         let handle = unsafe {
+             CreateDesktopW(
+diff --git a/codex-rs/windows-sandbox-rs/src/desktop_tests.rs b/codex-rs/windows-sandbox-rs/src/desktop_tests.rs
+index 2c8f35c..26977bf 100644
+--- a/codex-rs/windows-sandbox-rs/src/desktop_tests.rs
++++ b/codex-rs/windows-sandbox-rs/src/desktop_tests.rs
+@@ -30,10 +30,10 @@ fn private_desktop_rejects_interactive_and_injected_names() {
+     for name in [
+         "Default",
+         r"Winsta0\Default",
+-        "CodexSandboxDesktop-",
+-        r"CodexSandboxDesktop-abcd\Default",
+-        "CodexSandboxDesktop-abcd\0Default",
+-        "CodexSandboxDesktop-0123456789abcdef0123456789abcdef0",
++        "HappySandboxDesktop-",
++        r"HappySandboxDesktop-abcd\Default",
++        "HappySandboxDesktop-abcd\0Default",
++        "HappySandboxDesktop-0123456789abcdef0123456789abcdef0",
+     ] {
+         assert!(LaunchDesktop::open_private(name).is_err(), "{name:?}");
+     }
+diff --git a/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs b/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
+index 1b1766a..47948ee 100644
+--- a/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
++++ b/codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs
+@@ -207,7 +207,7 @@ mod tests {
+                     tty: false,
+                     stdin_open: false,
+                     use_private_desktop: true,
+-                    private_desktop_name: Some("CodexSandboxDesktop-1234".to_string()),
++                    private_desktop_name: Some("HappySandboxDesktop-1234".to_string()),
+                 }),
+             },
+         };
+@@ -226,7 +226,7 @@ mod tests {
+         assert_eq!(PermissionProfile::read_only(), payload.permission_profile);
+         assert_eq!(workspace_roots, payload.workspace_roots);
+         assert_eq!(
+-            Some("CodexSandboxDesktop-1234"),
++            Some("HappySandboxDesktop-1234"),
+             payload.private_desktop_name.as_deref()
+         );
+         assert_eq!(
+diff --git a/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs b/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs
+index 697ad33..5c38dea 100644
+--- a/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs
++++ b/codex-rs/windows-sandbox-rs/src/elevated/runner_client.rs
+@@ -214,7 +214,7 @@ fn connect_pipe_with_timeout(
+     let (connect_result_tx, connect_result_rx) = mpsc::sync_channel(1);
+     let mut connect_thread = Some(
+         thread::Builder::new()
+-            .name(format!("codex-runner-connect-{pipe_label}"))
++            .name(format!("happy-sandbox-runner-connect-{pipe_label}"))
+             .spawn(move || {
+                 let current_process = unsafe { GetCurrentProcess() };
+                 let mut thread_handle = 0;
+@@ -336,7 +336,7 @@ pub(crate) fn spawn_runner_transport(
+     let runner_cmdline = runner_exe
+         .to_str()
+         .map(str::to_owned)
+-        .unwrap_or_else(|| "codex-command-runner.exe".to_string());
++        .unwrap_or_else(|| "happy-sandbox-runner.exe".to_string());
+     let runner_full_cmd = format!(
+         "{} {} {}",
+         quote_windows_arg(&runner_cmdline),
+@@ -405,7 +405,7 @@ pub(crate) fn spawn_runner_transport(
+         unsafe {
+             // Keep the process handle alive until the pipe handshake finishes. If the handshake
+             // fails after the runner process has already launched, we still need a way to stop
+-            // that child instead of leaking a stray `codex-command-runner.exe`.
++            // that child instead of leaking a stray `happy-sandbox-runner.exe`.
+             if pi.hProcess != 0 {
+                 let _ = TerminateProcess(pi.hProcess, 1);
+                 CloseHandle(pi.hProcess);
+@@ -425,7 +425,7 @@ pub(crate) fn spawn_runner_transport(
+     let startup_result = (|| -> Result<()> {
+         // Keep the runner process HANDLE alive until the *entire* startup handshake finishes.
+         // That way, a later `send_spawn_request` or `spawn_ready` failure can still terminate the
+-        // runner instead of leaving a stray `codex-command-runner.exe` behind.
++        // runner instead of leaving a stray `happy-sandbox-runner.exe` behind.
+         transport.send_spawn_request(spawn_request)?;
+         transport.read_spawn_ready()?;
+         Ok(())
+diff --git a/codex-rs/windows-sandbox-rs/src/elevated/runner_pipe.rs b/codex-rs/windows-sandbox-rs/src/elevated/runner_pipe.rs
+index c8ae092..5bfcd9d 100644
+--- a/codex-rs/windows-sandbox-rs/src/elevated/runner_pipe.rs
++++ b/codex-rs/windows-sandbox-rs/src/elevated/runner_pipe.rs
+@@ -48,7 +48,7 @@ pub fn find_runner_exe(codex_home: &Path, log_dir: Option<&Path>) -> PathBuf {
+ pub fn pipe_pair() -> (String, String) {
+     let mut rng = SmallRng::from_entropy();
+     let nonce: u128 = rng.r#gen();
+-    let base = format!(r"\\.\pipe\codex-runner-{nonce:x}");
++    let base = format!(r"\\.\pipe\happy-sandbox-runner-{nonce:x}");
+     (format!("{base}-in"), format!("{base}-out"))
+ }
+
+diff --git a/codex-rs/windows-sandbox-rs/src/happy_setup_gate.rs b/codex-rs/windows-sandbox-rs/src/happy_setup_gate.rs
+new file mode 100644
+index 0000000..cca41ff
+--- /dev/null
++++ b/codex-rs/windows-sandbox-rs/src/happy_setup_gate.rs
+@@ -0,0 +1,428 @@
++//! One installation setup attempt, shared by every supervisor process.
++//! A failed or interrupted UAC attempt stays latched until an explicit retry.
++
++use anyhow::{Context, Result, bail};
++use serde::{Deserialize, Serialize};
++use std::fs;
++use std::io::Write;
++use std::path::{Path, PathBuf};
++
++/// The real Windows profile, never an app/project or inherited HOME override.
++pub fn default_state_directory() -> Result<PathBuf> {
++    use std::os::windows::ffi::OsStringExt;
++    use windows_sys::Win32::System::Com::CoTaskMemFree;
++    use windows_sys::Win32::UI::Shell::{FOLDERID_Profile, SHGetKnownFolderPath};
++    let mut raw = std::ptr::null_mut();
++    let result = unsafe { SHGetKnownFolderPath(&FOLDERID_Profile, 0, 0, &mut raw) };
++    if result < 0 {
++        bail!("resolve Windows user profile: HRESULT {result:#x}")
++    }
++    let mut length = 0;
++    unsafe {
++        while *raw.add(length) != 0 {
++            length += 1;
++        }
++    }
++    let value = unsafe { std::ffi::OsString::from_wide(std::slice::from_raw_parts(raw, length)) };
++    unsafe { CoTaskMemFree(raw as _) };
++    Ok(PathBuf::from(value).join(".happy").join("windows-sandbox"))
++}
++
++#[derive(Debug, Serialize, Deserialize)]
++struct Attempt {
++    boot_id: u32,
++    completed_failure: bool,
++}
++
++// This outcome cannot be retried until completion or a different Windows boot is proven.
++#[derive(Debug)]
++pub(crate) struct SetupStillPending;
++impl std::fmt::Display for SetupStillPending {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("The setup helper's completion could not be established")
++    }
++}
++impl std::error::Error for SetupStillPending {}
++
++fn current_boot_id() -> Result<u32> {
++    use windows_sys::Wdk::System::Threading::{
++        NtQueryInformationProcess, ProcessTelemetryIdInformation,
++    };
++    use windows_sys::Win32::System::Threading::GetCurrentProcess;
++    // Microsoft PROCESS_TELEMETRY_ID_INFORMATION: BootId is the per-boot counter,
++    // not the persistent BCD loader GUID. Its fixed header places BootId at byte 60.
++    // https://learn.microsoft.com/windows/win32/devnotes/process_telemetry_id_information_type
++    let mut required = 0;
++    unsafe {
++        NtQueryInformationProcess(
++            GetCurrentProcess(),
++            ProcessTelemetryIdInformation,
++            std::ptr::null_mut(),
++            0,
++            &mut required,
++        );
++    }
++    if !(64..=16 * 1024 * 1024).contains(&required) {
++        bail!("Cannot determine the Windows boot identity header size")
++    }
++    let mut information = vec![0u8; required as usize];
++    let status = unsafe {
++        NtQueryInformationProcess(
++            GetCurrentProcess(),
++            ProcessTelemetryIdInformation,
++            information.as_mut_ptr() as _,
++            required,
++            &mut required,
++        )
++    };
++    if status < 0 {
++        bail!("Cannot establish the Windows boot identity: NTSTATUS {status:#x}")
++    }
++    let header_size = u32::from_le_bytes(information[0..4].try_into().unwrap());
++    if header_size < 64 || required < 64 {
++        bail!("Windows returned an incomplete boot identity header")
++    }
++    Ok(u32::from_le_bytes(information[60..64].try_into().unwrap()))
++}
++
++fn save_attempt(path: &Path, attempt: &Attempt) -> Result<()> {
++    let mut record = tempfile::NamedTempFile::new_in(path.parent().context("setup record parent")?)
++        .context("prepare Happy setup attempt record")?;
++    record.write_all(&serde_json::to_vec(attempt)?)?;
++    record
++        .as_file()
++        .sync_all()
++        .context("flush Happy setup attempt before elevation")?;
++    record
++        .persist(path)
++        .context("atomically persist Happy setup attempt before elevation")?;
++    Ok(())
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum SetupIntent {
++    Automatic,
++    Explicit,
++    Retry,
++    Disabled,
++}
++
++pub(crate) fn run_setup_attempt(
++    home: &Path,
++    intent: SetupIntent,
++    ready: impl Fn() -> bool,
++    automatic_allowed: impl Fn() -> Result<bool>,
++    provision: impl FnOnce() -> Result<()>,
++) -> Result<()> {
++    if ready() {
++        return Ok(());
++    }
++    if intent == SetupIntent::Automatic && !automatic_allowed()? {
++        bail!(
++            "Happy Windows sandbox accounts already exist, but this installation state is missing or needs repair. No account passwords were changed and no Windows prompt was opened. Reuse the existing HAPPY_WINDOWS_SANDBOX_HOME or run `happy-agent sandbox setup` deliberately."
++        );
++    }
++    if intent == SetupIntent::Disabled {
++        bail!(
++            "Happy Windows sandbox setup is required. Automatic provisioning is disabled for this execution; run `happy-agent sandbox setup` deliberately."
++        );
++    }
++    let _lock = crate::setup_mutex::acquire_sandbox_setup_request_lock()?;
++    // The caller may have decided setup was missing before another process completed it.
++    if ready() {
++        return Ok(());
++    }
++    if intent == SetupIntent::Automatic && !automatic_allowed()? {
++        bail!(
++            "Happy Windows sandbox accounts now exist. Reuse their installation state or run `happy-agent sandbox setup` deliberately; no additional setup was started."
++        );
++    }
++    let boot_id = current_boot_id()?;
++    let directory = home.join(".sandbox");
++    fs::create_dir_all(&directory).context("create Happy setup coordination directory")?;
++    let attempt = directory.join("setup-attempt.json");
++    if attempt.try_exists()? {
++        let previous: Attempt = serde_json::from_slice(&fs::read(&attempt)?)
++            .context("read Happy setup attempt outcome")?;
++        if intent != SetupIntent::Retry {
++            bail!(
++                "A previous Happy Windows sandbox setup attempt did not complete. No additional Windows prompt was opened. Run `happy-agent sandbox setup --retry` when ready to try again."
++            );
++        }
++        if !previous.completed_failure && previous.boot_id == boot_id {
++            bail!(
++                "A previous Happy Windows sandbox setup is pending or was interrupted. Finish its existing Windows prompt, or restart Windows before running `happy-agent sandbox setup --retry`. No additional setup was started."
++            );
++        }
++    }
++    let mut record = Attempt {
++        boot_id,
++        completed_failure: false,
++    };
++    save_attempt(&attempt, &record)?;
++    // Keep the durable record on failure or process termination. The OS releases the request mutex.
++    if let Err(error) = provision() {
++        if error.downcast_ref::<SetupStillPending>().is_none() {
++            record.completed_failure = true;
++            save_attempt(&attempt, &record)?;
++        }
++        return Err(error);
++    }
++    if !ready() {
++        record.completed_failure = true;
++        save_attempt(&attempt, &record)?;
++        bail!(
++            "Happy Windows sandbox setup returned without a usable installation. Run `happy-agent sandbox setup --retry` to try again."
++        );
++    }
++    fs::remove_file(attempt).context("complete Happy setup attempt")?;
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::{
++        Arc, Barrier,
++        atomic::{AtomicBool, AtomicUsize, Ordering},
++    };
++
++    #[test]
++    fn canceled_attempt_does_not_repeat_until_explicit_retry() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        let calls = AtomicUsize::new(0);
++        let ready = AtomicBool::new(false);
++        let error = run_setup_attempt(
++            home.path(),
++            SetupIntent::Automatic,
++            || ready.load(Ordering::SeqCst),
++            || Ok(true),
++            || {
++                calls.fetch_add(1, Ordering::SeqCst);
++                bail!("UAC canceled in fake provisioner")
++            },
++        )
++        .unwrap_err();
++        assert!(error.to_string().contains("canceled"));
++        for intent in [SetupIntent::Automatic, SetupIntent::Explicit] {
++            let error = run_setup_attempt(
++                home.path(),
++                intent,
++                || false,
++                || Ok(true),
++                || {
++                    calls.fetch_add(1, Ordering::SeqCst);
++                    Ok(())
++                },
++            )
++            .unwrap_err();
++            assert!(error.to_string().contains("--retry"));
++        }
++        assert_eq!(calls.load(Ordering::SeqCst), 1);
++        run_setup_attempt(
++            home.path(),
++            SetupIntent::Retry,
++            || ready.load(Ordering::SeqCst),
++            || Ok(true),
++            || {
++                calls.fetch_add(1, Ordering::SeqCst);
++                ready.store(true, Ordering::SeqCst);
++                Ok(())
++            },
++        )?;
++        assert_eq!(calls.load(Ordering::SeqCst), 2);
++        assert!(!home.path().join(".sandbox/setup-attempt.json").exists());
++        Ok(())
++    }
++
++    #[test]
++    fn concurrent_requests_launch_only_one_provisioner() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        let path = home.path().to_path_buf();
++        let entered = Arc::new(Barrier::new(2));
++        let release = Arc::new(Barrier::new(2));
++        let ready = Arc::new(AtomicBool::new(false));
++        let first = {
++            let entered = entered.clone();
++            let release = release.clone();
++            let ready = ready.clone();
++            std::thread::spawn(move || {
++                run_setup_attempt(
++                    &path,
++                    SetupIntent::Automatic,
++                    || ready.load(Ordering::SeqCst),
++                    || Ok(true),
++                    || {
++                        entered.wait();
++                        release.wait();
++                        ready.store(true, Ordering::SeqCst);
++                        Ok(())
++                    },
++                )
++            })
++        };
++        entered.wait();
++        let other_home = tempfile::tempdir()?;
++        let error = run_setup_attempt(
++            other_home.path(),
++            SetupIntent::Retry,
++            || ready.load(Ordering::SeqCst),
++            || Ok(true),
++            || panic!("duplicate provisioning"),
++        )
++        .unwrap_err();
++        assert!(error.to_string().contains("already in progress"));
++        release.wait();
++        first.join().expect("setup worker")?;
++        run_setup_attempt(
++            home.path(),
++            SetupIntent::Automatic,
++            || ready.load(Ordering::SeqCst),
++            || Ok(true),
++            || panic!("already provisioned"),
++        )?;
++        Ok(())
++    }
++
++    #[test]
++    fn interrupted_attempt_stays_latched_and_disabled_never_creates_state() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        let absent = home.path().join("absent");
++        assert!(
++            run_setup_attempt(
++                &absent,
++                SetupIntent::Disabled,
++                || false,
++                || Ok(true),
++                || panic!("disabled setup")
++            )
++            .is_err()
++        );
++        assert!(!absent.exists());
++        fs::create_dir_all(home.path().join(".sandbox"))?;
++        save_attempt(
++            &home.path().join(".sandbox/setup-attempt.json"),
++            &Attempt {
++                boot_id: current_boot_id()?,
++                completed_failure: false,
++            },
++        )?;
++        assert!(
++            run_setup_attempt(
++                home.path(),
++                SetupIntent::Automatic,
++                || false,
++                || Ok(true),
++                || panic!("interrupted setup retried")
++            )
++            .is_err()
++        );
++        assert!(
++            run_setup_attempt(
++                home.path(),
++                SetupIntent::Retry,
++                || false,
++                || Ok(true),
++                || panic!("pending setup overlapped")
++            )
++            .unwrap_err()
++            .to_string()
++            .contains("restart Windows")
++        );
++        Ok(())
++    }
++
++    #[test]
++    fn uncertain_helper_completion_cannot_be_retried_in_the_same_boot() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        let error = run_setup_attempt(
++            home.path(),
++            SetupIntent::Explicit,
++            || false,
++            || Ok(true),
++            || Err(SetupStillPending.into()),
++        )
++        .unwrap_err();
++        assert!(error.downcast_ref::<SetupStillPending>().is_some());
++        assert!(
++            run_setup_attempt(
++                home.path(),
++                SetupIntent::Retry,
++                || false,
++                || Ok(true),
++                || panic!("helper with uncertain completion was overlapped"),
++            )
++            .unwrap_err()
++            .to_string()
++            .contains("restart Windows")
++        );
++        // Its authoritative completion can still make the installation usable.
++        run_setup_attempt(
++            home.path(),
++            SetupIntent::Automatic,
++            || true,
++            || Ok(true),
++            || panic!("completed setup was repeated"),
++        )?;
++        Ok(())
++    }
++
++    #[test]
++    fn checks_readiness_again_after_claiming_the_lock() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        let checks = AtomicUsize::new(0);
++        run_setup_attempt(
++            home.path(),
++            SetupIntent::Automatic,
++            || checks.fetch_add(1, Ordering::SeqCst) > 0,
++            || Ok(true),
++            || panic!("stale setup decision"),
++        )?;
++        assert_eq!(checks.load(Ordering::SeqCst), 2);
++        assert!(!home.path().join(".sandbox/setup-attempt.json").exists());
++        Ok(())
++    }
++
++    #[test]
++    fn explicit_retry_of_interrupted_attempt_is_allowed_after_a_new_boot() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        fs::create_dir_all(home.path().join(".sandbox"))?;
++        let old_boot = current_boot_id()?.wrapping_sub(1);
++        save_attempt(
++            &home.path().join(".sandbox/setup-attempt.json"),
++            &Attempt {
++                boot_id: old_boot,
++                completed_failure: false,
++            },
++        )?;
++        let ready = AtomicBool::new(false);
++        run_setup_attempt(
++            home.path(),
++            SetupIntent::Retry,
++            || ready.load(Ordering::SeqCst),
++            || Ok(true),
++            || {
++                ready.store(true, Ordering::SeqCst);
++                Ok(())
++            },
++        )?;
++        Ok(())
++    }
++
++    #[test]
++    fn another_installation_never_rotates_existing_global_accounts_automatically() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        let empty_state = home.path().join("another-home");
++        let error = run_setup_attempt(
++            &empty_state,
++            SetupIntent::Automatic,
++            || false,
++            || Ok(false),
++            || panic!("existing global accounts were reset"),
++        )
++        .unwrap_err();
++        assert!(error.to_string().contains("accounts already exist"));
++        assert!(!empty_state.exists());
++        Ok(())
++    }
++}
+diff --git a/codex-rs/windows-sandbox-rs/src/helper_materialization.rs b/codex-rs/windows-sandbox-rs/src/helper_materialization.rs
+index 7532d19..e32e2d6 100644
+--- a/codex-rs/windows-sandbox-rs/src/helper_materialization.rs
++++ b/codex-rs/windows-sandbox-rs/src/helper_materialization.rs
+@@ -17,7 +17,7 @@ use crate::sandbox_bin_dir;
+
+ const DEV_BUILD_VERSION_SENTINEL: &str = "0.0.0";
+ pub(crate) const BIN_DIRNAME: &str = "bin";
+-pub(crate) const RESOURCES_DIRNAME: &str = "codex-resources";
++pub(crate) const RESOURCES_DIRNAME: &str = "happy-resources";
+
+ #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+ pub(crate) enum HelperExecutable {
+@@ -27,7 +27,7 @@ pub(crate) enum HelperExecutable {
+ impl HelperExecutable {
+     fn file_name(self) -> &'static str {
+         match self {
+-            Self::CommandRunner => "codex-command-runner.exe",
++            Self::CommandRunner => "happy-sandbox-runner.exe",
+         }
+     }
+
+@@ -449,7 +449,7 @@ mod tests {
+         let codex_home = tmp.path().join("codex-home");
+         let source_dir = tmp.path().join("sibling-source");
+         fs::create_dir_all(&source_dir).expect("create source dir");
+-        let runner_source = source_dir.join("codex-command-runner.exe");
++        let runner_source = source_dir.join("happy-sandbox-runner.exe");
+         fs::write(&runner_source, b"runner").expect("runner");
+         let runner_suffix = helper_version_suffix(&runner_source).expect("runner suffix");
+         let runner_destination = helper_bin_dir(&codex_home).join(materialized_file_name(
+@@ -474,12 +474,12 @@ mod tests {
+         let resources_dir = release_dir.join(RESOURCES_DIRNAME);
+         fs::create_dir_all(&resources_dir).expect("create resources dir");
+         let exe = release_dir.join("codex.exe");
+-        let helper = resources_dir.join("codex-command-runner.exe");
++        let helper = resources_dir.join("happy-sandbox-runner.exe");
+         fs::write(&exe, b"codex").expect("write exe");
+         fs::write(&helper, b"runner").expect("write helper");
+
+         let resolved =
+-            bundled_executable_path_for_exe(&exe, /*file_name*/ "codex-command-runner.exe")
++            bundled_executable_path_for_exe(&exe, /*file_name*/ "happy-sandbox-runner.exe")
+                 .expect("helper path");
+
+         assert_eq!(resolved, helper);
+@@ -494,12 +494,12 @@ mod tests {
+         fs::create_dir_all(&bin_dir).expect("create bin dir");
+         fs::create_dir_all(&resources_dir).expect("create resources dir");
+         let exe = bin_dir.join("codex.exe");
+-        let helper = resources_dir.join("codex-command-runner.exe");
++        let helper = resources_dir.join("happy-sandbox-runner.exe");
+         fs::write(&exe, b"codex").expect("write exe");
+         fs::write(&helper, b"runner").expect("write helper");
+
+         let resolved =
+-            bundled_executable_path_for_exe(&exe, /*file_name*/ "codex-command-runner.exe")
++            bundled_executable_path_for_exe(&exe, /*file_name*/ "happy-sandbox-runner.exe")
+                 .expect("helper path");
+
+         assert_eq!(resolved, helper);
+@@ -516,7 +516,7 @@ mod tests {
+         fs::create_dir_all(&resources_dir).expect("create resources dir");
+         fs::create_dir_all(&install_dir).expect("create install dir");
+         fs::write(bin_dir.join("codex.exe"), b"codex").expect("write exe");
+-        let helper = resources_dir.join("codex-windows-sandbox-setup.exe");
++        let helper = resources_dir.join("happy-sandbox-setup.exe");
+         fs::write(&helper, b"setup").expect("write helper");
+
+         let junction = install_dir.join(BIN_DIRNAME);
+@@ -531,7 +531,7 @@ mod tests {
+         assert_eq!(
+             bundled_executable_path_for_exe(
+                 &junction.join("codex.exe"),
+-                /*file_name*/ "codex-windows-sandbox-setup.exe"
++                /*file_name*/ "happy-sandbox-setup.exe"
+             ),
+             Some(dunce::canonicalize(&helper).expect("canonical helper"))
+         );
+@@ -547,14 +547,14 @@ mod tests {
+         fs::create_dir_all(&package_resources_dir).expect("create package resources dir");
+         fs::create_dir_all(&bin_resources_dir).expect("create bin resources dir");
+         let exe = bin_dir.join("codex.exe");
+-        let package_helper = package_resources_dir.join("codex-command-runner.exe");
+-        let bin_helper = bin_resources_dir.join("codex-command-runner.exe");
++        let package_helper = package_resources_dir.join("happy-sandbox-runner.exe");
++        let bin_helper = bin_resources_dir.join("happy-sandbox-runner.exe");
+         fs::write(&exe, b"codex").expect("write exe");
+         fs::write(&package_helper, b"package runner").expect("write package helper");
+         fs::write(&bin_helper, b"bin runner").expect("write bin helper");
+
+         let resolved =
+-            bundled_executable_path_for_exe(&exe, /*file_name*/ "codex-command-runner.exe")
++            bundled_executable_path_for_exe(&exe, /*file_name*/ "happy-sandbox-runner.exe")
+                 .expect("helper path");
+
+         assert_eq!(resolved, package_helper);
+@@ -567,14 +567,14 @@ mod tests {
+         let resources_dir = release_dir.join(RESOURCES_DIRNAME);
+         fs::create_dir_all(&resources_dir).expect("create resources dir");
+         let exe = release_dir.join("codex.exe");
+-        let sibling_helper = release_dir.join("codex-command-runner.exe");
+-        let resource_helper = resources_dir.join("codex-command-runner.exe");
++        let sibling_helper = release_dir.join("happy-sandbox-runner.exe");
++        let resource_helper = resources_dir.join("happy-sandbox-runner.exe");
+         fs::write(&exe, b"codex").expect("write exe");
+         fs::write(&sibling_helper, b"sibling runner").expect("write sibling helper");
+         fs::write(&resource_helper, b"resource runner").expect("write resource helper");
+
+         let resolved =
+-            bundled_executable_path_for_exe(&exe, /*file_name*/ "codex-command-runner.exe")
++            bundled_executable_path_for_exe(&exe, /*file_name*/ "happy-sandbox-runner.exe")
+                 .expect("helper path");
+
+         assert_eq!(resolved, sibling_helper);
+@@ -598,6 +598,6 @@ mod tests {
+     fn materialized_file_name_adds_suffix_before_extension() {
+         let file_name = materialized_file_name(HelperExecutable::CommandRunner, "test-suffix");
+
+-        assert_eq!(file_name, "codex-command-runner-test-suffix.exe");
++        assert_eq!(file_name, "happy-sandbox-runner-test-suffix.exe");
+     }
+ }
+diff --git a/codex-rs/windows-sandbox-rs/src/identity.rs b/codex-rs/windows-sandbox-rs/src/identity.rs
+index 6f3a66d..7fd52cc 100644
+--- a/codex-rs/windows-sandbox-rs/src/identity.rs
++++ b/codex-rs/windows-sandbox-rs/src/identity.rs
+@@ -73,6 +73,20 @@ pub fn sandbox_setup_is_complete_with_settings(
+         && matches!(load_users(codex_home), Ok(Some(users)) if users.version_matches())
+ }
+
++/// Read-only readiness for Happy's installation-wide setup gate and status command.
++pub fn happy_sandbox_setup_is_ready(
++    codex_home: &Path,
++    settings: &crate::WindowsSandboxProvisioningSettings,
++) -> bool {
++    sandbox_setup_is_complete_with_settings(codex_home, settings)
++        && [OFFLINE_USERNAME, ONLINE_USERNAME].iter().all(|name| {
++            matches!(local_user_flags(name), Ok(Some(flags)) if flags & UF_ACCOUNTDISABLE == 0)
++        })
++        && [SandboxNetworkIdentity::Offline, SandboxNetworkIdentity::Online].into_iter().all(|identity| {
++            matches!(select_identity(identity, codex_home), Ok(Some(_)))
++        })
++}
++
+ fn load_marker(codex_home: &Path) -> Result<Option<SetupMarker>> {
+     let path = setup_marker_path(codex_home);
+     let marker = match fs::read_to_string(&path) {
+diff --git a/codex-rs/windows-sandbox-rs/src/lib.rs b/codex-rs/windows-sandbox-rs/src/lib.rs
+index e83a42a..ee49c67 100644
+--- a/codex-rs/windows-sandbox-rs/src/lib.rs
++++ b/codex-rs/windows-sandbox-rs/src/lib.rs
+@@ -79,6 +79,8 @@ mod hide_users;
+ #[cfg(target_os = "windows")]
+ mod identity;
+ #[cfg(target_os = "windows")]
++mod happy_setup_gate;
++#[cfg(target_os = "windows")]
+ mod logging;
+ #[cfg(target_os = "windows")]
+ mod no_reparse_dir;
+@@ -227,6 +229,10 @@ pub use identity::require_logon_sandbox_creds;
+ #[cfg(target_os = "windows")]
+ pub use identity::sandbox_setup_is_complete;
+ #[cfg(target_os = "windows")]
++pub use identity::happy_sandbox_setup_is_ready;
++#[cfg(target_os = "windows")]
++pub use happy_setup_gate::default_state_directory as happy_default_state_directory;
++#[cfg(target_os = "windows")]
+ pub use identity::sandbox_setup_is_complete_with_settings;
+ #[cfg(target_os = "windows")]
+ pub use ipc_framed::ErrorPayload;
+@@ -339,6 +345,8 @@ pub use setup::run_elevated_provisioning_setup_with_retained_handles;
+ #[cfg(target_os = "windows")]
+ pub use setup::run_elevated_setup;
+ #[cfg(target_os = "windows")]
++pub use setup::run_happy_explicit_setup;
++#[cfg(target_os = "windows")]
+ pub use setup::run_setup_refresh;
+ #[cfg(target_os = "windows")]
+ pub use setup::run_setup_refresh_with_extra_read_roots;
+diff --git a/codex-rs/windows-sandbox-rs/src/provisioning_client.rs b/codex-rs/windows-sandbox-rs/src/provisioning_client.rs
+index d02072b..850cccc 100644
+--- a/codex-rs/windows-sandbox-rs/src/provisioning_client.rs
++++ b/codex-rs/windows-sandbox-rs/src/provisioning_client.rs
+@@ -32,7 +32,7 @@ use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
+ use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+ use windows_sys::Win32::System::Services;
+
+-const SERVICE_NAME: &str = "CodexSandboxService";
++const SERVICE_NAME: &str = "HappySandboxService";
+ const PROVISIONING_TIMEOUT: Duration = Duration::from_secs(120);
+
+ impl WindowsSandboxProvisioningSettings {
+diff --git a/codex-rs/windows-sandbox-rs/src/provisioning_protocol.rs b/codex-rs/windows-sandbox-rs/src/provisioning_protocol.rs
+index f2524fa..4365444 100644
+--- a/codex-rs/windows-sandbox-rs/src/provisioning_protocol.rs
++++ b/codex-rs/windows-sandbox-rs/src/provisioning_protocol.rs
+@@ -11,7 +11,7 @@ use std::io::Write;
+ pub const PROVISIONING_PROTOCOL_VERSION: u8 = 1;
+
+ /// Named pipe used by the machine-wide Windows sandbox provisioning service.
+-pub const SANDBOX_PROVISIONING_PIPE_NAME: &str = r"\\.\pipe\OpenAI.CodexSandbox";
++pub const SANDBOX_PROVISIONING_PIPE_NAME: &str = r"\\.\pipe\Slopus.HappySandbox";
+
+ /// Versioned provisioning-service message carried in a length-prefixed JSON frame.
+ #[derive(Debug, Serialize, Deserialize, Clone)]
+diff --git a/codex-rs/windows-sandbox-rs/src/setup.rs b/codex-rs/windows-sandbox-rs/src/setup.rs
+index 1e84b6f..c7fb1ee 100644
+--- a/codex-rs/windows-sandbox-rs/src/setup.rs
++++ b/codex-rs/windows-sandbox-rs/src/setup.rs
+@@ -33,6 +33,8 @@ use crate::setup_error::extract_failure;
+ use crate::setup_error::failure;
+ use crate::setup_error::read_setup_error_report;
+ use crate::ssh_config_dependencies::ssh_config_dependency_paths;
++use anyhow::Context;
++use crate::happy_setup_gate::{run_setup_attempt, SetupIntent};
+ use anyhow::Result;
+ use anyhow::anyhow;
+ use base64::Engine;
+@@ -47,13 +49,14 @@ use windows_sys::Win32::Security::CheckTokenMembership;
+ use windows_sys::Win32::Security::FreeSid;
+ use windows_sys::Win32::Security::SECURITY_NT_AUTHORITY;
+
+-pub const SETUP_VERSION: u32 = 5;
+-pub const OFFLINE_USERNAME: &str = "CodexSandboxOffline";
+-pub const ONLINE_USERNAME: &str = "CodexSandboxOnline";
++// Happy setup revision: repair ACL ownership from the initial Windows prototype.
++pub const SETUP_VERSION: u32 = 8;
++pub const OFFLINE_USERNAME: &str = "HappySandboxOffline";
++pub const ONLINE_USERNAME: &str = "HappySandboxOnline";
+ const ERROR_CANCELLED: u32 = 1223;
+ const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x0000_0020;
+ const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x0000_0220;
+-const SETUP_EXE_FILENAME: &str = "codex-windows-sandbox-setup.exe";
++const SETUP_EXE_FILENAME: &str = "happy-sandbox-setup.exe";
+ const USERPROFILE_ROOT_EXCLUSIONS: &[&str] = &[
+     ".ssh",
+     ".tsh",
+@@ -348,7 +351,7 @@ fn run_setup_refresh_inner(
+         proxy_ports: offline_proxy_settings.proxy_ports,
+         allow_local_binding: offline_proxy_settings.allow_local_binding,
+         otel: None,
+-        real_user: std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string()),
++        real_user: current_account_name()?,
+         mode: SetupMode::Full,
+         refresh_only: true,
+     };
+@@ -949,20 +952,19 @@ fn run_setup_exe_payload(
+     };
+
+     if !needs_elevation {
+-        let status = if retained_handles.is_empty() {
++        let mut child = if retained_handles.is_empty() {
+             Command::new(&exe)
+                 .arg(payload_b64)
+                 .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                 .stdin(Stdio::null())
+                 .stdout(Stdio::null())
+                 .stderr(Stdio::null())
+-                .status()
++                .spawn()
+         } else {
+             crate::setup_launch::spawn_with_retained_handles(
+                 Command::new(&exe).arg(payload_b64),
+                 retained_handles,
+             )
+-            .and_then(|mut child| child.wait())
+         }
+         .map_err(|err| {
+             failure(
+@@ -970,6 +972,7 @@ fn run_setup_exe_payload(
+                 format!("failed to launch setup helper (non-elevated): {err}"),
+             )
+         })?;
++        let status = child.wait().map_err(|_| crate::happy_setup_gate::SetupStillPending)?;
+         if !status.success() {
+             return Err(report_helper_failure(
+                 codex_home,
+@@ -1004,7 +1007,7 @@ fn run_setup_exe_payload(
+     // Hide the window for the elevated helper.
+     sei.nShow = 0; // SW_HIDE
+     let ok = unsafe { ShellExecuteExW(&mut sei) };
+-    if ok == 0 || sei.hProcess == 0 {
++    if ok == 0 {
+         let last_error = unsafe { GetLastError() };
+         let code = if last_error == ERROR_CANCELLED {
+             SetupErrorCode::OrchestratorHelperLaunchCanceled
+@@ -1016,8 +1019,15 @@ fn run_setup_exe_payload(
+             format!("ShellExecuteExW failed to launch setup helper: {last_error}"),
+         ));
+     }
++    if sei.hProcess == 0 {
++        return Err(crate::happy_setup_gate::SetupStillPending.into());
++    }
+     unsafe {
+-        WaitForSingleObject(sei.hProcess, INFINITE);
++        let waited = WaitForSingleObject(sei.hProcess, INFINITE);
++        if waited != windows_sys::Win32::Foundation::WAIT_OBJECT_0 {
++            CloseHandle(sei.hProcess);
++            return Err(crate::happy_setup_gate::SetupStillPending.into());
++        }
+         let mut code: u32 = 1;
+         GetExitCodeProcess(sei.hProcess, &mut code);
+         CloseHandle(sei.hProcess);
+@@ -1040,48 +1050,80 @@ fn run_setup_exe_payload(
+ }
+
+ pub fn run_elevated_setup(request: SandboxSetupRequest<'_>) -> Result<()> {
+-    run_elevated_setup_inner(request, /*offline_proxy_settings_override*/ None)
++    run_elevated_setup_inner(request, /*offline_proxy_settings_override*/ None, None)
+ }
+
+ pub(crate) fn run_elevated_setup_with_proxy_settings(
+     request: SandboxSetupRequest<'_>,
+     offline_proxy_settings: &OfflineProxySettings,
+ ) -> Result<()> {
+-    run_elevated_setup_inner(request, Some(offline_proxy_settings))
++    run_elevated_setup_inner(request, Some(offline_proxy_settings), None)
++}
++
++/// Explicit user-requested setup, including a deliberate retry after cancellation/failure.
++pub fn run_happy_explicit_setup(request: SandboxSetupRequest<'_>, retry: bool) -> Result<()> {
++    run_elevated_setup_inner(request, None, Some(if retry { SetupIntent::Retry } else { SetupIntent::Explicit }))
+ }
+
+ fn run_elevated_setup_inner(
+     request: SandboxSetupRequest<'_>,
+     offline_proxy_settings_override: Option<&OfflineProxySettings>,
++    explicit_intent: Option<SetupIntent>,
+ ) -> Result<()> {
+-    request
+-        .permissions
+-        .validate_elevated_filesystem_policy(request.command_cwd)?;
+-    // Ensure the shared sandbox directory exists before we send it to the elevated helper.
+-    let sbx_dir = sandbox_dir(request.codex_home);
+-    std::fs::create_dir_all(&sbx_dir).map_err(|err| {
+-        failure(
+-            SetupErrorCode::OrchestratorSandboxDirCreateFailed,
+-            format!("failed to create sandbox dir {}: {err}", sbx_dir.display()),
+-        )
+-    })?;
+-    let payload = elevated_provisioning_payload(&request, offline_proxy_settings_override);
++    request.permissions.validate_elevated_filesystem_policy(request.command_cwd)?;
++    let intent = if request.env_map.get("HAPPY_WINDOWS_SANDBOX_NO_PROVISION").is_some_and(|value| value == "1")
++        || std::env::var("HAPPY_WINDOWS_SANDBOX_NO_PROVISION").is_ok_and(|value| value == "1") {
++        SetupIntent::Disabled
++    } else {
++        explicit_intent.unwrap_or_else(|| {
++            if request.env_map.get("HAPPY_WINDOWS_SANDBOX_ALLOW_AUTO_SETUP").is_some_and(|value| value == "1") {
++                SetupIntent::Automatic
++            } else {
++                SetupIntent::Disabled
++            }
++        })
++    };
++    let settings = offline_proxy_settings_for_request(&request, offline_proxy_settings_override);
++    let settings = crate::WindowsSandboxProvisioningSettings {
++        proxy_ports: settings.proxy_ports,
++        allow_local_binding: settings.allow_local_binding,
++    };
++    let payload = elevated_provisioning_payload(&request, offline_proxy_settings_override)?;
+     let needs_elevation = !is_elevated().map_err(|err| {
+         failure(
+             SetupErrorCode::OrchestratorElevationCheckFailed,
+             format!("failed to determine elevation state: {err}"),
+         )
+     })?;
+-    run_setup_exe(&payload, needs_elevation, request.codex_home, &[])
++    let coordination_home = crate::happy_setup_gate::default_state_directory()?;
++    run_setup_attempt(
++        &coordination_home,
++        intent,
++        || crate::identity::happy_sandbox_setup_is_ready(request.codex_home, &settings),
++        || Ok(crate::winutil::local_user_flags(OFFLINE_USERNAME)?.is_none() && crate::winutil::local_user_flags(ONLINE_USERNAME)?.is_none()),
++        || run_setup_exe(&payload, needs_elevation, request.codex_home, &[]),
++    )
++}
++
++// The caller environment is filtered for tool execution and is not an identity authority.
++// Resolve the actual Windows logon account before requesting elevation, with no admin fallback.
++fn current_account_name() -> Result<String> {
++    use windows_sys::Win32::Security::Authentication::Identity::{GetUserNameExW, NameSamCompatible};
++    let mut account = vec![0u16; 512];
++    let mut length = account.len() as u32;
++    if unsafe { GetUserNameExW(NameSamCompatible, account.as_mut_ptr(), &mut length) } == 0 {
++        return Err(std::io::Error::last_os_error()).context("resolve Happy caller account");
++    }
++    String::from_utf16(&account[..length as usize]).context("decode Happy caller account")
+ }
+
+ fn elevated_provisioning_payload(
+     request: &SandboxSetupRequest<'_>,
+     offline_proxy_settings_override: Option<&OfflineProxySettings>,
+-) -> ElevationPayload {
++) -> Result<ElevationPayload> {
+     let offline_proxy_settings =
+         offline_proxy_settings_for_request(request, offline_proxy_settings_override);
+-    ElevationPayload {
++    Ok(ElevationPayload {
+         version: SETUP_VERSION,
+         offline_username: OFFLINE_USERNAME.to_string(),
+         online_username: ONLINE_USERNAME.to_string(),
+@@ -1093,11 +1135,11 @@ fn elevated_provisioning_payload(
+         deny_write_paths: Vec::new(),
+         proxy_ports: offline_proxy_settings.proxy_ports,
+         allow_local_binding: offline_proxy_settings.allow_local_binding,
+-        real_user: std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string()),
++        real_user: current_account_name()?,
+         otel: codex_otel::global_statsig_metrics_settings(),
+         mode: SetupMode::InteractiveProvision,
+         refresh_only: false,
+-    }
++    })
+ }
+
+ pub fn run_elevated_provisioning_setup(
+@@ -1600,7 +1642,7 @@ mod tests {
+
+         let payload = super::elevated_provisioning_payload(
+             &request, /*offline_proxy_settings_override*/ None,
+-        );
++        ).expect("Windows caller account");
+
+         assert_eq!(payload.command_cwd, codex_home);
+         assert_eq!(payload.read_roots, Vec::<PathBuf>::new());
+@@ -1870,7 +1912,7 @@ mod tests {
+         fs::create_dir_all(&bin_dir).expect("create bin dir");
+         fs::create_dir_all(&resources_dir).expect("create resources dir");
+         let exe = bin_dir.join("codex.exe");
+-        let setup_exe = resources_dir.join("codex-windows-sandbox-setup.exe");
++        let setup_exe = resources_dir.join("happy-sandbox-setup.exe");
+         fs::write(&exe, b"codex").expect("write exe");
+         fs::write(&setup_exe, b"setup").expect("write setup");
+
+diff --git a/codex-rs/windows-sandbox-rs/src/setup_mutex.rs b/codex-rs/windows-sandbox-rs/src/setup_mutex.rs
+index dcb8f6f..13de6ed 100644
+--- a/codex-rs/windows-sandbox-rs/src/setup_mutex.rs
++++ b/codex-rs/windows-sandbox-rs/src/setup_mutex.rs
+@@ -42,7 +42,25 @@ impl Drop for SandboxSetupLock {
+
+ /// Waits up to `timeout_ms` for exclusive access by LocalSystem or an elevated administrator.
+ pub fn acquire_sandbox_setup_lock(timeout_ms: u32) -> Result<SandboxSetupLock> {
+-    let sddl = to_wide("D:P(A;;GA;;;SY)(A;;GA;;;BA)");
++    acquire_named_setup_lock(
++        timeout_ms,
++        r"Global\HappySandboxSetup",
++        "D:P(A;;GA;;;SY)(A;;GA;;;BA)",
++    )
++}
++
++/// Serializes user-facing requests before elevation, independently of the helper's admin lock.
++pub(crate) fn acquire_sandbox_setup_request_lock() -> Result<SandboxSetupLock> {
++    acquire_named_setup_lock(0, r"Global\HappySandboxSetupRequest", "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;AU)")
++        .context("Happy Windows sandbox setup is already in progress or cannot be coordinated safely; no additional setup was started")
++}
++
++fn acquire_named_setup_lock(
++    timeout_ms: u32,
++    name: &str,
++    descriptor: &str,
++) -> Result<SandboxSetupLock> {
++    let sddl = to_wide(descriptor);
+     let mut descriptor = null_mut();
+     if unsafe {
+         ConvertStringSecurityDescriptorToSecurityDescriptorW(
+@@ -60,7 +78,7 @@ pub fn acquire_sandbox_setup_lock(timeout_ms: u32) -> Result<SandboxSetupLock> {
+         lpSecurityDescriptor: descriptor,
+         bInheritHandle: 0,
+     };
+-    let name = to_wide(r"Global\CodexSandboxSetup");
++    let name = to_wide(name);
+     let handle = unsafe {
+         CreateMutexW(&attributes, /*binitialowner*/ 0, name.as_ptr())
+     };
+diff --git a/codex-rs/windows-sandbox-rs/src/stdio_bridge.rs b/codex-rs/windows-sandbox-rs/src/stdio_bridge.rs
+index 3ad722b..902f648 100644
+--- a/codex-rs/windows-sandbox-rs/src/stdio_bridge.rs
++++ b/codex-rs/windows-sandbox-rs/src/stdio_bridge.rs
+@@ -55,12 +55,38 @@ pub async fn forward_sandbox_session_stdio(spawned: SpawnedProcess) -> i32 {
+     };
+
+     stdin_close_task.abort();
+-    let _ = tokio::time::timeout(output_drain_timeout, async {
+-        let _ = stdout_forwarder_done_rx.await;
+-        let _ = stderr_forwarder_done_rx.await;
++    match wait_for_output_forwarders(
++        stdout_forwarder_done_rx,
++        stderr_forwarder_done_rx,
++        output_drain_timeout,
++    )
++    .await
++    {
++        Ok(()) => exit_code,
++        Err(error) => {
++            eprintln!("Happy sandbox output transfer failed: {error}");
++            session.request_terminate();
++            125
++        }
++    }
++}
++
++async fn wait_for_output_forwarders(
++    stdout: oneshot::Receiver<std::io::Result<()>>,
++    stderr: oneshot::Receiver<std::io::Result<()>>,
++    timeout: Duration,
++) -> std::io::Result<()> {
++    tokio::time::timeout(timeout, async {
++        stdout
++            .await
++            .map_err(|_| std::io::Error::other("stdout forwarder stopped unexpectedly"))??;
++        stderr
++            .await
++            .map_err(|_| std::io::Error::other("stderr forwarder stopped unexpectedly"))??;
++        Ok(())
+     })
+-    .await;
+-    exit_code
++    .await
++    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "output drain timed out"))?
+ }
+
+ fn spawn_input_forwarder<R>(
+@@ -97,7 +123,10 @@ fn spawn_output_forwarder<W>(
+     tokio_runtime: tokio::runtime::Handle,
+     output_rx: mpsc::Receiver<Vec<u8>>,
+     mut writer: W,
+-) -> (std::thread::JoinHandle<()>, oneshot::Receiver<()>)
++) -> (
++    std::thread::JoinHandle<()>,
++    oneshot::Receiver<std::io::Result<()>>,
++)
+ where
+     W: Write + Send + 'static,
+ {
+@@ -106,17 +135,14 @@ where
+     // caller's stdio is simplest from a dedicated blocking thread.
+     let handle = std::thread::spawn(move || {
+         let mut output_rx = output_rx;
+-        while let Some(chunk) = tokio_runtime.block_on(output_rx.recv()) {
+-            if let Err(err) = writer.write_all(&chunk) {
+-                eprintln!("windows sandbox output forwarder failed to write: {err}");
+-                break;
++        let result = (|| -> std::io::Result<()> {
++            while let Some(chunk) = tokio_runtime.block_on(output_rx.recv()) {
++                writer.write_all(&chunk)?;
++                writer.flush()?;
+             }
+-            if let Err(err) = writer.flush() {
+-                eprintln!("windows sandbox output forwarder failed to flush: {err}");
+-                break;
+-            }
+-        }
+-        let _ = done_tx.send(());
++            Ok(())
++        })();
++        let _ = done_tx.send(result);
+     });
+     (handle, done_rx)
+ }
+diff --git a/codex-rs/windows-sandbox-rs/src/stdio_bridge_tests.rs b/codex-rs/windows-sandbox-rs/src/stdio_bridge_tests.rs
+index c13632b..fd68932 100644
+--- a/codex-rs/windows-sandbox-rs/src/stdio_bridge_tests.rs
++++ b/codex-rs/windows-sandbox-rs/src/stdio_bridge_tests.rs
+@@ -52,7 +52,7 @@ async fn output_forwarder_writes_all_chunks() -> anyhow::Result<()> {
+     output_tx.send(b"beta".to_vec()).await?;
+     drop(output_tx);
+     forwarder.join().expect("output forwarder should finish");
+-    done_rx.await?;
++    done_rx.await??;
+
+     let output = sink
+         .lock()
+@@ -61,3 +61,55 @@ async fn output_forwarder_writes_all_chunks() -> anyhow::Result<()> {
+     assert_eq!(output, b"alphabeta".to_vec());
+     Ok(())
+ }
++
++#[tokio::test]
++async fn output_forwarder_propagates_write_failures() -> anyhow::Result<()> {
++    struct BrokenWriter;
++    impl std::io::Write for BrokenWriter {
++        fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
++            Err(std::io::Error::new(
++                std::io::ErrorKind::BrokenPipe,
++                "closed output",
++            ))
++        }
++        fn flush(&mut self) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++    let (tx, rx) = tokio::sync::mpsc::channel(1);
++    let (thread, done) =
++        spawn_output_forwarder(tokio::runtime::Handle::current(), rx, BrokenWriter);
++    tx.send(b"must not disappear".to_vec()).await?;
++    drop(tx);
++    let error = done
++        .await?
++        .expect_err("a failed write must fail the transfer");
++    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
++    thread.join().expect("join output forwarder");
++    Ok(())
++}
++
++#[tokio::test]
++async fn output_drain_propagates_failure_and_timeout() -> anyhow::Result<()> {
++    let (stdout_tx, stdout_rx) = oneshot::channel();
++    let (stderr_tx, stderr_rx) = oneshot::channel();
++    stdout_tx.send(Ok(())).expect("stdout completed");
++    stderr_tx
++        .send(Err(std::io::Error::new(
++            std::io::ErrorKind::BrokenPipe,
++            "stderr closed",
++        )))
++        .expect("stderr failed");
++    let error = wait_for_output_forwarders(stdout_rx, stderr_rx, Duration::from_secs(1))
++        .await
++        .expect_err("stderr failure must propagate");
++    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
++
++    let (_stdout_tx, stdout_rx) = oneshot::channel();
++    let (_stderr_tx, stderr_rx) = oneshot::channel();
++    let error = wait_for_output_forwarders(stdout_rx, stderr_rx, Duration::from_millis(10))
++        .await
++        .expect_err("incomplete drain must not report success");
++    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
++    Ok(())
++}
+diff --git a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs
+index 0d7d2ca..d378011 100644
+--- a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs
++++ b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs
+@@ -24,7 +24,6 @@ use codex_utils_pty::SpawnedProcess;
+ use std::collections::HashMap;
+ use std::path::Path;
+ use std::path::PathBuf;
+-use tokio::sync::broadcast;
+ use tokio::sync::mpsc;
+ use tokio::sync::oneshot;
+
+@@ -229,11 +228,11 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
+     let (pipe_write, pipe_read) = transport.into_files();
+
+     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
+-    let (stdout_tx, stdout_rx) = broadcast::channel::<Vec<u8>>(256);
++    let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(256);
+     let stderr_rx = if tty {
+         None
+     } else {
+-        Some(broadcast::channel::<Vec<u8>>(256))
++        Some(mpsc::channel::<Vec<u8>>(256))
+     };
+     let (exit_tx, exit_rx) = oneshot::channel::<i32>();
+
+diff --git a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs
+index f37829e..903e361 100644
+--- a/codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs
++++ b/codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs
+@@ -9,16 +9,19 @@ use crate::ipc_framed::decode_bytes;
+ use crate::ipc_framed::encode_bytes;
+ use anyhow::Result;
+ use codex_utils_pty::ProcessDriver;
++use codex_utils_pty::ProcessOutputReceiver;
+ use codex_utils_pty::SpawnedProcess;
+ use codex_utils_pty::TerminalSize;
+ use codex_utils_pty::WindowsTtyInputNormalizer;
+ use codex_utils_pty::spawn_from_driver;
+ use std::fs::File;
+-use tokio::sync::broadcast;
+ use tokio::sync::mpsc;
+ use tokio::sync::oneshot;
+
+-pub(crate) fn finish_driver_spawn(driver: ProcessDriver, stdin_open: bool) -> SpawnedProcess {
++pub(crate) fn finish_driver_spawn<Output: ProcessOutputReceiver>(
++    driver: ProcessDriver<Output>,
++    stdin_open: bool,
++) -> SpawnedProcess {
+     let spawned = spawn_from_driver(driver);
+     if !stdin_open {
+         spawned.session.close_stdin();
+@@ -79,8 +82,8 @@ pub(crate) fn start_runner_stdin_writer(
+
+ pub(crate) fn start_runner_stdout_reader(
+     mut pipe_read: File,
+-    stdout_tx: broadcast::Sender<Vec<u8>>,
+-    stderr_tx: Option<broadcast::Sender<Vec<u8>>>,
++    stdout_tx: mpsc::Sender<Vec<u8>>,
++    stderr_tx: Option<mpsc::Sender<Vec<u8>>>,
+     exit_tx: oneshot::Sender<i32>,
+ ) {
+     std::thread::spawn(move || {
+@@ -109,19 +112,27 @@ pub(crate) fn start_runner_stdout_reader(
+
+             match msg.message {
+                 Message::Output { payload } => {
+-                    if let Ok(data) = decode_bytes(&payload.data_b64) {
+-                        match payload.stream {
+-                            OutputStream::Stdout => {
+-                                let _ = stdout_tx.send(data);
+-                            }
+-                            OutputStream::Stderr => {
+-                                if let Some(stderr_tx) = stderr_tx.as_ref() {
+-                                    let _ = stderr_tx.send(data);
+-                                } else {
+-                                    let _ = stdout_tx.send(data);
+-                                }
+-                            }
++                    let data = match decode_bytes(&payload.data_b64) {
++                        Ok(data) => data,
++                        Err(error) => {
++                            send_runner_error(
++                                &format!("invalid runner output: {error}"),
++                                &stdout_tx,
++                                stderr_tx.as_ref(),
++                            );
++                            let _ = exit_tx.send(125);
++                            break;
+                         }
++                    };
++                    let target = match payload.stream {
++                        OutputStream::Stdout => &stdout_tx,
++                        OutputStream::Stderr => stderr_tx.as_ref().unwrap_or(&stdout_tx),
++                    };
++                    // This reader owns a blocking thread. Bounded backpressure reaches
++                    // the IPC pipe and child instead of silently dropping output chunks.
++                    if target.blocking_send(data).is_err() {
++                        let _ = exit_tx.send(125);
++                        break;
+                     }
+                 }
+                 Message::Exit { payload } => {
+@@ -164,13 +175,13 @@ pub(crate) fn make_runner_resizer(
+
+ fn send_runner_error(
+     message: &str,
+-    stdout_tx: &broadcast::Sender<Vec<u8>>,
+-    stderr_tx: Option<&broadcast::Sender<Vec<u8>>>,
++    stdout_tx: &mpsc::Sender<Vec<u8>>,
++    stderr_tx: Option<&mpsc::Sender<Vec<u8>>>,
+ ) {
+     let formatted = format!("runner error: {message}\n").into_bytes();
+     if let Some(stderr_tx) = stderr_tx {
+-        let _ = stderr_tx.send(formatted);
++        let _ = stderr_tx.blocking_send(formatted);
+     } else {
+-        let _ = stdout_tx.send(formatted);
++        let _ = stdout_tx.blocking_send(formatted);
+     }
+ }
+diff --git a/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs b/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs
+index ff5b779..4587143 100644
+--- a/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs
++++ b/codex-rs/windows-sandbox-rs/src/uninstall_windows.rs
+@@ -54,7 +54,7 @@ pub fn clean_up_packaged_windows_sandbox(
+     for result in [
+         crate::wfp::remove_wfp_filters(),
+         firewall::cleanup_firewall_rules(),
+-        principals::remove_sandbox_principal("CodexSandboxUsers"),
++        principals::remove_sandbox_principal("HappySandboxUsers"),
+         crate::hide_users::unhide_sandbox_users(&[OFFLINE_USERNAME, ONLINE_USERNAME]),
+         // Keep accounts disabled and setup locked until shared cleanup and account deletion finish.
+         principals::remove_sandbox_principal(OFFLINE_USERNAME),
+diff --git a/codex-rs/windows-sandbox-rs/src/uninstall_windows/firewall.rs b/codex-rs/windows-sandbox-rs/src/uninstall_windows/firewall.rs
+index 876405b..1250cc5 100644
+--- a/codex-rs/windows-sandbox-rs/src/uninstall_windows/firewall.rs
++++ b/codex-rs/windows-sandbox-rs/src/uninstall_windows/firewall.rs
+@@ -17,10 +17,10 @@ pub(super) fn cleanup_firewall_rules() -> Result<()> {
+     let rules = unsafe { policy.Rules() }.context("access sandbox firewall rules")?;
+     let mut errors = Vec::new();
+     for name in [
+-        "codex_sandbox_offline_block_outbound",
+-        "codex_sandbox_offline_block_loopback_tcp",
+-        "codex_sandbox_offline_block_loopback_udp",
+-        "codex_sandbox_offline_allow_loopback_proxy",
++        "happy_sandbox_offline_block_outbound",
++        "happy_sandbox_offline_block_loopback_tcp",
++        "happy_sandbox_offline_block_loopback_udp",
++        "happy_sandbox_offline_allow_loopback_proxy",
+     ] {
+         if let Err(error) = unsafe { rules.Remove(&BSTR::from(name)) } {
+             errors.push(format!("remove sandbox firewall rule {name}: {error}"));
+diff --git a/codex-rs/windows-sandbox-rs/src/uninstall_windows/principals.rs b/codex-rs/windows-sandbox-rs/src/uninstall_windows/principals.rs
+index 8d52e60..236eac8 100644
+--- a/codex-rs/windows-sandbox-rs/src/uninstall_windows/principals.rs
++++ b/codex-rs/windows-sandbox-rs/src/uninstall_windows/principals.rs
+@@ -68,7 +68,7 @@ impl DisabledSandboxUsers {
+
+ pub(super) fn remove_sandbox_principal(name: &str) -> Result<()> {
+     let name_wide = to_wide(name);
+-    let status = if name == "CodexSandboxUsers" {
++    let status = if name == "HappySandboxUsers" {
+         unsafe { network::NetLocalGroupDel(null(), name_wide.as_ptr()) }
+     } else {
+         unsafe { network::NetUserDel(null(), name_wide.as_ptr()) }
+diff --git a/codex-rs/windows-sandbox-rs/src/wfp.rs b/codex-rs/windows-sandbox-rs/src/wfp.rs
+index d992bcd..019e16a 100644
+--- a/codex-rs/windows-sandbox-rs/src/wfp.rs
++++ b/codex-rs/windows-sandbox-rs/src/wfp.rs
+@@ -64,17 +64,17 @@ use filter_specs::ConditionSpec;
+ use filter_specs::FILTER_SPECS;
+ use filter_specs::FilterSpec;
+
+-const SESSION_NAME: &str = "Codex Windows Sandbox WFP";
+-const PROVIDER_NAME: &str = "Codex Windows Sandbox WFP";
+-const PROVIDER_DESCRIPTION: &str = "Persistent WFP provider for Codex Windows sandbox filters";
+-const SUBLAYER_NAME: &str = "Codex Windows Sandbox WFP";
+-const SUBLAYER_DESCRIPTION: &str = "Persistent WFP sublayer for Codex Windows sandbox filters";
++const SESSION_NAME: &str = "Happy Windows Sandbox WFP";
++const PROVIDER_NAME: &str = "Happy Windows Sandbox WFP";
++const PROVIDER_DESCRIPTION: &str = "Persistent WFP provider for Happy Windows sandbox filters";
++const SUBLAYER_NAME: &str = "Happy Windows Sandbox WFP";
++const SUBLAYER_DESCRIPTION: &str = "Persistent WFP sublayer for Happy Windows sandbox filters";
+
+ // WFP identifies persistent providers, sublayers, and filters by stable GUIDs.
+ // These values are Codex-owned identities; do not regenerate them unless we
+ // intentionally want to orphan old objects and create a new WFP namespace.
+-const PROVIDER_KEY: GUID = GUID::from_u128(0x2e31d31c_3948_4753_9117_e5d1a6496f41);
+-const SUBLAYER_KEY: GUID = GUID::from_u128(0xe65054fd_4d32_4c7c_95ef_621f0cf6431a);
++const PROVIDER_KEY: GUID = GUID::from_u128(0xdbede2e39963118b5316d39d83b38119);
++const SUBLAYER_KEY: GUID = GUID::from_u128(0xe0a214a2fe0f93fcf2223d4b461f78de);
+
+ /// Installs the persistent Codex WFP filters for `account`.
+ ///
+diff --git a/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs b/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
+index d86df4a..8469289 100644
+--- a/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
++++ b/codex-rs/windows-sandbox-rs/src/wfp/filter_specs.rs
+@@ -23,9 +23,39 @@ pub(super) struct FilterSpec {
+ }
+
+ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
++    // Firewall COM rules alone do not prevent local loopback traffic. Enforce
++    // the offline account boundary at ALE, including implicit and explicit binds.
+     FilterSpec {
+-        key: GUID::from_u128(0x9f5f3812_79f0_4fe9_9615_4c2c92d2f0ff),
+-        name: "codex_wfp_icmp_connect_v4",
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f01),
++        name: "happy_wfp_offline_all_connect_v4",
++        description: "Block offline Happy sandbox network connect_v4",
++        layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
++        conditions: &[ConditionSpec::User],
++    },
++    FilterSpec {
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f02),
++        name: "happy_wfp_offline_all_connect_v6",
++        description: "Block offline Happy sandbox network connect_v6",
++        layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
++        conditions: &[ConditionSpec::User],
++    },
++    FilterSpec {
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f03),
++        name: "happy_wfp_offline_all_bind_v4",
++        description: "Block offline Happy sandbox network bind_v4",
++        layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4,
++        conditions: &[ConditionSpec::User],
++    },
++    FilterSpec {
++        key: GUID::from_u128(0x835f145677384719a5435a4bf57c0f04),
++        name: "happy_wfp_offline_all_bind_v6",
++        description: "Block offline Happy sandbox network bind_v6",
++        layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6,
++        conditions: &[ConditionSpec::User],
++    },
++    FilterSpec {
++        key: GUID::from_u128(0x718095af2bc080d7ab91b993c55c7300),
++        name: "happy_wfp_icmp_connect_v4",
+         description: "Block sandbox-account ICMP connect v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[
+@@ -34,8 +64,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+         ],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0x87498484_45ab_4510_845e_ece8b791b3bc),
+-        name: "codex_wfp_icmp_connect_v6",
++        key: GUID::from_u128(0x0247c4bc3d4f6faa48c7b7b750faa1bc),
++        name: "happy_wfp_icmp_connect_v6",
+         description: "Block sandbox-account ICMP connect v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[
+@@ -44,8 +74,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+         ],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xaf4751de_f874_4a7b_a34d_f0d0f22d1d9b),
+-        name: "codex_wfp_icmp_assign_v4",
++        key: GUID::from_u128(0x4552225230b05cb281bab8a09589e412),
++        name: "happy_wfp_icmp_assign_v4",
+         description: "Block sandbox-account ICMP resource assignment v4",
+         layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4,
+         conditions: &[
+@@ -54,8 +84,8 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+         ],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xea10db66_a928_4b2e_a82e_a376a54f93ba),
+-        name: "codex_wfp_icmp_assign_v6",
++        key: GUID::from_u128(0x05e9e733b3670e66e6a89147f9ae28f8),
++        name: "happy_wfp_icmp_assign_v6",
+         description: "Block sandbox-account ICMP resource assignment v6",
+         layer_key: FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V6,
+         conditions: &[
+@@ -66,57 +96,57 @@ pub(super) const FILTER_SPECS: &[FilterSpec] = &[
+     // NAME_RESOLUTION_CACHE filters are intentionally omitted because ordinary
+     // static filter shapes returned FWP_E_OUT_OF_BOUNDS during validation.
+     FilterSpec {
+-        key: GUID::from_u128(0x83172805_f6be_4ae1_9dc6_6847aef04e7f),
+-        name: "codex_wfp_dns_53_v4",
++        key: GUID::from_u128(0x7629b2fadfe8101203ce043655d51134),
++        name: "happy_wfp_dns_53_v4",
+         description: "Block sandbox-account DNS TCP or UDP port 53 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(53)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xd23b2efb_1efb_46b2_96f3_b0ccda5690c8),
+-        name: "codex_wfp_dns_53_v6",
++        key: GUID::from_u128(0x3c9bf6e506a669c99f01dacb19253464),
++        name: "happy_wfp_dns_53_v6",
+         description: "Block sandbox-account DNS TCP or UDP port 53 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(53)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0x420b026f_9dc9_4aea_88f4_0f2b9feab39a),
+-        name: "codex_wfp_dns_853_v4",
++        key: GUID::from_u128(0x6e17fd610bafaaa36b00a12398cf6fde),
++        name: "happy_wfp_dns_853_v4",
+         description: "Block sandbox-account DNS-over-TLS port 853 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(853)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0x8d917c81_99cc_45e7_84d6_824df860cfb8),
+-        name: "codex_wfp_dns_853_v6",
++        key: GUID::from_u128(0xaf1f1ad84735b92c7dd087f4c794da76),
++        name: "happy_wfp_dns_853_v6",
+         description: "Block sandbox-account DNS-over-TLS port 853 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(853)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xe1d6e0af_ce5f_471b_b2d3_15ca00e966f3),
+-        name: "codex_wfp_smb_445_v4",
++        key: GUID::from_u128(0x45ecdc8184a2c4101325fb9a62e3dc52),
++        name: "happy_wfp_smb_445_v4",
+         description: "Block sandbox-account SMB port 445 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(445)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xc2bceca4_66ef_4a0f_ba80_f4f761b8c6f0),
+-        name: "codex_wfp_smb_445_v6",
++        key: GUID::from_u128(0x2d3801a562bf96b18e316858d2c3fcb5),
++        name: "happy_wfp_smb_445_v6",
+         description: "Block sandbox-account SMB port 445 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(445)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xba10c618_84e7_4b83_8f74_36e22b2fa1ff),
+-        name: "codex_wfp_smb_139_v4",
++        key: GUID::from_u128(0xb2d199bfabadbadc0d8bd30bd04b8bc0),
++        name: "happy_wfp_smb_139_v4",
+         description: "Block sandbox-account SMB port 139 v4",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(139)],
+     },
+     FilterSpec {
+-        key: GUID::from_u128(0xfe7f22b8_5cf5_4adb_b2aa_71fc0a8f5d44),
+-        name: "codex_wfp_smb_139_v6",
++        key: GUID::from_u128(0x406b4669b54b217a382d36bfba6fba07),
++        name: "happy_wfp_smb_139_v6",
+         description: "Block sandbox-account SMB port 139 v6",
+         layer_key: FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+         conditions: &[ConditionSpec::User, ConditionSpec::RemotePort(139)],
+diff --git a/codex-rs/windows-sandbox-rs/src/wfp_setup.rs b/codex-rs/windows-sandbox-rs/src/wfp_setup.rs
+index b3d6c4d..8fec0a7 100644
+--- a/codex-rs/windows-sandbox-rs/src/wfp_setup.rs
++++ b/codex-rs/windows-sandbox-rs/src/wfp_setup.rs
+@@ -8,7 +8,7 @@ use codex_otel::StatsigMetricsSettings;
+ use std::collections::BTreeMap;
+ use std::path::Path;
+
+-const WFP_SETUP_SERVICE_NAME: &str = "codex-windows-sandbox-setup";
++const WFP_SETUP_SERVICE_NAME: &str = "happy-sandbox-setup";
+ const WFP_SETUP_SUCCESS_METRIC: &str = "codex.windows_sandbox.wfp_setup_success";
+ const WFP_SETUP_FAILURE_METRIC: &str = "codex.windows_sandbox.wfp_setup_failure";
+
+diff --git a/codex-rs/windows-sandbox-rs/src/winutil.rs b/codex-rs/windows-sandbox-rs/src/winutil.rs
+index 502d902..643202f 100644
+--- a/codex-rs/windows-sandbox-rs/src/winutil.rs
++++ b/codex-rs/windows-sandbox-rs/src/winutil.rs
+@@ -26,7 +26,7 @@ use windows_sys::Win32::System::Diagnostics::Debug::FORMAT_MESSAGE_FROM_SYSTEM;
+ use windows_sys::Win32::System::Diagnostics::Debug::FORMAT_MESSAGE_IGNORE_INSERTS;
+ use windows_sys::Win32::System::Diagnostics::Debug::FormatMessageW;
+
+-pub const SANDBOX_USERS_GROUP: &str = "CodexSandboxUsers";
++pub const SANDBOX_USERS_GROUP: &str = "HappySandboxUsers";
+ const SANDBOX_USERS_GROUP_COMMENT: &str = "Codex sandbox internal group (managed)";
+
+ pub fn to_wide<S: AsRef<OsStr>>(s: S) -> Vec<u16> {
+diff --git a/codex-rs/windows-sandbox-rs/tests/helper_manifest.rs b/codex-rs/windows-sandbox-rs/tests/helper_manifest.rs
+index 0428f90..c0c4703 100644
+--- a/codex-rs/windows-sandbox-rs/tests/helper_manifest.rs
++++ b/codex-rs/windows-sandbox-rs/tests/helper_manifest.rs
+@@ -19,10 +19,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::RT_MANIFEST;
+ /// The setup executable must expose an asInvoker manifest through the Windows resource API.
+ #[test]
+ fn setup_helper_embeds_as_invoker_manifest() -> Result<()> {
+-    let setup_executable = std::env::var_os("CARGO_BIN_EXE_codex-windows-sandbox-setup")
++    let setup_executable = std::env::var_os("CARGO_BIN_EXE_happy-sandbox-setup")
+         .or_else(|| std::env::var_os("CARGO_BIN_EXE_codex_windows_sandbox_setup"))
+         .map(PathBuf::from)
+-        .or_else(|| option_env!("CARGO_BIN_EXE_codex-windows-sandbox-setup").map(PathBuf::from))
++        .or_else(|| option_env!("CARGO_BIN_EXE_happy-sandbox-setup").map(PathBuf::from))
+         .context("locate the Windows sandbox setup executable")?;
+     std::fs::metadata(&setup_executable)
+         .with_context(|| format!("find setup helper {}", setup_executable.display()))?;

@@ -88,7 +88,8 @@ export class Gym {
             this.#localEnvironment?.HAPPY_TERMINAL_GYM_IN_PROCESS_DAEMON === "1";
         this.#disposed = true;
         this.#disconnectTerminal();
-        this.#pty.kill(inProcessDaemon ? "SIGKILL" : undefined);
+        // ConPTY terminates through its native close operation; Windows has no POSIX signals.
+        this.#pty.kill(inProcessDaemon && process.platform !== "win32" ? "SIGKILL" : undefined);
         await waitForExit(this.#exit, 1_000);
         if (this.#execution === "docker") {
             if (this.#dockerFixtureRoot === undefined) {

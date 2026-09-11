@@ -700,6 +700,9 @@ export class ComputeModule implements AgentModule {
                     "AGENTS_SECURITY.md",
                     "happy.toml",
                     "mcp.toml",
+                    ...(process.platform === "win32"
+                        ? [".agents", ".codex", ".gitconfig", ".gitmodules"]
+                        : []),
                     ...values.permissions.protectedPaths,
                     ...values.workspace.protectedSync,
                 ]),

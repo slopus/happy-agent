@@ -62,6 +62,11 @@ export interface SteeringRunOptions extends AgentRunOptions {
     expectedRunId?: string;
 }
 
+/** The public API keeps accepted messages pending across run boundaries. */
+export type SteeringSubmissionResponse =
+    | SteerMessageResponse
+    | { delivery: "pending"; messageId: string };
+
 export interface CodingAssistantAgentBackend {
     readonly canChangeModel: boolean;
     readonly confirmedServiceTier: ServiceTier | undefined;
@@ -110,7 +115,7 @@ export interface CodingAssistantAgentBackend {
     steer(
         content: string | readonly ContentBlock[],
         options?: SteeringRunOptions,
-    ): Promise<void | SteerMessageResponse>;
+    ): Promise<void | SteeringSubmissionResponse>;
     setEffort(effort: string | undefined): void;
     setModel(
         modelId: string,

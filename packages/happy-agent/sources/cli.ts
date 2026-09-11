@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { assertGymRuntimeSupported } from "./lifecycle/assertGymRuntimeSupported.js";
 import { AgentDaemonError } from "./lifecycle/AgentDaemonError.js";
 import { getDaemonIdentity } from "./lifecycle/getDaemonIdentity.js";
 import { isAgentDaemonCommand, runAgentDaemonCommand } from "./lifecycle/runAgentDaemonCommand.js";
@@ -16,12 +17,14 @@ Options:
 
 Commands:
   start    Start the daemon when none is running, replacing one that does not match.
-  drain    Signal the local daemon and wait for draining, without tokens or shutdown.
+  drain    Drain the local daemon and wait until it is idle, without shutdown.
   stop     Ask the running daemon to shut down.
   kill     Immediately kill the daemon process recorded in its PID file.
   status   Report whether the daemon is running.
   reload   Stop the running daemon, then start a fresh one.
-  run      Run the daemon in the foreground of this process.`;
+  run      Run the daemon in the foreground of this process.
+  sandbox setup [--retry]  Set up the Windows sandbox, or explicitly retry setup.
+  sandbox status          Report Windows sandbox configuration without changing it.`;
 
 installFailureReporting();
 
@@ -37,12 +40,18 @@ async function main(): Promise<void> {
         console.log(`Happy Agent ${getDaemonIdentity().version}`);
         return;
     }
+    if (command === "sandbox") {
+        const { runSandboxCommand } = await import("./lifecycle/runSandboxCommand.js");
+        await runSandboxCommand(rest);
+        return;
+    }
     if (rest.length > 0) {
         throw new AgentDaemonError(`The ${command} command does not take arguments.`, {
             hint: "Run happy-agent --help to see every command.",
         });
     }
     if (command === "run") {
+        assertGymRuntimeSupported();
         // The runtime import is deferred so lifecycle commands never load the whole agent.
         const { runAgentDaemon } = await import("./lifecycle/runAgentDaemon.js");
         // The daemon keeps this process alive through its socket server until it closes.
@@ -85,5 +94,5 @@ function reportFailure(error: unknown): void {
     } else {
         process.stderr.write(`${String(error)}\n`);
     }
-    process.exitCode = 1;
+    process.exitCode = error instanceof AgentDaemonError ? error.exitCode : 1;
 }

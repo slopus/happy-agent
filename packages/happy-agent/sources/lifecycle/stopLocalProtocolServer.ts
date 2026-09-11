@@ -28,7 +28,7 @@ export async function stopLocalProtocolServer(
 ): Promise<void> {
     const socketPath = typeof paths === "string" ? paths : paths.socketPath;
     let pid = typeof paths === "string" ? undefined : await readDaemonPid(paths.pidPath);
-    await drainLocalProtocolServer(client, options.onDrainProgress);
+    await drainLocalProtocolServer(client, options.onDrainProgress, true);
     try {
         pid = (await client.shutdown()).pid;
     } catch (error) {
@@ -51,14 +51,17 @@ export async function stopLocalProtocolServer(
     }
 }
 
-async function drainLocalProtocolServer(
+export async function drainLocalProtocolServer(
     client: HappyAgentClient,
     report: ((message: string) => void) | undefined,
+    allowShutdownFallback = false,
 ): Promise<void> {
     try {
         await client.drain();
     } catch (error: unknown) {
         if (error instanceof HappyAgentApiError && (error.status === 403 || error.status === 404)) {
+            if (!allowShutdownFallback)
+                throw new Error("This daemon does not support authenticated draining.");
             report?.("This daemon does not support draining; stopping it directly.");
             return;
         }
@@ -79,6 +82,10 @@ async function drainLocalProtocolServer(
         if (waiting.every((wait) => wait.name === "api-mutations")) {
             if (changed || stalledSince === undefined) stalledSince = Date.now();
             if (Date.now() - stalledSince >= DRAIN_MUTATION_TIMEOUT_MS) {
+                if (!allowShutdownFallback)
+                    throw new Error(
+                        "Timed out while draining API mutations; the daemon is still draining.",
+                    );
                 report?.(formatDrainGaveUp(waiting));
                 return;
             }

@@ -856,3 +856,56 @@ The current tests provide focused references:
 - [`inference_http_error_is_visible.test.ts`](tests/inference_http_error_is_visible.test.ts) demonstrates provider HTTP failure injection.
 - [`parallel_gym_instances_are_isolated.test.ts`](tests/parallel_gym_instances_are_isolated.test.ts) demonstrates concurrent isolated Gym filesystems.
 - [`large_multiline_unicode_message_renders_without_corruption.test.ts`](tests/large_multiline_unicode_message_renders_without_corruption.test.ts) demonstrates deterministic fuzz input, exact request validation, terminal-health assertions, scroll-transition checks, and a follow-up turn.
+
+## Native Windows lane
+
+Use `mode: "native-windows"` on Windows 11 to run the real Terminal, daemon,
+filesystem, PowerShell, and Happy native sandbox. Only inference is scripted.
+The scenario must explicitly name its permission mode. Each instance owns an
+isolated Happy home, workspace, named pipe, and SQLite databases.
+
+Native gyms require an explicit absolute `HAPPY_WINDOWS_SANDBOX_HOME`, supplied
+in the scenario environment or the launching shell, pointing to completed Happy
+sandbox setup. This shares OS provisioning only; each gym still has its own
+conversation/database state. The harness checks the setup version and Happy
+account identities before creating fixtures or starting a process.
+
+Windows test runners and native gyms set `HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1`.
+Existing sandbox checks and permission enforcement still apply, but tests cannot
+create accounts/firewall rules or open UAC. Missing or outdated setup fails with
+an actionable error; complete setup explicitly outside the test runner first.
+Pure and mocked unit tests do not require provisioned state. Live inference
+retains the two explicit opt-ins described above.
+
+Run the native scripted lane from PowerShell after building the native helpers:
+
+```powershell
+$env:HAPPY_WINDOWS_SANDBOX_HOME = "$env:USERPROFILE\.happy\windows-sandbox"
+pnpm --filter @slopus/happy-terminal-gym-tests test:gym:windows
+```
+
+Use the sandbox state of the installed local Happy build if its home differs.
+Native scenarios are excluded from the emulated and Docker lanes and run serially.
+
+### Live GPT on native Windows
+
+The live Windows gym uses GPT 5.6 Sol through Happy's Codex provider and the real
+upstream endpoint. It fixes a toy project, creates and updates `lol.txt`, runs
+three assertions through the restricted Happy sandbox account, and completes a
+second turn through Terminal. It checks exact filesystem results, the unchanged
+verification script, sandbox identity, nonzero provider usage, and an empty mock
+inference request log.
+
+Build Happy Agent and its native helpers first. Sign into Codex, then run from
+PowerShell with both explicit live-test opt-ins (the scenario supplies the second):
+
+```powershell
+$env:HAPPY_WINDOWS_SANDBOX_HOME = "$env:USERPROFILE\.happy\windows-sandbox"
+$env:HAPPY_TERMINAL_LIVE_TEST = "1"
+pnpm --filter @slopus/happy-terminal-gym-tests test:gym:live:windows
+```
+
+This spends real provider tokens. The scenario references `$env:CODEX_HOME\auth.json`
+or `$env:USERPROFILE\.codex\auth.json`; it never copies or prints the credential.
+The live file is excluded from all ordinary gym lanes. Without the host opt-in,
+it is skipped; missing sandbox provisioning or sign-in is an actionable failure.

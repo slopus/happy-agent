@@ -1,0 +1,8 @@
+{
+    "repository": "https://github.com/openai/codex",
+    "commit": "a62e98d18c6550e3bea152ed1b89d1e931dca961",
+    "license": "Apache-2.0",
+    "namespace": "Slopus.HappySandbox",
+    "buildToolchain": "1.95.0-x86_64-pc-windows-gnu",
+    "setupVersion": 8
+}

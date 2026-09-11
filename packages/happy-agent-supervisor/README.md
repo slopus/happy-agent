@@ -33,8 +33,13 @@ matching executable lives.
 
 The Linux binaries are static musl builds, so they run on any distribution and
 can be mounted read-only into a container that has no toolchain of its own.
-Windows is not supported; `resolveSupervisorBinary()` throws there rather than
-returning something that cannot enforce anything.
+A local Windows 11 x64 adapter is under validation. It builds a pinned Codex native sandbox
+with separate Happy OS identities; see `native/windows/source.json` and the license notices there.
+Run `pnpm build:native:windows` with the specified Rust toolchain installed. Set
+`HAPPY_CODEX_SOURCE_DIR` to reuse a checkout of the exact pinned commit. Building does not
+provision the sandbox. First execution requires one-time native setup; host allowlist proxy
+and independent listener policies currently fail closed until their Windows implementation
+is complete. This local validation build is not a published Windows release.
 
 ## Install
 

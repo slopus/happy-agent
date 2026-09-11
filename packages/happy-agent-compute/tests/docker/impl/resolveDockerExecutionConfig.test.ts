@@ -1,7 +1,9 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { resolveDockerExecutionConfig } from "../../../sources/docker/impl/resolveDockerExecutionConfig.js";
 
+const hostProject = resolve("/tmp/project");
 const reservedMounts = [
     { readOnly: true, source: "/bundled/docs", target: "/product/docs" },
     { readOnly: true, source: "/host/generated", target: "/product/output" },
@@ -15,12 +17,12 @@ describe("resolveDockerExecutionConfig", () => {
                 mounts: [{ source: ".", target: "/workspace" }],
                 workingDirectory: "/workspace",
             },
-            "/tmp/project",
+            hostProject,
             reservedMounts,
         );
 
         expect(resolved.mounts).toEqual([
-            { source: "/tmp/project", target: "/workspace" },
+            { source: hostProject, target: "/workspace" },
             { readOnly: true, source: "/bundled/docs", target: "/product/docs" },
             { readOnly: true, source: "/host/generated", target: "/product/output" },
         ]);
@@ -33,7 +35,7 @@ describe("resolveDockerExecutionConfig", () => {
                 mounts: [{ source: "/first", target: "/product/output" }],
                 workingDirectory: "/workspace",
             },
-            "/tmp/project",
+            hostProject,
             [{ source: "/second", target: "/product/output" }],
         );
 
@@ -50,16 +52,16 @@ describe("resolveDockerExecutionConfig", () => {
                 mounts: [{ source: ".", target: "/workspace" }],
                 workingDirectory: "/workspace",
             },
-            "/tmp/project",
+            hostProject,
         );
 
-        expect(resolved.mounts).toEqual([{ source: "/tmp/project", target: "/workspace" }]);
+        expect(resolved.mounts).toEqual([{ source: hostProject, target: "/workspace" }]);
     });
 
     it("does not add mounts when connecting to an existing container", () => {
         const resolved = resolveDockerExecutionConfig(
             { container: "already-running", workingDirectory: "/repo" },
-            "/tmp/project",
+            hostProject,
             reservedMounts,
         );
 

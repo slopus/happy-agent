@@ -1,3 +1,4 @@
+import { localAgentSocketPath } from "@slopus/happy-agent-compute";
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer, type RequestListener } from "node:http";
@@ -16,7 +17,7 @@ async function fixture(handler: RequestListener) {
     const scratch = resolve("../../.context");
     await mkdir(scratch, { recursive: true });
     const root = await mkdtemp(`${scratch}/f`);
-    const path = `${root}/s`;
+    const path = process.platform === "win32" ? localAgentSocketPath(root) : `${root}/s`;
     const server = createServer(handler);
     const sockets = new Set<Socket>();
     let connections = 0;

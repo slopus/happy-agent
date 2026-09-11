@@ -45,9 +45,23 @@ afterEach(() => {
         }
     }
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
 });
 
 describe("runAgentDaemon", () => {
+    it("refuses an emulated gym before any native runtime or filesystem work", async () => {
+        vi.clearAllMocks();
+        vi.stubEnv("HAPPY_TERMINAL_GYM_RUNTIME", "just-bash");
+
+        await expect(runAgentDaemon({ hardExit: false, persistPid: false })).rejects.toThrow(
+            "host execution cannot substitute for just-bash",
+        );
+
+        expect(mocks.startHappyAgentDaemon).not.toHaveBeenCalled();
+        expect(mocks.syncHappyAgentDocs).not.toHaveBeenCalled();
+        expect(mocks.getHappyDaemonPaths).not.toHaveBeenCalled();
+    });
+
     it("synchronizes docs before starting the runtime", async () => {
         mocks.startHappyAgentDaemon.mockResolvedValue({
             close: vi.fn(),

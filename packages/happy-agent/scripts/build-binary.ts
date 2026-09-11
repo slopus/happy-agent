@@ -14,8 +14,8 @@ const happyAgentRoot = resolve(import.meta.dirname, "..");
 interface BinaryTarget {
     arch: "arm64" | "x64";
     bunTarget: string;
-    key: "darwin-arm64" | "darwin-x64" | "linux-arm64" | "linux-x64";
-    platform: "darwin" | "linux";
+    key: "darwin-arm64" | "darwin-x64" | "linux-arm64" | "linux-x64" | "win32-x64";
+    platform: "darwin" | "linux" | "win32";
 }
 
 interface EmbeddedAsset {
@@ -46,7 +46,10 @@ interface BinaryAssets {
     menuBarRelativePath?: string;
     montyNativeRelativePath: string;
     montyWorkerRelativePath: string;
-    supervisorRelativePaths: Record<BinaryTarget["key"], string>;
+    montyWorkerVariables: string[];
+    supervisorGroups: Partial<
+        Record<BinaryTarget["key"], { relativePath: string; variables: string[] }>
+    >;
     tailcatRelativePath: string;
 }
 
@@ -57,6 +60,7 @@ interface SourceAdapter {
 }
 
 const TARGETS: readonly BinaryTarget[] = [
+    { arch: "x64", bunTarget: "bun-windows-x64-baseline", key: "win32-x64", platform: "win32" },
     {
         arch: "arm64",
         bunTarget: "bun-darwin-arm64",
@@ -84,6 +88,7 @@ const TARGETS: readonly BinaryTarget[] = [
 ];
 
 const SUPERVISOR_TARGETS: Record<BinaryTarget["key"], string> = {
+    "win32-x64": "x86_64-pc-windows-gnu",
     "darwin-arm64": "aarch64-apple-darwin",
     "darwin-x64": "x86_64-apple-darwin",
     "linux-arm64": "aarch64-unknown-linux-musl",
@@ -107,7 +112,12 @@ async function buildTarget(target: BinaryTarget): Promise<void> {
     const assets = resolveBinaryAssets(target, tailcatSource);
     const adapters = resolveSourceAdapters(target);
     const appliedAdapters = new Set<string>();
-    const outfile = join(happyAgentRoot, "dist", "bin", `happy-agent-${target.key}`);
+    const outfile = join(
+        happyAgentRoot,
+        "dist",
+        "bin",
+        `happy-agent-${target.key}${target.platform === "win32" ? ".exe" : ""}`,
+    );
     console.log(`Compiling ${target.key}...`);
     const result = await Bun.build({
         compile: {
@@ -233,19 +243,37 @@ function resolveBinaryAssets(target: BinaryTarget, tailcatSource: string): Binar
     const providersRoot = directPackageRoot("@slopus/happy-providers");
     const providersRequire = createRequire(join(providersRoot, "package.json"));
 
-    const nativeSuffix = target.platform === "linux" ? `${target.key}-gnu` : target.key;
+    const executableSuffix = target.platform === "win32" ? ".exe" : "";
+    const nativeSuffix =
+        target.platform === "win32"
+            ? `${target.key}-msvc`
+            : target.platform === "linux"
+              ? `${target.key}-gnu`
+              : target.key;
     const libsqlPackage = `@libsql/${nativeSuffix}`;
     const montyPackage = `@pydantic/monty-${nativeSuffix}`;
     const ffiPackage = `@yuuang/ffi-rs-${nativeSuffix}`;
-    const fffPackage = `@ff-labs/fff-bin-${nativeSuffix}`;
+    const fffPackage = `@ff-labs/fff-bin-${target.platform === "win32" ? target.key : nativeSuffix}`;
     const claudePackage = `@anthropic-ai/claude-agent-sdk-${target.key}`;
 
-    const libsqlSource = resolveRequired(libsqlRequire, libsqlPackage);
+    const libsqlSource =
+        target.platform === "win32"
+            ? join(happyAgentRoot, "native", "target", "win32-x64", "libsql.node")
+            : resolveRequired(libsqlRequire, libsqlPackage);
     const montySource = resolveRequired(montyRequire, montyPackage);
-    const montyWorkerSource = resolveRequired(montyRequire, `${montyPackage}/monty`);
+    const montyWorkerSource =
+        target.platform === "win32"
+            ? join(happyAgentRoot, "native", "target", "win32-x64", "monty.exe")
+            : resolveRequired(montyRequire, `${montyPackage}/monty${executableSuffix}`);
     const ffiSource = resolveRequired(fffRequire, ffiPackage);
-    const fffSource = resolveRequired(fffRequire, fffPackage);
-    const claudeSource = resolveRequired(providersRequire, `${claudePackage}/claude`);
+    const fffSource =
+        target.platform === "win32"
+            ? join(happyAgentRoot, "native", "target", "win32-x64", "fff_c.dll")
+            : resolveRequired(fffRequire, fffPackage);
+    const claudeSource = resolveRequired(
+        providersRequire,
+        `${claudePackage}/claude${executableSuffix}`,
+    );
     const ghosttySource = resolveRequired(modulesRequire, "@slopus/ghostty-wasm/wasm");
 
     const justBashRoot = packageRootFromEntry(
@@ -289,12 +317,12 @@ export const { getQuickJS } = QJS;
         ),
         asset("libsqlAsset", libsqlSource, "index.node"),
         asset("montyNativeAsset", montySource, basename(montySource)),
-        asset("montyWorkerAsset", montyWorkerSource, "monty", true),
+        asset("montyWorkerAsset", montyWorkerSource, `monty${executableSuffix}`, true),
         asset("ffiAsset", ffiSource, basename(ffiSource)),
         asset("fffAsset", fffSource, basename(fffSource)),
-        asset("claudeAsset", claudeSource, "claude", true),
+        asset("claudeAsset", claudeSource, `claude${executableSuffix}`, true),
         asset("ghosttyWasmAsset", ghosttySource, "ghostty-vt.wasm"),
-        asset("tailcatAsset", tailcatSource, "tailcat", true),
+        asset("tailcatAsset", tailcatSource, `tailcat${executableSuffix}`, true),
         asset(
             "tailcatLicenseAsset",
             join(happyAgentRoot, "assets", "tailcat", "LICENSE"),
@@ -328,20 +356,91 @@ export const { getQuickJS } = QJS;
         ),
     ];
 
-    const supervisorRelativePaths = {} as Record<BinaryTarget["key"], string>;
-    for (const supervisorTarget of TARGETS) {
-        const alias = `@slopus/happy-agent-supervisor-${supervisorTarget.key}`;
-        const manifest = resolveRequired(computeRequire, `${alias}/package.json`);
-        const relativePath = `vendor/${SUPERVISOR_TARGETS[supervisorTarget.key]}/bin/happy-agent-supervisor`;
-        supervisorRelativePaths[supervisorTarget.key] = relativePath;
+    if (target.platform === "win32") {
         assets.push(
             asset(
-                `supervisor${variableSuffix(supervisorTarget.key)}Asset`,
-                join(dirname(manifest), relativePath),
-                relativePath,
-                true,
+                "fffLicenseAsset",
+                join(happyAgentRoot, "native", "fff", "LICENSE"),
+                "LICENSE.fff",
             ),
         );
+        assets.push(
+            asset(
+                "montyLicenseAsset",
+                join(happyAgentRoot, "native", "monty", "LICENSE"),
+                "LICENSE.monty",
+            ),
+        );
+        for (const [name, suffix] of [
+            ["LICENSE.libsql", "Core"],
+            ["LICENSE.libsql-js", "Binding"],
+        ] as const) {
+            assets.push(
+                asset(
+                    "libsqlLicense" + suffix,
+                    join(happyAgentRoot, "native", "libsql", name),
+                    name,
+                ),
+            );
+        }
+    }
+
+    const supervisorGroups: BinaryAssets["supervisorGroups"] = {};
+    // Windows ships its own supervisor and matching helpers. Existing Unix
+    // bundles retain their Unix/container targets and never include Windows code.
+    const supervisorTargets =
+        target.platform === "win32"
+            ? [target]
+            : TARGETS.filter((entry) => entry.platform !== "win32");
+    for (const supervisorTarget of supervisorTargets) {
+        const relativeDirectory = `vendor/${SUPERVISOR_TARGETS[supervisorTarget.key]}/bin`;
+        const variable = `supervisor${variableSuffix(supervisorTarget.key)}Asset`;
+        const relativePath = `${relativeDirectory}/happy-agent-supervisor${supervisorTarget.platform === "win32" ? ".exe" : ""}`;
+        const variables = [variable];
+        if (supervisorTarget.platform === "win32") {
+            const supervisorRoot = packageDependencyRoot(
+                computeRoot,
+                "@slopus/happy-agent-supervisor",
+            );
+            const profile = process.env.HAPPY_AGENT_NATIVE_PROFILE ?? "release";
+            if (profile !== "release" && profile !== "debug")
+                throw new Error("Invalid native build profile.");
+            const nativeRoot = join(supervisorRoot, "native", "target", profile);
+            assets.push(
+                asset(variable, join(nativeRoot, "happy-agent-supervisor.exe"), relativePath, true),
+            );
+            for (const [name, suffix] of [
+                ["happy-sandbox-runner.exe", "Runner"],
+                ["happy-sandbox-setup.exe", "Setup"],
+            ] as const) {
+                const helperVariable = variable + suffix;
+                variables.push(helperVariable);
+                assets.push(
+                    asset(
+                        helperVariable,
+                        join(nativeRoot, name),
+                        `${relativeDirectory}/${name}`,
+                        true,
+                    ),
+                );
+            }
+            for (const name of ["LICENSE.codex", "NOTICE.codex"]) {
+                const licenseVariable = variable + name.replaceAll(".", "");
+                variables.push(licenseVariable);
+                assets.push(
+                    asset(
+                        licenseVariable,
+                        join(supervisorRoot, "native", "windows", name),
+                        `${relativeDirectory}/${name}`,
+                    ),
+                );
+            }
+        } else {
+            const alias = `@slopus/happy-agent-supervisor-${supervisorTarget.key}`;
+            const manifest = resolveRequired(computeRequire, `${alias}/package.json`);
+            assets.push(asset(variable, join(dirname(manifest), relativePath), relativePath, true));
+        }
+        supervisorGroups[supervisorTarget.key] = { relativePath, variables };
     }
 
     const menuBarApp = buildMenuBarApp(modulesRoot, target);
@@ -352,7 +451,7 @@ export const { getQuickJS } = QJS;
     return {
         assets,
         chiefOfStaffAvatarVariable: "chiefOfStaffAvatarAsset",
-        claudeRelativePath: "claude",
+        claudeRelativePath: `claude${executableSuffix}`,
         fffRelativePath: basename(fffSource),
         ffiRelativePath: basename(ffiSource),
         ghosttyVariable: "ghosttyWasmAsset",
@@ -374,9 +473,13 @@ export const { getQuickJS } = QJS;
         libsqlRelativePath: "index.node",
         ...(menuBarApp === undefined ? {} : { menuBarRelativePath: MENU_BAR_RELATIVE_PATH }),
         montyNativeRelativePath: basename(montySource),
-        montyWorkerRelativePath: "monty",
-        supervisorRelativePaths,
-        tailcatRelativePath: "tailcat",
+        montyWorkerRelativePath: `monty${executableSuffix}`,
+        montyWorkerVariables:
+            target.platform === "win32"
+                ? ["montyWorkerAsset", "montyLicenseAsset"]
+                : ["montyWorkerAsset"],
+        supervisorGroups,
+        tailcatRelativePath: `tailcat${executableSuffix}`,
     };
 }
 
@@ -652,14 +755,13 @@ function adaptBunComputePtyTransport(source: string): string {
     );
     const start = imported.indexOf("function startPtyTransport(");
     const next = imported.indexOf("function toPtyInput(", start);
-    const shell = imported.indexOf("function shellArgs(", next);
-    if (start < 0 || next < 0 || shell < 0) {
+    if (start < 0 || next < 0) {
         throw new Error("The compute PTY transport source changed.");
     }
     return (
         imported.slice(0, start) +
         `function startPtyTransport(executable, args, options) {\n    return startBunPtyProcessTransport(executable, args, options);\n}\n` +
-        imported.slice(shell)
+        imported.slice(next)
     );
 }
 
@@ -683,11 +785,11 @@ function renderAssetModule(binaryAssets: BinaryAssets): string {
         });
         return `[${rendered.join(", ")}]`;
     };
-    const supervisorCases = TARGETS.map((target) => {
-        const variable = `supervisor${variableSuffix(target.key)}Asset`;
-        const relativePath = binaryAssets.supervisorRelativePaths[target.key];
-        return `case ${JSON.stringify(target.key)}: return join(materializeEmbeddedFiles("supervisor-${target.key}", ${files([variable])}), ${JSON.stringify(relativePath)});`;
-    }).join("\n        ");
+    const supervisorCases = Object.entries(binaryAssets.supervisorGroups)
+        .map(([key, group]) => {
+            return `case ${JSON.stringify(key)}: return join(materializeEmbeddedFiles("supervisor-${key}", ${files(group.variables)}), ${JSON.stringify(group.relativePath)});`;
+        })
+        .join("\n        ");
     const justBashWorkerCases = Object.entries(binaryAssets.justBashWorkerGroups)
         .map(
             ([kind, group]) =>
@@ -710,19 +812,19 @@ function loadNative(name, files, relativePath) {
     return value;
 }
 export function loadLibsqlNative() {
-    return loadNative("libsql", ${files(["libsqlAsset"])}, ${JSON.stringify(binaryAssets.libsqlRelativePath)});
+    return loadNative("libsql", ${files(binaryAssets.assets.filter((entry) => entry.variable === "libsqlAsset" || entry.variable.startsWith("libsqlLicense")).map((entry) => entry.variable))}, ${JSON.stringify(binaryAssets.libsqlRelativePath)});
 }
 export function loadMontyNative() {
     return loadNative("monty-native", ${files(["montyNativeAsset"])}, ${JSON.stringify(binaryAssets.montyNativeRelativePath)});
 }
 export function getMontyBinary() {
-    return join(materializeEmbeddedFiles("monty-worker", ${files(["montyWorkerAsset"])}), ${JSON.stringify(binaryAssets.montyWorkerRelativePath)});
+    return join(materializeEmbeddedFiles("monty-worker", ${files(binaryAssets.montyWorkerVariables)}), ${JSON.stringify(binaryAssets.montyWorkerRelativePath)});
 }
 export function loadFfiRsNative() {
     return loadNative("ffi-rs", ${files(["ffiAsset"])}, ${JSON.stringify(binaryAssets.ffiRelativePath)});
 }
 export function getFffLibraryPath() {
-    return join(materializeEmbeddedFiles("fff", ${files(["fffAsset"])}), ${JSON.stringify(binaryAssets.fffRelativePath)});
+    return join(materializeEmbeddedFiles("fff", ${files(binaryAssets.assets.filter((entry) => entry.variable === "fffAsset" || entry.variable === "fffLicenseAsset").map((entry) => entry.variable))}), ${JSON.stringify(binaryAssets.fffRelativePath)});
 }
 export function getSupervisorBinary(key) {
     switch (key) {

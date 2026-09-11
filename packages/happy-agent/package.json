@@ -37,13 +37,22 @@
         "build:bun:all": "pnpm dlx bun@1.4.0 scripts/build-binary.ts --all",
         "check": "tsc --noEmit",
         "test": "vitest run --passWithNoTests",
-        "test:bun:transports": "pnpm dlx bun@1.4.0 test ./tests/bun/teamTerminalTransport.bun.mjs"
+        "test:bun:transports": "pnpm dlx bun@1.4.0 test ./tests/bun/teamTerminalTransport.bun.mjs",
+        "build:native:monty": "node scripts/build-native-monty.mjs",
+        "test:native:monty": "node scripts/verify-native-monty.mjs",
+        "test:native:transport": "bun scripts/verify-windows-sockets.ts",
+        "build:native:libsql": "node scripts/build-native-libsql.mjs",
+        "test:native:libsql": "node --expose-gc scripts/verify-native-libsql.mjs && bun scripts/verify-native-libsql.mjs",
+        "build:native:fff": "node scripts/build-native-fff.mjs",
+        "test:native:fff": "node scripts/verify-native-fff.mjs && bun scripts/verify-native-fff.mjs"
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.49",
         "@slopus/happy-agent-base": "0.0.54",
         "@slopus/happy-agent-client": "0.0.64",
+        "@slopus/happy-agent-compute": "0.1.11",
         "@slopus/happy-agent-modules": "workspace:*",
+        "@slopus/happy-agent-supervisor": "0.0.5",
         "@slopus/happy-providers": "0.0.27",
         "@steve.kite/stdlib": "0.0.12"
     },

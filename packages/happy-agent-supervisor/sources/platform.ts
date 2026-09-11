@@ -1,6 +1,13 @@
 import { type Static, Type } from "@sinclair/typebox";
 
 export const PLATFORM_TARGETS = {
+    "win32-x64": {
+        alias: "@slopus/happy-agent-supervisor-win32-x64",
+        arch: "x64",
+        os: "win32",
+        tag: "win32-x64",
+        target: "x86_64-pc-windows-gnu",
+    },
     "darwin-arm64": {
         alias: "@slopus/happy-agent-supervisor-darwin-arm64",
         arch: "arm64",

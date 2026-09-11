@@ -6,11 +6,12 @@ import { resolve } from "node:path";
 export const TAILCAT_VERSION = "v0.4.0";
 
 interface TailcatAssetTarget {
-    readonly key: "darwin-arm64" | "darwin-x64" | "linux-arm64" | "linux-x64";
-    readonly platform: "darwin" | "linux";
+    readonly key: "darwin-arm64" | "darwin-x64" | "linux-arm64" | "linux-x64" | "win32-x64";
+    readonly platform: "darwin" | "linux" | "win32";
 }
 
 const TAILCAT_SHA256: Readonly<Record<TailcatAssetTarget["key"], string>> = {
+    "win32-x64": "bcb0c6c91e126ee9a5880e45fe067484a1bc056d721447d5fae8575ab6e672bc",
     "darwin-arm64": "7e9ca0999a0c65eb5f84ca1ac15a767a498280a3fad39f30d6665ab269f5dddc",
     "darwin-x64": "798d79bccc7333559d924dc6fd0c7d54df338e7a23e89b7c615742f3cce3efa6",
     "linux-arm64": "b9b77747305bc388d31fe2189079e649e958ddadfde85a50ff25f4529345ef05",
@@ -28,7 +29,7 @@ export function resolveTailcatBinaryAsset(
         "tailcat",
         TAILCAT_VERSION,
         target.key,
-        "tailcat",
+        target.platform === "win32" ? "tailcat.exe" : "tailcat",
     );
     assertExecutable(source, `Tailcat ${TAILCAT_VERSION} asset for ${target.key}`);
     const actual = createHash("sha256").update(readFileSync(source)).digest("hex");

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { cp, mkdir, readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 
@@ -8,7 +9,11 @@ const execFileAsync = promisify(execFile);
 
 await rm("dist", { force: true, recursive: true });
 await mkdir("dist", { recursive: true });
-await execFileAsync("tsc", ["-p", "tsconfig.build.json"]);
+await execFileAsync(
+    process.execPath,
+    [createRequire(import.meta.url).resolve("typescript/bin/tsc"), "-p", "tsconfig.build.json"],
+    { windowsHide: true },
+);
 const bundle = await build({
     banner: {
         js: 'import { createRequire as createBundleRequire } from "node:module"; const require = createBundleRequire(import.meta.url);',

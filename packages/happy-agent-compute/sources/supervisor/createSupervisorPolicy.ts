@@ -1,4 +1,4 @@
-import { isAbsolute, normalize, resolve } from "node:path";
+import { posix, win32 } from "node:path";
 
 import {
     parseSupervisorPolicy,
@@ -17,15 +17,26 @@ import type { ComputeNetworkPermissions, ComputePermissions } from "../ComputePe
  */
 export function createSupervisorPolicy(options: {
     cwd: string;
+    /** Platform where permission paths are interpreted. */
+    platform?: NodeJS.Platform;
     permissions: ComputePermissions;
     allowedReadPaths?: readonly string[];
     deniedReadPaths?: readonly string[];
     allowedWritePaths?: readonly string[];
     deniedWritePaths?: readonly string[];
+    deniedWriteFilePaths?: readonly string[];
     network?: ComputeNetworkPermissions;
     /** Forces a proxy even for an empty host list, which means "deny every destination". */
     networkProxy?: boolean;
 }): SupervisorPolicy {
+    const paths = (options.platform ?? process.platform) === "win32" ? win32 : posix;
+    const absolutePaths = (values: readonly string[]): string[] => [
+        ...new Set(
+            values.map((path) =>
+                paths.isAbsolute(path) ? paths.normalize(path) : paths.resolve(options.cwd, path),
+            ),
+        ),
+    ];
     const network = options.network ?? options.permissions.network;
     const allowedHosts = [...(network.allowedHosts ?? [])];
     if (allowedHosts.includes("*")) {
@@ -52,22 +63,19 @@ export function createSupervisorPolicy(options: {
         mode: options.permissions.mode,
         ...(allowedReadPaths === undefined
             ? {}
-            : { allowedReadPaths: absolutePaths(options.cwd, allowedReadPaths) }),
+            : { allowedReadPaths: absolutePaths(allowedReadPaths) }),
         ...(deniedReadPaths === undefined
             ? {}
-            : { deniedReadPaths: absolutePaths(options.cwd, deniedReadPaths) }),
+            : { deniedReadPaths: absolutePaths(deniedReadPaths) }),
         ...(allowedWritePaths === undefined
             ? {}
-            : { allowedWritePaths: absolutePaths(options.cwd, allowedWritePaths) }),
+            : { allowedWritePaths: absolutePaths(allowedWritePaths) }),
         ...(deniedWritePaths === undefined
             ? {}
-            : { deniedWritePaths: absolutePaths(options.cwd, deniedWritePaths) }),
+            : { deniedWritePaths: absolutePaths(deniedWritePaths) }),
+        ...(options.deniedWriteFilePaths === undefined
+            ? {}
+            : { deniedWriteFilePaths: absolutePaths(options.deniedWriteFilePaths) }),
         network: nativeNetwork,
     });
-}
-
-function absolutePaths(cwd: string, paths: readonly string[]): string[] {
-    return [
-        ...new Set(paths.map((path) => (isAbsolute(path) ? normalize(path) : resolve(cwd, path)))),
-    ];
 }

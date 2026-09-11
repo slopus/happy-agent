@@ -37,11 +37,13 @@ describe("watchGitRepositoryChanges", () => {
         ]);
         const targets = gitWatchTargets({ commonDirectory, gitDirectory, path: repository });
         expect(targets.map((target) => target.directory)).toContain(gitDirectory);
-        expect(targets.some((target) => target.directory.endsWith("/HEAD"))).toBe(false);
+        expect(targets.some((target) => target.directory === join(gitDirectory, "HEAD"))).toBe(
+            false,
+        );
         expect(
-            targets.find((target) => target.directory === `${commonDirectory}/refs`)?.recursive,
+            targets.find((target) => target.directory === join(commonDirectory, "refs"))?.recursive,
         ).toBe(true);
-        const info = targets.find((target) => target.directory === `${commonDirectory}/info`);
+        const info = targets.find((target) => target.directory === join(commonDirectory, "info"));
         expect(info?.accept?.("exclude")).toBe(true);
         expect(info?.accept?.("attributes")).toBe(false);
     });
