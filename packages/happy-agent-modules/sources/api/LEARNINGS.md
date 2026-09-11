@@ -1,5 +1,18 @@
 # API module learnings
 
+## Filter archived agents before building catalog resources
+
+Desktop bootstrap used to build every attached agent's activity and resource, discard archived
+agents afterward, then repeat the work for each project's same-ID root workspace. Collection
+reads now check the agent's archival metadata first and pass the already-read configuration and
+children into the resource projection. Bootstrap shares each project's built agent series with
+its root workspace and reuses its project catalog for onboarding. Known owner-series and bot
+resources do not query bot ownership again. All reuse stays within the current request; archival
+decisions and activity are never cached across requests. Agent Base currently offers individual
+configuration reads only, so reducing that remaining per-agent cost must use a future public
+batch API, not reads into its private storage or a second archival index. Preserve archived
+by-ID reads and the API's existing archived project/bot collection behavior.
+
 ## Avatars and artwork share private browser caching
 
 The blanket no-store response policy prevented browsers from retaining images despite their

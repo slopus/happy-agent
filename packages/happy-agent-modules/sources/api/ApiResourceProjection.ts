@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { AgentConfig, AgentSystemRef } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 
 import type { GitChangeSnapshot } from "../git/index.js";
 import type { BotRecord } from "../bots/index.js";
@@ -349,6 +351,14 @@ export function profileResource(profile: Profile | undefined): Record<string, un
     };
 }
 
+const agentArchivedAtSchema = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+
+/** Keep collection filtering and the resource's archival fact identical. */
+export function agentArchivedAt(config: AgentConfig): number | null {
+    const value = config.metadata?.["archivedAt"];
+    return Value.Check(agentArchivedAtSchema, value) ? value : null;
+}
+
 export async function agentResource(
     ctx: Context,
     agents: AgentSystemRef,
@@ -356,6 +366,8 @@ export async function agentResource(
     agentId: string,
     workspaceId: string,
     state: {
+        readonly config?: AgentConfig;
+        readonly children?: readonly string[];
         readonly orderKey?: string | null;
         readonly pendingQuestionId?: string | null;
         readonly runningProcesses?: number;
@@ -364,10 +376,10 @@ export async function agentResource(
         readonly userVisible?: boolean;
     } = {},
 ): Promise<Record<string, unknown> | undefined> {
-    const config = await agents.config(ctx, agentId);
+    const config = state.config ?? (await agents.config(ctx, agentId));
     if (config === undefined) return undefined;
     const parentAgentId = await agents.parentOf(ctx, agentId);
-    const children = await agents.childOf(ctx, agentId);
+    const children = state.children ?? (await agents.childOf(ctx, agentId));
     const latestEvent = await events.latestAgentEvent(ctx, agentId);
     const metadata = config.metadata ?? {};
     const createdAt = config.provenance?.createdAt ?? 0;
@@ -378,7 +390,7 @@ export async function agentResource(
     const version =
         latestEvent?.cursor ??
         apiResourceVersion(updatedAt, numericMetadata(metadata["version"]) ?? 1, agentId);
-    const archivedAt = numericMetadata(metadata["archivedAt"]) ?? null;
+    const archivedAt = agentArchivedAt(config);
     const managedByAnotherAgent = parentAgentId !== null;
     return {
         id: agentId,

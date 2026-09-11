@@ -157,6 +157,7 @@ import {
 } from "./ApiMessageProjection.js";
 import { prepareLocalApiToken } from "./prepareLocalApiToken.js";
 import {
+    agentArchivedAt,
     agentResource,
     agentModeFromConfig,
     apiResourceVersion,
@@ -3300,7 +3301,8 @@ export class ApiModule implements AgentModule {
     }
 
     async #requireAgentResource(ctx: Context, agentId: string): Promise<Record<string, unknown>> {
-        if ((await this.#agentSystem().config(ctx, agentId)) === undefined) {
+        const config = await this.#agentSystem().config(ctx, agentId);
+        if (config === undefined) {
             throw notFound("The agent was not found.");
         }
         const workspaceId = await this.#workspaceIdForAgent(ctx, agentId);
@@ -3310,6 +3312,7 @@ export class ApiModule implements AgentModule {
             agentId,
             workspaceId,
             await this.#agentOrderKey(ctx, agentId),
+            { config },
         );
         if (resource === undefined) throw notFound("The agent was not found.");
         return resource;
@@ -3320,8 +3323,21 @@ export class ApiModule implements AgentModule {
         agentId: string,
         workspaceId: string,
         orderKey?: string | null,
+        options: {
+            readonly activeOnly?: boolean;
+            readonly config?: AgentConfig;
+            readonly userVisible?: boolean;
+        } = {},
     ): Promise<Record<string, unknown> | undefined> {
-        const botOwned = (await this.#bots.forAgent(ctx, agentId)) !== undefined;
+        const config = options.config ?? (await this.#agentSystem().config(ctx, agentId));
+        if (config === undefined || (options.activeOnly && agentArchivedAt(config) !== null)) {
+            return undefined;
+        }
+        // Owner-series entries and bot projections already establish visibility. Only an
+        // unscoped resource needs a bot lookup; never infer ancestry from owner membership.
+        const userVisible =
+            options.userVisible ??
+            (orderKey != null || (await this.#bots.forAgent(ctx, agentId)) !== undefined);
         const children = await this.#agentSystem().childOf(ctx, agentId);
         const [processes, questions, runningSubagents, activeRunId] = await Promise.all([
             this.#compute.listProcesses(ctx, agentId),
@@ -3336,8 +3352,10 @@ export class ApiModule implements AgentModule {
             this.#activeRunId(ctx, agentId),
         ]);
         return await agentResource(ctx, this.#agentSystem(), this.#events, agentId, workspaceId, {
+            config,
+            children,
             ...(orderKey === undefined ? {} : { orderKey }),
-            ...(botOwned ? { userVisible: true } : {}),
+            userVisible,
             pendingQuestionId: questions.requests[0]?.id ?? null,
             runningProcesses: processes.filter((process) => process.status === "running").length,
             runningSubagents,
@@ -4530,7 +4548,9 @@ export class ApiModule implements AgentModule {
     }
 
     async #botResource(ctx: Context, bot: BotRecord): Promise<Record<string, unknown>> {
-        const agent = await this.#buildAgentResource(ctx, bot.agentId, bot.workspaceId, null);
+        const agent = await this.#buildAgentResource(ctx, bot.agentId, bot.workspaceId, null, {
+            userVisible: true,
+        });
         if (agent === undefined) throw new Error("The bot has no agent.");
         return botResource(bot, agent);
     }
@@ -4548,6 +4568,7 @@ export class ApiModule implements AgentModule {
                         association.agentId,
                         projectId,
                         association.orderKey,
+                        { activeOnly: true },
                     ),
             ),
         );
@@ -4570,6 +4591,7 @@ export class ApiModule implements AgentModule {
                         association.agentId,
                         workspaceId,
                         association.orderKey,
+                        { activeOnly: true },
                     ),
             ),
         );
@@ -4910,12 +4932,15 @@ export class ApiModule implements AgentModule {
         }
     }
 
-    async #onboarding(ctx: Context): Promise<Record<string, unknown>> {
-        const [profileDone, projects, marker] = await Promise.all([
+    async #onboarding(ctx: Context, hasProject?: boolean): Promise<Record<string, unknown>> {
+        const [profileDone, projectDone, marker] = await Promise.all([
             this.#team.enabled
                 ? this.#team.currentUser(ctx).then((user) => user !== undefined)
                 : this.#profile.get(ctx).then((profile) => profile?.name != null),
-            this.#allProjects(ctx, false),
+            hasProject ??
+                this.#projects
+                    .list(ctx, { includeArchived: false, limit: 1 })
+                    .then((page) => page.projects.length > 0),
             readFile(this.#onboardingMarker(), "utf8").catch((error: NodeJS.ErrnoException) => {
                 if (error.code === "ENOENT") return undefined;
                 throw error;
@@ -4929,7 +4954,7 @@ export class ApiModule implements AgentModule {
             steps: {
                 providers: { done: signedIn.length > 0, signedIn },
                 profile: { done: profileDone },
-                project: { done: projects.length > 0 },
+                project: { done: projectDone },
             },
         };
     }
@@ -4938,11 +4963,10 @@ export class ApiModule implements AgentModule {
         // Capture first. A mutation concurrent with the reads is replayed after this cursor, which
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
-        const [profile, onboarding, projects, workspaces, bots] = await Promise.all([
+        const [profile, projects, workspaces, bots] = await Promise.all([
             this.#team.enabled
                 ? this.#team.currentUser(ctx).then(teamProfileResource)
                 : this.#profile.ensure(ctx).then(profileResource),
-            this.#onboarding(ctx),
             this.#allProjects(ctx, false),
             this.#config.configuration.values.features.workspaces
                 ? this.#allWorkspaces(ctx, undefined, false)
@@ -4952,25 +4976,25 @@ export class ApiModule implements AgentModule {
         const shallow = workspaces.filter(
             (workspace: Workspace) => workspace.parentId === workspace.projectRef,
         );
+        const projectResources = await Promise.all(
+            projects.map(async (project) => {
+                const resource = await this.#projectWithAgents(ctx, project);
+                return {
+                    project: resource,
+                    workspace: { ...rootWorkspaceResource(project), agents: resource["agents"] },
+                };
+            }),
+        );
         return {
             config: await this.#sanitizedConfig(ctx),
             profile,
-            onboarding,
+            onboarding: await this.#onboarding(ctx, projects.length > 0),
             cloud: this.#cloud.status(ctx),
             happyIntegration: await this.#happy.integration(ctx),
             bots: await Promise.all(bots.map(async (bot) => await this.#botResource(ctx, bot))),
-            projects: await Promise.all(
-                projects.map(
-                    async (project: Project) => await this.#projectWithAgents(ctx, project),
-                ),
-            ),
+            projects: projectResources.map((resource) => resource.project),
             workspaces: [
-                ...(await Promise.all(
-                    projects.map(async (project: Project) => ({
-                        ...rootWorkspaceResource(project),
-                        agents: await this.#agentsForProject(ctx, project.id),
-                    })),
-                )),
+                ...projectResources.map((resource) => resource.workspace),
                 ...(await Promise.all(
                     shallow.map(async (workspace: Workspace) => ({
                         ...workspaceResource(workspace),
