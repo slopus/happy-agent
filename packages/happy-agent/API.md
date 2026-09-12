@@ -72,6 +72,12 @@ changing the daemon's support for older clients' existing requests.
 Protocol 25 adds optional `workspaceId` and `agentId` to bot creation. Clients relying on these
 identities require protocol 25 or newer; older daemons may ignore or reject them.
 
+The global skills catalog, parsed skill documents, enablement, file reads, and live
+`skills.updated` invalidations are additive and do not increment the protocol version. Clients
+detect this feature through `GET /v0/skills`: `404` or `501` means skill management is unavailable,
+not that the catalog is empty. Protocol 25 alone does not guarantee this feature. Existing
+protocol-22 capabilities remain usable without it.
+
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
@@ -919,6 +925,188 @@ Request: `{ "policy": "<text>" }`
 
 Response — `200`: `{ "policy": "<text>" }` — the document as persisted. Recording the change
 also emits a `config.updated` event.
+
+## Global skills
+
+The installation's global skills live in the existing `~/.agents/skills` directory on the daemon's
+machine. This catalog is independent of any project or active agent. It does not include project
+skills, another connection's skills, or skills on a container's separate filesystem. A desktop
+uses the selected connection's API and journal, never its own local filesystem, to manage them.
+In team mode this is the shared daemon-machine catalog: onboarded members may read it, but only
+the configured owner may change enablement (`403 forbidden` for another member).
+
+The daemon monitors the directory recursively for additions, edits, renames, and removals,
+including supporting files and disabled skills. It notices creation of an initially missing root,
+atomic file replacement, root replacement, and changes made while the daemon was stopped. A
+missing root is an empty catalog; a failed root scan returns `503`, not a false empty snapshot.
+Watching is installation-owned, not tied to an open agent or a client's polling lease. Watcher
+work, scans, queued notifications, file reads, and output are bounded. Overflow or an unidentified
+change causes a broad invalidation and reconciliation rather than silently losing changes.
+
+### Skill records and parsing
+
+Each directory containing a `SKILL.md` is one installed skill. Discovery follows the existing
+skill-root rules, including directory symlinks, skipping dot-directories and `node_modules`.
+The root itself is a container, not a skill. Duplicate names remain separate installed records;
+agent discovery retains its existing project-versus-global precedence.
+
+One summary has this shape:
+
+```json
+{
+    "id": "s1a2b3c4",
+    "path": "code-review",
+    "name": "code-review",
+    "description": "Review the current changes.",
+    "enabled": true,
+    "status": "ready",
+    "error": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+- `id` is an opaque CUID2, persisted for this installation-relative directory path. Editing its
+  name or replacing files in place does not change its ID. Moving the directory is removal at the
+  old path and installation at the new path. Reinstallation at the same path retains its ID and
+  enablement preference; removed records are absent from list/read responses.
+- `path` is the directory path relative to the global skills root, using `/` separators.
+- `name` and `description` are parsed from the YAML frontmatter using the same rules as agent
+  discovery, including quoted strings and block scalars. A missing name falls back to the directory
+  basename. A valid name matches `[a-zA-Z0-9][a-zA-Z0-9._-]*` and is at most 128 characters; a valid
+  description is nonempty and at most 1,024 characters. Other frontmatter does not configure hooks,
+  execution, model selection, or permissions.
+- `status` is `"ready"`, `"invalid"`, or `"unreadable"`. Invalid or unreadable installed skills
+  remain visible in desktop but are not offered to agents. `error` is a human-readable diagnostic
+  or `null` for a ready skill. When parsing fails, `name` is the directory basename and
+  `description` is empty; never return stale parsed metadata as current.
+- `enabled` is the persisted user preference, initially `true`, independent of parsing status.
+- `version` is a UUIDv7, advanced when metadata, document bytes, supporting files, status, or
+  enablement changes. `updatedAt` is when the daemon observed that change, not a file's mtime.
+  Unchanged rescans do not advance either field or emit events.
+
+All relative paths in this chapter are nonempty, at most 4,096 characters, and contain no absolute
+prefix, backslash, NUL, or empty, `.` or `..` segment. A skill ID is resolved from the catalog, not
+interpreted as a path. Installed directory symlinks may establish a canonical skill directory;
+subsequent file access must remain within that directory, enforce the filesystem boundary, and
+recheck symlinks at access time. These routes are not arbitrary host-file reads.
+
+### `GET /v0/skills`
+
+Lists installed global skills, including disabled and broken ones, ordered by relative directory
+path. Query: optional `limit` (default 50, maximum 100) and opaque `pageCursor` (at most 512
+characters). Response — `200`:
+
+```json
+{ "skills": [], "nextPageCursor": null, "cursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e" }
+```
+
+`skills` contains summaries. `nextPageCursor` is `null` at the end. Page cursors are distinct from
+event cursors and bind to a catalog revision; a concurrent catalog change invalidating pagination
+returns `409 conflict`, and the client restarts the list. `cursor` is the journal position captured
+before the snapshot read. Follow from the first page's cursor while loading subsequent pages, so
+concurrent changes cannot disappear between the snapshot and subscription.
+
+### `GET /v0/skills/:skillId`
+
+Returns the summary and parsed instruction document, including when disabled. Response — `200`:
+
+```json
+{
+    "skill": { "...": "summary above" },
+    "content": "---\nname: code-review\ndescription: Review changes.\n---\nReview the diff.\n",
+    "instructions": "Review the diff.\n"
+}
+```
+
+`content` is the complete UTF-8 `SKILL.md`; `instructions` is its Markdown body with frontmatter
+removed. Parsing normalizes CRLF/CR to LF for the body, but `content` retains the original text.
+Documents are limited to 256 KiB. An unreadable, oversized, or non-UTF-8 document has `content`
+and `instructions` both `null`; malformed metadata may retain readable `content` but returns
+`instructions: null`. Its summary explains the failure. A removed or unknown ID returns `404`.
+
+### `PATCH /v0/skills/:skillId`
+
+Changes only enablement. Requires `If-Match` with the skill's last observed version.
+
+Request: `{ "enabled": false, "mutationId": "optional-client-echo" }`.
+
+Response — `200`: `{ "skill": { ... } }`, the committed summary. A stale version returns
+`409 conflict` with `currentVersion` and the current `skill`. Missing/malformed `If-Match` is
+`400`; a removed/unknown skill is `404`. Repeating the current value with a current version is a
+no-op, returning the existing summary without advancing its version or emitting an event.
+
+Disabling is not deletion: it does not rename, move, rewrite, or remove installed files. The
+record and its files remain available to the human-facing API and continue to be watched.
+Enablement is daemon-owned runtime state, survives restart, and cannot be overridden by skill
+frontmatter. A successful change emits `skills.updated` after persistence, echoing `mutationId`.
+
+A disabled global skill is absent from newly assembled system prompts, agent skill listings, and
+slash commands. Skill-specific reads and invocation check current enablement and refuse it, even
+if a caller knows its name or retained an old command. An active agent applies the change at its
+next instruction refresh; it does not interrupt an in-flight inference or erase previous messages
+or already-read content. Pending skill-specific prompt contributions must also respect disablement
+on refresh. Re-enabling restores normal discovery if the skill is valid. This is skill availability,
+not a filesystem permission boundary: ordinary file and shell tools retain their usual permissions.
+It does not disable a separate project skill with the same name.
+
+### `GET /v0/skills/:skillId/files`
+
+Lists regular files recursively inside this installed skill, including `SKILL.md`, ordered by
+skill-relative path. Uses the same optional `limit` and `pageCursor` bounds as the catalog.
+Response — `200`:
+
+```json
+{
+    "files": [{ "path": "SKILL.md", "size": 105, "modifiedAt": 1755400000000 }],
+    "nextPageCursor": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
+}
+```
+
+`size` is a non-negative byte count; `modifiedAt` is the file's modification time in epoch
+milliseconds. `version` is the containing skill's version. Pagination binds to that version;
+intervening changes return `409 conflict` and require restarting the listing. Missing skills
+return `404`; an unreadable tree returns an error, never a silently partial successful list.
+Nested installed skills own their own files and are not traversed as part of their parent skill.
+
+### `GET /v0/skills/:skillId/file?path=...`
+
+Reads one regular file by skill-relative `path`, including for disabled skills. Response — `200`:
+the original bytes with `Content-Type: application/octet-stream` and `Cache-Control: no-store`.
+Maximum file size is 8 MiB (`413 too_large` above that limit). Unknown skills/files return `404`,
+invalid paths `400`, and paths outside the skill boundary `403`. Directories and special files
+are not readable through this route. No skill installation, file editing, or deletion operation
+is introduced by this feature.
+
+### Live synchronization
+
+`skills.updated` is a bounded invalidation, not a resource diff. Its payload is:
+
+```json
+{
+    "skillIds": ["s1a2b3c4"],
+    "paths": ["code-review/SKILL.md"],
+    "mutationId": "optional-client-echo"
+}
+```
+
+`skillIds` identifies affected installed or removed records, or is `null` when unknown or more
+than 100 were affected. `paths` contains up to 100 root-relative changed file/directory paths, or
+is `null` for an unknown, root-wide, or overflowing change. An enablement-only change uses
+`paths: []`. Files not yet belonging to a valid skill still produce path invalidations. File
+changes advance the owning skill's version even when its parsed name and description are unchanged.
+Notifications may coalesce filesystem changes, but always follow publication of the corresponding
+catalog state. No document contents appear in events.
+
+The same event is delivered by journal pulls, SSE, and `HappyAgentClient.updates()`. Clients
+refresh affected catalog pages, open skill details, and file views. An invalidation during a
+refresh requires another refresh; an older response must not overwrite a newer summary version.
+On journal loss or daemon replacement, reload the catalog and visible details from a fresh cursor.
+Disabled skills remain in the management list throughout. These are synchronization events, not
+desktop operating-system notifications or unsolicited messages to running agents.
+
+## Daemon lifecycle
 
 ### `POST /v0/drain`
 
@@ -4234,7 +4422,7 @@ part of the protocol — a client that was offline for a while should expect it.
 ### Event types
 
 Version-chained resources use the two payload shapes below. Explicitly documented current-state
-events such as `git.updated`, `files.updated`, and `happy.integration.updated`
+events such as `git.updated`, `files.updated`, `skills.updated`, and `happy.integration.updated`
 use complete replacements or compact invalidations instead.
 
 **`*.created` normally carries the resource in full** — the same JSON the corresponding `GET`
@@ -4364,6 +4552,14 @@ event is idempotent by attachment ID.
       coalesced into one bounded event. `null` means the operating system did not identify a path
       or too many paths changed, so the client refreshes the visible file and tree state for that
       workspace.
+
+**Global skills**
+
+- `skills.updated` — installed skills, enablement, or files under `~/.agents/skills` changed.
+    - `skillIds` (up to 100 IDs, or `null`) and `paths` (up to 100 root-relative paths, or `null`).
+    - Optional `mutationId` for an API enablement change. This is the compact invalidation
+      described under Global skills; refetch affected management snapshots, including disabled
+      skills. It is not an agent-state event and contains no document bytes.
 
 **Agents**
 

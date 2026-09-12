@@ -16,6 +16,7 @@ import {
  * Versions from 22 onward are additive. Existing capabilities remain compatible
  * across that range; unnamed bot creation requires protocol 24 or newer, and
  * client-chosen bot workspace and agent identities require protocol 25 or newer.
+ * Global skill management is additive and detected through its catalog endpoint.
  */
 export const HAPPY_AGENT_PROTOCOL_VERSION = 25;
 

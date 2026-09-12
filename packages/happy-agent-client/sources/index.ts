@@ -42,6 +42,7 @@ export * from "./protocol/profile.js";
 export * from "./protocol/projects.js";
 export * from "./protocol/questions.js";
 export * from "./protocol/secrets.js";
+export * from "./protocol/skills.js";
 export * from "./protocol/slashCommands.js";
 export * from "./protocol/terminals.js";
 export * from "./protocol/usage.js";

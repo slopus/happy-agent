@@ -147,6 +147,14 @@ import type {
     WorkspaceResponse,
 } from "./protocol/workspaces.js";
 import type { QueryParameters } from "./endpointUrl.js";
+import type {
+    GlobalSkillDocumentResponse,
+    GlobalSkillFileListResponse,
+    GlobalSkillListResponse,
+    GlobalSkillResponse,
+    SkillPageQuery,
+    UpdateGlobalSkillRequest,
+} from "./protocol/skills.js";
 import { endpointUrl } from "./endpointUrl.js";
 import { readApiError } from "./HappyAgentApiError.js";
 import { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
@@ -648,6 +656,82 @@ export class HappyAgentClient {
             json: request,
             signal: options.signal,
         });
+    }
+
+    // Global skills
+
+    /** `GET /v0/skills` — installed global skills, including disabled and broken records. */
+    async listGlobalSkills(
+        query: SkillPageQuery = {},
+        options: RequestOptions = {},
+    ): Promise<GlobalSkillListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/skills",
+            query,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/skills/:skillId` — the summary, original document, and parsed Markdown body. */
+    async getGlobalSkill(
+        skillId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<GlobalSkillDocumentResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/skills/${encodeURIComponent(skillId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `PATCH /v0/skills/:skillId` — enable or disable without modifying installed files. */
+    async updateGlobalSkill(
+        skillId: Cuid2,
+        request: UpdateGlobalSkillRequest,
+        options: VersionedRequestOptions,
+    ): Promise<GlobalSkillResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/skills/${encodeURIComponent(skillId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/skills/:skillId/files` — one version-bound page of supporting files. */
+    async listGlobalSkillFiles(
+        skillId: Cuid2,
+        query: SkillPageQuery = {},
+        options: RequestOptions = {},
+    ): Promise<GlobalSkillFileListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/skills/${encodeURIComponent(skillId)}/files`,
+            query,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/skills/:skillId/file` — original file bytes, including for disabled skills. */
+    async readGlobalSkillFile(
+        skillId: Cuid2,
+        path: string,
+        options: RequestOptions = {},
+    ): Promise<BinaryContent> {
+        const response = await this.#send({
+            method: "GET",
+            path: `v0/skills/${encodeURIComponent(skillId)}/file`,
+            query: { path },
+            accept: "application/octet-stream",
+            signal: options.signal,
+        });
+        return {
+            contentType: response.headers.get("content-type") ?? "application/octet-stream",
+            data: await response.arrayBuffer(),
+            etag: response.headers.get("etag"),
+        };
     }
 
     // Profile

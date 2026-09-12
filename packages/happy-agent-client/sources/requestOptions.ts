@@ -42,7 +42,7 @@ export interface ImageUpload {
     data: BinaryData;
 }
 
-/** Image bytes served by the daemon. */
+/** Binary file or image bytes served by the daemon. */
 export interface BinaryContent {
     contentType: string;
     data: ArrayBuffer;

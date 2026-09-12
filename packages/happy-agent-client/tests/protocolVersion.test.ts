@@ -6,7 +6,7 @@ import {
 } from "../sources/protocol/daemon.js";
 
 describe("Happy Agent protocol version", () => {
-    it("marks client-chosen bot workspace and agent identities with protocol 25", () => {
+    it("keeps protocol 25 when adding endpoint-detected global skill management", () => {
         expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(25);
     });
 

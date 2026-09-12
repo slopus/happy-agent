@@ -39,6 +39,7 @@ import type { AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
 import type { SlashCommand } from "./slashCommands.js";
 import { connectionListResponseSchema } from "./connections.js";
+import type { SkillsUpdatedPayload } from "./skills.js";
 
 /**
  * What every `*.updated` payload carries beside the resource's own ID.
@@ -308,6 +309,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"terminal.updated", TerminalUpdatedPayload>
     | EventEnvelope<"git.updated", GitUpdatedPayload>
     | EventEnvelope<"files.updated", FilesUpdatedPayload>
+    | EventEnvelope<"skills.updated", SkillsUpdatedPayload>
     | EventEnvelope<"agent.created", AgentCreatedPayload>
     | EventEnvelope<"agent.updated", AgentUpdatedPayload>
     | EventEnvelope<"agent.context.updated", AgentContextUpdatedPayload>

@@ -1,5 +1,15 @@
 # Skill discovery learnings
 
+## Disablement means unavailable, not uninstalled
+
+The human-directed management contract uses the existing `~/.agents/skills` root and returns
+parsed skills, not parsed agent definitions. A disabled skill remains installed, visible in the
+human-facing catalog, readable through management APIs, and monitored for file changes. Its
+preference must not be implemented by deleting or moving files. Agent skill discovery, prompt
+contributions, skill-specific reads, and invocation exclude it; ordinary filesystem permissions
+are unchanged. This is the contract for the pending management implementation, not behavior
+already provided by the current discovery-only module.
+
 ## Concurrent agents share scans, not stale catalogs
 
 Startup used to scan the same skill files separately for every restored agent. Discovery now

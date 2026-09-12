@@ -129,6 +129,22 @@ An application that requires unnamed creation may require protocol 24 throughout
 checks the daemon's protocol and may open the conversation locally, queuing sends until creation
 succeeds. Keep `id` for retries; conflicting child IDs return `409`. Omitted IDs are daemon-generated.
 
+Global skill management is additive without a protocol bump. Detect support through
+`listGlobalSkills()`: `404` or `501` means unavailable; protocol 25 alone does not guarantee support.
+`listGlobalSkills()` includes disabled and broken
+skills; `getGlobalSkill(id)` returns parsed metadata, the original document, and its Markdown body.
+`updateGlobalSkill(id, { enabled, mutationId }, { ifMatch: skill.version })` changes availability
+without deleting files. `listGlobalSkillFiles()` pages through supporting files, and
+`readGlobalSkillFile()` reads their original bytes, including while disabled.
+
+Follow `skills.updated` from the first catalog page's event `cursor`. Its bounded `skillIds` and
+root-relative `paths` invalidate affected catalog pages, details, and open files; `null` means
+refresh broadly. An enablement-only change has `paths: []`. Page cursors are separate from journal
+cursors, and a `409` during pagination requires restarting the list. Refresh again if an event
+arrives during a read, keep the newer summary version, and resync on state loss or daemon replacement.
+The client exposes the feed without automatically caching skills in `HappyReducer`. Older daemons'
+missing endpoints mean this feature is unavailable, not that no skills are installed.
+
 Tool calls expose the complete `ToolPresentation` discriminated union — exploration, command,
 background-terminal interaction, file diff, and web/X search — together with an exported TypeBox
 schema for each variant and `toolPresentationSchema` for the whole set.
