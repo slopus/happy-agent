@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -291,7 +291,7 @@ describe("createHostShell commands", () => {
                               ? ["--state-dir", process.env.HAPPY_WINDOWS_SANDBOX_HOME.trim()]
                               : []),
                           "--cwd",
-                          cwd,
+                          await realpath(cwd),
                           "--",
                           expect.stringMatching(/powershell\.exe$/i),
                           "-NoLogo",
@@ -389,7 +389,7 @@ describe("createHostShell commands", () => {
                               ? ["--state-dir", process.env.HAPPY_WINDOWS_SANDBOX_HOME.trim()]
                               : []),
                           "--cwd",
-                          cwd,
+                          await realpath(cwd),
                           "--tty",
                           "--",
                           expect.stringMatching(/powershell\.exe$/i),
