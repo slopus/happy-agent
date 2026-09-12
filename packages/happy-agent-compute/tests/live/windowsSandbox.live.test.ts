@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -18,7 +19,20 @@ describe.runIf(enabled)("native Windows compute SDK boundary", () => {
         const root = await mkdtemp(join(tmpdir(), "happy-windows-live-"));
         const cwd = join(root, "project");
         await mkdir(cwd);
-        const compute = createHostCompute({ ctx, cwd });
+        const shortCwd = execFileSync(
+            "powershell.exe",
+            [
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                Buffer.from(
+                    `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${cwd.replaceAll("'", "''")}').ShortPath`,
+                    "utf16le",
+                ).toString("base64"),
+            ],
+            { encoding: "utf8", windowsHide: true },
+        ).trim();
+        const compute = createHostCompute({ ctx, cwd: shortCwd });
         const outside = join(root, "outside.txt");
         const proof = join(cwd, "proof.txt");
         try {

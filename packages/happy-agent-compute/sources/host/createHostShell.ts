@@ -222,7 +222,9 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
         const supervisorCommand = createSupervisorCommand({
             ...(options.environment === undefined ? {} : { environment: options.environment }),
             command: process.platform === "win32" ? command : withWorkingDirectory(command, cwd),
-            cwd,
+            // PowerShell needs the long path: resolving a short-name ancestor
+            // otherwise requires directory listing beyond the traversal grant.
+            cwd: process.platform === "win32" ? await resolvePotentialPath(cwd) : cwd,
             ...(tty === undefined ? {} : { tty }),
             policy,
             shell,
