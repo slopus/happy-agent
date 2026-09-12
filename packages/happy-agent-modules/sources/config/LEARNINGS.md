@@ -141,3 +141,19 @@ Provider-level `include_subagent_models` and `exclude_subagent_models` use exact
 same exclusion precedence as the ordinary model filters, but they are a separate delegation policy.
 They must leave the model catalog and picker unchanged. Collaboration asks configuration about each
 provider/model route when describing and validating new subagents, including workflow-created ones.
+
+## Provider hiding is file configuration, not an API field
+
+Treating `hidden` as account disablement was wrong: it disables direct selection only. An enabled
+hidden account remains usable behind a smart provider, and continues account-quota polling and
+explicit verification. `hidden = true` belongs in the machine provider table, not in a new API field
+or mutation. The public catalog keeps its provider/model references with direct availability false,
+and new turns, subagents, and direct internal inference cannot select that ID. Smart routing uses
+the independent account-enabled gate, including cancellation when the account is disabled.
+Scans and runtime enable overrides never unhide it. Removing hiding and restarting restores direct
+selection subject to the saved enablement preference. Quota readings remain account-specific;
+duplicate consumed-token attribution under both smart and concrete providers is not implemented.
+
+Scripted inference must replace concrete accounts, not smart routing itself. Factories receive
+enabled hidden accounts as well as their visible smart routes; configuration rebuilds the real
+router over the substituted concrete registry so gym tests exercise selection and cancellation.

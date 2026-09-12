@@ -360,12 +360,10 @@ setting it to `false` keeps every provider disabled unless that provider is
 explicitly enabled.
 
 These four built-in instances use the normal Codex, Claude Code, Grok, and
-Bedrock credential locations, so their `type` is inferred. At daemon
-startup, a provider disabled here or missing local authentication remains a
-disabled catalog entry with no models. Its models are omitted from both the
-model picker and agent system prompts; the prompt includes only the provider's
-disabled reason. This availability check reads local credential state and does
-not ping provider servers.
+Bedrock credential locations, so their `type` is inferred. Disabled providers remain
+in the catalog with their known models marked disabled. Those models are omitted
+from the model picker and the agent's available-model guidance. Startup credential
+discovery reads local state and does not ping provider servers.
 
 Add any number of named instances when you need separate accounts. For custom
 instances, the section suffix is the provider ID shown in the model picker and
@@ -405,7 +403,7 @@ profile = "work-bedrock"
 "anthropic/opus-4-8" = { endpoint = "https://bedrock-runtime.example", transport = "runtime" }
 ```
 
-Every provider accepts `enabled`, `include_models`, `exclude_models`,
+Every provider accepts `enabled`, `hidden`, `include_models`, `exclude_models`,
 `include_subagent_models`, and `exclude_subagent_models`. Filters use exact Happy Agent model IDs;
 exclusions win when a model appears in both matching lists. `include_models` and `exclude_models`
 control ordinary availability everywhere, including the model picker. The subagent-specific pair
@@ -451,6 +449,42 @@ entry. No other Gemini or Google credential variable is used. Repository
 `happy.toml` files cannot set the key. These tools are additional to each
 provider's native tools, including Claude's unchanged `WebSearch` tool. Restart
 the local daemon after adding or changing the key.
+
+### Hiding providers
+
+To keep an account available behind a smart provider without allowing direct selection, set `hidden = true`
+in its table in the user-wide `happy.toml`, then restart the daemon:
+
+```toml
+[providers.codex]
+enabled = true
+hidden = true
+
+[providers.router]
+type = "smart"
+providers = ["codex"]
+enabled = true
+```
+
+`hidden` defaults to `false` and works for built-in, named, and smart providers. It is a
+machine-wide, file-only setting: repository configuration cannot change it, and there is no
+API field or mutation for hiding.
+
+A hidden provider and its known models remain in the catalog with the existing `enabled = false`
+state, so clients omit them from model selection. Its credentials, model filters, and history are
+retained. New turns and subagents cannot select it directly, even by explicitly naming its provider
+ID. In the example above, select `router`: it can still run inference through the hidden `codex`
+account. Hiding does not disable the underlying account. Set `enabled = false` to prevent both
+direct and routed inference through that account.
+
+Credential scans and runtime enable overrides control whether the account can serve the router;
+they do not unhide it for direct selection. Account-quota polling and explicit provider verification
+continue normally for enabled hidden accounts. Vendor quota readings remain attached to concrete
+accounts; a smart provider does not synthesize a combined quota. Consumed-token accounting is not
+duplicated between the smart provider and its backing accounts.
+
+Set `hidden = false` or remove the setting and restart to restore direct selection. Unhiding does
+not force an otherwise disabled provider to become enabled.
 
 ## Docker-backed sessions
 

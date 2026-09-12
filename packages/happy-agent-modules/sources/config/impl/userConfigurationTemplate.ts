@@ -132,6 +132,9 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # Set auto_enable = false to prevent automatic use.
 # auto_enable = false
 # enabled = true
+# Set hidden = true to prevent direct selection while allowing use through a smart provider.
+# The account must remain enabled for routing and quota polling. Restart after changing hidden.
+# hidden = false
 # auth_file = "/absolute/path/to/auth.json"
 # base_url = "https://api.openai.com/v1"
 # transport = "auto"

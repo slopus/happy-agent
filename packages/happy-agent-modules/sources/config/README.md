@@ -107,6 +107,20 @@ while `offeredModels` is the stable complete set the agent systems can accept af
 Happy Agent never asks a vendor which models exist — the list is source, and a configured provider
 entry decides which of them its own key serves.
 
+Set `hidden = true` in a machine's `[providers.<id>]` table to prevent direct account selection
+while allowing an enabled account to back a smart provider. The default is `false`. Hidden providers and their complete model lists
+remain in the public catalog with the existing `enabled = false` values, so clients omit them from
+model selection without a new API field. New turns, subagents, and direct internal inference cannot
+select them. Smart routing, account-quota polling, and explicit verification remain available;
+the underlying `enabled` state controls whether an account can serve a router. Disabling an account
+also aborts routed inference through it. Credential scans and runtime enable overrides do not
+unhide an account. The saved enablement preference is retained:
+set `hidden = false` or remove the setting and restart to restore ordinary enablement rules.
+Hiding is file-only configuration and takes effect on daemon restart; there is no API mutation for it.
+The internal `offeredModels` catalog also retains hidden routes so startup and stored agents remain
+valid even when every account is hidden; the direct-selection gate prevents starting work on those
+account IDs. The independent account gate controls router eligibility and cancellation.
+
 A provider may independently narrow delegation with `include_subagent_models` and
 `exclude_subagent_models`. These use the same exact model IDs and exclusion precedence as
 `include_models` and `exclude_models`, but they do not change the ordinary catalog or model picker.
@@ -145,7 +159,8 @@ Bedrock regions are silently omitted. Each agent starts at a random point in the
 stays on that account across turns and provider-session recreation, and moves forward only after a
 typed authentication or account-token-exhaustion failure. A failure after visible model output is
 not replayed elsewhere, because doing so could duplicate output or provider-side effects. Usage is
-still recorded against the concrete account that spent it.
+not duplicated: vendor quotas belong to concrete accounts, while durable token records follow the
+selected provider identity.
 
 ```toml
 [providers.smart]

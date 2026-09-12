@@ -184,6 +184,7 @@ const providerCommonInput = {
     auto_enable: Type.Optional(Type.Boolean()),
     credential_isolation: Type.Optional(Type.Literal(true)),
     enabled: Type.Optional(Type.Boolean()),
+    hidden: Type.Optional(Type.Boolean()),
     exclude_models: Type.Optional(boundedStringArraySchema),
     exclude_subagent_models: Type.Optional(boundedStringArraySchema),
     include_models: Type.Optional(boundedStringArraySchema),
@@ -265,6 +266,7 @@ const providerInputSchemas = {
         {
             auto_enable: Type.Optional(Type.Boolean()),
             enabled: Type.Optional(Type.Boolean()),
+            hidden: Type.Optional(Type.Boolean()),
             exclude_models: Type.Optional(boundedStringArraySchema),
             exclude_subagent_models: Type.Optional(boundedStringArraySchema),
             include_models: Type.Optional(boundedStringArraySchema),
@@ -587,6 +589,7 @@ const providerRecordBase = {
     autoEnable: Type.Optional(Type.Boolean()),
     credentialIsolation: Type.Optional(Type.Literal(true)),
     enabled: Type.Boolean(),
+    hidden: Type.Optional(Type.Boolean()),
     excludeModels: Type.Optional(boundedStringArraySchema),
     excludeSubagentModels: Type.Optional(boundedStringArraySchema),
     includeModels: Type.Optional(boundedStringArraySchema),
@@ -668,6 +671,7 @@ const providerSchemas = {
         {
             autoEnable: Type.Optional(Type.Boolean()),
             enabled: Type.Boolean(),
+            hidden: Type.Optional(Type.Boolean()),
             excludeModels: Type.Optional(boundedStringArraySchema),
             excludeSubagentModels: Type.Optional(boundedStringArraySchema),
             includeModels: Type.Optional(boundedStringArraySchema),
@@ -1322,7 +1326,7 @@ export class ConfigModule implements AgentModule {
             // can then take ownership and turn them off during its startup phase just like real
             // accounts.
             void this.#providerSource();
-            return scripted.filter((model) => this.isProviderEnabled(model.providerId));
+            return scripted.filter((model) => this.#isModelSelectable(model));
         }
         return agentModels(
             this.configuration,
@@ -1330,27 +1334,38 @@ export class ConfigModule implements AgentModule {
                 if (!this.#catalogNotices.includes(message)) this.#catalogNotices.push(message);
             },
             (id) => this.isProviderEnabled(id),
+            (id) => this.#isAccountEnabled(id),
         );
     }
 
     /** Every configured route independent of its live provider gate. */
     get offeredModels(): readonly AgentModel[] {
-        return this.#scriptedModels() ?? agentModels(this.configuration, undefined, () => true);
+        return (
+            this.#scriptedModels() ??
+            agentModels(
+                this.configuration,
+                undefined,
+                () => true,
+                () => true,
+            )
+        );
     }
 
     /** Every configured provider/model route, including disabled and filtered catalog entries. */
     get catalog(): readonly ConfiguredAgentModel[] {
         const scripted = this.#scriptedModels();
         const scriptedProviderIds = new Set(scripted?.map((model) => model.providerId) ?? []);
-        const catalog = agentModelCatalog(this.configuration, (id) =>
-            this.isProviderEnabled(id),
+        const catalog = agentModelCatalog(
+            this.configuration,
+            (id) => this.isProviderEnabled(id),
+            (id) => this.#isAccountEnabled(id),
         ).filter((model) => !scriptedProviderIds.has(model.providerId));
         if (scripted !== undefined) {
             for (const model of scripted) {
                 const entry: ConfiguredAgentModel = {
                     ...model,
                     contextWindow: agentModelContext(model.id)?.contextWindow ?? null,
-                    enabled: this.isProviderEnabled(model.providerId),
+                    enabled: this.#isModelSelectable(model),
                 };
                 catalog.push(entry);
             }
@@ -1394,12 +1409,13 @@ export class ConfigModule implements AgentModule {
         if (this.#providers !== undefined) return this.#providers;
         const source = this.#providerSource();
         this.#providerEnablement = new ProviderEnablement(source.ids, (id) =>
-            this.isProviderEnabled(id),
+            this.#isAccountEnabled(id),
         );
         this.#providers = providerRegistryUntil(
             source,
             this.#providerLifetime.signal,
             this.#providerEnablement,
+            (id) => this.isProviderEnabled(id),
         );
         return this.#providers;
     }
@@ -1467,14 +1483,33 @@ export class ConfigModule implements AgentModule {
         });
     }
 
+    /** Public availability means direct selection; hidden accounts can still back smart routes. */
     isProviderEnabled(providerId: string): boolean {
+        return (
+            this.configuration.values.providers[providerId]?.hidden !== true &&
+            this.#isAccountEnabled(providerId)
+        );
+    }
+
+    #isAccountEnabled(providerId: string): boolean {
         return this.#providerEnabled.get(providerId) === true;
+    }
+
+    #isModelSelectable(model: AgentModel): boolean {
+        if (!this.isProviderEnabled(model.providerId)) return false;
+        if (this.configuration.values.providers[model.providerId]?.type !== "smart") return true;
+        return (
+            smartProviderRoute(this.configuration, model.providerId)
+                ?.models.find((route) => route.model.id === model.id)
+                ?.candidates.some((id) => this.#isAccountEnabled(id)) === true
+        );
     }
 
     /** Whether one otherwise available provider/model route may be chosen for a new subagent. */
     isSubagentModelAllowed(providerId: string, modelId: string): boolean {
         const provider = this.configuration.values.providers[providerId];
         return (
+            provider?.hidden !== true &&
             provider?.includeSubagentModels?.includes(modelId) !== false &&
             provider?.excludeSubagentModels?.includes(modelId) !== true
         );
@@ -1585,7 +1620,7 @@ export class ConfigModule implements AgentModule {
         });
     }
 
-    /** Resolve an account without consulting its live gate, for bounded scans and verification. */
+    /** Resolve an account without consulting direct selection, for bounded scans and verification. */
     async resolveProviderUnchecked(
         providerId: string,
         model: string | undefined,
@@ -1714,7 +1749,7 @@ export class ConfigModule implements AgentModule {
         ctx: Context,
         providerId: string,
     ): Promise<import("@slopus/happy-providers").ProviderUsage | null> {
-        if (!this.isProviderEnabled(providerId)) return null;
+        if (!this.#isAccountEnabled(providerId)) return null;
         return await this.readProviderUsageUnchecked(ctx, providerId);
     }
 
@@ -1740,13 +1775,15 @@ export class ConfigModule implements AgentModule {
         if (typeof this.#scripted !== "function") return this.#scripted;
         this.#resolvedScripted ??= this.#scripted(
             {
-                models: agentModels(this.configuration, (message) =>
-                    this.#catalogNotices.push(message),
+                models: agentModels(
+                    this.configuration,
+                    (message) => this.#catalogNotices.push(message),
+                    (id) => this.configuration.values.providers[id]?.enabled !== false,
                 ),
                 providers: agentProviders(
                     this.configuration,
                     undefined,
-                    (id) => this.isProviderEnabled(id),
+                    (id) => this.#isAccountEnabled(id),
                     (id) => this.#providerEnablement?.signal(id),
                 ),
             },
@@ -1775,14 +1812,17 @@ export class ConfigModule implements AgentModule {
 
     #providerSource(): AgentProviders {
         if (this.#sourceProviders === undefined) {
+            const scripted = this.#resolveScripted()?.providers;
             this.#sourceProviders =
-                this.#resolveScripted()?.providers ??
-                agentProviders(
-                    this.configuration,
-                    (usage) => this.#reportAccountUsage(usage),
-                    (id) => this.isProviderEnabled(id),
-                    (id) => this.#providerEnablement?.signal(id),
-                );
+                typeof this.#scripted !== "function" && scripted !== undefined
+                    ? scripted
+                    : agentProviders(
+                          this.configuration,
+                          (usage) => this.#reportAccountUsage(usage),
+                          (id) => this.#isAccountEnabled(id),
+                          (id) => this.#providerEnablement?.signal(id),
+                          scripted,
+                      );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This
             // happens exactly once: ProviderScanModule may subsequently gate them without a later
@@ -3010,6 +3050,7 @@ function normalizeProviderCommon(value: Record<string, unknown>): Record<string,
         ...(value["auto_enable"] === undefined ? {} : { autoEnable: value["auto_enable"] }),
         ...(value["credential_isolation"] === true ? { credentialIsolation: true } : {}),
         ...(value["enabled"] === undefined ? {} : { enabled: value["enabled"] }),
+        ...(value["hidden"] === undefined ? {} : { hidden: value["hidden"] }),
         ...(value["exclude_models"] === undefined
             ? {}
             : { excludeModels: value["exclude_models"] }),

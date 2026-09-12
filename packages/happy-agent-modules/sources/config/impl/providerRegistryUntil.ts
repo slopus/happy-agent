@@ -49,6 +49,7 @@ export function providerRegistryUntil(
     source: AgentProviders,
     shutdown: AbortSignal,
     enablement = new ProviderEnablement(source.ids, () => true),
+    isSelectable: (id: string) => boolean = () => true,
 ): AgentProviders {
     const providers = new AgentProviders();
     const wrappedProviders = new WeakSet<BaseProvider>();
@@ -59,7 +60,7 @@ export function providerRegistryUntil(
         providers.add(
             id,
             async ({ model }) => {
-                if (!enablement.isEnabled(id)) throw disabledError(id);
+                if (!enablement.isEnabled(id) || !isSelectable(id)) throw disabledError(id);
                 const provider = await source.resolve(id, model);
                 if (provider === null) throw new Error(`Provider "${id}" disappeared.`);
                 return providerUntil(

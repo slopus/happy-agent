@@ -23,5 +23,10 @@ poll is attempted until it passes.
 as Bedrock that expose no coding-account quota API. `ApiModule` combines these readings with the
 complete provider/model catalog in `GET /v0/usage`.
 
+`hidden = true` affects direct model selection, not account-quota collection. Enabled hidden
+accounts continue polling and receiving in-band quota readings when a smart provider uses them.
+Smart-provider entries have no synthesized account quota; the readings remain on the concrete
+accounts. This module does not duplicate consumed-token counters between router and account IDs.
+
 `onChanged()` lets presentation modules republish advisory UI as soon as a poll or in-band reading
 changes. The snapshot remains owned here; consumers choose their own wire shape and refresh scope.

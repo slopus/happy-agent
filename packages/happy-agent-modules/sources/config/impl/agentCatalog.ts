@@ -154,9 +154,10 @@ export function agentModels(
     configuration: HappyAgentConfiguration,
     onIgnored?: (message: string) => void,
     isProviderEnabled?: (id: string) => boolean,
+    isAccountEnabled?: (id: string) => boolean,
 ): readonly CatalogAgentModel[] {
     const values = configuration.values;
-    const available = agentModelCatalog(configuration, isProviderEnabled)
+    const available = agentModelCatalog(configuration, isProviderEnabled, isAccountEnabled)
         .filter((candidate) => candidate.enabled)
         .map(({ enabled: _enabled, ...candidate }) => candidate as CatalogAgentModel);
     const wantedModel = values.defaults.modelId;
@@ -200,6 +201,9 @@ export function agentModels(
 export function agentModelCatalog(
     configuration: HappyAgentConfiguration,
     isProviderEnabled: (id: string) => boolean = (id) =>
+        configuration.values.providers[id]?.enabled !== false &&
+        configuration.values.providers[id]?.hidden !== true,
+    isAccountEnabled: (id: string) => boolean = (id) =>
         configuration.values.providers[id]?.enabled !== false,
 ): readonly ConfiguredAgentModel[] {
     const concreteModels: ConfiguredAgentModel[] = [];
@@ -227,7 +231,7 @@ export function agentModelCatalog(
                 isProviderEnabled(id) &&
                 provider.includeModels?.includes(routed.model.id) !== false &&
                 provider.excludeModels?.includes(routed.model.id) !== true &&
-                routed.candidates.some((candidate) => isProviderEnabled(candidate));
+                routed.candidates.some((candidate) => isAccountEnabled(candidate));
             models.push({ ...routed.model, enabled, providerId: id });
         }
     }
@@ -322,11 +326,28 @@ export function agentProviders(
     onAccountUsage?: (usage: ProviderUsage) => void,
     isProviderEnabled: (providerId: string) => boolean = () => true,
     providerSignal: (providerId: string) => AbortSignal | undefined = () => undefined,
+    concreteProviders?: AgentProviders,
 ): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
+    if (concreteProviders !== undefined) {
+        for (const id of concreteProviders.ids) {
+            if (configuration.values.providers[id]?.type === "smart") continue;
+            const type = concreteProviders.typeOf(id);
+            if (type === null) continue;
+            providers.add(
+                id,
+                async ({ model }) => {
+                    const provider = await concreteProviders.resolve(id, model);
+                    if (provider === null) throw new Error(`Provider "${id}" is unavailable.`);
+                    return provider;
+                },
+                type,
+            );
+        }
+    }
     for (const [id, provider] of Object.entries(configuration.values.providers)) {
-        if (provider.type === "smart") continue;
+        if (provider.type === "smart" || concreteProviders !== undefined) continue;
         providers.add(
             id,
             async ({ model: selected }) =>
