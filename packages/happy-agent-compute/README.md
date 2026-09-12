@@ -175,15 +175,21 @@ policy. Like Codex's macOS Seatbelt path, the policy is passed directly as an ar
 workload receives ordinary stdin with only descriptors 0, 1, and 2. The supervisor itself supplies
 filtered HTTP and SOCKS egress, so compute does not create a host/Docker proxy or socket bridge for
 protections the supervisor already owns. Existing project policy files are denied directly.
-Missing protected paths are never materialized: macOS denies them natively, while the
-protected-create monitor is Linux-only, matching Codex's platform split.
+macOS denies missing protected paths natively, while the protected-create monitor is Linux-only.
+Native Windows uses protected placeholders for project configuration files and directories.
 
-The four static supervisor artifacts are installed as optional dependencies so Docker can run a
+The five native supervisor artifacts are installed as optional dependencies so Docker can run a
 Linux supervisor even when the caller is on macOS. The package dependency is exactly
-`@slopus/happy-agent-supervisor@0.0.5`; platform aliases resolve the matching darwin or Linux
-arm64/x64 binary. The workspace pnpm install configuration includes both Darwin and Linux
-arm64/x64 targets, so a macOS checkout downloads the Linux artifact needed by an emulated Docker
-image.
+versioned; platform aliases resolve the matching Darwin or Linux arm64/x64 binary, or the Windows
+x64 supervisor with its matching Happy runner and setup helper. The workspace install includes
+these platforms so a macOS checkout can also package the Linux artifact for a Docker image.
+
+Windows 11 uses Happy's separate sandbox accounts and restricted tokens with scoped filesystem
+ACLs and firewall rules. Installation setup is shared across projects; ordinary project commands
+do not require repeated elevation. Restricted Windows networking supports offline or explicitly
+online execution; selective host allowlists and independently allowed local listeners are rejected.
+Approved full access uses the ordinary caller's permissions. The next restricted command receives
+a fresh restricted token. Neither mode requires an installed Codex application.
 
 ## Processes
 
@@ -194,6 +200,10 @@ command rather than killing it.
 
 Background work belongs to the compute's own lifetime, never to the tool call that happened to start
 it, so a finished call is never retained by a process it left running.
+
+Windows uses the system Windows PowerShell by default. Its own built-in modules precede inherited
+PowerShell 7 module paths, preserving access to cmdlets such as `Get-Acl` when Happy is launched
+from a PowerShell 7 environment. Other configured module paths remain available.
 
 ## Tests
 
@@ -207,3 +217,7 @@ pnpm test:live:just-bash
 
 The live tests exercise real sandboxes and a real Docker daemon, so they are opt-in through
 `HAPPY_AGENT_COMPUTE_LIVE_TEST` and are not part of the default run.
+The native Windows release gate uses `HAPPY_AGENT_COMPUTE_WINDOWS_LIVE_TEST=1` and exercises
+workspace/read-only/full-access transitions, denied reads, and real offline/online networking.
+It requires an already provisioned Happy sandbox; set `HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1`
+to prevent tests from initiating installation setup.

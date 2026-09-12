@@ -29,6 +29,7 @@ import { projectProtectedFileNames } from "../sandbox/impl/projectProtectedFileN
 import { quoteShellArgument } from "../sandbox/impl/quoteShellArgument.js";
 import { resolvePotentialPath } from "../sandbox/impl/resolvePotentialPath.js";
 import { resolveSupervisorProtectedPaths } from "../supervisor/resolveSupervisorProtectedPaths.js";
+import { shellEnvironment } from "../processes/impl/shellEnvironment.js";
 import { createSupervisorCommand, createSupervisorPolicy } from "../supervisor/index.js";
 import {
     createProtectedPathMonitor,
@@ -430,7 +431,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                 shell,
                 runOptions.tty,
             );
-            const commandEnvironment = toolEnvironment;
+            const commandEnvironment = shellEnvironment(shell, toolEnvironment);
             const processRunOptions: ProcessRunOptions = {
                 command: preparedCommand.command,
                 cwd: preparedCommand.processCwd ?? cwd,
@@ -505,7 +506,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
                     shell,
                     runOptions.tty,
                 );
-                const commandEnvironment = toolEnvironment;
+                const commandEnvironment = shellEnvironment(shell, toolEnvironment);
                 const processStartOptions: ProcessStartOptions = {
                     command: preparedCommand.command,
                     cwd: preparedCommand.processCwd ?? cwd,

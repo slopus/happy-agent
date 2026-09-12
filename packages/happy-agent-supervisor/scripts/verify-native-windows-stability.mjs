@@ -68,7 +68,10 @@ function run(mode) {
 
 function descriptors() {
     const quote = (value) => `'${value.replaceAll("'", "''")}'`;
-    const command = `@(${[state, outside, protectedPath].map(quote).join(",")}) | ForEach-Object { (Get-Acl -LiteralPath $_).Sddl } | ConvertTo-Json -Compress`;
+    const command = `$ErrorActionPreference = 'Stop'; @(${[state, outside, protectedPath].map(quote).join(",")}) | ForEach-Object { (Get-Acl -LiteralPath $_).Sddl } | ConvertTo-Json -Compress`;
+    // A PowerShell 7 parent can inject incompatible modules into Windows PowerShell.
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
     const result = spawnSync(
         "powershell.exe",
         [
@@ -77,7 +80,7 @@ function descriptors() {
             "-EncodedCommand",
             Buffer.from(command, "utf16le").toString("base64"),
         ],
-        { windowsHide: true, encoding: "utf8", timeout: 30_000 },
+        { windowsHide: true, encoding: "utf8", timeout: 30_000, env },
     );
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
