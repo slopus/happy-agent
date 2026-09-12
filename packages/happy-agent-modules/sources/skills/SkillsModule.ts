@@ -34,6 +34,7 @@ import {
     type SkillReadInput,
 } from "./Skills.js";
 import { parseSkillFrontmatter } from "./impl/parseSkillFrontmatter.js";
+import { GlobalSkillsModule } from "./GlobalSkillsModule.js";
 
 const exact = { additionalProperties: false } as const;
 const MAX_SKILL_DISCOVERY_ENTRIES = 4_096;
@@ -78,6 +79,7 @@ const skillInvocationSchema = Type.Object(
         content: Type.String({ minLength: 1, maxLength: MAX_SKILL_DOCUMENT_BYTES }),
         messageId: Type.String({ minLength: 1, maxLength: 256 }),
         name: Type.String({ minLength: 1, maxLength: 128 }),
+        location: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
     },
     exact,
 );
@@ -118,12 +120,14 @@ const skillsComputeSchema = Type.Object(
 export class SkillsModule implements AgentModule {
     readonly name = "skills";
     readonly #compute: ComputeModule;
+    readonly #globalSkills: GlobalSkillsModule | undefined;
     readonly #discoveries = new Map<object | string, Map<string, Promise<readonly SkillEntry[]>>>();
     #sharedScanCount = 0;
     #agents: AgentSystemRef | undefined;
 
-    constructor(compute: ComputeModule) {
+    constructor(compute: ComputeModule, globalSkills?: GlobalSkillsModule) {
         this.#compute = compute;
+        this.#globalSkills = globalSkills;
     }
 
     async slashCommands(ctx: Context, agentId: string): Promise<readonly SlashCommandDefinition[]> {
@@ -164,6 +168,7 @@ export class SkillsModule implements AgentModule {
                         content: document.content,
                         messageId: id,
                         name: document.name,
+                        location: document.location,
                     },
                 },
                 model: input.mode.modelId,
@@ -236,13 +241,42 @@ export class SkillsModule implements AgentModule {
         compute: HostCompute,
         permissions: ComputePermissions,
     ): Promise<readonly SkillEntry[]> {
+        const unavailable =
+            typeof this.#compute.fileSystemIdentity(compute) === "string" &&
+            this.#globalSkills?.managesHome(compute.fs.home)
+                ? await this.#globalSkills.unavailableLocations(ctx)
+                : new Set<string>();
+        const entries = await this.#sharedEntries(ctx, compute, permissions, unavailable);
+        // A toggle can commit while filesystem discovery is in flight.
+        if (
+            typeof this.#compute.fileSystemIdentity(compute) !== "string" ||
+            !this.#globalSkills?.managesHome(compute.fs.home)
+        )
+            return entries;
+        const latest = await this.#globalSkills.unavailableLocations(ctx);
+        return entries.filter((entry) => entry.source !== "user" || !latest.has(entry.location));
+    }
+
+    async #sharedEntries(
+        ctx: Context,
+        compute: HostCompute,
+        permissions: ComputePermissions,
+        unavailable: ReadonlySet<string>,
+    ): Promise<readonly SkillEntry[]> {
         const identity = this.#compute.fileSystemIdentity(compute);
-        const key = JSON.stringify([compute.cwd, compute.fs.home, permissions]);
+        const key = JSON.stringify([
+            compute.cwd,
+            compute.fs.home,
+            permissions,
+            [...unavailable].sort(),
+        ]);
         const existing = this.#discoveries.get(identity)?.get(key);
         if (existing !== undefined) {
             return await ctx.span("skills.discovery.wait", () => existing);
         }
-        const pending = ctx.span("skills.discover", () => discoverSkills(compute, permissions));
+        const pending = ctx.span("skills.discover", () =>
+            discoverSkills(compute, permissions, unavailable),
+        );
         if (this.#sharedScanCount >= MAX_SHARED_SKILL_SCANS) return await pending;
         const scans =
             this.#discoveries.get(identity) ?? new Map<string, Promise<readonly SkillEntry[]>>();
@@ -279,7 +313,16 @@ export class SkillsModule implements AgentModule {
             const invocations = await this.#skillInvocations(ctx, scope);
             return [
                 entries.length === 0 ? "" : formatInstructions(entries),
-                ...invocations.map(formatInvokedSkill),
+                ...invocations
+                    .filter((invocation) =>
+                        entries.some(
+                            (entry) =>
+                                entry.name === invocation.name &&
+                                (invocation.location === undefined ||
+                                    entry.location === invocation.location),
+                        ),
+                    )
+                    .map(formatInvokedSkill),
             ]
                 .filter((text) => text.length > 0)
                 .join("\n\n");
@@ -353,6 +396,7 @@ function formatInvokedSkill(invocation: SkillInvocation): string {
 async function discoverSkills(
     compute: HostCompute,
     permissions: ComputePermissions,
+    unavailable: ReadonlySet<string>,
 ): Promise<readonly SkillEntry[]> {
     const byName = new Map<string, SkillEntry>();
     const budget: DiscoveryBudget = { entries: 0, files: 0 };
@@ -361,7 +405,7 @@ async function discoverSkills(
         if (byName.size >= MAX_SKILL_COUNT || budget.entries >= MAX_SKILL_DISCOVERY_ENTRIES) {
             break;
         }
-        await discoverSkillRoot(compute, permissions, root, byName, budget);
+        await discoverSkillRoot(compute, permissions, root, byName, budget, unavailable);
     }
     return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -392,6 +436,7 @@ async function discoverSkillRoot(
     root: DiscoveredRoot,
     byName: Map<string, SkillEntry>,
     budget: DiscoveryBudget,
+    unavailable: ReadonlySet<string>,
 ): Promise<void> {
     let rootIsLink: boolean;
     try {
@@ -475,6 +520,7 @@ async function discoverSkillRoot(
                         continue;
                     }
                     if (!stat.isFile || name !== "SKILL.md" || isContainer) continue;
+                    if (root.source === "user" && unavailable.has(path)) continue;
                     budget.files += 1;
                     if (budget.files > MAX_SKILL_FILES_INSPECTED) return;
                     const entry = await readSkillEntry(compute, permissions, path, root.source);
@@ -572,6 +618,9 @@ async function filesystemSkillRoots(
     }
     const roots: DiscoveredRoot[] = [];
     for (const directory of ancestors.slice(0, projectRootIndex + 1)) {
+        // A repository containing the home directory must not relabel the global installation
+        // as a project skill and bypass its availability preference.
+        if (directory === compute.fs.home) continue;
         const root = {
             path: join(directory, ".agents", "skills"),
             source: "project",

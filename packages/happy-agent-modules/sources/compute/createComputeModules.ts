@@ -1,4 +1,4 @@
-import { SkillsModule } from "../skills/SkillsModule.js";
+import { SkillsModule, type GlobalSkillsModule } from "../skills/index.js";
 import { ComputeModule } from "./ComputeModule.js";
 
 export interface CreatedComputeModules {
@@ -15,8 +15,11 @@ export interface CreatedComputeModules {
  * `new ComputeModule(config, secrets)`, or `ComputeModule.withProvider(...)` where the machine is
  * swapped — and this puts the pair in the order an agent collection wants them.
  */
-export function createComputeModules(computeModule: ComputeModule): CreatedComputeModules {
-    const skillsModule = new SkillsModule(computeModule);
+export function createComputeModules(
+    computeModule: ComputeModule,
+    globalSkills?: GlobalSkillsModule,
+): CreatedComputeModules {
+    const skillsModule = new SkillsModule(computeModule, globalSkills);
     return {
         computeModule,
         skillsModule,

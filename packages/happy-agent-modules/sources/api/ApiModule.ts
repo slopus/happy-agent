@@ -6,6 +6,7 @@ import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { ConnectionsModule, RemoteConnectionError } from "../connections/index.js";
+import { GlobalSkillsModule, GlobalSkillsError } from "../skills/index.js";
 import { queryTeamDraft, saveTeamDraft } from "./persistence/teamDraft.js";
 import { teamDraftMigration } from "./persistence/migrations/001-team-drafts.js";
 
@@ -24,6 +25,8 @@ import {
     nodeConfigPatchSchema,
     providerVerificationRequestSchema,
     userIdsSchema,
+    skillPageQuerySchema,
+    updateGlobalSkillRequestSchema,
     type DrainWaitingFor,
     type MessageMode,
 } from "@slopus/happy-agent-client";
@@ -308,6 +311,7 @@ export class ApiModule implements AgentModule {
     readonly #team: TeamModule;
     readonly #connections: ConnectionsModule;
     readonly #node: NodeModule;
+    readonly #globalSkills: GlobalSkillsModule | undefined;
     readonly #compute: ComputeModule;
     readonly #slashCommands: SlashCommandsModule;
     readonly #secrets: SecretsModule;
@@ -390,6 +394,7 @@ export class ApiModule implements AgentModule {
         team: TeamModule,
         connections: ConnectionsModule,
         node: NodeModule,
+        globalSkills?: GlobalSkillsModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -416,6 +421,7 @@ export class ApiModule implements AgentModule {
         this.#team = team;
         this.#connections = connections;
         this.#node = node;
+        this.#globalSkills = globalSkills;
     }
 
     readonly beforeStart = async (
@@ -574,6 +580,78 @@ export class ApiModule implements AgentModule {
                     );
                 }
                 finishMutation = this.#admitMutation(request, url);
+            }
+            if (url.pathname === "/v0/skills" || url.pathname.startsWith("/v0/skills/")) {
+                const skills = this.#globalSkills;
+                if (skills === undefined) throw notFound("Global skill management is unavailable.");
+                const query = {
+                    ...(url.searchParams.has("limit")
+                        ? { limit: Number(url.searchParams.get("limit")) }
+                        : {}),
+                    ...(url.searchParams.has("pageCursor")
+                        ? { pageCursor: url.searchParams.get("pageCursor")! }
+                        : {}),
+                };
+                if (!Value.Check(skillPageQuerySchema, query))
+                    throw invalidRequest("The skill page query is invalid.");
+                if (request.method === "GET" && url.pathname === "/v0/skills") {
+                    const cursor = this.#journal.cursor();
+                    sendJson(response, 200, { ...(await skills.list(ctx, query)), cursor });
+                    return;
+                }
+                const match = /^\/v0\/skills\/([a-z][a-z0-9]*)(?:\/(files|file))?$/.exec(
+                    url.pathname,
+                );
+                if (match === null) throw notFound("The requested skill endpoint does not exist.");
+                const id = match[1]!;
+                if (request.method === "GET" && match[2] === undefined) {
+                    sendJson(response, 200, await skills.read(ctx, id));
+                    return;
+                }
+                if (request.method === "GET" && match[2] === "files") {
+                    sendJson(response, 200, await skills.files(ctx, id, query));
+                    return;
+                }
+                if (request.method === "GET" && match[2] === "file") {
+                    const paths = url.searchParams.getAll("path");
+                    if (paths.length !== 1)
+                        throw invalidRequest("Provide one skill-relative file path.");
+                    const bytes = await skills.readFile(ctx, id, paths[0]!);
+                    response.writeHead(200, {
+                        "content-type": "application/octet-stream",
+                        "content-length": bytes.length,
+                        "cache-control": "no-store",
+                    });
+                    response.end(bytes);
+                    return;
+                }
+                if (request.method === "PATCH" && match[2] === undefined) {
+                    if (this.#team.enabled && teamUser(ctx)?.isOwner !== true)
+                        throw new ApiError(
+                            403,
+                            "forbidden",
+                            "Only the team owner can enable or disable global skills.",
+                        );
+                    const body = await bodyAs(
+                        request,
+                        updateGlobalSkillRequestSchema,
+                        "skill enablement",
+                    );
+                    const expectedVersion = request.headers["if-match"];
+                    if (!Value.Check(eventIdSchema, expectedVersion))
+                        throw invalidRequest("A valid If-Match resource version is required.");
+                    sendJson(response, 200, {
+                        skill: await skills.setEnabled(
+                            ctx,
+                            id,
+                            body.enabled,
+                            expectedVersion,
+                            body.mutationId,
+                        ),
+                    });
+                    return;
+                }
+                throw notFound("The requested skill endpoint does not exist.");
             }
             if (request.method === "GET" && url.pathname === "/v0/users") {
                 if (!this.#team.enabled)
@@ -1163,7 +1241,13 @@ export class ApiModule implements AgentModule {
             }
             throw notFound("The requested endpoint does not exist.");
         } catch (error: unknown) {
-            this.#sendError(ctx, response, error);
+            this.#sendError(
+                ctx,
+                response,
+                error instanceof GlobalSkillsError
+                    ? new ApiError(error.status, error.code, error.message, error.details)
+                    : error,
+            );
         } finally {
             finishMutation?.();
         }
@@ -1320,6 +1404,12 @@ export class ApiModule implements AgentModule {
 
     #subscribeToModules(ctx: Context): void {
         if (this.#unsubscribe.length > 0) return;
+        if (this.#globalSkills !== undefined)
+            this.#unsubscribe.push(
+                this.#globalSkills.onUpdated((_eventCtx, payload) => {
+                    this.#journal.appendOutsideMutation("skills.updated", payload);
+                }),
+            );
         this.#unsubscribe.push(
             this.#node.onUpdated(() => {
                 this.#journal.append("config.updated", {});

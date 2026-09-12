@@ -364,6 +364,11 @@ const mcpInputSchema = Type.Record(
 );
 const partialValuesSchema = Type.Object(
     {
+        skill_enablement: Type.Optional(
+            Type.Record(Type.String({ minLength: 1, maxLength: 4096 }), Type.Boolean(), {
+                maxProperties: 10000,
+            }),
+        ),
         node: Type.Optional(
             Type.Object({ name: Type.Optional(nodeNameSchema) }, { additionalProperties: false }),
         ),
@@ -1269,6 +1274,29 @@ export class ConfigModule implements AgentModule {
     /** The public root for persistent bot folders. Configuration owns every product path. */
     get botsHome(): string {
         return join(this.configuration.paths.publicHome, "Bots");
+    }
+
+    /** Installed global skills live on this daemon's machine, independently of its config home. */
+    get globalSkillsRoot(): string {
+        return join(this.#environment.HOME?.trim() || homedir(), ".agents", "skills");
+    }
+
+    get runtimeSkillEnablement(): Readonly<Record<string, boolean>> {
+        return structuredClone(this.#runtimeValues.skill_enablement ?? {});
+    }
+
+    /** Durable skills work writes the current committed preference snapshot, never old call arguments. */
+    async writeRuntimeSkillEnablement(
+        ctx: Context,
+        enablement: Readonly<Record<string, boolean>>,
+    ): Promise<void> {
+        if (!Value.Check(partialValuesSchema.properties.skill_enablement, enablement))
+            throw new Error("The global skill preferences are invalid.");
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const next = { ...this.#runtimeValues, skill_enablement: structuredClone(enablement) };
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+        });
     }
 
     /** The private, per-agent Code Mode interpreter snapshot owned by this installation. */
@@ -2304,6 +2332,7 @@ export function parseHappyAgentConfigToml(source: string): {
         unknownSettings.push(path);
     };
     const knownTopLevel = new Set([
+        "skill_enablement",
         "api",
         "connections",
         "defaults",
@@ -2346,6 +2375,9 @@ export function parseHappyAgentConfigToml(source: string): {
             ? readBoolean(table.providers, "default_enable", "providers.default_enable")
             : undefined;
     const values = {
+        ...(table.skill_enablement === undefined
+            ? {}
+            : { skill_enablement: table.skill_enablement }),
         ...(table.node === undefined ? {} : { node: table.node }),
         ...(table.profile === undefined ? {} : { profile: table.profile }),
         ...(table.api === undefined ? {} : { api: table.api }),
@@ -3100,6 +3132,7 @@ function inferProviderType(
 
 function withoutProjectMachineSettings(values: PartialValues): PartialValues {
     const {
+        skill_enablement: _skillEnablement,
         api: _api,
         connections: _connections,
         docker: _docker,

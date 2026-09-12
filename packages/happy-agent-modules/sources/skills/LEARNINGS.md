@@ -7,8 +7,15 @@ parsed skills, not parsed agent definitions. A disabled skill remains installed,
 human-facing catalog, readable through management APIs, and monitored for file changes. Its
 preference must not be implemented by deleting or moving files. Agent skill discovery, prompt
 contributions, skill-specific reads, and invocation exclude it; ordinary filesystem permissions
-are unchanged. This is the contract for the pending management implementation, not behavior
-already provided by the current discovery-only module.
+are unchanged. The global management module owns installation state and watching, while native
+agent discovery consults its availability without applying local preferences to another compute.
+Management remains feature-detected through its endpoint; this additive API does not raise
+protocol 25.
+
+If a repository contains the home directory, walking project ancestors must not rediscover
+`~/.agents/skills` as a project root. It remains the global installation, so its disabled state
+cannot be bypassed by source classification. Separate project installations keep their own
+availability even when they share a name.
 
 ## Concurrent agents share scans, not stale catalogs
 

@@ -1,4 +1,6 @@
 export { SkillsModule } from "./SkillsModule.js";
+export { GlobalSkillsModule } from "./GlobalSkillsModule.js";
+export { GlobalSkillsError } from "./GlobalSkillsError.js";
 export {
     skillDescriptionSchema,
     skillDocumentSchema,

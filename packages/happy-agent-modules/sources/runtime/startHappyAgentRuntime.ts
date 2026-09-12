@@ -65,7 +65,7 @@ import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
-import { SkillsModule } from "../skills/index.js";
+import { SkillsModule, GlobalSkillsModule } from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { TasksModule } from "../tasks/index.js";
@@ -162,6 +162,7 @@ export interface HappyAgentRuntimeModules {
     readonly secrets: SecretsModule;
     readonly slashCommands: SlashCommandsModule;
     readonly skills: SkillsModule;
+    readonly globalSkills: GlobalSkillsModule;
     readonly systemPrompt: SystemPromptModule;
     readonly tailcat: TailcatModule;
     readonly tasks: TasksModule;
@@ -336,6 +337,7 @@ export async function startHappyAgentRuntime(
             await system?.close(shutdownCtx);
             await settleRuntimeShutdownTasks(shutdownCtx, shutdownTasks, [
                 "files",
+                "global-skills",
                 "cloud",
                 "happy",
                 "projects-and-workspaces",
@@ -380,7 +382,10 @@ export async function startHappyAgentRuntime(
                       create: async (computeCtx: Context, computeConfig: HostComputeConfig) =>
                           (await suppliedCompute(computeCtx, computeConfig)) as HostCompute,
                   });
-        const compute = createComputeModules(computeModule);
+        const durableFunctions = new DurableFunctionsModule();
+        const globalSkills = new GlobalSkillsModule(config, durableFunctions);
+        const compute = createComputeModules(computeModule, globalSkills);
+        registerShutdown("global-skills", async () => await globalSkills.close());
         registerShutdown("compute", async (shutdownCtx) => {
             await Promise.allSettled([
                 system?.close(shutdownCtx) ?? Promise.resolve(),
@@ -418,7 +423,6 @@ export async function startHappyAgentRuntime(
         const permissions = new PermissionsModule(compute.computeModule, autoModule);
         const abort = new AbortModule(compute.computeModule);
         const git = new GitModule(config);
-        const durableFunctions = new DurableFunctionsModule();
         const projects = new ProjectsModule(config, git, abort, durableFunctions);
         const workspaces = new WorkspacesModule(config, projects, git, abort, durableFunctions);
         const titles = new TitlesModule(config, history, workspaces);
@@ -521,6 +525,7 @@ export async function startHappyAgentRuntime(
             team,
             connections,
             node,
+            globalSkills,
         );
         api = apiModule;
 
@@ -563,6 +568,7 @@ export async function startHappyAgentRuntime(
             secrets,
             slashCommands,
             skills: compute.skillsModule,
+            globalSkills,
             systemPrompt,
             tailcat,
             tasks,
@@ -602,6 +608,7 @@ export async function startHappyAgentRuntime(
             ...(team.enabled ? [team] : [profile]),
             git,
             durableFunctions,
+            globalSkills,
             bots,
             node,
             tailcat,
