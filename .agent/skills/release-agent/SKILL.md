@@ -11,27 +11,33 @@ tag, and it only does so after the build and publication have succeeded.
 
 ## Which product, which version
 
-An unqualified "release" means **the next patch of Happy Agent**. It never means Happy
-Terminal, and it never means a library.
+An unqualified "release" means **a Happy Agent preview**. Production must be explicit.
+Neither means Terminal or a library unless that product is named.
 
-| Request            | Product        | Version                               |
-| ------------------ | -------------- | ------------------------------------- |
-| "release"          | Happy Agent    | next patch                            |
-| "release terminal" | Happy Terminal | next stable patch, never a prerelease |
-| a named library    | that library   | next patch                            |
+| Request              | Product        | Version                               |
+| -------------------- | -------------- | ------------------------------------- |
+| "release"            | Happy Agent    | next patch followed by `-preview.N`   |
+| "release production" | Happy Agent    | next stable patch; no preview needed  |
+| "release stable"     | Happy Agent    | same as production                    |
+| "release terminal"   | Happy Terminal | next stable patch, never a prerelease |
+| a named library      | that library   | next patch                            |
 
-Read the current version from the published package rather than from the working tree, and
-confirm it against the tags:
+Read Agent versions from GitHub releases/tags, not its npm package or source manifest.
+Use npm for Terminal and libraries. Fetch tags before choosing an unused version:
 
 ```bash
-gh release list --limit 5
-git tag --list 'v0.3.*' --sort=-v:refname | head -3            # Happy Agent
+gh release list --limit 30
+gh api repos/slopus/happy-agent/releases/latest --jq .tag_name
+git tag --list 'v[0-9]*' --sort=-v:refname | head -10         # Happy Agent
 git tag --list 'happy-terminal-v*' --sort=-v:refname | head -3 # Happy Terminal
-npm view @slopus/happy-terminal version
+pnpm view @slopus/happy-terminal version
 ```
 
-If a tagged release failed before publication, its tag may exist unpublished. Advance to the
-next patch and dispatch again. Never reuse or move a failed tag.
+For stable `X.Y.Z`, use the next patch after the latest stable Agent release. For previews,
+append the next unused `-preview.N` (start at 1). Example: `0.4.67-preview.1`.
+No package manifest bump or SDK publication is required just to assign this binary identity.
+Existing pinned SDK dependencies must still resolve. Never reuse or move a failed tag;
+advance the preview number or stable patch as appropriate. A push never publishes a preview.
 
 ## Before dispatching
 
@@ -54,7 +60,9 @@ next patch and dispatch again. Never reuse or move a failed tag.
 
 ## Counting what is in the release
 
-Count commits against the **product's own last tag**, not the last tag of any kind:
+Count commits against the **product and channel's own last release**, not the last tag of
+any kind. For the first preview of a stable target, start from the latest stable release;
+production notes include everything since the previous stable, including previewed changes:
 
 ```bash
 git log --format='%h %s' v0.3.17..origin/main               # Happy Agent
@@ -90,7 +98,7 @@ the repository.
 Write the notes to a file under `.context/`, which is scratch and gitignored:
 
 ```bash
-.context/release-notes-0.3.18.md
+.context/release-notes.md
 ```
 
 ## Dispatching
@@ -101,21 +109,19 @@ submitted as the release body, the workflow succeeds, and the published release 
 not catch this, because a path is not blank.
 
 ```bash
-# Correct — the @ makes gh read the file
+# Preview example — use the version you selected, not this literal example
 gh workflow run release-happy-agent.yml --ref main \
-    -f version=0.3.18 \
-    -F release_notes=@.context/release-notes-0.3.18.md
-
-# Wrong — submits the literal path as the release body
-gh workflow run release-happy-agent.yml --ref main \
-    -f version=0.3.18 \
-    -F release_notes=.context/release-notes-0.3.18.md
+    -f version=0.4.67-preview.1 -F prerelease=true \
+    -F release_notes=@.context/release-notes.md
 ```
 
 `-f` is a literal string; `-F` reads a file only when the value begins with `@`. For short
 single-line values `-f` is fine.
 
-Happy Terminal is the same call against `release-happy-terminal.yml`.
+For production, supply the stable version and `-F prerelease=false`. Happy Terminal uses
+`release-happy-terminal.yml` with a stable version and notes, without a prerelease input.
+CI builds, tests, signs, and publishes the same artifacts within one workflow run.
+Do not introduce a separate prepare/publish dispatch or bump commit between those jobs.
 
 ## Verifying
 
@@ -124,26 +130,34 @@ catches the `@` mistake:
 
 ```bash
 gh run watch <run-id> --exit-status
-gh release view v0.3.18 --json body -q .body | head -20
+gh release view v0.4.67-preview.1 --json body -q .body
 ```
 
 The body must be the notes. If it is a file path, repair it in place — the artifacts are fine,
 only the body is wrong, so there is no need to re-release:
 
 ```bash
-gh release edit v0.3.18 --notes-file .context/release-notes-0.3.18.md
+gh release edit v0.4.67-preview.1 --notes-file .context/release-notes.md
 ```
 
 Then confirm the rest:
 
 ```bash
-# Happy Agent: four platform archives plus a .sha256 for each, not a draft or prerelease
-gh release view v0.3.18 --json tagName,isDraft,isPrerelease,assets \
+# Happy Agent: four platform archives plus a .sha256 for each; never a draft
+gh release view v0.4.67-preview.1 --json tagName,isDraft,isPrerelease,assets \
     -q '"tag=\(.tagName) draft=\(.isDraft) pre=\(.isPrerelease)", (.assets[] | .name)'
 
 # Happy Terminal: npm must show the new version on the latest tag
-npm view @slopus/happy-terminal version dist-tags --json
+pnpm view @slopus/happy-terminal version dist-tags --json
 ```
+
+Use your actual tag in each command. Verify preview releases have `isPrerelease=true` and
+leave GitHub's latest stable unchanged; production has `isPrerelease=false` and becomes
+latest. Download assets with `gh release download <tag> --dir <scratch-directory>` and run
+`shasum -a 256 -c <archive>.sha256` there for each archive. On a supported host, extract its
+archive and check the binary's `--version`; do not start the daemon. Nightly accepts supported
+Agent previews; standard Desktop must not offer them. No app or daemon restart is implied
+by a release request.
 
 For Happy Terminal, npm publication happens before the tag and GitHub Release are created, so
 a failed publish must leave both absent. If a tag exists without an npm version, something is

@@ -5,7 +5,7 @@ on:
     workflow_dispatch:
         inputs:
             version:
-                description: Semantic version without the leading v
+                description: Stable X.Y.Z or preview X.Y.Z-preview.N, without the leading v
                 required: true
                 type: string
             release_notes:
@@ -13,9 +13,9 @@ on:
                 required: true
                 type: string
             prerelease:
-                description: Mark the GitHub Release as a prerelease
+                description: Must be true for preview versions and false for stable versions
                 required: false
-                default: false
+                default: true
                 type: boolean
 
 permissions:
@@ -58,8 +58,13 @@ jobs:
                       echo "Happy Agent releases must be dispatched from main." >&2
                       exit 1
                   fi
-                  if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-                      echo "Version must be semantic and must not include the leading v." >&2
+                  if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview\.(0|[1-9][0-9]*))?$ ]]; then
+                      echo "Version must be X.Y.Z or X.Y.Z-preview.N, without a leading v or leading zeroes." >&2
+                      exit 1
+                  fi
+                  if [[ "$RELEASE_VERSION" == *-preview.* && "$RELEASE_PRERELEASE" != "true" ]] || \
+                     [[ "$RELEASE_VERSION" != *-preview.* && "$RELEASE_PRERELEASE" != "false" ]]; then
+                      echo "Preview versions require prerelease=true; stable versions require prerelease=false." >&2
                       exit 1
                   fi
                   if [[ -z "${RELEASE_NOTES//[[:space:]]/}" ]]; then
@@ -434,12 +439,14 @@ jobs:
                       --title "Happy Agent $RELEASE_TAG"
                       --notes-file .release/notes.md
                   )
-                  if [[ "$RELEASE_VERSION" == *-* || "$RELEASE_PRERELEASE" == "true" ]]; then
-                      arguments+=(--prerelease)
+                  if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+                      arguments+=(--prerelease --latest=false)
                   fi
                   gh release create "${arguments[@]}" release-assets/*
                   publish_arguments=(--draft=false)
-                  if [[ "$RELEASE_VERSION" != *-* && "$RELEASE_PRERELEASE" != "true" ]]; then
+                  if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+                      publish_arguments+=(--latest=false)
+                  else
                       publish_arguments+=(--latest)
                   fi
                   gh release edit "$RELEASE_TAG" "${publish_arguments[@]}"

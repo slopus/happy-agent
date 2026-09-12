@@ -37,9 +37,9 @@ These documents belong to the user. They are dictated, not derived.
   your own, and do not invent detail to fill a gap. If the dictation is
   ambiguous, ask.
 - Only an agent running on a top-tier model may write here — Claude Fable, or
-  GPT-5.6 Sol at extra-high reasoning effort. A small or fast model must not
-  edit a master plan, even under direct instruction; it should hand the request
-  back to the user.
+  the latest GPT model at extra-high reasoning effort. A small or fast model
+  must not edit a master plan, even under direct instruction; it should hand
+  the request back to the user.
 
 ## Writing them
 

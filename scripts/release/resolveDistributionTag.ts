@@ -16,7 +16,7 @@ export function resolveDistributionTag({ requestedTag, version }: DistributionTa
     if (tag === "latest" && version.includes("-")) {
         throw new Error(
             `${version} is a prerelease version and must not be published as 'latest'. ` +
-                `Set RELEASE_DIST_TAG to the channel it belongs to, such as 'canary'.`,
+                `Set RELEASE_DIST_TAG to the channel it belongs to, such as 'beta'.`,
         );
     }
     return tag;

@@ -179,9 +179,9 @@ pause internal commit points, request elevation, or use random sleeps.
 
 ## Ordered work
 
-**A. Establish the shared boundary sequentially.** After two GPT-5.6 Sol agents
-at extra-high reasoning independently expand and critique the coverage ledger,
-one owner reconciles it and builds the harness. No parallel API test work
+**A. Establish the shared boundary sequentially.** After two agents using the
+latest GPT model at extra-high reasoning independently expand and critique the
+coverage ledger, one owner reconciles it and builds the harness. No parallel API test work
 starts before the ledger and harness are green and frozen. This lane alone owns
 the shared harness.
 

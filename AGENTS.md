@@ -163,16 +163,20 @@ available, ask the user to configure one; never place WorkOS credentials in the 
 
 ## Default release versions
 
-When the user asks to "release" without naming a product or version, release the next patch
-version of Happy Agent. Do not treat an unqualified release request as a Happy Terminal or library
-release.
+When the user asks to "release" without naming a product or version, release a Happy Agent
+preview. "Release production" or "release stable" requests the next stable patch directly;
+no prior preview is required. Do not treat an unqualified release as a Terminal or library release.
 
-Happy Agent releases are always the next patch version. Release Happy Agent only by manually
-dispatching [`.github/workflows/release-happy-agent.yml`](.github/workflows/release-happy-agent.yml)
+Agent previews use the next stable patch followed by `-preview.N`; choose the next unused N
+from existing releases and tags. Never publish previews automatically on push or to npm.
+Release Happy Agent only by manually dispatching
+[`.github/workflows/release-happy-agent.yml`](.github/workflows/release-happy-agent.yml)
 from `main`; do not create or push its release tag locally. Supply the workflow's required
-`version` and `release_notes` inputs. Build the release notes from every commit included since the
-previous Happy Agent release, and write a polished, user-facing Markdown summary that explains the
-changes clearly rather than pasting commit subjects or a raw changelog. Monitor the workflow to
+`version` and `release_notes` inputs, and set `prerelease=true` only for previews. The existing
+workflow builds and publishes in one run; no separate preparation or intermediate bump commit.
+Follow the release-agent skill using existing Git and GitHub CLI commands. Build release notes
+from every included commit since the previous release of that channel. Write a polished,
+user-facing Markdown summary rather than pasting commit subjects or a raw changelog. Monitor to
 completion and verify the resulting GitHub Release and its assets before reporting success.
 
 Happy Terminal releases are always stable patch releases. Never release Happy Terminal as a beta
@@ -193,10 +197,10 @@ When the user explicitly names another product or library but does not name a ve
 Use an explicitly requested version or release channel instead whenever the user provides one,
 except that Happy Terminal always releases as its next stable patch version.
 
-Always release through trusted publishing by pushing the release Git tag. Never publish directly
-from local npm credentials. If a tagged patch release fails before publication, it may remain
-unpublished; advance to the next patch version and push a new release tag instead of reusing or
-moving the failed tag.
+Libraries release through trusted publishing by pushing their release Git tags; Agent and
+Terminal tags are created only by their workflows. Never publish from local npm credentials.
+If a tagged library patch fails before publication, advance to the next patch and push a new
+release tag instead of reusing or moving the failed tag.
 
 ## Published SDK dependencies
 

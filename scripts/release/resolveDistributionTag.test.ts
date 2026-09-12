@@ -11,10 +11,10 @@ test("an empty channel still means latest", () => {
     assert.equal(resolveDistributionTag({ requestedTag: "", version: "0.0.148" }), "latest");
 });
 
-test("a canary build claims its own channel", () => {
+test("a beta build claims its own channel", () => {
     assert.equal(
-        resolveDistributionTag({ requestedTag: "canary", version: "0.0.0-canary.403.c669089" }),
-        "canary",
+        resolveDistributionTag({ requestedTag: "beta", version: "0.0.148-beta.1" }),
+        "beta",
     );
 });
 
@@ -32,12 +32,12 @@ test("refuses to hand a prerelease to every user", () => {
     );
 });
 
-test("refuses a canary version asked for latest outright", () => {
+test("refuses a beta version asked for latest outright", () => {
     assert.throws(
         () =>
             resolveDistributionTag({
                 requestedTag: "latest",
-                version: "0.0.0-canary.403.c669089",
+                version: "0.0.148-beta.1",
             }),
         /must not be published as 'latest'/,
     );

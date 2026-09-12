@@ -1,78 +1,79 @@
-# Releases
+# Preview releases
 
-Three tiers: local (test the full assembly, nothing published), preview (auto
-on every push, team only), stable (machine-led, watched, never silent).
-Nobody types a version anywhere. Every released version has exactly one
-commit whose tree says that version.
+Support requested previews of Happy Agent, the Desktop native app, and the
+Desktop hosted renderer. Nightly consumes previews; standard stays stable-only.
+Keep the existing release flows: no cross-run coordinator or separate
+prepare/publish dispatches.
 
-## Everything we release
+## Agent instructions and scripted work
 
-| #   | Artifact                           | Repo                                                     | Distributed via                 | Released by                                |
-| --- | ---------------------------------- | -------------------------------------------------------- | ------------------------------- | ------------------------------------------ |
-| 1   | Happy Agent binary (4 targets)     | [happy-agent](https://github.com/slopus/happy-agent)     | GitHub Releases only, never npm | preview: auto on push; stable: promote     |
-| 2   | `@slopus/happy-terminal`           | happy-agent                                              | npm `latest` only               | machine-led dispatch, stable only          |
-| 3   | `@slopus/happy-agent-client`       | happy-agent                                              | npm `latest`                    | `pnpm release`, inert until repin          |
-| 4   | `@slopus/happy-agent-base`         | happy-agent                                              | npm `latest`                    | 〃                                         |
-| 5   | `@slopus/happy-providers`          | happy-agent                                              | npm `latest`                    | 〃                                         |
-| 6   | `@slopus/happy-agent-compute`      | happy-agent                                              | npm `latest`                    | 〃 (keeps its sandbox-proof workflow)      |
-| 7   | `@slopus/happy-agent-supervisor`   | happy-agent                                              | npm `latest`                    | 〃                                         |
-| 8   | `happy-plugins`                    | happy-agent                                              | npm `latest`                    | 〃                                         |
-| 9   | Happy Desktop app (std+nightly)    | [happy-desktop](https://github.com/slopus/happy-desktop) | mac builds + update manifest    | its own cycle; nightly = only preview user |
-| 10  | Happy mobile app (`happy-app`)     | [happy](https://github.com/slopus/happy)                 | App Store / Play                | its own cycle                              |
-| 11  | Happy sync server (`happy-server`) | happy                                                    | Docker deploy                   | its own cycle                              |
+People request releases; agents follow the release Markdown instructions using
+existing Git, pnpm, and GitHub CLI commands. Keep utilities small. The existing
+workflow owns deterministic build, test, signing, and publication work.
 
-Never published: `@slopus/happy-agent`, `@slopus/happy-agent-modules` —
-compiled into the binary. Library rules: exact pins everywhere, publish is
-inert until a consumer repins; dependency order providers → base → consumers.
-
-## Version rules
-
-- Product `package.json` holds the next stable version, always unpublished.
-- Preview versions derive: `X.Y.Z-preview.N`, N = commits since last stable tag.
-- Workflows never push to main; no bot commits.
-
-## The three tiers
-
-```
-LOCAL ── any worktree, nothing published, nothing tracked changes
-│  pnpm local / pnpm local:off
-├─ .local/tarballs/*.tgz                      packed SDKs (gitignored)
-├─ .pnpmfile.cjs                              committed, inert: tarballs present
-│                                             → resolve from them, else npm
-├─ pnpm-lock.yaml                             never written (lockfile off in local mode)
-└─ ~/.happy/dist/version/<tree-version>/      self-contained agent binary
-
-PREVIEW ── auto on every push to main, one channel, no canary, no beta
-├─ tag v0.4.50-preview.N (GitHub prerelease)
-│    happy-agent-0.4.50-preview.N-{darwin,linux}-{arm64,x64}.tar.gz + .sha256
-├─ npm: nothing
-└─ visible ONLY to Happy Desktop nightly
-
-STABLE ── machine-led, watched end to end
-│  1. push bump commit "Start 0.4.51"     ← closes the version window first
-│  2. dispatch promote → CI tags the previewed commit (tree already says
-│     0.4.50), rebuilds, marks LATEST
-│  3. gh run watch → verify assets/npm → report
-├─ tag v0.4.50 → releases/latest           preview machines auto-promote
-└─ npm: @slopus/happy-terminal@latest      (its own dispatch, same shape)
+```text
+Maintainer: "Release Happy Agent"
++-- Agent: review main, choose an unused preview version, write notes
++-- Agent: dispatch existing workflow with version, notes, prerelease=true
+    +-- CI: validate; build/test the four platform binaries
+    +-- CI: sign/notarize, smoke-test, archive, checksum
+    `-- CI: publish those artifacts as a GitHub prerelease in this run
++-- Agent: gh run watch; verify published version, notes, assets
+`-- Desktop Nightly: discover/download through its existing Agent update path
 ```
 
-## Desktop's three update loops
+An unqualified release of any of these products means preview. Explicit
+production requests use the existing stable flow, without requiring a prior
+preview. A push does not publish previews. Preserve source checks, signing,
+tests, checksums, and protection against replacing published assets.
 
-```
-Happy Desktop machine
-├─ the APP     auto-update via hosted manifest      (per desktop release)
-├─ the AGENT   GitHub release catalog → download+verify → select → restart
-│              (nightly lists prereleases; standard sees latest only)
-└─ the CLIENT  exact npm pin, baked in at app build time
-```
+Desktop native previews use the existing signed app build and publication
+workflow, with a version/notes/prerelease input and Nightly-only artifacts.
+Stable releases still ship both app flavors. Nightly's native updater must
+accept previews and later stable versions through its existing install action.
+Renderer previews use the existing hosted build/Pages deployment workflow,
+manually requested, targeting Nightly's existing URL. No native release is
+implicit in a renderer request. Standard bundles its renderer, so renderer
+production delivery requires explicit native-release scope.
 
-## Steps
+## Versions and distribution
 
-| #   | Step                                                                                                | Done when                                                                     |
-| --- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 1   | Local tier: `pnpm local`/`local:off`, tarball store, inert pnpmfile, tree-version installs          | an SDK change runs in the full local assembly, no publish, `git status` clean |
-| 2   | Reconcile SDK chain: publish+repin the client drift on main; encode release order                   | resolved graph holds one copy of each SDK at published pins                   |
-| 3   | Preview channel: real versions in manifests, on-push workflow, retention; delete canary + beta      | a push yields an installable prerelease; npm receives nothing                 |
-| 4   | Stable: promote mode, bump-then-dispatch flow, rewrite release-agent skill, dictate AGENTS.md edits | a stable ships with no typed version; tagged commit's tree says it            |
-| 5   | Gate previews to Desktop nightly                                                                    | a standard Desktop never offers a preview                                     |
+Use `X.Y.Z-preview.N`, for example `0.4.67-preview.1`. The agent selects the
+intended stable version and next unused preview number from release history;
+CI validates the input. Keep the existing version input. Embed preview identity
+in the binary without requiring package manifest bumps or npm publication.
+A stable request supplies `X.Y.Z`; no intervening bump commit is required
+between building and publishing.
+
+Nightly accepts supported stable and preview Agent versions; standard Desktop
+accepts stable only. Previews must not replace GitHub's latest stable release.
+This is an Agent binary channel, not an npm canary channel. Client/SDK releases
+are not inherently part of an Agent preview; existing published dependencies
+must still resolve until workspace use changes.
+
+## Scope and order
+
+1. Discard the unshipped coordinator redesign and unrelated pipeline changes.
+   Start from the original Agent workflow and release instructions; the workflow
+   already supports GitHub prereleases.
+2. Standardize preview naming/defaults and update Nightly's Agent discovery.
+   Preserve standard's stable-only behavior and existing activation controls.
+   Remove automatic npm canary publishing and its unused helpers; retain stable
+   library publication. Put orchestration in concise release instructions.
+3. Add native and renderer previews by extending their existing workflows and
+   Nightly updater. Remove the new Desktop release coordinator and version-bump
+   ceremony. Deliver host changes through the existing native install mechanism;
+   a renderer refresh alone cannot deliver them.
+4. Verify each requested preview reaches Nightly without reaching standard;
+   preserve the Agent's four platform archives and native signing gates. Verify
+   stable releases still work directly.
+
+Do not redesign Terminal or stable library publishing. Use existing CLI commands
+and small necessary helpers, not custom workflow-run tracking or artifact stores.
+
+## Separate contributor-development direction
+
+Consider exact workspace pins separately so outside contributors can experiment
+locally without publishing SDKs or dependency hacks. See the
+[local-development note](notes/25-workspace-local-development.md). This is not a
+prerequisite for the preview channel or a decision to stop publishing libraries.

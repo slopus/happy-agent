@@ -2,8 +2,6 @@ name: Publish package
 
 on:
     push:
-        branches:
-            - main
         tags:
             - "happy-agent-base-v*"
             - "happy-plugins-v*"
@@ -11,7 +9,7 @@ on:
     workflow_dispatch:
 
 env:
-    RELEASE_PACKAGE: ${{ startsWith(github.ref_name, 'happy-agent-base-v') && 'happy-agent-base' || startsWith(github.ref_name, 'happy-plugins-v') && 'happy-plugins' || startsWith(github.ref_name, 'happy-providers-v') && 'happy-providers' || 'happy-terminal' }}
+    RELEASE_PACKAGE: ${{ startsWith(github.ref_name, 'happy-agent-base-v') && 'happy-agent-base' || startsWith(github.ref_name, 'happy-plugins-v') && 'happy-plugins' || startsWith(github.ref_name, 'happy-providers-v') && 'happy-providers' || '' }}
 
 permissions:
     contents: read
@@ -19,13 +17,12 @@ permissions:
 
 concurrency:
     group: publish-${{ github.ref }}
-    # Only the newest canary build of main is worth finishing.
-    cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+    cancel-in-progress: false
 
 jobs:
     publish:
         name: Publish selected package
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/happy-agent-base-v') || startsWith(github.ref, 'refs/tags/happy-plugins-v') || startsWith(github.ref, 'refs/tags/happy-providers-v')
         runs-on: ubuntu-latest
         environment: npm
         timeout-minutes: 30
@@ -99,111 +96,3 @@ jobs:
 
             - name: Publish the package
               run: pnpm exec tsx scripts/publishPackage.ts
-
-    canary:
-        name: Publish the canary builds
-        if: github.ref == 'refs/heads/main' && github.repository == 'slopus/happy-agent'
-        runs-on: ubuntu-latest
-        environment: npm
-        timeout-minutes: 20
-
-        steps:
-            - name: Check out the commit
-              uses: actions/checkout@v6
-              with:
-                  fetch-depth: 0
-
-            - name: Set up pnpm
-              uses: pnpm/action-setup@v6
-
-            - name: Set up Node.js
-              uses: actions/setup-node@v6
-              with:
-                  node-version: "24"
-                  package-manager-cache: false
-
-            - name: Set up Bun
-              uses: oven-sh/setup-bun@v2
-              with:
-                  bun-version: "1.4.0"
-
-            - name: Install Linux sandbox dependencies
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install --yes bubblewrap ripgrep socat
-                  if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-                      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-                  fi
-
-            - name: Install dependencies
-              run: pnpm install --frozen-lockfile
-
-            # A resolvable published side-package canary is its watermark, keeping later package
-            # changes pending across failed workflows.
-            - name: Check for unpublished side-package changes
-              id: changed
-              env:
-                  PUSHED_FROM: ${{ github.event.before }}
-              run: pnpm exec tsx scripts/detectCanaryPackageChanges.ts
-
-            - name: Set the canary versions
-              env:
-                  CANARY_BUILD_NUMBER: ${{ github.run_number }}
-                  CANARY_COMMIT: ${{ github.sha }}
-                  PLUGINS_CHANGED: ${{ steps.changed.outputs.plugins }}
-                  PROVIDERS_CHANGED: ${{ steps.changed.outputs.providers }}
-              run: |
-                  # happy-plugins is versioned before the build so the SDK Happy Terminal bundles carries the
-                  # same canary version that is published.
-                  if [[ "$PLUGINS_CHANGED" == "true" ]]; then
-                      RELEASE_PACKAGE=happy-plugins pnpm exec tsx scripts/setCanaryVersion.ts
-                  fi
-                  if [[ "$PROVIDERS_CHANGED" == "true" ]]; then
-                      RELEASE_PACKAGE=happy-providers pnpm exec tsx scripts/setCanaryVersion.ts
-                  fi
-                  RELEASE_PACKAGE=happy-terminal pnpm exec tsx scripts/setCanaryVersion.ts
-
-            - name: Build the packages
-              env:
-                  PROVIDERS_CHANGED: ${{ steps.changed.outputs.providers }}
-              run: |
-                  pnpm run build
-                  if [[ "$PROVIDERS_CHANGED" == "true" ]]; then
-                      pnpm --filter @slopus/happy-providers build
-                  fi
-
-            # Canary builds stay fast: unit tests only, no gym, Docker, or live-provider suites.
-            - name: Run unit tests
-              env:
-                  # Keep Sandbox Runtime's home-directory mask away from the checkout.
-                  HOME: ${{ runner.temp }}/happy-terminal-test-home
-                  PLUGINS_CHANGED: ${{ steps.changed.outputs.plugins }}
-                  PROVIDERS_CHANGED: ${{ steps.changed.outputs.providers }}
-              run: |
-                  mkdir -p "$HOME"
-                  pnpm run test:scripts
-                  pnpm --recursive --filter './packages/**' --filter '!@slopus/happy-terminal-gym-tests' --filter '!happy-plugins' --filter '!@slopus/happy-providers' --filter '!@slopus/rig-codemode-codex' run test
-                  if [[ "$PLUGINS_CHANGED" == "true" ]]; then
-                      pnpm --filter happy-plugins test
-                  fi
-                  if [[ "$PROVIDERS_CHANGED" == "true" ]]; then
-                      pnpm --filter @slopus/happy-providers test
-                  fi
-
-            - name: Publish the canary builds
-              env:
-                  PLUGINS_CHANGED: ${{ steps.changed.outputs.plugins }}
-                  PROVIDERS_CHANGED: ${{ steps.changed.outputs.providers }}
-                  RELEASE_DIST_TAG: canary
-              run: |
-                  if [[ "$PLUGINS_CHANGED" == "true" ]]; then
-                      RELEASE_PACKAGE=happy-plugins pnpm exec tsx scripts/publishPackage.ts
-                  fi
-                  if [[ "$PROVIDERS_CHANGED" == "true" ]]; then
-                      RELEASE_PACKAGE=happy-providers pnpm exec tsx scripts/publishPackage.ts
-                  fi
-                  if pnpm view @slopus/happy-terminal name --json >/dev/null 2>&1; then
-                      RELEASE_PACKAGE=happy-terminal pnpm exec tsx scripts/publishPackage.ts
-                  else
-                      echo "Skipping the Happy Terminal canary until its npm package is initialized."
-                  fi

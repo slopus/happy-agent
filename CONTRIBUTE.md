@@ -10,9 +10,9 @@ or [@Ex3NDR](https://x.com/Ex3NDR) on X, or email kirill2003de@gmail.com.
 
 ## With push permissions
 
-You can validate a change through real installs instead of waiting on a stable
-release: publish the affected library packages, cut a preview, and test it on a
-nightly Happy Desktop. See [DEVELOPMENT.md](DEVELOPMENT.md#publishing).
+Request a Happy Agent preview and test it on Nightly Desktop. Changed published
+SDK dependencies may need a separate library release; most Agent previews do not.
+See [DEVELOPMENT.md](DEVELOPMENT.md#publishing).
 
 ## By pull request
 

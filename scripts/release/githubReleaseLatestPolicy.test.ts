@@ -37,7 +37,10 @@ describe("GitHub Release latest policy", () => {
 
             if (workflowName === HAPPY_AGENT_RELEASE_WORKFLOW) {
                 assert.equal(marksLatest, 1, "Happy Agent must explicitly publish as Latest.");
-                assert.equal(refusesLatest, 0, "Happy Agent must not opt out of Latest.");
+                assert.ok(
+                    refusesLatest >= 1,
+                    "Happy Agent previews must explicitly opt out of Latest.",
+                );
                 continue;
             }
 

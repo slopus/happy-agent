@@ -148,55 +148,27 @@ work into history without making the composer jump.
 
 ## Publishing
 
-Happy Terminal releases are dispatched manually through the `Release Happy Terminal`
-GitHub Actions workflow from `main`. The action requires an explicit semantic version and
-Markdown change notes. It applies that version to an ephemeral checkout, typechecks, tests,
-builds, packs, and smoke-tests the exact npm tarball before it creates any tag.
+Ask an agent to release; it follows the [release instructions](.agent/skills/release-agent/SKILL.md).
+An unqualified request publishes a Happy Agent preview (`X.Y.Z-preview.N`) for
+Nightly Desktop. Explicit production requests publish the next stable patch.
+Both use the existing manually dispatched workflow: version and notes in,
+build/test/sign and publication in one run. Previews never move GitHub's stable
+latest release. Previews are requested, not triggered by pushes.
 
-After those gates pass, the action commits the requested package version to `main`, creates
-`happy-terminal-v<version>` on that exact commit and opens a draft GitHub Release. It publishes
-the verified tarball as `@slopus/happy-terminal` through npm Trusted Publishing, verifies the
-registry, and then makes the GitHub Release public. Prereleases use their own npm channel, such
-as `beta`; stable releases move `latest`.
+Happy Terminal uses its separate manual workflow and remains stable-only. It
+builds and smoke-tests the npm tarball, commits the version, then publishes and
+verifies npm before creating its tag and GitHub Release. SDKs keep their existing
+tagged publication workflows.
+
+If publication fails before a tag exists, fix the issue and rerun the version.
+Never move or reuse an existing tag; advance the release version instead.
 
 ### Contributors with push permissions
 
-With push access you can validate a change through real installs instead of
-waiting on a stable release: publish the affected library packages, cut a
-preview, and test it on a nightly Happy Desktop. The release tiers are
+With release access you can request an Agent preview and test it on Nightly
+Desktop. Publish and repin changed SDKs only when the candidate needs new
+published dependencies; that is not a prerequisite for every preview. The flows are
 described in [master-plans/25-releases.md](master-plans/25-releases.md).
-
-### Beta releases
-
-Dispatch the workflow with the next explicit beta version when a change should reach early
-adopters quickly. Beta releases use npm's `beta` distribution tag and never move `latest`.
-Install or advance to the newest beta with:
-
-```sh
-happy-terminal upgrade
-```
-
-That command runs `npm install -g @slopus/happy-terminal@beta`. When the installed version
-is a canary, it preserves that channel and installs `@slopus/happy-terminal@canary`
-instead.
-
-### Canary builds
-
-Every push to `main` publishes a canary to npm under the `canary` distribution
-tag, so a change can be installed and used before it is released:
-
-```sh
-npm install --global @slopus/happy-terminal@canary
-```
-
-A canary is versioned from the release it followed — `0.0.148-canary.<build>.<commit>`
-after `0.0.147` — so reading one tells you what it is built on. Being a
-prerelease keeps it out of the way: npm excludes prereleases from ranges that do
-not ask for them, so no ordinary install resolves a canary, and publishing one
-never moves `latest`. Nothing needs versioning by hand; the workflow sets it.
-
-If the action fails before creating the tag, fix the issue and rerun the same version. Once a
-tag exists, never move or reuse it; advance to the next release version if publication failed.
 
 ### One-time publishing setup
 
