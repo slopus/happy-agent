@@ -57,8 +57,7 @@
     "packageManager": "pnpm@10.28.1",
     "pnpm": {
         "overrides": {
-            "@steve.kite/stdlib": "0.0.12",
-            "@slopus/happy-agent-compute": "workspace:*"
+            "@steve.kite/stdlib": "0.0.12"
         },
         "supportedArchitectures": {
             "cpu": [

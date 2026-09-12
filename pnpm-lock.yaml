@@ -6,7 +6,6 @@ settings:
 
 overrides:
   '@steve.kite/stdlib': 0.0.12
-  '@slopus/happy-agent-compute': workspace:*
 
 patchedDependencies:
   '@libsql/client@0.17.4':
@@ -155,8 +154,8 @@ importers:
         specifier: 0.0.64
         version: 0.0.64
       '@slopus/happy-agent-compute':
-        specifier: workspace:*
-        version: link:../happy-agent-compute
+        specifier: 0.1.15
+        version: 0.1.15
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -304,8 +303,8 @@ importers:
         specifier: 0.0.64
         version: 0.0.64
       '@slopus/happy-agent-compute':
-        specifier: workspace:*
-        version: link:../happy-agent-compute
+        specifier: npm:@slopus/happy-agent-compute@0.1.15
+        version: 0.1.15
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -389,8 +388,8 @@ importers:
         specifier: 0.0.64
         version: 0.0.64
       '@slopus/happy-agent-compute':
-        specifier: workspace:*
-        version: link:../happy-agent-compute
+        specifier: npm:@slopus/happy-agent-compute@0.1.15
+        version: 0.1.15
       '@slopus/happy-providers':
         specifier: 0.0.27
         version: 0.0.27(ws@8.21.1)(zod@4.4.3)
@@ -2028,6 +2027,10 @@ packages:
   '@slopus/happy-agent-client@0.0.64':
     resolution: {integrity: sha512-5o7rTYgnKUsKCQQdbQgGAvZO8scBvl0Gwz9f1a/hlQjjnU1TJmNVRwdYQzcVNQJ3T9J6hz6I4NkmVthNZpYITw==}
     engines: {node: '>=20'}
+
+  '@slopus/happy-agent-compute@0.1.15':
+    resolution: {integrity: sha512-SjpEhAdVlwKmNJ6ZGMe25WoPKjsae5WPjzFKoftVvz2wXGIur+oYcaupAbP+DOhcF70WmKHn0Sh1dSU13R0qhQ==}
+    engines: {node: '>=22.19.0'}
 
   '@slopus/happy-agent-supervisor@0.0.9':
     resolution: {integrity: sha512-9PdxphRcNoADth2lC/rhSqVOC47lxwlRKustq4dqLpJO+a1szdipWXrmwlU9skkdX6VA5dBRsDx50j8tTZIQGA==}
@@ -5264,6 +5267,23 @@ snapshots:
   '@slopus/happy-agent-client@0.0.64':
     dependencies:
       '@sinclair/typebox': 0.34.49
+
+  '@slopus/happy-agent-compute@0.1.15':
+    dependencies:
+      '@lydell/node-pty': 1.2.0-beta.15
+      '@sinclair/typebox': 0.34.49
+      '@slopus/happy-agent-supervisor': 0.0.9
+      '@steve.kite/stdlib': 0.0.12
+      dockerode: 5.0.1
+      just-bash: 3.0.2
+    optionalDependencies:
+      '@slopus/happy-agent-supervisor-darwin-arm64': '@slopus/happy-agent-supervisor@0.0.9-darwin-arm64'
+      '@slopus/happy-agent-supervisor-darwin-x64': '@slopus/happy-agent-supervisor@0.0.9-darwin-x64'
+      '@slopus/happy-agent-supervisor-linux-arm64': '@slopus/happy-agent-supervisor@0.0.9-linux-arm64'
+      '@slopus/happy-agent-supervisor-linux-x64': '@slopus/happy-agent-supervisor@0.0.9-linux-x64'
+      '@slopus/happy-agent-supervisor-win32-x64': '@slopus/happy-agent-supervisor@0.0.9-win32-x64'
+    transitivePeerDependencies:
+      - supports-color
 
   '@slopus/happy-agent-supervisor@0.0.9':
     dependencies:

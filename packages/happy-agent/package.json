@@ -50,7 +50,7 @@
         "@sinclair/typebox": "^0.34.49",
         "@slopus/happy-agent-base": "0.0.54",
         "@slopus/happy-agent-client": "0.0.64",
-        "@slopus/happy-agent-compute": "0.1.11",
+        "@slopus/happy-agent-compute": "0.1.15",
         "@slopus/happy-agent-modules": "workspace:*",
         "@slopus/happy-agent-supervisor": "0.0.9",
         "@slopus/happy-providers": "0.0.27",
