@@ -159,6 +159,13 @@ the verified tarball as `@slopus/happy-terminal` through npm Trusted Publishing,
 registry, and then makes the GitHub Release public. Prereleases use their own npm channel, such
 as `beta`; stable releases move `latest`.
 
+### Contributors with push permissions
+
+With push access you can validate a change through real installs instead of
+waiting on a stable release: publish the affected library packages, cut a
+preview, and test it on a nightly Happy Desktop. The release tiers are
+described in [master-plans/25-releases.md](master-plans/25-releases.md).
+
 ### Beta releases
 
 Dispatch the workflow with the next explicit beta version when a change should reach early
