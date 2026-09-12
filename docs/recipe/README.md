@@ -16,6 +16,13 @@ ask for confirmation of each routine step, and do not bypass permission or crede
 Recipes ship with Happy Agent and are available beside the installed documentation README, even
 when the current agent's workspace is unrelated to the Happy Agent source checkout.
 
+## Windows and WSL
+
+Read [Set up WSL projects](setup-wsl-agent.md) when adding Linux projects to a Windows installation.
+Keep bots on Windows by default and connect a separate Happy Agent in the chosen WSL distribution
+through the existing remote connection. Reuse the Linux user's projects and provider login; do not
+copy the Windows daemon database or run Windows project tools against a Linux project path.
+
 ## Happy teams
 
 Read [Create and deploy a Happy team](deploy-happy-team.md) for the complete shared-server workflow:

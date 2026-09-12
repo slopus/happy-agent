@@ -1,5 +1,13 @@
 # Bots — learnings
 
+## Windows bots coordinate WSL as a separate remote installation
+
+WSL projects use the existing remote Happy Agent connection rather than switching a Windows
+bot's execution environment. Keep the user's bot roster and conversations on Windows by default;
+the WSL daemon owns Linux projects, workspaces, tools, and provider settings. Chief of Staff follows
+the installed WSL setup recipe, reuses the existing Linux user's login, and verifies work through
+the remote connection. Neither daemon state nor bot identities are copied between installations.
+
 ## Optimistic creation reserves all three identities together
 
 The phone needs stable bot, workspace, and agent IDs before creation finishes. Creation now accepts
