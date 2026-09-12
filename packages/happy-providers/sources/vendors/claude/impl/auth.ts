@@ -3,10 +3,13 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const MACOS_KEYCHAIN_TIMEOUT_MS = 500;
+const MACOS_KEYCHAIN_ATTEMPTS = 3;
+const MACOS_KEYCHAIN_RETRY_DELAY_MS = 20;
 
 interface ClaudeCodeCredentials {
     claudeAiOauth?: {
@@ -61,7 +64,7 @@ export async function readClaudeCodeOAuthToken(
     }
 }
 
-async function readTokenFromMacOsKeychain(
+export async function readTokenFromMacOsKeychain(
     configDirectory: string,
     env: NodeJS.ProcessEnv,
 ): Promise<string | undefined> {
@@ -73,6 +76,30 @@ async function readTokenFromMacOsKeychain(
     const service = `Claude Code${oauthSuffix}-credentials${directorySuffix}`;
     const account = env.USER ?? userInfo().username;
 
+    // Claude Code stores a refreshed token with `security add-generic-password -U`, which deletes
+    // the item and adds it again. A read landing in that window fails with errSecItemNotFound for a
+    // credential that is present and valid, and `security` itself occasionally dies on a signal.
+    // Claude Code absorbs both behind a cache that keeps serving the last value it read; this
+    // function has no cache, so a single swallowed failure is reported to the caller as a missing
+    // credential. Retry instead, since the window closes within milliseconds.
+    for (let attempt = 1; attempt <= MACOS_KEYCHAIN_ATTEMPTS; attempt++) {
+        const token = await readTokenFromMacOsKeychainOnce(account, service);
+        if (token !== undefined) {
+            return token;
+        }
+
+        if (attempt < MACOS_KEYCHAIN_ATTEMPTS) {
+            await delay(MACOS_KEYCHAIN_RETRY_DELAY_MS * attempt);
+        }
+    }
+
+    return undefined;
+}
+
+async function readTokenFromMacOsKeychainOnce(
+    account: string,
+    service: string,
+): Promise<string | undefined> {
     try {
         const { stdout } = await execFileAsync(
             "security",
