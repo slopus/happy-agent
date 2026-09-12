@@ -23,6 +23,9 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
+    windows:
+        uses: ./.github/workflows/build-windows-sandbox.yml
+
     verify:
         name: ${{ matrix.name }}
         runs-on: ${{ matrix.runner }}
@@ -132,7 +135,7 @@ jobs:
     publish:
         name: Publish @slopus/happy-agent-supervisor
         if: startsWith(github.ref, 'refs/tags/happy-agent-supervisor-v')
-        needs: [verify, package]
+        needs: [verify, package, windows]
         runs-on: ubuntu-24.04
         environment: npm
         timeout-minutes: 20
@@ -210,6 +213,8 @@ jobs:
                       chmod +x "${binary}"
                       node scripts/package.mjs platform --target "${target}" --binary "${binary}"
                   done
+                  node scripts/package.mjs platform --target x86_64-pc-windows-gnu \
+                    --binary "${binaries}/happy-agent-supervisor-x86_64-pc-windows-gnu/happy-agent-supervisor.exe"
                   node scripts/package.mjs root
 
             - name: Publish the platform packages
@@ -219,7 +224,7 @@ jobs:
               # not exist yet. They stay off `latest`, because nothing installs them by name.
               run: |
                   set -euo pipefail
-                  for tarball in *-darwin-*.tgz *-linux-*.tgz; do
+                  for tarball in *-darwin-*.tgz *-linux-*.tgz *-win32-*.tgz; do
                       echo "Publishing ${tarball}..."
                       node "${NPM_CLI}" publish "${tarball}" --access public --tag platform --provenance
                   done

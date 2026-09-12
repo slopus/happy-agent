@@ -18,6 +18,12 @@ import { fileURLToPath } from "node:url";
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceManifest = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"));
 const targets = {
+    "x86_64-pc-windows-gnu": {
+        alias: "@slopus/happy-agent-supervisor-win32-x64",
+        cpu: "x64",
+        os: "win32",
+        tag: "win32-x64",
+    },
     "aarch64-apple-darwin": {
         alias: "@slopus/happy-agent-supervisor-darwin-arm64",
         cpu: "arm64",
@@ -92,14 +98,39 @@ function buildPlatform(releaseVersion, outputDirectory, targetName, binaryName) 
     const stage = createStage(target.tag);
     try {
         copySharedFiles(stage);
-        const executable = path.join(stage, "vendor", targetName, "bin", "happy-agent-supervisor");
+        const executableName =
+            target.os === "win32" ? "happy-agent-supervisor.exe" : "happy-agent-supervisor";
+        const executable = path.join(stage, "vendor", targetName, "bin", executableName);
         mkdirSync(path.dirname(executable), { recursive: true });
         copyFileSync(binary, executable);
         chmodSync(executable, 0o755);
-        const digest = createHash("sha256").update(readFileSync(executable)).digest("hex");
+        const packagedFiles = [executableName];
+        if (target.os === "win32") {
+            for (const helper of ["happy-sandbox-runner.exe", "happy-sandbox-setup.exe"]) {
+                copyFileSync(
+                    path.join(path.dirname(binary), helper),
+                    path.join(path.dirname(executable), helper),
+                );
+                packagedFiles.push(helper);
+            }
+            for (const license of ["LICENSE.codex", "NOTICE.codex"]) {
+                copyFileSync(
+                    path.join(packageRoot, "native", "windows", license),
+                    path.join(path.dirname(executable), license),
+                );
+                packagedFiles.push(license);
+            }
+        }
         writeFileSync(
             path.join(stage, "SHA256SUMS"),
-            `${digest}  vendor/${targetName}/bin/happy-agent-supervisor\n`,
+            packagedFiles
+                .map(
+                    (name) =>
+                        `${createHash("sha256")
+                            .update(readFileSync(path.join(path.dirname(executable), name)))
+                            .digest("hex")}  vendor/${targetName}/bin/${name}\n`,
+                )
+                .join(""),
         );
         writeManifest(stage, {
             name: sourceManifest.name,
@@ -111,7 +142,7 @@ function buildPlatform(releaseVersion, outputDirectory, targetName, binaryName) 
             os: [target.os],
             cpu: [target.cpu],
             bin: {
-                "happy-agent-supervisor": `vendor/${targetName}/bin/happy-agent-supervisor`,
+                "happy-agent-supervisor": `vendor/${targetName}/bin/${executableName}`,
             },
             files: ["vendor", "SHA256SUMS", ...sharedFiles],
             publishConfig: { access: "public", tag: "platform" },
@@ -163,6 +194,11 @@ function required(values, key) {
 }
 
 function run(command, commandArguments, cwd = packageRoot) {
+    if (process.platform === "win32" && command === "pnpm") {
+        if (!process.env.npm_execpath) throw new Error("Run package scripts through pnpm.");
+        commandArguments = [process.env.npm_execpath, ...commandArguments];
+        command = process.execPath;
+    }
     const result = spawnSync(command, commandArguments, {
         cwd,
         encoding: "utf8",

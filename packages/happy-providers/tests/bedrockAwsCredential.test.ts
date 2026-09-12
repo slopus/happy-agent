@@ -184,5 +184,6 @@ async function captureRequest(run: (endpoint: string) => Promise<void>): Promise
 }
 
 function shellArgument(value: string): string {
+    if (process.platform === "win32") return `"${value}"`;
     return `'${value.replaceAll("'", `'\\''`)}'`;
 }

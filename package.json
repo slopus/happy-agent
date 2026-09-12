@@ -59,8 +59,7 @@
         "overrides": {
             "@steve.kite/stdlib": "0.0.12",
             "@slopus/happy-agent-supervisor": "workspace:*",
-            "@slopus/happy-agent-compute": "workspace:*",
-            "@slopus/happy-providers": "workspace:*"
+            "@slopus/happy-agent-compute": "workspace:*"
         },
         "supportedArchitectures": {
             "cpu": [

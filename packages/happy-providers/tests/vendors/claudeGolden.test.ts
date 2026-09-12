@@ -378,6 +378,7 @@ function normalize(value: unknown, cwd: string): unknown {
             return item
                 .replaceAll(cwd, "<WORKSPACE>")
                 .replaceAll(tmpdir(), "<TMP>")
+                .replace(/<TMP>\\claude-resume-[^\s"]+/gu, (path) => path.replaceAll("\\", "/"))
                 .replaceAll(home, "<HOME>")
                 .replaceAll(homeRelativeCwd, "<WORKSPACE>")
                 .replaceAll(SDK_DEFAULT_WORKSPACE_SLUG, "<WORKSPACE_SLUG>")

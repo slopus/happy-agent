@@ -97,8 +97,11 @@ describe("Grok session credential", () => {
         expect(typeof expiresAt).toBe("string");
         expect(Date.parse(expiresAt as string)).toBeGreaterThan(Date.now());
 
-        const mode = (await stat(authFile)).mode & 0o777;
-        expect(mode).toBe(0o600);
+        // POSIX mode assertions do not describe Windows ACLs.
+        if (process.platform !== "win32") {
+            const mode = (await stat(authFile)).mode & 0o777;
+            expect(mode).toBe(0o600);
+        }
     });
 
     it("adopts a token another process already refreshed instead of spending the refresh token", async () => {

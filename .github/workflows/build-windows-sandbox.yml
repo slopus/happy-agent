@@ -1,0 +1,59 @@
+name: Build and verify Windows sandbox SDK
+
+on:
+    workflow_call:
+
+permissions:
+    contents: read
+
+jobs:
+    windows:
+        runs-on: windows-2025
+        timeout-minutes: 60
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+              id: msys2
+              with:
+                  msystem: MINGW64
+                  install: mingw-w64-x86_64-gcc
+            - name: Select pinned toolchain
+              env:
+                  MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+              run: |
+                  "$env:MSYS2_LOCATION\mingw64\bin" >> $env:GITHUB_PATH
+                  rustup toolchain install 1.95.0-x86_64-pc-windows-gnu --profile minimal
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - name: Build supervisor and matching helpers
+              env:
+                  CARGO_BUILD_JOBS: "2"
+              run: node packages/happy-agent-supervisor/scripts/build-native-windows.mjs
+            - name: Set up once on disposable runner
+              run: |
+                  if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Hosted CI only' }
+                  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+                  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+                  if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'An already elevated runner is required' }
+                  & packages/happy-agent-supervisor/native/target/release/happy-agent-supervisor.exe --setup
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $status = & packages/happy-agent-supervisor/native/target/release/happy-agent-supervisor.exe --setup-status | ConvertFrom-Json
+                  if ($LASTEXITCODE -ne 0 -or -not $status.ready) { throw 'Sandbox setup did not complete' }
+                  "HAPPY_WINDOWS_SANDBOX_HOME=$($status.stateDirectory)" >> $env:GITHUB_ENV
+                  'HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1' >> $env:GITHUB_ENV
+            - name: Verify enforced boundaries and process IO
+              run: |
+                  node packages/happy-agent-supervisor/scripts/verify-native-windows-network.mjs
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node packages/happy-agent-supervisor/scripts/verify-native-windows-placeholders.mjs
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node packages/happy-agent-supervisor/scripts/verify-native-windows-output.mjs
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: happy-agent-supervisor-x86_64-pc-windows-gnu
+                  path: packages/happy-agent-supervisor/native/target/release/*.exe
+                  if-no-files-found: error

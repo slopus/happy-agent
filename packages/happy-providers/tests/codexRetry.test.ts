@@ -386,7 +386,10 @@ describe("Codex stream retries", () => {
             );
             await chmod(join(codexHome, "installation_id"), 0o600);
             expect(await resolveCodexInstallationIdAt(codexHome)).toBe(resolved[0]);
-            expect((await stat(join(codexHome, "installation_id"))).mode & 0o777).toBe(0o644);
+            // Windows exposes synthesized mode bits; chmod does not implement POSIX permissions.
+            if (process.platform !== "win32") {
+                expect((await stat(join(codexHome, "installation_id"))).mode & 0o777).toBe(0o644);
+            }
         } finally {
             await rm(codexHome, { force: true, recursive: true });
         }
