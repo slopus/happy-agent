@@ -52,7 +52,7 @@
         "@slopus/happy-agent-client": "0.0.64",
         "@slopus/happy-agent-compute": "0.1.11",
         "@slopus/happy-agent-modules": "workspace:*",
-        "@slopus/happy-agent-supervisor": "0.0.5",
+        "@slopus/happy-agent-supervisor": "0.0.9",
         "@slopus/happy-providers": "0.0.27",
         "@steve.kite/stdlib": "0.0.12"
     },

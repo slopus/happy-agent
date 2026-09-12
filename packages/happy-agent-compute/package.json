@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-compute",
-    "version": "0.1.11",
+    "version": "0.1.12",
     "description": "Filesystems, shells, sandboxes, and containers for Happy agents.",
     "license": "MIT",
     "repository": {
@@ -35,7 +35,7 @@
     "dependencies": {
         "@lydell/node-pty": "1.2.0-beta.15",
         "@sinclair/typebox": "^0.34.49",
-        "@slopus/happy-agent-supervisor": "0.0.5",
+        "@slopus/happy-agent-supervisor": "0.0.9",
         "@steve.kite/stdlib": "0.0.12",
         "dockerode": "^5.0.1",
         "just-bash": "^3.0.2"
@@ -47,10 +47,11 @@
         "vitest": "^3.2.4"
     },
     "optionalDependencies": {
-        "@slopus/happy-agent-supervisor-darwin-arm64": "npm:@slopus/happy-agent-supervisor@0.0.5-darwin-arm64",
-        "@slopus/happy-agent-supervisor-darwin-x64": "npm:@slopus/happy-agent-supervisor@0.0.5-darwin-x64",
-        "@slopus/happy-agent-supervisor-linux-arm64": "npm:@slopus/happy-agent-supervisor@0.0.5-linux-arm64",
-        "@slopus/happy-agent-supervisor-linux-x64": "npm:@slopus/happy-agent-supervisor@0.0.5-linux-x64"
+        "@slopus/happy-agent-supervisor-darwin-arm64": "npm:@slopus/happy-agent-supervisor@0.0.9-darwin-arm64",
+        "@slopus/happy-agent-supervisor-darwin-x64": "npm:@slopus/happy-agent-supervisor@0.0.9-darwin-x64",
+        "@slopus/happy-agent-supervisor-linux-arm64": "npm:@slopus/happy-agent-supervisor@0.0.9-linux-arm64",
+        "@slopus/happy-agent-supervisor-linux-x64": "npm:@slopus/happy-agent-supervisor@0.0.9-linux-x64",
+        "@slopus/happy-agent-supervisor-win32-x64": "npm:@slopus/happy-agent-supervisor@0.0.9-win32-x64"
     },
     "engines": {
         "node": ">=22.19.0"

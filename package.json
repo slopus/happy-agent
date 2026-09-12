@@ -58,7 +58,6 @@
     "pnpm": {
         "overrides": {
             "@steve.kite/stdlib": "0.0.12",
-            "@slopus/happy-agent-supervisor": "workspace:*",
             "@slopus/happy-agent-compute": "workspace:*"
         },
         "supportedArchitectures": {

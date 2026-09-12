@@ -398,14 +398,11 @@ export const { getQuickJS } = QJS;
         const relativePath = `${relativeDirectory}/happy-agent-supervisor${supervisorTarget.platform === "win32" ? ".exe" : ""}`;
         const variables = [variable];
         if (supervisorTarget.platform === "win32") {
-            const supervisorRoot = packageDependencyRoot(
-                computeRoot,
-                "@slopus/happy-agent-supervisor",
+            const manifest = resolveRequired(
+                computeRequire,
+                "@slopus/happy-agent-supervisor-win32-x64/package.json",
             );
-            const profile = process.env.HAPPY_AGENT_NATIVE_PROFILE ?? "release";
-            if (profile !== "release" && profile !== "debug")
-                throw new Error("Invalid native build profile.");
-            const nativeRoot = join(supervisorRoot, "native", "target", profile);
+            const nativeRoot = join(dirname(manifest), relativeDirectory);
             assets.push(
                 asset(variable, join(nativeRoot, "happy-agent-supervisor.exe"), relativePath, true),
             );
@@ -428,11 +425,7 @@ export const { getQuickJS } = QJS;
                 const licenseVariable = variable + name.replaceAll(".", "");
                 variables.push(licenseVariable);
                 assets.push(
-                    asset(
-                        licenseVariable,
-                        join(supervisorRoot, "native", "windows", name),
-                        `${relativeDirectory}/${name}`,
-                    ),
+                    asset(licenseVariable, join(nativeRoot, name), `${relativeDirectory}/${name}`),
                 );
             }
         } else {

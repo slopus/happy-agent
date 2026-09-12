@@ -19,17 +19,17 @@ jobs:
             fail-fast: false
             matrix:
                 include:
-                    - component: sandbox
-                      script: packages/happy-agent-supervisor/scripts/build-native-windows.mjs
-                      output: packages/happy-agent-supervisor/native/target/release
                     - component: monty
                       script: packages/happy-agent/scripts/build-native-monty.mjs
+                      source: packages/happy-agent/native/monty/**
                       output: packages/happy-agent/native/target/win32-x64
                     - component: fff
                       script: packages/happy-agent/scripts/build-native-fff.mjs
+                      source: packages/happy-agent/native/fff/**
                       output: packages/happy-agent/native/target/win32-x64
                     - component: libsql
                       script: packages/happy-agent/scripts/build-native-libsql.mjs
+                      source: packages/happy-agent/native/libsql/**
                       output: packages/happy-agent/native/target/win32-x64
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -42,9 +42,9 @@ jobs:
               uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
               with:
                   path: ${{ matrix.output }}
-                  # Bump v1 when changing the compiler setup below. Package-only
+                  # Bump the cache version when changing the compiler setup below. Package-only
                   # changes reuse native outputs; every run still tests the final binary.
-                  key: windows-gnu-rust195-v1-${{ matrix.component }}-${{ hashFiles('.gitattributes', 'packages/happy-agent/native/libsql/**', 'packages/happy-agent/native/monty/**', 'packages/happy-agent/native/fff/**', 'packages/happy-agent-supervisor/native/windows/**', 'packages/happy-agent/scripts/build-native-*.mjs', 'packages/happy-agent/scripts/assertWindowsSystemImports.mjs', 'packages/happy-agent-supervisor/scripts/build-native-windows.mjs') }}
+                  key: windows-gnu-rust195-v2-${{ matrix.component }}-${{ hashFiles('.gitattributes', matrix.source, matrix.script, 'packages/happy-agent/scripts/assertWindowsSystemImports.mjs') }}
             - name: Install GNU native build tools
               if: steps.native-cache.outputs.cache-hit != 'true'
               id: msys2
@@ -104,6 +104,21 @@ jobs:
               run: pnpm install --frozen-lockfile
             - name: Build workspace JavaScript
               run: pnpm build
+            - name: Stage the published sandbox SDK for its native regression checks
+              run: |
+                  @'
+                  const { cpSync, mkdirSync } = require('node:fs');
+                  const { createRequire } = require('node:module');
+                  const { dirname, join, resolve } = require('node:path');
+                  const agent = createRequire(resolve('packages/happy-agent/package.json'));
+                  const compute = createRequire(agent.resolve('@slopus/happy-agent-compute'));
+                  const platform = dirname(compute.resolve('@slopus/happy-agent-supervisor-win32-x64/package.json'));
+                  const source = join(platform, 'vendor/x86_64-pc-windows-gnu/bin');
+                  const destination = 'packages/happy-agent-supervisor/native/target/release';
+                  mkdirSync(destination, { recursive: true });
+                  cpSync(source, destination, { recursive: true });
+                  '@ | node
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             - name: Select the built libsql binding for native regression checks
               run: |
                   @'
