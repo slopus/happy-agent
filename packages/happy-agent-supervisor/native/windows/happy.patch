@@ -1599,6 +1599,80 @@ index e83a42a..ee49c67 100644
  pub use setup::run_setup_refresh;
  #[cfg(target_os = "windows")]
  pub use setup::run_setup_refresh_with_extra_read_roots;
+diff --git a/codex-rs/windows-sandbox-rs/src/path_normalization.rs b/codex-rs/windows-sandbox-rs/src/path_normalization.rs
+index 1735b74..5a38d33 100644
+--- a/codex-rs/windows-sandbox-rs/src/path_normalization.rs
++++ b/codex-rs/windows-sandbox-rs/src/path_normalization.rs
+@@ -6,18 +6,68 @@ pub fn canonicalize_path(path: &Path) -> PathBuf {
+ }
+ 
+ pub fn canonical_path_key(path: &Path) -> String {
+-    canonicalize_path(path)
++    // Missing descendants still belong to the canonical existing parent. Without
++    // this, an 8.3 or junction spelling disagrees with an existing write root.
++    canonicalize_with_missing_children(path)
+         .to_string_lossy()
+         .replace('\\', "/")
+         .to_ascii_lowercase()
+ }
+ 
++fn canonicalize_with_missing_children(path: &Path) -> PathBuf {
++    let mut ancestor = path;
++    let mut missing = Vec::new();
++    loop {
++        if let Ok(mut resolved) = dunce::canonicalize(ancestor) {
++            for component in missing.into_iter().rev() {
++                resolved.push(component);
++            }
++            return resolved;
++        }
++        let (Some(name), Some(parent)) = (ancestor.file_name(), ancestor.parent()) else {
++            return path.to_path_buf();
++        };
++        missing.push(name.to_os_string());
++        ancestor = parent;
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::canonical_path_key;
+     use pretty_assertions::assert_eq;
+     use std::path::Path;
+ 
++    #[test]
++    fn missing_descendants_resolve_windows_short_parent_names() {
++        use std::os::windows::ffi::{OsStrExt, OsStringExt};
++        use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
++        let temp = tempfile::tempdir().expect("tempdir");
++        let root = temp.path().join("Workspace Long Directory");
++        std::fs::create_dir(&root).expect("workspace");
++        let long: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
++        let required = unsafe { GetShortPathNameW(long.as_ptr(), std::ptr::null_mut(), 0) };
++        assert!(required > 0, "GetShortPathNameW length");
++        let mut short = vec![0u16; required as usize + 1];
++        let written =
++            unsafe { GetShortPathNameW(long.as_ptr(), short.as_mut_ptr(), short.len() as u32) };
++        assert!(
++            written > 0 && written < short.len() as u32,
++            "GetShortPathNameW path"
++        );
++        let alias =
++            std::path::PathBuf::from(std::ffi::OsString::from_wide(&short[..written as usize]));
++        let missing = alias.join("absent-parent").join(".agents");
++        assert!(!missing.exists());
++        assert_eq!(
++            canonical_path_key(&missing),
++            canonical_path_key(&root.join("absent-parent").join(".agents"))
++        );
++        assert!(crate::cap::workspace_write_root_contains_path(
++            &root, &missing
++        ));
++    }
++
+     #[test]
+     fn canonical_path_key_normalizes_case_and_separators() {
+         let windows_style = Path::new(r"C:\Users\Dev\Repo");
 diff --git a/codex-rs/windows-sandbox-rs/src/provisioning_client.rs b/codex-rs/windows-sandbox-rs/src/provisioning_client.rs
 index d02072b..850cccc 100644
 --- a/codex-rs/windows-sandbox-rs/src/provisioning_client.rs

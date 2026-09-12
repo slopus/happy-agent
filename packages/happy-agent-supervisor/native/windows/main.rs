@@ -36,11 +36,7 @@ struct Network {
 }
 
 fn path_in_write_roots(path:&std::path::Path, roots:&[PathBuf]) -> bool {
-    let key=path.to_string_lossy().replace('\\',"/").trim_end_matches('/').to_lowercase();
-    roots.iter().any(|root| {
-        let root=root.to_string_lossy().replace('\\',"/").trim_end_matches('/').to_lowercase();
-        key==root || key.starts_with(&(root+"/"))
-    })
+    roots.iter().any(|root| codex_windows_sandbox::workspace_write_root_contains_path(root,path))
 }
 
 async fn run() -> Result<i32> {
@@ -120,8 +116,7 @@ async fn run() -> Result<i32> {
     let mut denied_read=Vec::new();
     for path in p.denied_read_paths {
         if !path.exists() {
-            let key=path.to_string_lossy().to_lowercase();
-            if write_roots.iter().any(|root| key==root.to_string_lossy().to_lowercase() || key.starts_with(&(root.to_string_lossy().trim_end_matches(['\\','/']).to_lowercase()+"\\"))) {
+            if path_in_write_roots(&path,&write_roots) {
                 bail!("cannot protect absent readable path inside a writable root: {}",path.display());
             }
             continue;

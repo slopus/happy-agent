@@ -19,6 +19,21 @@ if (!state || !isAbsolute(state))
 const outside = root + "-outside.toml";
 const files = ["happy.toml", "AGENTS.md", "AGENTS_SECURITY.md", "mcp.toml", "keep.toml"];
 const directories = [".git", ".agents", ".codex"];
+const shortPath = spawnSync(
+    "powershell.exe",
+    [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `$ErrorActionPreference = 'Stop'; (New-Object -ComObject Scripting.FileSystemObject).GetFolder('${root.replaceAll("'", "''")}').ShortPath`,
+    ],
+    { windowsHide: true, encoding: "utf8", timeout: 30_000 },
+);
+assert.equal(shortPath.status, 0, shortPath.stderr);
+const policyRoot = shortPath.stdout.trim();
+assert.ok(isAbsolute(policyRoot), "Windows returned an absolute short path");
+assert.equal((await stat(policyRoot)).isDirectory(), true);
+console.log(JSON.stringify({ fixture: root, policyRoot, shortPathCheck: true }));
 assert.equal(spawnSync(git, ["init", root], { windowsHide: true }).status, 0);
 await writeFile(join(root, "keep.toml"), "keep = 1\n");
 const policy = {
@@ -27,9 +42,9 @@ const policy = {
     // Missing names must remain protected even when their spelling differs from
     // the filesystem casing of the existing workspace root.
     deniedWritePaths: [...files, ...directories]
-        .map((n) => join(root, n).toUpperCase())
+        .map((n) => join(policyRoot, n).toUpperCase())
         .concat(outside),
-    deniedWriteFilePaths: files.map((n) => join(root, n).toUpperCase()).concat(outside),
+    deniedWriteFilePaths: files.map((n) => join(policyRoot, n).toUpperCase()).concat(outside),
     network: { egress: false, localBinding: false },
 };
 const program = `const fs=require('fs');const cp=require('child_process');const result={};
