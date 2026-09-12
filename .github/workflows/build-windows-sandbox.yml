@@ -52,6 +52,8 @@ jobs:
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   node packages/happy-agent-supervisor/scripts/verify-native-windows-output.mjs
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node packages/happy-agent-supervisor/scripts/verify-native-windows-stability.mjs
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
                   name: happy-agent-supervisor-x86_64-pc-windows-gnu

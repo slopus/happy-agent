@@ -143,7 +143,10 @@ async fn run() -> Result<i32> {
         }
     }
     let denied_write=p.denied_write_paths.into_iter()
-        .filter(|path|path.exists() || path_in_write_roots(path,&write_roots))
+        // Outside every writable root the restricted token already denies writes.
+        // Passing those paths to Codex's fallback adds each fresh scratch SID to
+        // their permanent ACL, eventually exhausting Windows' 64 KiB ACL limit.
+        .filter(|path|write_roots.iter().any(|root| codex_windows_sandbox::workspace_write_root_overlaps_path(root,path)))
         .map(AbsolutePathBuf::try_from).collect::<Result<Vec<_>,_>>()?;
     let profile:PermissionProfile=serde_json::from_value(json!({"type":"managed","file_system":{"type":"restricted","entries":entries},"network":if p.network.egress {"enabled"} else {"restricted"}}))?;
     let roots=vec![AbsolutePathBuf::try_from(cwd.clone())?];

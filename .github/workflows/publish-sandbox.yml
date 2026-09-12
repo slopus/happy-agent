@@ -2,7 +2,7 @@ name: Publish happy-agent-supervisor
 
 # The supervisor ships as a native binary per platform, and every claim it makes is an
 # operating-system claim that only that platform's kernel can settle. Nothing is published until all
-# four shipped targets have built and passed their own tests on their own real hardware.
+# five shipped targets have built and passed their own tests on their own real hardware.
 #
 # Publication uses npm's trusted publishing: the registry trusts this workflow in this repository
 # rather than a token, so there is no npm credential in the repository or in any environment. The

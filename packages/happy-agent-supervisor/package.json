@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-supervisor",
-    "version": "0.0.6",
+    "version": "0.0.7",
     "description": "Trusted native sandbox boundary for Happy agent workloads.",
     "keywords": [
         "sandbox",
@@ -41,7 +41,7 @@
         "test": "vitest run",
         "test:native": "cargo +1.96.0 test --manifest-path native/Cargo.toml --locked",
         "build:native:windows": "node scripts/build-native-windows.mjs",
-        "test:native:windows": "node scripts/verify-native-windows-network.mjs && node scripts/verify-native-windows-placeholders.mjs && node scripts/verify-native-windows-output.mjs"
+        "test:native:windows": "node scripts/verify-native-windows-network.mjs && node scripts/verify-native-windows-placeholders.mjs && node scripts/verify-native-windows-output.mjs && node scripts/verify-native-windows-stability.mjs"
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.49"

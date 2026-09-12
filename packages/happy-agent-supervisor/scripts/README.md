@@ -2,7 +2,8 @@
 
 `package.mjs` follows the native npm layout used by Rig Code Mode: platform
 packages carry one binary and checksum, while the root package carries the
-TypeScript API and optional dependencies selecting all four variants.
+TypeScript API and optional dependencies selecting all five variants. Windows
+also includes the matching Happy runner and setup helper, plus their licenses.
 
 `test-apparmor.sh /absolute/path/to/happy-agent-supervisor` runs the real binary inside Ubuntu's
 existing `unprivileged_userns` profile. It verifies that startup fails closed with an actionable
@@ -17,3 +18,8 @@ stdout/stderr bytes and hashes, including the tail before process completion.
 The transport uses bounded queues with backpressure; output-transfer failures
 must return a nonzero exit rather than present incomplete output as success.
 The same verifier also checks restricted ConPTY stdin roundtrips and preservation of a nonzero child exit code.
+
+`verify-native-windows-stability.mjs` alternates 66 real read-only and workspace-write
+commands. It verifies write denials on protected paths and outside the workspace,
+then compares the permanent ACLs and capability registry against their warmed
+baseline. Command scratch directories must not grow either persistent structure.
