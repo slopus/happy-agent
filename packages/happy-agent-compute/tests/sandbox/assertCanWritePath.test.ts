@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +23,58 @@ async function makeWorkspace(): Promise<string> {
 }
 
 describe("assertCanWritePath", () => {
+    it.runIf(process.platform === "win32")(
+        "compares real short-name parents for existing and missing file paths",
+        async () => {
+            const workspace = await makeWorkspace();
+            const quoted = `'${workspace.replaceAll("'", "''")}'`;
+            const command = `(New-Object -ComObject Scripting.FileSystemObject).GetFolder(${quoted}).ShortPath`;
+            const short = execFileSync(
+                "powershell.exe",
+                [
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-EncodedCommand",
+                    Buffer.from(command, "utf16le").toString("base64"),
+                ],
+                { encoding: "utf8", windowsHide: true },
+            ).trim();
+            expect(short.toLowerCase()).not.toBe(workspace.toLowerCase());
+            await writeFile(join(workspace, "existing.txt"), "bytes");
+            for (const [root, target] of [
+                [workspace, short],
+                [short, workspace],
+            ]) {
+                for (const name of ["existing.txt", "missing/child.txt"]) {
+                    await expect(
+                        assertCanWritePath(
+                            root!,
+                            join(target!, name),
+                            computePermissions("workspace_write"),
+                        ),
+                    ).resolves.toBeUndefined();
+                }
+                await expect(
+                    assertCanWritePath(
+                        root!,
+                        join(target!, "policy.toml"),
+                        computePermissions("workspace_write"),
+                        { protectedProjectFiles: ["policy.toml"] },
+                    ),
+                ).rejects.toThrow("protected project file");
+                await expect(
+                    assertCanWritePath(
+                        root!,
+                        join(target!, "denied", "child.txt"),
+                        computePermissions("workspace_write", {
+                            deniedWritePaths: [join(root!, "denied")],
+                        }),
+                    ),
+                ).rejects.toThrow("denied path");
+            }
+        },
+    );
+
     it("refuses every workspace change in Read only mode", async () => {
         const workspace = await makeWorkspace();
         await expect(

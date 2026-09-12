@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
@@ -12,7 +13,9 @@ describe.runIf(enabled)("native Windows compute SDK boundary", () => {
     it("enforces file permissions through the installed supervisor and restores restrictions", async () => {
         if (process.platform !== "win32") throw new Error("Windows live checks require Windows.");
         const ctx = createRootContext().named("windows-compute-release");
-        const root = await mkdtemp(join(import.meta.dirname, ".windows-live-"));
+        // Exercise normal per-user Windows storage. Broad Everyone-write ACLs
+        // are outside the inherited Codex token model's write boundary.
+        const root = await mkdtemp(join(tmpdir(), "happy-windows-live-"));
         const cwd = join(root, "project");
         await mkdir(cwd);
         const compute = createHostCompute({ ctx, cwd });
@@ -75,7 +78,7 @@ describe.runIf(enabled)("native Windows compute SDK boundary", () => {
     it("blocks network access by default and permits an explicit Windows online policy", async () => {
         if (process.platform !== "win32") throw new Error("Windows live checks require Windows.");
         const ctx = createRootContext().named("windows-compute-network-release");
-        const cwd = await mkdtemp(join(import.meta.dirname, ".windows-network-"));
+        const cwd = await mkdtemp(join(tmpdir(), "happy-windows-network-"));
         const compute = createHostCompute({ ctx, cwd });
         const server = createServer((socket) => socket.end("happy-network-proof"));
         await new Promise<void>((resolve, reject) => {

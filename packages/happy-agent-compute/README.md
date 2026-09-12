@@ -191,6 +191,11 @@ online execution; selective host allowlists and independently allowed local list
 Approved full access uses the ordinary caller's permissions. The next restricted command receives
 a fresh restricted token. Neither mode requires an installed Codex application.
 
+Windows write-boundary checks target ordinary per-user project directories. The inherited
+Codex token model can also write to folders with `Everyone` write access, and this release
+does not include Codex TUI's separate permissive-folder audit. Such ACLs are outside this
+release's isolation guarantee; additional hardening is deferred.
+
 ## Processes
 
 `sources/processes/` is the process machinery the host backend runs on, and it is what makes the

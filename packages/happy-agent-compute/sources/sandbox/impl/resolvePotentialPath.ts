@@ -1,4 +1,4 @@
-import { lstat, readlink } from "node:fs/promises";
+import { lstat, readlink, realpath } from "node:fs/promises";
 import { dirname, join, parse, resolve, sep } from "node:path";
 
 export async function resolvePotentialPath(target: string, symlinkDepth = 0): Promise<string> {
@@ -27,10 +27,16 @@ export async function resolvePotentialPath(target: string, symlinkDepth = 0): Pr
                 "code" in error &&
                 (error as NodeJS.ErrnoException).code === "ENOENT"
             ) {
-                return join(current, ...parts.slice(index));
+                // Windows may spell existing ancestors using DOS 8.3 names or
+                // different casing. Resolve that parent before appending names
+                // that do not exist yet, so file and shell policies agree.
+                return join(
+                    process.platform === "win32" ? await realpath(current) : current,
+                    ...parts.slice(index),
+                );
             }
             throw error;
         }
     }
-    return current;
+    return process.platform === "win32" ? realpath(current) : current;
 }

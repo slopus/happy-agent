@@ -24,22 +24,28 @@ matching executable lives.
 
 ## Where it runs
 
-| Platform | Architecture | Rust target                  | Enforcement                                           |
-| -------- | ------------ | ---------------------------- | ----------------------------------------------------- |
-| macOS    | arm64        | `aarch64-apple-darwin`       | Seatbelt profile installed in-process                 |
-| macOS    | x64          | `x86_64-apple-darwin`        | Seatbelt profile installed in-process                 |
-| Linux    | arm64        | `aarch64-unknown-linux-musl` | namespaces, mount policy, seccomp, capability removal |
-| Linux    | x64          | `x86_64-unknown-linux-musl`  | namespaces, mount policy, seccomp, capability removal |
+| Platform   | Architecture | Rust target                  | Enforcement                                             |
+| ---------- | ------------ | ---------------------------- | ------------------------------------------------------- |
+| macOS      | arm64        | `aarch64-apple-darwin`       | Seatbelt profile installed in-process                   |
+| macOS      | x64          | `x86_64-apple-darwin`        | Seatbelt profile installed in-process                   |
+| Linux      | arm64        | `aarch64-unknown-linux-musl` | namespaces, mount policy, seccomp, capability removal   |
+| Linux      | x64          | `x86_64-unknown-linux-musl`  | namespaces, mount policy, seccomp, capability removal   |
+| Windows 11 | x64          | `x86_64-pc-windows-gnu`      | Codex restricted tokens, Happy accounts, ACLs, firewall |
 
 The Linux binaries are static musl builds, so they run on any distribution and
 can be mounted read-only into a container that has no toolchain of its own.
-A local Windows 11 x64 adapter is under validation. It builds a pinned Codex native sandbox
+The Windows 11 x64 adapter builds a pinned Codex native sandbox
 with separate Happy OS identities; see `native/windows/source.json` and the license notices there.
 Run `pnpm build:native:windows` with the specified Rust toolchain installed. Set
 `HAPPY_CODEX_SOURCE_DIR` to reuse a checkout of the exact pinned commit. Building does not
 provision the sandbox. First execution requires one-time native setup; host allowlist proxy
 and independent listener policies currently fail closed until their Windows implementation
-is complete. This local validation build is not a published Windows release.
+is complete. The matching Windows supervisor and helpers are published starting with `0.0.9`.
+
+Windows retains Codex's native restricted-token model. A folder granting write access to
+`Everyone` can satisfy that token's write check even outside the selected writable roots.
+This release does not include Codex TUI's additional world-writable-folder audit; use normal
+per-user project directories. Broader filesystem hardening is deferred.
 
 ## Install
 
