@@ -706,7 +706,7 @@ index df39cfd..3477e13 100644
          fs::write(&new_runner, b"new").expect("create new runner");
  
 diff --git a/codex-rs/windows-sandbox-rs/src/cap.rs b/codex-rs/windows-sandbox-rs/src/cap.rs
-index 41b33b6..8934a12 100644
+index 41b33b6..358d87f 100644
 --- a/codex-rs/windows-sandbox-rs/src/cap.rs
 +++ b/codex-rs/windows-sandbox-rs/src/cap.rs
 @@ -7,6 +7,7 @@ use rand::SeedableRng;
@@ -785,7 +785,44 @@ index 41b33b6..8934a12 100644
  }
  
  pub fn workspace_write_cap_sid_for_root(
-@@ -171,7 +193,7 @@ mod tests {
+@@ -126,7 +148,15 @@ pub fn workspace_write_cap_sid_for_root(
+ }
+ 
+ pub fn workspace_write_root_contains_path(root: &Path, path: &Path) -> bool {
+-    canonicalize_path(path).starts_with(canonicalize_path(root))
++    // Existing paths canonicalize to filesystem casing; missing protected names
++    // retain caller casing. Windows compares both case-insensitively.
++    let root = canonical_path_key(root);
++    let root = root.trim_end_matches('/');
++    let path = canonical_path_key(path);
++    path == root
++        || path
++            .strip_prefix(root)
++            .is_some_and(|suffix| suffix.starts_with('/'))
+ }
+ 
+ pub fn workspace_write_root_overlaps_path(root: &Path, path: &Path) -> bool {
+@@ -146,6 +176,19 @@ mod tests {
+     use pretty_assertions::assert_eq;
+     use std::path::PathBuf;
+ 
++    #[test]
++    fn missing_protected_children_match_existing_roots_with_different_casing() {
++        let temp = tempfile::tempdir().expect("tempdir");
++        let root = temp.path().join("WorkspaceRoot");
++        std::fs::create_dir_all(&root).expect("workspace");
++        let child = PathBuf::from(root.join(".agents").to_string_lossy().to_ascii_uppercase());
++        assert!(!child.exists());
++        assert!(super::workspace_write_root_contains_path(&root, &child));
++        assert!(super::workspace_write_root_overlaps_path(&root, &child));
++        let sibling = root.with_file_name("WorkspaceRootSibling").join(".agents");
++        assert!(!super::workspace_write_root_contains_path(&root, &sibling));
++    }
++
+     #[test]
+     fn equivalent_cwd_spellings_share_workspace_sid_key() {
+         let temp = tempfile::tempdir().expect("tempdir");
+@@ -171,7 +214,7 @@ mod tests {
          assert_eq!(first_sid, second_sid);
  
          let caps = load_or_create_cap_sids(&codex_home).expect("load caps");
@@ -794,7 +831,7 @@ index 41b33b6..8934a12 100644
      }
  
      #[test]
-@@ -197,7 +219,34 @@ mod tests {
+@@ -197,7 +240,34 @@ mod tests {
          );
  
          let caps = load_or_create_cap_sids(&codex_home).expect("load caps");

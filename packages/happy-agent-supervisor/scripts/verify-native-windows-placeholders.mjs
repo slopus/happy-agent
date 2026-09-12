@@ -24,8 +24,12 @@ await writeFile(join(root, "keep.toml"), "keep = 1\n");
 const policy = {
     mode: "workspace_write",
     allowedReadPaths: [node, git],
-    deniedWritePaths: [...files, ...directories].map((n) => join(root, n)).concat(outside),
-    deniedWriteFilePaths: files.map((n) => join(root, n)).concat(outside),
+    // Missing names must remain protected even when their spelling differs from
+    // the filesystem casing of the existing workspace root.
+    deniedWritePaths: [...files, ...directories]
+        .map((n) => join(root, n).toUpperCase())
+        .concat(outside),
+    deniedWriteFilePaths: files.map((n) => join(root, n).toUpperCase()).concat(outside),
     network: { egress: false, localBinding: false },
 };
 const program = `const fs=require('fs');const cp=require('child_process');const result={};
@@ -74,6 +78,8 @@ async function run() {
     const error = Buffer.concat(stderr).toString();
     assert.equal(code, 0, JSON.stringify({ code, output, error }));
     const result = JSON.parse(output);
+    for (const dir of directories)
+        assert.equal((await stat(join(root, dir))).isDirectory(), true, `${dir} placeholder`);
     for (const key of [
         "write",
         "delete",

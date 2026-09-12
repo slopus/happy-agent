@@ -16,12 +16,20 @@ jobs:
               with:
                   node-version: "24"
                   package-manager-cache: false
+            - name: Restore matching native build
+              id: native-cache
+              uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: packages/happy-agent-supervisor/native/target/release
+                  key: windows-sandbox-gnu195-v1-${{ hashFiles('.gitattributes', 'packages/happy-agent-supervisor/native/windows/**', 'packages/happy-agent-supervisor/scripts/build-native-windows.mjs') }}
             - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+              if: steps.native-cache.outputs.cache-hit != 'true'
               id: msys2
               with:
                   msystem: MINGW64
                   install: mingw-w64-x86_64-gcc
             - name: Select pinned toolchain
+              if: steps.native-cache.outputs.cache-hit != 'true'
               env:
                   MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
               run: |
@@ -29,9 +37,16 @@ jobs:
                   rustup toolchain install 1.95.0-x86_64-pc-windows-gnu --profile minimal
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             - name: Build supervisor and matching helpers
+              if: steps.native-cache.outputs.cache-hit != 'true'
               env:
                   CARGO_BUILD_JOBS: "2"
               run: node packages/happy-agent-supervisor/scripts/build-native-windows.mjs
+            - name: Save the completed native build for release retries
+              if: steps.native-cache.outputs.cache-hit != 'true'
+              uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: packages/happy-agent-supervisor/native/target/release
+                  key: ${{ steps.native-cache.outputs.cache-primary-key }}
             - name: Set up once on disposable runner
               run: |
                   if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Hosted CI only' }
