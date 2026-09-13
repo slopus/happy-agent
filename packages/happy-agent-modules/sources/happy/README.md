@@ -120,6 +120,20 @@ same acceptance the session stream answers the phone with a content-free
 turn and tells the client, by server message ID, where its own message entered
 the run order. An older app that cannot name the receipt drops it silently.
 
+A permanently refused send returns `user-message-rejected` with the original relay
+message `ref` and a readable `reason`. The phone marks that bubble failed and stops
+waiting; rejection neither starts a turn nor pretends the message was accepted.
+
+Session metadata advertises `capabilities.messageReceipts: true`, so phones only
+hold pending bubbles when their daemon supports acceptance receipts. The sender's
+personal connection suppresses its own text echo; every other participant's
+connection publishes the text, including when backfilling history. Suppressing all
+phone-originated messages would leave those participants with an unmatchable receipt
+and no message. User envelopes carry an optional `author: { id, name, owner }` inside
+the encrypted payload. `owner` compares the authenticated author with this connection's
+owner, so mobile can label and left-align teammates without exposing identities to
+the relay or comparing unrelated account-ID spaces.
+
 The module registers its projection listener on the journal in its own
 constructor, because the journal must carry that listener from the moment it
 records anything; it takes its lifetime and the agent collection at

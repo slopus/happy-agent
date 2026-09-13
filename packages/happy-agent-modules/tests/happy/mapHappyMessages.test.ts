@@ -4,6 +4,10 @@ import type { AgentEvent } from "../../sources/events/index.js";
 import type { HistoryMessage } from "../../sources/history/index.js";
 import { HappyMessageMapper } from "../../sources/happy/index.js";
 import type { HappySessionEvent } from "../../sources/happy/index.js";
+import {
+    decryptHappyPayload,
+    encryptHappyPayload,
+} from "../../sources/happy/crypto/happyEncryption.js";
 
 const RUN = "run-1";
 
@@ -94,6 +98,69 @@ describe("Happy message mapping", () => {
         expect(messages[0]?.localId).toBe(`rig:${messages[0]?.content.id ?? ""}`);
     });
 
+    it("names who said it when the caller knows, live and from history", () => {
+        const mapper = new HappyMessageMapper();
+        const author = { id: "user-2", name: "Alex Chen", owner: false };
+        const live = mapper.map(
+            accepted(),
+            historyMessage("ship it", { userId: "user-2" }),
+            author,
+        );
+        expect(live).toHaveLength(1);
+        expect(live[0]?.content).toMatchObject({ author, role: "user" });
+
+        const replayed = mapper.mapHistory(
+            [historyMessage("ship it", { userId: "user-2" })],
+            undefined,
+            (message) => (message.userId === "user-2" ? author : undefined),
+        );
+        expect(replayed).toHaveLength(1);
+        expect(replayed[0]?.content).toMatchObject({ author, role: "user" });
+    });
+
+    it.each(["legacy", "dataKey"] as const)(
+        "keeps participant attribution inside %s encryption",
+        (variant) => {
+            const author = { id: "user-2", name: "Alex Chen", owner: false };
+            const envelope = new HappyMessageMapper("user-1").map(
+                accepted(),
+                historyMessage("from another phone", {
+                    userId: "user-2",
+                    remoteMessageId: "happy:other",
+                }),
+                author,
+            )[0];
+            const key = new Uint8Array(32).fill(19);
+            const encrypted = encryptHappyPayload(key, variant, envelope);
+
+            expect(envelope?.content.author).toEqual(author);
+            expect(Buffer.from(encrypted).includes(Buffer.from(author.name))).toBe(false);
+            expect(decryptHappyPayload(key, variant, encrypted)).toEqual(envelope);
+            expect(decryptHappyPayload(new Uint8Array(32), variant, encrypted)).toBeUndefined();
+        },
+    );
+
+    it("attaches no author when nobody is named, so a phone shows the message as its own", () => {
+        const mapper = new HappyMessageMapper();
+        const live = mapper.map(accepted(), historyMessage("just me"));
+        expect(live[0]?.content).not.toHaveProperty("author");
+        const replayed = mapper.mapHistory([historyMessage("just me")]);
+        expect(replayed[0]?.content).not.toHaveProperty("author");
+    });
+
+    it("never puts an author on what the agent said", () => {
+        const mapper = new HappyMessageMapper();
+        const author = { id: "user-2", name: "Alex Chen", owner: false };
+        const replayed = mapper.mapHistory(
+            [historyMessage("I did the thing", { role: "assistant" })],
+            undefined,
+            () => author,
+        );
+        expect(replayed).toHaveLength(1);
+        expect(replayed[0]?.content.role).toBe("agent");
+        expect(replayed[0]?.content).not.toHaveProperty("author");
+    });
+
     it("answers a phone message with an acceptance receipt instead of an echo", () => {
         const mapper = new HappyMessageMapper();
         const echo = accepted();
@@ -123,6 +190,47 @@ describe("Happy message mapping", () => {
             "user-message-accepted",
         ]);
         expect(messages[0]?.content.ev).toMatchObject({ reason: "steering", status: "completed" });
+    });
+
+    it("receipts only the sender's phone and shows the message to another participant", () => {
+        const sender = new HappyMessageMapper("user-2");
+        const reader = new HappyMessageMapper("user-1");
+        sender.map(blockStart());
+        reader.map(blockStart());
+        const acceptance = accepted({ kind: "steering" });
+        const message = historyMessage("hello from my phone", {
+            remoteMessageId: "happy:sender-server-message",
+            userId: "user-2",
+        });
+        const author = { id: "user-2", name: "Alex Chen", owner: false };
+
+        const own = sender.map(acceptance, message, { ...author, owner: true });
+        expect(own.map((item) => item.content.ev.t)).toEqual(["turn-end", "user-message-accepted"]);
+        expect(own[1]?.content.ev).toMatchObject({ ref: "sender-server-message" });
+
+        const other = reader.map(acceptance, message, author);
+        expect(other.map((item) => item.content.ev.t)).toEqual(["turn-end", "text"]);
+        expect(other[1]?.content).toMatchObject({
+            author,
+            ev: { t: "text", text: "hello from my phone" },
+            role: "user",
+        });
+        expect(reader.map(acceptance, message, author)).toEqual([]);
+    });
+
+    it("does not suppress another phone's message when its profile cannot be resolved", () => {
+        const mapper = new HappyMessageMapper("user-1");
+        const messages = mapper.map(
+            accepted(),
+            historyMessage("still visible", {
+                remoteMessageId: "happy:other-phone",
+                userId: "user-2",
+            }),
+        );
+        expect(messages[0]?.content).toMatchObject({
+            ev: { t: "text", text: "still visible" },
+            role: "user",
+        });
     });
 
     it("stays silent about a message meant to stay out of sight", () => {

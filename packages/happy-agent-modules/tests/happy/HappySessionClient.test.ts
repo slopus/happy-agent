@@ -569,8 +569,24 @@ describe("keeping one session in step with Happy", () => {
 
         const said = server
             .posted("/messages")
-            .flatMap((request) => (request.body as { messages: { localId: string }[] }).messages);
+            .flatMap(
+                (request) =>
+                    (request.body as { messages: { localId: string; content: string }[] }).messages,
+            );
         expect(said.map((one) => one.localId)).toContain("rig:refused:remote-message-1");
+        const refusal = said.find((one) => one.localId === "rig:refused:remote-message-1");
+        expect(decode(refusal!.content)).toMatchObject({
+            role: "session",
+            content: {
+                id: "refused:remote-message-1",
+                role: "agent",
+                ev: {
+                    t: "user-message-rejected",
+                    ref: "remote-message-1",
+                    reason: "That model is not available.",
+                },
+            },
+        });
         // The message behind it still ran, and Happy was told to send neither again.
         expect(calls).toHaveLength(2);
         expect(await sync.readSession(store.context, AGENT_ID)).toMatchObject({ lastRemoteSeq: 5 });

@@ -539,7 +539,12 @@ export class HappySessionClient {
     async #reportRefusal(message: HappyRemoteMessage, text: string): Promise<void> {
         const id = `refused:${message.id}`;
         const payload: HappySessionProtocolMessage = {
-            content: { ev: { t: "service", text }, id, role: "agent", time: Date.now() },
+            content: {
+                ev: { t: "user-message-rejected", ref: message.id, reason: text },
+                id,
+                role: "agent",
+                time: Date.now(),
+            },
             localId: `rig:${id}`,
             meta: { sentFrom: "rig" },
             role: "session",

@@ -24,6 +24,7 @@ import { ProjectFilesModule, type ProjectFileRoot } from "../files/index.js";
 import { GitModule, type GitChangeSnapshot, type GitTrackedEntity } from "../git/index.js";
 import {
     HistoryModule,
+    type HistoryMessage,
     type HistoryMessageMode,
     type HistoryPendingMessage,
 } from "../history/index.js";
@@ -72,6 +73,7 @@ import { HappySessionClient, type HappySessionOperations } from "./HappySessionC
 import { createHappySyncDatabase } from "./HappySyncDatabase.js";
 import { createHappyProjectSyncDatabase } from "./HappyProjectSyncDatabase.js";
 import { HappyMessageMapper } from "./mapHappyMessages.js";
+import { happyAuthorOf, type HappyAuthor } from "./HappyProtocol.js";
 import { resolveHappyUserInputAnswers } from "./resolveHappyUserInputAnswers.js";
 import {
     HAPPY_READ_MAX_BYTES,
@@ -274,10 +276,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 !Value.Check(acceptedEventPayloadSchema, event.payload)
                     ? undefined
                     : await this.#history.message(ctx, event.agentId, event.payload.id);
+            const author = accepted === undefined ? undefined : await this.#authorOf(ctx, accepted);
             await this.#sync.projectEvent(ctx, {
                 agentId: event.agentId,
                 eventId: event.id,
-                messages: attached.mapper.map(event, accepted).map((message) => ({
+                messages: attached.mapper.map(event, accepted, author).map((message) => ({
                     localId: message.localId,
                     payload: message,
                 })),
@@ -285,6 +288,47 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             });
         },
     };
+
+    /**
+     * Names who wrote a user message, for the phone to attribute it.
+     *
+     * Only a team deployment has more than one person in a session, and only then does History
+     * record which team user submitted a message. Standalone installations have no author to
+     * name, so nothing is attached and the phone shows the message as its own — which it is.
+     * The owner flag compares against the team user this connection publishes through, because
+     * that user's own phone is the one reading the session.
+     */
+    async #authorOf(ctx: Context, message: HistoryMessage): Promise<HappyAuthor | undefined> {
+        if (message.role !== "user" || message.userId === undefined) return undefined;
+        if (this.#team === undefined) return undefined;
+        const user = await this.#team.getUser(ctx, message.userId);
+        if (user === undefined) return undefined;
+        return happyAuthorOf(user, this.#connectionOwner);
+    }
+
+    /**
+     * Resolves authors for a page of history at once, so a backfill does not ask the team store
+     * once per message. Absent users, and everything in a standalone installation, stay unnamed.
+     */
+    async #historyAuthors(
+        ctx: Context,
+        messages: readonly HistoryMessage[],
+    ): Promise<(message: HistoryMessage) => HappyAuthor | undefined> {
+        if (this.#team === undefined) return () => undefined;
+        const ids = new Set<string>();
+        for (const message of messages) {
+            if (message.role === "user" && message.userId !== undefined) ids.add(message.userId);
+        }
+        if (ids.size === 0) return () => undefined;
+        const users = await this.#team.getUsers(ctx, [...ids]);
+        const authors = new Map(
+            users.map((user) => [user.id, happyAuthorOf(user, this.#connectionOwner)] as const),
+        );
+        return (message) =>
+            message.role === "user" && message.userId !== undefined
+                ? authors.get(message.userId)
+                : undefined;
+    }
 
     start(ctx: Context, agents: AgentSystemRef<LibSQLDatabase>): AgentModuleHooks {
         const database = agentDatabase(ctx);
@@ -1518,7 +1562,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             },
             Date.now(),
         );
-        const mapper = new HappyMessageMapper();
+        const mapper = new HappyMessageMapper(this.#connectionOwner?.id);
         await this.#backfill(ctx, agentId, mapper);
         const attached: ConnectedAgent = {
             client: new HappySessionClient({
@@ -1582,12 +1626,14 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 limit: HAPPY_BACKFILL_MESSAGES,
             });
             const latest = await this.#events.latestAgentEvent(ctx, agentId);
+            const messages = page.messages.map((record) => record.message);
             // One archived record may contain several structured tool events. The phone's initial
             // payload is still bounded to 50 protocol messages, keeping the newest visible context
             // while preserving chronological order within that window.
             const history = mapper.mapHistory(
-                page.messages.map((record) => record.message),
+                messages,
                 HAPPY_BACKFILL_MESSAGES,
+                await this.#historyAuthors(ctx, messages),
             );
             await this.#sync.backfillHistory(
                 ctx,

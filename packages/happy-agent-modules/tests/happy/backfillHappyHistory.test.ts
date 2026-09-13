@@ -129,6 +129,56 @@ describe("mapping archived Happy history", () => {
         ).toEqual([]);
     });
 
+    it("replays other participants' phone messages but not this connection's own echoes", () => {
+        const mapper = new HappyMessageMapper("reader");
+        const author = { id: "sender", name: "Alex Chen", owner: false };
+        const queued = mapper.mapHistory(
+            [
+                historyMessage({ userId: "reader", remoteMessageId: "happy:own" }),
+                historyMessage({
+                    recordId: "other-phone",
+                    userId: "sender",
+                    remoteMessageId: "happy:other",
+                    blocks: [{ text: "from another phone", type: "text" }],
+                }),
+            ],
+            undefined,
+            () => author,
+        );
+
+        expect(shown(queued)).toEqual([
+            {
+                author,
+                ev: { t: "text", text: "from another phone" },
+                id: "history:other-phone",
+                role: "user",
+                time: 1_000,
+            },
+        ]);
+    });
+
+    it("keeps queued participant timestamps from going backwards during backfill", () => {
+        const queued = new HappyMessageMapper("reader").mapHistory([
+            historyMessage({ recordId: "tail", at: 2_000, role: "assistant" }),
+            historyMessage({
+                recordId: "steering",
+                at: 1_000,
+                remoteMessageId: "happy:other-phone",
+                userId: "sender",
+            }),
+            historyMessage({ recordId: "answer", at: 4_000, role: "assistant" }),
+        ]);
+
+        // A queued user's submission time can precede the previous archive row.
+        // Projection keeps timestamps nondecreasing without changing the source.
+        expect(queued.map((message) => message.content.id)).toEqual([
+            "history:tail",
+            "history:steering",
+            "history:answer",
+        ]);
+        expect(queued.map((message) => message.content.time)).toEqual([2_000, 2_000, 4_000]);
+    });
+
     it("leaves out a message that amounts to no words", () => {
         expect(
             mapHistory([

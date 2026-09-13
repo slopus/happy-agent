@@ -3,6 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import type { AgentEvent } from "../events/index.js";
 import type { HistoryMessage } from "../history/index.js";
 import type {
+    HappyAuthor,
     HappySessionEnvelope,
     HappySessionEvent,
     HappySessionProtocolMessage,
@@ -135,25 +136,47 @@ interface ActiveTurn {
  * same thing in its own words, and this is the translation, one event at a time
  * and in order.
  *
- * One mapper belongs to one agent. It remembers only what an in-flight turn
+ * One mapper belongs to one agent on one personal connection. It remembers what an in-flight turn
  * needs, so a restart resumes mid-conversation without replaying anything: the
  * outbox, not this, is what makes delivery durable.
  */
 export class HappyMessageMapper {
+    readonly #connectionOwnerId: string | undefined;
     readonly #appliedEventIds = new Set<string>();
     readonly #runStartedAt = new Map<string, number>();
     #activeTurn: ActiveTurn | undefined;
     #usage: HappyUsage | undefined;
 
-    /** Translates one journal event, or answers nothing when it says nothing to Happy. */
+    constructor(connectionOwnerId?: string) {
+        this.#connectionOwnerId = connectionOwnerId;
+    }
+
+    /** Only this connection's phone already has the original message in its relay stream. */
+    #isOwnMessage(message: HistoryMessage): boolean {
+        return (
+            this.#connectionOwnerId === undefined ||
+            message.userId === undefined ||
+            message.userId === this.#connectionOwnerId
+        );
+    }
+
+    /**
+     * Translates one journal event, or answers nothing when it says nothing to Happy.
+     *
+     * `author` names who wrote an accepted user message, when the caller knows; it rides on the
+     * user-role envelope so a phone in a shared session can attribute a teammate's message.
+     */
     map(
         event: AgentEvent,
         acceptedMessage?: HistoryMessage,
+        author?: HappyAuthor,
     ): readonly HappySessionProtocolMessage[] {
         if (this.#appliedEventIds.has(event.id)) return [];
         this.#remember(event.id);
 
-        if (event.type === "message.accepted") return this.#mapAccepted(event, acceptedMessage);
+        if (event.type === "message.accepted") {
+            return this.#mapAccepted(event, acceptedMessage, author);
+        }
         if (event.type === "loop.started") return this.#mapLoopStarted(event);
         if (event.type === "provider.event") return this.#mapProviderEvent(event);
         if (event.type === "tool.started" || event.type === "tool.completed") {
@@ -164,14 +187,31 @@ export class HappyMessageMapper {
         return [];
     }
 
-    /** Maps archived history through the same message vocabulary used by the live event stream. */
+    /**
+     * Maps archived history through the same message vocabulary used by the live event stream.
+     * `authorOf` names who wrote a user message, when the caller can tell; see {@link map}.
+     */
     mapHistory(
         messages: readonly HistoryMessage[],
         maximumMessages?: number,
+        authorOf?: (message: HistoryMessage) => HappyAuthor | undefined,
     ): readonly HappySessionProtocolMessage[] {
+        let latestTime = 0;
         const mapped = messages.flatMap((message) => {
-            if (message.hideFromUser === true || message.remoteMessageId !== undefined) return [];
-            return this.#mapHistoryMessage(message, `history:${message.recordId}`, message.at ?? 0);
+            if (message.hideFromUser === true) return [];
+            if (message.remoteMessageId !== undefined && this.#isOwnMessage(message)) return [];
+            // Archive order is acceptance order, but a queued user's timestamp is
+            // its earlier submission time. Keep projection time nondecreasing;
+            // leave the source record unchanged.
+            const time = Math.max(latestTime, message.at ?? 0);
+            const projected = this.#mapHistoryMessage(
+                message,
+                `history:${message.recordId}`,
+                time,
+                authorOf?.(message),
+            );
+            if (projected.length > 0) latestTime = time;
+            return projected;
         });
         if (maximumMessages === undefined) return mapped;
         if (maximumMessages <= 0) return [];
@@ -181,16 +221,16 @@ export class HappyMessageMapper {
     #mapAccepted(
         event: AgentEvent,
         message: HistoryMessage | undefined,
+        author: HappyAuthor | undefined,
     ): readonly HappySessionProtocolMessage[] {
         if (!Value.Check(acceptedMessageSchema, event.payload)) return [];
         const accepted = event.payload;
         this.#rememberRunStart(accepted.runId, event.occurredAt);
         if (message?.recordId !== accepted.id) return [];
         if (message.hideFromUser === true) return [];
-        // The phone already shows a message it sent, so its text must never echo back. What the
-        // phone cannot see is where acceptance landed, so a content-free receipt carries that
-        // position, after the same turn close any other accepted user message causes.
-        if (message.remoteMessageId !== undefined) {
+        // Only the sending connection already has this message. Other participants use separate
+        // relay streams: they need its text, not a receipt referring to a message they never got.
+        if (message.remoteMessageId !== undefined && this.#isOwnMessage(message)) {
             if (message.role !== "user") return [];
             return [
                 ...this.#closeTurn(event, accepted.runId, "completed", "steering"),
@@ -219,6 +259,7 @@ export class HappyMessageMapper {
             return [
                 ...interrupted,
                 this.#createMessage({
+                    ...(author === undefined ? {} : { author }),
                     ev: {
                         t: "text",
                         text: text || requestedToolText(content),
@@ -238,9 +279,11 @@ export class HappyMessageMapper {
         message: HistoryMessage,
         idPrefix: string,
         time: number,
+        author: HappyAuthor | undefined,
     ): HappySessionProtocolMessage[] {
         const output: HappySessionProtocolMessage[] = [];
         const turn = `history:${message.runId ?? message.recordId}`;
+        const userAuthor = message.role === "user" && author !== undefined ? { author } : {};
         const content = richUserInput(message);
         if (content !== undefined) {
             const text = content
@@ -249,6 +292,7 @@ export class HappyMessageMapper {
                 .trim();
             return [
                 this.#createMessage({
+                    ...userAuthor,
                     ev: { t: "text", text: text || requestedToolText(content), content },
                     id: idPrefix,
                     role: "user",
@@ -265,6 +309,7 @@ export class HappyMessageMapper {
                     text.length > MAX_HISTORY_TEXT ? `${text.slice(0, MAX_HISTORY_TEXT)}…` : text;
                 output.push(
                     this.#createMessage({
+                        ...userAuthor,
                         ev:
                             message.role === "user" || message.role === "assistant"
                                 ? { t: "text", text: bounded }

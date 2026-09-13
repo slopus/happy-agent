@@ -31,6 +31,11 @@ export interface HappySessionMetadata {
         abort: boolean;
         attachments: { enabled: boolean; maxBytes: number; mediaTypes: readonly string[] };
         files: { browse: boolean; read: boolean; search: boolean; write: boolean };
+        /**
+         * This daemon answers every accepted phone message with a `user-message-accepted`
+         * receipt, so the phone may hold a sent message at the bottom until one arrives.
+         */
+        messageReceipts: boolean;
         modelSelection: boolean;
         permissionModeSelection: boolean;
         reasoningSelection: boolean;
@@ -142,6 +147,7 @@ export function createHappySessionMetadata(options: {
                 search: false,
                 write: false,
             },
+            messageReceipts: true,
             modelSelection: true,
             permissionModeSelection: true,
             reasoningSelection: efforts.length > 0,

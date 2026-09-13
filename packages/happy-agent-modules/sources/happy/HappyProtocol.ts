@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { toolCallRequestBlockSchema } from "@slopus/happy-agent-client";
+import type { TeamUser } from "../team/index.js";
 
 /** Rich user input travels atomically with the text fallback older phones understand. */
 export const happyInputContentSchema = Type.Array(
@@ -65,10 +66,34 @@ export type HappySessionEvent =
     // A content-free receipt for a message the phone itself sent: `ref` is the server message ID
     // the phone already holds, and the receipt's own position in the stream is where acceptance
     // landed, so a client can align its copy with the run order instead of arrival order.
-    | { t: "user-message-accepted"; id: string; ref: string; runId: string };
+    | { t: "user-message-accepted"; id: string; ref: string; runId: string }
+    | { t: "user-message-rejected"; ref: string; reason: string };
+
+/**
+ * Who wrote a user-role envelope. Travels inside the encrypted session payload like everything
+ * else here, so the relay never learns who is in the room. `owner` says whether the author is the
+ * team user whose Happy account this session is published through — the person reading it on the
+ * phone — which lets a client tell its own messages from a teammate's without reconciling user-id
+ * spaces. Absent when the daemon does not know the author, which a client renders as its own.
+ */
+export interface HappyAuthor {
+    id: string;
+    name: string;
+    owner: boolean;
+}
+
+/** The author a team user appears as, seen from the connection `owner` publishes through. */
+export function happyAuthorOf(user: TeamUser, owner: TeamUser | undefined): HappyAuthor {
+    return {
+        id: user.id,
+        name: user.lastName === null ? user.firstName : `${user.firstName} ${user.lastName}`,
+        owner: owner !== undefined && owner.id === user.id,
+    };
+}
 
 /** One rendered moment, with the identity and the turn it belongs to. */
 export interface HappySessionEnvelope {
+    author?: HappyAuthor;
     ev: HappySessionEvent;
     id: string;
     role: "agent" | "user";

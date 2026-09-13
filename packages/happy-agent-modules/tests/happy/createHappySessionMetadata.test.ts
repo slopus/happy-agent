@@ -207,6 +207,7 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         const capabilities = metadata().capabilities;
         expect(capabilities.abort).toBe(true);
         expect(capabilities.steering).toBe(true);
+        expect(capabilities.messageReceipts).toBe(true);
         expect(capabilities.modelSelection).toBe(true);
         expect(capabilities.reasoningSelection).toBe(true);
         // Happy Agent's Happy connection has no file or shell surface of its own.
