@@ -566,6 +566,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                     return this.#integration;
                 }
                 this.#machine.start();
+                await this.#machine.refreshSibling();
                 return this.#integration;
             }
         }
@@ -710,6 +711,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 await this.#integrationDatabase.clearBlockedCredentialFingerprints(ctx);
                 const configuration = await importHappyCredentials({
                     adoptExternalCredentials: false,
+                    includeExternalCliHome: this.#connectionOwner === undefined,
                     dataDirectory: this.#dataDirectory,
                     environment: this.#config.happyEnvironment,
                 });

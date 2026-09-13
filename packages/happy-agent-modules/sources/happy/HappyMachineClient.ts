@@ -111,6 +111,7 @@ export class HappyMachineClient {
     #closed = false;
     #keepAliveTimer: NodeJS.Timeout | undefined;
     #metadataBase: Record<string, unknown> = {};
+    #metadataVersion = 0;
     #retryTimer: NodeJS.Timeout | undefined;
     #siblingMachineId: string | undefined;
     #socket: HappySocket | undefined;
@@ -191,10 +192,53 @@ export class HappyMachineClient {
         this.#teardownSocket();
     }
 
+    /** Refreshes a CLI linked after the desktop QR, without restarting any Agent work. */
+    async refreshSibling(): Promise<void> {
+        const sibling = await this.#readSibling();
+        if (this.#closed) return;
+        this.#siblingMachineId = sibling;
+        const socket = this.#socket;
+        if (socket?.connected && this.#metadataBase.siblingMachineId !== sibling) {
+            await new Promise<void>((resolve, reject) => {
+                const timeout = setTimeout(
+                    () =>
+                        reject(
+                            new Error("Happy could not confirm the CLI machine link. Try again."),
+                        ),
+                    HTTP_TIMEOUT_MS,
+                );
+                this.#syncMetadata(socket, this.#generation, this.#metadataVersion, 0, (error) => {
+                    clearTimeout(timeout);
+                    if (error) reject(error);
+                    else resolve();
+                });
+            });
+        }
+        // An absent CLI is normal for Agent-only setups. An existing but unverified CLI
+        // must not make an explicit desktop refresh look like successful dual linking.
+        const cliHome = this.#options.configuration.cliHome;
+        if (
+            sibling === undefined &&
+            cliHome !== undefined &&
+            (await readHappyCliMachineId(cliHome)) !== undefined
+        ) {
+            throw new Error(
+                "Happy CLI must use the same V2 account and server as Happy Agent. Existing sign-ins were kept.",
+            );
+        }
+    }
+
+    #readSibling(): Promise<string | undefined> {
+        const configuration = this.#options.configuration;
+        return configuration.cliHome === undefined
+            ? Promise.resolve(undefined)
+            : readHappyCliMachineId(configuration.cliHome, configuration);
+    }
+
     async #registerAndConnect(): Promise<void> {
         // Happy CLI may have been installed since this daemon last registered, so who this
         // machine is paired with is read again every time the pairing is published.
-        this.#siblingMachineId = await readHappyCliMachineId(this.#options.configuration.happyHome);
+        this.#siblingMachineId = await this.#readSibling();
         const metadata = this.#metadata();
         const encryption = this.#options.configuration.credentials.encryption;
         const dataEncryptionKey =
@@ -240,6 +284,7 @@ export class HappyMachineClient {
     }
 
     #connect(metadataVersion: number, daemonStateVersion: number): void {
+        this.#metadataVersion = metadataVersion;
         const generation = ++this.#generation;
         const socket = (this.#options.socketFactory ?? connectHappySocket)(
             this.#options.configuration.serverUrl,
@@ -368,10 +413,20 @@ export class HappyMachineClient {
         });
     }
 
-    #syncMetadata(socket: HappySocket, generation: number, version: number, attempt: number): void {
-        if (!this.#isCurrent(generation) || attempt >= 3) return;
+    #syncMetadata(
+        socket: HappySocket,
+        generation: number,
+        version: number,
+        attempt: number,
+        settled?: (error?: Error) => void,
+    ): void {
+        if (!this.#isCurrent(generation) || attempt >= 3) {
+            settled?.(new Error("Happy could not update the CLI machine link. Try again."));
+            return;
+        }
+        const { siblingMachineId: _previousSibling, ...base } = this.#metadataBase;
         const metadata = {
-            ...this.#metadataBase,
+            ...base,
             ...this.#metadata(),
             // The name is the person's to choose, so Happy Agent never writes over it.
             ...(typeof this.#metadataBase.displayName === "string"
@@ -390,12 +445,16 @@ export class HappyMachineClient {
                 if (!Value.Check(acknowledgementSchema, answer)) return;
                 if (answer.result === "success") {
                     this.#metadataBase = metadata;
+                    this.#metadataVersion = answer.version ?? version + 1;
+                    settled?.();
                     return;
                 }
                 if (answer.result === "version-mismatch" && answer.version !== undefined) {
                     const latest = this.#decode(answer.metadata);
                     if (Value.Check(recordSchema, latest)) this.#metadataBase = latest;
-                    this.#syncMetadata(socket, generation, answer.version, attempt + 1);
+                    this.#syncMetadata(socket, generation, answer.version, attempt + 1, settled);
+                } else {
+                    settled?.(new Error("Happy did not accept the CLI machine link. Try again."));
                 }
             },
         );

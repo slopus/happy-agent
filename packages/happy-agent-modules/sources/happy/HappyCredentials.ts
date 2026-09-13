@@ -52,6 +52,8 @@ export type HappyCredentials =
 
 /** Everything the Happy clients need to reach the account this machine is signed in to. */
 export interface HappyConnectionConfiguration {
+    /** Standalone-only external CLI home; absent for isolated team connections. */
+    cliHome?: string;
     /** Canonical SHA-256 identity of the stored credentials, safe to compare and persist. */
     credentialFingerprint: string;
     credentials: HappyCredentials;

@@ -71,6 +71,9 @@ one message it cannot carry.
 
 ## Credential ownership and reconnects
 
+- Desktop can finish the existing Agent QR before the legacy CLI gets its own machine ID. Read the sibling from the explicitly resolved live CLI home, validate its V2 account and server, and refresh metadata on an explicit integration start. The daemon-owned settings copy is not an authoritative live CLI identity. This refresh must not restart Agent work, replace credentials, or introduce another phone authorization protocol.
+- Only standalone connections may resolve a sibling CLI home. Personal team connections omit it entirely, even when paired to the same account as the shared CLI. Standalone QR settlement allows sibling validation separately from credential adoption, so loading its newly saved credential cannot replace it with an existing CLI login.
+
 - Check the disable flag before credential adoption. Disabled mode may inspect an already daemon-owned credential to report `configured`, but must not read or copy the external Happy login or create a machine identity.
 - Remember a bounded fingerprint of credentials rejected by Happy or explicitly unlinked. Suppress only that exact daemon/external credential across restart, accept a genuinely changed external login, and clear rejection history after successful pairing. Fingerprints are metadata; never persist another copy of the token or encryption key.
 - Unlinking owns only this daemon's credential copy and live clients. It must not edit the external Happy CLI installation, and repeated unlink or cancel requests must be no-ops without duplicate events.

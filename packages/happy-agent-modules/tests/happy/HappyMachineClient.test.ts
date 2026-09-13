@@ -14,14 +14,25 @@ import {
     type HappySocket,
 } from "../../sources/happy/index.js";
 
-vi.mock("../../sources/happy/credentials/readHappyCliMachineId.js", () => ({
-    readHappyCliMachineId: async () => undefined,
+const sibling = vi.hoisted(() => ({
+    id: undefined as string | undefined,
+    unverifiedId: undefined as string | undefined,
 }));
+vi.mock("../../sources/happy/credentials/readHappyCliMachineId.js", () => ({
+    readHappyCliMachineId: async (_home: string, account?: unknown) =>
+        account === undefined ? (sibling.unverifiedId ?? sibling.id) : sibling.id,
+}));
+
+beforeEach(() => {
+    sibling.id = undefined;
+    sibling.unverifiedId = undefined;
+});
 
 const KEY = Buffer.alloc(32, 7);
 const SERVER = "https://api.happy.example";
 
 const CONFIGURATION: HappyConnectionConfiguration = {
+    cliHome: "/tmp/happy-cli",
     credentialFingerprint: "credential-fingerprint",
     credentials: {
         encryption: { secret: new Uint8Array(KEY), type: "legacy" },
@@ -221,6 +232,56 @@ describe("starting Happy Agent work through the machine RPC", () => {
 });
 
 describe("keeping Happy's picture of this computer current", () => {
+    it("publishes a CLI linked after desktop pairing without replacing the connection", async () => {
+        const socket = new FakeSocket();
+        const fetch = vi.fn(async () => REGISTERED());
+        const machine = client({ fetch, socket });
+        machine.start();
+        await vi.waitFor(() => expect(socket.connected).toBe(true));
+        expect(socket.published().at(-1)?.siblingMachineId).toBeUndefined();
+
+        sibling.id = "new-cli";
+        await machine.refreshSibling();
+        expect(socket.published().at(-1)?.siblingMachineId).toBe("new-cli");
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(socket.disconnectCount).toBe(0);
+        const count = socket.published().length;
+        await machine.refreshSibling();
+        expect(socket.published()).toHaveLength(count);
+
+        // A removed or changed-account CLI must not leave a stale relationship behind.
+        sibling.id = undefined;
+        await machine.refreshSibling();
+        expect(socket.published().at(-1)?.siblingMachineId).toBeUndefined();
+    });
+
+    it("reports a rejected sibling update so desktop can retry", async () => {
+        const socket = new FakeSocket();
+        const machine = client({ fetch: vi.fn(async () => REGISTERED()), socket });
+        machine.start();
+        await vi.waitFor(() => expect(socket.connected).toBe(true));
+        sibling.id = "new-cli";
+        socket.acknowledgements.push({ result: "error" });
+        await expect(machine.refreshSibling()).rejects.toThrow("CLI machine link");
+        await expect(machine.refreshSibling()).resolves.toBeUndefined();
+        expect(socket.published().at(-1)?.siblingMachineId).toBe("new-cli");
+    });
+
+    it("removes a stale sibling and refuses completion when the CLI account or server differs", async () => {
+        const socket = new FakeSocket();
+        sibling.id = "cli";
+        const machine = client({ fetch: vi.fn(async () => REGISTERED()), socket });
+        machine.start();
+        await vi.waitFor(() => expect(socket.connected).toBe(true));
+        expect(socket.published().at(-1)?.siblingMachineId).toBe("cli");
+
+        sibling.id = undefined;
+        sibling.unverifiedId = "cli";
+        await expect(machine.refreshSibling()).rejects.toThrow("account and server");
+        expect(socket.published().at(-1)?.siblingMachineId).toBeUndefined();
+        expect(socket.disconnectCount).toBe(0);
+    });
+
     it("describes this computer without listing the work on it", async () => {
         // The phone reads where a session may start from the sessions, so this document stays
         // about the machine itself and does not grow with every workspace somebody makes.

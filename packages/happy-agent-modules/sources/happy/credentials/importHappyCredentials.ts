@@ -27,6 +27,8 @@ import { writeHappyJsonFile } from "./writeHappyJsonFile.js";
 export async function importHappyCredentials(options: {
     /** Whether a newer credential and settings from the external Happy CLI may be adopted. */
     adoptExternalCredentials?: boolean;
+    /** Standalone pairing may validate a sibling CLI without adopting its credentials. */
+    includeExternalCliHome?: boolean;
     /** Exact rejected credential identities that must not be loaded or adopted. */
     blockedCredentialFingerprints?: ReadonlySet<string>;
     /** The agent's own data directory; the Happy copy lives in `happy/` beneath it. */
@@ -96,6 +98,9 @@ export async function importHappyCredentials(options: {
     const targetServerUrl = readString(targetSettings, "serverUrl");
     const machineId = await loadOrCreateHappyMachineId(targetPaths.machinePath);
     return {
+        ...((options.includeExternalCliHome ?? adoptExternalCredentials)
+            ? { cliHome: resolveHappyHome(environment, options.homeDirectory ?? homedir()) }
+            : {}),
         credentialFingerprint: targetCredentials.fingerprint,
         credentials: targetCredentials.credentials,
         credentialsPath: targetPaths.credentialsPath,
