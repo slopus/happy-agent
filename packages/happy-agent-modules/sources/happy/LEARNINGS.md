@@ -82,6 +82,21 @@ one message it cannot carry.
 
 ## Session state
 
+- Bot pictures travel as encrypted relay session avatars, not synthetic projects. Ordinary project
+  sessions leave this field unset so mobile can inherit project artwork. The local bot catalog
+  remains the image authority, including removal. Image uploads run independently of message and
+  question delivery, are bounded and cancelled with the session connection, and old relays that
+  omit the additive avatar field continue syncing normally. An encrypted content hash in the
+  preview prevents restart from re-uploading unchanged images; upload retries retain their
+  completed blob reference until activation succeeds. No avatar bytes or new resource fields are
+  added to Happy Agent's direct API or Agent Base.
+  Sessions are the relay image owner because pictures may eventually differ per conversation;
+  synthetic bot projects would expose invalid creation actions on older phones. Keep small
+  resource-specific validation and error messages local, while reusing the encryption primitives.
+  Read bot metadata and bytes in one transaction. Artwork failures use five exponentially spaced
+  retries independently of chat, then wait for a new bot revision or a recreated session client;
+  a socket reconnect alone does not reset the budget. Archival never waits for artwork to finish.
+
 - Bots are discovered through `BotsModule`, not project/workspace membership. Each bot projects
   its existing agent into one Happy session, with optional encrypted `bot` identity and no synthetic
   project or worktree. Startup includes idle bots; catalog events attach new bots and refresh names.

@@ -1010,6 +1010,19 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         );
     }
 
+    /** A bot's existing image; project sessions have no independently published artwork. */
+    async sessionAvatarAsset(ctx: Context, agentId: string) {
+        return await ctx.inTx(async (txCtx) => {
+            const bot = await this.#bots.forAgent(txCtx, agentId);
+            if (bot === undefined) return undefined;
+            if (bot.avatar === undefined) return null;
+            const asset = await this.#bots.avatar(txCtx, bot.id);
+            if (asset === undefined)
+                throw new Error("The bot picture metadata has no stored image.");
+            return asset;
+        });
+    }
+
     /** The same branch comparison the workspace API and the phone's badge describe. */
     async gitState(ctx: Context, agentId: string): Promise<HappyGitStateResponse> {
         const root = await this.#readRoot(ctx, agentId);
@@ -1839,6 +1852,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         return {
             agentId,
             ...(owner.bot === undefined ? {} : { bot: owner.bot }),
+            ...(owner.avatarVersion === undefined ? {} : { avatarVersion: owner.avatarVersion }),
             archived: typeof config.metadata?.archivedAt === "number",
             cwd,
             effort: selection.effort,
@@ -1915,6 +1929,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         agentId: string,
     ): Promise<{
         bot?: HappySessionSnapshot["bot"];
+        avatarVersion?: number;
         gitBranch?: string;
         project?: { id: string; kind: "home" | "regular"; name: string };
         workspace?: { id: string; name: string };
@@ -1923,6 +1938,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             const bot = await this.#bots.forAgent(ctx, agentId);
             if (bot !== undefined) {
                 return {
+                    avatarVersion: bot.version,
                     bot: {
                         id: bot.id,
                         name: bot.name,
