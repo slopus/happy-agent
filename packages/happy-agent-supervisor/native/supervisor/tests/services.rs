@@ -22,6 +22,8 @@ impl Boundary {
             .path()
             .canonicalize()
             .unwrap_or_else(|error| panic!("{error}"));
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+            .unwrap_or_else(|error| panic!("{error}"));
         fs::create_dir(root.join("root")).unwrap_or_else(|error| panic!("{error}"));
         fs::set_permissions(root.join("root"), fs::Permissions::from_mode(0o700))
             .unwrap_or_else(|error| panic!("{error}"));
@@ -90,7 +92,11 @@ fn a_fake_resource_controller_never_starts_the_command() {
     let output = boundary.run("printf SHOULD_NOT_EXECUTE");
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("cgroup"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cgroup"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
