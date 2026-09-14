@@ -322,7 +322,14 @@ fn run_namespace_init(
     if workload == 0 {
         close_fd(status_write);
         reset_signal_handlers();
-        let _ = unsafe { libc::setpgid(0, 0) };
+        if policy.service.is_some() {
+            if let Err(error) = establish_service_terminal_group() {
+                eprintln!("happy-agent-supervisor: cannot attach service input: {error}");
+                unsafe { libc::_exit(125) };
+            }
+        } else {
+            let _ = unsafe { libc::setpgid(0, 0) };
+        }
         if let Some(cgroup) = &mut cgroup
             && let Err(error) = cgroup.enter()
         {
@@ -893,6 +900,33 @@ fn bring_loopback_up() -> SupervisorResult<()> {
         return Err(error.into());
     }
     close_fd(socket);
+    Ok(())
+}
+
+/// A separate workload group must become the foreground group of its private PTY before exec.
+/// Otherwise a terminal read stops it with SIGTTIN (or fails with EIO for an orphaned group).
+fn establish_service_terminal_group() -> SupervisorResult<()> {
+    syscall_zero("create service command process group", unsafe {
+        libc::setpgid(0, 0)
+    })?;
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+        return Ok(());
+    }
+    // This fork is still single-threaded. Ignore only the background-terminal-write signal for
+    // this handoff, then restore its disposition before any application instruction can execute.
+    let previous = unsafe { libc::signal(libc::SIGTTOU, libc::SIG_IGN) };
+    if previous == libc::SIG_ERR {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let result = unsafe { libc::tcsetpgrp(libc::STDIN_FILENO, libc::getpgrp()) };
+    let error = std::io::Error::last_os_error();
+    let restored = unsafe { libc::signal(libc::SIGTTOU, previous) };
+    if restored == libc::SIG_ERR {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    if result != 0 {
+        return Err(error.into());
+    }
     Ok(())
 }
 

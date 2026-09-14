@@ -519,6 +519,109 @@ fn application_exit_125_is_not_a_native_startup_failure() {
 
 #[test]
 #[ignore = "requires delegated cgroups; mandatory in the native release gate"]
+fn service_terminal_reads_input_in_its_foreground_process_group() {
+    use std::io::{Read, Write};
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::process::CommandExt;
+    use std::time::{Duration, Instant};
+
+    let boundary = Boundary::new(&delegated_parent());
+    let mut master_fd = -1;
+    let mut slave_fd = -1;
+    let opened = unsafe {
+        libc::openpty(
+            &mut master_fd,
+            &mut slave_fd,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(opened, 0, "{}", std::io::Error::last_os_error());
+    let mut master = unsafe { fs::File::from_raw_fd(master_fd) };
+    let slave = unsafe { fs::File::from_raw_fd(slave_fd) };
+    for fd in [master_fd, slave_fd] {
+        assert_eq!(
+            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
+            0
+        );
+    }
+    let mut command = Command::new(SUPERVISOR);
+    command
+        .arg("--policy-file")
+        .arg(boundary.policy_file())
+        .args([
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf ready; read value; printf 'reply:%s' \"$value\"",
+        ])
+        .stdin(slave.try_clone().unwrap_or_else(|error| panic!("{error}")))
+        .stdout(slave.try_clone().unwrap_or_else(|error| panic!("{error}")))
+        .stderr(slave);
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut running = ServiceChild(command.spawn().unwrap_or_else(|error| panic!("{error}")));
+    drop(command);
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut output = Vec::new();
+    let mut sent = false;
+    while Instant::now() < deadline {
+        let mut descriptor = libc::pollfd {
+            fd: master.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut descriptor, 1, 100) } > 0 {
+            let mut buffer = [0; 4096];
+            match master.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => output.extend_from_slice(&buffer[..count]),
+                Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+                Err(error) => panic!("{error}"),
+            }
+        }
+        let text = String::from_utf8_lossy(&output);
+        if !sent && text.contains("ready") {
+            master
+                .write_all(b"hello\n")
+                .unwrap_or_else(|error| panic!("{error}"));
+            sent = true;
+        }
+        if text.contains("reply:hello") {
+            break;
+        }
+        assert!(output.len() <= 16384, "unbounded terminal fixture output");
+    }
+    assert!(
+        String::from_utf8_lossy(&output).contains("reply:hello"),
+        "terminal input was not read: {}",
+        String::from_utf8_lossy(&output)
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = running
+            .0
+            .try_wait()
+            .unwrap_or_else(|error| panic!("{error}"))
+        {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "terminal service did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(status.success());
+    assert!(!boundary.cgroup.exists());
+}
+
+#[test]
+#[ignore = "requires delegated cgroups; mandatory in the native release gate"]
 fn selected_inputs_cannot_expose_host_device_nodes() {
     let mut boundary = Boundary::new(&delegated_parent());
     boundary.policy["service"]["inputs"][0]["source"] = json!("/dev/null");
