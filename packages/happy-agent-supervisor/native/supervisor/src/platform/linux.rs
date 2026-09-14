@@ -57,6 +57,11 @@ struct CapabilityData {
 
 type OutgoingProxySetup = Option<OutgoingProxy>;
 
+struct ServiceStartup {
+    supervisor_lifetime: File,
+    admission: File,
+}
+
 pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> SupervisorResult<()> {
     let owner = unsafe { libc::getppid() };
     if let Some(service) = &policy.service {
@@ -149,6 +154,14 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
     }
 
     let (status_read, status_write) = create_pipe()?;
+    let startup_gate = if policy.service.is_some() {
+        let (read, write) = create_pipe()?;
+        Some((unsafe { File::from_raw_fd(read) }, unsafe {
+            File::from_raw_fd(write)
+        }))
+    } else {
+        None
+    };
     install_signal_forwarders()?;
     let namespace_init = unsafe { libc::fork() };
     if namespace_init < 0 {
@@ -158,6 +171,10 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
     }
     if namespace_init == 0 {
         close_fd(status_read);
+        let startup_admission = startup_gate.map(|(reader, writer)| {
+            drop(writer);
+            reader
+        });
         run_namespace_init(
             policy,
             command,
@@ -165,15 +182,29 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
             egress_link,
             cgroup,
             bridge,
-            supervisor_lifetime,
+            supervisor_lifetime
+                .zip(startup_admission)
+                .map(|(supervisor_lifetime, admission)| ServiceStartup {
+                    supervisor_lifetime,
+                    admission,
+                }),
         );
     }
 
     close_fd(status_write);
+    set_forward_target(namespace_init);
+    if let (Some(service), Some((reader, mut writer))) = (&policy.service, startup_gate) {
+        drop(reader);
+        let mut children = vec![namespace_init];
+        if let Some(pid) = egress_pid {
+            children.push(pid);
+        }
+        ServiceBridge::record_children(service, &children)?;
+        writer.write_all(&[1])?;
+    }
     // Only the namespace init keeps the link now, so its exit is what the egress process sees.
     drop(egress_link);
     drop(bridge);
-    set_forward_target(namespace_init);
     drop_all_capabilities_and_lock_privileges()?;
     let init_wait_status = wait_for_pid(namespace_init)?;
     set_forward_target(0);
@@ -199,15 +230,15 @@ fn run_namespace_init(
     egress_link: Option<File>,
     mut cgroup: Option<ServiceCgroup>,
     bridge: Option<ServiceBridge>,
-    supervisor_lifetime: Option<File>,
+    startup: Option<ServiceStartup>,
 ) -> ! {
     let setup = (|| -> SupervisorResult<OutgoingProxySetup> {
         syscall_zero("terminate namespace init if its supervisor exits", unsafe {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0)
         })?;
-        if let Some(lifetime) = &supervisor_lifetime {
+        if let Some(mut startup) = startup {
             let mut descriptor = libc::pollfd {
-                fd: lifetime.as_raw_fd(),
+                fd: startup.supervisor_lifetime.as_raw_fd(),
                 events: libc::POLLIN,
                 revents: 0,
             };
@@ -216,6 +247,13 @@ fn run_namespace_init(
                     "the service supervisor exited during namespace startup",
                 )
                 .into());
+            }
+            let mut ready = [0];
+            startup.admission.read_exact(&mut ready)?;
+            if ready != [1] {
+                return Err(
+                    invalid_input("service native process identities were not committed").into(),
+                );
             }
         }
         if let Some(service) = &policy.service {

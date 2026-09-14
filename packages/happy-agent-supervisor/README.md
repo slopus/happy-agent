@@ -226,6 +226,11 @@ private scratch paths, an execution identity, resource limits, and a private bri
 the supervisor records its PID and kernel start time in `process.json` beside the bridge.
 Recovery must check that identity as well as cgroup emptiness; an absent cgroup alone does not
 prove that a supervisor still setting up its sandbox has exited.
+Before namespace setup can continue, the supervisor atomically records `executionReady: true`
+and the stable identities of its namespace-init and optional egress children. Recovery must
+also confirm those native owners have exited: they can still hold mounts or bridges after
+the workload cgroup becomes empty. A missing or incomplete startup record is ambiguous after
+controller loss; retain the workspace and report blocked cleanup instead of guessing.
 Pass service policies through a controller-owned, mode-0600 `--policy-file` beneath the
 daemon's protected private storage, not through command-line JSON: process listings must
 not reveal the bridge credential. The controller owns that file's lifecycle too.

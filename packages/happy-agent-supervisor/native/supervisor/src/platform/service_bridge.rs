@@ -35,21 +35,12 @@ impl ServiceBridge {
         }
         // Persist stable process identity before acquiring any service runtime resource.
         // A new daemon can distinguish this execution from a reused numeric PID.
-        let stat = fs::read_to_string("/proc/self/stat")?;
-        let start_time = stat
-            .rsplit_once(')')
-            .and_then(|(_, fields)| fields.split_whitespace().nth(19))
-            .ok_or_else(|| invalid_input("cannot record service supervisor lifetime"))?;
         let mut identity = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(parent.join("process.json"))?;
-        identity.write_all(
-            serde_json::json!({ "pid": std::process::id(), "startTime": start_time })
-                .to_string()
-                .as_bytes(),
-        )?;
+        identity.write_all(lifetime_record(false, &[])?.to_string().as_bytes())?;
         identity.sync_all()?;
         let listener = UnixListener::bind(&policy.bridge_socket)?;
         fs::set_permissions(&policy.bridge_socket, fs::Permissions::from_mode(0o600))?;
@@ -63,6 +54,30 @@ impl ServiceBridge {
             token,
             port: policy.port,
         })
+    }
+
+    /// Commit every mount/bridge-owning native process before releasing namespace setup.
+    /// A crash before this atomic replacement leaves executionReady=false, which recovery
+    /// must treat as incomplete evidence rather than proof that no children exist.
+    pub(super) fn record_children(
+        policy: &ServicePolicy,
+        children: &[libc::pid_t],
+    ) -> SupervisorResult<()> {
+        let parent = policy
+            .bridge_socket
+            .parent()
+            .ok_or_else(|| invalid_input("missing bridge parent"))?;
+        let staging = parent.join("process-ready.json");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&staging)?;
+        file.write_all(lifetime_record(true, children)?.to_string().as_bytes())?;
+        file.sync_all()?;
+        fs::rename(staging, parent.join("process.json"))?;
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
     }
 
     /// Start after the workload has forked. Its exec closes the listener descriptor.
@@ -96,6 +111,27 @@ impl ServiceBridge {
             })?;
         Ok(())
     }
+}
+
+fn lifetime_record(ready: bool, children: &[libc::pid_t]) -> SupervisorResult<serde_json::Value> {
+    let mut identity = process_identity(std::process::id() as libc::pid_t)?;
+    identity["executionReady"] = serde_json::json!(ready);
+    identity["children"] = serde_json::json!(
+        children
+            .iter()
+            .map(|pid| process_identity(*pid))
+            .collect::<SupervisorResult<Vec<_>>>()?
+    );
+    Ok(identity)
+}
+
+fn process_identity(pid: libc::pid_t) -> SupervisorResult<serde_json::Value> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let start_time = stat
+        .rsplit_once(')')
+        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
+        .ok_or_else(|| invalid_input("cannot record service native process lifetime"))?;
+    Ok(serde_json::json!({ "pid": pid, "startTime": start_time }))
 }
 
 fn relay(mut controller: UnixStream, token: &[u8; 64], port: u16) -> std::io::Result<()> {

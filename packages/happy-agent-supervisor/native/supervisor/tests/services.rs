@@ -97,6 +97,13 @@ fn a_fake_resource_controller_never_starts_the_command() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let identity: serde_json::Value = serde_json::from_slice(
+        &fs::read(boundary.directory.path().join("process.json"))
+            .unwrap_or_else(|error| panic!("{error}")),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(identity["executionReady"], false);
+    assert_eq!(identity["children"], json!([]));
 }
 
 #[test]
@@ -336,6 +343,24 @@ while True:
         .read_line(&mut ready)
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(ready, "endpoint-ready\n");
+    let identity: serde_json::Value = serde_json::from_slice(
+        &fs::read(boundary.directory.path().join("process.json"))
+            .unwrap_or_else(|error| panic!("{error}")),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(identity["executionReady"], true);
+    let children = identity["children"]
+        .as_array()
+        .unwrap_or_else(|| panic!("missing native child identities"));
+    assert_eq!(children.len(), 1, "the namespace init must be recorded");
+    let pid = children[0]["pid"].as_u64().unwrap_or_else(|| panic!("pid"));
+    let stat =
+        fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_else(|error| panic!("{error}"));
+    let start_time = stat
+        .rsplit_once(')')
+        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
+        .unwrap_or_else(|| panic!("kernel process start time"));
+    assert_eq!(children[0]["startTime"], start_time);
     let socket = boundary.directory.path().join("bridge");
     let mut wrong = UnixStream::connect(&socket).unwrap_or_else(|error| panic!("{error}"));
     wrong
@@ -372,6 +397,87 @@ while True:
     }
     running.0.wait().unwrap_or_else(|error| panic!("{error}"));
     assert!(!boundary.cgroup.exists());
+}
+
+#[test]
+#[ignore = "requires delegated cgroups; mandatory in the native release gate"]
+fn abrupt_supervisor_death_releases_recorded_native_owners() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::net::UnixStream;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let mut boundary = Boundary::new(&delegated_parent());
+    boundary.policy["network"] = json!({
+        "egress": true, "localBinding": true, "outgoingProxy": { "frontEnds": ["http"] }
+    });
+    boundary.policy["service"]["outbound"] = json!([{ "hostname": "example.com", "port": 443 }]);
+    let child = Command::new(SUPERVISOR)
+        .arg("--policy-file")
+        .arg(boundary.policy_file())
+        .args([
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf 'child-ready\\n'; exec /bin/sleep 30",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap_or_else(|error| panic!("{error}"));
+    let mut running = ServiceChild(child);
+    let mut output = BufReader::new(running.0.stdout.take().unwrap_or_else(|| panic!("stdout")));
+    let mut ready = String::new();
+    output
+        .read_line(&mut ready)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(ready, "child-ready\n");
+    let identity: serde_json::Value = serde_json::from_slice(
+        &fs::read(boundary.directory.path().join("process.json"))
+            .unwrap_or_else(|error| panic!("{error}")),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(identity["executionReady"], true);
+    let children = identity["children"]
+        .as_array()
+        .unwrap_or_else(|| panic!("children"));
+    assert_eq!(
+        children.len(),
+        2,
+        "namespace init and egress must both be recorded"
+    );
+    running.0.kill().unwrap_or_else(|error| panic!("{error}"));
+    running.0.wait().unwrap_or_else(|error| panic!("{error}"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let native_owners_gone = children.iter().all(|child| {
+            let pid = child["pid"].as_u64().unwrap_or_else(|| panic!("pid"));
+            match fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Ok(stat) => {
+                    let fields: Vec<_> = stat
+                        .rsplit_once(')')
+                        .unwrap_or_else(|| panic!("stat"))
+                        .1
+                        .split_whitespace()
+                        .collect();
+                    child["startTime"] != fields[19] || matches!(fields[0], "Z" | "X")
+                }
+                Err(error) => panic!("{error}"),
+            }
+        });
+        let events = fs::read_to_string(boundary.cgroup.join("cgroup.events"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        if native_owners_gone && events.lines().any(|line| line == "populated 0") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native process tree did not terminate"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(UnixStream::connect(boundary.directory.path().join("bridge")).is_err());
+    fs::remove_dir(&boundary.cgroup).unwrap_or_else(|error| panic!("{error}"));
 }
 
 struct ServiceChild(std::process::Child);
