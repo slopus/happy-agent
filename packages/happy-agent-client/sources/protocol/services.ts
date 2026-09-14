@@ -37,7 +37,8 @@ export type WorkspaceServiceError = Static<typeof workspaceServiceErrorSchema>;
 export const workspaceServicePathSchema = Type.String({
     minLength: 1,
     maxLength: 4096,
-    pattern: "^(?![A-Za-z]:)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\\\u0000]+(?:/[^/\\\\\\u0000]+)*$",
+    pattern:
+        "^(?![A-Za-z]:)(?!\\.{1,2}(?:/|$))[^/\\\\\\u0000]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\\\u0000]+)*$",
 });
 
 export const workspaceServiceSandboxSchema = Type.Object({

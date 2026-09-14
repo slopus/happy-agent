@@ -94,12 +94,18 @@ describe("workspace services protocol", () => {
         "../secret",
         "a/../b",
         "a/.",
+        "a\n/../secret",
+        "a\r\n/./secret",
         "C:/x",
         "a\\b",
         "a\u0000b",
     ])("rejects unsafe input path %j", (path) =>
         expect(Value.Check(workspaceServicePathSchema, path)).toBe(false),
     );
+
+    it("accepts ordinary relative segments even when a filename contains a newline", () => {
+        expect(Value.Check(workspaceServicePathSchema, "a\n/file.txt")).toBe(true);
+    });
 
     it("bounds output, reader identities, list pages, and effective sandbox resources", () => {
         expect(Value.Check(workspaceServiceInputRequestSchema, { readerId: "view1" })).toBe(true);
