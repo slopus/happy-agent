@@ -94,8 +94,8 @@ one message it cannot carry.
   synthetic bot projects would expose invalid creation actions on older phones. Keep small
   resource-specific validation and error messages local, while reusing the encryption primitives.
   Read bot metadata and bytes in one transaction. Artwork failures use five exponentially spaced
-  retries independently of chat, then wait for a new bot revision or connection; archival never
-  waits for artwork to finish.
+  retries independently of chat, then wait for a new bot revision or a recreated session client;
+  a socket reconnect alone does not reset the budget. Archival never waits for artwork to finish.
 
 - Bots are discovered through `BotsModule`, not project/workspace membership. Each bot projects
   its existing agent into one Happy session, with optional encrypted `bot` identity and no synthetic

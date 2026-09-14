@@ -15,7 +15,8 @@ retries reuse the uploaded reference; clearing the bot picture explicitly remove
 the relay avatar. Network work is bounded, cancelled with the connection, and kept
 off message delivery. External upload origins never receive the Happy bearer token.
 Failures retry independently of chat, at 2, 4, 8, 16 and 32 seconds, then wait for a
-new bot revision or connection. Archival does not wait for image synchronization.
+new bot revision or a recreated session client (for example, after a daemon restart).
+A socket reconnect alone does not reset the budget. Archival does not wait for image synchronization.
 
 This module connects an agent to Happy, the mobile app. A session running here
 shows up on the phone, streams as it works, and can be driven from there.

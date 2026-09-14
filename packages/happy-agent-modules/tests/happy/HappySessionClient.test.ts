@@ -281,6 +281,54 @@ function client(options: {
 }
 
 describe("keeping one session in step with Happy", () => {
+    it("caps artwork backoff without polling chat and resets it for a new bot revision", async () => {
+        const server = fakeServer({ avatars: true });
+        const { operations, snapshot } = fakeOperations();
+        const read = vi.fn(async () => {
+            throw new Error("Picture unavailable");
+        });
+        let version = 1;
+        const session = client({
+            server,
+            socket: new FakeSocket(),
+            operations: {
+                ...operations,
+                sessionAvatarAsset: read,
+                session: async () => ({
+                    ...snapshot,
+                    avatarVersion: version,
+                    bot: {
+                        id: "b",
+                        name: "Assistant",
+                        username: "assistant",
+                        workspaceId: "w",
+                        orderKey: "1",
+                    },
+                }),
+            },
+        });
+        vi.useFakeTimers();
+        try {
+            await session.settle();
+            const chatRequests = server.requests.length;
+            for (const [index, delay] of [2_000, 4_000, 8_000, 16_000, 32_000].entries()) {
+                await vi.advanceTimersByTimeAsync(delay - 1);
+                expect(read).toHaveBeenCalledTimes(index + 1);
+                await vi.advanceTimersByTimeAsync(1);
+                expect(read).toHaveBeenCalledTimes(index + 2);
+            }
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(read).toHaveBeenCalledTimes(6);
+            expect(server.requests).toHaveLength(chatRequests);
+            version++;
+            await session.settle();
+            expect(read).toHaveBeenCalledTimes(7);
+        } finally {
+            await session.close();
+            vi.useRealTimers();
+        }
+    });
+
     it("does not retry failing optional artwork whenever chat synchronizes", async () => {
         const server = fakeServer({ avatars: true });
         const { operations, snapshot } = fakeOperations();
