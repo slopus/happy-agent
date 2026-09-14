@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # CI-only delegation for real-kernel service tests. Never run this at daemon startup.
 set -euo pipefail
-service_test_target="${1:?Pass the native target triple}"
+service_test_target="${1:?Pass the native target triple or --command followed by a test command}"
+shift
+if [[ "$service_test_target" == --command ]]; then
+    [[ "$#" -gt 0 ]]
+else
+    [[ "$#" -eq 0 ]]
+fi
 service_test_original=""
 while IFS=: read -r service_test_hierarchy service_test_controllers service_test_path; do
     if [[ "$service_test_hierarchy" == 0 ]]; then
@@ -29,4 +35,8 @@ sudo chown "$service_test_uid:$service_test_gid" "$service_test_parent" \
     "$service_test_parent/cgroup.subtree_control"
 printf '%s\n' "$service_test_pid" | sudo tee "$service_test_parent/runner/cgroup.procs" >/dev/null
 export HAPPY_SERVICE_TEST_CGROUP_PARENT="$service_test_parent"
-cargo test --locked --target "$service_test_target" --test services -- --include-ignored --test-threads=1
+if [[ "$service_test_target" == --command ]]; then
+    "$@"
+else
+    cargo test --locked --target "$service_test_target" --test services -- --include-ignored --test-threads=1
+fi

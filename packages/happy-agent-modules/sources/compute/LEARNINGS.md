@@ -1,5 +1,17 @@
 # Compute module learnings
 
+## Service inputs remain live and read-only
+
+Workspace services use selected live read-only inputs and private writable scratch. Changes made
+from outside the service are intentional and do not require copying the workspace into a startup
+snapshot. Preserve directory watching and hot reload rather than introducing snapshots implicitly.
+
+Linux read-only mounts prevent regular-file writes, but a named pipe in a selected directory can
+still communicate with a host process. The service cannot create that pipe in its read-only inputs;
+it must already exist or be added from outside, and a host process must consume it for the edge
+case to matter. This conditional IPC risk is explicitly accepted for the first service version.
+Do not describe it as arbitrary host-file write access or an automatic Happy escape.
+
 ## File mutations can explicitly request reviewed elevation
 
 Patch, write, and edit tools previously inferred elevation only from their target paths, so a model

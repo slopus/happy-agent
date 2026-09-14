@@ -29,6 +29,10 @@ export class BoundedOutputBuffer {
         return this.#totalBytes;
     }
 
+    get pendingBytes(): number {
+        return this.#pending.length;
+    }
+
     get omittedBytes(): number {
         return Math.max(
             0,
@@ -65,24 +69,28 @@ export class BoundedOutputBuffer {
         return joinSnapshot(this.#head, Buffer.concat([this.#tail, this.#pending]), omittedBytes);
     }
 
-    snapshotFromOffset(offset: number): {
+    snapshotFromOffset(
+        offset: number,
+        includePending = true,
+    ): {
         buffer: Buffer;
         omittedBytes: number;
         totalBytes: number;
     } {
-        const start = Math.max(0, Math.min(this.#totalBytes, offset));
-        const suffix = Buffer.concat([this.#tail, this.#pending]);
-        const suffixStart = this.#totalBytes - suffix.length;
+        const availableBytes = this.#totalBytes - (includePending ? 0 : this.#pending.length);
+        const start = Math.max(0, Math.min(availableBytes, offset));
+        const suffix = includePending ? Buffer.concat([this.#tail, this.#pending]) : this.#tail;
+        const suffixStart = availableBytes - suffix.length;
         const head = start < this.#head.length ? this.#head.subarray(start) : Buffer.alloc(0);
         const retainedSuffix =
-            start < this.#totalBytes
+            start < availableBytes
                 ? suffix.subarray(Math.max(0, start - suffixStart))
                 : Buffer.alloc(0);
         const omittedBytes = Math.max(0, suffixStart - Math.max(start, this.#head.length));
         return {
             buffer: joinSnapshot(head, retainedSuffix, omittedBytes),
             omittedBytes,
-            totalBytes: this.#totalBytes - start,
+            totalBytes: availableBytes - start,
         };
     }
 

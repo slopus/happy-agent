@@ -25,6 +25,32 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    compute-services:
+        if: ${{ !inputs.windows_only }}
+        name: Published service runtime on ${{ matrix.runner }}
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 20
+        strategy:
+            fail-fast: false
+            matrix:
+                runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        steps:
+            - uses: actions/checkout@v6
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm --filter @slopus/happy-agent-compute check
+            - run: pnpm --filter @slopus/happy-agent-compute build
+            - name: Allow only the installed supervisor to enter namespaces
+              run: bash packages/happy-agent-supervisor/scripts/allow-published-test-namespaces.sh
+            - name: Prove service I/O, endpoint transport, and controller-death cleanup
+              run: >-
+                  bash packages/happy-agent-supervisor/scripts/test-services.sh --command
+                  pnpm --filter @slopus/happy-agent-compute test:live:services
+
     windows:
         uses: ./.github/workflows/build-windows.yml
         with:

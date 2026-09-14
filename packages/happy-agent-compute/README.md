@@ -17,6 +17,7 @@ interface Compute {
     readonly cwd: string;
     readonly fs: ComputeFileSystem;
     readonly shell: ComputeShell;
+    readonly services?: ComputeServices;
     dispose(ctx: Context): Promise<void>;
 }
 ```
@@ -66,7 +67,7 @@ const build = computePermissions("workspace_write", {
 const reviewed = allowEverything();
 ```
 
-`full_access` is absolute: it means every filesystem and network restriction is gone, so it cannot
+For ordinary filesystem and shell operations, `full_access` is absolute: every filesystem and network restriction is gone, so it cannot
 be combined with one. A value that tries — full access with a denied path, or with `egress: false` —
 is rejected by `assertComputePermissions` rather than quietly resolved, because a caller who
 believes they restricted something and a backend that ignores them is the worst outcome available to
@@ -91,6 +92,39 @@ when it started, and re-deciding it afterwards could only disagree with the proc
 process that may hold credentials.
 
 ## The backends
+
+### Strict workspace services
+
+`compute.services` is a separate, optional capability for long-lived HTTP services. Its mandatory
+isolation is never disabled by Full access. Starting and writing input require Auto or Full access;
+the owner above compute reviews those operations. Ordinary shell behavior is unchanged.
+
+The controller records an execution identity before calling `start(ctx, options)`, using a private
+0700 control parent outside the workspace and inside `hostPolicy.privateDirectories`. The native
+supervisor receives its credential through a private policy file. No credential is returned through
+the service interface. A service has independent byte-position output readers, writable stdin or
+PTY input, an `admitted` promise, and a `completion` promise. Admission means the command's sandbox
+setup completed, not that an HTTP server is healthy. `completion` and `stop` wait for native owners,
+all command descendants, mounts, and private bridges to be gone. `reconcile` confirms teardown after
+a controller crash; it never restarts a command or signals a reused numeric PID. Incomplete evidence
+blocks cleanup and preserves execution files.
+
+Selected inputs are live read-only files or directories. External edits remain visible; private
+scratch paths, home, and temporary files are the only writable locations. Read-only input mounts
+still permit named-pipe IPC with an outside process using a pipe in that tree; this accepted edge
+does not grant ordinary file writes. Device files in selected inputs are denied. Outbound access is
+the intersection of explicitly requested destinations, action permissions, and resolved user policy;
+private-address destinations remain blocked. `connect(ctx)` reaches only the declared loopback HTTP
+port through the private native bridge. The product layer must enforce workspace access and HTTP
+protocol restrictions before using that trusted transport.
+
+The initial implementation requires Linux 5.12+, unprivileged user namespaces, and a pre-existing
+administrator-delegated cgroup v2 parent owned by the daemon user with memory and process controls.
+Compute never changes host security settings or creates the delegation. Unsupported hosts and
+backends fail closed, without falling back to an ordinary shell. The minimal runtime exposes system
+executables and libraries; tools installed only in the host user's home are not implicitly available.
+
+### Filesystem and shell backends
 
 Each backend is a `ComputeProvider`: an id, a one-line description, a TypeBox config schema, a
 `create` function, and `providesHostFileSystemAccess(config)` — the answer to "is this about to hand

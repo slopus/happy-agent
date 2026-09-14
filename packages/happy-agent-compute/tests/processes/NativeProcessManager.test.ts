@@ -103,6 +103,31 @@ describe("NativeProcessManager", () => {
         });
     });
 
+    it("does not advance independent readers through an incomplete UTF-8 character", async () => {
+        const cwd = await makeTemporaryDirectory();
+        const manager = createManager();
+        const managed = await manager.start(ctx, {
+            command: process.execPath,
+            args: [
+                "-e",
+                "process.stdout.write(Buffer.from([0xf0,0x9f])); process.stderr.write('ready'); process.stdin.once('data', () => { process.stdout.write(Buffer.from([0x98,0x80])); process.exit(0); });",
+            ],
+            cwd,
+        });
+        await vi.waitFor(() =>
+            expect(managed.readOutput(0, 0, false, true).stderrDelta).toBe("ready"),
+        );
+        const first = managed.readOutput(0, 0, false, true);
+        expect(first.stdoutDelta).toBe("");
+        expect(first.stdoutOffset).toBe(0);
+        await managed.writeStdin(ctx, "continue");
+        await managed.wait(ctx);
+        const second = managed.readOutput(first.stdoutOffset, first.stderrOffset, false, true);
+        expect(second.stdoutDelta).toBe("😀");
+        expect(second.stdoutOffset).toBe(4);
+        expect(managed.readOutput(0, 0, false, true).stdoutDelta).toBe("😀");
+    });
+
     it("accepts trusted startup input larger than the pipe high-water mark", async () => {
         const cwd = await makeTemporaryDirectory();
         const manager = createManager();

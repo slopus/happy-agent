@@ -8,6 +8,8 @@ import type { ComputeHostPolicy } from "../ComputeHostPolicy.js";
 import { NativeProcessManager } from "../processes/index.js";
 import { createHostFileSystem } from "./createHostFileSystem.js";
 import { createHostShell } from "./createHostShell.js";
+import { createHostServices } from "../services/createHostServices.js";
+import { runCleanupSteps } from "../sandbox/impl/runCleanupSteps.js";
 import { HOST_SESSION_STOP_GRACE_MS } from "./impl/hostSessionLimits.js";
 
 export interface HostComputeOptions {
@@ -29,6 +31,8 @@ export interface HostComputeOptions {
      */
     processManager?: NativeProcessManager;
     platform?: NodeJS.Platform;
+    /** Existing administrator delegation for strict services; never creates or changes it. */
+    serviceCgroupParent?: string;
 }
 
 /**
@@ -65,26 +69,41 @@ export function createHostCompute(options: HostComputeOptions): Compute {
         homeDirectory: home,
     });
 
+    const services = createHostServices({
+        ctx: options.ctx,
+        cwd,
+        processManager,
+        homeDirectory: home,
+        ...(options.environment === undefined ? {} : { environment: options.environment }),
+        ...(options.hostPolicy === undefined ? {} : { hostPolicy: options.hostPolicy }),
+        ...(options.serviceCgroupParent === undefined
+            ? {}
+            : { cgroupParent: options.serviceCgroupParent }),
+    });
+
     return {
         id: "host",
         kind: "host",
         cwd,
         fs,
         shell,
+        services,
         async dispose(ctx: Context) {
             shell.setSessionExitListener?.(undefined);
             shell.setActiveSessionCountListener?.(undefined);
-            // Stopping the tracked sessions records their outcome even when their manager belongs
-            // to the caller.
-            await shell.killAllSessions?.();
-            if (ownsProcessManager) {
-                // Reaping every group takes down anything that outlived the shell that launched it,
-                // such as a command that daemonized itself.
-                await processManager.killAll(ctx, {
-                    includeDetached: true,
-                    forceAfterMs: HOST_SESSION_STOP_GRACE_MS,
-                });
-            }
+            await runCleanupSteps("host compute", [
+                () => services.dispose(ctx),
+                async () => {
+                    await shell.killAllSessions?.();
+                },
+                async () => {
+                    if (ownsProcessManager)
+                        await processManager.killAll(ctx, {
+                            includeDetached: true,
+                            forceAfterMs: HOST_SESSION_STOP_GRACE_MS,
+                        });
+                },
+            ]);
         },
     };
 }

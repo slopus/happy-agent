@@ -152,6 +152,12 @@ export class NativeProcessManager {
         return this.#groups.pending();
     }
 
+    /** A stronger native boundary has independently confirmed this entire execution is gone. */
+    releaseConfirmedProcessGroup(process: ManagedProcess): void {
+        if (process.status === "running") throw new Error("Cannot retire a running process group.");
+        if (process.pid !== null) this.#groups.release(process.pid);
+    }
+
     /**
      * How much running work a shutdown would still find.
      *
@@ -273,6 +279,7 @@ export class ManagedProcess {
         stdoutOffset: number,
         stderrOffset: number,
         consume = false,
+        completeUtf8Only = false,
     ): ProcessSnapshot & {
         stderrDelta: string;
         stderrDeltaBytes: number;
@@ -283,12 +290,13 @@ export class ManagedProcess {
         stdoutDeltaOmittedBytes: number;
         stdoutOffset: number;
     } {
+        const includePending = !completeUtf8Only || this.#settled;
         const stdoutDelta = consume
             ? drainedSnapshot(this.#stdoutUnread)
-            : this.#stdout.snapshotFromOffset(stdoutOffset);
+            : this.#stdout.snapshotFromOffset(stdoutOffset, includePending);
         const stderrDelta = consume
             ? drainedSnapshot(this.#stderrUnread)
-            : this.#stderr.snapshotFromOffset(stderrOffset);
+            : this.#stderr.snapshotFromOffset(stderrOffset, includePending);
         return {
             ...this.snapshot(),
             stderrDelta: stderrDelta.buffer.toString("utf8"),
@@ -296,13 +304,13 @@ export class ManagedProcess {
             stderrDeltaOmittedBytes: stderrDelta.omittedBytes,
             stderrOffset: consume
                 ? this.#stderrBytes - this.#stderrUnread.totalBytes
-                : this.#stderrBytes,
+                : this.#stderrBytes - (includePending ? 0 : this.#stderr.pendingBytes),
             stdoutDelta: stdoutDelta.buffer.toString("utf8"),
             stdoutDeltaBytes: stdoutDelta.totalBytes,
             stdoutDeltaOmittedBytes: stdoutDelta.omittedBytes,
             stdoutOffset: consume
                 ? this.#stdoutBytes - this.#stdoutUnread.totalBytes
-                : this.#stdoutBytes,
+                : this.#stdoutBytes - (includePending ? 0 : this.#stdout.pendingBytes),
         };
     }
 
