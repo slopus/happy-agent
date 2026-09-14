@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
     createHappySyncDatabase,
@@ -178,17 +178,31 @@ function fakeOperations(overrides: Partial<HappySessionOperations> = {}): {
 }
 
 /** A stand-in for Happy's HTTP API that answers exactly what a test tells it to. */
-function fakeServer() {
+function fakeServer(options: { avatars?: boolean } = {}) {
     const requests: { body: unknown; method: string; url: string }[] = [];
     let remoteMessages: unknown[] = [];
     const handler = async (input: string | URL, init: RequestInit = {}): Promise<Response> => {
         const url = typeof input === "string" ? input : input.toString();
         const method = init.method ?? "GET";
-        const body = init.body === undefined ? undefined : JSON.parse(String(init.body));
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
         requests.push({ body, method, url });
         if (url.endsWith("/v1/sessions") && method === "POST") {
-            return Response.json({ session: { id: "remote-1", metadataVersion: 4 } });
+            return Response.json({
+                session: {
+                    id: "remote-1",
+                    metadataVersion: 4,
+                    ...(options.avatars ? { avatar: null } : {}),
+                },
+            });
         }
+        if (url.endsWith("/avatar/request-upload"))
+            return Response.json({
+                ref: "sessions/remote-1/avatar/a.enc",
+                method: "PUT",
+                uploadUrl: `${SERVER}/upload-avatar`,
+            });
+        if (url.endsWith("/avatar"))
+            return Response.json({ avatar: method === "DELETE" ? null : { ...body, version: 1 } });
         if (url.includes("/messages") && method === "POST") {
             return Response.json({ ok: true });
         }
@@ -267,6 +281,195 @@ function client(options: {
 }
 
 describe("keeping one session in step with Happy", () => {
+    it("does not retry failing optional artwork whenever chat synchronizes", async () => {
+        const server = fakeServer({ avatars: true });
+        const { operations, snapshot } = fakeOperations();
+        const read = vi.fn(async () => {
+            throw new Error("Missing stored picture");
+        });
+        const session = client({
+            server,
+            socket: new FakeSocket(),
+            operations: {
+                ...operations,
+                sessionAvatarAsset: read,
+                session: async () => ({
+                    ...snapshot,
+                    avatarVersion: 1,
+                    bot: {
+                        id: "b",
+                        name: "Assistant",
+                        username: "assistant",
+                        workspaceId: "w",
+                        orderKey: "1",
+                    },
+                }),
+            },
+        });
+        try {
+            await session.settle();
+            await session.settle();
+            await session.settle();
+            expect(read).toHaveBeenCalledOnce();
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("continues publishing session changes while a picture upload is pending", async () => {
+        const server = fakeServer({ avatars: true });
+        const request = server.fetch;
+        let finishUpload!: () => void;
+        const uploading = vi.fn();
+        server.fetch = (async (url, init) => {
+            if (String(url).endsWith("/upload-avatar")) {
+                await new Promise<void>((resolve) => {
+                    finishUpload = resolve;
+                    uploading();
+                });
+            }
+            return await request(url, init);
+        }) as typeof fetch;
+        const { operations, snapshot } = fakeOperations();
+        let name = "Assistant";
+        const socket = new FakeSocket();
+        const session = client({
+            server,
+            socket,
+            operations: {
+                ...operations,
+                sessionAvatarAsset: async () => ({
+                    bytes: new Uint8Array([1]),
+                    contentHash: "a".repeat(64),
+                    etag: '"a"',
+                    thumbhash: "hash",
+                    width: 1,
+                    height: 1,
+                }),
+                session: async () => ({
+                    ...snapshot,
+                    avatarVersion: 1,
+                    bot: { id: "b", name, username: "assistant", workspaceId: "w", orderKey: "1" },
+                }),
+            },
+        });
+        try {
+            session.kick();
+            await vi.waitFor(() => expect(uploading).toHaveBeenCalledOnce());
+            name = "Renamed Assistant";
+            session.kick();
+            await vi.waitFor(() => {
+                const values = socket.emittedValues("update-metadata") as { metadata: string }[];
+                expect(values.map((value) => decode(value.metadata))).toContainEqual(
+                    expect.objectContaining({ name }),
+                );
+            });
+        } finally {
+            finishUpload?.();
+            await session.close();
+        }
+    });
+
+    it("syncs bot artwork without adding a project or placing artwork in session metadata", async () => {
+        const server = fakeServer({ avatars: true });
+        const { operations, snapshot } = fakeOperations();
+        let version = 1;
+        let picture = {
+            bytes: new Uint8Array([1]),
+            contentHash: "a".repeat(64),
+            etag: '"a"',
+            thumbhash: "hash",
+            width: 1,
+            height: 1,
+        };
+        const read = vi.fn(async () => (version === 3 ? null : picture));
+        const bot = {
+            id: "b",
+            name: "Assistant",
+            username: "assistant",
+            workspaceId: "w",
+            orderKey: "1",
+        };
+        const socket = new FakeSocket();
+        const session = client({
+            server,
+            socket,
+            operations: {
+                ...operations,
+                sessionAvatarAsset: read,
+                session: async () => ({ ...snapshot, bot, avatarVersion: version }),
+            },
+        });
+        try {
+            await session.settle();
+            await session.settle();
+            expect(read).toHaveBeenCalledTimes(1);
+            expect(
+                server.requests.filter(
+                    (request) => request.url.endsWith("/avatar") && request.method === "PATCH",
+                ),
+            ).toHaveLength(1);
+            const metadata = decode(
+                (server.posted("/v1/sessions")[0]!.body as { metadata: string }).metadata,
+            );
+            expect(metadata).toMatchObject({ bot });
+            expect(metadata).not.toHaveProperty("project");
+            expect(metadata).not.toHaveProperty("avatarVersion");
+            version = 2;
+            picture = { ...picture, contentHash: "b".repeat(64) };
+            await session.settle();
+            version = 3;
+            await session.settle();
+            expect(
+                server.requests.filter(
+                    (request) => request.url.endsWith("/avatar") && request.method === "DELETE",
+                ),
+            ).toHaveLength(1);
+        } finally {
+            await session.close();
+        }
+    });
+
+    it("leaves project sessions and older relays untouched", async () => {
+        for (const avatars of [false, true]) {
+            const server = fakeServer({ avatars });
+            const { operations, snapshot } = fakeOperations();
+            const read = vi.fn(async () => null);
+            const session = client({
+                server,
+                socket: new FakeSocket(),
+                operations: {
+                    ...operations,
+                    sessionAvatarAsset: read,
+                    session: async () => ({
+                        ...snapshot,
+                        avatarVersion: 1,
+                        ...(avatars
+                            ? {}
+                            : {
+                                  bot: {
+                                      id: "b",
+                                      name: "Bot",
+                                      username: "bot",
+                                      workspaceId: "w",
+                                      orderKey: "1",
+                                  },
+                              }),
+                    }),
+                },
+            });
+            try {
+                await session.settle();
+                expect(read).not.toHaveBeenCalled();
+                expect(server.requests.some((request) => request.url.includes("/avatar"))).toBe(
+                    false,
+                );
+            } finally {
+                await session.close();
+            }
+        }
+    });
+
     it("creates the remote session under the tag that identifies it", async () => {
         const server = fakeServer();
         const socket = new FakeSocket();
