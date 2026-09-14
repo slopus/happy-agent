@@ -119,6 +119,40 @@ returns `reconcile` so the caller can replace the message from authoritative his
 Protocol shapes live in `sources/protocol/`, one file per API chapter, with shared wire
 values declared as TypeBox schemas and their TypeScript types derived with `Static`.
 
+## Sandboxed workspace services
+
+Services are started by an agent's separate `service_start` tool. This client manages and observes
+the same execution; it does not expose another command-launch route or a global services catalog.
+
+```text
+Workspace client → list/get service → shared process input/output
+                                  → stop and observe confirmed teardown
+                                  → scoped credential + fixed-endpoint CONNECT
+```
+
+Use `listWorkspaceServices(workspaceId)` and `getWorkspaceService(workspaceId, serviceId)` for
+discovery. Follow the list's journal `cursor` through `updates()` and reconcile `service.created`
+and version-chained `service.updated` events. Refetch on gaps or daemon replacement. Services are
+an on-demand surface; `HappyReducer` does not materialize a second service store automatically.
+For a known workspace, `404` or `501` means the feature is unavailable, not an empty catalog.
+
+`inputWorkspaceService(workspaceId, serviceId, { readerId, chars, waitMs })` reads when `chars` is
+empty and otherwise writes stdin then reads. Give every UI reader its own stable `readerId` so
+views do not consume each other's output. This ID grants no permission. Neither reads nor writes
+are retried automatically: a lost write response may already have delivered input. The response
+includes bounded output, an explicit truncation flag, and the current service snapshot.
+
+`stopWorkspaceService()` records a stop decision. A response with `status: "stopping"` does not
+prove the process tree is gone. Workspace `serviceCleanup` progress reports the mandatory barrier
+before deleting files; a blocked cleanup keeps the files intact.
+
+Trusted desktop hosts use `issueWorkspaceServiceAccessToken()` and `workspaceServiceProxyUrl()`.
+The latter returns an address only: supply normal API authorization and the separately scoped
+`WORKSPACE_SERVICE_AUTHORIZATION_HEADER` on CONNECT. Keep these credentials out of URLs, page
+JavaScript, ordinary application requests, and unrelated origins. The same methods work through
+`client.connection(id)`, preserving that connection's authenticated route. No public sharing or
+invitation is created by issuing a token.
+
 `HAPPY_AGENT_PROTOCOL_VERSION` is 25; `HAPPY_AGENT_MIN_PROTOCOL_VERSION` is 22. The range
 is additive, so clients should not require exact protocol equality for existing features.
 Creating a bot without `name` requires a daemon advertising protocol 24 or newer. With

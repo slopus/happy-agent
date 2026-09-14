@@ -134,6 +134,15 @@ import type {
 } from "./protocol/terminals.js";
 import type { AgentUsageResponse, DaemonUsageResponse } from "./protocol/usage.js";
 import type {
+    StopWorkspaceServiceRequest,
+    WorkspaceServiceAccessTokenResponse,
+    WorkspaceServiceInputRequest,
+    WorkspaceServiceInputResponse,
+    WorkspaceServiceListQuery,
+    WorkspaceServiceListResponse,
+    WorkspaceServiceResponse,
+} from "./protocol/services.js";
+import type {
     InvokeSlashCommandRequest,
     InvokeSlashCommandResponse,
 } from "./protocol/slashCommands.js";
@@ -1258,6 +1267,91 @@ export class HappyAgentClient {
         return endpointUrl(
             this.#endpoint,
             `v0/workspaces/${encodeURIComponent(workspaceId)}/proxy`,
+        );
+    }
+
+    // Sandboxed workspace services: creation belongs to the agent's service_start tool.
+
+    /** `GET /v0/workspaces/:workspaceId/services`. Unavailable is not an empty list. */
+    async listWorkspaceServices(
+        workspaceId: Cuid2,
+        query: WorkspaceServiceListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<WorkspaceServiceListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/services`,
+            query,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/workspaces/:workspaceId/services/:serviceId`. */
+    async getWorkspaceService(
+        workspaceId: Cuid2,
+        serviceId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<WorkspaceServiceResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/services/${encodeURIComponent(serviceId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** Empty chars reads; non-empty chars writes then reads. Never automatically replay input. */
+    async inputWorkspaceService(
+        workspaceId: Cuid2,
+        serviceId: Cuid2,
+        request: WorkspaceServiceInputRequest,
+        options: RequestOptions = {},
+    ): Promise<WorkspaceServiceInputResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/services/${encodeURIComponent(serviceId)}/input`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Stops the runtime, not its record. A stopping response is not proof of termination. */
+    async stopWorkspaceService(
+        workspaceId: Cuid2,
+        serviceId: Cuid2,
+        request: StopWorkspaceServiceRequest = {},
+        options: RequestOptions = {},
+    ): Promise<WorkspaceServiceResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/services/${encodeURIComponent(serviceId)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Issues a short-lived credential for existing permission; does not create a sharing grant. */
+    async issueWorkspaceServiceAccessToken(
+        workspaceId: Cuid2,
+        serviceId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<WorkspaceServiceAccessTokenResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/workspaces/${encodeURIComponent(workspaceId)}/services/${encodeURIComponent(serviceId)}/access-token`,
+            json: {},
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * Address of the fixed-service CONNECT tunnel. Fetch cannot open this attachment.
+     * Send ordinary API authentication and X-Happy-Service-Authorization separately;
+     * neither credential belongs in the URL or in the application request stream.
+     */
+    workspaceServiceProxyUrl(workspaceId: Cuid2, serviceId: Cuid2): string {
+        return endpointUrl(
+            this.#endpoint,
+            `v0/workspaces/${encodeURIComponent(workspaceId)}/services/${encodeURIComponent(serviceId)}/proxy`,
         );
     }
 
