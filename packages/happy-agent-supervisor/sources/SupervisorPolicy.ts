@@ -1,5 +1,6 @@
 import { type Static, Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { supervisorServicePolicySchema } from "./SupervisorServicePolicy.js";
 
 export const supervisorPermissionModeSchema = Type.Union([
     Type.Literal("read_only"),
@@ -65,6 +66,8 @@ export const supervisorPolicySchema = Type.Object(
         /** Windows placeholder type for protected project files that may be absent. */
         deniedWriteFilePaths: Type.Optional(Type.Array(Type.String())),
         network: supervisorNetworkPolicySchema,
+        /** Mandatory service isolation; never interpreted as ordinary shell permissions. */
+        service: Type.Optional(supervisorServicePolicySchema),
     },
     { additionalProperties: false },
 );

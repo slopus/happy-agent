@@ -1,7 +1,7 @@
 use crate::exec::exec_target;
 use crate::platform::child::{
-    STATUS_EXIT, WorkloadStatus, install_signal_forwarders, reproduce_status, reset_signal_handlers,
-    set_forward_target, wait_for_pid, wait_status_to_workload_status,
+    STATUS_EXIT, WorkloadStatus, install_signal_forwarders, reproduce_status,
+    reset_signal_handlers, set_forward_target, wait_for_pid, wait_status_to_workload_status,
 };
 use crate::policy::{PermissionMode, SupervisorPolicy};
 use crate::proxy::{OutgoingProxy, egress};
@@ -18,7 +18,11 @@ unsafe extern "C" {
         error_buffer: *mut *mut libc::c_char,
     ) -> libc::c_int;
     fn sandbox_free_error(error_buffer: *mut libc::c_char);
-    fn sandbox_check(pid: libc::pid_t, operation: *const libc::c_char, filter: libc::c_int) -> libc::c_int;
+    fn sandbox_check(
+        pid: libc::pid_t,
+        operation: *const libc::c_char,
+        filter: libc::c_int,
+    ) -> libc::c_int;
 }
 
 pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> SupervisorResult<()> {
@@ -105,7 +109,8 @@ fn run_beside_proxy(
 /// supervisor exists to be the boundary, so an enclosing sandbox is a setup error to report, not a
 /// condition to work around.
 fn refuse_nested_sandbox() -> SupervisorResult<()> {
-    let already_sandboxed = unsafe { sandbox_check(std::process::id() as libc::pid_t, std::ptr::null(), 0) };
+    let already_sandboxed =
+        unsafe { sandbox_check(std::process::id() as libc::pid_t, std::ptr::null(), 0) };
     if already_sandboxed != 0 {
         return Err(invalid_input(
             "this process is already inside a macOS Seatbelt sandbox, and Seatbelt profiles cannot be nested. Run the supervisor outside the enclosing sandbox rather than within it.",
@@ -317,8 +322,12 @@ mod tests {
         assert!(!profile.contains("(remote ip \"*:*\")"));
         assert!(!profile.contains("mDNSResponder"));
         for port in ports {
-            assert!(profile.contains(&format!("(allow network-outbound (remote ip \"localhost:{port}\"))")));
-            assert!(profile.contains(&format!("(allow network-inbound (local ip \"localhost:{port}\"))")));
+            assert!(profile.contains(&format!(
+                "(allow network-outbound (remote ip \"localhost:{port}\"))"
+            )));
+            assert!(profile.contains(&format!(
+                "(allow network-inbound (local ip \"localhost:{port}\"))"
+            )));
         }
     }
 }

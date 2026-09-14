@@ -16,8 +16,8 @@ use crate::proxy::locks::{guard, wait};
 use crate::proxy::protocol::{
     FRAME_DATA, FRAME_END, FRAME_HEADER_BYTES, FRAME_OPEN, FRAME_OPENED, FRAME_REFUSED,
     FRAME_RESET, FRAME_WINDOW, HANDSHAKE_ACCEPTED, INITIAL_WINDOW_BYTES, MAGIC, MAX_CHUNK_BYTES,
-    MAX_CONCURRENT_STREAMS, MAX_HOST_BYTES, MAX_MESSAGE_BYTES, MAX_PAYLOAD_BYTES,
-    REFUSED_BLOCKED, REFUSED_UNREACHABLE, REFUSED_UNRESOLVABLE, decode_window, encode_frame,
+    MAX_CONCURRENT_STREAMS, MAX_HOST_BYTES, MAX_MESSAGE_BYTES, MAX_PAYLOAD_BYTES, REFUSED_BLOCKED,
+    REFUSED_UNREACHABLE, REFUSED_UNRESOLVABLE, decode_window, encode_frame,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -44,7 +44,17 @@ pub(crate) struct Egress {
 /// The fork happens while this process is single-threaded, so the child reaches its own serving
 /// loop without a chance of waiting on a lock whose owner did not survive the fork.
 pub(crate) fn start(allowed_hosts: &[String]) -> SupervisorResult<Egress> {
-    let hosts = HostPolicy::new(allowed_hosts);
+    start_with_policy(HostPolicy::new(allowed_hosts))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn start_service(
+    destinations: &[crate::service_policy::ServiceDestination],
+) -> SupervisorResult<Egress> {
+    start_with_policy(HostPolicy::for_service(destinations))
+}
+
+fn start_with_policy(hosts: HostPolicy) -> SupervisorResult<Egress> {
     let (egress_end, front_end) = link_pair()?;
     let child = unsafe { libc::fork() };
     if child < 0 {
@@ -272,7 +282,7 @@ impl Session {
             }
             streams.insert(id, StreamEntry::Pending);
         }
-        if !session.hosts.permits_name(&host) {
+        if !session.hosts.permits_destination(&host, port) {
             guard(&session.streams).remove(&id);
             return session.refuse(
                 id,
@@ -530,9 +540,12 @@ fn decode_open(payload: &[u8]) -> Option<(String, u16)> {
 /// this check exists to close, so the addresses that are filtered here are the addresses that are
 /// used.
 fn connect(host: &str, port: u16, hosts: &HostPolicy) -> Result<TcpStream, (u8, String)> {
-    let resolved = (host, port)
-        .to_socket_addrs()
-        .map_err(|_| (REFUSED_UNRESOLVABLE, format!("{host} could not be resolved")))?;
+    let resolved = (host, port).to_socket_addrs().map_err(|_| {
+        (
+            REFUSED_UNRESOLVABLE,
+            format!("{host} could not be resolved"),
+        )
+    })?;
     let mut permitted: Vec<SocketAddr> = Vec::new();
     let mut refused_an_address = false;
     for address in resolved {
@@ -581,9 +594,21 @@ mod tests {
         assert_eq!(port, 443);
 
         assert!(decode_open(&[]).is_none());
-        assert!(decode_open(&[0x00, 0x00, 0x00, 0x01, b'a']).is_none(), "port zero");
-        assert!(decode_open(&[0x01, 0xbb, 0x00, 0x00]).is_none(), "empty host");
-        assert!(decode_open(&[0x01, 0xbb, 0x00, 0x05, b'a']).is_none(), "truncated host");
-        assert!(decode_open(&[0x01, 0xbb, 0x00, 0x01, 0xff]).is_none(), "invalid UTF-8");
+        assert!(
+            decode_open(&[0x00, 0x00, 0x00, 0x01, b'a']).is_none(),
+            "port zero"
+        );
+        assert!(
+            decode_open(&[0x01, 0xbb, 0x00, 0x00]).is_none(),
+            "empty host"
+        );
+        assert!(
+            decode_open(&[0x01, 0xbb, 0x00, 0x05, b'a']).is_none(),
+            "truncated host"
+        );
+        assert!(
+            decode_open(&[0x01, 0xbb, 0x00, 0x01, 0xff]).is_none(),
+            "invalid UTF-8"
+        );
     }
 }

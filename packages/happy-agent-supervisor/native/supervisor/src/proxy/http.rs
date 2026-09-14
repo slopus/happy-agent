@@ -23,7 +23,11 @@ pub(crate) fn serve(mux: &Arc<Mux>, credential: &ProxyCredential, mut client: Tc
         }
     };
     let Some(split) = find_head_end(&head.bytes) else {
-        respond(&mut client, 431, "The proxy request header block is too large.");
+        respond(
+            &mut client,
+            431,
+            "The proxy request header block is too large.",
+        );
         return;
     };
     let (header_block, remainder) = head.bytes.split_at(split);
@@ -36,7 +40,11 @@ pub(crate) fn serve(mux: &Arc<Mux>, credential: &ProxyCredential, mut client: Tc
         return;
     }
     let Some(request) = parse_request(header_block) else {
-        respond(&mut client, 400, "The proxy request could not be understood.");
+        respond(
+            &mut client,
+            400,
+            "The proxy request could not be understood.",
+        );
         return;
     };
 
@@ -270,8 +278,10 @@ mod tests {
         let authorization = credential.http_authorization();
 
         assert!(is_authorized(
-            format!("CONNECT example.com:443 HTTP/1.1\r\nProxy-Authorization: {authorization}\r\n\r\n")
-                .as_bytes(),
+            format!(
+                "CONNECT example.com:443 HTTP/1.1\r\nProxy-Authorization: {authorization}\r\n\r\n"
+            )
+            .as_bytes(),
             &credential,
         ));
         assert!(!is_authorized(
@@ -289,8 +299,9 @@ mod tests {
 
     #[test]
     fn connect_requests_name_a_destination_without_a_body() {
-        let request = parse_request(b"CONNECT example.com:8443 HTTP/1.1\r\nHost: example.com\r\n\r\n")
-            .unwrap_or_else(|| panic!("CONNECT should parse"));
+        let request =
+            parse_request(b"CONNECT example.com:8443 HTTP/1.1\r\nHost: example.com\r\n\r\n")
+                .unwrap_or_else(|| panic!("CONNECT should parse"));
         assert_eq!(request.host, "example.com");
         assert_eq!(request.port, 8443);
         assert!(matches!(request.body, RequestBody::Tunnel));

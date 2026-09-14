@@ -1,4 +1,6 @@
-use crate::exec::exec_target;
+use super::service_bridge::ServiceBridge;
+use super::service_cgroup::ServiceCgroup;
+use crate::exec::{exec_service_target, exec_target};
 use crate::platform::child::{
     STATUS_EXIT, WorkloadStatus, install_signal_forwarders, reproduce_status,
     reset_signal_handlers, set_forward_target, wait_for_pid, wait_status_to_workload_status,
@@ -11,7 +13,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::mem::size_of;
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
@@ -56,18 +58,71 @@ struct CapabilityData {
 type OutgoingProxySetup = Option<OutgoingProxy>;
 
 pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> SupervisorResult<()> {
+    let owner = unsafe { libc::getppid() };
+    if let Some(service) = &policy.service {
+        if owner != service.controller_pid {
+            return Err(
+                invalid_input("the service controller exited before supervisor startup").into(),
+            );
+        }
+        syscall_zero("watch the service controller during setup", unsafe {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0)
+        })?;
+        if unsafe { libc::getppid() } != owner {
+            return Err(
+                invalid_input("the service controller exited during supervisor startup").into(),
+            );
+        }
+    }
+    let bridge = policy
+        .service
+        .as_ref()
+        .map(ServiceBridge::bind)
+        .transpose()?;
+    let cgroup = policy
+        .service
+        .as_ref()
+        .map(ServiceCgroup::create)
+        .transpose()?;
     enter_user_namespace()?;
+    if policy.service.is_some() {
+        syscall_zero(
+            "terminate service supervisor when its owner exits",
+            unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) },
+        )?;
+        if unsafe { libc::getppid() } != owner || owner == 1 {
+            return Err(invalid_input("the service owner exited during sandbox startup").into());
+        }
+    }
     // Hardening follows the user namespace rather than preceding it. Marking the process
     // non-dumpable changes who may inspect it, and the identity mapping written immediately before
     // this is exactly the kind of write that governs. Nothing has forked yet, so everything below
     // inherits the hardening anyway.
     crate::hardening::apply()?;
+    // The namespace init cannot inspect getppid(): its parent is outside its PID namespace.
+    // A pidfd closes the fork-to-PDEATHSIG race without relying on reusable numeric PIDs.
+    let supervisor_lifetime = if policy.service.is_some() {
+        let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, libc::getpid(), 0) };
+        if descriptor < 0 {
+            return Err(std::io::Error::other(format!(
+                "workspace services require pidfd lifetime supervision: {}",
+                std::io::Error::last_os_error()
+            ))
+            .into());
+        }
+        Some(unsafe { File::from_raw_fd(descriptor as RawFd) })
+    } else {
+        None
+    };
     // A configured proxy isolates the network exactly as hard as no egress at all. The egress
     // process is forked here, before any namespace is unshared, so it keeps the original network
     // namespace while everything below shares an empty one. Its socketpair is created with it, and
     // a socketpair is unaffected by the unshare that follows.
     let egress = match &policy.network.outgoing_proxy {
-        Some(_) => Some(egress::start(&policy.network.allowed_hosts)?),
+        Some(_) => Some(match &policy.service {
+            Some(service) => egress::start_service(&service.outbound)?,
+            None => egress::start(&policy.network.allowed_hosts)?,
+        }),
         None => None,
     };
     let egress_pid = egress.as_ref().map(|egress| egress.pid);
@@ -75,6 +130,11 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
     let isolate_network = !policy.network.egress || policy.network.outgoing_proxy.is_some();
     let namespace_flags = libc::CLONE_NEWNS
         | libc::CLONE_NEWPID
+        | if policy.service.is_some() {
+            libc::CLONE_NEWIPC | libc::CLONE_NEWUTS
+        } else {
+            0
+        }
         | if isolate_network {
             libc::CLONE_NEWNET
         } else {
@@ -98,18 +158,30 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
     }
     if namespace_init == 0 {
         close_fd(status_read);
-        run_namespace_init(policy, command, status_write, egress_link);
+        run_namespace_init(
+            policy,
+            command,
+            status_write,
+            egress_link,
+            cgroup,
+            bridge,
+            supervisor_lifetime,
+        );
     }
 
     close_fd(status_write);
     // Only the namespace init keeps the link now, so its exit is what the egress process sees.
     drop(egress_link);
+    drop(bridge);
     set_forward_target(namespace_init);
     drop_all_capabilities_and_lock_privileges()?;
     let init_wait_status = wait_for_pid(namespace_init)?;
     set_forward_target(0);
     if let Some(pid) = egress_pid {
         egress::stop(pid);
+    }
+    if let Some(cgroup) = &cgroup {
+        cgroup.confirm_and_remove()?;
     }
     let workload_status = read_status(status_read).unwrap_or_else(|| {
         wait_status_to_workload_status(init_wait_status).unwrap_or(WorkloadStatus {
@@ -125,13 +197,34 @@ fn run_namespace_init(
     command: Vec<OsString>,
     status_write: RawFd,
     egress_link: Option<File>,
+    mut cgroup: Option<ServiceCgroup>,
+    bridge: Option<ServiceBridge>,
+    supervisor_lifetime: Option<File>,
 ) -> ! {
     let setup = (|| -> SupervisorResult<OutgoingProxySetup> {
         syscall_zero("terminate namespace init if its supervisor exits", unsafe {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0)
         })?;
-        mount_private_procfs()?;
-        apply_filesystem_policy(&policy)?;
+        if let Some(lifetime) = &supervisor_lifetime {
+            let mut descriptor = libc::pollfd {
+                fd: lifetime.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            if unsafe { libc::poll(&mut descriptor, 1, 0) } != 0 {
+                return Err(invalid_input(
+                    "the service supervisor exited during namespace startup",
+                )
+                .into());
+            }
+        }
+        if let Some(service) = &policy.service {
+            super::service_filesystem::establish(service)?;
+            mount_private_procfs()?;
+        } else {
+            mount_private_procfs()?;
+            apply_filesystem_policy(&policy)?;
+        }
         // The front-end listeners are bound here, before the filter below denies `bind` and
         // `listen` for everything that runs afterwards, so serving them re-opens nothing.
         let proxy = match &policy.network.outgoing_proxy {
@@ -147,6 +240,9 @@ fn run_namespace_init(
             install_local_binding_filter()?;
         }
         drop_all_capabilities_and_lock_privileges()?;
+        if policy.service.is_some() {
+            install_service_socket_filter()?;
+        }
         Ok(proxy)
     })();
     let proxy = match setup {
@@ -189,19 +285,44 @@ fn run_namespace_init(
         close_fd(status_write);
         reset_signal_handlers();
         let _ = unsafe { libc::setpgid(0, 0) };
-        if let Err(error) = exec_target(&command, &proxy_environment) {
+        if let Some(cgroup) = &mut cgroup
+            && let Err(error) = cgroup.enter()
+        {
+            eprintln!("happy-agent-supervisor: cannot enforce service resource limits: {error}");
+            unsafe { libc::_exit(125) };
+        }
+        let execution = if policy.service.is_some() {
+            exec_service_target(&command, &proxy_environment)
+        } else {
+            exec_target(&command, &proxy_environment)
+        };
+        if let Err(error) = execution {
             eprintln!("happy-agent-supervisor: failed to exec target: {error}");
         }
         unsafe { libc::_exit(126) };
     }
 
     set_forward_target(workload);
+    if let Some(bridge) = bridge
+        && let Err(error) = bridge.serve()
+    {
+        eprintln!("happy-agent-supervisor: failed to serve the private endpoint: {error}");
+        unsafe { libc::_exit(125) };
+    }
     // A failure here leaves the front-ends bound but unserved, and dropping the listeners is what
     // turns that into a refused connection rather than a workload waiting forever.
-    if let Some(proxy) = proxy
-        && let Err(error) = proxy.serve()
-    {
-        eprintln!("happy-agent-supervisor: failed to serve the outgoing proxy: {error}");
+    if let Some(proxy) = proxy {
+        let serving = if policy.service.is_some() {
+            proxy.serve_with_limit(64)
+        } else {
+            proxy.serve()
+        };
+        if let Err(error) = serving {
+            eprintln!("happy-agent-supervisor: failed to serve the outgoing proxy: {error}");
+            if policy.service.is_some() {
+                unsafe { libc::_exit(125) };
+            }
+        }
     }
     let status = match wait_for_pid(workload) {
         Ok(status) => wait_status_to_workload_status(status).unwrap_or(WorkloadStatus {
@@ -415,7 +536,11 @@ fn bind_mount(path: &Path, recursive: bool) -> SupervisorResult<()> {
     Ok(())
 }
 
-fn change_mount_read_only(path: &Path, recursive: bool, read_only: bool) -> SupervisorResult<()> {
+pub(super) fn change_mount_read_only(
+    path: &Path,
+    recursive: bool,
+    read_only: bool,
+) -> SupervisorResult<()> {
     // Every kernel this is developed and tested on has mount_setattr, so the pre-5.12 path would
     // otherwise never execute anywhere it could be observed. This switch lets the behaviour tests
     // drive the real binary down the fallback. It cannot weaken the boundary: the fallback is the
@@ -550,11 +675,11 @@ fn change_mount_read_only_by_remount(
 
 fn live_mount_is_read_only(path: &Path) -> SupervisorResult<bool> {
     let target = c_path(path)?;
-    let mut statistics = unsafe { std::mem::zeroed::<libc::statfs>() };
+    let mut statistics = unsafe { std::mem::zeroed::<libc::statvfs>() };
     syscall_zero("read live mount flags", unsafe {
-        libc::statfs(target.as_ptr(), &mut statistics)
+        libc::statvfs(target.as_ptr(), &mut statistics)
     })?;
-    Ok(statistics.f_flags & libc::ST_RDONLY != 0)
+    Ok(statistics.f_flag & libc::ST_RDONLY != 0)
 }
 
 struct MountPoint {
@@ -696,6 +821,92 @@ fn bring_loopback_up() -> SupervisorResult<()> {
     Ok(())
 }
 
+fn install_service_socket_filter() -> SupervisorResult<()> {
+    #[cfg(target_arch = "x86_64")]
+    const ARCH: u32 = 0xc000_003e;
+    #[cfg(target_arch = "aarch64")]
+    const ARCH: u32 = 0xc000_00b7;
+    // Filesystem inputs may change on the host. Even a newly inserted pathname socket
+    // cannot become a route to a host control process. Socketpairs are denied too:
+    // a Unix datagram pair can otherwise be reconnected to a pathname socket.
+    let mut instructions = vec![
+        bpf(BPF_LD_W_ABS, 0, 0, 4),
+        bpf(BPF_JMP_JEQ_K, 1, 0, ARCH),
+        bpf(BPF_RET_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+        bpf(BPF_LD_W_ABS, 0, 0, 0),
+    ];
+    #[cfg(target_arch = "x86_64")]
+    instructions.extend([
+        bpf(0x45, 0, 1, 0x4000_0000), // Reject x32 syscall-number aliases.
+        bpf(BPF_RET_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+    ]);
+    // A workload must not remount cgroup controls in a fresh user/cgroup namespace.
+    // io_uring can create/connect sockets without passing through the socket syscall filter.
+    for syscall in [
+        libc::SYS_socketpair,
+        libc::SYS_unshare,
+        libc::SYS_setns,
+        libc::SYS_mount,
+        libc::SYS_umount2,
+        libc::SYS_pivot_root,
+        libc::SYS_open_tree,
+        libc::SYS_move_mount,
+        libc::SYS_fsopen,
+        libc::SYS_fsmount,
+        libc::SYS_mount_setattr,
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
+    ] {
+        instructions.extend([
+            bpf(BPF_JMP_JEQ_K, 0, 1, syscall as u32),
+            bpf(BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | libc::EPERM as u32),
+        ]);
+    }
+    instructions.extend([
+        // libc falls back to clone when clone3 is unavailable; its pointer-based flags
+        // cannot be safely inspected by a classic seccomp filter.
+        bpf(BPF_JMP_JEQ_K, 0, 1, libc::SYS_clone3 as u32),
+        bpf(BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | libc::ENOSYS as u32),
+        bpf(BPF_JMP_JEQ_K, 0, 3, libc::SYS_clone as u32),
+        bpf(BPF_LD_W_ABS, 0, 0, 16),
+        bpf(
+            0x45,
+            0,
+            1,
+            (libc::CLONE_NEWUSER
+                | libc::CLONE_NEWCGROUP
+                | libc::CLONE_NEWNS
+                | libc::CLONE_NEWPID
+                | libc::CLONE_NEWNET
+                | libc::CLONE_NEWIPC
+                | libc::CLONE_NEWUTS) as u32,
+        ),
+        bpf(BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | libc::EPERM as u32),
+        bpf(BPF_LD_W_ABS, 0, 0, 0),
+    ]);
+    instructions.extend([
+        bpf(BPF_JMP_JEQ_K, 0, 3, libc::SYS_socket as u32),
+        bpf(BPF_LD_W_ABS, 0, 0, 16), // socket domain, first syscall argument.
+        bpf(BPF_JMP_JEQ_K, 0, 1, libc::AF_UNIX as u32),
+        bpf(BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | libc::EPERM as u32),
+        bpf(BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW),
+    ]);
+    let program = libc::sock_fprog {
+        len: instructions.len() as u16,
+        filter: instructions.as_mut_ptr(),
+    };
+    syscall_zero("enforce service syscall isolation", unsafe {
+        libc::prctl(
+            libc::PR_SET_SECCOMP,
+            SECCOMP_MODE_FILTER,
+            &program as *const libc::sock_fprog,
+            0,
+            0,
+        )
+    })
+}
+
 fn install_local_binding_filter() -> SupervisorResult<()> {
     #[cfg(target_arch = "x86_64")]
     const AUDIT_ARCH: u32 = 0xc000_003e;
@@ -835,7 +1046,7 @@ fn c_path(path: &Path) -> SupervisorResult<CString> {
         .map_err(|_| invalid_input(format!("path contains a NUL byte: {}", path.display())).into())
 }
 
-fn syscall_zero(description: &str, result: libc::c_int) -> SupervisorResult<()> {
+pub(super) fn syscall_zero(description: &str, result: libc::c_int) -> SupervisorResult<()> {
     if result == 0 {
         Ok(())
     } else {

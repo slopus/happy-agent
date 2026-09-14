@@ -3,6 +3,7 @@ use crate::{SupervisorResult, invalid_input};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Take};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
 const MAX_POLICY_BYTES: u64 = 1024 * 1024;
@@ -80,17 +81,33 @@ fn read_policy(source: PolicySource) -> SupervisorResult<SupervisorPolicy> {
             if json.len() as u64 > MAX_POLICY_BYTES {
                 return Err(invalid_input("policy JSON exceeds the 1 MiB limit").into());
             }
-            Ok(serde_json::from_str(&json)?)
+            let policy: SupervisorPolicy = serde_json::from_str(&json)?;
+            if policy.service.is_some() {
+                return Err(invalid_input("service bridge credentials require a private --policy-file, not process arguments").into());
+            }
+            Ok(policy)
         }
         PolicySource::File(path) => {
             let file = File::open(path)?;
+            let metadata = file.metadata()?;
             let mut bytes = Vec::new();
             let mut limited: Take<File> = file.take(MAX_POLICY_BYTES + 1);
             limited.read_to_end(&mut bytes)?;
             if bytes.len() as u64 > MAX_POLICY_BYTES {
                 return Err(invalid_input("policy JSON exceeds the 1 MiB limit").into());
             }
-            Ok(serde_json::from_slice(&bytes)?)
+            let policy: SupervisorPolicy = serde_json::from_slice(&bytes)?;
+            if policy.service.is_some()
+                && (!metadata.is_file()
+                    || metadata.mode() & 0o077 != 0
+                    || metadata.uid() != unsafe { libc::geteuid() })
+            {
+                return Err(invalid_input(
+                    "service policy files must be private and owned by the controller user",
+                )
+                .into());
+            }
+            Ok(policy)
         }
     }
 }

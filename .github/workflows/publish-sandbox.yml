@@ -98,6 +98,11 @@ jobs:
             - name: Lint
               run: cargo clippy --locked --all-targets --target "${{ matrix.target }}" -- -D warnings
 
+            - name: Verify strict service isolation with delegated resource controls
+              if: runner.os == 'Linux'
+              # Missing delegation cannot silently skip these checks before publication.
+              run: bash ../scripts/test-services.sh "${{ matrix.target }}"
+
             - name: Upload the binary
               uses: actions/upload-artifact@v4
               with:

@@ -4,6 +4,7 @@ mod hardening;
 mod platform;
 mod policy;
 mod proxy;
+mod service_policy;
 
 pub type SupervisorError = Box<dyn std::error::Error + Send + Sync>;
 pub type SupervisorResult<T> = Result<T, SupervisorError>;
