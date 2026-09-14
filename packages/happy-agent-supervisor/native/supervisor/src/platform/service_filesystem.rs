@@ -1,5 +1,5 @@
 //! An empty filesystem with explicit inputs, not a read-only view of the host.
-use super::linux::{change_mount_read_only, syscall_zero};
+use super::linux::{change_mount_read_only, deny_service_input_devices, syscall_zero};
 use crate::service_policy::ServicePolicy;
 use crate::{SupervisorResult, invalid_input};
 use std::ffi::CString;
@@ -60,6 +60,7 @@ pub(super) fn establish(policy: &ServicePolicy) -> SupervisorResult<()> {
         let destination = policy.root.join("workspace").join(&input.destination);
         reject_symlink_ancestors(&policy.root, &destination)?;
         bind_read_only(&input.source, &destination, true)?;
+        deny_service_input_devices(&destination, true)?;
     }
     // Overlapping scratch needs an existing mount point in a read-only input.
     // Never create that point through the host input or grant host write access.

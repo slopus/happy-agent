@@ -220,6 +220,11 @@ a sibling leaf cgroup). Startup never changes service privileges, host cgroup de
 AppArmor, or global sysctls. macOS and Windows service launches fail closed; their ordinary
 shell behavior is unchanged.
 
+Service input mounts also require recursive `mount_setattr` device denial (Linux 5.12 or
+newer). Selected inputs remain live and read-only; host edits are intentional. Linux named
+pipes in those selected inputs retain their IPC semantics, an accepted first-version edge
+case, while device-file access and Unix socket creation are blocked.
+
 The trusted controller supplies an empty private root, explicit read-only input mounts,
 private scratch paths, an execution identity, resource limits, and a private bridge socket.
 `controllerPid` must identify the direct launching process. Before creating runtime resources,
@@ -231,6 +236,9 @@ and the stable identities of its namespace-init and optional egress children. Re
 also confirm those native owners have exited: they can still hold mounts or bridges after
 the workload cgroup becomes empty. A missing or incomplete startup record is ambiguous after
 controller loss; retain the workspace and report blocked cleanup instead of guessing.
+The private `started` file is empty before command admission, `1` once the sandboxed command
+is admitted, and `E` if exec itself fails. This distinguishes sandbox startup failure from
+an application's nonzero exit without interpreting untrusted command output.
 Pass service policies through a controller-owned, mode-0600 `--policy-file` beneath the
 daemon's protected private storage, not through command-line JSON: process listings must
 not reveal the bridge credential. The controller owns that file's lifecycle too.

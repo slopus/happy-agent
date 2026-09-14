@@ -104,6 +104,11 @@ fn a_fake_resource_controller_never_starts_the_command() {
     .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(identity["executionReady"], false);
     assert_eq!(identity["children"], json!([]));
+    assert_eq!(
+        fs::read(boundary.directory.path().join("started"))
+            .unwrap_or_else(|error| panic!("{error}")),
+        b""
+    );
 }
 
 #[test]
@@ -177,6 +182,11 @@ fn service_filesystem_and_environment_are_private() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.stdout, b"sandbox-ready");
+    assert_eq!(
+        fs::read(boundary.directory.path().join("started"))
+            .unwrap_or_else(|error| panic!("{error}")),
+        b"1"
+    );
     assert_eq!(
         fs::read(boundary.directory.path().join("input")).unwrap_or_else(|error| panic!("{error}")),
         b"selected-input"
@@ -478,6 +488,48 @@ fn abrupt_supervisor_death_releases_recorded_native_owners() {
     }
     assert!(UnixStream::connect(boundary.directory.path().join("bridge")).is_err());
     fs::remove_dir(&boundary.cgroup).unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires delegated cgroups; mandatory in the native release gate"]
+fn application_exit_125_is_not_a_native_startup_failure() {
+    let boundary = Boundary::new(&delegated_parent());
+    let output = boundary.run("exit 125");
+    assert_eq!(output.status.code(), Some(125));
+    assert_eq!(
+        fs::read(boundary.directory.path().join("started"))
+            .unwrap_or_else(|error| panic!("{error}")),
+        b"1"
+    );
+    assert!(!boundary.cgroup.exists());
+    let failed = Boundary::new(&delegated_parent());
+    let output = Command::new(SUPERVISOR)
+        .arg("--policy-file")
+        .arg(failed.policy_file())
+        .args(["--", "/missing-service-executable"])
+        .output()
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(output.status.code(), Some(126));
+    assert_eq!(
+        fs::read(failed.directory.path().join("started")).unwrap_or_else(|error| panic!("{error}")),
+        b"E"
+    );
+    assert!(!failed.cgroup.exists());
+}
+
+#[test]
+#[ignore = "requires delegated cgroups; mandatory in the native release gate"]
+fn selected_inputs_cannot_expose_host_device_nodes() {
+    let mut boundary = Boundary::new(&delegated_parent());
+    boundary.policy["service"]["inputs"][0]["source"] = json!("/dev/null");
+    let output = boundary.run("if printf x > /workspace/input; then exit 91; fi; printf x > /dev/null; printf device-blocked");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"device-blocked");
+    assert!(!boundary.cgroup.exists());
 }
 
 struct ServiceChild(std::process::Child);

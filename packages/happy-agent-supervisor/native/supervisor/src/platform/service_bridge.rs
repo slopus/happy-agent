@@ -4,7 +4,7 @@ use crate::{SupervisorResult, invalid_input};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,6 +14,7 @@ pub(super) struct ServiceBridge {
     listener: UnixListener,
     token: [u8; 64],
     port: u16,
+    workload_started: fs::File,
 }
 
 impl ServiceBridge {
@@ -42,6 +43,11 @@ impl ServiceBridge {
             .open(parent.join("process.json"))?;
         identity.write_all(lifetime_record(false, &[])?.to_string().as_bytes())?;
         identity.sync_all()?;
+        let workload_started = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(parent.join("started"))?;
         let listener = UnixListener::bind(&policy.bridge_socket)?;
         fs::set_permissions(&policy.bridge_socket, fs::Permissions::from_mode(0o600))?;
         let token = policy
@@ -53,7 +59,15 @@ impl ServiceBridge {
             listener,
             token,
             port: policy.port,
+            workload_started,
         })
+    }
+
+    /// This descriptor is controller-private and close-on-exec; application output cannot
+    /// impersonate the marker. Empty means setup never completed, 1 means command admission,
+    /// and E means exec itself failed (distinct from the application's eventual exit code).
+    pub(super) fn mark_workload(&self, value: u8) -> std::io::Result<()> {
+        self.workload_started.write_all_at(&[value], 0)
     }
 
     /// Commit every mount/bridge-owning native process before releasing namespace setup.

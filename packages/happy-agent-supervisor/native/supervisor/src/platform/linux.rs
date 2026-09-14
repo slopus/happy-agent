@@ -329,12 +329,21 @@ fn run_namespace_init(
             eprintln!("happy-agent-supervisor: cannot enforce service resource limits: {error}");
             unsafe { libc::_exit(125) };
         }
+        if let Some(bridge) = &bridge
+            && let Err(error) = bridge.mark_workload(b'1')
+        {
+            eprintln!("happy-agent-supervisor: cannot record service command admission: {error}");
+            unsafe { libc::_exit(125) };
+        }
         let execution = if policy.service.is_some() {
             exec_service_target(&command, &proxy_environment)
         } else {
             exec_target(&command, &proxy_environment)
         };
         if let Err(error) = execution {
+            if let Some(bridge) = &bridge {
+                let _ = bridge.mark_workload(b'E');
+            }
             eprintln!("happy-agent-supervisor: failed to exec target: {error}");
         }
         unsafe { libc::_exit(126) };
@@ -571,6 +580,34 @@ fn bind_mount(path: &Path, recursive: bool) -> SupervisorResult<()> {
             std::ptr::null(),
         )
     })?;
+    Ok(())
+}
+
+pub(super) fn deny_service_input_devices(path: &Path, recursive: bool) -> SupervisorResult<()> {
+    let target = CString::new(path.as_os_str().as_bytes())?;
+    let attributes = MountAttributes {
+        attr_set: 0x0000_0002 | 0x0000_0004, // MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
+        attr_clear: 0,
+        propagation: 0,
+        user_namespace_fd: 0,
+    };
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            if recursive { AT_RECURSIVE } else { 0 },
+            &attributes,
+            size_of::<MountAttributes>(),
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::other(format!(
+            "workspace services require recursive device-file denial for input mounts: {}",
+            std::io::Error::last_os_error()
+        ))
+        .into());
+    }
     Ok(())
 }
 
