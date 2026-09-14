@@ -78,6 +78,12 @@ aggregates per-iteration usage, and retains both `content` and `encrypted_conten
 provider returned them, including null values. A missing compaction block fails the operation;
 Rig never sends a separate summarization request.
 
+Compaction carries the selected model's normal tool definitions, including deferred tools and
+native tool search. Historical tool-search results contain references that the server validates
+against that same request's tools. Sending an empty tool list makes an otherwise valid transcript
+fail with `Tool reference 'web_fetch' not found in available tools`. Keep the definitions and the
+opaque historical results intact; `pause_after_compaction` still stops at the native checkpoint.
+
 ## Credentials
 
 Load `BedrockBearerTokenCredential`, normally from `AWS_BEARER_TOKEN_BEDROCK`, or load
@@ -95,6 +101,9 @@ resulting OpenAI Mantle, Anthropic Mantle, and Anthropic Runtime SigV4 request h
 `tests/anthropicBedrockProvider.test.ts` exercises regional routing, signed-thinking replay,
 provider-owned retry, native compaction, Mantle and Runtime wire shapes, exact current Rig prompt
 and tools, and the captured Claude golden response stream.
+`tests/anthropicBedrockCompactionTools.test.ts` exercises tool-search inference, native compaction,
+and checkpoint continuation through the real SDK with scripted HTTP responses. It verifies both
+session-level and selected-model tool definitions and leaves the caller's history unchanged.
 `tests/anthropicBedrock.live.test.ts` performs a real preferred-endpoint turn and a real native
 compaction followed by a checkpoint-replay turn when `RIG_LIVE_TEST=1` and a bearer token are
 available.

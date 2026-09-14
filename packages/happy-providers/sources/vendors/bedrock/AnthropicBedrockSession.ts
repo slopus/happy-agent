@@ -121,7 +121,8 @@ export class AnthropicBedrockSession extends BaseSession {
                     compactionInstructions: options.instructions ?? null,
                     context: original,
                     model,
-                    tools: [],
+                    // Use the selected model's normal tools: replayed native tool-search results
+                    // reference their definitions even when generation pauses after compaction.
                     ...(this.activeEffort === undefined ? {} : { effort: this.activeEffort }),
                 }),
                 ...(signal === undefined ? {} : { signal }),
