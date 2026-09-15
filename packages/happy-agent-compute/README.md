@@ -109,6 +109,11 @@ all command descendants, mounts, and private bridges to be gone. `reconcile` con
 a controller crash; it never restarts a command or signals a reused numeric PID. Incomplete evidence
 blocks cleanup and preserves execution files.
 
+If a completion failed to establish cleanup, a later successful `reconcile` releases that exact
+execution's active slot and process-group ownership. Disposal can then be retried without reopening
+admission. Independent service reads use delta-only capture access, so an idle poll does not copy
+the complete retained stdout and stderr buffers.
+
 Selected inputs are live read-only files or directories. External edits remain visible; private
 scratch paths, home, and temporary files are the only writable locations. Read-only input mounts
 still permit named-pipe IPC with an outside process using a pipe in that tree; this accepted edge

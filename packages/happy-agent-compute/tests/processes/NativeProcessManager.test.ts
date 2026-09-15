@@ -23,6 +23,28 @@ afterEach(async () => {
 });
 
 describe("NativeProcessManager", () => {
+    it("reads independent deltas without copying the full retained output snapshot", async () => {
+        const cwd = await makeTemporaryDirectory();
+        const manager = createManager();
+        const managed = await manager.start(ctx, {
+            command: process.execPath,
+            args: ["-e", "process.stdout.write('retained output'); process.stdin.resume();"],
+            cwd,
+        });
+        await vi.waitFor(() => expect(managed.snapshot().stdout).toBe("retained output"));
+        const snapshot = vi.spyOn(managed, "snapshot");
+        const first = managed.readOutputDelta(0, 0, false, true);
+        expect(first.stdoutDelta).toBe("retained output");
+        expect(first.stdoutOffset).toBe(15);
+        expect(
+            managed.readOutputDelta(first.stdoutOffset, first.stderrOffset, false, true)
+                .stdoutDelta,
+        ).toBe("");
+        expect(snapshot).not.toHaveBeenCalled();
+        expect(first).not.toHaveProperty("stdout");
+        expect(managed.readOutputDelta(0, 0, false, true).stdoutDelta).toBe("retained output");
+        snapshot.mockRestore();
+    });
     it("runs a command with an explicit cwd and captures stdout and stderr", async () => {
         const cwd = await makeTemporaryDirectory();
         const manager = createManager();

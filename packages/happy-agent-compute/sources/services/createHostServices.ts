@@ -41,7 +41,7 @@ const positionSchema = Type.Object(
 
 /** Separate service sessions sharing only the shell's underlying process I/O machinery. */
 export function createHostServices(options: HostServicesOptions): ComputeServices {
-    const active = new Set<ComputeService>();
+    const active = new Map<ComputeService, ManagedProcess>();
     const starts = new Set<Promise<ComputeService>>();
     let closed = false;
     let disposal: Promise<void> | undefined;
@@ -117,7 +117,7 @@ export function createHostServices(options: HostServicesOptions): ComputeService
                 maxOutputBytes: 1048576,
             });
             const service = session(options, processContext, start, managed, bridge, token);
-            active.add(service);
+            active.set(service, managed);
             void service.completion.then(
                 () => active.delete(service),
                 () => undefined,
@@ -150,13 +150,30 @@ export function createHostServices(options: HostServicesOptions): ComputeService
         },
         async reconcile(ctx, execution) {
             await ctx.span("compute.service.reconcile", () => reconcileServiceExecution(execution));
+            for (const [service, managed] of active) {
+                if (
+                    service.execution.id === execution.id &&
+                    service.execution.directory === execution.directory
+                ) {
+                    await managed.wait(ctx);
+                    options.processManager.releaseConfirmedProcessGroup(managed);
+                    active.delete(service);
+                }
+            }
         },
         dispose(ctx) {
             closed = true;
-            disposal ??= ctx.span("compute.services.dispose", async () => {
-                await Promise.allSettled([...starts]);
-                await Promise.all([...active].map((service) => service.stop(ctx)));
-            });
+            disposal ??= ctx
+                .span("compute.services.dispose", async () => {
+                    await Promise.allSettled([...starts]);
+                    await Promise.all([...active.keys()].map((service) => service.stop(ctx)));
+                })
+                .catch((error: unknown) => {
+                    // Admission stays closed. A later exact-execution reconciliation may establish
+                    // cleanup that failed earlier, so disposal must be able to observe that new proof.
+                    disposal = undefined;
+                    throw error;
+                });
             return disposal;
         },
     };
@@ -200,7 +217,7 @@ function session(
         read(position) {
             if (!Value.Check(positionSchema, position))
                 throw new Error("Invalid service output position.");
-            const output = managed.readOutput(position.stdout, position.stderr, false, true);
+            const output = managed.readOutputDelta(position.stdout, position.stderr, false, true);
             return {
                 stdout: output.stdoutDelta,
                 stderr: output.stderrDelta,

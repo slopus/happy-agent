@@ -13,6 +13,7 @@ import { BoundedOutputBuffer } from "./impl/BoundedOutputBuffer.js";
 import type {
     ManagedProcessStatus,
     ProcessKillOptions,
+    ProcessOutputDelta,
     ProcessRunOptions,
     ProcessRunResult,
     ProcessSnapshot,
@@ -280,16 +281,20 @@ export class ManagedProcess {
         stderrOffset: number,
         consume = false,
         completeUtf8Only = false,
-    ): ProcessSnapshot & {
-        stderrDelta: string;
-        stderrDeltaBytes: number;
-        stderrDeltaOmittedBytes: number;
-        stderrOffset: number;
-        stdoutDelta: string;
-        stdoutDeltaBytes: number;
-        stdoutDeltaOmittedBytes: number;
-        stdoutOffset: number;
-    } {
+    ): ProcessSnapshot & ProcessOutputDelta {
+        return {
+            ...this.snapshot(),
+            ...this.readOutputDelta(stdoutOffset, stderrOffset, consume, completeUtf8Only),
+        };
+    }
+
+    /** Service readers need independent deltas, not repeated copies of a megabyte-sized capture. */
+    readOutputDelta(
+        stdoutOffset: number,
+        stderrOffset: number,
+        consume = false,
+        completeUtf8Only = false,
+    ): ProcessOutputDelta {
         const includePending = !completeUtf8Only || this.#settled;
         const stdoutDelta = consume
             ? drainedSnapshot(this.#stdoutUnread)
@@ -298,7 +303,6 @@ export class ManagedProcess {
             ? drainedSnapshot(this.#stderrUnread)
             : this.#stderr.snapshotFromOffset(stderrOffset, includePending);
         return {
-            ...this.snapshot(),
             stderrDelta: stderrDelta.buffer.toString("utf8"),
             stderrDeltaBytes: stderrDelta.totalBytes,
             stderrDeltaOmittedBytes: stderrDelta.omittedBytes,

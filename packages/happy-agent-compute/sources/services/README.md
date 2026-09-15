@@ -17,3 +17,8 @@ Startup admission comes from private native control data. Teardown verifies stab
 identities, the empty resource group, and closed bridge before removing an execution directory.
 Restart reconciliation never replays a command. The selected inputs remain live and read-only;
 named-pipe IPC in those trees is an accepted boundary edge, while input device files are denied.
+
+Active executions retain their managed-process handles until completion or independent teardown
+proof. Reconciliation of the exact execution also releases retained process-group ownership and
+capacity after a prior completion failure; a failed disposal may be retried, with admission still
+closed. Service output uses `readOutputDelta`, avoiding full-capture copies on every reader poll.
