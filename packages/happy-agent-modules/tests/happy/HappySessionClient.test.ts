@@ -1184,6 +1184,33 @@ describe("answering what the phone asks of a session", () => {
 });
 
 describe("ending a session", () => {
+    it("settles archive metadata after the relay echoes its own update", async () => {
+        const socket = new FakeSocket();
+        const server = fakeServer();
+        const session = client({ operations: fakeOperations().operations, server, socket });
+        await session.settle();
+        let now = 1_800_000_000_000;
+        const clock = vi.spyOn(Date, "now").mockImplementation(() => ++now);
+        const emit = socket.emit.bind(socket);
+        let metadataWrites = 0;
+        const echo = vi.spyOn(socket, "emit").mockImplementation((event, ...values) => {
+            emit(event, ...values);
+            // A real relay broadcasts metadata writes back to the session socket.
+            // Bound the broken case so the regression fails without an infinite loop.
+            if (event === "update-metadata" && ++metadataWrites < 4) socket.update();
+        });
+        try {
+            await session.archive();
+            expect(metadataWrites).toBe(1);
+            expect(server.posted("/v1/sessions/remote-1/archive")).toHaveLength(1);
+            expect(socket.connected).toBe(false);
+        } finally {
+            await session.close();
+            echo.mockRestore();
+            clock.mockRestore();
+        }
+    });
+
     it("tells Happy the session is over and archives it", async () => {
         const socket = new FakeSocket();
         const server = fakeServer();

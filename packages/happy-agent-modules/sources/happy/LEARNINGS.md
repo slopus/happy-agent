@@ -97,6 +97,11 @@ one message it cannot carry.
   retries independently of chat, then wait for a new bot revision or a recreated session client;
   a socket reconnect alone does not reset the budget. Archival never waits for artwork to finish.
 
+- Capture an archive transition's timestamp once per session-client lifetime.
+  Recomputing it while composing metadata makes each relay echo appear to be a
+  new change: the sync loop writes forever, `archive()` never reaches remote
+  archival or closure, and phones are flooded with metadata updates. An echoed
+  write must converge without another write; restoration uses a new client.
 - Bots are discovered through `BotsModule`, not project/workspace membership. Each bot projects
   its existing agent into one Happy session, with optional encrypted `bot` identity and no synthetic
   project or worktree. Startup includes idle bots; catalog events attach new bots and refresh names.

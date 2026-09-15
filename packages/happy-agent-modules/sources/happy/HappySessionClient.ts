@@ -210,6 +210,7 @@ export class HappySessionClient {
     #avatarCompletedVersion = -1;
     #avatarFailures = 0;
     #avatarRetryTimer: NodeJS.Timeout | undefined;
+    #archiveStartedAt: number | undefined;
     #archiving = false;
     #closed = false;
     // A new session is created with no agent state, so nothing is owed until a question arrives.
@@ -975,7 +976,9 @@ export class HappySessionClient {
                       archiveReason: "The session was ended in Happy Agent.",
                       archivedBy: "rig",
                       lifecycleState: "archived",
-                      lifecycleStateSince: Date.now(),
+                      // Relay echoes must not turn this one transition into a
+                      // new metadata write on every pass through the sync loop.
+                      lifecycleStateSince: (this.#archiveStartedAt ??= Date.now()),
                   }
                 : session.bot === undefined
                   ? {}
