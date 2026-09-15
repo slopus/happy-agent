@@ -214,6 +214,25 @@ describe("ComputeModule", () => {
         );
     });
 
+    it("rejects a malformed optional service capability before exposing the compute", async () => {
+        const compute = Object.assign(new FakeCompute(), {
+            services: { start: "not callable", reconcile: async () => {}, dispose: async () => {} },
+        });
+        const module = ComputeModule.withProvider(testConfig, new SecretsModule(), {
+            id: "host",
+            create: async () => compute as never,
+        });
+        const agentCtx = withAgentConfig(ctx, { modules: { compute: { cwd: "/workspace" } } });
+        try {
+            await expect(module.resolve(agentCtx, "agent-services")).rejects.toThrow(
+                "returned an invalid compute",
+            );
+            expect(compute.disposeCount).toBe(1);
+        } finally {
+            await module.dispose(ctx);
+        }
+    });
+
     it("asks for a decision only when a path leaves the workspace", async () => {
         const compute = new FakeCompute();
         compute.write("/workspace/sources/main.ts", "export const main = 1;\n");

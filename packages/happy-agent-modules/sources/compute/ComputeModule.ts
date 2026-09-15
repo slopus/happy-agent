@@ -141,6 +141,12 @@ export const hostComputeSchema = Type.Unsafe<HostCompute>(
             cwd: Type.String({ minLength: 1 }),
             fs: computeFileSystemSchema,
             shell: computeShellSchema,
+            services: Type.Optional(
+                Type.Object(
+                    { start: callableSchema, reconcile: callableSchema, dispose: callableSchema },
+                    exact,
+                ),
+            ),
             dispose: callableSchema,
         },
         exact,
@@ -883,6 +889,7 @@ function runtimeCompute(compute: Compute): unknown {
         cwd: compute.cwd,
         fs: compute.fs,
         shell: compute.shell,
+        ...(compute.services === undefined ? {} : { services: compute.services }),
         dispose: compute.dispose,
     };
 }
