@@ -13,7 +13,7 @@ on:
     workflow_dispatch:
         inputs:
             services_only:
-                description: Verify only the published service runtime on both Linux architectures
+                description: Verify published services and Docker boundaries on both Linux architectures
                 type: boolean
                 default: false
             windows_only:
@@ -54,6 +54,12 @@ jobs:
               run: >-
                   bash packages/happy-agent-supervisor/scripts/test-services.sh --command
                   pnpm --filter @slopus/happy-agent-compute test:live:services
+            - name: Build the container test image
+              run: docker build --tag happy-terminal-gym:local packages/happy-agent-compute/tests/fixtures
+            - name: Prove the container-path namespace allowance
+              run: bash packages/happy-agent-supervisor/scripts/test-container-namespaces.sh
+            - name: Prove the container boundary
+              run: pnpm --filter @slopus/happy-agent-compute test:live:docker
 
     windows:
         if: ${{ !inputs.services_only }}
