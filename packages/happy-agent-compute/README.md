@@ -151,6 +151,13 @@ own narrower filter and mounts. Compute fails closed rather than changing a runn
 configuration shapes are mutually exclusive at the validation boundary, and settings that only
 apply while creating a container exist only on the image branch.
 
+On Ubuntu with restricted unprivileged user namespaces, `apparmor=unconfined` alone may not allow
+nested namespace setup. A managed container can select an administrator-installed profile with
+`apparmorProfile: "happy-compute"`; that profile must permit the supervisor's namespace operations.
+Compute never installs profiles or disables AppArmor. Missing or incompatible profiles fail closed,
+and reusing a managed container with a different requested profile is refused. Attached containers
+must already have their required profile selected at creation time.
+
 ```ts
 const compute = await dockerComputeProvider.create(ctx, {
     image: "node:24",

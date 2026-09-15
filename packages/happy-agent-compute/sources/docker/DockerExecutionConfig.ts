@@ -53,6 +53,7 @@ export const dockerExecutionConfigSchema = Type.Union([
         {
             ...sharedDockerConfigProperties,
             container: nonBlankString,
+            apparmorProfile: Type.Optional(Type.Never()),
             environment: Type.Optional(Type.Never()),
             image: Type.Optional(Type.Never()),
             mounts: Type.Optional(Type.Never()),
@@ -65,6 +66,10 @@ export const dockerExecutionConfigSchema = Type.Union([
             ...sharedDockerConfigProperties,
             container: Type.Optional(Type.Never()),
             image: nonBlankString,
+            /** An administrator-installed profile. Compute never installs or relaxes host policy. */
+            apparmorProfile: Type.Optional(
+                Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_.-]+$" }),
+            ),
             environment: Type.Optional(Type.Record(Type.String({ minLength: 1 }), Type.String())),
             mounts: Type.Optional(Type.Array(dockerMountConfigSchema)),
             name: Type.Optional(nonBlankString),

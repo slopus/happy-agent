@@ -141,6 +141,8 @@ jobs:
               # GitHub's macOS runners have no Docker daemon, so the container backend is proven on
               # Linux only.
               if: matrix.docker
+              env:
+                  HAPPY_AGENT_COMPUTE_DOCKER_APPARMOR_PROFILE: happy-compute-container-tests
               run: |
                   bash packages/happy-agent-supervisor/scripts/test-container-namespaces.sh
                   pnpm --filter @slopus/happy-agent-compute test:live:docker

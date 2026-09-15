@@ -10,8 +10,8 @@ skip these security checks during publication.
 `allow-published-test-namespaces.sh` permits namespace setup only at the installed native
 artifact's exact host path on disposable hosted Linux CI. `test-container-namespaces.sh`, after
 building the compute fixture image, first proves that the same artifact fails closed at its
-read-only container mount path. It then installs the separate exact-path container allowance
-and proves startup succeeds. Both retain Ubuntu's global AppArmor user-namespace restriction;
+read-only container mount path. It then installs a named, explicitly selected test-container
+profile and proves startup succeeds. Both retain Ubuntu's global AppArmor user-namespace restriction;
 neither script is part of daemon startup or changes a developer's machine.
 
 `package.mjs` follows the native npm layout used by Rig Code Mode: platform

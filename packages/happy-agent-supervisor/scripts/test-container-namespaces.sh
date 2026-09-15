@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable CI only: prove the denial, then allow the exact read-only container artifact path.
+# Disposable CI only: prove the denial, then explicitly allow only the test containers.
 set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]
 [[ "$(uname -s)" == Linux ]]
@@ -14,7 +14,7 @@ console.log(realpathSync(resolveSupervisorBinary()));
 
 probe_container() {
     docker run --rm --network none \
-        --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+        --security-opt seccomp=unconfined --security-opt "apparmor=${1:-unconfined}" \
         --security-opt systempaths=unconfined \
         --mount "type=bind,source=$container_test_binary,target=/tools/happy-agent-sandbox,readonly" \
         --entrypoint /tools/happy-agent-sandbox happy-terminal-gym:local \
@@ -32,18 +32,18 @@ if [[ "$container_probe_status" != 125 || "$container_probe_output" != *AppArmor
 fi
 printf 'Confirmed container-path namespace denial: %s\n' "$container_probe_output"
 
-# AppArmor attaches using the executable path in the container, not its host bind-mount source.
-# This allowance exists only on the disposable runner. The application never installs it.
+# Docker explicitly selects its container profile; executable-path attachment does not grant
+# this allowance. Only containers selecting this named CI profile receive it.
 sudo tee /etc/apparmor.d/happy-compute-container-tests >/dev/null <<'EOF'
 abi <abi/4.0>,
 include <tunables/global>
-profile happy-compute-container-tests "/tools/happy-agent-sandbox" flags=(unconfined) {
+profile happy-compute-container-tests flags=(unconfined) {
     userns,
 }
 EOF
 sudo apparmor_parser --replace /etc/apparmor.d/happy-compute-container-tests
-if ! container_probe_output="$(probe_container 2>&1)"; then
-    printf 'Container namespace probe failed after the exact-path allowance: %s\n' "$container_probe_output" >&2
+if ! container_probe_output="$(probe_container happy-compute-container-tests 2>&1)"; then
+    printf 'Container namespace probe failed with the selected CI profile: %s\n' "$container_probe_output" >&2
     exit 1
 fi
 [[ "$container_probe_output" == ready ]]
