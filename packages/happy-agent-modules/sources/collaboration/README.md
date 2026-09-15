@@ -4,10 +4,11 @@ Lets one agent put another to work.
 
 ```ts
 const abort = new AbortModule(compute);
-new CollaborationModule(config, abort);
+new CollaborationModule(config, abort, history);
 ```
 
-The module takes the config module and abort module for transactional descendant-tree cancellation,
+The module takes Config, Abort for transactional descendant-tree cancellation, and History for
+durable creation presentations,
 then reaches the rest of the runtime through the `AgentSystemRef` it is handed at `beforeStart`.
 `features.cross_workspace`, enabled by default, controls whether a known Agent ID may route a
 message outside direct collaboration ancestry.
@@ -155,6 +156,14 @@ same filtered list is rendered in the model-facing tool description. When the ca
 `provider`, the tool uses its creator's current provider if that provider serves the requested
 model; otherwise an unambiguous model route is still accepted and an ambiguous one is refused.
 Direct workflow creation passes through the same validation.
+
+Before `create_agent` creates its child, it resolves the exact provider/model pair and writes
+`agent_spawn` with the catalog name to the original History tool-call record. History publishes
+that committed presentation through the API's ordinary message update. The child's ID is added
+only after creation and initial-task delivery succeed. A replay reads the retained identity,
+including its original catalog name, instead of relabeling history from today's catalog. Failed
+creation keeps the resolved model but never fabricates a successful child ID. Workflow-owned
+creation has no `create_agent` call to present and continues through its own operation.
 
 `max_collaborators` in `[settings]` controls how many collaborators created through `create_agent`
 one root agent tree retains across all branches and defaults to five. Collaborators are durable and

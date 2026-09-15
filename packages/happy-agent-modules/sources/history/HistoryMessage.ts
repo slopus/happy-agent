@@ -2,6 +2,7 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
 import {
+    agentSpawnPresentationSchema,
     clientMetadataSchema,
     clientMetadataValueSchema,
     toolCallRequestBlockSchema,
@@ -205,6 +206,8 @@ const historyToolCallFields = {
     elevated: Type.Optional(Type.Boolean()),
     /** The bounded review outcome shown to public clients. */
     review: Type.Optional(toolPermissionReviewSchema),
+    /** Resolved creation identity, retained before the child exists and across tool outcomes. */
+    spawnPresentation: Type.Optional(agentSpawnPresentationSchema),
 };
 
 /** Requested calls retain their exact input even when it is too large to execute. */

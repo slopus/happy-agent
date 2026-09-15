@@ -437,7 +437,7 @@ export async function startHappyAgentRuntime(
 
         const profile = new ProfileModule<LibSQLDatabase>(config, bots);
         const team = new TeamModule<LibSQLDatabase>(config, profile);
-        const collaboration = new CollaborationModule(config, abort);
+        const collaboration = new CollaborationModule(config, abort, history);
         const scheduling = new SchedulingModule();
         const userInput = new UserInputModule(presence);
         const mcp = new McpModule(config, userInput, workspaces);

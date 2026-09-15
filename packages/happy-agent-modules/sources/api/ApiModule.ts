@@ -1462,6 +1462,14 @@ export class ApiModule implements AgentModule {
                 );
                 boundedAdd(this.#apiPendingMessageIds, pending.id, MAX_ANNOUNCED_PENDING_MESSAGES);
             }),
+            this.#history.onToolSpawn((_ctx, agentId, message) => {
+                if (messageHiddenFromUser(message)) return;
+                this.#journal.append("message.updated", {
+                    agentId,
+                    runId: message.runId ?? null,
+                    message: messageResource(message),
+                });
+            }),
             this.#history.onAppend((_ctx, agentId, messages) => {
                 for (const message of messages) {
                     if (

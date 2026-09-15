@@ -1,5 +1,6 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import type { AgentSpawnPresentation } from "@slopus/happy-agent-client";
 
 import {
     MAX_HISTORY_RECORDED_TOOL_OUTPUT_LENGTH,
@@ -102,7 +103,10 @@ export function messageResource(
 export function providerMessageContent(
     value: unknown,
     reviewedCalls: ReadonlyMap<string, ReviewedHistoryToolCall> = new Map(),
-    resultPresentations: ReadonlyMap<string, HistoryToolPresentation> = new Map(),
+    resultPresentations: ReadonlyMap<
+        string,
+        HistoryToolPresentation | AgentSpawnPresentation
+    > = new Map(),
 ): readonly Record<string, unknown>[] | undefined {
     if (!Value.Check(providerContentSchema, value)) return undefined;
     const results = new Map<string, Static<typeof providerToolResultBlockSchema>>();
@@ -146,7 +150,7 @@ export function providerMessageContent(
                               : "completed",
                     arguments: call.arguments ?? {},
                     ...(result === undefined ? {} : { output: providerToolOutput(result) }),
-                    ...(result === undefined || presentation === undefined ? {} : { presentation }),
+                    ...(presentation === undefined ? {} : { presentation }),
                     ...(reviewed === undefined
                         ? {}
                         : { elevated: reviewed.elevated, review: reviewed.review }),
@@ -193,6 +197,7 @@ function historyBlocks(
                 };
             }
             const result = results.get(block.callId);
+            const presentation = block.spawnPresentation ?? result?.presentation;
             return toolCallResource(
                 {
                     id: block.callId,
@@ -205,9 +210,7 @@ function historyBlocks(
                               : "completed",
                     arguments: block.arguments,
                     ...(result === undefined ? {} : { output: result.output ?? "" }),
-                    ...(result?.presentation === undefined
-                        ? {}
-                        : { presentation: result.presentation }),
+                    ...(presentation === undefined ? {} : { presentation }),
                     ...(block.elevated === undefined || block.review === undefined
                         ? {}
                         : { elevated: block.elevated, review: block.review }),
@@ -234,12 +237,15 @@ export function reviewedToolCalls(
     return reviewed;
 }
 
-/** Result-derived presentations from a durable assistant message, by Base call identity. */
+/** Durable call- and result-owned presentations, by Base call identity. */
 export function toolResultPresentations(
     message: HistoryMessage | undefined,
-): ReadonlyMap<string, HistoryToolPresentation> {
-    const presentations = new Map<string, HistoryToolPresentation>();
+): ReadonlyMap<string, HistoryToolPresentation | AgentSpawnPresentation> {
+    const presentations = new Map<string, HistoryToolPresentation | AgentSpawnPresentation>();
     for (const block of message?.blocks ?? []) {
+        if (block.type === "tool_call" && block.spawnPresentation !== undefined) {
+            presentations.set(block.callId, block.spawnPresentation);
+        }
         if (block.type === "tool_result" && block.presentation !== undefined) {
             presentations.set(block.callId, block.presentation);
         }

@@ -19,7 +19,11 @@ import type {
 import { sql, type SQL } from "drizzle-orm";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { clientMetadataValueSchema, userIdSchema } from "@slopus/happy-agent-client";
+import {
+    clientMetadataValueSchema,
+    userIdSchema,
+    type AgentSpawnPresentation,
+} from "@slopus/happy-agent-client";
 import { afterCommit, withLogContext, type Context } from "@steve.kite/stdlib";
 import {
     agentDatabaseRows,
@@ -32,6 +36,10 @@ import {
 import { isUserOriginMetadata, senderAgentIdOf } from "../impl/messageOrigin.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
 import type { EventsModule } from "../events/index.js";
+import {
+    queryRecordToolSpawnPresentation,
+    queryToolSpawnMessage,
+} from "./persistence/queryToolSpawnPresentation.js";
 import {
     toolPermissionReviewSchema,
     type ToolPermissionReview,
@@ -163,6 +171,13 @@ export type HistoryPendingListener = (
     message: HistoryPendingMessage,
 ) => void | Promise<void>;
 
+/** A creation presentation changed on an already committed tool-call message. */
+export type HistoryToolSpawnListener = (
+    ctx: Context,
+    agentId: string,
+    message: HistoryMessage,
+) => void | Promise<void>;
+
 /**
  * The agent's own record of what happened, which it can read back.
  *
@@ -189,6 +204,7 @@ export class HistoryModule implements AgentModule {
     readonly #appendListeners = new Set<HistoryAppendListener>();
     /** Who projects newly committed pending messages into live client surfaces. */
     readonly #pendingListeners = new Set<HistoryPendingListener>();
+    readonly #toolSpawnListeners = new Set<HistoryToolSpawnListener>();
 
     constructor(events?: EventsModule) {
         this.#events = events;
@@ -623,6 +639,57 @@ export class HistoryModule implements AgentModule {
                     LIMIT 1`,
             );
             return rows[0] === undefined ? undefined : toHistoryRecord(rows[0]).message;
+        });
+    }
+
+    onToolSpawn(listener: HistoryToolSpawnListener): () => void {
+        this.#toolSpawnListeners.add(listener);
+        return () => {
+            this.#toolSpawnListeners.delete(listener);
+        };
+    }
+
+    async toolSpawnPresentation(
+        ctx: Context,
+        agentId: string,
+        callId: string,
+    ): Promise<AgentSpawnPresentation | undefined> {
+        return await this.#direct(ctx, async (txCtx) => {
+            const message = await queryToolSpawnMessage(txCtx, agentId, callId);
+            const call = message?.blocks.find(
+                (block) => block.type === "tool_call" && block.callId === callId,
+            );
+            return call?.type === "tool_call" ? call.spawnPresentation : undefined;
+        });
+    }
+
+    async recordToolSpawnPresentation(
+        ctx: Context,
+        agentId: string,
+        callId: string,
+        presentation: AgentSpawnPresentation,
+    ): Promise<void> {
+        await this.#direct(ctx, async (txCtx) => {
+            const message = await queryRecordToolSpawnPresentation(
+                txCtx,
+                agentId,
+                callId,
+                presentation,
+            );
+            if (message === undefined) return;
+            const listeners = [...this.#toolSpawnListeners];
+            afterCommit(txCtx, async (postCommitCtx) => {
+                for (const listener of listeners) {
+                    try {
+                        await listener(postCommitCtx, agentId, structuredClone(message));
+                    } catch (error: unknown) {
+                        withLogContext(postCommitCtx, { agentId }).log.error(
+                            "A spawn presentation subscriber failed.",
+                            error,
+                        );
+                    }
+                }
+            });
         });
     }
 

@@ -1,5 +1,14 @@
 # Collaboration learnings
 
+## Spawn rows describe resolved execution, not task titles
+
+A creation row cannot infer its model from the task name or wait for an arbitrary result string.
+The creation path now resolves the eligible model/provider pair once, writes its complete typed
+identity through History before creating the child, and adds the child ID only after initial
+delivery succeeds. Replay keeps the recorded model name and provider; catalog/configuration
+changes must not relabel historical spawns. The call's status describes creation, not the child's
+later work. These facts belong to the feature modules, without changing frozen Agent Base.
+
 ## Messages and interruption
 
 Messages between a creator and collaborator are steering in both directions. After the opening task
