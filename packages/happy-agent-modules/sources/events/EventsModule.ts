@@ -161,6 +161,11 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         return this.#originCursor;
     }
 
+    /** Allocate an opaque resource version without publishing a journal event. */
+    resourceVersion(): string {
+        return this.#createId();
+    }
+
     latestCursor(agentId: string): string | undefined {
         return this.#entries.findLast((event) => event.agentId === agentId)?.id;
     }

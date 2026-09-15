@@ -1,5 +1,21 @@
 # Compute module learnings
 
+## Services share the process catalog, not ordinary shell completion shortcuts
+
+A service's public process ID refers to its actual strict SDK execution. Stopping that process
+uses the service's revocation and whole-sandbox teardown barrier; a shell exit notice or an abort
+signal is not proof that its namespace, descendants, and bridges are gone. Failed cleanup leaves
+the process active and addressable. Service starts use Compute's independently owned process
+context and an abort-generation check, including starts that finish after the abort snapshot.
+Public process stops persist service revocation with the caller's transaction and signal only after
+commit; a rollback leaves the execution untouched. Independent native reconciliation may later
+confirm a previously failed cleanup and finalize that same public process identity.
+
+Archival previously removed the cached compute before disposal succeeded. It now closes admission
+and retains the compute until cleanup is confirmed, so a failed archive can be retried without
+losing the only handle able to stop its processes. Disposal attempts every owned cleanup path even
+when an earlier one fails. Normal tool and turn completion do not dispose service runtimes.
+
 ## Service inputs remain live and read-only
 
 Workspace services use selected live read-only inputs and private writable scratch. Changes made

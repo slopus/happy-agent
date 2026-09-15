@@ -1,6 +1,11 @@
 import { createId } from "@paralleldrive/cuid2";
 import { Value } from "@sinclair/typebox/value";
-import type { ComputeSessionExit } from "@slopus/happy-agent-compute";
+import type {
+    ComputeService,
+    ComputeServiceExecution,
+    ComputeSessionExit,
+} from "@slopus/happy-agent-compute";
+import type { Context } from "@steve.kite/stdlib";
 
 import { createUuidV7Factory } from "../events/index.js";
 import type { HostCompute } from "./ComputeModule.js";
@@ -15,11 +20,21 @@ import {
     type ComputeProcessUnsubscribe,
 } from "./ComputeProcess.js";
 
-interface ProcessHandle {
+interface ShellHandle {
+    readonly kind: "shell";
     readonly agentId: string;
     readonly compute: HostCompute;
     readonly sessionId: number;
 }
+
+interface ServiceHandle {
+    readonly kind: "service";
+    readonly agentId: string;
+    readonly compute: HostCompute;
+    readonly service: ComputeService;
+}
+
+type ProcessHandle = ShellHandle | ServiceHandle;
 
 interface AgentProcesses {
     readonly records: Map<string, ComputeProcess>;
@@ -31,6 +46,7 @@ export class ComputeProcessRegistry {
     readonly #listeners = new Set<ComputeProcessEventListener>();
     readonly #processes = new Map<string, AgentProcesses>();
     readonly #handles = new Map<string, ProcessHandle>();
+    readonly #serviceIds = new WeakMap<ComputeService, { agentId: string; processId: string }>();
     readonly #trackingCleanups = new Map<HostCompute, () => void>();
     readonly #exitedOrder: { readonly agentId: string; readonly processId: string }[] = [];
     readonly #nextVersion = createUuidV7Factory();
@@ -106,8 +122,13 @@ export class ComputeProcessRegistry {
     exit(agentId: string, compute: HostCompute, sessionId: number, exitCode: number | null): void {
         const state = this.#processes.get(agentId);
         const processId = state?.sessionIds.get(compute)?.get(sessionId);
-        const before = processId === undefined ? undefined : state?.records.get(processId);
-        if (state === undefined || processId === undefined || before?.status !== "running") return;
+        if (processId !== undefined) this.#exitProcess(agentId, processId, exitCode);
+    }
+
+    #exitProcess(agentId: string, processId: string, exitCode: number | null): void {
+        const state = this.#processes.get(agentId);
+        const before = state?.records.get(processId);
+        if (state === undefined || before?.status !== "running") return;
 
         const version = this.#nextVersion();
         const endedAt = Date.now();
@@ -133,22 +154,121 @@ export class ComputeProcessRegistry {
         this.#trim(agentId);
     }
 
-    async stop(agentId: string, processId: string): Promise<ComputeProcess | undefined> {
+    async stop(
+        ctx: Context,
+        agentId: string,
+        processId: string,
+    ): Promise<ComputeProcess | undefined> {
         const existing = this.#processes.get(agentId)?.records.get(processId);
         if (existing === undefined) return undefined;
         if (existing.status === "exited") return structuredClone(existing);
         const handle = this.#handles.get(processId);
         if (handle === undefined || handle.agentId !== agentId) return undefined;
-        const stopped = await handle.compute.shell.killSession(handle.sessionId);
-        if (stopped === undefined) {
-            this.exit(agentId, handle.compute, handle.sessionId, null);
-        } else if (stopped.status !== "running") {
-            this.exit(agentId, handle.compute, handle.sessionId, stopped.exitCode);
+        if (handle.kind === "service") {
+            const stopped = await handle.service.stop(ctx);
+            this.#exitProcess(agentId, processId, stopped.exitCode);
+        } else {
+            const stopped = await handle.compute.shell.killSession(handle.sessionId);
+            if (stopped === undefined) {
+                this.exit(agentId, handle.compute, handle.sessionId, null);
+            } else if (stopped.status !== "running") {
+                this.exit(agentId, handle.compute, handle.sessionId, stopped.exitCode);
+            }
         }
         const process = this.#processes.get(agentId)?.records.get(processId);
         return process === undefined ? undefined : structuredClone(process);
     }
 
+    serviceExecution(agentId: string, processId: string): ComputeServiceExecution | undefined {
+        const handle = this.#handles.get(processId);
+        return handle?.kind === "service" && handle.agentId === agentId
+            ? structuredClone(handle.service.execution)
+            : undefined;
+    }
+
+    /** One public identity for the SDK execution, without inventing a shell session. */
+    registerService(
+        agentId: string,
+        compute: HostCompute,
+        service: ComputeService,
+        command: string,
+    ): ComputeProcess {
+        const previous = this.#serviceIds.get(service);
+        if (previous !== undefined) {
+            const existing = this.#processes.get(previous.agentId)?.records.get(previous.processId);
+            if (previous.agentId !== agentId || existing === undefined) {
+                throw new Error(
+                    "A service execution cannot be registered under another owner or restarted.",
+                );
+            }
+            return structuredClone(existing);
+        }
+        const process: ComputeProcess = {
+            agentId,
+            command,
+            endedAt: null,
+            exitCode: null,
+            id: createId(),
+            startedAt: Date.now(),
+            status: "running",
+            version: this.#nextVersion(),
+        };
+        this.#agentProcesses(agentId).records.set(process.id, process);
+        this.#serviceIds.set(service, { agentId, processId: process.id });
+        this.#handles.set(process.id, { kind: "service", agentId, compute, service });
+        this.#emit({
+            agentId,
+            process: structuredClone(process),
+            runningProcesses: this.#runningProcesses(agentId),
+            type: "process_started",
+        });
+        // A rejected completion is explicitly not evidence of teardown. Its owning Services
+        // runtime retains the cleanup error and blocks archival; this process remains active.
+        void service.completion.then(
+            (exit) => this.#exitProcess(agentId, process.id, exit.exitCode),
+            () => undefined,
+        );
+        return structuredClone(process);
+    }
+
+    async stopServices(ctx: Context, agentId: string, compute: HostCompute): Promise<void> {
+        const services = [...this.#handles.entries()].filter(
+            ([, handle]) =>
+                handle.kind === "service" &&
+                handle.agentId === agentId &&
+                handle.compute === compute,
+        );
+        const results = await Promise.allSettled(
+            services.map(async ([processId]) => await this.stop(ctx, agentId, processId)),
+        );
+        const failures = results.filter((result) => result.status === "rejected");
+        if (failures.length > 0)
+            throw new AggregateError(
+                failures.map((result) => result.reason),
+                "Service cleanup is not confirmed.",
+            );
+    }
+
+    /** Compute calls this only after the SDK independently confirms the exact execution is gone. */
+    confirmServiceReconciled(
+        agentId: string,
+        compute: HostCompute,
+        execution: ComputeServiceExecution,
+    ): void {
+        for (const [processId, handle] of this.#handles) {
+            if (
+                handle.kind === "service" &&
+                handle.agentId === agentId &&
+                handle.compute === compute &&
+                handle.service.execution.id === execution.id &&
+                handle.service.execution.directory === execution.directory
+            ) {
+                this.#exitProcess(agentId, processId, null);
+            }
+        }
+    }
+
+    /** Shell notices cannot finalize service executions; only their SDK barrier can. */
     exitAll(agentId: string, compute: HostCompute): void {
         const sessionIds = this.#processes.get(agentId)?.sessionIds.get(compute);
         if (sessionIds === undefined) return;
@@ -202,7 +322,7 @@ export class ComputeProcessRegistry {
         };
         sessionIds.set(sessionId, process.id);
         state.records.set(process.id, process);
-        this.#handles.set(process.id, { agentId, compute, sessionId });
+        this.#handles.set(process.id, { kind: "shell", agentId, compute, sessionId });
         this.#emit({
             agentId,
             process: structuredClone(process),
