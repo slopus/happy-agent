@@ -3535,7 +3535,7 @@ The daemon uses the same tool-call projection for live `message.updated` events 
 including `status`, raw data, and `presentation` — is identical on both paths and remains so after
 a daemon restart. `omitToolData` is applied only after this shared projection.
 
-The daemon currently emits four presentation types from these exact tool names when their
+The daemon emits the following presentation types from these exact tool names when their
 expected arguments are present:
 
 | Presentation   | Tool calls                                                                                                             |
@@ -3544,6 +3544,7 @@ expected arguments are present:
 | `exec_command` | `exec_command`, `Bash`, `run_terminal_command`                                                                         |
 | `file_diff`    | `Edit`, `Write`, `apply_patch`, `search_replace`, `write`                                                              |
 | `search`       | `bedrock_web_search`, `claude_web_search`, `codex_web_search`, `gemini_web_search`, `grok_web_search`, `grok_x_search` |
+| `agent_spawn`  | `create_agent`                                                                                                         |
 
 **`exploration`** — one normalized directory listing, file read, or code search. The daemon
 currently emits one operation per mapped tool call.
@@ -3616,6 +3617,41 @@ and zero totals are valid.
     "query": "thumbhash spec"
 }
 ```
+
+**`agent_spawn`** — creation of a sub-agent. The enclosing tool call's `status` owns the lifecycle;
+this presentation does not report the child's later progress or completion.
+
+```json
+{
+    "type": "agent_spawn",
+    "model": {
+        "modelId": "xai/grok-4.6",
+        "providerId": "grok",
+        "name": "Grok 4.6"
+    }
+}
+```
+
+`model` and `agentId` are optional. When present, `model` contains all three fields: `modelId`,
+`providerId`, and `name`. The daemon supplies this identity once the creation path has resolved
+and validated the exact model/provider pair, before creating the child. `name` is the selected
+model's human-readable catalog name, not the task title, raw arguments, or generated prose.
+Each identity field is a non-empty string of at most 256 characters. An omitted provider follows
+the same resolution as execution: the creator's provider when it serves the requested model,
+otherwise the unique eligible provider. Unresolved, unavailable, or ambiguous selections leave
+`model` absent; clients must not guess it.
+
+Clients may display `Spawning Grok 4.6 sub-agent` while the call is running, or `Spawning sub-agent`
+when no model name is available. Completion or failure uses the enclosing tool status, never a
+separate inferred lifecycle. `agentId` is the created child's CUID2 and is supplied only after
+creation and initial-task delivery succeed. The resolved model identity remains unchanged on
+completion, failure, history loads, and restart, even if the catalog or configuration later
+changes. Live updates and history use the same call identity and durable presentation.
+
+This presentation is additive and does not increment the protocol version. Older daemons may omit
+it. To preserve unknown-presentation fallback in older clients, `agent_spawn` blocks retain their
+raw `arguments` and `result` even when `omitToolData=true`; other presentations keep their existing
+omission behavior. Clients never need to parse these raw fields to render a recognized spawn.
 
 Other calls, including background-terminal-input calls, currently carry no presentation and keep
 their raw data. The presentation set may grow; a client that meets an unknown presentation type
@@ -3775,7 +3811,8 @@ Query parameters:
   `presentation` come back without `arguments` and `result` — the client renders the
   presentation, and the page stays small even when runs carried large tool output. Blocks
   without a `presentation` keep their raw data regardless, since there would be nothing else to
-  render.
+  render. `agent_spawn` presentations also keep their raw data so older clients can render this
+  additive variant through their unknown-presentation fallback.
 
 With no cursor, the newest runs are returned.
 

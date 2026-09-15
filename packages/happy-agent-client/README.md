@@ -180,8 +180,17 @@ The client exposes the feed without automatically caching skills in `HappyReduce
 missing endpoints mean this feature is unavailable, not that no skills are installed.
 
 Tool calls expose the complete `ToolPresentation` discriminated union — exploration, command,
-background-terminal interaction, file diff, and web/X search — together with an exported TypeBox
-schema for each variant and `toolPresentationSchema` for the whole set.
+background-terminal interaction, file diff, web/X search, and sub-agent creation — together with
+an exported TypeBox schema for each variant and `toolPresentationSchema` for the whole set.
+
+`AgentSpawnPresentation` carries an optional complete `model: { modelId, providerId, name }`
+identity resolved before child creation, and an optional `agentId` after creation and initial-task
+delivery succeed. The enclosing tool status owns the spawning/completed/failed lifecycle, not the
+child's later work. Use the catalog `model.name` for the inline label, or a generic sub-agent label
+when absent; never infer model identity from task titles or raw tool data. The daemon retains the
+resolved identity across history loads and restart. Older daemons may omit this additive
+presentation; older clients can use raw tool data, which remains present for `agent_spawn` even
+with `omitToolData: true`. No protocol-version bump is required.
 
 Cloud exposes WorkOS authentication and organization management. Use `getCloud()` for local
 status, `startCloudAuthorization()` and `completeCloudAuthorization()` for PKCE sign-in,

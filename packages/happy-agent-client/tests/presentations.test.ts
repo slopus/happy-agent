@@ -2,6 +2,7 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
+    agentSpawnPresentationSchema,
     backgroundTerminalInteractionPresentationSchema,
     execCommandPresentationSchema,
     explorationPresentationSchema,
@@ -67,6 +68,15 @@ const presentations = [
         target: "web",
         type: "search",
     },
+    {
+        type: "agent_spawn",
+        model: {
+            modelId: "xai/grok-4.6",
+            providerId: "grok",
+            name: "Grok 4.6",
+        },
+        agentId: "tz4a98xxat96iws9zmbrgj3b",
+    },
 ] satisfies ToolPresentation[];
 
 describe("tool presentation schemas", () => {
@@ -77,14 +87,41 @@ describe("tool presentation schemas", () => {
             backgroundTerminalInteractionPresentationSchema,
             fileDiffPresentationSchema,
             searchPresentationSchema,
+            agentSpawnPresentationSchema,
         ];
 
         expect(
             presentations.map((presentation) => Value.Check(toolPresentationSchema, presentation)),
-        ).toEqual([true, true, true, true, true]);
+        ).toEqual([true, true, true, true, true, true]);
         expect(
             presentations.map((presentation, index) => Value.Check(schemas[index]!, presentation)),
-        ).toEqual([true, true, true, true, true]);
+        ).toEqual([true, true, true, true, true, true]);
+    });
+
+    it("accepts unresolved and running spawns but rejects partial or malformed model identity", () => {
+        expect(Value.Check(toolPresentationSchema, { type: "agent_spawn" })).toBe(true);
+        const model = {
+            modelId: "xai/grok-4.6",
+            providerId: "grok",
+            name: "Grok 4.6",
+        };
+        expect(Value.Check(agentSpawnPresentationSchema, { type: "agent_spawn", model })).toBe(
+            true,
+        );
+        for (const invalidModel of [
+            null,
+            {},
+            { modelId: model.modelId, providerId: model.providerId },
+            { modelId: model.modelId, name: model.name },
+            { providerId: model.providerId, name: model.name },
+            { ...model, modelId: "" },
+            { ...model, providerId: 4 },
+            { ...model, name: "x".repeat(257) },
+        ]) {
+            expect(
+                Value.Check(toolPresentationSchema, { type: "agent_spawn", model: invalidModel }),
+            ).toBe(false);
+        }
     });
 
     it("rejects unknown variants and malformed bounded counts", () => {
