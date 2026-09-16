@@ -182,6 +182,12 @@ export type PresenceConfig = Static<typeof presenceConfigSchema>;
 
 /** Everything a client needs to present a model, defined once. */
 export const modelDefinitionSchema = Type.Object({
+    /**
+     * Measured conversation tokens at which the daemon compacts automatically, below
+     * `contextWindow`. Absent from older daemons; `null` when the model has no curated threshold.
+     * Clients showing remaining context count down to this value when present.
+     */
+    autoCompactWindow: Type.Optional(Nullable(Type.Integer({ minimum: 1 }))),
     /** Maximum measured conversation tokens accepted before provider inference must compact. */
     contextWindow: Nullable(Type.Integer({ minimum: 1 })),
     defaultEffort: effortSchema,

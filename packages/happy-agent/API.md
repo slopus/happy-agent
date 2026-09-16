@@ -82,6 +82,10 @@ Sandboxed workspace services are additive and do not increment the protocol vers
 workspace, `404` or `501` from `GET /v0/workspaces/:workspaceId/services` means the feature is
 unavailable. Existing terminals, background commands, and workspace proxies remain unchanged.
 
+The model definition's `autoCompactWindow` is additive and does not increment the protocol
+version. Older daemons omit it; a client that shows remaining context counts down to
+`contextWindow` when the field is absent.
+
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
@@ -629,6 +633,7 @@ Response — `200`:
             "openai/gpt-5.6-sol": {
                 "name": "GPT-5.6 Sol",
                 "contextWindow": 272000,
+                "autoCompactWindow": 244800,
                 "efforts": ["low", "medium", "high", "xhigh", "max"],
                 "defaultEffort": "medium",
                 "serviceTiers": ["priority"]
@@ -636,6 +641,7 @@ Response — `200`:
             "openai/gpt-5.6-terra": {
                 "name": "GPT-5.6 Terra",
                 "contextWindow": 272000,
+                "autoCompactWindow": 244800,
                 "efforts": ["off", "low", "medium", "high", "xhigh", "max"],
                 "defaultEffort": "medium",
                 "serviceTiers": ["priority"]
@@ -643,6 +649,7 @@ Response — `200`:
             "openai/gpt-5.6-luna": {
                 "name": "GPT-5.6 Luna",
                 "contextWindow": 272000,
+                "autoCompactWindow": 244800,
                 "efforts": ["off", "low", "medium", "high", "xhigh", "max"],
                 "defaultEffort": "medium",
                 "serviceTiers": ["priority"]
@@ -650,6 +657,7 @@ Response — `200`:
             "anthropic/opus-5": {
                 "name": "Opus 5 1M",
                 "contextWindow": 1000000,
+                "autoCompactWindow": 400000,
                 "efforts": ["off", "low", "medium", "high", "xhigh", "max"],
                 "defaultEffort": "medium",
                 "serviceTiers": []
@@ -657,6 +665,7 @@ Response — `200`:
             "anthropic/sonnet-5": {
                 "name": "Sonnet 5",
                 "contextWindow": 1000000,
+                "autoCompactWindow": 400000,
                 "efforts": ["off", "low", "medium", "high", "xhigh", "max"],
                 "defaultEffort": "medium",
                 "serviceTiers": []
@@ -664,6 +673,7 @@ Response — `200`:
             "anthropic/fable-5": {
                 "name": "Fable 5",
                 "contextWindow": 1000000,
+                "autoCompactWindow": 400000,
                 "efforts": ["off", "low", "medium", "high", "xhigh", "max"],
                 "defaultEffort": "medium",
                 "serviceTiers": []
@@ -671,6 +681,7 @@ Response — `200`:
             "anthropic/opus-4-8": {
                 "name": "Opus 4.8 1M",
                 "contextWindow": 1000000,
+                "autoCompactWindow": 400000,
                 "efforts": ["off", "low", "medium", "high", "xhigh", "max"],
                 "defaultEffort": "medium",
                 "serviceTiers": []
@@ -678,6 +689,7 @@ Response — `200`:
             "xai/grok-4.6": {
                 "name": "Grok 4.6",
                 "contextWindow": 500000,
+                "autoCompactWindow": 450000,
                 "efforts": ["low", "medium", "high", "xhigh"],
                 "defaultEffort": "high",
                 "serviceTiers": []
@@ -685,6 +697,7 @@ Response — `200`:
             "xai/grok-build": {
                 "name": "Grok Build",
                 "contextWindow": 500000,
+                "autoCompactWindow": 450000,
                 "efforts": ["medium"],
                 "defaultEffort": "medium",
                 "serviceTiers": []
@@ -692,6 +705,7 @@ Response — `200`:
             "xai/grok-4.5": {
                 "name": "Grok 4.5",
                 "contextWindow": 500000,
+                "autoCompactWindow": 450000,
                 "efforts": ["low", "medium", "high"],
                 "defaultEffort": "high",
                 "serviceTiers": []
@@ -699,6 +713,7 @@ Response — `200`:
             "xai/grok-composer-2.5-fast": {
                 "name": "Composer 2.5",
                 "contextWindow": 200000,
+                "autoCompactWindow": 180000,
                 "efforts": ["off"],
                 "defaultEffort": "off",
                 "serviceTiers": []
@@ -779,6 +794,11 @@ Field groups:
 - `models` — every known model, keyed by model ID. Each definition carries the display `name`,
   `contextWindow` in tokens (`null` only for a custom model whose limit is unknown), the allowed
   `efforts`, the `defaultEffort`, and the supported `serviceTiers` (empty when the model has none).
+  A definition may also carry `autoCompactWindow`: the measured conversation size in tokens at
+  which the daemon compacts automatically, always below `contextWindow`. It is optional, so
+  older daemons omit it, and `null` when a model has no curated threshold. A client that shows
+  how much context remains counts down to `autoCompactWindow` when present and to
+  `contextWindow` otherwise, so the indicator reaches zero at the moment compaction happens.
   Definitions live only here; everything else refers to models by ID.
 - `providers` — one entry per configured provider: its `type` (canonical provider key),
   whether the provider is `enabled`, and its model list as references — `id` into the top-level
@@ -4231,8 +4251,9 @@ Response — `200`:
   catalog entry has no known limit. Provider-measured occupancy is durable across daemon restart.
 - `usage` — lifetime inference totals for the complete agent subtree.
 
-When an exact measurement reaches the model's curated automatic-compaction threshold, the daemon
-requests compaction before another inference can overflow the hard `contextWindow`. Successful
+When an exact measurement reaches the model's curated automatic-compaction threshold, published
+as the model definition's `autoCompactWindow`, the daemon requests compaction before another
+inference can overflow the hard `contextWindow`. Successful
 compaction clears `context`; the first inference on the replacement context establishes its next
 exact value and also records that value as `tokensAfter` on the completed compaction.
 

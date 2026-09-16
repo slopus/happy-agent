@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
     configPatchSchema,
     healthResponseSchema,
+    modelDefinitionSchema,
     providerScanResponseSchema,
     providerVerificationResponseSchema,
 } from "../sources/protocol/daemon.js";
@@ -103,5 +104,41 @@ describe("provider control schemas", () => {
                 status: "passed",
             }),
         ).toBe(true);
+    });
+});
+
+describe("modelDefinitionSchema", () => {
+    const definition = {
+        contextWindow: 1_000_000,
+        defaultEffort: "medium",
+        efforts: ["off", "low", "medium", "high"],
+        name: "Opus 5 1M",
+        serviceTiers: [],
+    } as const;
+
+    it("accepts definitions from older daemons that omit the compaction threshold", () => {
+        expect(Value.Check(modelDefinitionSchema, definition)).toBe(true);
+    });
+
+    it("accepts a curated compaction threshold below the context window", () => {
+        expect(
+            Value.Check(modelDefinitionSchema, { ...definition, autoCompactWindow: 400_000 }),
+        ).toBe(true);
+    });
+
+    it("accepts a null threshold for a model without a curated limit", () => {
+        expect(
+            Value.Check(modelDefinitionSchema, {
+                ...definition,
+                autoCompactWindow: null,
+                contextWindow: null,
+            }),
+        ).toBe(true);
+    });
+
+    it("rejects a non-positive compaction threshold", () => {
+        expect(Value.Check(modelDefinitionSchema, { ...definition, autoCompactWindow: 0 })).toBe(
+            false,
+        );
     });
 });
