@@ -1362,6 +1362,22 @@ tokens on demand. Refresh tokens, PKCE verifiers, and access tokens never appear
 status responses, events, logs, or error bodies. A minted access token appears only in the direct
 successful response that requested it.
 
+While connected, the daemon also refreshes the installation's main WorkOS session once per hour
+in the background to prevent inactivity expiry. This refresh supplies no organization ID and
+does not mint, enumerate, or populate cached tokens for teams or organizations. It uses the same
+serialized refresh-and-verify boundary as on-demand minting, persists the replacement refresh
+token before verification, and discards the resulting access token without exposing it.
+
+The hourly schedule is durable, starts when sign-in commits, and resumes after daemon restart;
+an overdue refresh runs once when the daemon resumes, without replaying missed hours. Existing
+connected installations acquire the schedule on startup. Sign-out or authoritative credential
+rejection cancels it transactionally. A rolled-back sign-out leaves the schedule intact. Temporary
+refresh or verification failures preserve the connected session and leave the next hourly attempt
+scheduled. Background refresh does not change the public snapshot or emit an event unless verified
+user metadata changes or credentials are authoritatively rejected. Status reads remain local.
+This requires the daemon to be running with network access; it cannot revive an expired or revoked
+session, override WorkOS's maximum session length, or keep a stopped installation active.
+
 ### The Cloud object
 
 Disconnected:
@@ -1512,10 +1528,11 @@ snapshot. Authoritative rejection stores a display-safe error; transient failure
 ### `DELETE /v0/cloud/auth`
 
 Disconnects Cloud locally. The optional JSON body is `{ "mutationId": "..." }`; an empty body is
-equivalent to `{}`. In one local transaction it cancels any pending authorization expiry, removes
-the stored session and refresh token, and persists a clean disconnected snapshot. It performs no
-remote request or background teardown and does not revoke the person's WorkOS browser session or
-affect other applications. Another authorization may begin as soon as sign-out commits.
+equivalent to `{}`. In one local transaction it cancels any pending authorization expiry and hourly
+session refresh, removes the stored session and refresh token, and persists a clean disconnected
+snapshot. It performs no remote request or background teardown and does not revoke the person's
+WorkOS browser session or affect other applications. Another authorization may begin as soon as
+sign-out commits.
 
 Response — `200`: `{ "cloud": { ... } }` with a clean disconnected Cloud object. A changed
 snapshot emits one `cloud.updated`; an already-clean disconnected snapshot emits nothing.
