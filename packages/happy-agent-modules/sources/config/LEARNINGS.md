@@ -31,6 +31,22 @@ valid when configured. Project configuration cannot choose an installation's ide
 mode rejects a shared standalone profile. The profile module consumes these records on startup
 to fill missing fields without overwriting later edits.
 
+## Claude 1M models compact at 400k, not at Claude Code's default
+
+Claude Code's own default compacts at the model window minus a 20k response reservation and a 13k
+summary buffer, so 967k on a 1M model. Matching that was considered and rejected: the Claude Code
+team recommends 400k as the compromise between task depth and context pollution, replayed sessions
+show 300k to 400k halving re-read tokens at the same wall-clock time, and Opus measurably degrades
+on task-related context beyond that range. Going much lower is also wrong, because each compaction
+loses roughly half of the user's stated constraints. The 1M Claude entries therefore compact at
+400k. Rig measures context the way Claude Code does (input plus cache read plus cache write, plus
+the response), so the numbers are comparable.
+
+The threshold was never the source of user confusion. The terminal reports context remaining
+against the full window, while Claude Code counts down to the compaction trigger, so any threshold
+below the window makes the display and the compaction disagree. Fixing that needs the threshold on
+the API's model definition, which the terminal cannot otherwise learn.
+
 ## Reseller catalogs are explicit subsets
 
 Adding a model to its native provider must not automatically advertise it through a reseller.

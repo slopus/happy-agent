@@ -511,6 +511,44 @@ describe("ConfigModule", () => {
         });
     });
 
+    it("compacts 1M Claude models at the Claude Code team's recommended 400k", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-claude-compaction-"));
+        temporaryDirectories.push(root);
+        await mkdir(join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config"), {
+            recursive: true,
+        });
+        await writeFile(
+            join(
+                root,
+                process.platform === "darwin" ? "Happy/Config" : "happy/config",
+                "happy.toml",
+            ),
+            "[providers.claude]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        // The Claude Code team's recommended compromise for the 1M window; measured sessions put
+        // the cost and quality sweet spot at 300k to 400k, well below Claude Code's own default.
+        const recommendedThreshold = 400_000;
+        for (const modelId of [
+            "anthropic/fable-5-1",
+            "anthropic/fable-5",
+            "anthropic/opus-4-8",
+            "anthropic/opus-5",
+            "anthropic/sonnet-5",
+        ]) {
+            expect(module.modelContext("claude", modelId), modelId).toEqual({
+                contextWindow: 1_000_000,
+                autoCompactWindow: recommendedThreshold,
+            });
+        }
+        expect(module.modelContext("bedrock", "anthropic/opus-5")).toEqual({
+            contextWindow: 1_000_000,
+            autoCompactWindow: recommendedThreshold,
+        });
+    });
+
     it("offers GPT-6 Astra through Codex and Bedrock with Happy's operating profile", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-astra-catalog-"));
         temporaryDirectories.push(root);

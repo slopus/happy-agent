@@ -51,26 +51,35 @@ export type ConfiguredAgentModel = AgentModel & {
     readonly enabled: boolean;
 };
 
+/**
+ * Claude Code's own default compacts just under the full 1M window, but the Claude Code team
+ * recommends 400k as the compromise between task depth and context pollution, and measured
+ * sessions show 300k to 400k halving re-read tokens at the same wall-clock time while Opus
+ * starts degrading on task-related context beyond that range. See the commit that set this.
+ */
+const CLAUDE_CONTEXT_WINDOW = 1_000_000;
+const CLAUDE_AUTO_COMPACT_WINDOW = 400_000;
+
 const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freeze({
     "anthropic/fable-5-1": Object.freeze({
-        contextWindow: 1_000_000,
-        autoCompactWindow: 333_000,
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
     "anthropic/fable-5": Object.freeze({
-        contextWindow: 1_000_000,
-        autoCompactWindow: 333_000,
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
     "anthropic/opus-4-8": Object.freeze({
-        contextWindow: 1_000_000,
-        autoCompactWindow: 333_000,
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
     "anthropic/opus-5": Object.freeze({
-        contextWindow: 1_000_000,
-        autoCompactWindow: 333_000,
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
     "anthropic/sonnet-5": Object.freeze({
-        contextWindow: 1_000_000,
-        autoCompactWindow: 333_000,
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
     }),
     "openai/gpt-5.4": Object.freeze({
         contextWindow: 272_000,

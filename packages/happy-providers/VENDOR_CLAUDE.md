@@ -165,7 +165,7 @@ Curated million-token Claude models explicitly select the SDK's `[1m]` suffix, i
 Fable 5.1. SDK 2.1.251 accepts `claude-fable-5-1` on the wire but does not have that exact
 model in its local context catalog. Without the suffix its continuation guard assumes 200k,
 so a successful response reporting 235k tokens makes the next request fail locally before
-Rig's 333k compaction threshold. Native `/compact` bypasses that ordinary inference guard;
+Rig's 400k compaction threshold. Native `/compact` bypasses that ordinary inference guard;
 manual compaction succeeding does not prove the continuation limit is configured correctly.
 
 SDK results with `subtype: "success"` can still carry `is_error: true`. Their result text is
