@@ -89,13 +89,13 @@ import type { FileMentionContext } from "./findFileMentionContext.js";
 import { formatFileMention } from "./formatFileMention.js";
 import { formatProviderError } from "./formatProviderError.js";
 import { formatResetDuration } from "./formatResetDuration.js";
-import { formatSessionTokenStatus } from "./formatSessionTokenStatus.js";
+import { formatContextLine, formatSessionTokenStatus } from "./formatSessionTokenStatus.js";
 import { formatSessionUsageSummary } from "./formatSessionUsageSummary.js";
 import { formatSubagentToolCall } from "./formatSubagentToolCall.js";
 import { formatToolResultForDisplay } from "./formatToolResultForDisplay.js";
 import { formatToolPermissionNotice } from "./formatToolPermissionNotice.js";
 import { formatTurnUsageSummary } from "./formatTurnUsageSummary.js";
-import { formatUsageTokens, formatWorkUsageDetails } from "./formatWorkUsageSummary.js";
+import { formatWorkUsageDetails } from "./formatWorkUsageSummary.js";
 import { providerErrorResetAt } from "./providerErrorResetAt.js";
 import { humanizeReasoningLevel } from "./humanizeReasoningLevel.js";
 import { humanizePermissionMode } from "./humanizePermissionMode.js";
@@ -2432,17 +2432,12 @@ export class CodingAssistantApp implements Component, Focusable {
             return;
         }
 
-        const contextWindow = this.#agent.model.contextWindow;
         this.#appendEntry({
             role: "event",
             title: "Token usage",
             text: [
                 ...formatWorkUsageDetails(this.#usage),
-                ...(contextWindow === undefined
-                    ? [`Context: ${formatUsageTokens(this.#latestContextTokens)}`]
-                    : [
-                          `Context: ${formatUsageTokens(this.#latestContextTokens)} / ${formatUsageTokens(contextWindow)} · ${Math.max(0, Math.round((1 - this.#latestContextTokens / contextWindow) * 100))}% left`,
-                      ]),
+                formatContextLine(this.#latestContextTokens, this.#agent.model),
             ].join("\n"),
         });
     }
@@ -4723,12 +4718,17 @@ export class CodingAssistantApp implements Component, Focusable {
     }
 
     #usageFooter(): string {
+        const model = this.#agent.model;
         return formatSessionTokenStatus({
             contextTokens: this.#latestContextTokens,
-            ...(this.#agent.model.contextWindow === undefined
+            ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+            ...(model.autoCompactWindow === undefined
                 ? {}
-                : { contextWindow: this.#agent.model.contextWindow }),
+                : { autoCompactWindow: model.autoCompactWindow }),
             usage: this.#authoritativeUsage ?? this.#usage,
+            // The footer is drawn in the secondary color; the warning interrupts it for the figure
+            // alone and hands the color back afterwards.
+            warn: (text) => `${RESET}${this.#theme.warning}${text}${RESET}${this.#theme.secondary}`,
         });
     }
 

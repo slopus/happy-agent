@@ -5666,6 +5666,7 @@ export class ApiModule implements AgentModule {
             const candidate: ApiModelDefinition = {
                 name: route.name,
                 contextWindow: route.contextWindow,
+                autoCompactWindow: route.autoCompactWindow,
                 efforts: [...route.effortLevels],
                 defaultEffort: route.defaultEffort,
                 serviceTiers: [...(route.serviceTiers ?? [])],
@@ -6129,6 +6130,7 @@ interface ApiCatalog {
 interface ApiModelDefinition {
     readonly name: string;
     readonly contextWindow: number | null;
+    readonly autoCompactWindow: number | null;
     readonly efforts: string[];
     readonly defaultEffort: string;
     readonly serviceTiers: string[];

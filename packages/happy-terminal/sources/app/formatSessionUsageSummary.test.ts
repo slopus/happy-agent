@@ -36,6 +36,31 @@ describe("formatSessionUsageSummary", () => {
         expect(output).toContain("Session work: 830 used · 74% cache hit");
     });
 
+    it("counts context down to the compaction threshold when the model publishes one", () => {
+        const summary: GetSessionUsageResponse = {
+            currentProviderId: "codex",
+            groups: [group("codex", "openai/gpt-5.6-sol", 800, 80, 700)],
+            context: {
+                approximate: false,
+                modelId: "openai/gpt-5.6-sol",
+                providerId: "codex",
+                requestedModelId: "openai/gpt-5.6-sol",
+                totalTokens: 100_000,
+            },
+            quotas: [],
+        };
+        const choice = model("codex", "openai/gpt-5.6-sol", "GPT-5.6 Sol");
+
+        expect(
+            formatSessionUsageSummary(summary, [
+                { ...choice, model: { ...choice.model, autoCompactWindow: 400_000 } },
+            ]),
+        ).toContain("Context: 100k / 400k · 75% until auto-compact");
+        expect(formatSessionUsageSummary(summary, [choice])).toContain(
+            "Context: 100k / 500k · 80% left",
+        );
+    });
+
     it("clamps fresh input per attributed model before folding", () => {
         const summary: GetSessionUsageResponse = {
             currentProviderId: "codex",

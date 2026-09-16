@@ -195,6 +195,15 @@ describe("Happy Agent platform API matrix", () => {
                 expect(
                     model.contextWindow === null || typeof model.contextWindow === "number",
                 ).toBe(true);
+                expect(
+                    model.autoCompactWindow === null || typeof model.autoCompactWindow === "number",
+                ).toBe(true);
+                if (
+                    typeof model.autoCompactWindow === "number" &&
+                    typeof model.contextWindow === "number"
+                ) {
+                    expect(model.autoCompactWindow).toBeLessThan(model.contextWindow);
+                }
             }
             for (const provider of Object.values(config.providers)) {
                 expect(provider.models).toEqual(expect.any(Array));

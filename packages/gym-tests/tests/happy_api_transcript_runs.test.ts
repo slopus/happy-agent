@@ -599,6 +599,13 @@ describe("public transcript and run APIs", () => {
             },
         });
 
+        // The published threshold is the point where the compaction below actually fires, so a
+        // client counting down to it reaches zero at the same moment the daemon compacts.
+        expect((await gym.client.getConfig()).config.models["openai/gpt-5.6-sol"]).toMatchObject({
+            autoCompactWindow: 244_800,
+            contextWindow: 272_000,
+        });
+
         const first = await gym.send("establish the previous context measurement");
         await waitForFinished(gym, gym.defaultSessionId, first.runId);
         await expect(gym.client.getAgentUsage(gym.defaultSessionId)).resolves.toMatchObject({

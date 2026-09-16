@@ -1436,9 +1436,11 @@ export class ConfigModule implements AgentModule {
         ).filter((model) => !scriptedProviderIds.has(model.providerId));
         if (scripted !== undefined) {
             for (const model of scripted) {
+                const modelContext = agentModelContext(model.id);
                 const entry: ConfiguredAgentModel = {
                     ...model,
-                    contextWindow: agentModelContext(model.id)?.contextWindow ?? null,
+                    autoCompactWindow: modelContext?.autoCompactWindow ?? null,
+                    contextWindow: modelContext?.contextWindow ?? null,
                     enabled: this.#isModelSelectable(model),
                 };
                 catalog.push(entry);

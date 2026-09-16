@@ -42,10 +42,11 @@ loses roughly half of the user's stated constraints. The 1M Claude entries there
 400k. Rig measures context the way Claude Code does (input plus cache read plus cache write, plus
 the response), so the numbers are comparable.
 
-The threshold was never the source of user confusion. The terminal reports context remaining
+The threshold was never the source of user confusion. The terminal reported context remaining
 against the full window, while Claude Code counts down to the compaction trigger, so any threshold
-below the window makes the display and the compaction disagree. Fixing that needs the threshold on
-the API's model definition, which the terminal cannot otherwise learn.
+below the window made the display and the compaction disagree. The catalog therefore publishes
+`autoCompactWindow` beside `contextWindow` on every route, including scripted ones, and the API
+model definition carries it so clients count down to the point where compaction actually fires.
 
 ## Reseller catalogs are explicit subsets
 

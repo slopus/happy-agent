@@ -47,6 +47,7 @@ export interface SmartProviderRoute {
 
 /** One provider/model route in the complete catalog, whether or not configuration enables it. */
 export type ConfiguredAgentModel = AgentModel & {
+    readonly autoCompactWindow: number | null;
     readonly contextWindow: number | null;
     readonly enabled: boolean;
 };

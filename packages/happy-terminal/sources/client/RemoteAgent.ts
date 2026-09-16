@@ -620,6 +620,12 @@ export class RemoteAgent implements CodingAssistantAgentBackend {
                     ...(definition.contextWindow === null
                         ? {}
                         : { contextWindow: definition.contextWindow }),
+                    // Older daemons publish no threshold; the countdown then falls back to the
+                    // hard window rather than inventing one.
+                    ...(definition.autoCompactWindow === undefined ||
+                    definition.autoCompactWindow === null
+                        ? {}
+                        : { autoCompactWindow: definition.autoCompactWindow }),
                     id: reference.id,
                     name: definition.name,
                     thinkingLevels: definition.efforts,

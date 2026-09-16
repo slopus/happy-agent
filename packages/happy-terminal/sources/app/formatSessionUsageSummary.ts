@@ -136,15 +136,19 @@ function formatContext(
 ): string {
     const context = summary.context;
     if (context === undefined) return "Context: unavailable";
-    const window = modelChoices.find(
+    const model = modelChoices.find(
         (choice) =>
             choice.providerId === context.providerId &&
             choice.model.id === context.requestedModelId,
-    )?.model.contextWindow;
+    )?.model;
     const prefix = context.approximate ? "~" : "";
-    if (window === undefined) return `Context: ${prefix}${formatUsageTokens(context.totalTokens)}`;
-    const percentLeft = Math.max(0, (1 - context.totalTokens / window) * 100);
-    return `Context: ${prefix}${formatUsageTokens(context.totalTokens)} / ${formatUsageTokens(window)} · ${formatPercent(percentLeft)} left`;
+    // The countdown measures against the compaction threshold when the daemon publishes one,
+    // so it reaches zero when the conversation is actually summarized.
+    const limit = model?.autoCompactWindow ?? model?.contextWindow;
+    if (limit === undefined) return `Context: ${prefix}${formatUsageTokens(context.totalTokens)}`;
+    const percentLeft = Math.max(0, (1 - context.totalTokens / limit) * 100);
+    const label = model?.autoCompactWindow === undefined ? "left" : "until auto-compact";
+    return `Context: ${prefix}${formatUsageTokens(context.totalTokens)} / ${formatUsageTokens(limit)} · ${formatPercent(percentLeft)} ${label}`;
 }
 
 function formatPercent(value: number): string {
