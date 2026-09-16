@@ -52,6 +52,14 @@ two subtask levels below a bot and no two-sibling limit. Prove these rules
 without changing ordinary subagent behavior. Workspace-bound subtasks are the
 only parent-managed agents created into a workspace's owner series.
 
+Every agent object carries the optional additive `subtasks` array of full agent
+objects for its direct non-archived subtasks, recursively. Prove full-tree
+discovery from desktop and focused bootstrap, including shared-filesystem and
+cross-workspace subtasks, empty leaves, older responses without the field,
+exclusion of ordinary hidden subagents and archived children, and reconciliation
+of repeated workspace/tree records by agent ID. Existing child-agent events
+keep the tree current; an ancestor snapshot must not overwrite a newer child.
+
 The gym must prove both ordinary success and deliberate failure. A project is
 registered or cloned, workspaces are created and nested, ordering and archival
 are durable, and invalid paths, impossible workspace operations, stale

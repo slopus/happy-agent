@@ -90,6 +90,11 @@ Subtasks are additive and do not increment the protocol version. The agent's opt
 boolean defaults to `false` when absent; the workspace's optional `subtaskAgentId` defaults to
 `null`. Clients use the explicit capability flags for interaction, not ancestry alone.
 
+The optional additive agent field `subtasks` contains full agent objects for direct non-archived
+subtasks, recursively. Current daemons emit it on every full agent object, including empty arrays
+on leaves; older daemons may omit it. Omission means the tree was not supplied, not that a client
+should discard already-known children. This addition does not increment the protocol version.
+
 By explicit product decision, the unused managed-root creation option is removed from both the
 client and daemon as a one-off exception to additive compatibility. `POST /v0/agents` rejects
 `parentAgentId` as an unknown request field with `400 invalid_request`; it creates only
@@ -3010,8 +3015,9 @@ tool. An ordinary root or hidden subagent cannot create subtasks.
 There may be at most two subtask levels below the bot; this is a depth limit, not a sibling limit.
 The ordinary `parentAgentId` links each subtask to its coordinator.
 
-A shared-filesystem subtask runs in its parent's workspace. It appears in parent activity and
-focused agent reads, but not in the workspace's ordered agent series; its `orderKey` is `null`.
+A shared-filesystem subtask runs in its parent's workspace. It appears in its parent's `subtasks`
+tree, parent activity, and focused agent reads, but not in the workspace's ordered agent series;
+its `orderKey` is `null`.
 A workspace-bound subtask runs in a newly created ordinary project workspace, appears in that
 workspace's ordered agent series, and is identified by the workspace's `subtaskAgentId`. A bot
 may create either form directly; a subtask may create either form within the depth limit. Several
@@ -3024,7 +3030,8 @@ agent routes. They report `userVisible: true` and `managedByAnotherAgent: true`,
 shared-filesystem subtask returns `409` on `reorder`. Archived subtasks accept no new messages or
 child creation. Archiving a subtask keeps its history and does not archive its workspace.
 Subtask creation is asynchronous delegation: it never waits for completion. Existing agent
-messaging tools deliver follow-ups; there is no subtask wait or archive tool. Ordinary subagents
+messaging tools deliver follow-ups, and `archive_subtask` exposes archival to the coordinator;
+there is no subtask wait tool. Ordinary subagents
 retain their existing restrictions.
 
 Every agent therefore reports three independent capability facts: `userVisible`,
@@ -3049,6 +3056,7 @@ guarding the whole row. The version exists for event chaining and newer-copy com
     "workspaceId": "k2h4j5l6",
     "parentAgentId": null,
     "subtask": false,
+    "subtasks": [],
     "userVisible": true,
     "managedByAnotherAgent": false,
     "canSendMessages": true,
@@ -3080,6 +3088,15 @@ Fields:
 - `subtask` — optional additive boolean, always emitted by current daemons; absent means `false`.
   `true` identifies a user-interactive subtask, whether sharing its parent's filesystem or rooted
   in its own project workspace. The parent relationship remains `parentAgentId`.
+- `subtasks` — optional additive array of full agent objects for this agent's direct children
+  with `subtask: true` and `archivedAt: null`, newest `createdAt` first, with ascending `id` as a
+  tie-breaker. Each child recursively carries its own `subtasks`. Idle and finished-but-unarchived
+  subtasks are included; ordinary hidden subagents and archived children are not. Leaves emit
+  `[]`; older daemons may omit the field. Every child's `parentAgentId` names the containing
+  agent, and its `workspaceId` remains its actual workspace. The existing two-level bot-rooted
+  limit bounds recursion, not sibling count. Do not flatten grandchildren across an archived
+  child: archiving removes that branch from the containing tree without deleting its history
+  or changing independently stored descendants. Focused reads and activity remain available.
 - `userVisible` — optional additive flag, always emitted by current daemons. `true` when the agent
   is a subtask, a bot's own agent, or explicitly attached to a project or workspace root-agent
   series. Ordinary subagents are `false`; subtasks are `true`.
@@ -4351,7 +4368,8 @@ Response — `200`:
 
 - `subagents` — full agent objects (with `parentAgentId` set to this agent), including
   finished and archived ones; their `status` tells which are still running. This includes
-  subtasks, distinguished by `subtask: true`, and is how shared-filesystem subtasks are discovered.
+  subtasks, distinguished by `subtask: true`. Unlike an agent's `subtasks` tree, this activity list
+  also includes ordinary hidden subagents and finished or archived children.
 - `processes` — full process objects, including exited ones.
 
 `404` when no such agent exists. On a subagent the endpoint works normally — subagents can
@@ -4517,7 +4535,8 @@ workspace. The differences are ownership and lifecycle, not behavior:
   the agent follows.
 - It is the workspace's only primary conversation: `POST /v0/agents` refuses a bot workspace
   with `409`, and the bot workspace's `agents` array always contains exactly this one agent.
-  Shared-filesystem subtasks may also run there and are discovered through parent activity.
+  Shared-filesystem subtasks may also run there and are included in the bot agent's `subtasks`
+  tree and parent activity.
 
 Bot agents and bot workspaces appear in no project or workspace listing; they are discovered
 only through bot objects. A client that does not know about bots therefore never encounters
@@ -4936,6 +4955,17 @@ services are an on-demand workspace surface.
   and unarchive. `changes` carries exactly the fields that moved — a status flip is
   `{ "status": "running_tools", "updatedAt": ... }`, nothing more.
     - `agentId` (ID string), `previousVersion`, `version`, `changes`.
+
+Nested `subtasks` are a composed snapshot of independently versioned agents, not additional
+identities or copies of their durable state. Creating, archiving, unarchiving, or updating a
+subtask emits that child's existing `agent.created` or `agent.updated` event. Clients normalize
+every nested full agent by ID and its own version, then reconcile direct-child membership using
+`parentAgentId`, `subtask`, and `archivedAt`. A child-only change does not require replaying the
+whole tree or advancing every ancestor's version. A delayed ancestor or workspace snapshot must
+not overwrite a newer child record. If `changes.subtasks` is supplied, it is a complete replacement
+snapshot of that parent's direct active subtask list, with the same recursive shape and child
+version rules. Snapshot-to-stream cursor and version-gap recovery rules remain unchanged.
+
 - `agent.context.updated` — the provider measured the active conversation context, or compaction
   or reset invalidated the previous measurement. Context is computed state and has no resource
   version chain; replace the prior value whole.
@@ -5248,7 +5278,7 @@ Response — `200`:
 }
 ```
 
-- `agent` — exactly the focused agent resource.
+- `agent` — exactly the focused agent resource, including its recursive active `subtasks` tree.
 - `draft` — exactly the focused draft response object, scoped to the authenticated user in team mode.
 - `mode` — exactly the focused mode response; `null` on a fresh agent.
 - `context`, `usage` — exactly the focused usage response fields.
@@ -5324,11 +5354,18 @@ Response — `200`:
 - `bots` — every bot, archived ones included, in catalog order, exactly as `GET /v0/bots`
   returns them, each embedding its one agent. This additive field may be absent on an older
   compatible daemon, which does not serve the bot endpoints either.
+- Every included full agent embeds its recursive `subtasks` tree. This includes each bot's agent
+  and every agent in a project or workspace series, so shared-filesystem and workspace-bound
+  subtasks are available on initial load without fetching activity for every agent. Workspace
+  listings remain shallow and owner-series membership is unchanged. A workspace-bound subtask
+  may appear both in its parent's tree and in its own workspace's series; both occurrences name
+  the same agent. Reconcile by ID and the nested agent's own version.
 - `cursor` — the event cursor captured before the composed snapshot reads. The client opens
   `GET /v0/events/stream` from here and everything it just read stays current; there is no
   window for a change to fall between the snapshot and the stream.
 
 There is no standalone agent collection in bootstrap or a global agent-list endpoint. Agents
 are discovered through the ordered `agents` arrays embedded in projects and workspaces — and,
-for bots, through the single agent embedded in each bot object; an individual agent and its
-history are then loaded by ID.
+for bots, through the single agent embedded in each bot object. Active subtask descendants are
+included recursively on those same agent objects, not in a new top-level collection. An
+individual agent's history is loaded by ID.

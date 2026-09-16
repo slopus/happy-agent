@@ -50,10 +50,22 @@ workspace. That workspace identifies its resident subtask agent; the agent's
 parent identifies its coordinator. A bot may create a workspace-bound subtask
 directly, and that subtask may create a shared-filesystem subtask.
 
-Add one creation tool, `create_subtask`. Messaging uses the existing agent
-messaging tools, archival uses the existing agent API, and there is no waiting
-for a subtask. Shared-filesystem subtasks are visible through parent activity;
-workspace-bound subtasks also appear in their workspace's agent series.
+Use `create_subtask` to create and `archive_subtask` to archive delegated work.
+Messaging uses the existing agent messaging tools, and there is no waiting for
+a subtask. Users may also archive through the existing agent API.
+
+Bots and subtasks prefer subtasks by default when delegating work the user may
+collaborate on. Ordinary subagents are for internal parts of that work that do
+not need user collaboration, such as research. An explicit request for a
+subtask must use a subtask, within the existing eligibility and depth limits.
+
+Every agent object may carry `subtasks`, an array of its direct non-archived
+subtask agents. Each entry is the same full agent object and includes its own
+subtasks recursively. Bootstrap and other responses therefore carry the active
+tree without per-agent discovery calls. Older daemons may omit the field.
+Ordinary hidden subagents are not in this tree. Workspace-bound subtasks also
+appear in their workspace's agent series; clients reconcile repeated agent
+records by ID rather than treating them as different conversations.
 Subtasks are the exception to the managed-agent restriction on user messages;
 ordinary subagents keep their current behavior.
 

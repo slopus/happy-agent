@@ -38,7 +38,8 @@ export interface AgentBootstrapResponse
  *
  * A composition of other endpoints' objects; nothing here has a shape of its
  * own. There is no separate global agent list: each included project and
- * workspace carries its own ordered top-level agents.
+ * workspace carries its own ordered top-level agents. Every full agent may embed its recursive
+ * active subtask tree, including each bot's agent and shared-filesystem subtasks.
  */
 export const desktopBootstrapResponseSchema = Type.Object({
     /** Every bot, archived ones included. Absent on older compatible daemons. */

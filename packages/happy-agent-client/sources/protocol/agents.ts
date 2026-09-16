@@ -80,40 +80,44 @@ export interface AgentDraft {
 }
 
 /** The agent object. */
-export const agentSchema = Type.Object({
-    archivedAt: Nullable(timestampSchema),
-    /** Whether the user-facing send route accepts messages for this agent. */
-    canSendMessages: Type.Optional(Type.Boolean()),
-    createdAt: timestampSchema,
-    id: cuid2Schema,
-    /** The newest event cursor for this agent, so a stream opens where this left off. */
-    lastCursor: eventCursorSchema,
-    /** Whether another agent owns this agent's Agent Base ancestry. */
-    managedByAnotherAgent: Type.Optional(Type.Boolean()),
-    /** Owner-local order for a user-visible root; `null` on an ordinary hidden subagent. */
-    orderKey: Nullable(Type.String()),
-    /** `null` when no agent manages this one; otherwise the managing parent. */
-    parentAgentId: Nullable(cuid2Schema),
-    /** The open question when the run is waiting on the person. */
-    pendingQuestionId: Nullable(cuid2Schema),
-    /** How many background processes started by this agent are running now. */
-    processes: Type.Object({ running: Type.Integer() }),
-    status: agentStatusSchema,
-    /** How many subagents this agent spawned over its life, and how many run now. */
-    subagents: Type.Object({ running: Type.Integer(), total: Type.Integer() }),
-    /** A user-interactive, parent-managed subtask. Absent means false on older daemons. */
-    subtask: Type.Optional(Type.Boolean()),
-    title: Nullable(Type.String()),
-    /** `"idle"` while no title has been generated yet. */
-    titleStatus: Type.Union([Type.Literal("idle"), Type.Literal("ready")]),
-    unread: Nullable(agentUnreadSchema),
-    updatedAt: timestampSchema,
-    /** Whether this agent belongs to a project or workspace's visible root-agent series. */
-    userVisible: Type.Optional(Type.Boolean()),
-    version: resourceVersionSchema,
-    /** The workspace the agent runs in; its commands and edits land there. */
-    workspaceId: cuid2Schema,
-});
+export const agentSchema = Type.Recursive((agent) =>
+    Type.Object({
+        archivedAt: Nullable(timestampSchema),
+        /** Whether the user-facing send route accepts messages for this agent. */
+        canSendMessages: Type.Optional(Type.Boolean()),
+        createdAt: timestampSchema,
+        id: cuid2Schema,
+        /** The newest event cursor for this agent, so a stream opens where this left off. */
+        lastCursor: eventCursorSchema,
+        /** Whether another agent owns this agent's Agent Base ancestry. */
+        managedByAnotherAgent: Type.Optional(Type.Boolean()),
+        /** Owner-local order for a user-visible root; `null` on an ordinary hidden subagent. */
+        orderKey: Nullable(Type.String()),
+        /** `null` when no agent manages this one; otherwise the managing parent. */
+        parentAgentId: Nullable(cuid2Schema),
+        /** The open question when the run is waiting on the person. */
+        pendingQuestionId: Nullable(cuid2Schema),
+        /** How many background processes started by this agent are running now. */
+        processes: Type.Object({ running: Type.Integer() }),
+        status: agentStatusSchema,
+        /** How many subagents this agent spawned over its life, and how many run now. */
+        subagents: Type.Object({ running: Type.Integer(), total: Type.Integer() }),
+        /** A user-interactive, parent-managed subtask. Absent means false on older daemons. */
+        subtask: Type.Optional(Type.Boolean()),
+        /** Direct non-archived subtasks, recursively. Absent on older compatible daemons. */
+        subtasks: Type.Optional(Type.Array(agent)),
+        title: Nullable(Type.String()),
+        /** `"idle"` while no title has been generated yet. */
+        titleStatus: Type.Union([Type.Literal("idle"), Type.Literal("ready")]),
+        unread: Nullable(agentUnreadSchema),
+        updatedAt: timestampSchema,
+        /** Whether this agent belongs to a project or workspace's visible root-agent series. */
+        userVisible: Type.Optional(Type.Boolean()),
+        version: resourceVersionSchema,
+        /** The workspace the agent runs in; its commands and edits land there. */
+        workspaceId: cuid2Schema,
+    }),
+);
 export type Agent = Static<typeof agentSchema>;
 
 /** Every single-agent route answers with this. */
