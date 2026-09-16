@@ -37,11 +37,22 @@ import { ServiceRecords, type ServiceRecord } from "./persistence/ServiceRecords
 import { servicePageCursor, readServicePageCursor } from "./impl/ServicePageCursor.js";
 import { ServiceAccessTokens } from "./impl/ServiceAccessTokens.js";
 import {
+    ServiceOutputReaders,
+    serviceReaderSchema,
+    type ServiceReader,
+} from "./impl/ServiceOutputReaders.js";
+import { serviceStartTool } from "./tools/service_start.js";
+import { serviceInputTool } from "./tools/service_input.js";
+import { serviceStopTool } from "./tools/service_stop.js";
+import { listServicesTool } from "./tools/list_services.js";
+import {
     serviceDefinitionSchema,
+    serviceInputOptionsSchema,
     serviceExecutionCallSchema,
     serviceEventSchema,
     ServiceError,
     type ServiceDefinition,
+    type ServiceInputOptions,
     type ServiceEvent,
     type ServiceEventListener,
     type ServiceExecutionCall,
@@ -60,6 +71,7 @@ interface ServiceWorkspace {
 }
 interface LiveService {
     service: ComputeService;
+    output: ServiceOutputReaders;
     workspaceId: string;
     endedAt?: number;
     retirement?: NodeJS.Timeout;
@@ -123,7 +135,11 @@ export class ServicesModule implements AgentModule {
             "abort",
             () => {
                 this.#closed = true;
-                for (const live of this.#live.values()) this.#revoke(live);
+                for (const live of this.#live.values()) {
+                    this.#revoke(live);
+                    live.output.close();
+                    if (live.retirement !== undefined) clearTimeout(live.retirement);
+                }
             },
             { once: true },
         );
@@ -131,6 +147,14 @@ export class ServicesModule implements AgentModule {
             this.#records ??= new ServiceRecords(scope.sharedKV);
         };
         return {
+            tools: async (_toolCtx, scope) => [
+                serviceStartTool(this, scope.agent.id),
+                listServicesTool(this, scope.agent.id),
+                serviceInputTool(this, scope.agent.id),
+                serviceStopTool(this, scope.agent.id),
+            ],
+            instructions: async () =>
+                "Use the dedicated service tools when starting a workspace HTTP preview. A service uses selected live read-only inputs and disposable private scratch, with no ambient credentials. Select inputs carefully: application code can read or serve their contents. Inputs and scratch are relative to the workspace root, even when workdir differs. Ordinary shell commands do not become safely exposed services. Services survive a normal turn, but owning-agent abort or archival stops them. list_services discovers other agents' services in this exact workspace; service_input and service_stop manage the same underlying processes. Browser access is private to the registered workspace service, never a public sharing link.",
             agentCreatedTransact: capture,
             agentRestoredTransact: capture,
             agentArchivedTransact: async (hookCtx, scope, agent) => {
@@ -354,6 +378,149 @@ export class ServicesModule implements AgentModule {
         return (await this.#record(ctx, workspaceId, serviceId)).service;
     }
 
+    /** All active services plus a bounded newest stopped window, on one storage snapshot. */
+    async listForAgent(
+        ctx: Context,
+        agentId: string,
+        includeStopped = false,
+    ): Promise<{
+        services: WorkspaceService[];
+        omittedHistory: boolean;
+    }> {
+        if (!Value.Check(Type.Boolean(), includeStopped))
+            throw new ServiceError("invalid_request", "The stopped-service selection is invalid.");
+        const workspace = await this.workspaceForAgent(ctx, agentId);
+        if (this.#records === undefined) return { services: [], omittedHistory: false };
+        return await this.#records.kv.transaction(ctx, async (_, txCtx) => {
+            const active = await this.#requireRecords().queryPage(txCtx, workspace.workspaceId, {
+                includeStopped: false,
+                limit: 32,
+            });
+            if (!includeStopped)
+                return {
+                    services: active.records.map(({ service }) => service),
+                    omittedHistory: false,
+                };
+            // There are at most 32 active records anywhere in history; the newest 288 records
+            // necessarily contain the newest 256 stopped records without scanning older pages.
+            const history = await this.#requireRecords().queryPage(txCtx, workspace.workspaceId, {
+                includeStopped: true,
+                limit: 288,
+            });
+            const stopped = history.records
+                .filter(({ service }) => terminal(service))
+                .slice(0, 256);
+            const total = (history.records[0]?.sequence ?? -1) + 1;
+            const records = [...active.records, ...stopped].sort((a, b) => b.sequence - a.sequence);
+            return {
+                services: records.map(({ service }) => service),
+                omittedHistory: total - active.records.length > stopped.length,
+            };
+        });
+    }
+
+    /** The tool supplies only its trusted agent identity; no model-selected scope or cursor. */
+    async inputForAgent(
+        ctx: Context,
+        agentId: string,
+        serviceId: string,
+        options: ServiceInputOptions,
+    ) {
+        const owner = await this.workspaceForAgent(ctx, agentId);
+        return await this.input(
+            ctx,
+            owner.workspaceId,
+            serviceId,
+            { kind: "agent", agentId },
+            options,
+        );
+    }
+
+    /** One consuming read, optionally after one non-replayed write, over the actual SDK process. */
+    async input(
+        ctx: Context,
+        workspaceId: string,
+        serviceId: string,
+        reader: ServiceReader,
+        options: ServiceInputOptions,
+    ): Promise<{
+        service: WorkspaceService;
+        output: string;
+        truncated: boolean;
+        wallTimeSeconds: number;
+    }> {
+        if (
+            !Value.Check(serviceInputOptionsSchema, options) ||
+            !Value.Check(serviceReaderSchema, reader)
+        )
+            throw new ServiceError("invalid_request", "The service input request is invalid.");
+        const chars = options.chars ?? "";
+        if (
+            Buffer.byteLength(chars, "utf8") > 65536 ||
+            (chars.length > 0 && options.waitMs > 30000)
+        )
+            throw new ServiceError(
+                "invalid_request",
+                "Service input exceeds its byte or write-wait limit.",
+            );
+        const startedAt = performance.now();
+        const deadline = startedAt + options.waitMs;
+        let service = await this.get(ctx, workspaceId, serviceId);
+        let live = this.#live.get(serviceId);
+        if (live === undefined && terminal(service))
+            throw new ServiceError(
+                "output_unavailable",
+                "This service's runtime output is no longer available.",
+            );
+        live?.output.reserve(reader);
+        if (chars.length > 0) {
+            const permissions = this.compute.permissionsForContext(ctx);
+            if (permissions.mode !== "auto" && permissions.mode !== "full_access")
+                throw new Error(
+                    "Sending service input requires Auto or Full access and never widens its sandbox.",
+                );
+            live = this.#running(service);
+            ctx.lifetime?.throwIfAborted();
+            if (!(await live.service.write(ctx, permissions, chars)))
+                throw new ServiceError(
+                    "service_not_running",
+                    "The service is no longer accepting input.",
+                );
+        }
+        for (;;) {
+            ctx.lifetime?.throwIfAborted();
+            live = this.#live.get(serviceId);
+            if (live === undefined && terminal(service))
+                throw new ServiceError(
+                    "output_unavailable",
+                    "This service's runtime output is no longer available.",
+                );
+            const output = live?.output.read(reader, options.maxOutputBytes) ?? {
+                output: "",
+                truncated: false,
+            };
+            if (
+                output.output.length > 0 ||
+                output.truncated ||
+                terminal(service) ||
+                live?.endedAt !== undefined ||
+                performance.now() >= deadline
+            ) {
+                return {
+                    service: await this.get(ctx, workspaceId, serviceId),
+                    ...output,
+                    wallTimeSeconds: (performance.now() - startedAt) / 1000,
+                };
+            }
+            // The request owns its bounded wait, not the service. No per-reader promise chain or
+            // output cache is retained; API/agent request admission owns concurrent call bounds.
+            await pause(Math.min(50, Math.max(1, deadline - performance.now())), undefined, {
+                signal: ctx.lifetime,
+            });
+            if (live === undefined) service = await this.get(ctx, workspaceId, serviceId);
+        }
+    }
+
     /** Commit revocation now; the durable execution records terminal state only after teardown. */
     async stop(ctx: Context, workspaceId: string, serviceId: string): Promise<WorkspaceService> {
         return await this.#change(
@@ -447,7 +614,11 @@ export class ServicesModule implements AgentModule {
                 record.service.agentId,
                 call.options,
             );
-            live = { service: started.service, workspaceId: call.workspaceId };
+            live = {
+                service: started.service,
+                output: new ServiceOutputReaders(started.service),
+                workspaceId: call.workspaceId,
+            };
             this.#live.set(call.serviceId, live);
             await this.#change(ctx, call.workspaceId, call.serviceId, (service) => ({
                 processId: started.process.id,
@@ -781,12 +952,14 @@ export class ServicesModule implements AgentModule {
                 counts.get(live.workspaceId)! > 256
             ) {
                 if (live.retirement !== undefined) clearTimeout(live.retirement);
+                live.output.close();
                 this.#live.delete(id);
                 counts.set(live.workspaceId, counts.get(live.workspaceId)! - 1);
                 retained -= 1;
             } else if (live.retirement === undefined) {
                 live.retirement = setTimeout(
                     () => {
+                        live.output.close();
                         this.#live.delete(id);
                     },
                     live.endedAt! + 3_600_000 - now,

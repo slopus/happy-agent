@@ -98,7 +98,11 @@ export async function servicesHarness(dispatch = true) {
         } as unknown as AgentSystemRef;
         let held = false;
         let endpointReachable = false;
-        const running: { service: ComputeService; finish: () => void }[] = [];
+        const running: {
+            service: ComputeService;
+            finish: () => void;
+            output: { stdout: string; stderr: string };
+        }[] = [];
         const start = vi.fn(
             async (_ctx: Context, options: ComputeServiceStartOptions): Promise<ComputeService> => {
                 let resolve!: (exit: ComputeServiceExit) => void;
@@ -107,15 +111,16 @@ export async function servicesHarness(dispatch = true) {
                 });
                 const finish = () =>
                     resolve({ exitCode: null, killed: true, startupFailed: false });
+                const output = { stdout: "", stderr: "" };
                 const service: ComputeService = {
                     execution: options.execution,
                     processId: `native-${String(running.length)}`,
                     admitted: Promise.resolve(true),
                     completion,
-                    read: () => ({
-                        stdout: "",
-                        stderr: "",
-                        position: { stdout: 0, stderr: 0 },
+                    read: (position) => ({
+                        stdout: output.stdout.slice(position.stdout),
+                        stderr: output.stderr.slice(position.stderr),
+                        position: { stdout: output.stdout.length, stderr: output.stderr.length },
                         truncated: false,
                     }),
                     connect: async () => {
@@ -128,7 +133,7 @@ export async function servicesHarness(dispatch = true) {
                         return await completion;
                     }),
                 };
-                running.push({ service, finish });
+                running.push({ service, finish, output });
                 return service;
             },
         );

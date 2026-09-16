@@ -19,6 +19,18 @@ only after commit. Services remain independently owned after their initiating to
 A bounded endpoint probe reports connection readiness separately from process liveness. Completed
 runtime handles retire within one hour, at most 256 per workspace and 4096 per daemon.
 
+The module hook installs the same four common tools for every provider: `service_start`,
+`list_services`, `service_input`, and `service_stop`. Startup, writes, and stops own their Auto
+reviews without elevation; consuming reads and mutations are never replayed after a restart.
+Trusted agent placement selects the workspace. Discovery retains every active service plus at
+most the newest 256 stopped records, with an explicit omitted-history flag.
+
+Input uses the existing SDK process and capture. Each agent and authenticated API view has an
+independent position; read-and-advance is synchronous, writes use the SDK's serialization, and
+caller cancellation ends only that bounded wait. UTF-8 response limits disclose truncation.
+At most 64 reader positions survive per execution, idle positions expire after 30 minutes, and
+positions retire together with the completed capture.
+
 ```text
 authenticated API scope -> daemon-lifetime issuer -> five-minute credential
 CONNECT scope + credential -> signature/expiry/scope validation -> live-runtime admission check
@@ -27,6 +39,6 @@ CONNECT scope + credential -> signature/expiry/scope validation -> live-runtime 
 Signature validation alone never admits a connection: the runtime must still be running and
 unrevoked. A new daemon issuer invalidates every old credential.
 
-The controller is not yet installed in product composition. Agent output/input tools, archive
-barrier subscriptions, the authenticated HTTP gateway, and the Desktop integration are still being
-connected against the published service contract; this directory does not create a public listener.
+The controller is not yet installed in product composition. Archive barrier subscriptions, the
+authenticated HTTP gateway, and the Desktop integration are still being connected against the
+published service contract; this directory does not create a public listener.

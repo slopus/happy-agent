@@ -22,6 +22,17 @@ export const serviceDefinitionSchema = Type.Object(
 );
 export type ServiceDefinition = Static<typeof serviceDefinitionSchema>;
 
+/** The agent adapter supplies its longer wait; HTTP independently enforces its 20-second bound. */
+export const serviceInputOptionsSchema = Type.Object(
+    {
+        chars: Type.Optional(Type.String({ maxLength: 65536 })),
+        waitMs: Type.Integer({ minimum: 0, maximum: 300000 }),
+        maxOutputBytes: Type.Integer({ minimum: 1, maximum: 262144 }),
+    },
+    exact,
+);
+export type ServiceInputOptions = Static<typeof serviceInputOptionsSchema>;
+
 export const serviceExecutionCallSchema = Type.Object(
     {
         workspaceId: cuid2Schema,
