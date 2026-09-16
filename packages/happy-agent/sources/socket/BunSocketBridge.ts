@@ -70,7 +70,7 @@ interface ParsedRequestHead {
 }
 
 export interface BunSocketBridgeOptions {
-    readonly forwardRemoteAttachment?: (
+    readonly forwardAuthenticatedAttachment?: (
         request: { method: string; target: string; headers: Record<string, string | string[]> },
         stream: Duplex,
         head: Buffer,
@@ -184,8 +184,12 @@ function routeInitialRequest(
     // Bun's node:http server does not own native upgrade/CONNECT sockets. Give the
     // shared authenticated API gateway a Duplex over this native socket instead.
     if (
-        pathname?.startsWith("/v0/connections/") === true &&
-        options.forwardRemoteAttachment !== undefined &&
+        (pathname?.startsWith("/v0/connections/") === true ||
+            (parsed.method === "CONNECT" &&
+                /^\/v0\/workspaces\/[a-z][a-z0-9]*\/services\/[a-z][a-z0-9]*\/proxy$/.test(
+                    pathname ?? "",
+                ))) &&
+        options.forwardAuthenticatedAttachment !== undefined &&
         (parsed.method === "CONNECT" || parsed.upgrade?.toLowerCase() === "websocket")
     ) {
         const remote = new Duplex({
@@ -216,7 +220,9 @@ function routeInitialRequest(
         state.phase = "raw";
         const head = state.buffer.subarray(parsed.bytes);
         state.buffer = Buffer.alloc(0);
-        void options.forwardRemoteAttachment(parsed, remote, head).catch(() => closeBridge(socket));
+        void options
+            .forwardAuthenticatedAttachment(parsed, remote, head)
+            .catch(() => closeBridge(socket));
         return;
     }
     if (parsed.method === "CONNECT" && pathname !== undefined) {

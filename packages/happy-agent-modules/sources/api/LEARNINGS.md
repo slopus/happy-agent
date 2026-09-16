@@ -1,5 +1,21 @@
 # API module learnings
 
+## Service attachments are HTTP endpoints, not workspace forward proxies
+
+Each service CONNECT authenticates both the normal caller and a short-lived credential for the
+exact principal, workspace, service, and execution. It owns one already-connected native endpoint;
+neither request URLs nor Host headers can select another destination. Node's HTTP parser and
+client stream bodies and WebSocket upgrades on that socket, preserving application credentials
+and duplicate headers. Canonical body framing must be restored after removing hop-by-hop headers:
+honoring Connection's nomination of Content-Length without reframing turns a GET body into a new
+upstream request. Validate WebSocket method, version, key, and absence of a body before upgrading.
+The header deadline must not end a quiet active SSE response. Stop revokes live attachments before
+confirmed cleanup, and both pending admissions and established connections have bounded counts.
+
+The service list captures its journal cursor before loading its snapshot. Input uses independent
+principal/view reader positions, returns bounded capture, and does not publish I/O or credentials
+in events. Ordinary workspace CONNECT remains a separate existing API contract.
+
 ## Team drafts belong to users, not shared agent metadata
 
 Shared agent metadata made teammates read and overwrite each other's composer drafts. Team

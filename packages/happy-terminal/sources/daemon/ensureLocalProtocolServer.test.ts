@@ -45,7 +45,13 @@ async function serveHealth(protocol: number) {
     await mkdir(scratch, { recursive: true });
     const root = await mkdtemp(resolve(scratch, "protocol-"));
     roots.add(root);
-    const paths = getHappyDaemonPaths({ HAPPY_HOME_DIR: root }, root);
+    const productionPaths = getHappyDaemonPaths({ HAPPY_HOME_DIR: root }, root);
+    // This fixture proves protocol negotiation, not endpoint naming. Keep its
+    // real Unix socket short enough for a deeply nested workspace checkout.
+    const paths = {
+        ...productionPaths,
+        ...(process.platform === "win32" ? {} : { socketPath: resolve(root, "s") }),
+    };
     await mkdir(paths.agentDirectory);
     await writeFile(paths.tokenPath, "fixture-token", { mode: 0o600 });
     const server = createServer((request, response) => {

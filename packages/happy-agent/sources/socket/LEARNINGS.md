@@ -1,5 +1,15 @@
 # Socket transport learnings
 
+## Private services use the same native attachment carrier
+
+Bun's raw carrier also recognizes exact workspace-service CONNECT paths. Both standalone and team
+listeners reconstruct the bounded attachment handshake, then call the same API authentication and
+fixed-service gateway as Node. This does not turn the carrier into an ordinary HTTP body parser or
+an arbitrary destination proxy. Native Bun coverage must exercise streamed HTTP and binary
+WebSockets after asynchronous admission. Bun's WebSocket test client can ignore createConnection;
+send the handshake on the actual admitted socket to prove the tunnel rather than accidentally
+dialing a test hostname.
+
 ## Team terminals need native Bun upgrades too
 
 Team TCP still used Node's WebSocket upgrade path after standalone moved to native Bun.

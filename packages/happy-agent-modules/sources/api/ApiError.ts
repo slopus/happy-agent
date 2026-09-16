@@ -24,6 +24,10 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("too_large"),
     Type.Literal("unauthorized"),
     Type.Literal("unsupported"),
+    Type.Literal("service_not_running"),
+    Type.Literal("service_unavailable"),
+    Type.Literal("output_unavailable"),
+    Type.Literal("reader_limit"),
 ]);
 
 export type ApiErrorCode = Static<typeof apiErrorCodeSchema>;

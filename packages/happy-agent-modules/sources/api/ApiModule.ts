@@ -27,6 +27,9 @@ import {
     userIdsSchema,
     skillPageQuerySchema,
     updateGlobalSkillRequestSchema,
+    workspaceServiceListQuerySchema,
+    workspaceServiceInputRequestSchema,
+    stopWorkspaceServiceRequestSchema,
     type DrainWaitingFor,
     type MessageMode,
 } from "@slopus/happy-agent-client";
@@ -41,10 +44,12 @@ import {
 } from "@slopus/happy-agent-base";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { afterCommit, shutdown, type Context } from "@steve.kite/stdlib";
+import { afterCommit, shutdown, withLifetime, type Context } from "@steve.kite/stdlib";
 import { WebSocketServer } from "ws";
 
 import { AbortModule } from "../abort/index.js";
+import { ServicesModule, ServiceError, ServiceAccessError } from "../services/index.js";
+import { ServiceHttpTunnel } from "./ServiceHttpTunnel.js";
 import {
     BotAvatarInputError,
     BotConflictError,
@@ -339,6 +344,11 @@ export class ApiModule implements AgentModule {
         perMessageDeflate: false,
     });
     readonly #workspaceProxy = new WorkspaceProxy();
+    readonly #serviceTunnels = new Map<ServiceHttpTunnel, string>();
+    readonly #serviceAdmissions = new Map<string, number>();
+    #serviceAttachmentCount = 0;
+    #serviceInputs = 0;
+    readonly #services: ServicesModule | undefined;
     readonly #unsubscribe: (() => void)[] = [];
     readonly #streams = new Set<SseWriter>();
     readonly #shutdownListeners = new Set<() => void | Promise<void>>();
@@ -395,6 +405,7 @@ export class ApiModule implements AgentModule {
         connections: ConnectionsModule,
         node: NodeModule,
         globalSkills?: GlobalSkillsModule,
+        services?: ServicesModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -422,6 +433,7 @@ export class ApiModule implements AgentModule {
         this.#connections = connections;
         this.#node = node;
         this.#globalSkills = globalSkills;
+        this.#services = services;
     }
 
     readonly beforeStart = async (
@@ -517,6 +529,7 @@ export class ApiModule implements AgentModule {
         if (this.#closed) return;
         this.#closed = true;
         this.#ready = false;
+        for (const tunnel of this.#serviceTunnels.keys()) tunnel.close();
         for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
         this.#shutdownListeners.clear();
         this.#drainSources.clear();
@@ -712,6 +725,7 @@ export class ApiModule implements AgentModule {
                 );
                 return;
             }
+            if (await this.#handleServiceRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/") {
                 sendJson(response, 200, { text: "Welcome to Happy Agent!" });
                 return;
@@ -1288,6 +1302,7 @@ export class ApiModule implements AgentModule {
         head: Buffer,
     ): Promise<boolean> {
         if (await this.handleRemoteAttachment(ctx, request, socket, head)) return true;
+        if (await this.handleServiceAttachment(ctx, request, socket, head)) return true;
         const prepared = await this.prepareWorkspaceProxySocket(
             ctx,
             requestUrl(request).pathname,
@@ -1304,6 +1319,111 @@ export class ApiModule implements AgentModule {
             return true;
         }
         this.#workspaceProxy.accept(socket, head);
+        return true;
+    }
+
+    /** Node and native Bun use this same authenticated, fixed-service attachment boundary. */
+    async handleServiceAttachment(
+        ctx: Context,
+        request: IncomingMessage,
+        socket: import("node:stream").Duplex,
+        head: Buffer,
+    ): Promise<boolean> {
+        const match =
+            /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/services\/([a-z][a-z0-9]*)\/proxy$/.exec(
+                requestUrl(request).pathname,
+            );
+        if (request.method !== "CONNECT" || match === null) return false;
+        let release: (() => void) | undefined;
+        const disconnected = new AbortController();
+        const closed = () => disconnected.abort();
+        socket.once("close", closed);
+        try {
+            const signal =
+                ctx.lifetime === undefined
+                    ? disconnected.signal
+                    : AbortSignal.any([ctx.lifetime, disconnected.signal]);
+            ctx = await this.#authenticate(
+                withLifetime(ctx, signal),
+                request.headers.authorization,
+            );
+            this.#assertTeamUser(ctx);
+            if (!this.#ready || this.#closed)
+                throw new ApiError(
+                    503,
+                    "not_initialized",
+                    "Happy Agent is not ready for attachments.",
+                );
+            if (this.#draining)
+                throw new ApiError(
+                    503,
+                    "draining",
+                    "Happy Agent is draining and no longer accepts attachments.",
+                );
+            const services = this.#services;
+            if (services === undefined)
+                throw unsupported("Workspace services are unavailable in this daemon.");
+            if (head.length > 65536)
+                throw invalidRequest("The service attachment's initial data is too large.");
+            const workspaceId = match[1]!;
+            const serviceId = match[2]!;
+            const key = `${workspaceId}/${serviceId}`;
+            const count = this.#serviceAdmissions.get(key) ?? 0;
+            if (count >= 32 || this.#serviceAttachmentCount >= 256)
+                throw new ApiError(
+                    503,
+                    "service_unavailable",
+                    "The service attachment limit has been reached.",
+                );
+            this.#serviceAdmissions.set(key, count + 1);
+            this.#serviceAttachmentCount += 1;
+            let released = false;
+            release = () => {
+                if (released) return;
+                released = true;
+                this.#serviceAttachmentCount -= 1;
+                const remaining = (this.#serviceAdmissions.get(key) ?? 1) - 1;
+                if (remaining === 0) this.#serviceAdmissions.delete(key);
+                else this.#serviceAdmissions.set(key, remaining);
+            };
+            const credential = request.headers["x-happy-service-authorization"];
+            const accessToken =
+                typeof credential === "string" && credential.startsWith("Bearer ")
+                    ? credential.slice(7)
+                    : undefined;
+            const endpoint = await services.connect(
+                ctx,
+                teamUser(ctx)?.id ?? "standalone",
+                workspaceId,
+                serviceId,
+                accessToken,
+            );
+            if (socket.destroyed || this.#closed) {
+                endpoint.destroy();
+                release();
+                return true;
+            }
+            if (endpoint.destroyed)
+                throw new ApiError(
+                    503,
+                    "service_unavailable",
+                    "The service connection has closed.",
+                );
+            const releaseAdmission = release;
+            const tunnel = new ServiceHttpTunnel(endpoint, () => {
+                this.#serviceTunnels.delete(tunnel);
+                releaseAdmission();
+            });
+            this.#serviceTunnels.set(tunnel, key);
+            tunnel.accept(socket, head);
+            release = undefined;
+        } catch (error) {
+            release?.();
+            const rejection = this.#socketRejection(ctx, error, "The service was not found.");
+            writeSocketError(socket, rejection.status, rejection.message, rejection.code);
+        } finally {
+            socket.off("close", closed);
+        }
         return true;
     }
 
@@ -1404,6 +1524,28 @@ export class ApiModule implements AgentModule {
 
     #subscribeToModules(ctx: Context): void {
         if (this.#unsubscribe.length > 0) return;
+        if (this.#services !== undefined)
+            this.#unsubscribe.push(
+                this.#services.onEvent((event) => {
+                    const { type, ...payload } = event;
+                    if (
+                        event.type === "service.updated" &&
+                        event.changes.status !== undefined &&
+                        event.changes.status !== "running"
+                    ) {
+                        const key = `${event.workspaceId}/${event.serviceId}`;
+                        for (const [tunnel, owner] of this.#serviceTunnels)
+                            if (owner === key) tunnel.close();
+                    }
+                    this.#journal.append(
+                        type,
+                        payload,
+                        type === "service.created"
+                            ? event.service.createdAt
+                            : event.changes.updatedAt,
+                    );
+                }),
+            );
         if (this.#globalSkills !== undefined)
             this.#unsubscribe.push(
                 this.#globalSkills.onUpdated((_eventCtx, payload) => {
@@ -4615,6 +4757,133 @@ export class ApiModule implements AgentModule {
         };
     }
 
+    async #handleServiceRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const match =
+            /^\/v0\/workspaces\/([a-z][a-z0-9]*)\/services(?:\/([a-z][a-z0-9]*)(?:\/(input|access-token))?)?$/.exec(
+                url.pathname,
+            );
+        if (match === null) return false;
+        const services = this.#services;
+        if (services === undefined)
+            throw unsupported("Workspace services are unavailable in this daemon.");
+        const workspaceId = match[1]!;
+        const serviceId = match[2];
+        const action = match[3];
+        if (request.method === "GET" && serviceId === undefined) {
+            for (const key of ["includeStopped", "pageCursor", "limit"])
+                if (url.searchParams.getAll(key).length > 1)
+                    throw invalidRequest("The service query contains duplicate parameters.");
+            const query = queryAs(
+                {
+                    includeStopped: booleanParameter(url.searchParams.get("includeStopped"), false),
+                    ...(url.searchParams.has("pageCursor")
+                        ? { pageCursor: url.searchParams.get("pageCursor")! }
+                        : {}),
+                    ...(url.searchParams.has("limit")
+                        ? { limit: Number(url.searchParams.get("limit")) }
+                        : {}),
+                },
+                workspaceServiceListQuerySchema,
+                "service list",
+            );
+            const cursor = this.#journal.cursor();
+            sendJson(response, 200, { ...(await services.list(ctx, workspaceId, query)), cursor });
+            return true;
+        }
+        if (serviceId === undefined)
+            throw notFound("The requested service endpoint does not exist.");
+        if (request.method === "GET" && action === undefined) {
+            sendJson(response, 200, { service: await services.get(ctx, workspaceId, serviceId) });
+            return true;
+        }
+        if (request.method === "DELETE" && action === undefined) {
+            const body = await optionalBodyAs(
+                request,
+                stopWorkspaceServiceRequestSchema,
+                "service stop",
+                8192,
+            );
+            const service = await this.#withMutationId(body.mutationId, () =>
+                services.stop(ctx, workspaceId, serviceId),
+            );
+            sendJson(
+                response,
+                service.status === "stopping" ||
+                    service.status === "running" ||
+                    service.status === "starting"
+                    ? 202
+                    : 200,
+                { service },
+            );
+            return true;
+        }
+        const principalId = teamUser(ctx)?.id ?? "standalone";
+        if (request.method === "POST" && action === "access-token") {
+            await bodyAs(
+                request,
+                Type.Object({}, { additionalProperties: false }),
+                "service access request",
+                1024,
+            );
+            sendJson(
+                response,
+                200,
+                await services.accessToken(ctx, principalId, workspaceId, serviceId),
+            );
+            return true;
+        }
+        if (request.method === "POST" && action === "input") {
+            if (this.#serviceInputs >= 256)
+                throw new ApiError(
+                    503,
+                    "service_unavailable",
+                    "Too many service input requests are already waiting.",
+                );
+            this.#serviceInputs += 1;
+            const disconnected = new AbortController();
+            const closed = () => disconnected.abort();
+            response.once("close", closed);
+            try {
+                const body = await bodyAs(
+                    request,
+                    workspaceServiceInputRequestSchema,
+                    "service input",
+                    512 * 1024,
+                );
+                const chars = body.chars ?? "";
+                const signal =
+                    ctx.lifetime === undefined
+                        ? disconnected.signal
+                        : AbortSignal.any([ctx.lifetime, disconnected.signal]);
+                // Normal API authentication grants this existing process input operation. It does
+                // not confer Full access or change any part of the service's enforced sandbox.
+                const inputCtx = withLifetime(ctx, signal);
+                const result = await services.input(
+                    inputCtx,
+                    workspaceId,
+                    serviceId,
+                    { kind: "api", principalId, readerId: body.readerId },
+                    {
+                        chars,
+                        waitMs: body.waitMs ?? (chars.length === 0 ? 1000 : 250),
+                        maxOutputBytes: body.maxOutputBytes ?? 65536,
+                    },
+                );
+                sendJson(response, 200, result);
+            } finally {
+                response.off("close", closed);
+                this.#serviceInputs -= 1;
+            }
+            return true;
+        }
+        throw notFound("The requested service endpoint does not exist.");
+    }
+
     async #handleWorkspaceList(ctx: Context, url: URL, response: ServerResponse): Promise<void> {
         const projectId = url.searchParams.get("projectId") ?? undefined;
         const includeArchived = booleanParameter(url.searchParams.get("includeArchived"), false);
@@ -5515,6 +5784,7 @@ export class ApiModule implements AgentModule {
     }
 
     #sendError(ctx: Context, response: ServerResponse, error: unknown): void {
+        error = serviceApiError(error) ?? error;
         if (response.headersSent) {
             response.end();
             return;
@@ -5670,6 +5940,7 @@ export class ApiModule implements AgentModule {
     }
 
     #socketRejection(ctx: Context, error: unknown, notFoundMessage: string): ApiSocketRejection {
+        error = serviceApiError(error) ?? error;
         if (error instanceof RemoteConnectionError)
             return { code: error.code, status: error.status, message: error.message };
         if (error instanceof ApiError) {
@@ -5685,6 +5956,21 @@ export class ApiModule implements AgentModule {
             status: 500,
         };
     }
+}
+
+function serviceApiError(error: unknown): ApiError | undefined {
+    if (error instanceof ServiceAccessError)
+        return new ApiError(error.code === "unauthorized" ? 401 : 403, error.code, error.message);
+    if (!(error instanceof ServiceError)) return undefined;
+    const statuses = {
+        not_found: 404,
+        invalid_request: 400,
+        service_not_running: 409,
+        service_unavailable: 503,
+        output_unavailable: 410,
+        reader_limit: 409,
+    } as const;
+    return new ApiError(statuses[error.code], error.code, error.message);
 }
 
 function remoteRoute(target: string | undefined): { id: string; path: string } | undefined {

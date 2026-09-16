@@ -26,7 +26,7 @@ import {
     type BunWebSocketState,
 } from "./createBunBinaryWebSocket.js";
 import { createBunHttpForwarder } from "./createBunHttpForwarder.js";
-import { forwardBunRemoteAttachment } from "./forwardBunRemoteAttachment.js";
+import { forwardBunAttachment } from "./forwardBunAttachment.js";
 
 const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 
@@ -74,8 +74,8 @@ export async function bindBunAgentSocket(
         await prepared.api.listenWorkspaceProxyHttp(proxyHttpSocketPath);
         nativeHttp = startBunHttpServer(bun, prepared, { unix: nativeHttpSocketPath }, forwarder);
         bridge = startBunSocketBridge(bun, {
-            forwardRemoteAttachment: (head, stream, bytes) =>
-                forwardBunRemoteAttachment(prepared, head, stream, bytes),
+            forwardAuthenticatedAttachment: (head, stream, bytes) =>
+                forwardBunAttachment(prepared, head, stream, bytes),
             httpAddress: { unix: nativeHttpSocketPath },
             prepareWorkspaceProxy: async (pathname, authorization) =>
                 await prepared.api.prepareWorkspaceProxySocket(

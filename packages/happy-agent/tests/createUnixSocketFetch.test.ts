@@ -139,7 +139,9 @@ async function serveFetch(
     await mkdir(localRoot, { recursive: true });
     const root = await mkdtemp(join(localRoot, "rig-fetch-"));
     roots.push(root);
-    const socketPath = localAgentSocketPath(root);
+    // The transport fixture stays inside the worktree without spending the
+    // platform's Unix-address budget on the production endpoint's filename.
+    const socketPath = process.platform === "win32" ? localAgentSocketPath(root) : join(root, "s");
     const server = createServer(listener);
     servers.push(server);
     await new Promise<void>((resolve, reject) => {

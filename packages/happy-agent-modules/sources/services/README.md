@@ -46,6 +46,20 @@ have the same removal barrier. Restore reopens admission for new identities and 
 cleanup without reviving any execution. Agent and bot archival also revoke owned services through
 their existing abort paths.
 
-The controller is not yet installed in product composition. The authenticated HTTP gateway and
-Desktop integration are still being connected against the published service contract; this
-directory does not create a public listener.
+Product composition installs this module and its common tools, and supplies it to the API module.
+The workspace-nested API exposes discovery, consuming input/output, stop, access credentials, and
+a fixed-service HTTP/1.1 CONNECT attachment. The gateway streams HTTP, SSE, and WebSockets without
+following redirects, accepting absolute-form requests, or permitting nested CONNECT. It forwards
+application cookies and authorization but never inserts daemon credentials into that stream.
+
+Desktop keeps Chromium local. A trusted workspace browser action resolves `http://localhost:PORT`
+against running service records, or selects an exact service with
+`http://service-SERVICE_ID.localhost`. It then opens a workspace-specific private origin under
+`.happy.invalid`; ordinary internet traffic remains direct. Chromium bypasses PAC routing for
+`.localhost`, so that suffix is only an entry selector, not the application's actual origin.
+These initial private origins use HTTP: secure-context-only browser features are unavailable,
+and development servers with Host allowlists must permit `.happy.invalid`. An ordinary shell's
+host listener is never implicitly exposed.
+This directory creates no public listener or public sharing grant. Strict startup requires the
+native supervisor's supported Linux isolation and delegated resource controllers; unavailable
+enforcement fails closed instead of falling back to an ordinary shell.

@@ -5,7 +5,7 @@ import { bindNodeAgentHttpServer, type BoundAgentHttpServer } from "./AgentSocke
 import { startBunSocketBridge, type BunSocketBridge } from "./BunSocketBridge.js";
 import { bunRuntime, startBunHttpServer, type BunWebSocketServer } from "./bindBunAgentSocket.js";
 import { createBunHttpForwarder } from "./createBunHttpForwarder.js";
-import { forwardBunRemoteAttachment } from "./forwardBunRemoteAttachment.js";
+import { forwardBunAttachment } from "./forwardBunAttachment.js";
 
 /** Team TCP uses the same native Bun HTTP, WebSocket, and tunnel paths as standalone. */
 export async function bindBunAgentHttpServer(
@@ -47,8 +47,8 @@ export async function bindBunAgentHttpServer(
                     pathname,
                     authorization,
                 ),
-            forwardRemoteAttachment: (head, stream, bytes) =>
-                forwardBunRemoteAttachment(prepared, head, stream, bytes),
+            forwardAuthenticatedAttachment: (head, stream, bytes) =>
+                forwardBunAttachment(prepared, head, stream, bytes),
         });
         if (bridge.hostname === undefined || bridge.port === undefined) {
             throw new Error("The Happy Agent team HTTP listener has no TCP address.");
