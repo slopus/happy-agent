@@ -46,7 +46,9 @@ jobs:
     test:
         name: Unprivileged Linux
         runs-on: ubuntu-24.04
-        timeout-minutes: 60
+        # The full partitioned suite plus setup/preflight can exceed one hour.
+        # Keep the ordinary push/PR budget unchanged; only an explicit full gate gets headroom.
+        timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.exhaustive && 90 || 60 }}
         env:
             HOME: ${{ github.workspace }}/.local/happy-agent-api-home
             NODE_OPTIONS: --max-old-space-size=6144
