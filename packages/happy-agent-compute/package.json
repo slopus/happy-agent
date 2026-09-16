@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-compute",
-    "version": "0.1.18",
+    "version": "0.1.19",
     "description": "Filesystems, shells, sandboxes, and containers for Happy agents.",
     "license": "MIT",
     "repository": {

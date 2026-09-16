@@ -27,7 +27,12 @@ afterEach(() => {
 
 describe.runIf(process.platform !== "win32")("service reconciliation ownership", () => {
     it("releases active capacity and process-group ownership after a failed completion is independently confirmed", async () => {
-        const directory = await realpath(await mkdtemp(join(tmpdir(), "svc-proof-")));
+        // Darwin's per-user TMPDIR is already long enough to exceed the private Unix bridge
+        // path budget once execution components are appended. Keep this scripted fixture short;
+        // the production 100-byte boundary must remain enforced on every platform.
+        const directory = await realpath(
+            await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "svc-proof-")),
+        );
         const ctx = createRootContext().named("service-reconciliation-test");
         const manager = new NativeProcessManager(ctx);
         const confirmed = vi.spyOn(manager, "releaseConfirmedProcessGroup");
