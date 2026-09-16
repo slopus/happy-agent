@@ -1,5 +1,12 @@
 # Git learnings
 
+## Internal Git events must not launch worktree scans
+
+Recursive Windows watches also report object packs, lock files and reflogs under `.git`.
+Classifying each event launched an unnecessary sandboxed PowerShell/Git command. Those paths
+now stay with the dedicated metadata watchers; ordinary source changes still reach Git status.
+Direct Git operations and clones explicitly hide their background console windows.
+
 ## An unborn branch has no comparison base
 
 Using the empty tree when HEAD did not exist made an unborn repository look comparable without

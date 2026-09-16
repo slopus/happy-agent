@@ -218,6 +218,11 @@ export class GitStateTracker {
             this.markChanged(entity);
             return;
         }
+        // The dedicated index/config/ref watchers already cover Git metadata. A recursive
+        // Windows worktree watch also sees pack files, locks and reflogs; classifying those
+        // with another sandboxed Git process creates work for changes outside the worktree.
+        const metadataPath = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+        if (metadataPath.startsWith(".git/")) return;
         if (!tracker.unclassifiedDirty) {
             if (
                 tracker.pendingWorktreePaths.size >= WORKTREE_PATH_LIMIT &&

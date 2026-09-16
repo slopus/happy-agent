@@ -32,6 +32,7 @@ export async function runGitCommandWithEnvironment(
     try {
         const result = await execFile("git", ["-C", cwd, ...args], {
             encoding: "utf8",
+            windowsHide: true,
             env: { ...process.env, ...environment, GIT_TERMINAL_PROMPT: "0" },
             maxBuffer: options.maxOutputBytes ?? GIT_OUTPUT_LIMIT,
             signal: options.signal,

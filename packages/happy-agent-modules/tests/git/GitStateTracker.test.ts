@@ -31,6 +31,35 @@ afterEach(async () => {
 });
 
 describe("GitStateTracker scheduling", () => {
+    it("ignores Git internal churn already covered by dedicated metadata watchers", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const scan = testScan();
+        const tracker = new GitStateTracker(createRootContext(), scan.run, owner());
+        try {
+            await startTracking(tracker);
+            for (const path of [
+                ".git/objects/pack/tmp_pack",
+                ".git/index.lock",
+                ".git\\logs\\HEAD",
+            ]) {
+                tracker.markWorktreeChanged(entity, path);
+                await vi.advanceTimersByTimeAsync(150);
+                await settlePromises();
+            }
+            expect(scan.pathStatusReads).toBe(0);
+            expect(scan.fullStatusReads).toBe(1);
+            // Ordinary nested source paths still reach Git's authoritative status check.
+            scan.pathStatusDirty = true;
+            tracker.markWorktreeChanged(entity, "src/file.ts");
+            await vi.advanceTimersByTimeAsync(150);
+            await settlePromises();
+            expect(scan.fullStatusReads).toBe(2);
+        } finally {
+            tracker.dispose();
+        }
+    });
+
     it("uses one stale deadline without treating subscription renewal as dirtiness", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);

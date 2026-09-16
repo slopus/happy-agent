@@ -71,6 +71,7 @@ async function runOne(
     return await new Promise<SetupCommandResult>((settle) => {
         const child = spawn(shell, [...args], {
             cwd,
+            windowsHide: true,
             env: shellEnvironment(environment),
             stdio: ["ignore", "pipe", "pipe"],
         });

@@ -40,6 +40,7 @@ export interface GitCloneExecFileOptions {
     env: NodeJS.ProcessEnv;
     maxBuffer: number;
     timeout: number;
+    windowsHide: boolean;
 }
 
 export type GitCloneExecFile = (
@@ -93,6 +94,7 @@ export async function cloneRemoteRepository(options: CloneRemoteRepositoryOption
     try {
         await (options.execFile ?? runExecFile)("git", ["clone", "--", remote, stagingPath], {
             encoding: "utf8",
+            windowsHide: true,
             env: environment,
             maxBuffer: GIT_CLONE_OUTPUT_LIMIT,
             timeout: GIT_CLONE_TIMEOUT_MS,

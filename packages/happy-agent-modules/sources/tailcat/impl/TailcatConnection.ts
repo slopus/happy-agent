@@ -104,7 +104,7 @@ export class TailcatConnection {
         const child = spawn(
             this.#executable,
             ["--key=new", "socks", "--listen=127.0.0.1:0", this.#address],
-            { stdio: ["ignore", "pipe", "pipe"] },
+            { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
         );
         const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
         const run = { child, exited };

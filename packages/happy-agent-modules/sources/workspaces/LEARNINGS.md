@@ -10,6 +10,11 @@ workspace; that agent's parent names the coordinator. The binding is immutable t
 renames, and archival. A shared-filesystem subtask does not replace its parent's workspace binding
 or add an entry to the workspace's agent series.
 
+## Background setup has no native console window
+
+Workspace setup captures its command output in the app. Its child process explicitly hides the
+Windows console so session/workspace creation does not flash a separate terminal.
+
 ## Optimistic archival does not authorize early file removal
 
 Service admission closes in the archive transaction, which records the bounded service IDs and

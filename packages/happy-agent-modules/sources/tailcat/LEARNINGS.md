@@ -1,5 +1,10 @@
 # Tailcat learnings
 
+## Carriers stay in the background on Windows
+
+Both incoming exposure and outgoing SOCKS helpers launch with hidden Windows consoles. Their
+captured output and existing supervision remain authoritative; reconnecting cannot flash a terminal.
+
 ## The feature owns its live transport
 
 Tailcat used to be started by the daemon executable after the modules-owned runtime had already

@@ -253,6 +253,7 @@ function spawnCommand(
 ): TailcatRun {
     const child = spawn(executable, [...arguments_], {
         env: environment,
+        windowsHide: true,
         stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
