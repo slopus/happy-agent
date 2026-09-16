@@ -121,6 +121,10 @@ export {
 export { workspaceBranchName, workspaceNameKey, workspaceStorageKey } from "./WorkspaceIdentity.js";
 export { WorkspaceInputError } from "./WorkspaceInputError.js";
 export { WorkspaceLifecycleError } from "./WorkspaceLifecycleError.js";
+export type {
+    WorkspaceServiceArchiveListener,
+    WorkspaceRemovalBarrier,
+} from "./WorkspaceServiceCleanup.js";
 export {
     workspaceContextSchema,
     workspaceEventIdSchema,

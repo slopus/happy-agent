@@ -21,7 +21,6 @@ import { vi } from "vitest";
 import { AbortModule } from "../../../sources/abort/index.js";
 import { BotsModule } from "../../../sources/bots/index.js";
 import { ComputeModule } from "../../../sources/compute/index.js";
-import { ConfigModule } from "../../../sources/config/index.js";
 import { DurableFunctionsModule } from "../../../sources/durableFunctions/index.js";
 import { EventsModule } from "../../../sources/events/index.js";
 import { GitModule } from "../../../sources/git/index.js";
@@ -32,6 +31,7 @@ import { ServicesModule, type ServiceDefinition } from "../../../sources/service
 import { TitlesModule } from "../../../sources/titles/index.js";
 import { WorkspacesModule } from "../../../sources/workspaces/index.js";
 import { FakeCompute } from "../../compute/support/FakeCompute.js";
+import { testConfigRootedAt } from "../../support/configModule.js";
 import {
     pendingCallCount,
     waitForCondition,
@@ -71,7 +71,7 @@ export async function servicesHarness(dispatch = true) {
             database: connection.database,
             acquireLock: async () => ({ release: async () => {} }),
         });
-        const config = await ConfigModule.load(join(directory, "happy"));
+        const config = await testConfigRootedAt(directory);
         if (process.platform !== "linux") {
             // The controller runs over a scripted Linux compute; platform-native path enforcement is
             // tested separately by Config and the real Linux supervisor lane.
@@ -140,8 +140,8 @@ export async function servicesHarness(dispatch = true) {
         const reconcile = vi.fn(async () => {});
         const compute = ComputeModule.withProvider(config, new SecretsModule(), {
             id: "host",
-            create: async () =>
-                Object.assign(new FakeCompute(directory), {
+            create: async (_ctx, options) =>
+                Object.assign(new FakeCompute(options.cwd), {
                     services: {
                         start,
                         reconcile,
@@ -202,6 +202,7 @@ export async function servicesHarness(dispatch = true) {
             storage,
             config,
             services,
+            abort,
             durable,
             compute,
             projects,
@@ -209,6 +210,7 @@ export async function servicesHarness(dispatch = true) {
             bots,
             events,
             agents,
+            agentConfigs,
             scope,
             hooks,
             start,

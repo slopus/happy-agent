@@ -2,6 +2,14 @@
 
 Feedback and decisions gathered while building this module.
 
+## Root deletion requires runtime cleanup proof
+
+Cancelling project agents is a stop decision, not proof that their service sandboxes are gone.
+Managed-root cleanup now awaits registered removal barriers before taking the filesystem lock.
+Service admission closes with project archival and reopens on restore only for new executions.
+After waiting, cleanup rechecks the archived state inside the same Git lock used by restore, so
+an old cleanup operation cannot delete a restored project.
+
 ## Project creation and imports are available to coordinating agents
 
 Chief of Staff could see projects but could not register or import them. Root agents with

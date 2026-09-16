@@ -1,4 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
+import { workspaceServiceCleanupSchema } from "@slopus/happy-agent-client";
 
 /**
  * A workspace is a folder someone works in. When the project is a Git folder that folder is a
@@ -217,6 +218,7 @@ export const workspaceMutationOperationSchema = Type.Union([
     Type.Literal("complete_archive"),
     Type.Literal("apply_git_facts"),
     Type.Literal("apply_probe"),
+    Type.Literal("set_service_cleanup"),
 ]);
 
 /** Host-observed Git state for one workspace. */
@@ -266,6 +268,7 @@ export const workspaceSchema = Type.Object(
         createdAt: workspaceTimestampSchema,
         updatedAt: workspaceTimestampSchema,
         archivedAt: Type.Optional(workspaceTimestampSchema),
+        serviceCleanup: Type.Optional(Type.Union([workspaceServiceCleanupSchema, Type.Null()])),
     },
     { additionalProperties: false },
 );

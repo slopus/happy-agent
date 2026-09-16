@@ -2,6 +2,15 @@
 
 Feedback and decisions gathered while building this module.
 
+## Optimistic archival does not authorize early file removal
+
+Service admission closes in the archive transaction, which records the bounded service IDs and
+initial cleanup phase in the same workspace version. The durable removal operation then awaits
+positive service teardown before touching files. Failed cleanup retains the directory and records
+a credential-free blocked status; retries resume the same intent. Progress changes use ordinary
+workspace versions and events, and successful archival clears the cleanup field. Abort signals or
+shell exit notifications alone never satisfy this removal barrier.
+
 ## Child workspaces reuse the project's credential owner
 
 GitHub project cloning resolves a default creator, but child creation used to require every caller

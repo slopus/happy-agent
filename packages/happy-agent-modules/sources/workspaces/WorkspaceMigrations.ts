@@ -258,4 +258,13 @@ export const workspaceMigrations = [
             );
         },
     ],
+    [
+        "008-workspace-service-cleanup",
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(WORKSPACES_TABLE)} ADD COLUMN service_cleanup TEXT`,
+            );
+        },
+    ],
 ] as const;

@@ -151,6 +151,9 @@ export function workspaceResource(
         createdAt: workspace.createdAt,
         updatedAt: workspace.updatedAt,
         archivedAt: workspace.archivedAt ?? null,
+        ...(workspace.serviceCleanup === undefined
+            ? {}
+            : { serviceCleanup: structuredClone(workspace.serviceCleanup) }),
     };
 }
 

@@ -25,8 +25,10 @@ or a conversation queue.
 
 If ancestry traversal, notice recording, or any abort request fails, the transaction rolls back
 and no abort or process signal is issued. On commit, every run signal is issued immediately.
-Public process state moves to `exited`, then every retained operating-system process group receives
-`SIGKILL` directly. Abort never sends `SIGTERM` and has no graceful waiting period. Nested callers
+Ordinary shell process state moves to `exited`, then every retained operating-system process group receives
+`SIGKILL` directly. Strict services revoke access and use their mandatory whole-sandbox stop protocol;
+their process records remain active until teardown is confirmed. Commit launches cleanup without
+waiting for process exit or retaining the database queue. Nested callers
 reuse their transaction, so the operation composes with API and tool mutations without an early
 commit.
 

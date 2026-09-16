@@ -260,6 +260,17 @@ export class ServiceRecords {
         });
     }
 
+    /** Restore admits new identities without reviving or rebinding any previous execution. */
+    async reopenAdmission(ctx: Context, workspaceId: string): Promise<void> {
+        assertIdentity(workspaceId);
+        await this.kv.transaction(ctx, async (_, txCtx) => {
+            const header = await this.#header(txCtx, workspaceId);
+            if (!header.closed) return;
+            header.closed = false;
+            await this.kv.write(txCtx, headerKey(workspaceId), header);
+        });
+    }
+
     async #header(ctx: Context, workspaceId: string): Promise<Static<typeof headerSchema>> {
         return (
             (await readChecked(ctx, this.kv, headerKey(workspaceId), headerSchema)) ?? {

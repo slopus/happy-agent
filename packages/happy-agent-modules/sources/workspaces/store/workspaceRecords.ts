@@ -34,6 +34,7 @@ type WorkspaceRow = {
     readonly created_at: number | string;
     readonly updated_at: number | string;
     readonly archived_at: number | string | null;
+    readonly service_cleanup: string | null;
 };
 
 export function assertWorkspace(value: unknown): asserts value is Workspace {
@@ -183,7 +184,7 @@ export async function insertWorkspace(
             kind, path, base_ref, base_commit, git_common_dir, presence, status, order_key,
             version, creator_session_id, git_ahead, git_behind, git_detached, git_head,
             git_upstream, initialization_attempt, initialization_error, created_at, updated_at,
-            archived_at
+            archived_at, service_cleanup
         ) VALUES (
             ${workspace.id}, ${workspace.projectRef}, ${workspace.parentId}, ${workspace.name},
             ${workspaceNameKey(workspace.name)}, ${workspace.nameConfigured ? 1 : 0},
@@ -194,7 +195,8 @@ export async function insertWorkspace(
             ${workspace.gitAhead}, ${workspace.gitBehind}, ${workspace.gitDetached ? 1 : 0},
             ${workspace.gitHead ?? null}, ${workspace.gitUpstream ?? null},
             ${workspace.initializationAttempt}, ${workspace.initializationError ?? null},
-            ${workspace.createdAt}, ${workspace.updatedAt}, ${workspace.archivedAt ?? null}
+            ${workspace.createdAt}, ${workspace.updatedAt}, ${workspace.archivedAt ?? null},
+            ${workspace.serviceCleanup === undefined ? null : JSON.stringify(workspace.serviceCleanup)}
         )`,
     );
 }
@@ -240,7 +242,8 @@ export async function writeWorkspace(
                 initialization_error = ${workspace.initializationError ?? null},
                 created_at = ${workspace.createdAt},
                 updated_at = ${workspace.updatedAt},
-                archived_at = ${workspace.archivedAt ?? null}
+                archived_at = ${workspace.archivedAt ?? null},
+                service_cleanup = ${workspace.serviceCleanup === undefined ? null : JSON.stringify(workspace.serviceCleanup)}
             WHERE id = ${workspace.id} AND version = ${expectedVersion}
             RETURNING id`,
     );
@@ -315,6 +318,9 @@ function workspaceFromRow(row: WorkspaceRow): Workspace {
         createdAt: Number(row.created_at),
         updatedAt: Number(row.updated_at),
         ...(row.archived_at === null ? {} : { archivedAt: Number(row.archived_at) }),
+        ...(row.service_cleanup === null
+            ? {}
+            : { serviceCleanup: JSON.parse(row.service_cleanup) }),
     };
     assertWorkspace(workspace);
     return workspace;

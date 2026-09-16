@@ -126,6 +126,23 @@ export class ServicesModule implements AgentModule {
                 await this.stop(ctx, workspaceId, record.service.id);
             }
         });
+        workspaces.onServiceArchiveTransactional(async (ctx, workspace) => [
+            ...(await this.closeWorkspaceAdmission(ctx, workspace.id)),
+        ]);
+        workspaces.onBeforeFolderRemoval(async (ctx, workspace) => {
+            await this.closeWorkspaceAdmission(ctx, workspace.id);
+            await this.confirmWorkspaceStopped(ctx, workspace.id);
+        });
+        projects.onEventTransactional(async (ctx, event) => {
+            if (event.type === "project_archived")
+                await this.closeWorkspaceAdmission(ctx, event.project.id);
+            if (event.type === "project_restored")
+                await this.#records?.reopenAdmission(ctx, event.project.id);
+        });
+        projects.onBeforeFolderRemoval(async (ctx, project) => {
+            await this.closeWorkspaceAdmission(ctx, project.id);
+            await this.confirmWorkspaceStopped(ctx, project.id);
+        });
     }
 
     readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {

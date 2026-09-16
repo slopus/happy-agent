@@ -437,11 +437,11 @@ export class ComputeModule implements AgentModule {
     }
 
     /** Immediately mark and hard-kill every process tree owned by one agent compute. */
-    async hardKillAgentProcesses(ctx: Context, agentId: string): Promise<void> {
+    async hardKillAgentProcesses(_ctx: Context, agentId: string): Promise<void> {
         const cached = this.#computes.get(agentId);
         if (cached === undefined) return;
         cached.abortGeneration += 1;
-        await this.#hardKillCached(ctx, agentId, cached);
+        await this.#hardKillCached(cached.processContext, agentId, cached);
     }
 
     /** Read command output without advancing the model's output cursor. */

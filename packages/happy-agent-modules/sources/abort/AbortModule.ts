@@ -1,4 +1,5 @@
 import type { AgentModule, AgentModuleHooks, AgentSystemRef } from "@slopus/happy-agent-base";
+import { AsyncResource } from "node:async_hooks";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
 import type { ComputeModule } from "../compute/index.js";
@@ -21,6 +22,7 @@ export class AbortModule implements AgentModule {
     readonly #compute: ComputeModule;
     /** Who each open transaction has already cancelled, so one transaction signals nobody twice. */
     readonly #signalled = new WeakMap<object, Set<string>>();
+    readonly #processSignals = new AsyncResource("happy-agent-abort-process-signals");
 
     #agents: AgentSystemRef | undefined;
 
@@ -53,23 +55,27 @@ export class AbortModule implements AgentModule {
             // subtree is signalled first, then every compute advances its abort generation and
             // hard-kills its process groups concurrently. An empty process snapshot is irrelevant:
             // a command still crossing spawn observes the generation change and dies too.
-            afterCommit(txCtx, async (postCommitCtx) => {
-                await Promise.all(
-                    leafFirst.map(async (targetAgentId) => {
-                        try {
-                            await this.#compute.hardKillAgentProcesses(
-                                postCommitCtx,
-                                targetAgentId,
-                            );
-                        } catch (error: unknown) {
-                            postCommitCtx.log.error(
-                                "Abort could not hard-kill an agent's background processes.",
-                                { agentId: targetAgentId },
-                                error,
-                            );
-                        }
-                    }),
-                );
+            afterCommit(txCtx, (postCommitCtx) => {
+                // Publication owns the database FIFO. Start every signal now, but leave waiting
+                // for native teardown to Compute and the durable service/archive barriers.
+                this.#processSignals.runInAsyncScope(() => {
+                    void Promise.all(
+                        leafFirst.map(async (targetAgentId) => {
+                            try {
+                                await this.#compute.hardKillAgentProcesses(
+                                    postCommitCtx,
+                                    targetAgentId,
+                                );
+                            } catch (error: unknown) {
+                                postCommitCtx.log.error(
+                                    "Abort could not hard-kill an agent's background processes.",
+                                    { agentId: targetAgentId },
+                                    error,
+                                );
+                            }
+                        }),
+                    );
+                });
             });
         });
     }

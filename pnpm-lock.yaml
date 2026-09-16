@@ -155,8 +155,8 @@ importers:
         specifier: 0.0.66-preview.2
         version: 0.0.66-preview.2
       '@slopus/happy-agent-compute':
-        specifier: 0.1.17-preview.1
-        version: 0.1.17-preview.1
+        specifier: 0.1.19
+        version: 0.1.19
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -304,8 +304,8 @@ importers:
         specifier: 0.0.66-preview.2
         version: 0.0.66-preview.2
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.17-preview.1
-        version: 0.1.17-preview.1
+        specifier: npm:@slopus/happy-agent-compute@0.1.19
+        version: 0.1.19
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -389,8 +389,8 @@ importers:
         specifier: 0.0.66-preview.2
         version: 0.0.66-preview.2
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.17-preview.1
-        version: 0.1.17-preview.1
+        specifier: npm:@slopus/happy-agent-compute@0.1.19
+        version: 0.1.19
       '@slopus/happy-providers':
         specifier: 0.0.28
         version: 0.0.28(ws@8.21.1)(zod@4.4.3)
@@ -2029,8 +2029,8 @@ packages:
     resolution: {integrity: sha512-mg43YnSRi8JqUH/db35XpzcQ5FJpemYTJDlhswPv0M6Wuq5D9CjvwxDvhwTdGLFUeYV5hA6unMT9FbrjfzlXzw==}
     engines: {node: '>=20'}
 
-  '@slopus/happy-agent-compute@0.1.17-preview.1':
-    resolution: {integrity: sha512-N/H/jlw46G66nezZCNuJgloh6HUoPUReHmJfMervLBCX4jrh2+cikFrRfluFt4DCQKRqN86k3zrcXICQxI147g==}
+  '@slopus/happy-agent-compute@0.1.19':
+    resolution: {integrity: sha512-dFGK5NXZBzqjnHFOWNRM56GKbta4duNF5rzK1sParrXewmwHon7uGpiTZC6bv4YkeJqKyzB4cs83JEedElWrPQ==}
     engines: {node: '>=22.19.0'}
 
   '@slopus/happy-agent-supervisor@0.0.13-preview.1':
@@ -5269,7 +5269,7 @@ snapshots:
     dependencies:
       '@sinclair/typebox': 0.34.49
 
-  '@slopus/happy-agent-compute@0.1.17-preview.1':
+  '@slopus/happy-agent-compute@0.1.19':
     dependencies:
       '@lydell/node-pty': 1.2.0-beta.15
       '@sinclair/typebox': 0.34.49

@@ -35,6 +35,7 @@ export const workspaceUpdateChangeSchema = Type.Union([
     Type.Literal("begin_archive"),
     Type.Literal("apply_git_facts"),
     Type.Literal("apply_probe"),
+    Type.Literal("set_service_cleanup"),
 ]);
 
 const eventEnvelope = {

@@ -39,6 +39,13 @@ CONNECT scope + credential -> signature/expiry/scope validation -> live-runtime 
 Signature validation alone never admits a connection: the runtime must still be running and
 unrevoked. A new daemon issuer invalidates every old credential.
 
-The controller is not yet installed in product composition. Archive barrier subscriptions, the
-authenticated HTTP gateway, and the Desktop integration are still being connected against the
-published service contract; this directory does not create a public listener.
+Managed-workspace archival closes admission in the same transaction as the optimistic archive
+decision. Cleanup progress is versioned workspace state. Removal waits for positive service
+teardown; failure retains the directory and exposes a safe blocked status. Managed project roots
+have the same removal barrier. Restore reopens admission for new identities and cancels old
+cleanup without reviving any execution. Agent and bot archival also revoke owned services through
+their existing abort paths.
+
+The controller is not yet installed in product composition. The authenticated HTTP gateway and
+Desktop integration are still being connected against the published service contract; this
+directory does not create a public listener.

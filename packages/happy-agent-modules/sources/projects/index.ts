@@ -127,6 +127,10 @@ export {
 } from "./ProjectEvent.js";
 export { projectMigrations } from "./ProjectMigrations.js";
 export {
+    projectRemovalBarrierSchema,
+    type ProjectRemovalBarrier,
+} from "./ProjectRemovalBarrier.js";
+export {
     MAX_PROJECT_CURSOR_LENGTH,
     MAX_PROJECT_PAGE_SIZE,
     projectCursorSchema,
